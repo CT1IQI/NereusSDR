@@ -330,6 +330,7 @@ jobs:
             libgl1-mesa-dev libfftw3-dev \
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev \
+            libssl-dev \
             xvfb libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
@@ -400,8 +401,57 @@ jobs:
           target: desktop
           arch: win64_mingw
           modules: 'qtmultimedia qtshadertools qtwebsockets'
-          tools: 'tools_mingw1310'
+          # tools_openssl_x64,qt.tools.openssl.gcc_64 added alongside
+          # tools_mingw1310 (Remote Daemon R2, Task 17 fix round 1): this
+          # job's main-app build now requires OpenSSL unconditionally
+          # (find_package(OpenSSL 3.0 REQUIRED ...) in CMakeLists.txt), and
+          # this leg's Qt is MinGW-built (arch: win64_mingw above), a
+          # DIFFERENT toolchain from release.yml's MSVC Windows leg -- the
+          # vcpkg x64-windows-static-md route decided for that leg does not
+          # transfer here without its own verification. The gcc_64 variant
+          # is Qt's own official MinGW-compatible OpenSSL distribution, the
+          # same mechanism Qt's installer uses to pair a MinGW Qt build
+          # with a working QtNetwork OpenSSL backend, so it is a named,
+          # Qt-maintained answer rather than a guess -- confirmed via
+          # aqtinstall's own docs (aqt list-tool windows desktop
+          # tools_openssl_x64) and jurplel/install-qt-action's documented
+          # `tools:` syntax (comma separates tool from variant, space
+          # separates multiple tool entries) during this fix round, not
+          # carried over from general knowledge. Lower confidence than the
+          # MSVC/vcpkg route: unverified end to end (no Windows runner
+          # available here) -- the discovery step immediately below finds
+          # wherever this actually lands and fails the job loudly, rather
+          # than silently, if it cannot.
+          tools: 'tools_mingw1310 tools_openssl_x64,qt.tools.openssl.gcc_64'
           cache: true
+
+      # See the "Install Qt (Windows)" step's tools: comment above for the
+      # full reasoning. This job's Qt install directory (and therefore the
+      # aqt-installed OpenSSL tool's directory) is controlled by
+      # install-qt-action's own `dir` input, which this workflow leaves at
+      # its default -- rather than hardcode an assumed path that may not
+      # match that default exactly, search for it and fail loudly if it is
+      # not where expected, instead of silently configuring against no
+      # OpenSSL at all.
+      - name: Locate aqt-installed OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          OPENSSL_DIR=$(find "$RUNNER_WORKSPACE" -maxdepth 6 -type d -iname 'OpenSSL' -path '*Tools*' 2>/dev/null | head -n1)
+          if [ -z "$OPENSSL_DIR" ]; then
+            echo "::error::Could not locate the aqt-installed OpenSSL tool directory under $RUNNER_WORKSPACE (searched for a 'Tools/.../OpenSSL' path). tools_openssl_x64 may not have installed, or install-qt-action's layout changed."
+            exit 1
+          fi
+          # The tool installs an architecture subdirectory (Win_x64) one
+          # level below; CMake's OPENSSL_ROOT_DIR wants the directory that
+          # directly contains include/ and lib/.
+          ARCH_DIR=$(find "$OPENSSL_DIR" -maxdepth 1 -type d -iname 'Win_x64' | head -n1)
+          if [ -z "$ARCH_DIR" ]; then
+            echo "::error::Found OpenSSL tool directory at $OPENSSL_DIR but no Win_x64 subdirectory inside it."
+            exit 1
+          fi
+          echo "Found aqt OpenSSL at: $ARCH_DIR"
+          echo "OPENSSL_ROOT_DIR=$ARCH_DIR" >> "$GITHUB_ENV"
 
       - name: Install Ninja (Windows)
         if: runner.os == 'Windows'
@@ -529,9 +579,16 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
+          #
+          # OPENSSL_ROOT_DIR was set into GITHUB_ENV by the "Locate
+          # aqt-installed OpenSSL (Windows)" step above (Remote Daemon R2,
+          # Task 17 fix round 1); passed explicitly here rather than relied
+          # on as an ambient env var so find_package(OpenSSL) in
+          # CMakeLists.txt cannot silently prefer a different copy.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DNEREUS_GPU_SPECTRUM=ON
+            -DNEREUS_GPU_SPECTRUM=ON \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
 
       # ------------------------------------------------------------------
       # Build

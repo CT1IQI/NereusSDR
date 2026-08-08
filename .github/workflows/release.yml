@@ -126,7 +126,8 @@ jobs:
             libfuse2 file desktop-file-utils \
             libfftw3-dev imagemagick \
             libasound2-dev libjack-jackd2-dev \
-            libpipewire-0.3-dev
+            libpipewire-0.3-dev \
+            libssl-dev
 
       - name: Install system Qt (ARM only)
         if: matrix.use_aqt == false
@@ -703,9 +704,41 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
+          #
+          # vcpkg (Remote Daemon R2, Task 17 fix round 1, coordinator
+          # decision): windows-latest ships vcpkg with
+          # VCPKG_INSTALLATION_ROOT already set, so no separate install
+          # step is needed. The toolchain file below triggers vcpkg's
+          # manifest-mode install (reads vcpkg.json at the repo root) as
+          # part of THIS SAME configure run, before find_package(OpenSSL)
+          # in CMakeLists.txt executes, installing into
+          # build/vcpkg_installed/x64-windows-static-md. -static-md:
+          # static OpenSSL libraries against the dynamic CRT, matching
+          # what Qt itself links against here, and avoiding a runtime DLL
+          # to deploy (this project has already shipped a release broken
+          # by a missing runtime DLL: v0.5.0's Windows installer without
+          # rade.dll). vcpkg.json's builtin-baseline is a PLACEHOLDER and
+          # must be replaced with a real vcpkg commit SHA before this
+          # step can succeed -- see that file's own note and the
+          # CMakeLists.txt find_package(OpenSSL) block for the full
+          # reasoning.
+          #
+          # OPENSSL_ROOT_DIR is passed explicitly, pointing at that same
+          # vcpkg install location, as a defensive belt-and-suspenders
+          # measure: windows-latest preinstalls Strawberry Perl, which
+          # bundles its own MinGW-built OpenSSL that is NOT link-
+          # compatible with this MSVC build. Naming the root rather than
+          # trusting the toolchain file's search order to win on its own
+          # is the point; the CMakeLists.txt find_package(OpenSSL) block
+          # asserts the resolved OPENSSL_INCLUDE_DIR is actually under
+          # this root and fails the configure loudly if not, rather than
+          # linking the wrong copy silently.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DNEREUS_GPU_SPECTRUM=ON
+            -DNEREUS_GPU_SPECTRUM=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
+            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
 
       - name: Build
         shell: bash
