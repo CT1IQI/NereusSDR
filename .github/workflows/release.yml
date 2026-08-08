@@ -386,6 +386,54 @@ jobs:
           test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
 
+      - name: Build OpenSSL from source for x86_64
+        if: matrix.arch == 'x86_64'
+        # Remote Daemon R2, Task 17 fix round 3, Important B: this row's
+        # Homebrew is the arm64 (Apple Silicon host) install, whose
+        # openssl@3 keg has no x86_64 slice -- under
+        # -DCMAKE_OSX_ARCHITECTURES=x86_64 that is either a REQUIRED
+        # configure failure or a link error mixing arm64 libcrypto into
+        # an x86_64 binary. Same story, same fix shape as FFTW immediately
+        # above on this exact row: source-build for the target arch rather
+        # than reach for a second (Rosetta-emulated) Homebrew install,
+        # keeping this row's one cross-compile story instead of adding a
+        # second, different one. This is the exact artifact-class bug the
+        # whole REQUIRED finding is modelled on (v0.5.0's Windows build
+        # shipped without rade.dll) -- caught here, before a release.
+        #
+        # darwin64-x86_64-cc bakes in "-arch x86_64" itself (verified
+        # 2026-08-08 against openssl/openssl's own INSTALL.md and the
+        # darwin64-x86_64-cc Configure target source); -mmacosx-version-min
+        # is passed as an extra Configure argument (Configure passes
+        # unrecognised options through to the compiler) rather than via
+        # CFLAGS, matching this row's deployment_target the same way
+        # FFTW's CFLAGS does above. shared (not no-shared) matches FFTW's
+        # --enable-shared choice on the same row, so packaging treats both
+        # non-Qt dylibs the same way. no-tests skips building the (large)
+        # test-binary tree -- verified 2026-08-08 as a real, current
+        # OpenSSL 3.x Configure option, not building the suite this step
+        # never runs anyway. install_sw (not install) skips man pages/HTML
+        # docs, unneeded in CI.
+        run: |
+          PREFIX="${{ github.workspace }}/openssl-x86_64"
+          curl -fsSL https://www.openssl.org/source/openssl-3.0.21.tar.gz -o openssl.tar.gz
+          tar xzf openssl.tar.gz
+          cd openssl-3.0.21
+
+          ./Configure darwin64-x86_64-cc shared no-tests \
+            -mmacosx-version-min=${{ matrix.deployment_target }} \
+            --prefix="$PREFIX" --openssldir="$PREFIX/ssl"
+          make -j$(sysctl -n hw.ncpu)
+          make install_sw
+
+          # Sanity-check the install, and that it is actually x86_64 --
+          # the one failure mode a plain file-exists check would miss:
+          # a misconfigured Configure call silently building for the
+          # HOST (arm64) instead of the intended TARGET (x86_64).
+          test -f "$PREFIX/include/openssl/evp.h" || { echo "::error::openssl/evp.h not installed"; exit 1; }
+          test -f "$PREFIX/lib/libcrypto.3.dylib"  || { echo "::error::libcrypto.3.dylib not installed"; exit 1; }
+          file "$PREFIX/lib/libcrypto.3.dylib" | grep -q x86_64 || { echo "::error::libcrypto.3.dylib was not built for x86_64 -- got: $(file "$PREFIX/lib/libcrypto.3.dylib")"; exit 1; }
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -464,11 +512,24 @@ jobs:
             export PKG_CONFIG_PATH="$FFTW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
             export LDFLAGS="-L$FFTW_PREFIX/lib $LDFLAGS"
             CMAKE_PREFIX_PATH_VAL="$FFTW_PREFIX"
+            # OpenSSL (fix round 3, Important B): same cross-compile-
+            # from-source story as FFTW above, for the same reason --
+            # this row's Homebrew (arm64) has no x86_64 openssl@3 slice.
+            # Explicit -DOPENSSL_ROOT_DIR, not just CMAKE_PREFIX_PATH, so
+            # the assertion in CMakeLists.txt's find_package(OpenSSL)
+            # block can confirm the resolved copy is actually this one
+            # (and not, say, a stale build/ cache from a previous
+            # native-arm64 configure of the same working directory).
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
           else
             # Native path: brew supplies both Qt and FFTW under the brew
             # prefix (/opt/homebrew on Apple Silicon). No env-var dance
-            # needed because brew's lib dir is in the default search path.
+            # needed because brew's lib dir is in the default search path,
+            # and openssl@3 is not keg-only (fix round 3 correction; see
+            # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
+            # no OPENSSL_ROOT_DIR hint either.
             CMAKE_PREFIX_PATH_VAL="$(brew --prefix)"
+            EXTRA_CMAKE_ARGS=""
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -476,7 +537,8 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH_VAL" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            $EXTRA_CMAKE_ARGS
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)

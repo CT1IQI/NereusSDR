@@ -401,91 +401,91 @@ jobs:
           target: desktop
           arch: win64_mingw
           modules: 'qtmultimedia qtshadertools qtwebsockets'
-          # tools_openssl_x64,qt.tools.openssl.gcc_64 added alongside
-          # tools_mingw1310 (Remote Daemon R2, Task 17 fix round 1): this
-          # job's main-app build now requires OpenSSL unconditionally
-          # (find_package(OpenSSL 3.0 REQUIRED ...) in CMakeLists.txt), and
-          # this leg's Qt is MinGW-built (arch: win64_mingw above), a
-          # DIFFERENT toolchain from release.yml's MSVC Windows leg -- the
-          # vcpkg x64-windows-static-md route decided for that leg does not
-          # transfer here without its own verification. The gcc_64 variant
-          # is Qt's own official MinGW-compatible OpenSSL distribution, the
-          # same mechanism Qt's installer uses to pair a MinGW Qt build
-          # with a working QtNetwork OpenSSL backend, so it is a named,
-          # Qt-maintained answer rather than a guess -- confirmed via
-          # aqtinstall's own docs (aqt list-tool windows desktop
-          # tools_openssl_x64) and jurplel/install-qt-action's documented
-          # `tools:` syntax (comma separates tool from variant, space
-          # separates multiple tool entries) during this fix round, not
-          # carried over from general knowledge. Lower confidence than the
-          # MSVC/vcpkg route: unverified end to end (no Windows runner
-          # available here) -- the discovery step immediately below finds
-          # wherever this actually lands and fails the job loudly, rather
-          # than silently, if it cannot.
-          tools: 'tools_mingw1310 tools_openssl_x64,qt.tools.openssl.gcc_64'
+          tools: 'tools_mingw1310'
           cache: true
 
-      # See the "Install Qt (Windows)" step's tools: comment above for the
-      # full reasoning. This job's Qt install directory (and therefore the
-      # aqt-installed OpenSSL tool's directory) is controlled by
-      # install-qt-action's own `dir` input, which this workflow leaves at
-      # its default -- rather than hardcode an assumed path that may not
-      # match that default exactly, search for it and fail loudly if it is
-      # not where expected, instead of silently configuring against no
-      # OpenSSL at all.
+      # Fix round 3, Important A (coordinator + reviewer): a prior
+      # revision of this route used Qt's aqt tool tools_openssl_x64,
+      # which the reviewer found does not exist under that name -- the
+      # real package is tools_opensslv3_x64 / qt.tools.opensslv3.win_x64
+      # -- and even correctly named would have been the wrong ABI
+      # regardless: that Qt-distributed package is an MSVC 2019 prebuild
+      # (openssl_3.0.16_prebuild_x64.7z), and this leg's Qt is MinGW-built
+      # (arch: win64_mingw above). Replaced entirely rather than patched:
+      # the toolchain-matched route for a MinGW target is MSYS2's own
+      # package repository, not a Qt-distributed tool at all.
       #
-      # Fix round 2 (coordinator): a directory existing is not proof it is
-      # usable. Qt ships tools_openssl_x64 primarily so QSslSocket has a
-      # runtime backend, so the package can carry DLLs without the
-      # development headers and import/static libraries linking libcrypto
-      # directly (what CertificateStore.cpp needs) requires. Left
-      # unchecked, either the headers are missing and configure proceeds
-      # only to fail at link with something unhelpful, or -- worse -- this
-      # search matches nothing, and on a leg that is not REQUIRED-guarded
-      # that would configure quietly without TLS, exactly the bug this
-      # whole fix round exists to prevent. So this step asserts BOTH a
-      # real header and a real link library exist, not merely that a
-      # directory does, and fails the job loudly (not just this leg
-      # silently degrading) if either is missing.
-      - name: Locate aqt-installed OpenSSL (Windows)
+      # MINGW64, not UCRT64: verified 2026-08-08 that win64_mingw /
+      # tools_mingw1310 (GCC 13.1.0) is Qt's classic MSVCRT-based MinGW
+      # build, distinct from Qt's separate win64_mingw_ucrt architecture,
+      # which exists specifically to offer the newer UCRT runtime as an
+      # alternative -- MSYS2's own documentation is explicit that mixing
+      # MSVCRT and UCRT binaries is unsafe because their internal
+      # structures differ, so matching the environment to win64_mingw's
+      # actual runtime (not just its "MinGW" name) is the point, the same
+      # kind of ABI check that caught Important A in the first place.
+      # mingw-w64-x86_64-openssl is the MINGW64-environment package;
+      # mingw-w64-ucrt-x86_64-openssl (a different package, UCRT64
+      # environment) would be the wrong runtime here.
+      #
+      # msys2/setup-msys2 (not the MSYS2 already preinstalled at
+      # C:\msys64 on windows-latest) because MSYS2's own CI documentation
+      # recommends the action over the preinstalled copy specifically for
+      # reproducibility: the preinstalled one updates on a rolling ~10-day
+      # cycle with no package caching, which is exactly the kind of
+      # silent-drift risk the vcpkg baseline pin (fix round 2) exists to
+      # avoid on the MSVC leg. `id: msys2` captures the action's
+      # `msys2-location` output (documented since v2.24.1) so the
+      # discovery step below does not have to assume install-qt-action's
+      # `dir` default the way the removed aqt-search step did.
+      - name: Set up MSYS2 MINGW64 with OpenSSL (Windows)
+        if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-openssl
+
+      # Fix round 2 assertions kept exactly as they were (reviewer judged
+      # them correct): a directory existing is not proof it is usable.
+      # Kept here in fix round 3 because the underlying risk is unchanged
+      # by swapping the acquisition route -- MSYS2 packaging could still
+      # in principle ship a runtime-only OpenSSL, so this still asserts a
+      # real header AND a real link library exist, not merely that
+      # mingw-w64-x86_64-openssl reported success, and fails the job
+      # loudly rather than letting a not-REQUIRED-guarded leg configure
+      # quietly without TLS.
+      - name: Locate MSYS2 OpenSSL (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          OPENSSL_DIR=$(find "$RUNNER_WORKSPACE" -maxdepth 6 -type d -iname 'OpenSSL' -path '*Tools*' 2>/dev/null | head -n1)
-          if [ -z "$OPENSSL_DIR" ]; then
-            echo "::error::Could not locate the aqt-installed OpenSSL tool directory under $RUNNER_WORKSPACE (searched for a 'Tools/.../OpenSSL' path). tools_openssl_x64 may not have installed, or install-qt-action's layout changed."
-            exit 1
-          fi
-          # The tool installs an architecture subdirectory (Win_x64) one
-          # level below; CMake's OPENSSL_ROOT_DIR wants the directory that
-          # directly contains include/ and lib/.
-          ARCH_DIR=$(find "$OPENSSL_DIR" -maxdepth 1 -type d -iname 'Win_x64' | head -n1)
-          if [ -z "$ARCH_DIR" ]; then
-            echo "::error::Found OpenSSL tool directory at $OPENSSL_DIR but no Win_x64 subdirectory inside it."
-            exit 1
-          fi
+          # msys2-location has NO trailing separator (verified 2026-08-08
+          # against the action's own main.js: it is built with Node's
+          # path.join(), which never appends one) -- a bare concatenation
+          # without the "/" here would silently produce
+          # "...msys64mingw64" instead of "...msys64/mingw64".
+          ARCH_DIR="${{ steps.msys2.outputs.msys2-location }}/mingw64"
 
           # Header check: openssl/evp.h specifically, because that is one
           # of the headers CertificateStore.cpp itself includes -- proof
           # this exact dependency is satisfiable, not just that SOME
           # OpenSSL-shaped tree exists.
           if [ ! -f "$ARCH_DIR/include/openssl/evp.h" ]; then
-            echo "::error::$ARCH_DIR has no include/openssl/evp.h -- tools_openssl_x64 appears to be a runtime-only package (DLLs for QSslSocket) without development headers. CertificateStore cannot link libcrypto against this; a different OpenSSL acquisition route is needed for this leg."
+            echo "::error::$ARCH_DIR has no include/openssl/evp.h -- mingw-w64-x86_64-openssl may not have installed, or MSYS2's MINGW64 layout changed."
             exit 1
           fi
 
-          # Link library check: MinGW's naming for this varies by how the
-          # package was built (libcrypto.a, libcrypto.dll.a alongside a
-          # runtime DLL, or a plain .lib), so this matches ANY plausible
-          # libcrypto import/static library under lib/ or lib64/ rather
-          # than assuming one exact filename.
+          # Link library check: matches ANY plausible libcrypto import/
+          # static library under lib/ or lib64/ rather than assuming one
+          # exact filename, since packaging naming can vary.
           CRYPTO_LIB=$(find "$ARCH_DIR" \( -path '*/lib/*' -o -path '*/lib64/*' \) -iname '*crypto*' \( -iname '*.a' -o -iname '*.lib' \) 2>/dev/null | head -n1)
           if [ -z "$CRYPTO_LIB" ]; then
-            echo "::error::$ARCH_DIR has headers but no libcrypto import/static library under lib/ or lib64/ (searched for *crypto*.a / *crypto*.lib). tools_openssl_x64 appears to ship runtime DLLs only; CertificateStore cannot link against this without one."
+            echo "::error::$ARCH_DIR has headers but no libcrypto import/static library under lib/ or lib64/ (searched for *crypto*.a / *crypto*.lib). CertificateStore cannot link against this without one."
             exit 1
           fi
 
-          echo "Found aqt OpenSSL at: $ARCH_DIR"
+          echo "Found MSYS2 MINGW64 OpenSSL at: $ARCH_DIR"
           echo "  headers: $ARCH_DIR/include/openssl/evp.h"
           echo "  link library: $CRYPTO_LIB"
           echo "OPENSSL_ROOT_DIR=$ARCH_DIR" >> "$GITHUB_ENV"
@@ -617,11 +617,11 @@ jobs:
           # without GPU spectrum because this flag was implicit; never
           # again.
           #
-          # OPENSSL_ROOT_DIR was set into GITHUB_ENV by the "Locate
-          # aqt-installed OpenSSL (Windows)" step above (Remote Daemon R2,
-          # Task 17 fix round 1); passed explicitly here rather than relied
-          # on as an ambient env var so find_package(OpenSSL) in
-          # CMakeLists.txt cannot silently prefer a different copy.
+          # OPENSSL_ROOT_DIR was set into GITHUB_ENV by the "Locate MSYS2
+          # OpenSSL (Windows)" step above (Remote Daemon R2, Task 17 fix
+          # round 3); passed explicitly here rather than relied on as an
+          # ambient env var so find_package(OpenSSL) in CMakeLists.txt
+          # cannot silently prefer a different copy.
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DNEREUS_GPU_SPECTRUM=ON \
