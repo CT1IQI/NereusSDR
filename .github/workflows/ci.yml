@@ -387,7 +387,12 @@ jobs:
           # autoconf/automake/libtool/wget are required by third_party/rade
           # vendored Opus (autotools chain + wget-based DRED model download
           # in opus/autogen.sh). Not installed by default on macOS runners.
-          brew install qt@6 ninja fftw autoconf automake libtool wget
+          # openssl@3 named explicitly (fix round 4 cheap out-of-scope
+          # item): find_package(OpenSSL) is now REQUIRED, and this row was
+          # relying on openssl@3 arriving transitively rather than
+          # declaring the dependency this build actually has, the same
+          # way fftw already is declared.
+          brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
 
       # ------------------------------------------------------------------
       # Windows dependencies
@@ -417,27 +422,49 @@ jobs:
       #
       # MINGW64, not UCRT64: verified 2026-08-08 that win64_mingw /
       # tools_mingw1310 (GCC 13.1.0) is Qt's classic MSVCRT-based MinGW
-      # build, distinct from Qt's separate win64_mingw_ucrt architecture,
-      # which exists specifically to offer the newer UCRT runtime as an
-      # alternative -- MSYS2's own documentation is explicit that mixing
-      # MSVCRT and UCRT binaries is unsafe because their internal
-      # structures differ, so matching the environment to win64_mingw's
-      # actual runtime (not just its "MinGW" name) is the point, the same
-      # kind of ABI check that caught Important A in the first place.
+      # build. Fix round 4 correction: the immediately preceding revision
+      # of this comment supported that claim by citing a "separate
+      # win64_mingw_ucrt architecture" -- that name does not exist and
+      # was never checked against Qt's real architecture list before
+      # being written down. Verified this round via aqtinstall's own
+      # docs: Qt's Windows desktop architectures are win64_mingw,
+      # win64_llvm_mingw, win64_msvc2022_64 and
+      # win64_msvc2022_arm64_cross_compiled -- no "_ucrt" suffix anywhere.
+      # win64_llvm_mingw (a DIFFERENT toolchain, LLVM-based, not GCC) is
+      # Qt's actual UCRT MinGW option; win64_mingw (this leg's
+      # architecture, GCC-based) remains the classic MSVCRT one.
+      # Recorded here because the ORIGINAL conclusion (this leg needs the
+      # MSVCRT-matching MINGW64 environment, not UCRT64) was correct both
+      # times; only the supporting citation was fabricated, which is
+      # worse than an honest "unverified" because it reads as checked.
+      # MSYS2's own documentation is still the real, separately-verified
+      # basis for treating MSVCRT/UCRT as unsafe to mix.
       # mingw-w64-x86_64-openssl is the MINGW64-environment package;
       # mingw-w64-ucrt-x86_64-openssl (a different package, UCRT64
       # environment) would be the wrong runtime here.
       #
       # msys2/setup-msys2 (not the MSYS2 already preinstalled at
       # C:\msys64 on windows-latest) because MSYS2's own CI documentation
-      # recommends the action over the preinstalled copy specifically for
-      # reproducibility: the preinstalled one updates on a rolling ~10-day
-      # cycle with no package caching, which is exactly the kind of
-      # silent-drift risk the vcpkg baseline pin (fix round 2) exists to
-      # avoid on the MSVC leg. `id: msys2` captures the action's
-      # `msys2-location` output (documented since v2.24.1) so the
-      # discovery step below does not have to assume install-qt-action's
-      # `dir` default the way the removed aqt-search step did.
+      # recommends the action over the preinstalled copy, and the
+      # preinstalled one updates on a rolling ~10-day cycle. Fix round 4
+      # correction: an earlier revision of this comment additionally
+      # framed the action as giving REPRODUCIBILITY comparable to the
+      # vcpkg baseline pin on the MSVC leg -- that overstated it. `update:
+      # true` below still runs a full `pacman -Syuu`, and `install:` names
+      # no package version, so the OpenSSL version this step resolves to
+      # can still float run to run; there is no MSYS2 baseline-pin
+      # equivalent of vcpkg's manifest mode in use here. What
+      # msys2/setup-msys2 actually gives over the preinstalled copy is a
+      # controlled, action-maintained setup path, not reproducibility.
+      # Checked (not just assumed) whether adding an explicit `cache:
+      # true` below would help: the action's own action.yml defaults
+      # `cache` to `true` already, so this step already has it and an
+      # explicit line would be a no-op -- nothing to add there.
+      #
+      # `id: msys2` captures the action's `msys2-location` output
+      # (documented since v2.24.1) so the discovery step below does not
+      # have to assume install-qt-action's `dir` default the way the
+      # removed aqt-search step did.
       - name: Set up MSYS2 MINGW64 with OpenSSL (Windows)
         if: runner.os == 'Windows'
         id: msys2
@@ -478,8 +505,20 @@ jobs:
 
           # Link library check: matches ANY plausible libcrypto import/
           # static library under lib/ or lib64/ rather than assuming one
-          # exact filename, since packaging naming can vary.
-          CRYPTO_LIB=$(find "$ARCH_DIR" \( -path '*/lib/*' -o -path '*/lib64/*' \) -iname '*crypto*' \( -iname '*.a' -o -iname '*.lib' \) 2>/dev/null | head -n1)
+          # exact filename, since packaging naming can vary. -print -quit
+          # (not `| head -n1`, fix round 4 minor): this whole script runs
+          # under `set -eo pipefail` (see the shell's own default for
+          # `run:` steps), and a `find ... | head -n1` pipeline can exit
+          # 141 (SIGPIPE) if find is still writing a second match when
+          # head closes the pipe after its first line -- bash's pipefail
+          # reports that as the pipeline's own failure even though head
+          # itself succeeded. find's own -quit action stops the search
+          # after the first match with no pipe involved, so there is
+          # nothing for a downstream reader to close early. Verified
+          # locally: `find <dir> ... -print -quit` returns the same
+          # single result `| head -n1` did, with two candidate files
+          # present, exit 0.
+          CRYPTO_LIB=$(find "$ARCH_DIR" \( -path '*/lib/*' -o -path '*/lib64/*' \) -iname '*crypto*' \( -iname '*.a' -o -iname '*.lib' \) -print -quit 2>/dev/null)
           if [ -z "$CRYPTO_LIB" ]; then
             echo "::error::$ARCH_DIR has headers but no libcrypto import/static library under lib/ or lib64/ (searched for *crypto*.a / *crypto*.lib). CertificateStore cannot link against this without one."
             exit 1

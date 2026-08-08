@@ -332,8 +332,14 @@ jobs:
         if: matrix.arch == 'arm64'
         # autoconf/automake/libtool/wget required by third_party/rade
         # vendored Opus (autotools + wget DRED model download). Not in
-        # default macOS runner image.
-        run: brew install qt@6 ninja create-dmg fftw ccache autoconf automake libtool wget
+        # default macOS runner image. openssl@3 named explicitly (fix
+        # round 4 cheap out-of-scope item): find_package(OpenSSL) is now
+        # REQUIRED, and this row was relying on whatever openssl@3
+        # happens to already be present transitively (the runner image,
+        # or a dependency of something else in this list) rather than
+        # declaring the dependency this build actually has, the same way
+        # fftw already is declared.
+        run: brew install qt@6 ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -779,11 +785,15 @@ jobs:
           # what Qt itself links against here, and avoiding a runtime DLL
           # to deploy (this project has already shipped a release broken
           # by a missing runtime DLL: v0.5.0's Windows installer without
-          # rade.dll). vcpkg.json's builtin-baseline is a PLACEHOLDER and
-          # must be replaced with a real vcpkg commit SHA before this
-          # step can succeed -- see that file's own note and the
-          # CMakeLists.txt find_package(OpenSSL) block for the full
-          # reasoning.
+          # rade.dll). vcpkg.json's builtin-baseline is pinned to a real
+          # vcpkg commit (fix round 2, coordinator-supplied: the commit
+          # vcpkg's annotated release tag 2026.07.29 dereferences to) --
+          # see that file's own note and the CMakeLists.txt
+          # find_package(OpenSSL) block for the full reasoning and how to
+          # bump it when taking a future OpenSSL update. Fix round 4:
+          # this comment previously (correctly, at the time) called that
+          # baseline a placeholder still needing a real SHA; stale after
+          # round 2 landed one, corrected here.
           #
           # OPENSSL_ROOT_DIR is passed explicitly, pointing at that same
           # vcpkg install location, as a defensive belt-and-suspenders
