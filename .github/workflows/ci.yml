@@ -433,6 +433,20 @@ jobs:
       # match that default exactly, search for it and fail loudly if it is
       # not where expected, instead of silently configuring against no
       # OpenSSL at all.
+      #
+      # Fix round 2 (coordinator): a directory existing is not proof it is
+      # usable. Qt ships tools_openssl_x64 primarily so QSslSocket has a
+      # runtime backend, so the package can carry DLLs without the
+      # development headers and import/static libraries linking libcrypto
+      # directly (what CertificateStore.cpp needs) requires. Left
+      # unchecked, either the headers are missing and configure proceeds
+      # only to fail at link with something unhelpful, or -- worse -- this
+      # search matches nothing, and on a leg that is not REQUIRED-guarded
+      # that would configure quietly without TLS, exactly the bug this
+      # whole fix round exists to prevent. So this step asserts BOTH a
+      # real header and a real link library exist, not merely that a
+      # directory does, and fails the job loudly (not just this leg
+      # silently degrading) if either is missing.
       - name: Locate aqt-installed OpenSSL (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -450,7 +464,30 @@ jobs:
             echo "::error::Found OpenSSL tool directory at $OPENSSL_DIR but no Win_x64 subdirectory inside it."
             exit 1
           fi
+
+          # Header check: openssl/evp.h specifically, because that is one
+          # of the headers CertificateStore.cpp itself includes -- proof
+          # this exact dependency is satisfiable, not just that SOME
+          # OpenSSL-shaped tree exists.
+          if [ ! -f "$ARCH_DIR/include/openssl/evp.h" ]; then
+            echo "::error::$ARCH_DIR has no include/openssl/evp.h -- tools_openssl_x64 appears to be a runtime-only package (DLLs for QSslSocket) without development headers. CertificateStore cannot link libcrypto against this; a different OpenSSL acquisition route is needed for this leg."
+            exit 1
+          fi
+
+          # Link library check: MinGW's naming for this varies by how the
+          # package was built (libcrypto.a, libcrypto.dll.a alongside a
+          # runtime DLL, or a plain .lib), so this matches ANY plausible
+          # libcrypto import/static library under lib/ or lib64/ rather
+          # than assuming one exact filename.
+          CRYPTO_LIB=$(find "$ARCH_DIR" \( -path '*/lib/*' -o -path '*/lib64/*' \) -iname '*crypto*' \( -iname '*.a' -o -iname '*.lib' \) 2>/dev/null | head -n1)
+          if [ -z "$CRYPTO_LIB" ]; then
+            echo "::error::$ARCH_DIR has headers but no libcrypto import/static library under lib/ or lib64/ (searched for *crypto*.a / *crypto*.lib). tools_openssl_x64 appears to ship runtime DLLs only; CertificateStore cannot link against this without one."
+            exit 1
+          fi
+
           echo "Found aqt OpenSSL at: $ARCH_DIR"
+          echo "  headers: $ARCH_DIR/include/openssl/evp.h"
+          echo "  link library: $CRYPTO_LIB"
           echo "OPENSSL_ROOT_DIR=$ARCH_DIR" >> "$GITHUB_ENV"
 
       - name: Install Ninja (Windows)
