@@ -294,6 +294,13 @@ jobs:
             find AppDir build -name 'libNereusSDRLib.so*' >&2
             exit 1
           fi
+          # R-R3-36: the microphone capture helper installs beside NereusSDR
+          # in the default component; linuxdeploy then resolves its libraries
+          # along with the rest of AppDir/usr/bin.
+          if [ ! -x AppDir/usr/bin/nereus-audio-capture ]; then
+            echo "ERROR: nereus-audio-capture missing from AppDir/usr/bin after cmake --install" >&2
+            exit 1
+          fi
           export LD_LIBRARY_PATH="$PWD/AppDir/usr/lib:$LD_LIBRARY_PATH"
 
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
@@ -586,7 +593,20 @@ jobs:
           else
             MACDEPLOYQT="$(brew --prefix qt@6)/bin/macdeployqt"
           fi
-          "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite
+          # R-R3-36: the microphone capture helper in Contents/Helpers links
+          # Qt directly, so macdeployqt must rewrite its references too.
+          HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          if [ ! -f "$HELPER" ]; then
+            echo "::error::nereus-audio-capture missing from Contents/Helpers; PC microphone capture would not work" >&2
+            exit 1
+          fi
+          "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite \
+            "-executable=$HELPER"
+          if otool -L "$HELPER" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::nereus-audio-capture still references Qt outside the bundle:" >&2
+            otool -L "$HELPER" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
+            exit 1
+          fi
 
           # libNereusSDRLib.dylib is the application itself, built SHARED so
           # the ~514 test executables stop each embedding a private 22 MB
@@ -639,6 +659,20 @@ jobs:
       # Without secrets we fall back to ad-hoc so dev builds still work.
       - name: Codesign app
         run: |
+          # R-R3-36: sign the nested capture helper before its containing
+          # bundle, with the same identity, hardened runtime and entitlements
+          # (audio-input) as the app.
+          HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
+            codesign --force --options runtime --timestamp \
+              --entitlements packaging/macos/app-entitlements.plist \
+              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+              "$HELPER"
+          else
+            codesign --force --entitlements packaging/macos/app-entitlements.plist \
+              --sign - "$HELPER"
+          fi
+          codesign --verify --verbose=2 "$HELPER"
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --deep --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
@@ -927,6 +961,18 @@ jobs:
             Copy-Item $coreDll deploy\
           } else {
             Write-Error "NereusCore.dll missing from build\ (Windows artifact would ship broken)"
+            exit 1
+          }
+          # nereus-audio-capture.exe: the microphone capture helper (R-R3-36).
+          # NereusSDR.exe looks for it beside itself; without it the PC
+          # microphone reports the helper missing. windeployqt runs on
+          # NereusSDR.exe only, so it is staged by hand; it loads the Qt and
+          # app DLLs NereusSDR.exe already brought into deploy\.
+          $helperExe = "build\nereus-audio-capture.exe"
+          if (Test-Path $helperExe) {
+            Copy-Item $helperExe deploy\
+          } else {
+            Write-Error "nereus-audio-capture.exe missing from build\ (Windows artifact would ship broken: the PC microphone cannot be opened)"
             exit 1
           }
           # Copy third-party license notices + both root license files
