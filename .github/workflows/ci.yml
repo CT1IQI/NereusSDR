@@ -693,6 +693,30 @@ jobs:
         shell: bash
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
 
+      # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
+      # above has NEREUS_BUILD_TESTS=ON, so a function defined only inside
+      # an `#ifdef NEREUS_BUILD_TESTS` block but called from shipping code
+      # links here and fails only in a release build. The checkpoint found
+      # two (AudioEngine::configureSpeakersConverter and
+      # HardwarePage::showAntennaTab). This builds the app and nereusd a
+      # second time with tests off so that mistake fails CI instead.
+      # One shard is enough: every shard builds the same app. It reuses
+      # the job's ccache (same launcher, same CCACHE_DIR) and removes its
+      # build tree afterwards to keep disk free for the test link.
+      - name: Build with tests off (Linux)
+        if: runner.os == 'Linux' && matrix.shard == 0
+        run: |
+          cmake -B build-notests -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=OFF
+          cmake --build build-notests -j$(nproc) --target NereusSDR nereusd
+          rm -rf build-notests
+
       # Build the test executables explicitly.  Every tst_* executable is
       # now EXCLUDE_FROM_ALL, so a routine `cmake --build build` builds
       # only the main app (seconds, not the ~32 minutes it takes to link
