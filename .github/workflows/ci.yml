@@ -74,6 +74,13 @@ jobs:
         # hook never saw.
         run: python3 scripts/verify-provenance-sync.py
 
+      - name: Every shipped library has its licence text
+        # R-R3-50. Fails when a third_party/ directory or a FetchContent /
+        # ExternalProject name in the CMake files has no row in
+        # packaging/third-party-licenses/README.md, when a row's text is
+        # missing from that folder, or when a text there is named by no row.
+        run: python3 scripts/check-third-party-licenses.py
+
       - name: Verify inline '// From Thetis' cite version stamps
         # Regression gate: fails if the count of unstamped cites
         # exceeds the grandfathered baseline in
