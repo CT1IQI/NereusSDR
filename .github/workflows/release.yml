@@ -316,6 +316,13 @@ jobs:
             echo "ERROR: libNereusSDRLib.so vanished from AppDir during linuxdeploy" >&2
             exit 1
           fi
+          # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
+          # planner); linuxdeploy traces it from the NEEDED entries like
+          # libfftw3. Assert it, as above.
+          if ! ls AppDir/usr/lib/libfftw3_threads.so.3* >/dev/null 2>&1; then
+            echo "ERROR: libfftw3_threads.so.3 missing from AppDir/usr/lib" >&2
+            exit 1
+          fi
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
@@ -402,8 +409,10 @@ jobs:
           tar xzf fftw.tar.gz
           cd fftw-3.3.10
 
-          # Pass 1 — double precision (libfftw3)
-          ./configure --enable-shared --disable-doc \
+          # Pass 1 — double precision (libfftw3), with libfftw3_threads:
+          # WdspEngine makes FFTW's planner thread-safe (R-R3-39,
+          # fftw_make_planner_thread_safe), which lives in that library.
+          ./configure --enable-shared --enable-threads --disable-doc \
             --prefix="$PREFIX" CFLAGS="$CFLAGS" --host=x86_64-apple-darwin
           make -j$(sysctl -n hw.ncpu)
           make install
@@ -420,6 +429,7 @@ jobs:
           test -f "$PREFIX/lib/pkgconfig/fftw3.pc"     || { echo "::error::fftw3.pc not installed"; exit 1; }
           test -f "$PREFIX/lib/pkgconfig/fftw3f.pc"    || { echo "::error::fftw3f.pc not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3.dylib"         || { echo "::error::libfftw3 (double) not installed"; exit 1; }
+          test -f "$PREFIX/lib/libfftw3_threads.dylib" || { echo "::error::libfftw3_threads (double) not installed"; exit 1; }
           test -f "$PREFIX/lib/libfftw3f.dylib"        || { echo "::error::libfftw3f (single) not installed"; exit 1; }
 
       - name: Build OpenSSL from source for x86_64
@@ -629,6 +639,22 @@ jobs:
             otool -L "$DYLIB" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
             exit 1
           fi
+
+          # R-R3-39: WDSP links libfftw3_threads (FFTW's thread-safe
+          # planner). macdeployqt copies it with libfftw3 as a dependency of
+          # the app's libraries; assert it arrived and that no bundled binary
+          # still points at the build machine's copy.
+          if ! ls build/NereusSDR.app/Contents/Frameworks/libfftw3_threads*.dylib >/dev/null 2>&1; then
+            echo "::error::libfftw3_threads is missing from Contents/Frameworks; the app cannot launch" >&2
+            exit 1
+          fi
+          for BIN in build/NereusSDR.app/Contents/MacOS/* build/NereusSDR.app/Contents/Frameworks/*.dylib; do
+            if otool -L "$BIN" | grep -qE '(/opt/homebrew|/usr/local|fftw-x86_64)/.*libfftw3'; then
+              echo "::error::$BIN still references an FFTW library outside the bundle:" >&2
+              otool -L "$BIN" | grep -E '(/opt/homebrew|/usr/local|fftw-x86_64)/.*libfftw3' >&2
+              exit 1
+            fi
+          done
 
       - name: Copy license notices into app bundle
         run: |
