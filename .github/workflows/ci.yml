@@ -693,6 +693,51 @@ jobs:
         shell: bash
         run: cmake --build build -j$NUMBER_OF_PROCESSORS
 
+      # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
+      # above has NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
+      # build the app with tests off (their configure steps above leave
+      # NEREUS_BUILD_TESTS at its OFF default), but the Linux-only sources
+      # (the PipeWire bridge and the pipe bus) compile only here, so this
+      # is the one build before merge that compiles them with tests off.
+      # It builds the app and nereusd a second time in that shape.
+      #
+      # One shard is enough: every shard builds the same app. It builds in
+      # Release, since only compiling and linking matter here, and uses its
+      # own ccache directory and cache key: NEREUS_BUILD_TESTS is a PUBLIC
+      # definition on NereusCore, so none of these objects match the main
+      # build's, and sharing the shard's 500M directory would evict them.
+      # The build tree is removed afterwards to keep disk free for the
+      # test link.
+      - name: Restore tests-off ccache (Linux)
+        if: runner.os == 'Linux' && matrix.shard == 0
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache-notests
+          key: ccache-notests-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-notests-${{ runner.os }}-
+
+      - name: Build with tests off (Linux)
+        if: runner.os == 'Linux' && matrix.shard == 0
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache-notests
+        run: |
+          ccache --max-size=500M
+          ccache --set-config=sloppiness=pch_defines,time_macros,include_file_mtime,include_file_ctime
+          ccache --set-config=hash_dir=false
+          ccache --zero-stats
+          cmake -B build-notests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_MODULE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=OFF
+          cmake --build build-notests -j$(nproc) --target NereusSDR nereusd
+          ccache --show-stats
+          rm -rf build-notests
+
       # Build the test executables explicitly.  Every tst_* executable is
       # now EXCLUDE_FROM_ALL, so a routine `cmake --build build` builds
       # only the main app (seconds, not the ~32 minutes it takes to link
