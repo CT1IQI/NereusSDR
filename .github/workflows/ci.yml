@@ -258,6 +258,32 @@ jobs:
         run: python3 -m pytest tests/compliance/ -v
 
   # --------------------------------------------------------------------
+  # The rendezvous service (rendezvous/, iPhone app plan Task 26).
+  #
+  # Runs the service's pytest suite, conformance vectors included, on the
+  # same packages the server runs: Ubuntu 24.04's python3-websockets,
+  # python3-cryptography and python3-pytest from apt, never pip, under the
+  # system interpreter (no setup-python, whose interpreter would not see
+  # the apt packages).
+  # --------------------------------------------------------------------
+  rendezvous:
+    runs-on: ubuntu-24.04
+    name: Rendezvous service
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the service's packages from apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-websockets python3-cryptography python3-pytest
+
+      - name: Show the versions under test
+        run: /usr/bin/python3 -c "import sys, websockets, cryptography, pytest; print(sys.version.split()[0], websockets.__version__, cryptography.__version__, pytest.__version__)"
+
+      - name: pytest (rendezvous service and conformance vectors)
+        run: /usr/bin/python3 -m pytest rendezvous/tests -q -p no:cacheprovider
+
+  # --------------------------------------------------------------------
   # Per-platform build + C++ test gate.
   #
   # Linux is the source-of-truth gate for the C++ test suite (see the
