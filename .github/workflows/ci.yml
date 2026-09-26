@@ -284,6 +284,62 @@ jobs:
         run: /usr/bin/python3 -m pytest rendezvous/tests -q -p no:cacheprovider
 
   # --------------------------------------------------------------------
+  # The traversal harness (iPhone app plan Task 27, R-IOS-16).
+  #
+  # Reaching a Core through the rendezvous across real NATs, on this runner
+  # only: Linux network namespaces and nftables (endpoint-independent and
+  # port-randomising NATs, UDP blocked, large datagrams dropped, an
+  # IPv6-only client behind NAT64 and DNS64 with a CLAT, netem loss), with
+  # the rendezvous service and coturn started inside it and every secret
+  # made at run time. It builds only the peer tool and runs the opt-in
+  # ctest label `traversal` as root. It never reaches the live server.
+  # --------------------------------------------------------------------
+  traversal:
+    runs-on: ubuntu-24.04
+    name: Traversal harness
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and harness packages from apt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build pkg-config g++ mold \
+            libgl1-mesa-dev libfftw3-dev libasound2-dev libjack-jackd2-dev \
+            libpipewire-0.3-dev libssl-dev \
+            autoconf automake libtool wget \
+            python3-websockets python3-cryptography \
+            iproute2 nftables coturn socat openssl unbound tayga
+          # The packaged services must not run on the runner itself; the
+          # harness starts its own copies inside namespaces.
+          sudo systemctl stop coturn unbound 2>/dev/null || true
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: 'qtmultimedia qtshadertools qtwebsockets'
+          cache: true
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
+            -DNEREUS_BUILD_TESTS=ON \
+            -DNEREUS_TRAVERSAL_TESTS=ON
+
+      - name: Build the peer tool
+        run: cmake --build build --target nereus_rendezvous_peer -j$(nproc)
+
+      - name: Run the harness (ctest -L traversal, as root)
+        run: sudo -E env "PATH=$PATH" "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" ctest --test-dir build -L traversal --output-on-failure
+
+  # --------------------------------------------------------------------
   # Per-platform build + C++ test gate.
   #
   # Linux is the source-of-truth gate for the C++ test suite (see the
