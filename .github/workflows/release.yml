@@ -695,6 +695,21 @@ jobs:
               --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
               "$HELPER"
           else
+            # Ad hoc, no identity (R-R3-50): the same order the local CMake
+            # build uses. Nested code is signed first, inside-out, each item
+            # with its own options, and the bundle is sealed last WITHOUT
+            # --deep. --deep would re-sign the helper with the bundle's
+            # options, which carry no entitlements, and strip its
+            # disable-library-validation and audio-input entitlements.
+            APP="build/NereusSDR.app"
+            if [ -d "$APP/Contents/PlugIns" ]; then
+              find "$APP/Contents/PlugIns" -type f -name '*.dylib' -print0 \
+                | xargs -0 -n 1 codesign --force --sign -
+            fi
+            find "$APP/Contents/Frameworks" -type f -name '*.dylib' -print0 \
+              | xargs -0 -n 1 codesign --force --sign -
+            find "$APP/Contents/Frameworks" -maxdepth 1 -type d -name '*.framework' -print0 \
+              | xargs -0 -n 1 codesign --force --sign -
             codesign --force --entitlements packaging/macos/app-entitlements.plist \
               --sign - "$HELPER"
           fi
@@ -705,7 +720,13 @@ jobs:
               --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
               build/NereusSDR.app
           else
-            codesign --force --deep --sign - build/NereusSDR.app
+            codesign --force --sign - build/NereusSDR.app
+            codesign --verify --deep --strict --verbose=2 build/NereusSDR.app
+            HELPER_ENTS="$(codesign -d --entitlements - "$HELPER" 2>/dev/null)"
+            if ! grep -q 'com.apple.security.device.audio-input' <<<"$HELPER_ENTS"; then
+              echo "::error::nereus-audio-capture lost its entitlements in the ad hoc signature" >&2
+              exit 1
+            fi
           fi
           codesign --verify --verbose=2 build/NereusSDR.app
 
