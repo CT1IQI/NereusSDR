@@ -359,6 +359,10 @@ jobs:
         # 6.4.2, which is too old for QRhiWidget and forced
         # -DNEREUS_GPU_SPECTRUM=OFF on Linux.
         #
+        # python3-websockets and python3-cryptography: tst_rendezvous_client
+        # runs the rendezvous service (rendezvous/server) on the runner, as
+        # the rendezvous job does (iPhone app plan Task 27).
+        #
         # mold (the apt mold package) is the fast linker. With 451 test
         # executables linking against NereusSDRLib + Qt6 the default
         # ld linker dominated Linux build time at ~33 minutes. The
@@ -372,6 +376,7 @@ jobs:
             libasound2-dev libjack-jackd2-dev \
             libpipewire-0.3-dev \
             libssl-dev \
+            python3-websockets python3-cryptography \
             xvfb libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
