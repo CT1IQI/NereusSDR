@@ -5,6 +5,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Run by hand from the Actions tab; the traversal harness runs only then.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -293,8 +295,13 @@ jobs:
   # the rendezvous service and coturn started inside it and every secret
   # made at run time. It builds only the peer tool and runs the opt-in
   # ctest label `traversal` as root. It never reaches the live server.
+  #
+  # It builds all of NereusCore (RADE included), so it runs only when the
+  # workflow is started by hand (workflow_dispatch), not on every push or
+  # pull request.
   # --------------------------------------------------------------------
   traversal:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     name: Traversal harness
     steps:
