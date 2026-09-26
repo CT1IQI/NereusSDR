@@ -115,6 +115,13 @@ jobs:
         # flag A whatever the operator selected.
         run: python3 scripts/verify-no-captured-slice-spectrum-wiring.py
 
+      - name: No image-drawn cursor shapes
+        # Qt 6.11.0 on macOS draws SizeAllCursor / WaitCursor / BusyCursor
+        # from ICC-tagged PNGs and QImage::toCGImage() frees the colour
+        # space before CGImageCreate uses it: the 2026-09-25 / 09-26 desktop
+        # crashes from the container title bar. Native shapes only.
+        run: python3 scripts/verify-no-image-cursors.py
+
       # ------------------------------------------------------------------
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
       # ------------------------------------------------------------------
