@@ -115,6 +115,13 @@ jobs:
         # flag A whatever the operator selected.
         run: python3 scripts/verify-no-captured-slice-spectrum-wiring.py
 
+      - name: Every test property names a test that exists
+        # PR #327's first run: all four Linux shards failed to configure.
+        # nereus_add_test() registers a test in one shard of four, so a
+        # set_tests_properties() after it must sit inside if(TEST <name>).
+        # Parses tests/CMakeLists.txt; no build, no configure.
+        run: python3 scripts/verify-test-registration.py
+
       - name: No image-drawn cursor shapes
         # Qt 6.11.0 on macOS draws SizeAllCursor / WaitCursor / BusyCursor
         # from ICC-tagged PNGs and QImage::toCGImage() frees the colour
