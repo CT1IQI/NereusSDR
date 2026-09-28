@@ -191,6 +191,11 @@ jobs:
       - name: Install to AppDir
         run: |
           DESTDIR=${{ github.workspace }}/AppDir cmake --install build
+          # The daemon component also contains a system unit, which does not
+          # belong in an AppImage. Stage just its executable beside the GUI.
+          DESTDIR=${{ github.workspace }}/StationStage cmake --install build --component nereusd
+          cp StationStage/usr/bin/nereusd AppDir/usr/bin/nereusd
+          test -x AppDir/usr/bin/nereusd
 
       - name: Download linuxdeploy + Qt plugin
         run: |
@@ -305,6 +310,8 @@ jobs:
 
           ./linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
+            --executable AppDir/usr/bin/nereusd \
+            --custom-apprun packaging/linux/AppRun \
             --plugin qt \
             --desktop-file AppDir/usr/share/applications/NereusSDR.desktop \
             --output appimage
@@ -323,12 +330,99 @@ jobs:
             echo "ERROR: libfftw3_threads.so.3 missing from AppDir/usr/lib" >&2
             exit 1
           fi
+          test -x AppDir/usr/bin/nereusd
+          chmod +x "$LDAI_OUTPUT"
+          "./$LDAI_OUTPUT" --appimage-extract >/dev/null
+          test -x squashfs-root/usr/bin/nereusd
+          cmp packaging/linux/AppRun squashfs-root/AppRun.wrapped
+          QT_QPA_PLATFORM=offscreen "./$LDAI_OUTPUT" --nereus-station --help > station-help.txt
+          grep -q 'NereusSDR headless daemon' station-help.txt
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: NereusSDR-*.AppImage
+          retention-days: 7
+
+  build-deb:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Install daemon build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
+            qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
+            qt6-svg-dev qt6-websockets-dev libfftw3-dev libssl-dev \
+            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev \
+            libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
+      - name: Configure and build headless station
+        run: |
+          cmake -B build-deb -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr -DNEREUS_GPU_SPECTRUM=OFF
+          cmake --build build-deb --target nereusd -j$(nproc)
+          test -x build-deb/nereusd
+      - name: Build and inspect Debian package
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          DESTDIR="$PWD/debroot" cmake --install build-deb --component nereusd
+          test -x debroot/usr/bin/nereusd
+          UNIT=$(find debroot -path '*/systemd/system/nereusd.service' -type f -print -quit)
+          test -n "$UNIT"
+          test -f debroot/usr/share/nereusd/nereusd.conf.sample
+          grep -q '^DynamicUser=yes$' "$UNIT"
+          grep -q '^StateDirectory=nereusd$' "$UNIT"
+          CORE_LIB=$(find debroot/usr/lib -name 'libNereusCore.so' -type f -print -quit)
+          RADE_LIB=$(find debroot/usr/lib -name 'librade.so.0.1' -print -quit)
+          test -n "$CORE_LIB" && test -n "$RADE_LIB"
+          LIBDIR=$(dirname "$CORE_LIB")
+          mkdir -p debroot/DEBIAN
+          # Derive distro-specific Qt/t64 and other ELF dependencies from
+          # the release runner. Bundled Core/RADE libraries need no external
+          # package dependency; the installed tree is searched first.
+          mkdir -p package-work/debian
+          cd package-work
+          cp ../packaging/deb/source-control debian/control
+          DEPS=$(dpkg-shlibdeps -O --ignore-missing-info \
+            -l"$GITHUB_WORKSPACE/$LIBDIR" \
+            -e"$GITHUB_WORKSPACE/debroot/usr/bin/nereusd" \
+            -e"$GITHUB_WORKSPACE/$CORE_LIB" \
+            -e"$GITHUB_WORKSPACE/$RADE_LIB" \
+            | sed -n 's/^shlibs:Depends=//p')
+          test -n "$DEPS"
+          cd ..
+          LD_LIBRARY_PATH="$PWD/$LIBDIR" ldd debroot/usr/bin/nereusd > package-ldd.txt
+          ! grep -q 'not found' package-ldd.txt
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$ARCH/g" \
+            -e "s/@DEPENDS@/$DEPS/g" \
+            packaging/deb/control.in > debroot/DEBIAN/control
+          install -m 0755 packaging/deb/postinst debroot/DEBIAN/postinst
+          install -m 0755 packaging/deb/postrm debroot/DEBIAN/postrm
+          dpkg-deb --build --root-owner-group debroot "nereusd_${VERSION}_${ARCH}.deb"
+          dpkg-deb --contents "nereusd_${VERSION}_${ARCH}.deb" > package-contents.txt
+          grep -q 'usr/bin/nereusd$' package-contents.txt
+          grep -q 'systemd/system/nereusd.service$' package-contents.txt
+          grep -q 'usr/share/nereusd/nereusd.conf.sample$' package-contents.txt
+          dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: nereusd_*.deb
           retention-days: 7
 
   build-macos:
@@ -606,15 +700,22 @@ jobs:
           # R-R3-36: the microphone capture helper in Contents/Helpers links
           # Qt directly, so macdeployqt must rewrite its references too.
           HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          STATION="build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/MacOS/nereusd"
+          test -x "$STATION"
+          test -f "build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Info.plist"
           if [ ! -f "$HELPER" ]; then
             echo "::error::nereus-audio-capture missing from Contents/Helpers; PC microphone capture would not work" >&2
             exit 1
           fi
           "$MACDEPLOYQT" build/NereusSDR.app -verbose=1 -always-overwrite \
-            "-executable=$HELPER"
+            "-executable=$HELPER" "-executable=$STATION"
           if otool -L "$HELPER" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
             echo "::error::nereus-audio-capture still references Qt outside the bundle:" >&2
             otool -L "$HELPER" | grep -E '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.' >&2
+            exit 1
+          fi
+          if otool -L "$STATION" | grep -qE '/(opt/homebrew|usr/local)/.*Qt|/Qt/6\.'; then
+            echo "::error::nereusd still references Qt outside the bundle" >&2
             exit 1
           fi
 
@@ -679,6 +780,11 @@ jobs:
           # DeepFilterNet3 ONNX tarball
           mkdir -p build/NereusSDR.app/Contents/Resources/models/dfnet3
           cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz build/NereusSDR.app/Contents/Resources/models/dfnet3/
+          # The nested background app resolves models relative to its own
+          # Contents/MacOS, so it needs its own Resources copy.
+          mkdir -p build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/dfnet3
+          cp third_party/deepfilter/models/DeepFilterNet3_onnx.tar.gz \
+            build/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/dfnet3/
 
       # Sign the .app bundle. With APPLE_DEVELOPER_ID set we use Developer
       # ID + hardened runtime + entitlements (required for notarization).
@@ -689,11 +795,14 @@ jobs:
           # bundle, with the same identity, hardened runtime and entitlements
           # (audio-input) as the app.
           HELPER="build/NereusSDR.app/Contents/Helpers/nereus-audio-capture"
+          STATION="build/NereusSDR.app/Contents/Helpers/NereusStation.app"
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
               --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
               "$HELPER"
+            codesign --force --options runtime --timestamp \
+              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" "$STATION"
           else
             # Ad hoc, no identity (R-R3-50): the same order the local CMake
             # build uses. Nested code is signed first, inside-out, each item
@@ -712,8 +821,10 @@ jobs:
               | xargs -0 -n 1 codesign --force --sign -
             codesign --force --entitlements packaging/macos/app-entitlements.plist \
               --sign - "$HELPER"
+            codesign --force --sign - "$STATION"
           fi
           codesign --verify --verbose=2 "$HELPER"
+          codesign --verify --strict --verbose=2 "$STATION"
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --deep --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
@@ -729,6 +840,7 @@ jobs:
             fi
           fi
           codesign --verify --verbose=2 build/NereusSDR.app
+          codesign --verify --strict --verbose=2 "$STATION"
 
       - name: Build HAL plugin
         run: |
@@ -822,6 +934,20 @@ jobs:
         run: |
           DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
           xcrun stapler staple "$DMG_PATH"
+
+      - name: Inspect shipped macOS artifacts
+        run: |
+          set -euo pipefail
+          STATION_REL='NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/MacOS/nereusd'
+          PKG_PATH="build/NereusSDR-${{ needs.prepare.outputs.version }}-${{ matrix.dmg_suffix }}.pkg"
+          pkgutil --payload-files "$PKG_PATH" | grep -Fq "$STATION_REL"
+          DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
+          mkdir -p mounted-dmg
+          hdiutil attach -readonly -nobrowse -quiet -mountpoint "$PWD/mounted-dmg" "$DMG_PATH"
+          trap 'hdiutil detach -quiet "$PWD/mounted-dmg"' EXIT
+          test -x "mounted-dmg/$STATION_REL"
+          test -f "mounted-dmg/NereusSDR.app/Contents/Helpers/NereusStation.app/Contents/Resources/models/rnnoise/Default_large.bin"
+          codesign --verify --strict "mounted-dmg/NereusSDR.app/Contents/Helpers/NereusStation.app"
 
       - name: Upload .pkg artifact
         uses: actions/upload-artifact@v4
@@ -1022,6 +1148,13 @@ jobs:
             Write-Error "nereus-audio-capture.exe missing from build\ (Windows artifact would ship broken: the PC microphone cannot be opened)"
             exit 1
           }
+          $stationExe = "build\nereusd.exe"
+          if (-not (Test-Path $stationExe)) {
+            Write-Error "nereusd.exe missing from build"
+            exit 1
+          }
+          Copy-Item $stationExe deploy\
+          if (-not (Test-Path "deploy\nereusd.exe")) { exit 1 }
           # Copy third-party license notices + both root license files
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
@@ -1049,6 +1182,12 @@ jobs:
         run: |
           $name = "NereusSDR-${{ needs.prepare.outputs.version }}-Windows-x64-portable.zip"
           Compress-Archive -Path deploy\* -DestinationPath $name
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $name).Path)
+          try {
+            if (-not ($archive.Entries | Where-Object { $_.FullName -eq 'nereusd.exe' })) {
+              throw 'nereusd.exe missing from portable ZIP'
+            }
+          } finally { $archive.Dispose() }
 
       - name: Build NSIS installer
         shell: pwsh
@@ -1074,6 +1213,10 @@ jobs:
             exit 1
           }
           Get-Item $outfile
+          $entries = & "C:\Program Files\7-Zip\7z.exe" l $outfile
+          if ($LASTEXITCODE -ne 0 -or -not ($entries | Select-String 'nereusd\.exe')) {
+            throw 'nereusd.exe missing from NSIS installer payload'
+          }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -1085,7 +1228,7 @@ jobs:
           retention-days: 7
 
   sign-and-publish:
-    needs: [prepare, build-linux, build-macos, build-windows]
+    needs: [prepare, build-linux, build-deb, build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1106,6 +1249,7 @@ jobs:
             -name '*.dmg' -o \
             -name '*.pkg' -o \
             -name '*.zip' -o \
+            -name '*.deb' -o \
             -name '*-setup.exe' -o \
             -name 'release_notes.md' \
           \) -exec cp {} artifacts/ \;
@@ -1153,7 +1297,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         working-directory: artifacts
         run: |
-          for f in *.AppImage *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
+          for f in *.AppImage *.deb *.dmg *.pkg *.zip *.exe *.tar.gz SHA256SUMS.txt; do
             [ -f "$f" ] || continue
             gpg --batch --yes --pinentry-mode loopback \
               --passphrase "$GPG_PASSPHRASE" \
@@ -1179,6 +1323,7 @@ jobs:
             --draft \
             $PRERELEASE_FLAG \
             artifacts/*.AppImage \
+            artifacts/*.deb \
             artifacts/*.dmg \
             artifacts/*.pkg \
             artifacts/*.zip \
