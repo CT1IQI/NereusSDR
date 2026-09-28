@@ -396,9 +396,8 @@ jobs:
           # package dependency; the installed tree is searched first.
           mkdir -p package-work/debian
           cd package-work
-          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$ARCH/g" \
-            -e 's/@DEPENDS@/libc6/g' ../packaging/deb/control.in > debian/control
-          DEPS=$(dpkg-shlibdeps -O --ignore-missing-info \
+          cp ../packaging/deb/source-control debian/control
+          DEPS=$(dpkg-shlibdeps -pnereusd -O --ignore-missing-info \
             -l"$GITHUB_WORKSPACE/$LIBDIR" \
             -e"$GITHUB_WORKSPACE/debroot/usr/bin/nereusd" \
             -e"$GITHUB_WORKSPACE/$CORE_LIB" \
