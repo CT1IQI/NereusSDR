@@ -397,7 +397,7 @@ jobs:
           mkdir -p package-work/debian
           cd package-work
           cp ../packaging/deb/source-control debian/control
-          DEPS=$(dpkg-shlibdeps -pnereusd -O --ignore-missing-info \
+          DEPS=$(dpkg-shlibdeps -O --ignore-missing-info \
             -l"$GITHUB_WORKSPACE/$LIBDIR" \
             -e"$GITHUB_WORKSPACE/debroot/usr/bin/nereusd" \
             -e"$GITHUB_WORKSPACE/$CORE_LIB" \
