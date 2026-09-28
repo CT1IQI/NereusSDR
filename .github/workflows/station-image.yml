@@ -33,12 +33,12 @@ jobs:
           NEREUS_VERSION: ${{ steps.source.outputs.version }}
         run: |
           set -euo pipefail
-          docker pull --platform linux/arm64 debian:trixie
-          docker image inspect --format '{{index .RepoDigests 0}}' debian:trixie > station-builder-image.txt
+          docker pull --platform linux/arm64 rust:1.94.1-trixie
+          docker image inspect --format '{{index .RepoDigests 0}}' rust:1.94.1-trixie > station-builder-image.txt
           docker run --rm --platform linux/arm64 \
             -e NEREUS_VERSION \
             -v "$PWD:/workspace" -w /workspace \
-            debian:trixie /bin/bash packaging/station-image/build-trixie-deb.sh
+            rust:1.94.1-trixie /bin/bash packaging/station-image/build-trixie-deb.sh
           package="station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
           bash packaging/station-image/verify-package.sh "$package" "$NEREUS_VERSION"
           echo "package=$PWD/$package" >> "$GITHUB_ENV"
@@ -92,18 +92,28 @@ jobs:
           image_hash=$(sha256sum "$image" | cut -d' ' -f1)
           package_hash=$(sha256sum "$package" | cut -d' ' -f1)
           builder=$(cat station-builder-image.txt)
-          cat > "pi-gen/deploy/nereus-station-${NEREUS_VERSION}-rpi-arm64.provenance.json" <<EOF
-          {
-            "source_sha": "$SOURCE_SHA",
-            "version": "$NEREUS_VERSION",
-            "pi_gen_sha": "74d08a337bd29da289b9aedbe5b48c79fb2e5a03",
-            "os": "Raspberry Pi OS Lite, Debian trixie, arm64",
-            "builder_image": "$builder",
-            "cpu_baseline": "ARMv8-A (Raspberry Pi 4 Cortex-A72)",
-            "package_sha256": "$package_hash",
-            "image_sha256": "$image_hash"
+          export IMAGE_HASH="$image_hash" PACKAGE_HASH="$package_hash" BUILDER="$builder"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          dfnr = json.loads(Path("station-output/dfnr-provenance.json").read_text())
+          manifest = {
+              "source_sha": os.environ["SOURCE_SHA"],
+              "version": os.environ["NEREUS_VERSION"],
+              "pi_gen_sha": "74d08a337bd29da289b9aedbe5b48c79fb2e5a03",
+              "os": "Raspberry Pi OS Lite, Debian trixie, arm64",
+              "builder_image": os.environ["BUILDER"],
+              "cpu_baseline": "ARMv8-A (Raspberry Pi 4 Cortex-A72)",
+              "package_sha256": os.environ["PACKAGE_HASH"],
+              "image_sha256": os.environ["IMAGE_HASH"],
+              "dfnr": dfnr,
           }
-          EOF
+          target = Path("pi-gen/deploy/nereus-station-{}-rpi-arm64.provenance.json".format(
+              os.environ["NEREUS_VERSION"]))
+          target.write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
       - name: Upload image, matching package and provenance
         uses: actions/upload-artifact@v4
         with:
