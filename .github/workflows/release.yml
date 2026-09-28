@@ -7,10 +7,15 @@ on:
     inputs:
       tag:
         description: 'Tag to (re-)build, e.g. v0.2.0'
-        required: true
+        required: false
+      verify_only:
+        description: 'Build and inspect packages from the selected branch commit without publishing'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -22,25 +27,54 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ inputs.verify_only && github.sha || inputs.tag || github.ref }}
 
-      - name: Resolve tag and validate format
+      - name: Resolve source and release metadata
         id: meta
         shell: bash
+        env:
+          VERIFY_ONLY: ${{ inputs.verify_only }}
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          SOURCE_REF=$(git rev-parse HEAD)
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          CMAKE_VER=$(grep -oE 'project\(NereusSDR VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | awk '{print $3}')
+          if ! [[ "$CMAKE_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cannot derive a numeric CMakeLists.txt version"
+            exit 1
+          fi
+          if [[ "$VERIFY_ONLY" == "true" ]]; then
+            echo "Verification source: $SOURCE_REF; CMake version: $CMAKE_VER"
+            echo "version=$CMAKE_VER" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$INPUT_TAG" ]]; then
+            echo "::error::A tag is required when verify_only is false"
+            exit 1
+          fi
+          TAG="${INPUT_TAG:-$REF_NAME}"
           echo "Tag: $TAG"
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
             echo "::error::Tag '$TAG' does not match vMAJOR.MINOR.PATCH[-suffix]"
             exit 1
           fi
           VERSION="${TAG#v}"
+          BASE_VER="${VERSION%%-*}"
+          if [[ "$CMAKE_VER" != "$BASE_VER" ]]; then
+            echo "::error::CMakeLists.txt version ($CMAKE_VER) != tag version ($BASE_VER)"
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
@@ -49,20 +83,8 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify CMakeLists.txt version matches tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          CMAKE_VER=$(grep -oE 'project\(NereusSDR VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | awk '{print $3}')
-          TAG_VER="${{ steps.meta.outputs.version }}"
-          BASE_VER="${TAG_VER%%-*}"
-          if [[ "$CMAKE_VER" != "$BASE_VER" ]]; then
-            echo "::error::CMakeLists.txt version ($CMAKE_VER) != tag version ($BASE_VER)"
-            exit 1
-          fi
-          echo "Version match: $CMAKE_VER"
-
       - name: Extract release notes from CHANGELOG.md
+        if: ${{ !inputs.verify_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -81,6 +103,7 @@ jobs:
           echo "-------------------------"
 
       - name: Append release-notes template
+        if: ${{ !inputs.verify_only }}
         shell: bash
         run: |
           if [[ -f .github/release-notes-template.md ]]; then
@@ -89,6 +112,7 @@ jobs:
           fi
 
       - name: Upload release notes artifact
+        if: ${{ !inputs.verify_only }}
         uses: actions/upload-artifact@v4
         with:
           name: release-notes
@@ -111,7 +135,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Install system dependencies
         run: |
@@ -359,7 +383,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
       - name: Install daemon build dependencies
         run: |
           sudo apt-get update
@@ -453,11 +477,11 @@ jobs:
     # evaluated at workflow-parse time before secrets inject. Job-level
     # env is populated after secrets are available.
     env:
-      HAS_APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+      HAS_APPLE_DEVELOPER_ID: ${{ !inputs.verify_only && secrets.APPLE_DEVELOPER_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Install dependencies (arm64 native)
         if: matrix.arch == 'arm64'
@@ -790,6 +814,8 @@ jobs:
       # ID + hardened runtime + entitlements (required for notarization).
       # Without secrets we fall back to ad-hoc so dev builds still work.
       - name: Codesign app
+        env:
+          APPLE_DEVELOPER_ID: ${{ !inputs.verify_only && secrets.APPLE_DEVELOPER_ID || '' }}
         run: |
           # R-R3-36: sign the nested capture helper before its containing
           # bundle, with the same identity, hardened runtime and entitlements
@@ -799,10 +825,10 @@ jobs:
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
-              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+              --sign "$APPLE_DEVELOPER_ID" \
               "$HELPER"
             codesign --force --options runtime --timestamp \
-              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" "$STATION"
+              --sign "$APPLE_DEVELOPER_ID" "$STATION"
           else
             # Ad hoc, no identity (R-R3-50): the same order the local CMake
             # build uses. Nested code is signed first, inside-out, each item
@@ -828,7 +854,7 @@ jobs:
           if [ "$HAS_APPLE_DEVELOPER_ID" = "true" ]; then
             codesign --force --deep --options runtime --timestamp \
               --entitlements packaging/macos/app-entitlements.plist \
-              --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+              --sign "$APPLE_DEVELOPER_ID" \
               build/NereusSDR.app
           else
             codesign --force --sign - build/NereusSDR.app
@@ -853,15 +879,17 @@ jobs:
 
       - name: Sign HAL plugin
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           codesign --force --options runtime --timestamp \
             --entitlements packaging/macos/hal-entitlements.plist \
-            --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+            --sign "$APPLE_DEVELOPER_ID" \
             build-hal/NereusSDRVAX.driver
 
       - name: Build .pkg
         env:
-          APPLE_INSTALLER_ID: ${{ secrets.APPLE_INSTALLER_ID }}
+          APPLE_INSTALLER_ID: ${{ !inputs.verify_only && secrets.APPLE_INSTALLER_ID || '' }}
           # Pass the FULL tag version (including any -rcN / -alpha / -beta
           # suffix) so productbuild writes the correctly-suffixed PKG at
           # the same path the notarize/staple/upload steps below expect.
@@ -913,10 +941,12 @@ jobs:
 
       - name: Codesign DMG
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           DMG_PATH=$(ls NereusSDR-*.dmg | head -1)
           codesign --force --timestamp \
-            --sign "${{ secrets.APPLE_DEVELOPER_ID }}" \
+            --sign "$APPLE_DEVELOPER_ID" \
             "$DMG_PATH"
 
       - name: Notarize DMG
@@ -969,7 +999,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -1228,13 +1258,16 @@ jobs:
           retention-days: 7
 
   sign-and-publish:
+    if: ${{ !inputs.verify_only }}
     needs: [prepare, build-linux, build-deb, build-macos, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.source_ref }}
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
