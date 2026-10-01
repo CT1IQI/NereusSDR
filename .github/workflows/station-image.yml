@@ -93,6 +93,7 @@ jobs:
           package_hash=$(sha256sum "$package" | cut -d' ' -f1)
           builder=$(cat station-builder-image.txt)
           export IMAGE_HASH="$image_hash" PACKAGE_HASH="$package_hash" BUILDER="$builder"
+          mkdir -p station-provenance
           python3 - <<'PY'
           import json
           import os
@@ -110,7 +111,10 @@ jobs:
               "image_sha256": os.environ["IMAGE_HASH"],
               "dfnr": dfnr,
           }
-          target = Path("pi-gen/deploy/nereus-station-{}-rpi-arm64.provenance.json".format(
+          # pi-gen/deploy belongs to root after `sudo ./build.sh`, and the
+          # builder container made station-output as root too. The manifest
+          # goes in station-provenance, which this step makes as the runner.
+          target = Path("station-provenance/nereus-station-{}-rpi-arm64.provenance.json".format(
               os.environ["NEREUS_VERSION"]))
           target.write_text(json.dumps(manifest, indent=2) + "\n")
           PY
@@ -120,7 +124,7 @@ jobs:
           name: nereus-station-${{ steps.source.outputs.version }}-rpi-arm64
           path: |
             pi-gen/deploy/nereus-station-${{ steps.source.outputs.version }}-rpi-arm64.img.xz
-            pi-gen/deploy/nereus-station-${{ steps.source.outputs.version }}-rpi-arm64.provenance.json
+            station-provenance/nereus-station-${{ steps.source.outputs.version }}-rpi-arm64.provenance.json
             station-output/nereusd_${{ steps.source.outputs.version }}_arm64_trixie.deb
           if-no-files-found: error
           retention-days: 14
