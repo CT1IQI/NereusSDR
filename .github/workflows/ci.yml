@@ -318,8 +318,53 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     name: Traversal harness
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Dependency downloads (cmake/NereusDependencyArchives.cmake)
+      # ------------------------------------------------------------------
+      # Every source archive and git repository the configure and build
+      # download, fetched up front into NEREUS_DEPENDENCY_ARCHIVE_DIR and
+      # cached across runs. CI run 36866003880 lost two Linux jobs to a
+      # GitHub 504 on the libsodium and Opus archives, which CMake does not
+      # retry (it retries connection errors only, never an HTTP error).
+      # cmake/FetchDependencyArchives.cmake retries each download with
+      # waits between attempts, keeps an archive only when its SHA-256
+      # matches the pin and a git mirror only when its pinned ref resolves
+      # to the pinned commit, and writes url.insteadOf redirects for the
+      # verified mirrors. The configure then uses each local copy in place
+      # of its upstream URL and still checks URL_HASH on it. On a cache hit no
+      # dependency download reaches the network at all. The cache is saved
+      # straight after the fetch, so a later build failure still keeps it.
+      - name: Restore dependency downloads
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      - name: Save dependency downloads
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Install build and harness packages from apt
         run: |
@@ -423,9 +468,56 @@ jobs:
       # and trivially valid for the cache action.  No-op on Windows
       # (sccache path; this env var is only consumed by ccache).
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      # Pre-fetched, hash-checked dependency archives; see "Fetch
+      # dependency downloads" below. Every configure in the job reads it.
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
 
     steps:
       - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # Dependency downloads (cmake/NereusDependencyArchives.cmake)
+      # ------------------------------------------------------------------
+      # Every source archive and git repository the configure and build
+      # download, fetched up front into NEREUS_DEPENDENCY_ARCHIVE_DIR and
+      # cached across runs. CI run 36866003880 lost two Linux jobs to a
+      # GitHub 504 on the libsodium and Opus archives, which CMake does not
+      # retry (it retries connection errors only, never an HTTP error).
+      # cmake/FetchDependencyArchives.cmake retries each download with
+      # waits between attempts, keeps an archive only when its SHA-256
+      # matches the pin and a git mirror only when its pinned ref resolves
+      # to the pinned commit, and writes url.insteadOf redirects for the
+      # verified mirrors. The configure then uses each local copy in place
+      # of its upstream URL and still checks URL_HASH on it. On a cache hit no
+      # dependency download reaches the network at all. The cache is saved
+      # straight after the fetch, so a later build failure still keeps it;
+      # one job per OS saves (Linux shard 0), the others only restore.
+      - name: Restore dependency downloads
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      - name: Save dependency downloads
+        if: steps.deps-cache.outputs.cache-hit != 'true' && (matrix.shard == 0 || matrix.shard == '')
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       # ------------------------------------------------------------------
       # Linux dependencies
@@ -668,8 +760,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          # The zip comes from the dependency downloads fetched above,
+          # already checked against its pinned SHA-256.
           mkdir -p third_party/fftw3/{include,lib,bin}
-          curl -L -o /tmp/fftw3.zip "https://fftw.org/pub/fftw/fftw-3.3.5-dll64.zip"
+          cp .nereus-deps/fftw-3.3.5-dll64.zip /tmp/fftw3.zip
           cd /tmp && unzip -o fftw3.zip -d fftw3
           cp /tmp/fftw3/fftw3.h $GITHUB_WORKSPACE/third_party/fftw3/include/
           cp /tmp/fftw3/libfftw3-3.dll $GITHUB_WORKSPACE/third_party/fftw3/bin/
