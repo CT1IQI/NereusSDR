@@ -352,6 +352,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DCMAKE_SHARED_LINKER_FLAGS_INIT=-fuse-ld=mold \
             -DNEREUS_BUILD_TESTS=ON \
+            -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
             -DNEREUS_TRAVERSAL_TESTS=ON
 
       - name: Build the peer tool
@@ -438,7 +439,10 @@ jobs:
         #
         # python3-websockets and python3-cryptography: tst_rendezvous_client
         # runs the rendezvous service (rendezvous/server) on the runner, as
-        # the rendezvous job does (iPhone app plan Task 27).
+        # the rendezvous job does (iPhone app plan Task 27). They belong to
+        # /usr/bin/python3, which Configure (Linux) names as
+        # NEREUS_TEST_PYTHON: a PATH lookup would find setup-python's
+        # toolcache interpreter (from install-qt-action), which lacks them.
         #
         # mold (the apt mold package) is the fast linker. With 451 test
         # executables linking against NereusSDRLib + Qt6 the default
@@ -748,9 +752,16 @@ jobs:
         # tell tests/CMakeLists.txt's nereus_add_test() to register
         # only the slice of tests whose name-MD5 modulo SHARDS matches
         # SHARD.  See tests/CMakeLists.txt for the dispatch rules.
+        #
+        # 2026-09-30 (INFRA-C1): NEREUS_TEST_PYTHON=/usr/bin/python3, the
+        # interpreter the apt python3-websockets and python3-cryptography
+        # above belong to. install-qt-action runs setup-python, which puts
+        # a toolcache Python without them first on PATH; the rendezvous
+        # test helpers start on this absolute path instead.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_EXE_LINKER_FLAGS_INIT=-fuse-ld=mold \
