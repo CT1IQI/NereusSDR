@@ -916,7 +916,9 @@ jobs:
         # handler runs gdb (installed above) on the test process and prints
         # every thread's stack into the test's output. It is a diagnostic:
         # no ctest TIMEOUT changes, and a test whose ctest TIMEOUT is 120 s
-        # is still ended by ctest first.
+        # is still ended by ctest first. tst_rendezvous_client sets its own
+        # 120 s (tests/CMakeLists.txt), since its hang starts late enough in
+        # the process that 240 s would leave gdb no time before 300 s.
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             export QT_QPA_PLATFORM=offscreen
