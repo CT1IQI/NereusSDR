@@ -448,6 +448,9 @@ jobs:
         # executables linking against NereusSDRLib + Qt6 the default
         # ld linker dominated Linux build time at ~33 minutes. The
         # Configure (Linux) step below selects mold via -fuse-ld=mold.
+        #
+        # gdb: QtTest's watchdog uses it to print every thread's stack when
+        # a test function hangs (QTEST_FUNCTION_TIMEOUT in the test step).
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -458,6 +461,7 @@ jobs:
             libpipewire-0.3-dev \
             libssl-dev \
             python3-websockets python3-cryptography \
+            gdb \
             xvfb libxkbcommon-x11-0 libxcb-cursor0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
@@ -905,9 +909,18 @@ jobs:
         # asserting on a successful open.  tst_port_audio_bus is
         # the one outstanding case; tracked as out-of-scope for
         # this PR.
+        #
+        # QTEST_FUNCTION_TIMEOUT=240000: a QtTest function that hangs is
+        # ended by QtTest's own watchdog at 240 s, before ctest's 300 s
+        # TIMEOUT kills the process without a trace. The watchdog's crash
+        # handler runs gdb (installed above) on the test process and prints
+        # every thread's stack into the test's output. It is a diagnostic:
+        # no ctest TIMEOUT changes, and a test whose ctest TIMEOUT is 120 s
+        # is still ended by ctest first.
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then
             export QT_QPA_PLATFORM=offscreen
+            export QTEST_FUNCTION_TIMEOUT=240000
             xvfb-run -a ctest --output-on-failure
           else
             ctest --output-on-failure --no-tests=ignore
