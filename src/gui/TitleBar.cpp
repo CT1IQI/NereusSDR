@@ -66,6 +66,9 @@
 //                 offline", and the kUtcToMasterGap comment records that
 //                 18 px now covers every audio group in the measured fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - ConnectionSegment::setPulsePausedForTest(), a test seam for
+//                 the workspace visual preview tool (tests/visual/).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -172,6 +175,20 @@ ConnectionSegment::ConnectionSegment(QWidget* parent)
         emit diagnosticsRequested();
     });
     updateRoutePopup();
+}
+
+void ConnectionSegment::setPulsePausedForTest(bool paused)
+{
+    if (paused) {
+        m_pulseTimer.stop();
+        m_pulseOn = false;
+    } else if (m_state == ConnectionState::Connected   ||
+               m_state == ConnectionState::Probing     ||
+               m_state == ConnectionState::Connecting  ||
+               m_state == ConnectionState::LinkLost) {
+        m_pulseTimer.start();
+    }
+    update();
 }
 
 void ConnectionSegment::setState(ConnectionState s)

@@ -65,6 +65,10 @@
 //                 because local time already sits in the menu bar and the
 //                 date is not an operator-facing fact worth the pixels.
 //                 NereusSDR-original UI, not a Thetis/AetherSDR port.
+//   2026-10-07 - ConnectionSegment::setPulsePausedForTest(): holds the
+//                 state dot still so the workspace visual preview tool
+//                 (tests/visual/) captures the same pixels on every run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -129,6 +133,11 @@ public:
     // smoothedRttMs() impl for the rationale. Returns the latest sample
     // if only one sample has been seen, or -1 if no samples at all.
     int                      smoothedRttMs() const noexcept;
+
+    // Test seam: stop the state-dot pulse and hold it in its resting colour
+    // (paused), or resume it as setState() would (unpaused). The visual
+    // preview tool uses it so two captures of one scene match pixel for pixel.
+    void setPulsePausedForTest(bool paused);
 
     // Hit-test rect accessors — populated after the first paintEvent.
     // Exposed publicly so callers can verify click regions (e.g. in tests).
