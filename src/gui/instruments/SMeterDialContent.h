@@ -14,9 +14,12 @@
 // effective source context (the container's source chip: Active or RX A
 // to D) exactly as a Longpath needle does: its readings come from
 // MeterPoller::addReadingConsumer / readingUpdated for that context, its
-// transmit state from RadioModel::transmittingChanged. Each copy keeps its
-// own TX mode, RX mode, peak hold, decay and face in its entry config;
-// the right-click menu commits them through ContentConfigNotifier. The
+// transmit state from RadioModel::transmittingChanged, and the external
+// amplifier's power scale and watts from the RadioModel signals that feed
+// the Main Panel's dial. Each copy keeps its own TX mode, RX mode, peak
+// hold, decay and face in its entry config; the right-click menu commits
+// them through ContentConfigNotifier. A copy with no face key draws Setup's
+// Meter Styles face and follows it until it is given a face of its own. The
 // Main Panel's dial (applet:s_meter) and its AppSettings keys are not
 // touched.
 //
@@ -24,6 +27,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The external amplifier and Setup's face reach copies.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -42,8 +47,8 @@ namespace SMeterDialContent {
 inline constexpr auto kDialType = "sMeter.dial";
 
 // Entry config keys. Absent keys are today's defaults (the Main Panel's
-// defaults with no saved key): Power, Signal, peak hold on, Medium, Aged
-// Cream. Values are the right-click menu's names: kTxModeKey "Power",
+// defaults with no saved key): Power, Signal, peak hold on, Medium; an
+// absent kFaceKey is Setup's face (SMeter_FaceStyle), followed. Values are the right-click menu's names: kTxModeKey "Power",
 // "SWR", "Level", "Compression"; kRxModeKey "Signal", "Sig Avg",
 // "Signal Peak", "Max Bin"; kPeakHoldKey true/false; kPeakDecayKey "Fast",
 // "Medium", "Slow"; kFaceKey an SMeterWidget::faceStyleKey.

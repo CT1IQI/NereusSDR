@@ -3,10 +3,17 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The external amplifier, Setup's face, locked and editing,
+//                 and the test-only plate limit. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLabel>
 #include <QSplitter>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QMenu>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include "core/AppSettings.h"
 #include "gui/SMeterWidget.h"
@@ -14,7 +21,10 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "gui/instruments/SMeterDialContent.h"
+#include "gui/setup/AppearanceSetupPages.h"
+#include "models/RadioModel.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -80,6 +90,83 @@ ContainerDocument stationContainer(const QVector<ContentEntry>& contents)
     c.geometry = QRect(10, 10, 380, 800);
     c.contents = contents;
     return c;
+}
+
+// A station container of `entries` committed through a ContainerManager on
+// an isolated store, shown and settled.
+struct DialStation {
+    DialStation(ContainerContentRegistry& registry, const QVector<ContentEntry>& entries, bool locked = false)
+        : settings(directory.filePath(QStringLiteral("dial-station.xml")))
+        , store(settings)
+        , manager(&dock, &splitter)
+    {
+        dock.resize(900, 900);
+        manager.setWorkspaceAdapter(&store, &registry);
+        WorkspaceDocument document;
+        document.containers.append(stationContainer(entries));
+        document.containers.first().locked = locked;
+        document.mainContainerId = QStringLiteral("station");
+        committed = manager.commitWorkspace(document, 0);
+        dock.show();
+        exposed = QTest::qWaitForWindowExposed(&dock);
+        settle();
+    }
+    ContentEntry entry(const QString& id) const
+    {
+        // The snapshot is held: a range-for over a temporary's member
+        // would read a destroyed document.
+        const WorkspaceDocument snapshot = store.snapshot();
+        for (const auto& e : snapshot.containers.first().contents) {
+            if (e.id == id) { return e; }
+        }
+        return {};
+    }
+    ContainerContentHost* host() { return manager.contentHost(QStringLiteral("station")); }
+
+    QTemporaryDir directory;
+    AppSettings settings;
+    ContainerWorkspaceStore store;
+    QWidget dock;
+    QSplitter splitter;
+    ContainerManager manager;
+    bool exposed{false};
+    CommitResult committed;
+};
+
+ContentEntry dialEntry(ContainerContentRegistry& registry, const QString& id, const QJsonObject& config = {})
+{
+    ContentEntry e = registry.makeEntry(QString::fromLatin1(SMeterDialContent::kDialType));
+    e.id = id;
+    e.config = config;
+    return e;
+}
+
+// A Power Genius XL status report as RadioModel receives it from the amp's
+// connection (RadioModel::onPgxlStatus): no device, no connection.
+void reportPgxl(RadioModel& radio, const QMap<QString, QString>& kvs)
+{
+    using StatusMap = QMap<QString, QString>;
+    QVERIFY(QMetaObject::invokeMethod(&radio, "onPgxlStatus", Qt::DirectConnection,
+                                      Q_ARG(StatusMap, kvs)));
+}
+
+// The action labelled `label` in `menu` or its submenus.
+QAction* menuAction(QMenu* menu, const QString& label)
+{
+    for (QAction* a : menu->actions()) {
+        if (a->text() == label) { return a; }
+        if (a->menu()) {
+            if (QAction* inner = menuAction(a->menu(), label)) { return inner; }
+        }
+    }
+    return nullptr;
+}
+
+// SMeter_FaceStyle is written below: only in a test home (ctest gives each
+// test its own HOME), never the operator's settings.
+bool settingsAreIsolated()
+{
+    return AppSettings::instance().filePath().contains(QLatin1String("/test-home/"));
 }
 
 } // namespace
@@ -320,6 +407,227 @@ private slots:
         QCOMPARE(again->peakDecayRate(), SMeterWidget::DecayRate::Slow);
         QCOMPARE(again->faceStyle(), SMeterWidget::FaceStyle::VuAmber);
         QCOMPARE(globalDialKeys(), globalBefore);
+    }
+
+    // A copy follows the external amplifier as the Main Panel's dial does
+    // (MainWindow.cpp:9505-9612): the 2 kW scale and the amplifier's watts
+    // while it amplifies, the radio's own power held back meanwhile, and
+    // back to the radio's scale and power when it stands by.
+    void copiesFollowTheExternalAmplifier()
+    {
+        MeterPoller poller;
+        RadioModel radio;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        sources.radio = &radio;
+        SMeterDialContent::registerDial(registry, sources);
+        DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-amp"))});
+        QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
+        QVERIFY(station.exposed);
+        SMeterWidget* dial = dialFor(*station.host(), QStringLiteral("dial-amp"));
+        QVERIFY(dial);
+        const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+        dial->setTransmitting(true);
+        QVERIFY(!dial->txScaleIs2kWForTesting());
+        emit poller.readingUpdated(context, MeterBinding::TxPower, 85.0);
+        emit poller.readingUpdated(context, MeterBinding::TxSwr, 1.25);
+        QCOMPARE(dial->testTxValue(), 85.0f);
+
+        // The amp reports OPERATE and 1500 W (61.76 dBm), return loss 20 dB.
+        reportPgxl(radio, {{QStringLiteral("state"), QStringLiteral("OPERATE")},
+                           {QStringLiteral("peakfwd"), QStringLiteral("61.7609")},
+                           {QStringLiteral("swr"), QStringLiteral("-20")}});
+        QVERIFY(radio.isAnyExternalAmpInOperate());
+        QVERIFY(dial->txScaleIs2kWForTesting());
+        QVERIFY2(qAbs(dial->testTxValue() - 1500.0f) < 1.0f, qPrintable(QString::number(dial->testTxValue())));
+        // The radio's own forward power does not overwrite the amp's.
+        emit poller.readingUpdated(context, MeterBinding::TxPower, 85.0);
+        QVERIFY2(qAbs(dial->testTxValue() - 1500.0f) < 1.0f, qPrintable(QString::number(dial->testTxValue())));
+
+        // A copy added while the amp amplifies starts on its scale.
+        QWidget parent;
+        std::unique_ptr<QWidget> later(registry.createWidget(dialEntry(registry, QStringLiteral("dial-later")), &parent));
+        auto* laterDial = qobject_cast<SMeterWidget*>(later.get());
+        QVERIFY(laterDial);
+        QVERIFY(laterDial->txScaleIs2kWForTesting());
+
+        // STANDBY: the radio's scale and its own power again.
+        reportPgxl(radio, {{QStringLiteral("state"), QStringLiteral("STANDBY")}});
+        QVERIFY(!radio.isAnyExternalAmpInOperate());
+        QVERIFY(!dial->txScaleIs2kWForTesting());
+        QVERIFY(!laterDial->txScaleIs2kWForTesting());
+        emit poller.readingUpdated(context, MeterBinding::TxPower, 90.0);
+        QCOMPARE(dial->testTxValue(), 90.0f);
+    }
+
+    // A copy with no face key draws Setup's Meter Styles face and follows
+    // it; once a face is picked from its own menu it keeps that face. A
+    // stored face key is the copy's own. The Main Panel's dial is as before.
+    void faceFollowsSetupUntilTheCopyPicksItsOwn()
+    {
+        if (!settingsAreIsolated()) {
+            QSKIP("writes SMeter_FaceStyle: run through ctest (its own test home)");
+        }
+        AppSettings& global = AppSettings::instance();
+        const QString faceKey = QStringLiteral("SMeter_FaceStyle");
+        global.remove(faceKey);
+        auto restore = qScopeGuard([&global, faceKey] { global.remove(faceKey); });
+
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        SMeterDialContent::registerDial(registry, sources);
+        SMeterWidget mainPanelDial;
+        const QString ownFace = SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::Ice);
+        DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-follow")),
+                                       dialEntry(registry, QStringLiteral("dial-picks")),
+                                       dialEntry(registry, QStringLiteral("dial-stored"),
+                                                 {{QLatin1String(SMeterDialContent::kFaceKey), ownFace}})});
+        QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
+        QVERIFY(station.exposed);
+        SMeterWidget* follow = dialFor(*station.host(), QStringLiteral("dial-follow"));
+        SMeterWidget* picks = dialFor(*station.host(), QStringLiteral("dial-picks"));
+        SMeterWidget* stored = dialFor(*station.host(), QStringLiteral("dial-stored"));
+        QVERIFY(follow && picks && stored);
+        QCOMPARE(follow->faceStyle(), SMeterWidget::FaceStyle::AgedCream);
+        QCOMPARE(stored->faceStyle(), SMeterWidget::FaceStyle::Ice);
+
+        // Setup > Appearance > Meter Styles: Face Blackface.
+        MeterStylesPage page(nullptr);
+        auto* combo = page.findChild<QComboBox*>(QStringLiteral("sMeterFaceCombo"));
+        QVERIFY(combo);
+        combo->setCurrentIndex(combo->findData(static_cast<int>(SMeterWidget::FaceStyle::Blackface)));
+        QCOMPARE(global.value(faceKey).toString(), SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::Blackface));
+        QCOMPARE(follow->faceStyle(), SMeterWidget::FaceStyle::Blackface);
+        QCOMPARE(picks->faceStyle(), SMeterWidget::FaceStyle::Blackface);
+        QCOMPARE(stored->faceStyle(), SMeterWidget::FaceStyle::Ice);
+
+        // The second copy picks Carbon from its own menu.
+        std::unique_ptr<QMenu> menu(picks->buildContextMenuForTesting());
+        QAction* carbon = menuAction(menu.get(), SMeterWidget::faceStyleLabel(SMeterWidget::FaceStyle::Carbon));
+        QVERIFY(carbon);
+        carbon->trigger();
+        settle();
+        picks = dialFor(*station.host(), QStringLiteral("dial-picks"));
+        QVERIFY(picks);
+        QCOMPARE(picks->faceStyle(), SMeterWidget::FaceStyle::Carbon);
+        QCOMPARE(station.entry(QStringLiteral("dial-picks")).config.value(QLatin1String(SMeterDialContent::kFaceKey)).toString(),
+                 SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::Carbon));
+        // Setup's face is not written by a copy.
+        QCOMPARE(global.value(faceKey).toString(), SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::Blackface));
+
+        // The first copy changes another setting: still no face key, still
+        // following.
+        follow->setTxMode(QStringLiteral("SWR"));
+        settle();
+        follow = dialFor(*station.host(), QStringLiteral("dial-follow"));
+        QVERIFY(follow);
+        const QJsonObject followConfig = station.entry(QStringLiteral("dial-follow")).config;
+        QCOMPARE(followConfig.value(QLatin1String(SMeterDialContent::kTxModeKey)).toString(), QStringLiteral("SWR"));
+        QVERIFY(!followConfig.contains(QLatin1String(SMeterDialContent::kFaceKey)));
+
+        // The Main Panel's dial changes the face (its menu writes the key):
+        // the follower follows; the copies with a face of their own do not.
+        mainPanelDial.setFaceStyle(SMeterWidget::FaceStyle::VuAmber);
+        QCOMPARE(global.value(faceKey).toString(), SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::VuAmber));
+        QCOMPARE(follow->faceStyle(), SMeterWidget::FaceStyle::VuAmber);
+        QCOMPARE(picks->faceStyle(), SMeterWidget::FaceStyle::Carbon);
+        QCOMPARE(stored->faceStyle(), SMeterWidget::FaceStyle::Ice);
+        QVERIFY(!station.entry(QStringLiteral("dial-follow")).config.contains(QLatin1String(SMeterDialContent::kFaceKey)));
+    }
+
+    // Locked and editing, as the Longpath needle: a locked container locks
+    // its arrangement, not its contents' settings (Container Settings'
+    // property editor still edits a needle's properties), so the dial's
+    // menu opens and its change commits; while Container Settings edits
+    // the workspace (application-modal) its preview copies take no mouse
+    // input and commit nothing, as the needle's preview.
+    void lockedAndEditingMatchTheNeedle()
+    {
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        SMeterDialContent::registerDial(registry, sources);
+
+        // The needle in a locked container: its properties stay editable.
+        ContentEntry needle = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        needle.id = QStringLiteral("needle-locked");
+        ContentPropertyEditor editor(registry);
+        editor.setGeometryLocked(true);
+        editor.setEntry(needle);
+        QStringList needleEdits;
+        connect(&editor, &ContentPropertyEditor::entryEdited, this,
+                [&needleEdits](const ContentEntry& e) { needleEdits.append(e.name); });
+        auto* name = editor.findChild<QLineEdit*>(QStringLiteral("contentName"));
+        QVERIFY(name);
+        QVERIFY(name->isEnabled());
+        QTest::keyClicks(name, QStringLiteral("Peak"));
+        QVERIFY(!needleEdits.isEmpty());
+        QVERIFY(needleEdits.last().endsWith(QStringLiteral("Peak")));
+
+        // The dial in a locked container: the menu is offered and commits.
+        DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-locked"))}, true);
+        QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
+        QVERIFY(station.exposed);
+        QVERIFY(station.store.snapshot().containers.first().locked);
+        SMeterWidget* dial = dialFor(*station.host(), QStringLiteral("dial-locked"));
+        QVERIFY(dial);
+        std::unique_ptr<QMenu> menu(dial->buildContextMenuForTesting());
+        QAction* swr = menuAction(menu.get(), QStringLiteral("SWR"));
+        QVERIFY(swr);
+        QVERIFY(swr->isEnabled());
+        swr->trigger();
+        settle();
+        QCOMPARE(station.entry(QStringLiteral("dial-locked")).config.value(QLatin1String(SMeterDialContent::kTxModeKey)).toString(),
+                 QStringLiteral("SWR"));
+        QVERIFY(station.store.snapshot().containers.first().locked);
+
+        // Container Settings' preview: neither takes the mouse, neither commits.
+        QWidget previewParent;
+        std::unique_ptr<QWidget> needlePreview(registry.createPreview(needle, &previewParent));
+        std::unique_ptr<QWidget> dialPreview(registry.createPreview(dialEntry(registry, QStringLiteral("dial-preview")), &previewParent));
+        QVERIFY(needlePreview && dialPreview);
+        QVERIFY(qobject_cast<SMeterWidget*>(dialPreview.get()));
+        QVERIFY(needlePreview->testAttribute(Qt::WA_TransparentForMouseEvents));
+        QVERIFY(dialPreview->testAttribute(Qt::WA_TransparentForMouseEvents));
+        QVERIFY(!needlePreview->findChild<ContentConfigNotifier*>());
+        QVERIFY(!dialPreview->findChild<ContentConfigNotifier*>());
+    }
+
+    // The test-only plate limit (variant B of the wide-container look): off,
+    // the plate is the widget; on, a dial wider than kPlateMaxAspect times
+    // its height gets a centred plate that wide, and one at the Main Panel's
+    // own size (298 x 140) keeps its whole rect, pixel for pixel.
+    void plateLimitOnlyNarrowsWideDials()
+    {
+        QWidget parent;
+        SMeterWidget mainSize(SMeterWidget::SettingsStore::Instance, &parent);
+        SMeterWidget wide(SMeterWidget::SettingsStore::Instance, &parent);
+        mainSize.setGeometry(0, 0, 298, 140);
+        wide.setGeometry(0, 150, 1000, 140);
+        QCOMPARE(SMeterWidget::plateLimitForTest(), false);
+        QCOMPARE(wide.plateRect(), QRectF(0, 0, 1000, 140));
+        const QImage before = mainSize.grab().toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+        SMeterWidget::setPlateLimitForTest(true);
+        auto off = qScopeGuard([] { SMeterWidget::setPlateLimitForTest(false); });
+        QCOMPARE(mainSize.plateRect(), QRectF(0, 0, 298, 140));
+        QCOMPARE(wide.plateRect(), QRectF(351, 0, 298, 140));
+        QVERIFY(!wide.testAttribute(Qt::WA_OpaquePaintEvent));
+        // Same pixels; only the grab's format follows the opaque attribute.
+        QCOMPARE(mainSize.grab().toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied), before);
+        // A dial made with the limit on takes it too.
+        SMeterWidget later(SMeterWidget::SettingsStore::Instance, &parent);
+        later.setGeometry(0, 300, 600, 140);
+        QCOMPARE(later.plateRect(), QRectF(151, 0, 298, 140));
+
+        SMeterWidget::setPlateLimitForTest(false);
+        QCOMPARE(wide.plateRect(), QRectF(0, 0, 1000, 140));
+        QVERIFY(wide.testAttribute(Qt::WA_OpaquePaintEvent));
     }
 
     void savedSingletonWorkspaceLoadsUnchanged()

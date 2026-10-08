@@ -91,6 +91,10 @@
 //   2026-10-08 - dial-addable--* scenes: added copies of the SIGNAL
 //                 STRENGTH dial, each fed for its own receiver. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - dial-addable--amp, --face and the --plate-b variants of
+//                 --two-band and --tx (SMeterWidget's test-only plate
+//                 limit). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -143,6 +147,7 @@
 
 #include "ControlsSheet.h"
 #include "PreviewData.h"
+#include "core/AppSettings.h"
 #include "core/ControlRanges.h"
 #include "core/RadioDiscovery.h"
 #include "core/audio/VirtualCableDetector.h"
@@ -175,6 +180,7 @@
 #include "gui/multidevice/ReplaceDeviceDialog.h"
 #include "gui/multidevice/TakeReceiverDialog.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
+#include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -3528,9 +3534,20 @@ void sceneDialWindow(SceneContext& ctx, const QString& name, HeaderMode header,
     annotateSlices(ctx);
 }
 
-void sceneDialTwoBand(SceneContext& ctx)
+// Variant B of the wide-container look: SMeterWidget's test-only plate
+// limit, for every dial in the scene (the Main Panel's and the copies).
+void limitDialPlates(SceneContext& ctx)
 {
-    const QString name = QStringLiteral("dial-addable--two-band");
+    SMeterWidget::setPlateLimitForTest(true);
+    ctx.notes.append(QStringLiteral("SMeterWidget::setPlateLimitForTest(true): plate at most %1 x its height, centred")
+                         .arg(SMeterWidget::kPlateMaxAspect));
+}
+
+void sceneDialTwoBand(SceneContext& ctx, const QString& name, bool plateB)
+{
+    if (plateB) {
+        limitDialPlates(ctx);
+    }
     sceneProfile(ctx, name, SceneProfile::Dx, [](SceneContext& c) {
         feedDials(c);
         c.extraCrops = addStripAndDialCrops;
@@ -3567,9 +3584,12 @@ void sceneDialNarrow(SceneContext& ctx)
 }
 
 // Dials for RX A and RX B on top while slice A transmits (display-only).
-void sceneDialTx(SceneContext& ctx)
+void sceneDialTx(SceneContext& ctx, const QString& name, bool plateB)
 {
-    sceneDialWindow(ctx, QStringLiteral("dial-addable--tx"), HeaderMode::Always,
+    if (plateB) {
+        limitDialPlates(ctx);
+    }
+    sceneDialWindow(ctx, name, HeaderMode::Always,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
@@ -3581,6 +3601,102 @@ void sceneDialTx(SceneContext& ctx)
     }, poseTxBeforeFreeze, [](SceneContext& c) {
         poseTxAfterFeed(c);
         feedDialsTx(c);
+    });
+}
+
+// A Power Genius XL status report as RadioModel takes it from the amp's
+// connection (RadioModel::onPgxlStatus), with no device and no connection:
+// display-only. The radio is not keyed (MoxController stays on receive).
+void reportPgxlStatus(SceneContext& c, const QMap<QString, QString>& kvs)
+{
+    using StatusMap = QMap<QString, QString>;
+    if (!QMetaObject::invokeMethod(c.model, "onPgxlStatus", Qt::DirectConnection,
+                                   Q_ARG(StatusMap, kvs))) {
+        c.failure = QStringLiteral("RadioModel::onPgxlStatus not reachable");
+        return;
+    }
+    QStringList pairs;
+    for (auto it = kvs.cbegin(); it != kvs.cend(); ++it) {
+        pairs.append(it.key() + QLatin1Char('=') + it.value());
+    }
+    c.notes.append(QStringLiteral("RadioModel::onPgxlStatus(%1) (no device)").arg(pairs.join(QLatin1Char(' '))));
+}
+
+// The power the amp scene's Power Genius XL reports: 1200 W (60.79 dBm),
+// return loss 20 dB (SWR 1.22).
+constexpr auto kAmpPeakFwdDbm = "60.7918";
+constexpr auto kAmpReturnLossDb = "-20";
+
+// A dial for RX A while slice A transmits through a Power Genius XL in
+// OPERATE (display-only): the copy on the amplifier's 2 kW scale with its
+// watts, as the Main Panel's dial.
+void sceneDialAmp(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--amp"), HeaderMode::Always,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Right);
+        const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal A"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(1)}}), 1));
+        d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+    }, poseTxBeforeFreeze, [](SceneContext& c) {
+        poseTxAfterFeed(c);
+        feedDialsTx(c);
+        // The amp reports after the radio's own 85 W, as it does on air.
+        reportPgxlStatus(c, {{QStringLiteral("state"), QStringLiteral("OPERATE")},
+                             {QStringLiteral("peakfwd"), QString::fromLatin1(kAmpPeakFwdDbm)},
+                             {QStringLiteral("swr"), QString::fromLatin1(kAmpReturnLossDb)}});
+        for (SMeterWidget* dial : dialCopies(c)) {
+            c.notes.append(QStringLiteral("dial copy %1: 2 kW scale %2, TX value %3 W")
+                               .arg(dial->property("containerEntryId").toString())
+                               .arg(dial->txScaleIs2kWForTesting() ? QStringLiteral("on") : QStringLiteral("off"))
+                               .arg(dial->testTxValue(), 0, 'f', 0));
+        }
+    });
+}
+
+// Two dials side by side: "Setup face" has no face of its own and follows
+// Setup's Meter Styles face, set to Blackface the way the page sets it (the
+// page writes SMeter_FaceStyle; MainWindow::wireSetupDialog passes it to the
+// Main Panel's dial); "Own face" has VU Amber picked from its own menu.
+void sceneDialFace(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--face"), HeaderMode::Always,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Right);
+        const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+        const QJsonObject own{{QLatin1String(SMeterDialContent::kFaceKey),
+                               SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::VuAmber)}};
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Setup face"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(1)}}), 1));
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Own face"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(2), own}}), 2));
+        d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+    }, {}, [](SceneContext& c) {
+        MeterStylesPage page(c.model);
+        auto* combo = page.findChild<QComboBox*>(QStringLiteral("sMeterFaceCombo"));
+        SMeterWidget* mainPanelDial = nullptr;
+        for (SMeterWidget* meter : allMeters(c)) {
+            if (meter->settingsStore() == SMeterWidget::SettingsStore::Global) {
+                mainPanelDial = meter;
+            }
+        }
+        if (combo == nullptr || mainPanelDial == nullptr) {
+            c.failure = QStringLiteral("no Meter Styles face combo or no Main Panel dial");
+            return;
+        }
+        QObject::connect(&page, &MeterStylesPage::sMeterFaceChanged, mainPanelDial, [mainPanelDial](int face) {
+            mainPanelDial->setFaceStyle(static_cast<SMeterWidget::FaceStyle>(face));
+        });
+        combo->setCurrentIndex(combo->findData(static_cast<int>(SMeterWidget::FaceStyle::Blackface)));
+        c.notes.append(QStringLiteral("Setup > Appearance > Meter Styles: Face %1 (SMeter_FaceStyle=%2)")
+                           .arg(combo->currentText(), AppSettings::instance().value(QStringLiteral("SMeter_FaceStyle")).toString()));
+        for (SMeterWidget* dial : dialCopies(c)) {
+            c.notes.append(QStringLiteral("dial copy %1: face %2, follows Setup %3")
+                               .arg(dial->property("containerEntryId").toString(),
+                                    SMeterWidget::faceStyleLabel(dial->faceStyle()),
+                                    dial->followsSetupFace() ? QStringLiteral("yes") : QStringLiteral("no")));
+        }
     });
 }
 
@@ -5143,13 +5259,25 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
     // ---- added SIGNAL STRENGTH dial copies (switch on) ----
     scenes.append({QStringLiteral("dial-addable--two-band"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTwoBand(ctx); }, true});
+                   [](SceneContext& ctx) { sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band"), false); },
+                   true});
+    scenes.append({QStringLiteral("dial-addable--two-band--plate-b"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+                       sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band--plate-b"), true);
+                   }, true});
     scenes.append({QStringLiteral("dial-addable--mixed"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialMixed(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--narrow"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialNarrow(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--tx"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTx(ctx); }, true});
+                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx"), false); }, true});
+    scenes.append({QStringLiteral("dial-addable--tx--plate-b"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx--plate-b"), true); },
+                   true});
+    scenes.append({QStringLiteral("dial-addable--amp"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialAmp(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--face"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialFace(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--closed"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialClosed(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--add-content"), QStringLiteral("2v"), false,
