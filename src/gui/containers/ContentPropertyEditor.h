@@ -21,6 +21,8 @@ signals:
     void entryEdited(const ContentEntry& entry);
 private:
     QWidget* control(const QString& key, const QJsonValue& value, int channel=-1);
+    // Workspace preview: a control for a declared ContentProperty.
+    QWidget* declaredControl(const ContentProperty& property, QWidget* parent);
     void captureRenderer();
     void publish();
     QJsonValue effectiveProperty(const QString& key, int channel) const;

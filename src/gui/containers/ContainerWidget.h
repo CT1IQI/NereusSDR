@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header source chip opens the
+//                 source menu (slices A to D, Active slice) and emits
+//                 sourceRequested. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -169,6 +173,7 @@ mw0lge@grange-lane.co.uk
 #include <QColor>
 #include <QString>
 #include <cstdint>
+#include <functional>
 
 class QLabel;
 class QPushButton;
@@ -289,6 +294,18 @@ public:
     // its entry's name) and its source chip ("RX A"); empty hides the chip.
     void setWorkspaceTitle(const QString& title);
     void setWorkspaceSource(const QString& text, const QColor& colour);
+    // The source menu the chip opens: slices A to D (a slice that does not
+    // exist is disabled, not hidden) and Active slice. A choice emits
+    // sourceRequested; the manager commits it as Container Settings does.
+    // kActiveSliceSource is the Active slice choice (follow the selected
+    // receiver); 1..4 are slices A to D.
+    static constexpr int kActiveSliceSource = 0;
+    // Whether a slice id (0 for A) exists; unset, every slice counts.
+    void setSliceAvailability(std::function<bool(int sliceId)> available);
+    // The saved choice the menu checks: Active slice, or rxSource().
+    void setFollowsSelectedRx(bool follows) { m_followsSelectedRx = follows; }
+    bool followsSelectedRx() const { return m_followsSelectedRx; }
+    void populateSourceMenu(QMenu& menu);
     WorkspaceGroupHeader* workspaceHeader() const { return m_groupHeader; }
     QWidget* contentHolder() const { return m_contentHolder; }
     // Workspace preview: the strip a panel-docked container sits in, and
@@ -357,6 +374,8 @@ signals:
     // Workspace preview: the options menu's Lock and Arrange workspace.
     void lockRequested(bool locked);
     void arrangeWorkspaceRequested(bool active);
+    // Workspace preview: a source menu choice, kActiveSliceSource or 1..4.
+    void sourceRequested(int rxSource);
     // Workspace preview: the options menu's Move to Edge and Place Free,
     // and a panel-docked header drag (global pointer positions). Only a
     // release on a valid destination commits; Escape cancels.
@@ -417,6 +436,7 @@ private:
     void setHeaderRevealed(bool revealed, bool animate);
     bool headerHasFocus() const;
     void showWorkspaceOptions();
+    void showSourceMenu();
     void populateWorkspaceMenu(QMenu& menu);
     void buildUI();
     void updateTitleBar();
@@ -512,6 +532,8 @@ private:
     bool m_revealHeld{false};
     bool m_keyboardFocus{false};
     bool m_workspaceMenuOpen{false};
+    bool m_followsSelectedRx{false};
+    std::function<bool(int)> m_sliceAvailable;
     Qt::Orientations m_resizeAxes{Qt::Horizontal | Qt::Vertical};
     DockEdge m_dockEdge{DockEdge::Right};
     int m_gridPx{0};

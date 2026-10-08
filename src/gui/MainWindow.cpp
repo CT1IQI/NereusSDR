@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the container source menu's slice
+//                 availability comes from the RadioModel. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: legacy container adoption checks
 //                 the store's own key (ContainerWorkspacePreview with the
 //                 switch on). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -7368,6 +7371,11 @@ void MainWindow::buildUI()
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the header source menu enables the open slices.
+        m_containerManager->setSliceAvailability(
+            [this](int sliceId) { return m_radioModel && m_radioModel->sliceById(sliceId) != nullptr; });
+    }
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {

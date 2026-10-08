@@ -15,9 +15,20 @@
 //   2026-10-08 - previewNeedleIsInertAndSeeded and
 //                 registrationReplayReachesOnlyTheNewWidget. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - editorShowsDeclaredProperties,
+//                 compactAndLabelReachTheWidgets and
+//                 sourceMenuCommitsTheContainerSource. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QMenu>
+#include <QSignalSpy>
+#include <QStandardItemModel>
+#include <QTimer>
 #include <QLabel>
 #include <QLayout>
 #include <QLoggingCategory>
@@ -30,7 +41,10 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerPreviewWidget.h"
+#include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContentPropertyEditor.h"
+#include "gui/containers/WorkspaceHeader.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
 #include "gui/instruments/InstrumentFooter.h"
@@ -766,6 +780,212 @@ private slots:
         QVERIFY(seeded->hasValue());
         QCOMPARE(seeded->peakHold().value(), -81.0);
         QCOMPARE(shared.count(), 0);
+    }
+
+    void editorShowsDeclaredProperties()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        ContentPropertyEditor editor(registry);
+        QSignalSpy edited(&editor, &ContentPropertyEditor::entryEdited);
+
+        // Needle: the reading bindings ReadingSource offers; the two with no
+        // NereusSDR producer are listed but disabled.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType)));
+        auto* binding = editor.findChild<QComboBox*>(QStringLiteral("property_binding"));
+        QVERIFY(binding);
+        QCOMPARE(binding->currentData().toInt(), int(MeterBinding::SignalPeak));
+        QVERIFY(binding->isEnabled());
+        auto* model = qobject_cast<QStandardItemModel*>(binding->model());
+        QVERIFY(model);
+        for (int id : {9, 10}) {
+            const int row = binding->findData(id);
+            QVERIFY(row >= 0);
+            QVERIFY(!model->item(row)->isEnabled());
+        }
+        QVERIFY(model->item(binding->findData(int(MeterBinding::TxSwr)))->isEnabled());
+        auto* secondary = editor.findChild<QComboBox*>(QStringLiteral("property_secondaryBinding"));
+        QVERIFY(secondary);
+        QVERIFY(secondary->currentData().isNull());
+        for (const QLabel* l : editor.findChildren<QLabel*>()) {
+            QVERIFY(!l->text().startsWith(QStringLiteral("Unsupported configuration")));
+        }
+        binding->setCurrentIndex(binding->findData(int(MeterBinding::TxSwr)));
+        QCOMPARE(edited.size(), 1);
+        auto entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kBindingKey)).toInt(),
+                 int(MeterBinding::TxSwr));
+
+        // Frequency form.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyType)));
+        auto* form = editor.findChild<QComboBox*>(QStringLiteral("property_form"));
+        QVERIFY(form);
+        QCOMPARE(form->currentData().toString(), QStringLiteral("numberOnly"));
+        QCOMPARE(form->count(), 3);
+        edited.clear();
+        form->setCurrentIndex(form->findData(QStringLiteral("bandStrip")));
+        QCOMPARE(edited.size(), 1);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kFormKey)).toString(),
+                 QStringLiteral("bandStrip"));
+
+        // Bar compact, on by default.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType)));
+        auto* compact = editor.findChild<QCheckBox*>(QStringLiteral("property_compact"));
+        QVERIFY(compact);
+        QVERIFY(compact->isChecked());
+        edited.clear();
+        compact->setChecked(false);
+        QCOMPARE(edited.size(), 1);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kCompactKey)), QJsonValue(false));
+
+        // Filter label; empty removes the key.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kFilterType)));
+        auto* label = editor.findChild<QLineEdit*>(QStringLiteral("property_label"));
+        QVERIFY(label);
+        QVERIFY(label->text().isEmpty());
+        edited.clear();
+        label->setText(QStringLiteral("Main"));
+        emit label->editingFinished();
+        QCOMPARE(edited.size(), 1);
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QCOMPARE(entry.config.value(QString::fromLatin1(LongpathContent::kLabelKey)).toString(), QStringLiteral("Main"));
+        label->clear();
+        emit label->editingFinished();
+        entry = edited.takeLast().at(0).value<ContentEntry>();
+        QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kLabelKey)));
+    }
+
+    void compactAndLabelReachTheWidgets()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        QWidget parent;
+        ContentEntry barEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        barEntry.config.insert(QString::fromLatin1(LongpathContent::kCompactKey), false);
+        std::unique_ptr<QWidget> bar(registry.createWidget(barEntry, &parent));
+        QVERIFY(qobject_cast<BarInstrument*>(bar.get()));
+        QVERIFY(!qobject_cast<BarInstrument*>(bar.get())->isCompact());
+
+        ContentEntry filterEntry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFilterType));
+        filterEntry.config.insert(QString::fromLatin1(LongpathContent::kLabelKey), QStringLiteral("Main"));
+        std::unique_ptr<QWidget> pane(registry.createWidget(filterEntry, &parent));
+        settle();
+        QVERIFY(qobject_cast<BandwidthFilterPane*>(pane.get()));
+        QCOMPARE(qobject_cast<BandwidthFilterPane*>(pane.get())->label(), QStringLiteral("Main"));
+    }
+
+    void sourceMenuCommitsTheContainerSource()
+    {
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, {});
+        QTemporaryDir directory;
+        AppSettings settings{directory.filePath("source.xml")};
+        ContainerWorkspaceStore store{settings};
+        QWidget dock;
+        dock.resize(900, 900);
+        QSplitter splitter;
+        ContainerManager manager{&dock, &splitter};
+        manager.setWorkspaceAdapter(&store, &registry);
+        // Slices A and B are open.
+        manager.setSliceAvailability([](int sliceId) { return sliceId >= 0 && sliceId < 2; });
+        ContainerDocument c;
+        c.id = QStringLiteral("meters");
+        c.name = QStringLiteral("Meters");
+        c.layout = ContentLayout::VerticalStack;
+        c.dockMode = DockMode::OverlayDocked;
+        c.geometry = QRect(10, 10, 380, 300);
+        c.config.insert(QStringLiteral("rxSource"), 1);
+        ContentEntry needle = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        needle.id = QStringLiteral("meters-needle");
+        c.contents = {needle};
+        WorkspaceDocument document;
+        document.containers.append(c);
+        document.mainContainerId = c.id;
+        QVERIFY(manager.commitWorkspace(document, 0).status == CommitStatus::Saved);
+        settle();
+        ContainerWidget* widget = manager.container(c.id);
+        QVERIFY(widget && widget->workspaceHeader());
+        QCOMPARE(widget->workspaceHeader()->sourceText(), QStringLiteral("RX A"));
+
+        const auto config = [&store] { return store.snapshot().containers.constFirst().config; };
+        const auto menuActions = [widget] {
+            auto menu = std::make_unique<QMenu>();
+            widget->populateSourceMenu(*menu);
+            QList<QAction*> actions;
+            for (QAction* a : menu->actions()) {
+                if (!a->isSeparator()) { actions.append(a); }
+            }
+            return std::make_pair(std::move(menu), actions);
+        };
+        {
+            auto [menu, actions] = menuActions();
+            QCOMPARE(actions.size(), 5);
+            QStringList texts;
+            for (QAction* a : actions) { texts.append(a->text()); }
+            QCOMPARE(texts, (QStringList{QStringLiteral("RX A"), QStringLiteral("RX B"), QStringLiteral("RX C"),
+                                         QStringLiteral("RX D"), QStringLiteral("Active slice")}));
+            QVERIFY(actions.at(0)->isEnabled() && actions.at(0)->isChecked());
+            QVERIFY(actions.at(1)->isEnabled() && !actions.at(1)->isChecked());
+            // Slices that do not exist are disabled, not hidden.
+            QVERIFY(!actions.at(2)->isEnabled());
+            QVERIFY(!actions.at(3)->isEnabled());
+            QVERIFY(actions.at(4)->isEnabled() && !actions.at(4)->isChecked());
+            actions.at(1)->trigger();
+        }
+        settle();
+        QCOMPARE(config().value("rxSource").toInt(), 2);
+        QVERIFY(!config().contains("rxSourceMode"));
+        QCOMPARE(widget->workspaceHeader()->sourceText(), QStringLiteral("RX B"));
+
+        // Active slice follows the selected receiver and keeps the slice.
+        {
+            auto [menu, actions] = menuActions();
+            QVERIFY(actions.at(1)->isChecked());
+            actions.at(4)->trigger();
+        }
+        settle();
+        QCOMPARE(config().value("rxSourceMode").toString(), QStringLiteral("followSelectedRx"));
+        QCOMPARE(config().value("rxSource").toInt(), 2);
+        QCOMPARE(widget->workspaceHeader()->sourceText(), QStringLiteral("Active"));
+        {
+            auto [menu, actions] = menuActions();
+            QVERIFY(actions.at(4)->isChecked());
+            QVERIFY(!actions.at(1)->isChecked());
+            actions.at(0)->trigger();
+        }
+        settle();
+        QVERIFY(!config().contains("rxSourceMode"));
+        QCOMPARE(config().value("rxSource").toInt(), 1);
+        QCOMPARE(widget->workspaceHeader()->sourceText(), QStringLiteral("RX A"));
+
+        // A saved sliceId keeps its key, as Container Settings writes it.
+        QVERIFY(manager.commitContainerSource(c.id, 2));
+        WorkspaceDocument withSliceId = store.snapshot();
+        withSliceId.containers.first().config.remove("rxSource");
+        withSliceId.containers.first().config.insert("sliceId", 0);
+        QVERIFY(manager.commitWorkspace(withSliceId, withSliceId.revision).status == CommitStatus::Saved);
+        QVERIFY(manager.commitContainerSource(c.id, 2));
+        QCOMPARE(config().value("sliceId").toInt(), 1);
+        QVERIFY(!config().contains("rxSource"));
+
+        // A click on the chip opens the menu.
+        dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dock));
+        widget->setHeaderRevealedForPreview(true);
+        settle();
+        WorkspaceSourceChip* chip = widget->workspaceHeader()->sourceChip();
+        QVERIFY(chip && chip->isVisible());
+        QStringList shown;
+        QTimer::singleShot(0, [&shown] {
+            if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+                for (QAction* a : menu->actions()) { shown.append(a->text()); }
+                menu->close();
+            }
+        });
+        QTest::mouseClick(chip, Qt::LeftButton);
+        QVERIFY(shown.contains(QStringLiteral("Active slice")));
     }
 
     void traceFromRenderedTakesBucketMaxima()

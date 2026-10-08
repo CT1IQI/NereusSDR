@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original read-only source routing; no DSP reads.
 // Modification history (NereusSDR):
+//   2026-10-08 - writeContainerSource: the container source write shared by
+//                 Container Settings and the workspace header's source menu.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -14,6 +17,11 @@ namespace NereusSDR {
 bool ContainerSourceAdapter::followsSelectedRx(const QJsonObject& context)
 {
     return context.value("rxSourceMode").toString() == QStringLiteral("followSelectedRx");
+}
+void ContainerSourceAdapter::writeContainerSource(QJsonObject& config, int rxSource)
+{
+    if (config.contains("sliceId")) { config["sliceId"] = rxSource - 1; }
+    else { config["rxSource"] = rxSource; }
 }
 SliceModel* ContainerSourceAdapter::slice(RadioModel* model, const QJsonObject& context, SliceModel* inherited, const QString& currentSessionId)
 {

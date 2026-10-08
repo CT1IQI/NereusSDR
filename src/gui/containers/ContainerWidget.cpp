@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header source chip opens the
+//                 source menu (slices A to D, Active slice) and emits
+//                 sourceRequested. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -386,6 +390,8 @@ void ContainerWidget::buildWorkspaceHeader()
     });
     connect(m_groupHeader, &WorkspaceGroupHeader::optionsClicked, this,
             &ContainerWidget::showWorkspaceOptions);
+    connect(m_groupHeader, &WorkspaceGroupHeader::sourceClicked, this,
+            &ContainerWidget::showSourceMenu);
 
     m_headerOpacity = new QGraphicsOpacityEffect(m_groupHeader);
     m_headerOpacity->setOpacity(kRevealOpacity);
@@ -669,6 +675,45 @@ void ContainerWidget::showWorkspaceOptions()
     m_workspaceMenuOpen = true;
     QPushButton* button = m_groupHeader->optionsButton();
     menu.exec(button->mapToGlobal(QPoint(0, button->height())));
+    m_workspaceMenuOpen = false;
+    trackRevealBand(QCursor::pos());
+}
+
+void ContainerWidget::setSliceAvailability(std::function<bool(int sliceId)> available)
+{
+    m_sliceAvailable = std::move(available);
+}
+
+void ContainerWidget::populateSourceMenu(QMenu& menu)
+{
+    menu.setToolTipsVisible(true);
+    for (int rx = kFirstRxSource; rx <= kLastRxSource; ++rx) {
+        const QChar letter(QLatin1Char(static_cast<char>('A' + rx - 1)));
+        auto* action = menu.addAction(tr("RX %1").arg(letter), this,
+                                      [this, rx] { emit sourceRequested(rx); });
+        action->setCheckable(true);
+        action->setChecked(!m_followsSelectedRx && m_rxSource == rx);
+        const bool exists = !m_sliceAvailable || m_sliceAvailable(sliceIdForRxSource(rx));
+        action->setEnabled(exists);
+        if (!exists) {
+            action->setToolTip(tr("Slice %1 is not open").arg(letter));
+        }
+    }
+    menu.addSeparator();
+    auto* active = menu.addAction(tr("Active slice"), this,
+                                  [this] { emit sourceRequested(kActiveSliceSource); });
+    active->setCheckable(true);
+    active->setChecked(m_followsSelectedRx);
+    active->setToolTip(tr("Follow the selected slice"));
+}
+
+void ContainerWidget::showSourceMenu()
+{
+    QMenu menu(this);
+    populateSourceMenu(menu);
+    m_workspaceMenuOpen = true;
+    QWidget* chip = m_groupHeader->sourceChip();
+    menu.exec(chip->mapToGlobal(QPoint(0, chip->height())));
     m_workspaceMenuOpen = false;
     trackRevealBand(QCursor::pos());
 }

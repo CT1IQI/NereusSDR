@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - The container Slice combo writes through
+//                 ContainerSourceAdapter::writeContainerSource, shared with
+//                 the workspace header's source menu. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Separate compact object actions within their editor panes by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Reset Qt 6.11 Cocoa popup accessibility cache before
@@ -137,6 +141,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
 #include "ContainerContentHost.h"
+#include "ContainerSourceAdapter.h"
 #include "ContainerWorkspaceStore.h"
 #include "MmioEndpointsDialog.h"
 
@@ -2163,8 +2168,8 @@ void ContainerSettingsDialog::saveCurrentDraft()
             d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);
             const int source=d.config.contains("sliceId") ? d.config.value("sliceId").toInt()+1 : d.config.value("rxSource").toInt(1);
             if (m_rxSourceCombo->currentData().toInt()!=source) {
-                if(d.config.contains("sliceId")) { d.config["sliceId"]=m_rxSourceCombo->currentData().toInt()-1; }
-                else { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
+                // The workspace header's source menu writes through the same call.
+                ContainerSourceAdapter::writeContainerSource(d.config,m_rxSourceCombo->currentData().toInt());
             }
             setBool("highlight",m_highlightCheck->isChecked());
             setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);

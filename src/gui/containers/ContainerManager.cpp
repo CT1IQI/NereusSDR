@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header source menu commits the
+//                 container source as Container Settings does (and Active
+//                 slice as rxSourceMode followSelectedRx); a following
+//                 container's chip reads Active. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview review fixes: profile strips drop
 //                 carried thickness and extents, stale edge drags end,
 //                 hidden-strip extents prune deleted ids, Move/Resize honour
@@ -117,6 +122,9 @@ mw0lge@grange-lane.co.uk
 #include "gui/styles/WorkspacePreview.h"
 #include "EdgeDockStrip.h"
 #include "WorkspaceHeader.h"
+#include "ContainerSourceAdapter.h"
+#include "gui/styles/WorkspacePalette.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include <algorithm>
 
 namespace NereusSDR {
@@ -417,6 +425,13 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 commitWorkspace(draft, draft.revision);
             });
             connect(c, &ContainerWidget::arrangeWorkspaceRequested, this, &ContainerManager::setArrangeMode);
+            // Workspace preview: the header's source menu. The same config
+            // write as Container Settings' Slice combo, committed as a draft;
+            // nothing tunes.
+            c->setSliceAvailability(m_sliceAvailable);
+            connect(c, &ContainerWidget::sourceRequested, this, [this, id = d.id](int rxSource) {
+                commitContainerSource(id, rxSource);
+            });
             // Workspace preview: edges, free placement and the edge drag.
             connect(c, &ContainerWidget::moveToEdgeRequested, this,
                     [this, id = d.id](DockEdge edge) { moveContainerToEdge(id, edge); });
@@ -1014,8 +1029,43 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
             colour = QColor::fromRgb(ControlRanges::sliceColour(slice));
         }
     }
+    // Workspace preview: a following container's chip reads Active, so the
+    // source menu stays reachable.
+    const bool follows = d.config.value("rxSourceMode").toString() == QStringLiteral("followSelectedRx");
+    if (follows) {
+        source = tr("Active");
+        colour = QColor(Workspace::role("label-mid", Workspace::kLabelMid));
+    }
+    c->setFollowsSelectedRx(follows);
     c->setWorkspaceSource(source, colour);
     c->setArrangeActive(m_arrangeMode);
+}
+void ContainerManager::setSliceAvailability(std::function<bool(int sliceId)> available)
+{
+    m_sliceAvailable = std::move(available);
+    for (auto* c : std::as_const(m_containers)) {
+        c->setSliceAvailability(m_sliceAvailable);
+    }
+}
+bool ContainerManager::commitContainerSource(const QString& id, int rxSource)
+{
+    if (!m_store || m_reconciling) {
+        return false;
+    }
+    WorkspaceDocument draft = m_store->snapshot();
+    for (auto& d : draft.containers) {
+        if (d.id != id) {
+            continue;
+        }
+        if (rxSource == ContainerWidget::kActiveSliceSource) {
+            d.config["rxSourceMode"] = QStringLiteral("followSelectedRx");
+        } else {
+            d.config.remove("rxSourceMode");
+            ContainerSourceAdapter::writeContainerSource(d.config, rxSource);
+        }
+        return commitWorkspace(draft, draft.revision).status == CommitStatus::Saved;
+    }
+    return false;
 }
 bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
 {

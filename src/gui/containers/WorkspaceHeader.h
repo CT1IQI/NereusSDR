@@ -43,6 +43,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The source chip is a click target: it opens the source
+//                 menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include <QColor>
@@ -55,7 +58,8 @@ class QPushButton;
 namespace NereusSDR {
 
 // The source chip ("RX A") in a group header: mono text in the slice
-// colour on a dark chip with a slice-coloured border.
+// colour on a dark chip with a slice-coloured border. A click on it opens
+// the source menu, so it accepts its own presses like the header buttons.
 class WorkspaceSourceChip final : public QWidget {
     Q_OBJECT
 public:
@@ -63,11 +67,16 @@ public:
     void setSource(const QString& text, const QColor& colour);
     QString text() const { return m_text; }
     QSize sizeHint() const override;
+signals:
+    void clicked();
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 private:
     QString m_text;
     QColor m_colour;
+    bool m_pressed{false};
 };
 
 // A small padlock, drawn so it takes the header's glyph colour.
@@ -90,9 +99,9 @@ protected:
 };
 
 // A container's group header. Dragging the header (its stripe, grab
-// handle, title, chip or empty area) moves the container; the owner
-// installs an event filter on the header for that. The buttons accept
-// their own presses, so a press on a button never reaches the filter.
+// handle, title or empty area) moves the container; the owner installs an
+// event filter on the header for that. The buttons and the source chip
+// accept their own presses, so a press on them never reaches the filter.
 class WorkspaceGroupHeader final : public QWidget {
     Q_OBJECT
 public:
@@ -115,10 +124,12 @@ public:
     QWidget* grip() const;
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
+    WorkspaceSourceChip* sourceChip() const { return m_chip; }
 
 signals:
     void popOutClicked();
     void optionsClicked();
+    void sourceClicked();
 
 private:
     void applyStyle();

@@ -33,6 +33,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The source chip is a click target: it opens the source
+//                 menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -43,6 +46,7 @@
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
@@ -123,7 +127,26 @@ WorkspaceSourceChip::WorkspaceSourceChip(QWidget* parent) : QWidget(parent)
 {
     setFont(Workspace::monoFont(font(), Workspace::kFontCaption));
     setFixedHeight(kChipHeight);
+    setCursor(Qt::PointingHandCursor);
+    setToolTip(tr("Source"));
     hide();
+}
+
+void WorkspaceSourceChip::mousePressEvent(QMouseEvent* event)
+{
+    m_pressed = event->button() == Qt::LeftButton;
+    event->accept();
+}
+
+void WorkspaceSourceChip::mouseReleaseEvent(QMouseEvent* event)
+{
+    const bool click = m_pressed && event->button() == Qt::LeftButton
+                       && rect().contains(event->position().toPoint());
+    m_pressed = false;
+    event->accept();
+    if (click) {
+        emit clicked();
+    }
 }
 
 void WorkspaceSourceChip::setSource(const QString& text, const QColor& colour)
@@ -253,6 +276,7 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
     row->addWidget(m_title);
 
     m_chip = new WorkspaceSourceChip(this);
+    connect(m_chip, &WorkspaceSourceChip::clicked, this, &WorkspaceGroupHeader::sourceClicked);
     row->addWidget(m_chip);
 
     m_lock = new WorkspaceLockGlyph(this);

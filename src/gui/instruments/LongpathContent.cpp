@@ -56,6 +56,11 @@
 //                 readings and the slice. A needle or bar's registration
 //                 replay reaches that widget alone.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The four types declare their editable properties for the
+//                 Container Settings property editor (readings, frequency
+//                 form, bar compact, filter label); the bar's compact form
+//                 and the filter pane's label come from the entry config.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/LongpathContent.h"
@@ -247,6 +252,73 @@ void registerReadings(MeterPoller* poller, QWidget* widget, const QJsonObject& c
     poller->addReadingConsumer(widget, context, bindings, replay);
 }
 
+// The readings a needle or bar can show (those with a scale), for the
+// property editor; one NereusSDR has no producer for is listed, disabled.
+QVector<ContentPropertyChoice> readingChoices(bool withNone)
+{
+    QVector<ContentPropertyChoice> out;
+    if (withNone) {
+        out.append({QObject::tr("None"), QJsonValue(QJsonValue::Null), true, {}});
+    }
+    for (const ReadingDescriptor* d : readingsWithScale()) {
+        out.append({d->label, d->bindingId, d->available,
+                    d->available ? QString() : QObject::tr("NereusSDR has no source for this reading yet")});
+    }
+    return out;
+}
+
+QVector<ContentProperty> meterProperties(const QString& typeId)
+{
+    ContentProperty primary;
+    primary.key = QLatin1String(kBindingKey);
+    primary.label = QObject::tr("Reading");
+    primary.kind = ContentProperty::Kind::Reading;
+    primary.choices = readingChoices(false);
+    primary.effectiveDefault = [typeId](const QJsonObject& config) -> QJsonValue {
+        return primaryBinding(typeId, config);
+    };
+    ContentProperty secondary;
+    secondary.key = QLatin1String(kSecondaryKey);
+    secondary.label = typeId == QLatin1String(kBarType) ? QObject::tr("Second reading (second trough)")
+                                                         : QObject::tr("Second reading (second pointer)");
+    secondary.kind = ContentProperty::Kind::Reading;
+    secondary.choices = readingChoices(true);
+    secondary.defaultValue = QJsonValue(QJsonValue::Null);
+    QVector<ContentProperty> out{primary, secondary};
+    if (typeId == QLatin1String(kBarType)) {
+        ContentProperty compact;
+        compact.key = QLatin1String(kCompactKey);
+        compact.label = QObject::tr("Compact (no footer)");
+        compact.kind = ContentProperty::Kind::Toggle;
+        compact.defaultValue = true;
+        out.append(compact);
+    }
+    return out;
+}
+
+QVector<ContentProperty> frequencyProperties()
+{
+    ContentProperty form;
+    form.key = QLatin1String(kFormKey);
+    form.label = QObject::tr("Form");
+    form.kind = ContentProperty::Kind::Choice;
+    form.choices = {{QObject::tr("Number only"), QStringLiteral("numberOnly"), true, {}},
+                    {QObject::tr("Band strip"), QStringLiteral("bandStrip"), true, {}},
+                    {QObject::tr("Flat arc"), QStringLiteral("flatArc"), true, {}}};
+    form.defaultValue = QStringLiteral("numberOnly");
+    return {form};
+}
+
+QVector<ContentProperty> filterProperties()
+{
+    ContentProperty label;
+    label.key = QLatin1String(kLabelKey);
+    label.label = QObject::tr("Label");
+    label.kind = ContentProperty::Kind::Text;
+    label.placeholder = QObject::tr("The source slice, for example RX A");
+    return {label};
+}
+
 } // namespace
 
 int primaryBinding(const QString& typeId, const QJsonObject& config)
@@ -288,7 +360,8 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         {QLatin1String(kFrequencyType), QStringLiteral("Frequency (Longpath)"), false, true, {}},
         [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             return makeFrequency(entry, parent, sources, mode == ContentRenderMode::Preview);
-        });
+        },
+        frequencyProperties());
 
     const auto meterFactory = [sources](const ContentEntry& entry, QWidget* parent,
                                         ContentRenderMode mode) -> QWidget* {
@@ -305,7 +378,7 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         auto unavailable = std::make_shared<bool>(false);
         if (entry.typeId == QLatin1String(kBarType)) {
             auto owned = std::make_unique<BarInstrument>(parent);
-            owned->setCompact(true);
+            owned->setCompact(entry.config.value(QLatin1String(kCompactKey)).toBool(true));
             if (!owned->setPrimary(primary)) { return nullptr; }
             BarInstrument* bar = owned.release();
             if (secondary >= 0) { bar->setSecondary(secondary); }
@@ -377,9 +450,11 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         return widget;
     };
     registry.registerWidgetFactory(QLatin1String(kNeedleType),
-        {QLatin1String(kNeedleType), QStringLiteral("Needle meter (Longpath)"), false, true, {}}, meterFactory);
+        {QLatin1String(kNeedleType), QStringLiteral("Needle meter (Longpath)"), false, true, {}},
+        meterFactory, meterProperties(QLatin1String(kNeedleType)));
     registry.registerWidgetFactory(QLatin1String(kBarType),
-        {QLatin1String(kBarType), QStringLiteral("Bar meter (Longpath)"), false, true, {}}, meterFactory);
+        {QLatin1String(kBarType), QStringLiteral("Bar meter (Longpath)"), false, true, {}},
+        meterFactory, meterProperties(QLatin1String(kBarType)));
 
     registry.registerWidgetFactory(QLatin1String(kFilterType),
         {QLatin1String(kFilterType), QStringLiteral("Filter passband (Longpath)"), false, true, {}},
@@ -389,10 +464,11 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             auto slicePtr = std::make_shared<QPointer<SliceModel>>();
             const bool preview = mode == ContentRenderMode::Preview;
             SliceFollower* follower = preview ? nullptr : new SliceFollower(pane, sources, entry.context);
-            auto bind = [guard, follower, slicePtr](SliceModel* slice) {
+            const QString label = entry.config.value(QLatin1String(kLabelKey)).toString();
+            auto bind = [guard, follower, slicePtr, label](SliceModel* slice) {
                 if (!guard) { return; }
                 *slicePtr = slice;
-                guard->setLabel(sliceLabel(slice));
+                guard->setLabel(label.isEmpty() ? sliceLabel(slice) : label);
                 guard->setHasFrequency(slice != nullptr);
                 guard->setTrace({});
                 if (!slice) { return; }
@@ -487,7 +563,8 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             });
             timer->start();
             return pane;
-        });
+        },
+        filterProperties());
 }
 
 } // namespace NereusSDR::LongpathContent

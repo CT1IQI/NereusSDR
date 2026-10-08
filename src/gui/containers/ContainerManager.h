@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header source menu commits the
+//                 container source as Container Settings does (and Active
+//                 slice as rxSourceMode followSelectedRx); a following
+//                 container's chip reads Active. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview review fixes: edge drag mode
 //                 tracking. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -161,6 +166,16 @@ public:
     void showDropPreviewForTest(DockEdge edge, int index);
     void clearDropPreviewForTest();
 
+    // --- Workspace preview: the header source menu ---
+    // Whether a slice id exists, for the menu's enabled slices. MainWindow
+    // sets it from the RadioModel; unset, every slice counts.
+    void setSliceAvailability(std::function<bool(int sliceId)> available);
+    // Commits a container's source as Container Settings' Slice combo does:
+    // `rxSource` 1..4 is a fixed slice (A to D), and
+    // ContainerWidget::kActiveSliceSource follows the selected receiver.
+    // Returns true when the draft was saved.
+    bool commitContainerSource(const QString& id, int rxSource);
+
     // --- Container lifecycle ---
     ContainerWidget* createContainer(int rxSource, DockMode mode);
     void destroyContainer(const QString& id);
@@ -258,6 +273,7 @@ private:
     QPointer<MeterPoller> m_previewPoller;
     QPointer<ContainerWorkspaceStore> m_store;
     QPointer<ContainerContentRegistry> m_registry;
+    std::function<bool(int)> m_sliceAvailable;
     bool m_reconciling = false;
     bool m_transmitting = false;
     bool effectiveVisible(const ContainerDocument& document) const;

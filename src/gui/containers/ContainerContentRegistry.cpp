@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a widget factory registers its
+//                 declared properties (declaredProperties). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: createPreview passes the effective
 //                 context and the Preview render mode to widget factories.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -392,14 +395,15 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     item->setParent(parent);
     return item.release();
 }
-void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory)
+void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
+                                                     const QVector<ContentProperty>& properties)
 {
     if (typeId.isEmpty() || !factory) { return; }
     ContentDescriptor stored = descriptor;
     stored.typeId = typeId;
     stored.singleton = false;
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
-    m_widgetFactories.insert(typeId, {stored, std::move(factory)});
+    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties});
     ++m_generation;
     emit runtimeChanged();
 }
@@ -411,6 +415,11 @@ void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
     emit runtimeChanged();
 }
 bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
+QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QString& typeId) const
+{
+    const auto it = m_widgetFactories.constFind(typeId);
+    return it == m_widgetFactories.constEnd() ? QVector<ContentProperty>{} : it->properties;
+}
 QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent,
                                                 ContentRenderMode mode) const
 {

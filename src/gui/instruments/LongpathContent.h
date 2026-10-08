@@ -26,6 +26,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - kCompactKey and kLabelKey; declared editor properties.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -54,11 +56,16 @@ inline constexpr auto kFilterType    = "longpath.filter";
 // Entry config keys. "binding" / "secondaryBinding" are MeterBinding ids;
 // "direction" ("rx" or "tx") picks the needle default when "binding" is
 // absent; "form" ("numberOnly", "bandStrip", "flatArc") is the frequency
-// form.
+// form; "compact" (bool, default true) is the bar's footerless form;
+// "label" overrides the filter pane's slice label. Each type declares the
+// ones the Container Settings property editor offers
+// (ContentDescriptor::properties).
 inline constexpr auto kBindingKey   = "binding";
 inline constexpr auto kSecondaryKey = "secondaryBinding";
 inline constexpr auto kDirectionKey = "direction";
 inline constexpr auto kFormKey      = "form";
+inline constexpr auto kCompactKey   = "compact";
+inline constexpr auto kLabelKey     = "label";
 
 struct Sources {
     MeterPoller* poller = nullptr;

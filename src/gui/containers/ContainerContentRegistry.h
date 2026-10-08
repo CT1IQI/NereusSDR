@@ -1,6 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a widget type declares its
+//                 editable properties (ContentProperty) for the Container
+//                 Settings property editor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: widget factories take a render
 //                 mode, and createPreview passes the effective context and
 //                 ContentRenderMode::Preview. J.J. Boyd (KG4VCF), AI-assisted
@@ -12,11 +16,38 @@
 #include <QMetaType>
 #include <QPointer>
 #include <QHash>
+#include <QJsonValue>
+#include <QVector>
 #include <QWidget>
 #include <functional>
 namespace NereusSDR {
 class MeterItem;
 enum class ContentRenderMode { Live, Preview, Validation };
+// Workspace preview: one choice of a declared property.
+struct ContentPropertyChoice {
+    QString label;
+    QJsonValue value;           // Null: the key is removed from the config.
+    bool enabled = true;
+    QString disabledReason;
+};
+// Workspace preview: an editable property a per-instance widget type
+// declares, the counterpart of a MeterItem's editableFields() for content
+// that has no MeterItem. ContentPropertyEditor builds its controls from
+// these and writes the value to the entry's config under `key`; the edit
+// goes to the draft like every other property. A Reading is a choice of
+// reading binding and sits with the other bindings.
+struct ContentProperty {
+    enum class Kind { Reading, Choice, Toggle, Text };
+    QString key, label;
+    Kind kind = Kind::Choice;
+    QVector<ContentPropertyChoice> choices;
+    // The value shown when the config has no `key`.
+    QJsonValue defaultValue;
+    // When set, the value shown when the config has no `key`, from the
+    // rest of the config (a default that depends on another key).
+    std::function<QJsonValue(const QJsonObject& config)> effectiveDefault;
+    QString placeholder;        // Text: shown while the text is empty.
+};
 struct ContentDescriptor {
     QString typeId, title;
     bool singleton = false, available = false;
@@ -63,7 +94,11 @@ public:
     // cached readings for its context.
     using WidgetFactory = std::function<QWidget*(const ContentEntry& entry, QWidget* parent,
                                                  ContentRenderMode mode)>;
-    void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory);
+    // `properties`: the type's editable properties (workspace preview).
+    void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
+                               const QVector<ContentProperty>& properties = {});
+    // The properties a widget type declared; empty for every other type.
+    QVector<ContentProperty> declaredProperties(const QString& typeId) const;
     void unregisterWidgetFactory(const QString& typeId);
     bool hasWidgetFactory(const QString& typeId) const;
     QWidget* createWidget(const ContentEntry& entry, QWidget* parent,
@@ -80,7 +115,7 @@ private:
     QHash<QString, QMetaObject::Connection> m_destroyConnections;
     QHash<QString, QString> m_placements;
     QHash<QString, QString> m_unavailable;
-    struct WidgetFactoryRecord { ContentDescriptor descriptor; WidgetFactory factory; };
+    struct WidgetFactoryRecord { ContentDescriptor descriptor; WidgetFactory factory; QVector<ContentProperty> properties; };
     QHash<QString, WidgetFactoryRecord> m_widgetFactories;
     QStringList m_widgetFactoryOrder;
     QWidget* m_parking = nullptr;
