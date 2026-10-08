@@ -36,6 +36,9 @@
 //   2026-10-08 - Look variants only for dialog-* scenes (setup-look-*
 //                 are looks already). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The export-import scene runs on a fixed profile name, so
+//                 the settings path it shows is the same every run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -50,6 +53,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QScreen>
 #include <QStyle>
 #include <QStyleFactory>
@@ -196,6 +200,15 @@ void applyAppTheme(QApplication& app)
         applyWorkspacePalette(app);
     }
 }
+
+// ---- settings profile ------------------------------------------------------
+
+// The scene that shows the settings file path, and the fixed profile it runs
+// on (see main()).
+constexpr auto kFixedProfileScene = "dialog-setup-export-import";
+constexpr auto kFixedProfileName = "visual-preview-fixed";
+// Longer than one capture run of the scene; capture.py stops a run at 180 s.
+constexpr int kFixedProfileLockWaitMs = 170000;
 
 // ---- workspace look --------------------------------------------------------
 
@@ -593,7 +606,31 @@ int main(int argc, char** argv)
     OffScreenFilter offScreen;
     app.installEventFilter(&offScreen);
 
-    if (!Test::RemoteWindowHarness::useIsolatedProfile(QStringLiteral("visual-preview"))) {
+    // A scene that shows the settings path (Setup > Diagnostics > Export /
+    // Import) runs on a profile with a fixed name, so its text and layout do
+    // not change with the process id. One process at a time holds that name:
+    // the lock is taken before the profile is emptied and released after it
+    // is removed (declared before profileCleanup, so destroyed after it).
+    const bool fixedProfile = args.scene == QLatin1String(kFixedProfileScene);
+    const QString profileName = fixedProfile
+        ? QString::fromLatin1(kFixedProfileName)
+        : QStringLiteral("visual-preview-%1").arg(QCoreApplication::applicationPid());
+    std::unique_ptr<QLockFile> fixedProfileLock;
+    if (fixedProfile) {
+        const QDir profileDir = QFileInfo(AppSettings::resolveSettingsPath(profileName)).absoluteDir();
+        QDir parent = profileDir;
+        parent.cdUp();
+        parent.mkpath(QStringLiteral("."));
+        fixedProfileLock = std::make_unique<QLockFile>(
+            parent.filePath(QString::fromLatin1(kFixedProfileName) + QStringLiteral(".lock")));
+        fixedProfileLock->setStaleLockTime(0);
+        if (!fixedProfileLock->tryLock(kFixedProfileLockWaitMs)) {
+            std::fprintf(stderr, "nereus_visual_preview: another process holds the %s profile\n",
+                         kFixedProfileName);
+            return kExitUnsafeProfile;
+        }
+    }
+    if (!Test::RemoteWindowHarness::useNamedIsolatedProfile(profileName)) {
         std::fprintf(stderr, "nereus_visual_preview: the isolated profile is not active\n");
         return kExitUnsafeProfile;
     }
@@ -602,6 +639,7 @@ int main(int argc, char** argv)
     // file, then the profile's own folder (the DSP asset folders the app
     // creates in it), but only a folder named for this process.
     struct ProfileCleanup {
+        QString ownName;
         ~ProfileCleanup()
         {
             const QString settingsPath = AppSettings::instance().filePath();
@@ -609,13 +647,11 @@ int main(int argc, char** argv)
                 return;
             }
             QDir dir = QFileInfo(settingsPath).absoluteDir();
-            const QString ownName = QStringLiteral("visual-preview-%1")
-                                        .arg(QCoreApplication::applicationPid());
             if (dir.dirName() == ownName && dir.absolutePath().contains(QLatin1String("/.qttest/"))) {
                 dir.removeRecursively();
             }
         }
-    } profileCleanup;
+    } profileCleanup{profileName};
     QString why;
     if (!profileIsSafe(why)) {
         std::fprintf(stderr, "nereus_visual_preview: %s\n", qPrintable(why));

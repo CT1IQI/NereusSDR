@@ -58,6 +58,9 @@
 //   2026-10-08 - The edge values note the right strip's 0 px padding and
 //                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Setup page scenes centre the page's tree item, so the
+//                 tree scroll is the same every run. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -3813,6 +3816,11 @@ QVector<Scene> setupPageScenes(MainWindow* window)
                 return;
             }
             tree->setCurrentItem(item);
+            // setCurrentItem() scrolls the tree only as far as it must, from
+            // wherever a pending layout left it, so the offset varied by run.
+            // Settle, then centre the item: the same tree scroll every run.
+            pump(kFinalSettleMs);
+            tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
             ctx.notes.append(QStringLiteral("Setup page %1 / %2 (registry index %3)%4")
                                  .arg(category, label).arg(index)
                                  .arg(hidden ? QStringLiteral(", hidden in the tree") : QString()));
