@@ -38,6 +38,8 @@
 # Modification history (NereusSDR):
 #   2026-10-08 - Written for the workspace visual review. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - setup-look-* counterparts dropped (scenes removed).
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import datetime
@@ -160,10 +162,6 @@ def dialog_counterpart(cat, scene, profile):
     names = []
     if scene.startswith("look-"):
         names.append(scene[len("look-"):])
-    if scene.startswith("setup-look-"):
-        page = scene[len("setup-look-"):]
-        names.append("dialog-setup-" + page)
-        names.extend(sorted(n for n in base if n.startswith("dialog-setup-" + page)))
     for n in names:
         if n in base:
             return n

@@ -34,6 +34,9 @@
 #   2026-10-08 - Run-root review page: coverage sections, source maps,
 #                retained comparison, status table. J.J. Boyd (KG4VCF),
 #                AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - Integration: setup-look-* dropped (the Setup section uses
+#                look-dialog-setup-*), clean-spectrum-reveal placed.
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import datetime
@@ -309,7 +312,8 @@ SECTIONS = [
      ["profile-contest", "edge-all-four"], ["mixed-container"]),
     ("clean", "Clean spectrum workspace",
      "Minimal visible container chrome while retaining access to operating controls and arrangement.",
-     ["clean-spectrum", "edge-all-four-clean"], ["header-reveal-idle", "mixed-container-reveal", "profile-ft8"]),
+     ["clean-spectrum", "clean-spectrum-reveal", "edge-all-four-clean"],
+     ["header-reveal-idle", "mixed-container-reveal", "profile-ft8"]),
     ("cw-digital", "CW and digital arrangements",
      "Relevant PhoneCw, Cwx, Dvk, Digital, or other existing content selected from the inventory; label "
      "availability accurately.",
@@ -339,7 +343,7 @@ SECTIONS = [
       "profile-dx", "profile-ft8"], ["profile-contest"]),
     ("setup", "Setup and supporting screens",
      "Representative real setup and diagnostic screens, with sufficient coverage to judge theme consistency.",
-     ["setup-look-*", "look-dialog-pan-layout", "look-dialog-diversity", "look-dialog-setup-*"], []),
+     ["look-dialog-setup-*", "look-dialog-pan-layout", "look-dialog-diversity", "look-dialog-*"], []),
 ]
 
 # Scenes planned for this review that may not be captured yet: a tile says so.
@@ -355,8 +359,6 @@ PLANNED = {
                         "Thetis presets.",
     "edit-source-select": "The source chip menu on a frequency entry: RX A to RX D and Active slice.",
     "edit-properties": "Container settings open on a Longpath needle entry: its binding and form.",
-    "setup-look-*": "Six Setup pages in the look: General, Display, Transmit, Audio, DSP, and the "
-                    "containers or appearance page if present.",
     "four-rx-look": "The four-receiver data in the look: four compact frequency instruments (A to D) in the "
                     "left strip and four compact Longpath S-meter bars in the bottom strip.",
 }

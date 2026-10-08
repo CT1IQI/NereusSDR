@@ -120,8 +120,9 @@ rewritten only when older than the capture or sidecar, or with `--force`.
 
 `compare_retained.py` pairs each proposed scene with a baseline scene at
 the same profile from the sidecars, never from a fixed list: an explicit
-`baseline_counterpart` key first, then `look-dialog-X` to `dialog-X` and
-`setup-look-<page>` to `dialog-setup-<page>`, then the same
+`baseline_counterpart` key first, then `look-dialog-X` to `dialog-X`
+(the Setup pages are `look-dialog-setup-<page>` beside
+`dialog-setup-<page>`), then the same
 `spectrum_checks` data (pan centre, sample rate, span, reference level,
 seeded signals) and transmit keying, preferring `baseline-two-band`,
 `baseline-four-rx` and `baseline-tx`. It compares the slice flag crop and
