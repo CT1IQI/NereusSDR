@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Containers > Hidden reads hiddenItems() in both looks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: hidden containers and entries are
 //                 listed for Containers > Hidden and shown again where they
 //                 were; a container whose entries are all hidden leaves the
@@ -230,7 +232,7 @@ public:
     // --- Visibility ---
     void setContainerVisible(const QString& id, bool visible);
 
-    // --- Workspace preview: Containers > Hidden ---
+    // --- Containers > Hidden (both looks) ---
     // One hidden thing: a container (entryId empty) or an entry. `label`
     // is the container's name, or "Entry (Container)".
     struct HiddenItem {
