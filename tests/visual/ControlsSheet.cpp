@@ -22,6 +22,10 @@
 //   2026-10-08 - measureAppletFit: every visible container holding
 //                 applets, checked like the strip-fit scenes. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Colour choices: colour-choice--status (+ --zoom) and
+//                 colour-choice--data (+ --crops), every variant from one
+//                 build through WorkspacePreview's test seams. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -63,25 +67,40 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 #include "LongpathControlStyles.h"
 #include "PreviewData.h"
 #include "PreviewScenes.h"
+#include "core/TciServer.h"
 #include "gui/MainWindow.h"
+#include "gui/NetworkDiagnosticsDialog.h"
+#include "gui/SMeterWidget.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
+#include "gui/TimeSeriesGraphWidget.h"
+#include "gui/TitleBar.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxEqDialog.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/meters/MeterItem.h"
+#include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
+#include "gui/meters/presets/BarPresetItem.h"
+#include "gui/setup/CatNetworkSetupPages.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/QssTranslator.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/styles/WorkspaceStyle.h"
+#include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/widgets/MeterSlider.h"
+#include "gui/widgets/ParametricEqWidget.h"
+#include "gui/widgets/StatusBadge.h"
 
 namespace NereusSDR::Preview {
 
@@ -2784,6 +2803,654 @@ void sceneControlSizes(SceneContext& ctx)
         placements);
     setSheetImages(ctx, scene, sheet, placements,
                    QJsonObject{{QStringLiteral("radii"), radii}, {QStringLiteral("today_sizes"), todaySizes}});
+}
+
+// ---- colour choices (status and data) ----------------------------------------
+
+namespace {
+
+using WorkspacePreview::DataColours;
+using WorkspacePreview::StatusTones;
+
+// The status sheet's zoom enlarges each cell 4x, nearest-neighbour.
+constexpr int kStatusZoomFactor = 4;
+constexpr double kGoodRttMs = 12;
+constexpr double kMiddlingRttMs = 80;
+constexpr double kPoorRttMs = 250;
+constexpr double kRxMbps = 18.4;
+constexpr double kTxMbps = 0.6;
+constexpr quint16 kTciPreviewPort = 50001;
+constexpr int kStatusCropPadPx = 4;
+// Network Diagnostics' Connection rows: the field names and their values.
+constexpr int kDiagnosticsCropWidthPx = 260;
+// The SIGNALAVG reading the colour-choice--data scene feeds (PreviewScenes.cpp),
+// settled again after the user-colour row reconfigures the strip.
+constexpr double kStripAvgDbm = -73.0;
+constexpr int kStripSettleSteps = 40;
+constexpr qint64 kStripClockMs = 2'000'000'000'000;
+constexpr qint64 kStripStepMs = 100;
+constexpr int kBadgeCellPadPx = 8;
+constexpr int kBadgeGapPx = 6;
+constexpr int kGraphWidth = 380;
+constexpr int kGraphHeight = 220;
+constexpr int kGraphRangeSeconds = 60;
+constexpr int kGraphPoints = 61;
+constexpr int kEqWidth = 520;
+constexpr int kEqHeight = 300;
+constexpr int kDataCellPadPx = 8;
+// A user's own colours for the user-colour rows: a warm dark container
+// background and a blue bar.
+constexpr QRgb kUserContainerBg = 0xff2a1e14;
+constexpr QRgb kUserBarColour = 0xff3c9cff;
+
+struct StatusVariant {
+    StatusTones tones;
+    QString key;
+    QString title;
+    QString note;
+};
+
+QVector<StatusVariant> statusVariants()
+{
+    return {
+        {StatusTones::Muted, QStringLiteral("a-muted"),
+         QStringLiteral("A. Muted (Longpath's semantic roles, the lane today)"),
+         QStringLiteral("ok kGreenText #6fa384, warn kAmberWarn #a8853f, danger kRedBorder #a86b6d; "
+                        "accent, sel-hover, text-scale, text-inactive unchanged")},
+        {StatusTones::Bright, QStringLiteral("b-bright"),
+         QStringLiteral("B. Bright (Longpath's brighter tones, indicators only)"),
+         QStringLiteral("ok -> live kLiveGreen #4caf6a, warn -> measured kAmberText #d8a55f, "
+                        "danger -> tx kTxRed #c25a5c; every other role as in A")},
+        {StatusTones::Legacy, QStringLiteral("c-legacy"),
+         QStringLiteral("C. Legacy (today's saturated colours, as written)"),
+         QStringLiteral("dot #3fcf6a / #cf6c00 / #ff4040, latency #5fff8a / #ffd700 / #ff6060, "
+                        "badges #5fff8a / #ffd700 / #ff6060, TCI #3DD068 / #D04040, "
+                        "diagnostics #5fff8a / #ff6060")},
+    };
+}
+
+struct DataVariant {
+    DataColours colours;
+    QString key;
+    QString title;
+    QString note;
+};
+
+QVector<DataVariant> dataVariants()
+{
+    return {
+        {DataColours::Navy, QStringLiteral("a-navy"), QStringLiteral("A. Navy (today's data backgrounds)"),
+         QStringLiteral("spectrum #0a0a14, meters and dial #0f0f1a, filter passband #0a0a18, "
+                        "graph #050b13, EQ client #0f0f1a and plot #0a0a18, Thetis bar strip backdrop "
+                        "#202020; all ink unchanged")},
+        {DataColours::Neutral, QStringLiteral("b-neutral"),
+         QStringLiteral("B. Neutral (backgrounds take the surrounding container's role)"),
+         QStringLiteral("spectrum and waterfall app-bg #08080a (the pans sit on app-bg); meters, "
+                        "dial surround and filter passband panel #0c0c0e; graph app-bg #08080a; "
+                        "EQ client app-bg #08080a and plot panel #0c0c0e; Thetis bar strip backdrop "
+                        "panel #0c0c0e; all ink unchanged")},
+        {DataColours::NeutralInstrument, QStringLiteral("c-instrument"),
+         QStringLiteral("C. Neutral + instrument ink (B, bar meter items in Longpath's tones)"),
+         QStringLiteral("B, plus the bar strips' factory ink: bar measured #d8a55f, over-range danger #a86b6d, "
+                        "marker measured, peak-hold text #dcdce1, value measured, peak value "
+                        "text-secondary #a6a6ac, history measured-dim #6b5630 (alpha kept), ticks "
+                        "and labels text-scale #7e7e85, title and average marker text-secondary; "
+                        "Power/SWR and the dial unchanged")},
+    };
+}
+
+QWidget* firstVisibleTopLevel(const char* className)
+{
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (w->isVisible() && w->inherits(className)) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
+Shot plainShot(const QString& caption, const QImage& image)
+{
+    Shot s;
+    s.caption = caption;
+    s.image = image;
+    s.focus = QRect(QPoint(0, 0), logicalSizeOf(image));
+    return s;
+}
+
+Shot zoomShotBy(const Shot& s, int factor)
+{
+    const double dpr = s.image.devicePixelRatio();
+    const QRect device = toDevice(s.focus, dpr).intersected(s.image.rect());
+    const QImage cut = s.image.copy(device);
+    QImage big = cut.scaled(cut.width() * factor, cut.height() * factor, Qt::IgnoreAspectRatio,
+                            Qt::FastTransformation);
+    big.setDevicePixelRatio(dpr);
+    Shot z;
+    z.caption = s.caption;
+    z.image = big;
+    z.source = QJsonObject{{QStringLiteral("cell_device_rect"), rectArray(device)}};
+    return z;
+}
+
+// ---- status cells ----
+
+struct TitleBarState {
+    QString caption;
+    ConnectionState state;
+    int rttMs;
+    AudioEngine::FlowState audio;
+};
+
+QVector<TitleBarState> titleBarStates()
+{
+    return {
+        {QStringLiteral("good: 12 ms, audio healthy"), ConnectionState::Connected,
+         static_cast<int>(kGoodRttMs), AudioEngine::FlowState::Healthy},
+        {QStringLiteral("middling: 80 ms, audio underrun"), ConnectionState::Connected,
+         static_cast<int>(kMiddlingRttMs), AudioEngine::FlowState::Underrun},
+        {QStringLiteral("poor: 250 ms, audio stalled"), ConnectionState::Connected,
+         static_cast<int>(kPoorRttMs), AudioEngine::FlowState::Stalled},
+        {QStringLiteral("disconnected"), ConnectionState::Disconnected, -1, AudioEngine::FlowState::Dead},
+    };
+}
+
+QVector<Shot> titleBarShots(ConnectionSegment* seg)
+{
+    QVector<Shot> shots;
+    auto* bar = seg->parentWidget();
+    for (const TitleBarState& st : titleBarStates()) {
+        seg->setState(st.state);
+        seg->setRates(kRxMbps, kTxMbps);
+        // A negative sample clears the smoothing window, so the painted
+        // value is this state's reading alone.
+        seg->setRttMs(-1);
+        if (st.rttMs >= 0) {
+            seg->setRttMs(st.rttMs);
+        }
+        seg->setAudioFlowState(st.audio);
+        seg->setPulsePausedForTest(true);
+        seg->update();
+        pump(kShortSettleMs);
+        const QRect r = seg->geometry()
+                            .adjusted(-kStatusCropPadPx, -kStatusCropPadPx, kStatusCropPadPx, kStatusCropPadPx)
+                            .intersected(bar->rect());
+        shots.append(plainShot(st.caption, grabImage(bar, r)));
+    }
+    return shots;
+}
+
+struct BadgeSpec {
+    StatusBadge::Variant variant;
+    const char* label;
+};
+
+QVector<Shot> badgeShots(const QColor& statusBarBg)
+{
+    const BadgeSpec specs[] = {
+        {StatusBadge::Variant::Info, "LSB"},
+        {StatusBadge::Variant::On, "2.7k"},
+        {StatusBadge::Variant::Off, "OFF"},
+        {StatusBadge::Variant::Warn, "WARN"},
+        {StatusBadge::Variant::Tx, "TX"},
+    };
+    auto cell = std::make_unique<QWidget>();
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    pal.setColor(QPalette::Window, statusBarBg);
+    cell->setPalette(pal);
+    int x = kBadgeCellPadPx;
+    int h = 0;
+    for (const BadgeSpec& b : specs) {
+        auto* badge = new StatusBadge(cell.get());
+        badge->setVariant(b.variant);
+        badge->setSvgIcon(QStringLiteral(":/icons/badge-mode.svg"));
+        badge->setLabel(QString::fromLatin1(b.label));
+        badge->adjustSize();
+        badge->move(x, kBadgeCellPadPx);
+        x += badge->width() + kBadgeGapPx;
+        h = qMax(h, badge->height());
+    }
+    cell->resize(x - kBadgeGapPx + kBadgeCellPadPx, h + 2 * kBadgeCellPadPx);
+    cell->show();
+    pump(kSettleMs);
+    return {plainShot(QStringLiteral("Info, On, Off, Warn, Tx on statusbar-bg %1").arg(statusBarBg.name()),
+                      grabImage(cell.get()))};
+}
+
+QImage tciStatusCrop(QLabel* status)
+{
+    QWidget* group = status->parentWidget();
+    // The "Status:" caption and the status word, not the page's empty width.
+    const int width = qMin(group->width(), status->x() + status->sizeHint().width() + kStatusCropPadPx);
+    const QRect r(0, status->y() - kStatusCropPadPx, width, status->height() + 2 * kStatusCropPadPx);
+    return grabImage(group, r.intersected(group->rect()));
+}
+
+QLabel* labelWithText(QWidget* root, const QString& text)
+{
+    for (QLabel* l : root->findChildren<QLabel*>()) {
+        if (l->text() == text && l->isVisible()) {
+            return l;
+        }
+    }
+    return nullptr;
+}
+
+QImage diagnosticsConnectionCrop(QWidget* dialog)
+{
+    QLabel* head = labelWithText(dialog, QObject::tr("Connection"));
+    QLabel* last = labelWithText(dialog, QObject::tr("MAC"));
+    if (head == nullptr || last == nullptr) {
+        return {};
+    }
+    const QRect top(head->mapTo(dialog, QPoint(0, 0)), head->size());
+    const QRect bottom(last->mapTo(dialog, QPoint(0, 0)), last->size());
+    const QRect r(top.left() - kStatusCropPadPx, top.top() - kStatusCropPadPx,
+                  qMin(kDiagnosticsCropWidthPx, dialog->width() - 2 * (top.left() - kStatusCropPadPx)),
+                  bottom.bottom() - top.top() + 2 * kStatusCropPadPx);
+    return grabImage(dialog, r.intersected(dialog->rect()));
+}
+
+// ---- data cells ----
+
+void rerenderData(QWidget* window)
+{
+    for (MeterWidget* m : window->findChildren<MeterWidget*>()) {
+        m->invalidateGeometry();
+        for (MeterItem* item : m->items()) {
+            m->invalidatePresentation(item);
+        }
+        m->update();
+    }
+    for (SpectrumWidget* s : window->findChildren<SpectrumWidget*>()) {
+        s->update();
+    }
+    for (QWidget* w : window->findChildren<QWidget*>()) {
+        if (qobject_cast<SMeterWidget*>(w) != nullptr || qobject_cast<FilterPassbandWidget*>(w) != nullptr) {
+            w->update();
+        }
+    }
+    pump(kSettleMs);
+}
+
+QRect windowRectOf(QWidget* window, QWidget* w)
+{
+    return w == nullptr ? QRect() : QRect(w->mapTo(window, QPoint(0, 0)), w->size());
+}
+
+QRect pansRect(QWidget* window)
+{
+    QRect r;
+    for (SpectrumWidget* s : window->findChildren<SpectrumWidget*>()) {
+        if (s->isVisible()) {
+            r = r.united(windowRectOf(window, s));
+        }
+    }
+    return r;
+}
+
+QImage cropOf(const QImage& full, const QRect& logical)
+{
+    const double dpr = full.devicePixelRatio();
+    QImage c = full.copy(toDevice(logical, dpr));
+    c.setDevicePixelRatio(dpr);
+    return c;
+}
+
+QWidget* graphCell(QVector<TimeSeriesGraphWidget::Series>& out)
+{
+    auto* cell = new QWidget;
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    // RemoteDiagnosticsDialog's surface (Style::kAppBg) in the look.
+    pal.setColor(QPalette::Window, WorkspacePreview::roleColour(QColor(QLatin1String(Style::kAppBg)), "app-bg"));
+    cell->setPalette(pal);
+    auto* graph = new TimeSeriesGraphWidget(QStringLiteral("Total traffic"), QStringLiteral(" kbps"), cell);
+    graph->setGeometry(kDataCellPadPx, kDataCellPadPx, kGraphWidth, kGraphHeight);
+    struct Spec { const char* label; const char* colour; double base; double swing; };
+    // RemoteDiagnosticsDialog's total traffic graph: its labels and colours.
+    const Spec specs[] = {
+        {"Core → app received", "#00b4d8", 410.0, 60.0},
+        {"App → Core outgoing", "#5fff8a", 48.0, 12.0},
+        {"Total", "#ffd700", 458.0, 66.0},
+    };
+    for (const Spec& sp : specs) {
+        TimeSeriesGraphWidget::Series s;
+        s.label = QString::fromUtf8(sp.label);
+        s.color = QColor(QLatin1String(sp.colour));
+        s.unitSuffix = QStringLiteral(" kbps");
+        for (int i = 0; i < kGraphPoints; ++i) {
+            const double t = static_cast<double>(i);
+            s.points.append(QPointF(t, sp.base + sp.swing * std::sin(t / 6.0) * std::cos(t / 17.0)));
+        }
+        out.append(s);
+    }
+    graph->setSeries(out, kGraphRangeSeconds);
+    cell->resize(kGraphWidth + 2 * kDataCellPadPx, kGraphHeight + 2 * kDataCellPadPx);
+    return cell;
+}
+
+QWidget* eqCell()
+{
+    auto* cell = new QWidget;
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    // TxEqDialog's surface (Style::kAppBg) in the look.
+    pal.setColor(QPalette::Window, WorkspacePreview::roleColour(QColor(QLatin1String(Style::kAppBg)), "app-bg"));
+    cell->setPalette(pal);
+    auto* eq = new ParametricEqWidget(cell);
+    eq->setEditorPresentationEnabled(true);
+    eq->setGeometry(kDataCellPadPx, kDataCellPadPx, kEqWidth, kEqHeight);
+    cell->resize(kEqWidth + 2 * kDataCellPadPx, kEqHeight + 2 * kDataCellPadPx);
+    return cell;
+}
+
+QImage grabCell(QWidget* cell)
+{
+    cell->show();
+    for (QWidget* w : cell->findChildren<QWidget*>()) {
+        w->update();
+    }
+    pump(kSettleMs);
+    return grabImage(cell);
+}
+
+struct DataCrops {
+    QRect pans;
+    QRect topStrip;
+    QRect levels;
+    QRect needle;
+    QRect dial;
+    QRect passband;
+};
+
+DataCrops dataCrops(QWidget* window)
+{
+    DataCrops c;
+    c.pans = pansRect(window);
+    auto* manager = window->findChild<ContainerManager*>();
+    if (manager != nullptr) {
+        c.topStrip = windowRectOf(window, manager->container(QStringLiteral("preview-meters")));
+        c.levels = windowRectOf(window, manager->container(QStringLiteral("preview-levels")));
+        c.needle = windowRectOf(window, manager->container(QStringLiteral("preview-needle")));
+    }
+    c.dial = windowRectOf(window, window->findChild<SMeterWidget*>());
+    c.passband = windowRectOf(window, window->findChild<FilterPassbandWidget*>());
+    return c;
+}
+
+QVector<Shot> surfaceShots(const QImage& full, const DataCrops& c)
+{
+    return {
+        plainShot(QStringLiteral("both pans"), cropOf(full, c.pans)),
+        plainShot(QStringLiteral("top strip: SIGNALAVG, Power/SWR"), cropOf(full, c.topStrip)),
+        plainShot(QStringLiteral("left: SIGNALMAXBIN, COMP"), cropOf(full, c.levels)),
+        plainShot(QStringLiteral("Longpath needle"), cropOf(full, c.needle)),
+        plainShot(QStringLiteral("SIGNAL STRENGTH dial"), cropOf(full, c.dial)),
+        plainShot(QStringLiteral("filter passband"), cropOf(full, c.passband)),
+    };
+}
+
+// The first Thetis bar strip (BarPresetItem) bound to `binding` anywhere in the window (docked,
+// edge strip or floating container), or null.
+BarPresetItem* boundBar(QWidget* window, int binding)
+{
+    QList<MeterWidget*> meters = window->findChildren<MeterWidget*>();
+    if (auto* manager = window->findChild<ContainerManager*>()) {
+        for (const QString& id : {QStringLiteral("preview-meters"), QStringLiteral("preview-levels")}) {
+            if (ContainerWidget* c = manager->container(id)) {
+                meters += c->findChildren<MeterWidget*>();
+            }
+        }
+    }
+    for (MeterWidget* m : meters) {
+        for (MeterItem* item : m->items()) {
+            auto* bar = qobject_cast<BarPresetItem*>(item);
+            if (bar != nullptr && bar->bindingId() == binding) {
+                return bar;
+            }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void sceneStatusColourChoices(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("colour-choice--status");
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
+        return;
+    }
+    auto* titleBar = ctx.window->findChild<TitleBar*>();
+    ConnectionSegment* seg = titleBar != nullptr ? titleBar->findChild<ConnectionSegment*>() : nullptr;
+    if (seg == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no title bar connection segment");
+        return;
+    }
+
+    // Setup at the TCI Server page; a TciServer that never starts says
+    // "running" through its own signal (no socket is opened).
+    QMetaObject::invokeMethod(ctx.window, "openSetupAtPage", Qt::DirectConnection,
+                              Q_ARG(QString, QStringLiteral("TCI Server")));
+    pump(kSettleMs);
+    QWidget* setup = firstVisibleTopLevel("NereusSDR::SetupDialog");
+    auto* tciPage = setup != nullptr ? setup->findChild<CatTciServerPage*>() : nullptr;
+    QLabel* tciStatus = tciPage != nullptr ? tciPage->findChild<QLabel*>(QStringLiteral("tciStatusLabel")) : nullptr;
+    if (tciStatus == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no TCI Server status label");
+        return;
+    }
+    TciServer tci(nullptr);
+
+    // Network Diagnostics with no radio: Status reads Disconnected.
+    NetworkDiagnosticsDialog diagnostics(nullptr, nullptr);
+    diagnostics.setAttribute(Qt::WA_DontShowOnScreen, true);
+    diagnostics.show();
+    pump(kSettleMs);
+
+    QVector<GridRow> rows;
+    QJsonArray variants;
+    const QColor statusBarBg = WorkspacePreview::roleColour(QColor(0x0a, 0x0a, 0x14), "statusbar-bg");
+    for (const StatusVariant& v : statusVariants()) {
+        WorkspacePreview::setStatusTonesForTest(v.tones);
+        GridRow row{v.key, v.title, v.note, {}};
+        row.groups.append(titleBarShots(seg));
+        row.groups.append(badgeShots(statusBarBg));
+
+        QVector<Shot> tciShots;
+        tciPage->setTciServer(&tci);
+        pump(kShortSettleMs);
+        tciShots.append(plainShot(QStringLiteral("stopped"), tciStatusCrop(tciStatus)));
+        emit tci.serverStarted(kTciPreviewPort);
+        pump(kShortSettleMs);
+        tciShots.append(plainShot(QStringLiteral("running"), tciStatusCrop(tciStatus)));
+        row.groups.append(tciShots);
+
+        // The 250 ms refresh writes the status HTML again in this choice.
+        pump(kSettleMs);
+        row.groups.append(QVector<Shot>{
+            plainShot(QStringLiteral("no radio: Disconnected"), diagnosticsConnectionCrop(&diagnostics))});
+        rows.append(row);
+        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
+                                    {QStringLiteral("title"), v.title},
+                                    {QStringLiteral("colours"), v.note}});
+    }
+    WorkspacePreview::setStatusTonesForTest(StatusTones::Muted);
+    tciPage->setTciServer(nullptr);
+    diagnostics.close();
+    setup->close();
+
+    const QStringList groups{QStringLiteral("Title bar status area (real window)"),
+                             QStringLiteral("Status badges"),
+                             QStringLiteral("Setup > TCI Server: Status"),
+                             QStringLiteral("Network Diagnostics: Connection")};
+    QJsonObject extra{{QStringLiteral("variants"), variants},
+                      {QStringLiteral("seam"), QStringLiteral("WorkspacePreview::setStatusTonesForTest")},
+                      {QStringLiteral("not_shown"), QJsonArray{
+                           QStringLiteral("Network Diagnostics Connected: needs a radio connection"),
+                           QStringLiteral("the pulse step of the title bar dot: the pulse is paused")}}};
+    // The sheet is chrome around the grabs: keep the look's pass off it.
+    WorkspacePreview::setEnabledForTest(false);
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Status colours: three choices"),
+        QStringLiteral("Real widgets with the workspace preview on; only the status choice differs per row. "
+                       "Title bar: the window's own connection segment, pulse paused at its resting step."),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QVector<GridRow> zoom;
+    for (const GridRow& row : rows) {
+        GridRow z{row.key, row.title, QString(), {}};
+        for (const QVector<Shot>& group : row.groups) {
+            QVector<Shot> zs;
+            for (const Shot& s : group) {
+                zs.append(zoomShotBy(s, kStatusZoomFactor));
+            }
+            z.groups.append(zs);
+        }
+        zoom.append(z);
+    }
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(
+        zoom, groups, QStringLiteral("Status colours, 4x nearest-neighbour"),
+        QStringLiteral("Each cell of colour-choice--status enlarged 4x."), zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("4x nearest-neighbour")}});
+    WorkspacePreview::setEnabledForTest(true);
+}
+
+void sceneDataColourChoices(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("colour-choice--data");
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
+        return;
+    }
+    QWidget* window = ctx.window;
+    const DataCrops crops = dataCrops(window);
+    if (crops.pans.isEmpty() || crops.topStrip.isEmpty() || crops.levels.isEmpty() || crops.needle.isEmpty()
+        || crops.dial.isEmpty() || crops.passband.isEmpty()) {
+        ctx.failure = scene + QStringLiteral(": a data surface is missing from the window");
+        return;
+    }
+    QVector<TimeSeriesGraphWidget::Series> series;
+    std::unique_ptr<QWidget> graph(graphCell(series));
+    std::unique_ptr<QWidget> eq(eqCell());
+
+    QVector<GridRow> rows;
+    QVector<GridRow> cropRows;
+    QJsonArray variants;
+    auto captureRow = [&](const QString& key, const QString& title, const QString& note) {
+        rerenderData(window);
+        const QImage full = grabImage(window);
+        const QImage graphImage = grabCell(graph.get());
+        const QImage eqImage = grabCell(eq.get());
+        GridRow cropRow{key, title, note, {}};
+        cropRow.groups.append(surfaceShots(full, crops));
+        cropRow.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
+                                            plainShot(QStringLiteral("parametric EQ"), eqImage)});
+        cropRows.append(cropRow);
+        return std::make_tuple(full, graphImage, eqImage);
+    };
+
+    for (const DataVariant& v : dataVariants()) {
+        WorkspacePreview::setDataColoursForTest(v.colours);
+        const auto [full, graphImage, eqImage] = captureRow(v.key, v.title, v.note);
+        GridRow row{v.key, v.title, v.note, {}};
+        row.groups.append(QVector<Shot>{plainShot(QStringLiteral("window"), full)});
+        row.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
+                                        plainShot(QStringLiteral("parametric EQ"), eqImage)});
+        rows.append(row);
+        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
+                                    {QStringLiteral("title"), v.title},
+                                    {QStringLiteral("colours"), v.note}});
+    }
+
+    // User colours win: a container background set by the user (B) and a
+    // bar colour set by the user on SIGNALAVG (C) stay the user's.
+    auto* manager = window->findChild<ContainerManager*>();
+    ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));
+    const QColor levelsBefore = levels->backgroundColor();
+    levels->setBackgroundColor(QColor::fromRgba(kUserContainerBg));
+    WorkspacePreview::setDataColoursForTest(DataColours::Neutral);
+    captureRow(QStringLiteral("b-user-container"),
+               QStringLiteral("B with a user container background (Levels)"),
+               QStringLiteral("Levels container background set to %1 by the user: it stays; the meter's "
+                              "default background takes panel #0c0c0e")
+                   .arg(QColor::fromRgba(kUserContainerBg).name()));
+    levels->setBackgroundColor(levelsBefore);
+
+    BarPresetItem* bar = boundBar(window, MeterBinding::SignalAvg);
+    if (bar == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no SIGNALAVG bar item");
+        return;
+    }
+    const QJsonValue barBefore = bar->configuration().value(QStringLiteral("barColor"));
+    bar->applyConfiguration({{QStringLiteral("barColor"), QColor::fromRgba(kUserBarColour).name()}});
+    // Applying a configuration resets the strip's smoothing: settle the
+    // scene's SIGNALAVG reading again on a hand-stepped clock past the
+    // scene's own, so no real frame moves it.
+    for (int i = 0; i < kStripSettleSteps; ++i) {
+        bar->pushBindingValue(MeterBinding::SignalAvg, kStripAvgDbm);
+        bar->advanceMeter(kStripClockMs + i * kStripStepMs);
+    }
+    WorkspacePreview::setDataColoursForTest(DataColours::NeutralInstrument);
+    captureRow(QStringLiteral("c-user-bar"), QStringLiteral("C with a user bar colour (SIGNALAVG)"),
+               QStringLiteral("SIGNALAVG bar colour set to %1 by the user: it stays; every other factory "
+                              "colour takes the instrument tones")
+                   .arg(QColor::fromRgba(kUserBarColour).name()));
+    bar->applyConfiguration({{QStringLiteral("barColor"), barBefore}});
+    WorkspacePreview::setDataColoursForTest(DataColours::Navy);
+    rerenderData(window);
+
+    QJsonObject cropsJson{{QStringLiteral("pans"), rectArray(crops.pans)},
+                          {QStringLiteral("top_strip"), rectArray(crops.topStrip)},
+                          {QStringLiteral("levels"), rectArray(crops.levels)},
+                          {QStringLiteral("needle"), rectArray(crops.needle)},
+                          {QStringLiteral("dial"), rectArray(crops.dial)},
+                          {QStringLiteral("passband"), rectArray(crops.passband)}};
+    QJsonObject extra{
+        {QStringLiteral("variants"), variants},
+        {QStringLiteral("seam"), QStringLiteral("WorkspacePreview::setDataColoursForTest")},
+        {QStringLiteral("window_crops_logical"), cropsJson},
+        {QStringLiteral("not_shown"), QJsonArray{
+             QStringLiteral("a user spectrum background: NereusSDR has no such setting (Setup > Colors & "
+                            "Theme sets trace, grid, text, band edge, zero line, filter and waterfall low "
+                            "colours only); the user rows show a container background and a bar colour"),
+             QStringLiteral("the waterfall's empty fill before data arrives: the pans are fed before the "
+                            "choice changes, so every row shows fed rows")}}};
+
+    WorkspacePreview::setEnabledForTest(false);
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, {QStringLiteral("Window: pans, meter strips, Longpath needle, Main Panel"),
+               QStringLiteral("Remote diagnostics graph, TX EQ editor")},
+        QStringLiteral("Data colours: three choices"),
+        QStringLiteral("Real widgets with the workspace preview on; only the data choice differs per row. "
+                       "Graph and EQ are the real widgets on their dialogs' surface, with fixed data."),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QJsonArray cropPlacements;
+    const QImage cropSheet = assembleGrid(
+        cropRows, {QStringLiteral("Window crops"), QStringLiteral("Graph and EQ")},
+        QStringLiteral("Data colours: surface crops, with user colours"),
+        QStringLiteral("The same grabs cut per surface; the last two rows show that colours the user set "
+                       "stay the user's."),
+        cropPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--crops"), cropSheet, cropPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene}, {QStringLiteral("variants"), variants}});
+    WorkspacePreview::setEnabledForTest(true);
 }
 
 } // namespace NereusSDR::Preview

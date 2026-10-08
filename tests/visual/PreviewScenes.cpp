@@ -88,6 +88,9 @@
 //   2026-10-08 - Scenes for every remaining dialog, the standard dialogs and
 //                 the remote set on a never-dialled remote window. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - colour-choice--status and colour-choice--data: the status
+//                 and data colour choices (ControlsSheet.cpp). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -222,6 +225,7 @@
 #include "gui/widgets/BandwidthFilterPane.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
 #include "core/MicProfileManager.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/widgets/ProfileRail.h"
@@ -4887,6 +4891,60 @@ QVector<Scene> fixedScenes()
         runWindowScene(ctx, twoBandPoses(), 0);
         if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
     }});
+    // ---- colour choices (Task 28) ----
+    // Every status choice on the real title bar, badges, the TCI Server
+    // page and Network Diagnostics, from one build (the ForTest seam).
+    scenes.append({QStringLiteral("colour-choice--status"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneStatusColourChoices(ctx); }
+    }, true});
+    // Every data choice on the two-band window with the Thetis bar strips
+    // (top: S-Meter preset's SIGNALAVG and Power/SWR; left: SIGNALMAXBIN
+    // and COMP), a Longpath needle on slice A and the Main Panel.
+    scenes.append({QStringLiteral("colour-choice--data"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            if (c.failure.isEmpty()) { addLevelsContainer(c, DockEdge::Left); }
+            if (c.failure.isEmpty()) {
+                addSceneContainer(c, QStringLiteral("Needle"), DockEdge::Left, ContentLayout::VerticalStack,
+                                  {{QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, rxSource(1)}});
+            }
+        }, [](SceneContext& c) {
+            feedSliceInstruments(c, c.window);
+            // Display-only readings for the bar rows, repeated so the
+            // bars' attack smoothing settles on them.
+            constexpr double kAvgDbm = -73.0;
+            constexpr double kMaxBinDbm = -68.0;
+            constexpr double kCompDb = -8.0;
+            constexpr double kCompPeakDb = -4.0;
+            constexpr int kSettleUpdates = 40;
+            constexpr qint64 kFrozenClockMs = 1'000'000'000'000;
+            constexpr qint64 kStepMs = 100;
+            for (MeterWidget* m : c.window->findChildren<MeterWidget*>()) {
+                for (int i = 0; i < kSettleUpdates; ++i) {
+                    m->updateMeterValue(MeterBinding::SignalAvg, kAvgDbm);
+                    m->updateMeterValue(MeterBinding::SignalMaxBin, kMaxBinDbm);
+                    m->updateMeterValue(MeterBinding::TxComp, kCompDb);
+                    m->updateMeterValue(MeterBinding::TxCompPeak, kCompPeakDb);
+                    // The Thetis bar strips smooth on the frame clock: step
+                    // it by hand on a time base far past the real one, so a
+                    // later real frame never moves the settled marker.
+                    m->advanceMeters(kFrozenClockMs + i * kStepMs);
+                }
+            }
+            c.fedReadings.append(QJsonObject{
+                {QStringLiteral("instrument"), QStringLiteral("MeterWidget bar rows")},
+                {QStringLiteral("values"), QJsonObject{{QStringLiteral("SignalAvg_dbm"), kAvgDbm},
+                                                       {QStringLiteral("SignalMaxBin_dbm"), kMaxBinDbm},
+                                                       {QStringLiteral("TxComp_db"), kCompDb},
+                                                       {QStringLiteral("TxCompPeak_db"), kCompPeakDb}}},
+                {QStringLiteral("seam"), QStringLiteral("MeterWidget::updateMeterValue (display only)")}});
+            pump(kSettleMs);
+        });
+        if (ctx.failure.isEmpty()) { sceneDataColourChoices(ctx); }
+    }, true});
     scenes.append({QStringLiteral("controls-sheet--indicators"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0);
