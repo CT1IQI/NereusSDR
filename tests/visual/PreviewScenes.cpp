@@ -476,6 +476,10 @@ VfoWidget* flagForSlice(MainWindow* window, SliceModel* slice)
 // Grabs the whole window and, at the crop profile, its detail crops.
 void captureWindow(SceneContext& ctx, const QString& name)
 {
+    if (ctx.beforeGrab) {
+        ctx.beforeGrab(ctx.window);
+        pump(kFinalSettleMs);
+    }
     CapturedImage full;
     full.name = name;
     full.kind = QStringLiteral("window");
@@ -609,6 +613,10 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
         ctx.stoppedTimers.append(v);
     }
     pump(kFinalSettleMs);
+    if (ctx.beforeGrab) {
+        ctx.beforeGrab(dialog);
+        pump(kFinalSettleMs);
+    }
     CapturedImage img;
     img.name = name;
     img.kind = QStringLiteral("dialog");

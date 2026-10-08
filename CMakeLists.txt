@@ -1650,6 +1650,14 @@ set(GUI_SOURCES
     src/gui/PsaIndicatorWidget.h
     src/gui/PsForm.cpp
     src/gui/TitleBar.cpp
+    src/gui/styles/QssTranslator.cpp
+    src/gui/styles/QssTranslator.h
+    src/gui/styles/WorkspacePalette.cpp
+    src/gui/styles/WorkspacePalette.h
+    src/gui/styles/WorkspacePreview.cpp
+    src/gui/styles/WorkspacePreview.h
+    src/gui/styles/WorkspaceStyle.cpp
+    src/gui/styles/WorkspaceStyle.h
     src/gui/RelayBar.cpp
     src/gui/SMeterWidget.cpp
     src/gui/VintageMeterFace.cpp

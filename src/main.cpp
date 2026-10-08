@@ -1,6 +1,7 @@
 #include "gui/GuiConnectionController.h"
 #include "gui/GuiApplication.h"
 #include "gui/styles/AppTheme.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/BuildIdentity.h"
@@ -261,6 +262,9 @@ int main(int argc, char* argv[])
     app.setStyle(QStyleFactory::create("Fusion"));
     NereusSDR::applyDarkPalette(app);
     NereusSDR::applyAppBaselineQss(app);
+    if (NereusSDR::WorkspacePreview::enabled()) {
+        NereusSDR::applyWorkspacePalette(app);
+    }
 
     // Register custom metatypes for cross-thread signal/slot connections.
     // R1 Task 9: src/server_main.cpp registers this same pair itself

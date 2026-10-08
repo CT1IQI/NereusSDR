@@ -132,6 +132,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "ContainerControlCatalog.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
@@ -368,6 +369,10 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     // captured items into m_workingItems from the live MeterWidget.
     takeSnapshot();
     styleSelectorPopups(this);
+
+    // Workspace preview: the scoped stylesheet pass runs each time the
+    // dialog is shown (preview scaffolding; nothing with the switch off).
+    WorkspacePreview::themeOnShow(this);
 }
 
 ContainerSettingsDialog::~ContainerSettingsDialog()

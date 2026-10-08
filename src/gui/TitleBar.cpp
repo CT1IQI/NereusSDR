@@ -74,6 +74,8 @@
 #include "TitleBar.h"
 
 #include "StyleConstants.h"
+#include "styles/WorkspacePreview.h"
+#include "styles/WorkspaceStyle.h"
 #include "widgets/MasterOutputWidget.h"
 
 #include <QDateTime>
@@ -533,7 +535,9 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
 
     // Background
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor("#0f1420"));
+    const bool workspaceLook = WorkspacePreview::enabled();
+    p.setBrush(workspaceLook ? QColor(Workspace::role("inset", "#0f1420"))
+                             : QColor("#0f1420"));
     p.drawRoundedRect(rect(), 3, 3);
 
     p.setFont(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
@@ -548,7 +552,8 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
 
     const QString remoteText = remoteTextForWidth(width() - x - 6);
     if (!remoteText.isEmpty()) {
-        p.setPen(QColor("#c8d8e8"));
+        p.setPen(workspaceLook ? QColor(Workspace::role("text", "#c8d8e8"))
+                               : QColor("#c8d8e8"));
         p.drawText(x, textY, p.fontMetrics().elidedText(
             remoteText, Qt::ElideRight, width() - x - 6));
         m_lastRttX1 = x;
@@ -558,7 +563,8 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     }
 
     if (m_state == ConnectionState::Disconnected) {
-        p.setPen(QColor("#607080"));
+        p.setPen(workspaceLook ? QColor(Workspace::role("text-scale", "#607080"))
+                               : QColor("#607080"));
         p.drawText(x, textY, tr("Disconnected — click to connect"));
         m_lastRttX1 = m_lastRttX2 = 0;
         m_lastPipX1 = m_lastPipX2 = 0;
@@ -677,6 +683,13 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     setStyleSheet(QStringLiteral("TitleBar { background: %1; border-bottom: 1px solid %2; }")
                   .arg(QLatin1String(Style::kStatusBarBg),
                        QLatin1String(Style::kBorderSubtle)));
+    const bool workspaceLook = WorkspacePreview::enabled();
+    if (workspaceLook) {
+        // Workspace preview: the same strip in the Glass and Depth roles.
+        setStyleSheet(QStringLiteral("TitleBar { background: %1; border-bottom: 1px solid %2; }")
+                      .arg(Workspace::role("statusbar-bg", Style::kStatusBarBg),
+                           Workspace::role("border-subtle", Style::kBorderSubtle)));
+    }
 
     m_hbox = new QHBoxLayout(this);
     m_hbox->setContentsMargins(kMarginLeft, kMarginTop, kMarginRight, kMarginBottom);
@@ -703,6 +716,10 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // App-name label. From AetherSDR TitleBar.cpp:102.
     appName->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }")
                            .arg(QLatin1String(Style::kAccent)));
+    if (workspaceLook) {
+        appName->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }")
+                               .arg(Workspace::role("accent", Style::kAccent)));
+    }
     appName->setAlignment(Qt::AlignCenter);
     m_hbox->addWidget(appName);
 
@@ -725,6 +742,13 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_utcLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8aa8c0; font-size: 11px;"
         " font-family: 'SF Mono', Menlo, monospace; }"));
+    if (workspaceLook) {
+        // A number: the workspace monospace chain (monoFont's families).
+        m_utcLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 11px; font-family: %2; }")
+            .arg(Workspace::role("text-secondary", "#8aa8c0"),
+                 QLatin1String(Workspace::kMonoQssFamilies)));
+    }
     m_hbox->addWidget(m_utcLabel);
     m_hbox->addSpacing(kUtcToMasterGap);
 
@@ -806,6 +830,16 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
         "QPushButton { background: #3a2a00; border: 1px solid #806020; "
         "border-radius: 4px; padding: 0; }"
         "QPushButton:hover { background: #504000; border-color: #a08030; }"));
+    if (workspaceLook) {
+        m_featureBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; border: 1px solid %2; "
+            "border-radius: 4px; padding: 0; }"
+            "QPushButton:hover { background: %3; border-color: %4; }")
+            .arg(Workspace::role("measured-bg", "#3a2a00"),
+                 Workspace::role("measured-border", "#806020"),
+                 Workspace::shiftL(QColor(Workspace::role("measured-bg", "#3a2a00")), 10),
+                 Workspace::role("warn", "#a08030")));
+    }
     connect(m_featureBtn, &QPushButton::clicked,
             this, &TitleBar::featureRequestClicked);
     m_hbox->addWidget(m_featureBtn);
@@ -830,6 +864,21 @@ void TitleBar::setMenuBar(QMenuBar* mb)
              QLatin1String(Style::kOverlayBorder),
              QLatin1String(Style::kTextPrimary),
              QLatin1String(Style::kBlueBg)));
+    if (WorkspacePreview::enabled()) {
+        mb->setStyleSheet(QStringLiteral(
+            "QMenuBar { background: transparent; color: %1; font-size: 12px; }"
+            "QMenuBar::item { padding: 4px 8px; }"
+            "QMenuBar::item:selected { background: %2; color: %7; }"
+            "QMenu { background: %3; color: %5; border: 1px solid %4; }"
+            "QMenu::item:selected { background: %6; color: %7; }")
+            .arg(Workspace::role("title-text", Style::kTitleText),
+                 Workspace::role("button-hover", Style::kBorderSubtle),
+                 Workspace::role("panel", Style::kAppBg),
+                 Workspace::role("overlay-border", Style::kOverlayBorder),
+                 Workspace::role("text", Style::kTextPrimary),
+                 Workspace::role("selected-top", Style::kBlueBg),
+                 Workspace::role("selected-text", "#ffffff")));
+    }
     mb->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).

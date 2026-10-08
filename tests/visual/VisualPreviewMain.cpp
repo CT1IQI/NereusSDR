@@ -12,7 +12,11 @@
 //   nereus_visual_preview --probe
 //   nereus_visual_preview --list
 //   nereus_visual_preview --scene <name> --size <W>x<H> --dpr <d> --out <dir>
-//                         [--profile <name>]
+//                         [--profile <name>] [--workspace-preview]
+//
+// A scene named look-<x> is the Task 1 scene <x> (baseline-<x>, or
+// dialog-<x> for look-dialog-<x>) with the workspace preview switch on;
+// --workspace-preview turns the switch on for any scene.
 //
 // tests/visual/capture.py drives it; see tests/visual/README.md.
 //
@@ -20,6 +24,9 @@
 //   2026-10-07 - Written for the workspace visual review, replacing the
 //                 feasibility spike. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-07 - Workspace look scenes (look-*), --workspace-preview and
+//                 the look coverage sidecar fields. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -58,6 +65,10 @@
 #include "gui/PanadapterApplet.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/styles/AppTheme.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/containers/ContainerContentHost.h"
+#include <QStatusBar>
+#include <algorithm>
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
@@ -100,6 +111,7 @@ struct Args {
     double dpr{2.0};
     QString out;
     QString profile;
+    bool workspacePreview{false};
 };
 
 bool parseArgs(const QStringList& argv, Args& args, QString& error)
@@ -119,6 +131,8 @@ bool parseArgs(const QStringList& argv, Args& args, QString& error)
             args.probe = true;
         } else if (a == QLatin1String("--list")) {
             args.list = true;
+        } else if (a == QLatin1String("--workspace-preview")) {
+            args.workspacePreview = true;
         } else if (a == QLatin1String("--scene")) {
             if (!value(args.scene)) { return false; }
         } else if (a == QLatin1String("--out")) {
@@ -166,6 +180,140 @@ void applyAppTheme(QApplication& app)
     app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     applyDarkPalette(app);
     applyAppBaselineQss(app);
+    if (WorkspacePreview::enabled()) {
+        applyWorkspacePalette(app);
+    }
+}
+
+// ---- workspace look --------------------------------------------------------
+
+constexpr auto kLookPrefix = "look-";
+
+bool isLookScene(const QString& name)
+{
+    return name.startsWith(QLatin1String(kLookPrefix));
+}
+
+// look-two-band -> baseline-two-band; look-dialog-tx-eq -> dialog-tx-eq.
+QString baseSceneFor(const QString& name)
+{
+    if (!isLookScene(name)) {
+        return name;
+    }
+    const QString rest = name.mid(int(qstrlen(kLookPrefix)));
+    if (rest.startsWith(QLatin1String("dialog-"))) {
+        return rest;
+    }
+    return QStringLiteral("baseline-") + rest;
+}
+
+// The look name for a Task 1 scene, or empty when it has no look variant.
+QString lookSceneFor(const Scene& s)
+{
+    if (s.dialog) {
+        return QLatin1String(kLookPrefix) + s.name;
+    }
+    for (const char* base : {"baseline-two-band", "baseline-four-rx", "baseline-tx"}) {
+        if (s.name == QLatin1String(base)) {
+            return QLatin1String(kLookPrefix) + s.name.mid(int(qstrlen("baseline-")));
+        }
+    }
+    return QString();
+}
+
+// Re-runs the scoped stylesheet pass on the surfaces that use it, right
+// before a grab: container content (docked and floating), the status bar
+// content, and a dialog when the grab is a dialog.
+void rethemeBeforeGrab(QWidget* target)
+{
+    QVector<QWidget*> roots;
+    for (QWidget* top : QApplication::topLevelWidgets()) {
+        for (ContainerContentHost* host : top->findChildren<ContainerContentHost*>()) {
+            roots.append(host);
+        }
+        if (auto* mw = qobject_cast<MainWindow*>(top)) {
+            for (QWidget* child : mw->statusBar()->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+                roots.append(child);
+            }
+        }
+    }
+    if (target != nullptr && qobject_cast<MainWindow*>(target) == nullptr) {
+        roots.append(target);
+    }
+    for (QWidget* root : roots) {
+        WorkspacePreview::themeSubtree(root);
+    }
+}
+
+QJsonObject lookCoverageJson()
+{
+    auto arr = [](std::initializer_list<const char*> items) {
+        QJsonArray a;
+        for (const char* i : items) {
+            a.append(QString::fromUtf8(i));
+        }
+        return a;
+    };
+    return QJsonObject{
+        {QStringLiteral("explicit_roles"), arr({
+             "application palette and baseline QSS (applyWorkspacePalette)",
+             "main window stylesheet (MainWindow::applyDarkTheme, #203040 as border-subtle)",
+             "top status strip: TitleBar, menu bar, connection segment colours, UTC clock in monoFont",
+             "main splitter handle (#203040 as border-subtle, width unchanged)",
+             "pan toolbar column buttons and pan corner zoom buttons (SpectrumOverlayPanel)",
+             "pan CH tag and TX / TAKE TX / WIDE / DIV / PS HOLD badges (SpectrumStatusOverlay)",
+             "bottom status bar frame",
+             "ContainerWidget title bar, buttons, border, content background, resize grip",
+             "ContainerContentHost insertion line, scroll bar, applets banner button, entry grip"})},
+        {QStringLiteral("scoped_pass"), arr({
+             "container content (after every reconcile, and before each grab)",
+             "bottom status bar content",
+             "pan toolbar flyouts (when shown)",
+             "Setup, TX EQ, TX CFC, Container Settings, Pan Layout and PureSignal dialogs (on show)"})},
+        {QStringLiteral("not_migrated"), arr({
+             "slice flag (VfoWidget, VfoStyles helpers) and slice colours: excluded",
+             "spectrum and waterfall plot colours, filter overlays, band-plan strip: excluded",
+             "meter face artwork and user meter colours: excluded (their surrounds change)",
+             "EQ/CFC graph band colours: excluded",
+             "spectrum chrome on the GPU path (grid, scale text): not migrated",
+             "SpectrumWidget children other than the toolbar, corner buttons and badges "
+             "(dBm range arrows, clarity badge): not migrated",
+             "connection segment state dot, RTT and audio pip colours (state meaning): kept",
+             "dialogs outside the six named (Diversity, connection panel, ...): not migrated",
+             "#203040 in the scoped pass: by context (groove, hover background, else border-subtle)"})},
+    };
+}
+
+QJsonArray unknownLiteralsJson(int limit)
+{
+    const QHash<QString, int> counts = WorkspacePreview::unknownLiteralCounts();
+    QVector<QPair<QString, int>> rows;
+    for (auto it = counts.constBegin(); it != counts.constEnd(); ++it) {
+        rows.append({it.key(), it.value()});
+    }
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        return a.second != b.second ? a.second > b.second : a.first < b.first;
+    });
+    QJsonArray out;
+    for (int i = 0; i < rows.size() && i < limit; ++i) {
+        out.append(QJsonObject{{QStringLiteral("literal"), rows[i].first},
+                               {QStringLiteral("count"), rows[i].second}});
+    }
+    return out;
+}
+
+// Look scenes name their images after the look scene, not the base.
+void renameImages(SceneContext& ctx, const QString& from, const QString& to)
+{
+    auto renamed = [&](const QString& n) {
+        return n.startsWith(from) ? to + n.mid(from.size()) : n;
+    };
+    for (CapturedImage& img : ctx.images) {
+        img.name = renamed(img.name);
+        if (img.extra.contains(QStringLiteral("source"))) {
+            img.extra[QStringLiteral("source")] = renamed(img.extra.value(QStringLiteral("source")).toString());
+        }
+    }
 }
 
 // The settings file must be the isolated test profile under Qt's test-mode
@@ -366,9 +514,14 @@ bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneC
             {QStringLiteral("stopped_timers"), ctx.stoppedTimers},
             {QStringLiteral("spectrum_checks"), ctx.checks},
             {QStringLiteral("notes"), ctx.notes},
-            {QStringLiteral("provenance"), QStringLiteral("retained-current-app")},
+            {QStringLiteral("provenance"), WorkspacePreview::enabled()
+                 ? QStringLiteral("proposed-look") : QStringLiteral("retained-current-app")},
             {QStringLiteral("environment"), env},
         };
+        if (WorkspacePreview::enabled()) {
+            side.insert(QStringLiteral("look_coverage"), lookCoverageJson());
+            side.insert(QStringLiteral("unknown_literals_top30"), unknownLiteralsJson(30));
+        }
         for (auto it = img.extra.constBegin(); it != img.extra.constEnd(); ++it) {
             side.insert(it.key(), it.value());
         }
@@ -401,6 +554,14 @@ int main(int argc, char** argv)
         std::printf("qt_scale_factor=%s\n", qPrintable(qEnvironmentVariable("QT_SCALE_FACTOR")));
         return 0;
     }
+
+    // A look scene, or --workspace-preview, turns the workspace preview
+    // switch on before anything is themed or constructed.
+    const QString sceneName = args.scene;
+    if (args.workspacePreview || isLookScene(sceneName)) {
+        WorkspacePreview::setEnabledForTest(true);
+    }
+    args.scene = baseSceneFor(sceneName);
 
     applyAppTheme(app);
     OffScreenFilter offScreen;
@@ -472,6 +633,15 @@ int main(int argc, char** argv)
             for (const Scene& s : setup) {
                 out << s.name << "\tdialog\n";
             }
+            for (const Scene& s : scenes) {
+                const QString look = lookSceneFor(s);
+                if (!look.isEmpty()) {
+                    out << look << (s.dialog ? "\tdialog" : "\twindow") << '\n';
+                }
+            }
+            for (const Scene& s : setup) {
+                out << lookSceneFor(s) << "\tdialog\n";
+            }
             out.flush();
             window.reset();
             return 0;
@@ -514,6 +684,9 @@ int main(int argc, char** argv)
     ctx.size = args.size;
     ctx.dpr = args.dpr;
     ctx.crops = !scene.dialog && args.profile == QLatin1String("mac-1512x869@2");
+    if (WorkspacePreview::enabled()) {
+        ctx.beforeGrab = rethemeBeforeGrab;
+    }
     scene.run(ctx);
     if (!ctx.failure.isEmpty()) {
         std::fprintf(stderr, "nereus_visual_preview: %s: %s\n", qPrintable(scene.name),
@@ -525,10 +698,13 @@ int main(int argc, char** argv)
                      window->width(), window->height());
         return kExitMismatch;
     }
-    if (!writeImages(app, window.get(), args, ctx, scene.name)) {
+    if (sceneName != scene.name) {
+        renameImages(ctx, scene.name, sceneName);
+    }
+    if (!writeImages(app, window.get(), args, ctx, sceneName)) {
         return kExitSceneFailed;
     }
-    std::printf("%s: %lld images\n", qPrintable(scene.name), static_cast<long long>(ctx.images.size()));
+    std::printf("%s: %lld images\n", qPrintable(sceneName), static_cast<long long>(ctx.images.size()));
     window.reset();
     return 0;
 }

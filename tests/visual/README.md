@@ -22,11 +22,15 @@ python3 tests/visual/capture.py --out <run-dir>            # every scene, every 
 python3 tests/visual/capture.py --out <run-dir> --scenes 'baseline-*' --profiles 'mac-*'
 python3 tests/visual/capture.py --list                     # the planned runs
 python3 tests/visual/capture.py --verify --scenes baseline-two-band --profiles 'mac-1512x869@2'
+python3 tests/visual/capture.py --verify --against <stored-run-dir> --scenes baseline-two-band
 python3 tests/visual/build_gallery.py <run-dir>            # writes <run-dir>/index.html
 ```
 
 `--scenes` and `--profiles` take comma-separated names or shell globs.
 `--jobs N` sets how many processes run at once (default 4).
+`--verify --against <dir>` captures each pair once into a temporary
+directory and compares it with the stored `<dir>/<profile>/<image>.png`;
+it never writes into `<dir>`.
 
 Each run writes `<run-dir>/<profile>/<image>.png` with a `<image>.json`
 sidecar next to it, and `<run-dir>/manifest.json`. The sidecar records the
@@ -81,6 +85,39 @@ strip, status bar, pan 1 toolbar), each with a 3x nearest-neighbour copy.
 list comes from the running Setup dialog). Scenes live in a table in
 `PreviewScenes.cpp`; add a scene by appending a row.
 
+### Workspace look scenes
+
+`look-two-band`, `look-four-rx`, `look-tx` and `look-dialog-*` (one per
+`dialog-*` scene) pose the same state as the scene they are named after
+with the workspace preview switch on, so they show the proposed Longpath
+look (the Glass and Depth palette in `src/gui/styles/WorkspacePalette`).
+The binary sets the switch itself for a `look-*` scene; `--workspace-preview`
+sets it for any scene. In the app the switch is the environment variable
+`NEREUS_WORKSPACE_PREVIEW=1`; with it unset nothing changes, and the
+`baseline-*` and `dialog-*` scenes stay pixel-identical (check with
+`--verify --against`).
+
+The look is applied two ways:
+
+- (a) Explicit roles at call sites, under `if (WorkspacePreview::enabled())`:
+  the application palette and baseline stylesheet, the main window
+  stylesheet, the top strip and menu bar, the splitter handle, the pan
+  toolbar and corner buttons, the pan badges, the status bar frame, the
+  container title bars, borders and scroll bars.
+- (b) A scoped pass, `WorkspacePreview::themeSubtree`, that rewrites the
+  retained stylesheets of a subtree through `QssTranslator`: container
+  content, status bar content, pan toolbar flyouts and the Setup, TX EQ,
+  TX CFC, Container Settings, Pan Layout and PureSignal dialogs.
+
+(b) is preview scaffolding, not the final migration: it shows what the
+look would be before each call site is moved to a role.
+
+The slice flag, spectrum and waterfall plot colours, meter artwork and
+EQ/CFC graph band colours are excluded. The sidecar of a look image has
+`provenance: proposed-look`, a `look_coverage` block (explicit roles,
+scoped pass, not migrated) and `unknown_literals_top30`, the colour
+literals the scoped pass met and left alone.
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives
@@ -126,5 +163,5 @@ non-zero on any difference. What makes it repeatable:
   by a real 125% or 150% Windows display.
 - Amp, Tuner and RF-Kit applets are not shown: they appear only once a
   device setting that starts discovery or a connection is on.
-- The tool shows the current app only. Proposed designs are added as new
-  scenes.
+- The tool shows the current app, plus the proposed workspace look in the
+  `look-*` scenes. Other proposed designs are added as new scenes.

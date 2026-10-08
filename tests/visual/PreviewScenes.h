@@ -67,6 +67,10 @@ struct SceneContext {
     QJsonArray checks;
     QJsonArray notes;
     QString failure;     // non-empty: the scene could not run; exit non-zero
+    // Called with the window or dialog right before it is grabbed (the
+    // workspace look re-runs its scoped stylesheet pass here). Empty for
+    // the retained baseline, which then captures exactly as before.
+    std::function<void(QWidget*)> beforeGrab;
 };
 
 struct Scene {

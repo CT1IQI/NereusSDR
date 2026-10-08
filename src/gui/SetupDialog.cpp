@@ -187,6 +187,7 @@
 // =================================================================
 
 #include "SetupDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "SetupPage.h"
 #include "UnbuiltFeatures.h"
 #include "core/AppSettings.h"
@@ -477,6 +478,10 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
 
     // R-R3-21: leaf tooltips for remote-unavailable pages from the start.
     refreshTransmitPresentation();
+
+    // Workspace preview: the scoped stylesheet pass runs each time the
+    // dialog is shown (preview scaffolding; nothing with the switch off).
+    WorkspacePreview::themeOnShow(this);
 }
 
 // ── showEvent ─────────────────────────────────────────────────────────────────

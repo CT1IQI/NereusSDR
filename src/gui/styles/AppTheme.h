@@ -29,6 +29,7 @@
 #include <QStringLiteral>
 
 #include "../StyleConstants.h"
+#include "WorkspacePalette.h"
 
 namespace NereusSDR {
 
@@ -140,6 +141,91 @@ inline void applyAppBaselineQss(QApplication& app)
           QString::fromLatin1(Style::kBorder),
           QString::fromLatin1(Style::kTitleText),
           QString::fromLatin1(Style::kTextInactive)));
+}
+
+
+// Workspace preview only (WorkspacePreview::enabled()): the same palette
+// roles and baseline rules as applyDarkPalette + applyAppBaselineQss,
+// filled from the built-in Glass and Depth palette. main.cpp and the
+// visual preview tool call it after the two functions above when the
+// switch is on; with the switch off nothing calls it.
+inline void applyWorkspacePalette(QApplication& app)
+{
+    const auto& wp = Workspace::WorkspacePalette::glassAndDepth();
+    auto c = [&wp](const char* role) { return wp.color(QString::fromLatin1(role)); };
+
+    QPalette p = app.palette();
+    const QColor appBg        = c("app-bg");
+    const QColor panelBg      = c("panel");
+    const QColor buttonBg     = c("button");
+    const QColor insetBg      = c("inset");
+    const QColor textPrimary  = c("text");
+    const QColor textInactive = c("text-inactive");
+    const QColor selected     = c("selected-top");
+    const QColor selectedText = c("selected-text");
+    const QColor accent       = c("accent");
+    const QColor border       = c("border");
+    const QColor disabledBg   = c("disabled-bg");
+    const QColor disabledText = c("disabled-text");
+
+    for (auto group : { QPalette::Active, QPalette::Inactive }) {
+        p.setColor(group, QPalette::Window,          appBg);
+        p.setColor(group, QPalette::WindowText,      textPrimary);
+        p.setColor(group, QPalette::Base,            insetBg);
+        p.setColor(group, QPalette::AlternateBase,   panelBg);
+        p.setColor(group, QPalette::Text,            textPrimary);
+        p.setColor(group, QPalette::Button,          buttonBg);
+        p.setColor(group, QPalette::ButtonText,      textPrimary);
+        p.setColor(group, QPalette::ToolTipBase,     buttonBg);
+        p.setColor(group, QPalette::ToolTipText,     textPrimary);
+        p.setColor(group, QPalette::Highlight,       selected);
+        p.setColor(group, QPalette::HighlightedText, selectedText);
+        p.setColor(group, QPalette::Link,            accent);
+        p.setColor(group, QPalette::LinkVisited,     accent);
+        p.setColor(group, QPalette::PlaceholderText, textInactive);
+        p.setColor(group, QPalette::BrightText,      QColor(Qt::white));
+        p.setColor(group, QPalette::Light,           border);
+        p.setColor(group, QPalette::Midlight,        border);
+        p.setColor(group, QPalette::Dark,            panelBg);
+        p.setColor(group, QPalette::Mid,             panelBg);
+        p.setColor(group, QPalette::Shadow,          appBg);
+    }
+    p.setColor(QPalette::Disabled, QPalette::WindowText,      disabledText);
+    p.setColor(QPalette::Disabled, QPalette::Text,            disabledText);
+    p.setColor(QPalette::Disabled, QPalette::ButtonText,      disabledText);
+    p.setColor(QPalette::Disabled, QPalette::Button,          disabledBg);
+    p.setColor(QPalette::Disabled, QPalette::Base,            disabledBg);
+    p.setColor(QPalette::Disabled, QPalette::HighlightedText, disabledText);
+    p.setColor(QPalette::Disabled, QPalette::PlaceholderText, disabledText);
+    app.setPalette(p);
+
+    const auto r = [&wp](const char* role) { return wp.qss(QString::fromLatin1(role)); };
+    app.setStyleSheet(QStringLiteral(
+        "QToolTip {"
+        "  color: %1; background: %2; border: 1px solid %3;"
+        "  padding: 3px; border-radius: 3px;"
+        "}"
+        "QGroupBox::title { color: %4; }"
+        "QMenu { background: %2; color: %1; border: 1px solid %3; }"
+        "QMenu::item { padding: 4px 20px; }"
+        "QMenu::item:selected { background: %6; color: %7; }"
+        "QMenu::item:disabled { color: %5; }"
+        "QSpinBox::up-button, QDoubleSpinBox::up-button {"
+        "  subcontrol-origin: border; subcontrol-position: top right;"
+        "  width: 20px; border: none;"
+        "}"
+        "QSpinBox::down-button, QDoubleSpinBox::down-button {"
+        "  subcontrol-origin: border; subcontrol-position: bottom right;"
+        "  width: 20px; border: none;"
+        "}"
+        "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {"
+        "  image: url(:/icons/spin-up.svg); width: 14px; height: 14px;"
+        "}"
+        "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {"
+        "  image: url(:/icons/spin-down.svg); width: 14px; height: 14px;"
+        "}"
+    ).arg(r("text"), r("button"), r("border"), r("title-text"), r("text-inactive"),
+          r("selected-top"), r("selected-text")));
 }
 
 } // namespace NereusSDR

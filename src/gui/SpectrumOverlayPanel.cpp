@@ -75,6 +75,8 @@
 #include "SpectrumOverlayPanel.h"
 
 #include "StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include "core/AntennaLabels.h"
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
@@ -149,6 +151,91 @@ namespace OverlayColors {
         "color: #ffffff; font-size: 11px; font-weight: bold; }";
 } // namespace OverlayColors
 
+// ── Workspace preview styles ─────────────────────────────────────────────────
+// With WorkspacePreview::enabled() the strip and corner buttons keep their
+// geometry, translucency and font sizes and take the Glass and Depth roles:
+// a neutral raised chip, a quiet hover, the selected blue when active. With
+// the switch off each helper returns the OverlayColors string unchanged.
+namespace {
+
+QString wsRgba(const char* role, const char* fallback, int alpha)
+{
+    const QColor c(Workspace::role(role, fallback));
+    return QStringLiteral("rgba(%1, %2, %3, %4)")
+        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
+}
+
+QString wsMenuBtnStyle(int fontPx, int bgAlpha)
+{
+    return QStringLiteral(
+        "QPushButton { background: %1; "
+        "border: 1px solid rgba(255, 255, 255, 40); border-radius: 2px; "
+        "color: %2; font-size: %3px; font-weight: bold; }"
+        "QPushButton:hover { background: %4; "
+        "border: 1px solid %5; }"
+        "QPushButton:pressed { background: %6; }")
+        .arg(wsRgba("raised-top", "#222227", bgAlpha),
+             Workspace::role("text", "#dcdce1"))
+        .arg(fontPx)
+        .arg(wsRgba("button-alt-hover", "#2f3138", 240),
+             Workspace::role("border-muted", "#3d3d41"),
+             wsRgba("selected-bottom", "#1e3d5f", 220));
+}
+
+QString menuBtnNormalStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kMenuBtnNormal);
+    }
+    return wsMenuBtnStyle(11, 240);
+}
+
+QString menuBtnActiveStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kMenuBtnActive);
+    }
+    return QStringLiteral(
+        "QPushButton { background: %1; "
+        "border: 1px solid %2; border-radius: 2px; "
+        "color: %3; font-size: 11px; font-weight: bold; }")
+        .arg(wsRgba("selected-top", "#2f5f92", 230),
+             Workspace::role("selected-border", "#3d78b0"),
+             Workspace::role("selected-text", "#dbe9f8"));
+}
+
+QString panelStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kPanelStyle);
+    }
+    return QStringLiteral(
+        "QWidget { background: %1; "
+        "border: 1px solid %2; border-radius: 3px; }")
+        .arg(wsRgba("panel", "#0c0c0e", 220), Workspace::role("border", "#2c2c31"));
+}
+
+QString labelStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kLabelStyle);
+    }
+    return QStringLiteral(
+        "QLabel { background: transparent; border: none; "
+        "color: %1; font-size: 10px; font-weight: bold; }")
+        .arg(Workspace::role("title-text", "#c4c4ca"));
+}
+
+// The flyout's own controls go through the scoped pass when shown.
+void themeFlyout(QWidget* flyout)
+{
+    if (WorkspacePreview::enabled()) {
+        WorkspacePreview::themeSubtree(flyout);
+    }
+}
+
+} // namespace
+
 // File-local helpers for opaque styles that diverge from the canonical
 // Style:: helpers (per §A2 exception pattern — verified byte-by-byte):
 
@@ -167,7 +254,7 @@ static QPushButton* makeMenuBtn(const QString& text, QWidget* parent)
 {
     auto* btn = new QPushButton(text, parent);
     btn->setFixedSize(kBtnW, kBtnH);
-    btn->setStyleSheet(OverlayColors::kMenuBtnNormal);
+    btn->setStyleSheet(menuBtnNormalStyle());
     return btn;
 }
 
@@ -194,6 +281,9 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         "color: #c8d8e8; font-size: 13px; font-weight: bold; }"
         "QPushButton:hover { background: rgba(0, 112, 192, 180); "
         "border: 1px solid #0090e0; }");
+    if (WorkspacePreview::enabled()) {
+        m_collapseBtn->setStyleSheet(wsMenuBtnStyle(13, 240));
+    }
     connect(m_collapseBtn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggle);
 
     // Button 2: +RX (NYI Phase 3F)
@@ -337,7 +427,7 @@ void SpectrumOverlayPanel::hideFlyout()
         m_activeFlyout = nullptr;
     }
     if (m_activeButton) {
-        m_activeButton->setStyleSheet(OverlayColors::kMenuBtnNormal);
+        m_activeButton->setStyleSheet(menuBtnNormalStyle());
         m_activeButton = nullptr;
     }
 }
@@ -389,7 +479,7 @@ void SpectrumOverlayPanel::toggle()
 void SpectrumOverlayPanel::buildBandFlyout()
 {
     m_bandFlyout = new QWidget(parentWidget());
-    m_bandFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_bandFlyout->setStyleSheet(panelStyle());
     m_bandFlyout->hide();
 
     auto* grid = new QGridLayout(m_bandFlyout);
@@ -445,10 +535,11 @@ void SpectrumOverlayPanel::toggleBandFlyout()
     // Flyout: top-aligned with panel (from AetherSDR toggleBandPanel)
     m_bandFlyout->move(x() + width(), y());
     m_bandFlyout->raise();
+    themeFlyout(m_bandFlyout);
     m_bandFlyout->show();
     m_activeFlyout = m_bandFlyout;
     m_activeButton = bandBtn;
-    bandBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    bandBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── ANT flyout ────────────────────────────────────────────────────────────────
@@ -456,7 +547,7 @@ void SpectrumOverlayPanel::toggleBandFlyout()
 void SpectrumOverlayPanel::buildAntFlyout()
 {
     m_antFlyout = new QWidget(parentWidget());
-    m_antFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_antFlyout->setStyleSheet(panelStyle());
     m_antFlyout->hide();
 
     auto* vbox = new QVBoxLayout(m_antFlyout);
@@ -476,7 +567,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
         auto* lbl = new QLabel("RX Ant:");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_rxAntCmb = new QComboBox;
@@ -511,7 +602,7 @@ void SpectrumOverlayPanel::buildAntFlyout()
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
         auto* lbl = new QLabel("TX Ant:");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_txAntCmb = new QComboBox;
@@ -552,10 +643,11 @@ void SpectrumOverlayPanel::toggleAntFlyout()
     int panelY = y() + antBtnCenterY - m_antFlyout->sizeHint().height() / 2;
     m_antFlyout->move(x() + width(), std::max(0, panelY));
     m_antFlyout->raise();
+    themeFlyout(m_antFlyout);
     m_antFlyout->show();
     m_activeFlyout = m_antFlyout;
     m_activeButton = antBtn;
-    antBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    antBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── Display flyout ────────────────────────────────────────────────────────────
@@ -563,7 +655,7 @@ void SpectrumOverlayPanel::toggleAntFlyout()
 void SpectrumOverlayPanel::buildDisplayFlyout()
 {
     m_displayFlyout = new QWidget(parentWidget());
-    m_displayFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_displayFlyout->setStyleSheet(panelStyle());
     m_displayFlyout->hide();
 
     auto* grid = new QGridLayout(m_displayFlyout);
@@ -830,10 +922,11 @@ void SpectrumOverlayPanel::toggleDisplayFlyout()
     m_displayFlyout->adjustSize();
     m_displayFlyout->move(x() + width(), y());
     m_displayFlyout->raise();
+    themeFlyout(m_displayFlyout);
     m_displayFlyout->show();
     m_activeFlyout = m_displayFlyout;
     m_activeButton = dispBtn;
-    dispBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    dispBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── VAX flyout ────────────────────────────────────────────────────────────────
@@ -841,7 +934,7 @@ void SpectrumOverlayPanel::toggleDisplayFlyout()
 void SpectrumOverlayPanel::buildVaxFlyout()
 {
     m_vaxFlyout = new QWidget(parentWidget());
-    m_vaxFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_vaxFlyout->setStyleSheet(panelStyle());
     m_vaxFlyout->hide();
 
     auto* vb = new QVBoxLayout(m_vaxFlyout);
@@ -853,7 +946,7 @@ void SpectrumOverlayPanel::buildVaxFlyout()
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
         auto* lbl = new QLabel("VAX Ch");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         row->addWidget(lbl);
         m_vaxCmb = new QComboBox;
         m_vaxCmb->setObjectName(QStringLiteral("vaxCombo"));
@@ -1151,10 +1244,11 @@ void SpectrumOverlayPanel::toggleVaxFlyout()
     int panelY = y() + btnCenterY - m_vaxFlyout->sizeHint().height() / 2;
     m_vaxFlyout->move(x() + width(), std::max(0, panelY));
     m_vaxFlyout->raise();
+    themeFlyout(m_vaxFlyout);
     m_vaxFlyout->show();
     m_activeFlyout = m_vaxFlyout;
     m_activeButton = vaxBtn;
-    vaxBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    vaxBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── ATT flyout (R-R3-21) ─────────────────────────────────────────────────────
@@ -1169,7 +1263,7 @@ void SpectrumOverlayPanel::buildAttFlyout()
 {
     m_attFlyout = new QWidget(parentWidget());
     m_attFlyout->setObjectName(QStringLiteral("attFlyout"));
-    m_attFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_attFlyout->setStyleSheet(panelStyle());
     m_attFlyout->hide();
 
     auto* vb = new QVBoxLayout(m_attFlyout);
@@ -1178,14 +1272,14 @@ void SpectrumOverlayPanel::buildAttFlyout()
 
     m_attEnableChk = new QCheckBox(QStringLiteral("Step attenuator"));
     m_attEnableChk->setObjectName(QStringLiteral("attEnableCheck"));
-    m_attEnableChk->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attEnableChk->setStyleSheet(labelStyle());
     m_attEnableChk->setToolTip(QStringLiteral("Use the radio's step attenuator"));
     vb->addWidget(m_attEnableChk);
 
     auto* row = new QHBoxLayout;
     row->setSpacing(4);
     auto* lbl = new QLabel(QStringLiteral("ATT"));
-    lbl->setStyleSheet(OverlayColors::kLabelStyle);
+    lbl->setStyleSheet(labelStyle());
     row->addWidget(lbl);
     m_attSpin = new QSpinBox;
     m_attSpin->setObjectName(QStringLiteral("attSpin"));
@@ -1198,7 +1292,7 @@ void SpectrumOverlayPanel::buildAttFlyout()
     m_attReason = new QLabel;
     m_attReason->setObjectName(QStringLiteral("attReason"));
     m_attReason->setWordWrap(true);
-    m_attReason->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attReason->setStyleSheet(labelStyle());
     m_attReason->setVisible(false);
     vb->addWidget(m_attReason);
 
@@ -1285,10 +1379,11 @@ void SpectrumOverlayPanel::toggleAttFlyout()
     const int panelY = y() + btnCenterY - m_attFlyout->sizeHint().height() / 2;
     m_attFlyout->move(x() + width(), std::max(0, panelY));
     m_attFlyout->raise();
+    themeFlyout(m_attFlyout);
     m_attFlyout->show();
     m_activeFlyout = m_attFlyout;
     m_activeButton = attBtn;
-    attBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    attBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 void SpectrumOverlayPanel::wheelEvent(QWheelEvent* event) { event->accept(); }
@@ -1319,11 +1414,12 @@ void SpectrumOverlayPanel::buildZoomButtons()
         "QPushButton:hover { background: rgba(0, 112, 192, 180); "
         "border: 1px solid #0090e0; }"
         "QPushButton:pressed { background: rgba(0, 144, 224, 200); }";
+    const QString zoomStyle = WorkspacePreview::enabled() ? wsMenuBtnStyle(10, 200) : zBtnStyle;
 
     auto makeZBtn = [&](const QString& text) -> QPushButton* {
         auto* btn = new QPushButton(text, m_zoomStrip);
         btn->setFixedSize(kZBtnW, kZBtnH);
-        btn->setStyleSheet(zBtnStyle);
+        btn->setStyleSheet(zoomStyle);
         return btn;
     };
 

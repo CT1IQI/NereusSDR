@@ -90,6 +90,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/meters/VoiceRecordPlayItem.h"
 #include "gui/meters/VfoDisplayItem.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 
 #include <QUuid>
 #include <QVBoxLayout>
@@ -121,6 +123,11 @@ ContainerWidget::ContainerWidget(QWidget* parent)
     placeholder->setAlignment(Qt::AlignCenter);
     placeholder->setStyleSheet(QStringLiteral(
         "color: #405060; font-size: 14px; background: transparent;"));
+    if (WorkspacePreview::enabled()) {
+        placeholder->setStyleSheet(QStringLiteral(
+            "color: %1; font-size: 14px; background: transparent;")
+            .arg(Workspace::role("text-inactive", "#405060")));
+    }
     setContent(placeholder);
 
     qCDebug(lcContainer) << "Container created:" << m_id;
@@ -146,6 +153,13 @@ void ContainerWidget::buildUI()
     m_titleBar->setVisible(false);
     m_titleBar->setStyleSheet(QStringLiteral(
         "background: #1a2a3a; border-bottom: 1px solid #203040;"));
+    const bool workspaceLook = WorkspacePreview::enabled();
+    if (workspaceLook) {
+        // Workspace preview: Longpath's raised title bar, scoped to the bar
+        // itself so its borders do not cascade onto the label.
+        m_titleBar->setStyleSheet(QStringLiteral("QWidget#containerTitleBar { %1 }")
+                                      .arg(Workspace::titleBarStyle()));
+    }
 
     auto* barLayout = new QHBoxLayout(m_titleBar);
     barLayout->setContentsMargins(4, 0, 0, 0);
@@ -155,6 +169,11 @@ void ContainerWidget::buildUI()
     m_titleLabel = new QLabel(QStringLiteral("RX1"), m_titleBar);
     m_titleLabel->setStyleSheet(QStringLiteral(
         "color: #c8d8e8; font-size: 11px; font-weight: bold; background: transparent;"));
+    if (workspaceLook) {
+        m_titleLabel->setStyleSheet(QStringLiteral(
+            "color: %1; font-size: 11px; font-weight: bold; background: transparent;")
+            .arg(Workspace::role("title-text", "#c8d8e8")));
+    }
     // Native hand cursors only. Qt 6.11.0 on macOS draws SizeAllCursor (and
     // WaitCursor / BusyCursor) from its own ICC-tagged PNGs, and
     // QImage::toCGImage() frees the colour space before CGImageCreate uses
@@ -166,10 +185,18 @@ void ContainerWidget::buildUI()
     m_titleLabel->setCursor(Qt::OpenHandCursor);
     barLayout->addWidget(m_titleLabel, 1);
 
-    const QString btnStyle = QStringLiteral(
-        "QPushButton { background: transparent; border: none; color: #8090a0;"
-        "  font-size: 11px; padding: 2px 4px; }"
-        "QPushButton:hover { background: #2a3a4a; color: #c8d8e8; }");
+    const QString btnStyle = workspaceLook
+        ? QStringLiteral(
+              "QPushButton { background: transparent; border: none; color: %1;"
+              "  font-size: 11px; padding: 2px 4px; }"
+              "QPushButton:hover { background: %2; color: %3; }")
+              .arg(Workspace::role("text-secondary", "#8090a0"),
+                   Workspace::role("button-hover", "#2a3a4a"),
+                   Workspace::role("text", "#c8d8e8"))
+        : QStringLiteral(
+              "QPushButton { background: transparent; border: none; color: #8090a0;"
+              "  font-size: 11px; padding: 2px 4px; }"
+              "QPushButton:hover { background: #2a3a4a; color: #c8d8e8; }");
 
     // Axis lock button (overlay-docked only)
     m_btnAxis = new QPushButton(QStringLiteral("\u2196"), m_titleBar);
@@ -215,6 +242,12 @@ void ContainerWidget::buildUI()
     m_contentHolder = new QWidget(this);
     m_contentHolder->setMouseTracking(true);
     m_contentHolder->setStyleSheet(QStringLiteral("background: #0f0f1a;"));
+    if (workspaceLook) {
+        // Selector-less on purpose, like the original: the content's
+        // descendants inherit this background.
+        m_contentHolder->setStyleSheet(QStringLiteral("background: %1;")
+                                           .arg(Workspace::role("panel", "#0f0f1a")));
+    }
     new QVBoxLayout(m_contentHolder);
     m_contentHolder->layout()->setContentsMargins(0, 0, 0, 0);
     mainLayout->addWidget(m_contentHolder, 1);
@@ -226,6 +259,10 @@ void ContainerWidget::buildUI()
     m_resizeGrip->setCursor(Qt::SizeFDiagCursor);
     m_resizeGrip->setStyleSheet(QStringLiteral(
         "background: #405060; border-radius: 2px;"));
+    if (workspaceLook) {
+        m_resizeGrip->setStyleSheet(QStringLiteral("background: %1; border-radius: 2px;")
+                                        .arg(Workspace::role("border-muted", "#405060")));
+    }
     m_resizeGrip->setVisible(false);
 
     // Wire button signals
@@ -410,7 +447,14 @@ void ContainerWidget::setupBorder()
     // (Phase 3G-6). When m_highlighted the accent outline overrides the
     // normal border regardless of m_border, so the user always sees
     // which container the settings dialog is editing.
-    if (m_highlighted) {
+    if (WorkspacePreview::enabled() && (m_highlighted || m_border)) {
+        // Workspace preview: the highlight is the accent; the plain
+        // border is #203040's border-subtle role.
+        setStyleSheet(QStringLiteral("ContainerWidget { border: %1px solid %2; }")
+                          .arg(m_highlighted ? 2 : 1)
+                          .arg(m_highlighted ? Workspace::role("accent", "#00b4d8")
+                                             : Workspace::role("border-subtle", "#203040")));
+    } else if (m_highlighted) {
         setStyleSheet(QStringLiteral(
             "ContainerWidget { border: 2px solid #00b4d8; }"));
     } else if (m_border) {

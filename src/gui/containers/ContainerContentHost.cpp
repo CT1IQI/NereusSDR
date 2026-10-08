@@ -31,6 +31,8 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -72,6 +74,30 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         if(!result.ok) {qCWarning(lcFreeCanvas)<<result.error;m_canvas->project(m_document,[this]{QHash<QString,QPointer<QWidget>> views;for(const auto& row:m_rows) {views[row.entryId]=row.widget;}return views;}());}
     });
     connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview, explicit roles: the insertion line, the
+        // applets banner button and Longpath's narrow scroll bar. The
+        // background is the container's panel role (ContainerWidget's
+        // content holder). The content itself goes through the scoped
+        // pass after every reconcile.
+        m_indicator->setStyleSheet(QStringLiteral("background:%1;")
+                                       .arg(Workspace::role("accent", "#00b4d8")));
+        setStyleSheet(QString::fromLatin1(Workspace::kScrollBarStyle)
+            + QStringLiteral(
+                  "QPushButton#containerAppletsMenu {"
+                  " background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2);"
+                  " border: 1px solid %3; border-radius: 3px; color: %4; }"
+                  "QPushButton#containerAppletsMenu:hover { background: %5; color: %6; }"
+                  "QPushButton#containerAppletsMenu::menu-indicator { image: none; width: 0; }")
+                  .arg(Workspace::role("raised-top", "#222227"),
+                       Workspace::role("raised-bottom", "#141417"),
+                       Workspace::role("border", "#2c2c31"),
+                       Workspace::role("text-secondary", "#a6a6ac"),
+                       Workspace::role("button-hover", "#26262b"),
+                       Workspace::role("text", "#dcdce1")));
+        connect(this, &ContainerContentHost::reconciled, this,
+                [this]() { WorkspacePreview::themeSubtree(m_body); });
+    }
 }
 ContainerContentHost::~ContainerContentHost() { releaseViews(); }
 QJsonObject ContainerContentHost::effectiveContext(const ContainerDocument& document, const ContentEntry& entry)
@@ -523,7 +549,12 @@ class EntryGrip final : public QWidget
     {
         QPainter p(this);
         p.setPen(Qt::NoPen);
-        p.setBrush(underMouse() ? QColor("#00b4d8") : QColor("#8090a0"));
+        if (WorkspacePreview::enabled()) {
+            p.setBrush(underMouse() ? QColor(Workspace::role("accent", "#00b4d8"))
+                                    : QColor(Workspace::role("text-scale", "#8090a0")));
+        } else {
+            p.setBrush(underMouse() ? QColor("#00b4d8") : QColor("#8090a0"));
+        }
         for (int x : {5, 11}) {
             for (int y : {5, 11, 17}) {
                 p.drawEllipse(QPoint(x, y), 1, 1);

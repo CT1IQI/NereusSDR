@@ -928,6 +928,9 @@ warren@wpratt.com
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/styles/QssTranslator.h"
+#include "gui/styles/WorkspacePalette.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/SkuUiProfile.h"
 // Remote Daemon R2 Task 12: source-selector wiring below (setSourceSelector).
@@ -1528,6 +1531,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 
     buildStatusBar();
     applyDarkTheme();
+    if (WorkspacePreview::enabled()) {
+        WorkspacePreview::themeSubtree(m_chromeBarWidget);
+    }
 
     // Wire connection state changes to status bar
     connect(m_radioModel, &RadioModel::connectionStateChanged,
@@ -6966,6 +6972,13 @@ void MainWindow::buildUI()
     m_mainSplitter->setHandleWidth(3);
     m_mainSplitter->setStyleSheet(QStringLiteral(
         "QSplitter::handle { background: #203040; }"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the handle is a border between two panes.
+        // Width stays 3 px; only the colour takes the palette role.
+        m_mainSplitter->setStyleSheet(QStringLiteral(
+            "QSplitter::handle { background: %1; }")
+            .arg(Workspace::WorkspacePalette::glassAndDepth().qss(QStringLiteral("border-subtle"))));
+    }
 
     // Left side: spectrum + zoom bar
     auto* spectrumPane = new QWidget(m_mainSplitter);
@@ -11606,6 +11619,16 @@ void MainWindow::buildStatusBar()
     sb->setStyleSheet(QStringLiteral(
         "QStatusBar { background: #0a0a14; border-top: 1px solid #203040; }"
         "QStatusBar::item { border: none; }"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the status bar frame in explicit roles; its
+        // children go through WorkspacePreview::themeSubtree at startup.
+        const auto& wp = Workspace::WorkspacePalette::glassAndDepth();
+        sb->setStyleSheet(QStringLiteral(
+            "QStatusBar { background: %1; border-top: 1px solid %2; }"
+            "QStatusBar::item { border: none; }")
+            .arg(wp.qss(QStringLiteral("statusbar-bg")),
+                 wp.qss(QStringLiteral("statusbar-border"))));
+    }
 
     // Wrapper widget for the full-width custom layout. Stored as a
     // member so resizeEvent can read its width for m_chromeBar->relayout().
@@ -14841,7 +14864,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 void MainWindow::applyDarkTheme()
 {
-    setStyleSheet(QStringLiteral(
+    const QString qss(QStringLiteral(
         "QMainWindow { background: #0f0f1a; }"
         "QMenuBar {"
         "  background: #1a2a3a;"
@@ -14861,6 +14884,14 @@ void MainWindow::applyDarkTheme()
         "  color: #8090a0;"
         "  border-top: 1px solid #203040;"
         "}"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: #203040 here is a menu and status-bar
+        // border, so it takes border-subtle.
+        setStyleSheet(QssTranslator::translateWithAmbiguousRole(
+                          qss, QStringLiteral("border-subtle")).qss);
+    } else {
+        setStyleSheet(qss);
+    }
 }
 
 void MainWindow::showConnectionPanel()

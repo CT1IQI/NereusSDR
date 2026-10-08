@@ -2677,6 +2677,8 @@ target_compile_definitions(tst_ui_capability_gating PRIVATE NEREUS_BUILD_TESTS)
 # Gates issue #98 regression (dark-on-dark popup menus on Ubuntu 25.10
 # GNOME). NEREUS_SOURCE_ROOT lets the test resolve paths relative to
 # the source tree regardless of build directory.
+nereus_add_test(tst_workspace_qss_translator)
+
 nereus_add_test(tst_popup_style_coverage)
 target_compile_definitions(tst_popup_style_coverage PRIVATE
     NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")

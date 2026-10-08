@@ -7,10 +7,14 @@
 # process), writes every PNG with its JSON sidecar under
 # <out>/<profile>/, stamps each sidecar with the git HEAD and dirty state,
 # and writes <out>/manifest.json. --verify runs each pair twice and compares
-# the pixels. See tests/visual/README.md.
+# the pixels; --verify --against <dir> runs each pair once and compares it
+# with the stored images in <dir>/<profile>/. See tests/visual/README.md.
 #
 # Modification history (NereusSDR):
 #   2026-10-07 - Written for the workspace visual review. J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-07 - --against (compare with a stored run) and the
+#                proposed-look provenance for look-* scenes. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
@@ -177,6 +181,47 @@ def compare(png_a, png_b):
     return count, box
 
 
+def verify_against(binary, screen_dpr, runs, jobs, stored):
+    """Captures each pair once into a scratch directory and compares every
+    image with the same file under <stored>/<profile>/. Never writes to
+    <stored>."""
+    failures = 0
+    work = pathlib.Path(tempfile.mkdtemp(prefix="nereus-visual-against-"))
+    try:
+        def once(item):
+            scene, profile = item
+            return scene, profile, capture_one(binary, screen_dpr, scene, profile, work / profile)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(once, runs))
+        for scene, profile, r in results:
+            if r["returncode"] != 0:
+                print("%s @ %s: RUN FAILED (%s) %s" % (
+                    scene, profile, r["returncode"], r["stderr"].strip().splitlines()[-1:]))
+                failures += 1
+                continue
+            for png in images_of(work / profile, scene):
+                ref = stored / profile / png.name
+                if not ref.exists():
+                    print("%s @ %s: %s has no stored image" % (scene, profile, png.name))
+                    failures += 1
+                    continue
+                result = compare(png, ref)
+                if result is None:
+                    print("%s @ %s: %s IDENTICAL to stored" % (scene, profile, png.name))
+                else:
+                    count, box = result
+                    print("%s @ %s: %s DIFFERS from stored: %d pixels, bounding box %s" % (
+                        scene, profile, png.name, count, box))
+                    failures += 1
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    print("verify against %s: %d run(s), %s" % (
+        stored, len(runs), "all identical" if failures == 0
+        else "%d difference(s) or failure(s)" % failures))
+    return failures
+
+
 def verify(binary, screen_dpr, runs, jobs):
     failures = 0
     work = pathlib.Path(tempfile.mkdtemp(prefix="nereus-visual-verify-"))
@@ -228,6 +273,9 @@ def main():
                     help="comma-separated profile names or globs (default: all)")
     ap.add_argument("--verify", action="store_true",
                     help="run each pair twice and compare the pixels; writes nothing to --out")
+    ap.add_argument("--against", type=pathlib.Path,
+                    help="with --verify: run each pair once and compare with the stored "
+                         "images in <dir>/<profile>/ (never written)")
     ap.add_argument("--jobs", type=int, default=4, help="processes at once (default 4)")
     ap.add_argument("--list", action="store_true", help="print the planned runs and exit")
     opts = ap.parse_args()
@@ -250,6 +298,10 @@ def main():
         for scene, profile in runs:
             print("%s\t%s" % (scene, profile))
         return 0
+    if opts.against is not None and not opts.verify:
+        sys.exit("--against needs --verify")
+    if opts.verify and opts.against is not None:
+        return 1 if verify_against(opts.binary, screen_dpr, runs, opts.jobs, opts.against) else 0
     if opts.verify:
         return 1 if verify(opts.binary, screen_dpr, runs, opts.jobs) else 0
     if opts.out is None:
@@ -287,7 +339,10 @@ def main():
 
     manifest = {
         "tool": "nereus_visual_preview",
-        "provenance": "retained-current-app",
+        # Per run: look-* scenes are the proposed workspace look.
+        "provenance": ("proposed-look" if runs and all(s.startswith("look-") for s, _ in runs)
+                       else "retained-current-app" if not any(s.startswith("look-") for s, _ in runs)
+                       else "mixed; see each sidecar"),
         "started_utc": started,
         "git_head": head,
         "git_dirty": dirty,

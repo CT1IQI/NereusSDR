@@ -58,6 +58,7 @@ PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
 WDSP_PROVENANCE = REPO / "docs" / "attribution" / "WDSP-PROVENANCE.md"
 AETHER_RECONCILIATION = REPO / "docs" / "attribution" / "aethersdr-reconciliation.md"
 FREEDV_PROVENANCE = REPO / "docs" / "attribution" / "FREEDV-GUI-PROVENANCE.md"
+LONGPATH_PROVENANCE = REPO / "docs" / "attribution" / "LONGPATH-PROVENANCE.md"
 BASE_REF = os.environ.get("CHECK_NEW_PORTS_BASE_REF", "origin/main")
 FULL_TREE = (
     os.environ.get("CHECK_NEW_PORTS_FULL") == "1"
@@ -402,7 +403,7 @@ def main():
         files = all_src_files()
         listed = parse_provenance_paths(
             PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
-            FREEDV_PROVENANCE,
+            FREEDV_PROVENANCE, LONGPATH_PROVENANCE,
         )
         mode_label = "full-tree"
     else:
@@ -413,7 +414,7 @@ def main():
         # whether this invocation happens to inspect a PR diff.
         listed = parse_provenance_paths(
             PROVENANCE, WDSP_PROVENANCE, AETHER_RECONCILIATION,
-            FREEDV_PROVENANCE,
+            FREEDV_PROVENANCE, LONGPATH_PROVENANCE,
             text_reader=index_snapshot_text,
         )
         mode_label = "diff"
