@@ -4,6 +4,10 @@
 //                 and drags, routed the way AppKit routes it through native
 //                 child views, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The entry header's pop-out button, stacked and on a free
+//                 canvas, and JJ's bottom strip (Tuner and Amplifier side by
+//                 side), by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -41,6 +45,7 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
+#include "gui/containers/FreeCanvasSurface.h"
 #include "gui/containers/WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -412,6 +417,27 @@ struct LiveFixture {
         return -1;
     }
 
+    // The one pop-out shell that holds `entryId`, or an empty id.
+    QString shellHolding(const QString& entryId) const
+    {
+        for (const auto& d : store->snapshot().containers) {
+            if (d.popOutShell && d.contents.size() == 1 && d.contents[0].id == entryId) {
+                return d.id;
+            }
+        }
+        return {};
+    }
+
+    // Commits a change to the current workspace.
+    bool edit(const std::function<void(WorkspaceDocument&)>& change)
+    {
+        WorkspaceDocument document = store->snapshot();
+        change(document);
+        const bool saved = manager->commitWorkspace(document, document.revision).status == CommitStatus::Saved;
+        settle();
+        return saved;
+    }
+
     QString describe(QWidget* widget) const
     {
         return QString::fromLatin1(widget->metaObject()->className()) + QLatin1Char('#') + widget->objectName();
@@ -671,6 +697,259 @@ private slots:
         QVERIFY2(entryView == entry || entry->isAncestorOf(entryView),
                  qPrintable(QStringLiteral("the entry header is under ") + f.describe(entryView)));
         QCOMPARE(entry->cursor().shape(), Qt::OpenHandCursor);
+    }
+
+    // The entry header's ↗: left of ⋯, the entry button size, and one real
+    // click pops the entry out into a new floating container.
+    void entryPopOutButtonPopsTheEntryOut()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QVERIFY(f.enterArrange());
+        WorkspaceEntryHeader* header = f.entryHeader(f.rxEntryId);
+        QVERIFY(header);
+        f.reveal(header);
+        QPushButton* popOut = header->popOutButton();
+        QVERIFY(popOut && popOut->isVisible());
+        QCOMPARE(popOut->objectName(), QStringLiteral("workspaceEntryPopOut"));
+        QCOMPARE(popOut->text(), QStringLiteral("↗"));
+        QCOMPARE(popOut->toolTip(), QStringLiteral("Pop out"));
+        QCOMPARE(popOut->size(), header->optionsButton()->size());
+        // Immediately left of ⋯: nothing between them but the row spacing.
+        QVERIFY(popOut->geometry().right() < header->optionsButton()->geometry().left());
+        for (QWidget* child : header->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            if (child != popOut && child != header->optionsButton() && child->isVisible()) {
+                QVERIFY(child->geometry().right() < popOut->geometry().left());
+            }
+        }
+        QVERIFY(popOut->isEnabled());
+        NativeMouse mouse(f.window.get());
+        const QPoint at = centreOf(popOut);
+        QWidget* hit = mouse.targetAt(at);
+        QVERIFY2(hit == header || header->isAncestorOf(hit),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(at);
+        settle();
+        QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), -1);
+        const QString shell = f.shellHolding(f.rxEntryId);
+        QVERIFY(!shell.isEmpty());
+        QCOMPARE(f.document(shell)->dockMode, DockMode::Floating);
+        QVERIFY(f.manager->arrangeController()->returnEntry(f.rxEntryId).ok);
+        settle();
+    }
+
+    // Disabled, never hidden, when the menu's Pop Out is disabled: a locked
+    // container, or no arrange controller (the menu is then empty).
+    void entryPopOutButtonIsDisabledWhenPopOutIs()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            for (auto& c : d.containers) {
+                if (c.id == f.mainId) {
+                    c.locked = true;
+                }
+            }
+        }));
+        QVERIFY(f.enterArrange());
+        WorkspaceEntryHeader* header = f.entryHeader(f.rxEntryId);
+        QVERIFY(header);
+        f.reveal(header);
+        QVERIFY(header->popOutButton()->isVisible());
+        QVERIFY(!header->popOutButton()->isEnabled());
+        MenuProbe probe;
+        probe.arm();
+        NativeMouse mouse(f.window.get());
+        mouse.click(centreOf(header->optionsButton()));
+        QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
+        QVERIFY(probe.actions.contains(QStringLiteral("Pop Out")));
+        QVERIFY(!probe.enabled.value(QStringLiteral("Pop Out"), true));
+        mouse.click(centreOf(header->popOutButton()));
+        settle();
+        QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
+
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            for (auto& c : d.containers) {
+                if (c.id == f.mainId) {
+                    c.locked = false;
+                }
+            }
+        }));
+        header = f.entryHeader(f.rxEntryId);
+        QVERIFY(header && header->popOutButton()->isEnabled());
+        ContainerContentHost* host = f.host();
+        host->setArrangeController(nullptr);
+        settle();
+        QVERIFY(header->popOutButton()->isVisible());
+        QVERIFY(!header->popOutButton()->isEnabled());
+        host->setArrangeController(f.manager->arrangeController());
+        settle();
+        QVERIFY(header->popOutButton()->isEnabled());
+    }
+
+    // A free canvas leaf's header carries the same ↗.
+    void freeCanvasEntryPopOutButtonPopsTheEntryOut()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QString leafId;
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument canvas;
+            canvas.id = QStringLiteral("canvas");
+            canvas.name = QStringLiteral("Canvas");
+            canvas.layout = ContentLayout::FreeCanvas;
+            canvas.dockMode = DockMode::PanelDocked;
+            canvas.edge = DockEdge::Left;
+            for (int i = 0; i < 2; ++i) {
+                ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+                entry.context["sliceId"] = 0;
+                entry.setFreeCanvasRect(QRectF(0, i * 120, 300, 100));
+                canvas.contents.append(entry);
+            }
+            leafId = canvas.contents[0].id;
+            d.containers.append(canvas);
+            d.arrangement.strips[DockEdge::Left].thickness = 360;
+        }));
+        QVERIFY(f.enterArrange());
+        ContainerContentHost* host = f.manager->contentHost(QStringLiteral("canvas"));
+        QVERIFY(host);
+        auto* surface = host->findChild<FreeCanvasSurface*>();
+        QVERIFY(surface);
+        // A leaf's header shows while it is selected or hovered.
+        surface->selectEntry(leafId);
+        settle();
+        auto* header = surface->findChild<WorkspaceEntryHeader*>(QStringLiteral("freeCanvasGrip_") + leafId);
+        QVERIFY(header && header->isVisible());
+        QPushButton* popOut = header->popOutButton();
+        QCOMPARE(popOut->objectName(), QStringLiteral("workspaceEntryPopOut"));
+        QVERIFY(popOut->isEnabled());
+        NativeMouse mouse(f.window.get());
+        const QPoint at = centreOf(popOut);
+        QWidget* hit = mouse.targetAt(at);
+        QVERIFY2(hit == header || header->isAncestorOf(hit),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(at);
+        settle();
+        QCOMPARE(f.entryIndex(QStringLiteral("canvas"), leafId), -1);
+        const QString shell = f.shellHolding(leafId);
+        QVERIFY(!shell.isEmpty());
+        QCOMPARE(f.document(shell)->dockMode, DockMode::Floating);
+        QVERIFY(f.manager->arrangeController()->returnEntry(leafId).ok);
+        settle();
+    }
+
+    // JJ's bottom strip: one container "RX" holding Tuner and Amplifier,
+    // stacked; he wants them side by side, left to right. The path: the
+    // entry's ↗ (or ⋯ > Pop Out), then the new container's ⋯ > Move to Edge >
+    // Bottom. Move to Edge appends at the strip's end, so the popped entry
+    // lands to the right of what stays: pop the one that belongs on the right.
+    // The Tuner and Amplifier applets need a 4O3A device setting, which
+    // starts discovery, so they never materialize here (the gallery has the
+    // same limit); VAX stands in for Tuner and TCI for Amplifier. The strip
+    // and the commands do not look at the entry's type.
+    void bottomStripSideBySide_data()
+    {
+        QTest::addColumn<QString>("popType");
+        QTest::addColumn<QString>("leftType");
+        QTest::newRow("pop Amplifier: Tuner left, Amplifier right") << QStringLiteral("applet:tci") << QStringLiteral("applet:vax");
+        QTest::newRow("pop Tuner: Amplifier left, Tuner right") << QStringLiteral("applet:vax") << QStringLiteral("applet:tci");
+    }
+    void bottomStripSideBySide()
+    {
+        QFETCH(QString, popType);
+        QFETCH(QString, leftType);
+        LiveFixture f;
+        QVERIFY(f.build());
+        QString popId;
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument rx;
+            rx.id = QStringLiteral("rx-bottom");
+            rx.name = QStringLiteral("RX");
+            rx.layout = ContentLayout::VerticalStack;
+            rx.dockMode = DockMode::PanelDocked;
+            rx.edge = DockEdge::Bottom;
+            for (auto& c : d.containers) {
+                if (c.id != f.mainId) {
+                    continue;
+                }
+                for (int i = c.contents.size() - 1; i >= 0; --i) {
+                    if (c.contents[i].typeId == QStringLiteral("applet:vax")
+                        || c.contents[i].typeId == QStringLiteral("applet:tci")) {
+                        c.contents.removeAt(i);
+                    }
+                }
+            }
+            for (const QString& type : {QStringLiteral("applet:vax"), QStringLiteral("applet:tci")}) {
+                ContentEntry entry = f.registry->makeEntry(type);
+                entry.context["sliceId"] = 0;
+                if (type == popType) {
+                    popId = entry.id;
+                }
+                rx.contents.append(entry);
+            }
+            d.containers.append(rx);
+        }));
+        QVERIFY(f.enterArrange());
+        ContainerContentHost* host = f.manager->contentHost(QStringLiteral("rx-bottom"));
+        QVERIFY(host);
+        auto* header = host->findChild<WorkspaceEntryHeader*>(QStringLiteral("workspaceEntryHeader_") + popId);
+        QVERIFY(header && header->isVisible());
+        NativeMouse mouse(f.window.get());
+        const QPoint at = centreOf(header->popOutButton());
+        QWidget* hit = mouse.targetAt(at);
+        QVERIFY2(hit == header || header->isAncestorOf(hit),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(at);
+        settle();
+        const QString shell = f.shellHolding(popId);
+        QVERIFY(!shell.isEmpty());
+        ContainerWidget* shellWidget = f.manager->container(shell);
+        QVERIFY(shellWidget);
+        WorkspaceGroupHeader* shellHeader = shellWidget->workspaceHeader();
+        QVERIFY(shellHeader && shellHeader->isVisible());
+        // The floating container is its own window: the click goes to it.
+        NativeMouse shellMouse(shellWidget->window());
+        MenuProbe probe;
+        bool submenuOpened = false;
+        probe.arm([&](QMenu* menu) {
+            clickItem(menu, QStringLiteral("Move to Edge"));
+            QTimer::singleShot(400, qApp, [&, menu] {
+                auto* sub = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (!sub || sub == menu) {
+                    menu->close();
+                    return;
+                }
+                submenuOpened = true;
+                clickItem(sub, QStringLiteral("Bottom"));
+            });
+        });
+        shellMouse.click(centreOf(shellHeader->optionsButton()));
+        QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(submenuOpened, kMenuWaitMs);
+        settle();
+        QCOMPARE(f.document(shell)->dockMode, DockMode::PanelDocked);
+        QCOMPARE(f.document(shell)->edge, DockEdge::Bottom);
+        // The bottom strip holds the two containers, one entry each.
+        QStringList bottom;
+        for (const auto& d : f.store->snapshot().containers) {
+            if (d.dockMode == DockMode::PanelDocked && d.edge == DockEdge::Bottom) {
+                bottom.append(d.id);
+            }
+        }
+        QCOMPARE(bottom, (QStringList{QStringLiteral("rx-bottom"), shell}));
+        QCOMPARE(f.document(QStringLiteral("rx-bottom"))->contents.size(), 1);
+        QCOMPARE(f.document(QStringLiteral("rx-bottom"))->contents[0].typeId, leftType);
+        // Side by side, left to right, as the strip lays them out.
+        ContainerWidget* left = f.manager->container(QStringLiteral("rx-bottom"));
+        QVERIFY(left && left->isVisible() && shellWidget->isVisible());
+        QWidget* stripWidget = f.manager->edgeDockArea()->strip(DockEdge::Bottom);
+        const QRect leftRect(left->mapTo(stripWidget, QPoint()), left->size());
+        const QRect rightRect(shellWidget->mapTo(stripWidget, QPoint()), shellWidget->size());
+        QVERIFY2(leftRect.right() < rightRect.left(),
+                 qPrintable(QStringLiteral("left %1,%2 %3x%4 right %5,%6 %7x%8")
+                                .arg(leftRect.x()).arg(leftRect.y()).arg(leftRect.width()).arg(leftRect.height())
+                                .arg(rightRect.x()).arg(rightRect.y()).arg(rightRect.width()).arg(rightRect.height())));
+        QCOMPARE(leftRect.top(), rightRect.top());
     }
 };
 
