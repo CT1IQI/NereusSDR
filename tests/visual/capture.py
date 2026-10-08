@@ -23,6 +23,9 @@
 #                files are cleared before it is captured again; --against
 #                reports stored images a run no longer produces. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - compare() looks at every channel: it had compared alpha
+#                only and reported every opaque pair identical. J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -204,11 +207,14 @@ def compare(png_a, png_b):
         return (max(a.size[0] * a.size[1], b.size[0] * b.size[1]),
                 "sizes differ %s vs %s" % (a.size, b.size))
     diff = ImageChops.difference(a, b)
-    box = diff.getbbox()
+    # Every channel counts. getbbox() looks only at alpha by default when
+    # there is one, and the difference of two opaque images has alpha 0
+    # everywhere, so it called every pair identical; an "L" conversion
+    # also rounds small single-channel differences to zero.
+    box = diff.getbbox(alpha_only=False)
     if box is None:
         return None
-    mask = diff.convert("L").point(lambda v: 255 if v else 0)
-    count = sum(1 for v in mask.getdata() if v)
+    count = sum(1 for px in diff.getdata() if any(px))
     return count, box
 
 
