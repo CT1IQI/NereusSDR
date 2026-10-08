@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: Arrange's outline and the Reveal
+//                 shadow let clicks through as native views (macOS), so
+//                 the header under them answers. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the source menu ticks the slice
 //                 the chip shows, not the legacy rxSource key. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -149,7 +153,9 @@ class RevealShadow final : public QWidget {
 public:
     explicit RevealShadow(QWidget* parent) : QWidget(parent)
     {
-        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        // Native on macOS like every sibling here: it must pass clicks
+        // through as a view, not only as a widget.
+        WorkspacePreview::passInputThrough(this);
         hide();
     }
 protected:
@@ -167,7 +173,9 @@ class ArrangeOutline final : public QWidget {
 public:
     explicit ArrangeOutline(QWidget* parent) : QWidget(parent)
     {
-        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        // Covers the whole container in Arrange and is raised over the
+        // header: as a native view it took every click on macOS.
+        WorkspacePreview::passInputThrough(this);
         hide();
     }
 protected:

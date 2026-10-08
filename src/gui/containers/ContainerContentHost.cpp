@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the insertion line lets a drop
+//                 through as a native view (macOS). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: a free-canvas factory widget is not
 //                 reused as an explanation label (gated on the switch).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -94,6 +97,9 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         // pass after every reconcile.
         m_indicator->setStyleSheet(QStringLiteral("background:%1;")
                                        .arg(Workspace::role("accent", "#00b4d8")));
+        // The insertion line is a native view on macOS while a drag runs;
+        // the drop goes to the stack under it.
+        WorkspacePreview::passInputThrough(m_indicator);
         // Longpath's scroll bar is 10 px thick; the preview keeps the
         // thickness the platform style gives the legacy bar, so the
         // content area does not change width.
