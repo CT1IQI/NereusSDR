@@ -26,6 +26,10 @@
 #   2026-10-08 - compare() looks at every channel: it had compared alpha
 #                only and reported every opaque pair identical. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - A scene no longer claims the images of a longer scene
+#                name (controls-sheet and controls-sheet--sizes): clearing,
+#                stamping and comparing go through owns(). J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -119,7 +123,23 @@ def list_scenes(binary):
         parts = line.split("\t")
         if len(parts) == 2:
             scenes.append((parts[0], parts[1] == "dialog"))
+    KNOWN_SCENES.update(name for name, _ in scenes)
     return scenes
+
+
+# Every scene name the binary lists; filled by list_scenes().
+KNOWN_SCENES = set()
+
+
+def owns(stem, scene):
+    """True when a file stem is one of the scene's images: <scene> or
+    <scene>--<part>, and not an image of a longer scene name that starts
+    the same way (controls-sheet--sizes is its own scene, not a part of
+    controls-sheet)."""
+    if stem != scene and not stem.startswith(scene + "--"):
+        return False
+    return not any(len(other) > len(scene) and (stem == other or stem.startswith(other + "--"))
+                   for other in KNOWN_SCENES)
 
 
 def git_state():
@@ -153,7 +173,7 @@ def clear_scene(out_dir, scene):
     out_dir, so a re-capture lists only what this run wrote."""
     for p in list(out_dir.iterdir()) if out_dir.is_dir() else []:
         stem = p.name.split(".", 1)[0]
-        if p.is_file() and p.suffix in (".png", ".json") and (stem == scene or stem.startswith(scene + "--")):
+        if p.is_file() and p.suffix in (".png", ".json") and owns(stem, scene):
             p.unlink()
 
 
@@ -178,7 +198,7 @@ def images_of(out_dir, scene):
     # A scene's images are <scene>.png and <scene>--<part>.png.
     return sorted(p for p in out_dir.glob("*.png")
                   if not p.name.endswith(MAP_SUFFIX)
-                  and (p.stem == scene or p.stem.startswith(scene + "--")))
+                  and owns(p.stem, scene))
 
 
 def stamp_sidecars(out_dir, scene, head, dirty, screen_dpr, factor):

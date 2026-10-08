@@ -341,6 +341,38 @@ python3 tests/visual/capture.py --out <dir> --scenes controls-sheet \
     --profiles 'mac-1512x869@2,laptop-1280x800@1'
 ```
 
+### Choice sheets
+
+Three scenes put a few candidate looks for one kind of control in rows,
+one candidate per row, for JJ to pick from. Every cell is a real Qt widget
+with the candidate's stylesheet, on a background painted as the preview
+paints it. Each row's note names every colour and the palette role it
+comes from; the sidecar repeats them under `variants`.
+
+- `controls-sheet--indicators` (and `--zoom`, 5x): checkbox and radio
+  off, on, disabled off and disabled on at today's 16 px row height, on
+  the Main Panel (`kPanelBg`) and a Setup page (`kAppBg`). Rows: today,
+  Longpath as is, then three brighter off states built on Longpath's
+  sheet.
+- `controls-sheet--lit-buttons` (and `--zoom`, 5x, one row per state):
+  checked push buttons with real labels, resting and hovered, on the Main
+  Panel. Rows: today's three meanings (green, blue, amber), the same three
+  in Longpath's tones (the amber is a composition from Longpath's roles),
+  and Longpath's one blue.
+- `controls-sheet--sizes`: combo, line edit, spin box, tabs and a push
+  button at Longpath's own sizes, then at today's sizes with Longpath's
+  shading, with today's corners and with corners scaled to the control
+  height. Captions give each widget's logical size; the sidecar has the
+  radii and today's sizes.
+
+`capture.py` treats each of these as its own scene: capturing
+`controls-sheet` neither clears nor claims their files.
+
+```
+python3 tests/visual/capture.py --out <dir> --scenes 'controls-sheet--*' \
+    --profiles 'mac-1512x869@2,laptop-1280x800@1'
+```
+
 ### Strip fit scenes
 
 `strip-fit-today` (the baseline two-band window) and `strip-fit-preview`

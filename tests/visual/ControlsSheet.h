@@ -18,6 +18,10 @@
 //                 scenes (applet minimum width against the Main Panel
 //                 viewport). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - sceneIndicatorChoices, sceneLitButtons and
+//                 sceneControlSizes: candidate looks for JJ to pick from.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -42,5 +46,20 @@ QJsonObject measurePanelFit(SceneContext& ctx, const QString& look);
 // window image, with `fit` (from measurePanelFit) in its sidecar, and
 // stores `fit` on the window image too.
 void appendPanelFitCrop(SceneContext& ctx, const QString& scene, const QJsonObject& fit);
+
+// Choice sheets: one row per candidate look, real widgets in every cell.
+// Each leaves the app in today's look with the preview switch off.
+// controls-sheet--indicators (+ --zoom): checkbox and radio off, on,
+// disabled off and disabled on at 16 px, five candidates, on the Main
+// Panel and Setup page backgrounds.
+void sceneIndicatorChoices(SceneContext& ctx);
+// controls-sheet--lit-buttons (+ --zoom): checked push buttons, today's
+// three meanings, Longpath's tones for the same three, and Longpath's one
+// blue; resting and hovered.
+void sceneLitButtons(SceneContext& ctx);
+// controls-sheet--sizes: combo, line edit, spin box, tabs and push button
+// at Longpath's sizes, and at today's with Longpath shading (today's and
+// height-scaled corners).
+void sceneControlSizes(SceneContext& ctx);
 
 } // namespace NereusSDR::Preview

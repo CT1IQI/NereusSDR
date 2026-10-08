@@ -12,10 +12,14 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Choice sheets: checkbox and radio off states, lit push
+//                 buttons, field and button sizes. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
 
+#include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
@@ -42,12 +46,14 @@
 #include <QStyleHints>
 #include <QStyleOptionButton>
 #include <QStyleOptionSlider>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolTip>
 #include <QVBoxLayout>
 
 #include <array>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -1456,6 +1462,891 @@ void appendPanelFitCrop(SceneContext& ctx, const QString& scene, const QJsonObje
     c.extra[QStringLiteral("device_rect")] = rectArray(toDevice(r, c.dpr));
     c.extra[QStringLiteral("panel_fit")] = fit;
     ctx.images.append(c);
+}
+
+// ---- choice sheets -----------------------------------------------------------
+//
+// Sheets that put a few candidate looks for one kind of control side by
+// side for JJ to pick from: checkbox and radio "off" states, lit push
+// buttons, and field and button sizes. Each row is one candidate; the
+// cells are real Qt widgets with the candidate's stylesheet.
+
+namespace {
+
+constexpr int kGridLabelWidth = 250;
+constexpr int kIndicatorRowHeight = 16;   // today's checkbox and radio row height
+constexpr int kIndicatorWidth = 90;
+constexpr int kLitButtonWidth = 72;
+constexpr int kLitButtonHeight = 22;      // Style::kButtonH
+// Longpath's corner radius and the field height it sits on (sizeHint of
+// its line edit and combo, controls-sheet sidecar): the ratio that row 3
+// of the sizes sheet scales today's heights by.
+constexpr int kLongpathRadiusPx = 7;
+constexpr int kLongpathFieldHeightPx = 26;
+// Today's corner radius on combo, line edit, spin box and button
+// (StyleConstants.h kComboStyle, kLineEditStyle, kSpinBoxStyle,
+// buttonBaseStyle); today's tabs (SpotHubDialog) have square corners.
+constexpr int kTodayRadiusPx = 3;
+constexpr int kTodayTabRadiusPx = 0;
+
+struct GridRow {
+    QString key;
+    QString title;
+    QString note;
+    QVector<QVector<Shot>> groups;
+};
+
+// Lays the rows out as a sheet of QLabels and grabs it, one column group
+// per entry of `groupTitles`. `placements` receives each image's rect.
+QImage assembleGrid(const QVector<GridRow>& rows, const QStringList& groupTitles, const QString& title,
+                    const QString& subtitle, QJsonArray& placements)
+{
+    auto sheet = std::make_unique<QWidget>();
+    sheet->setObjectName(QStringLiteral("choiceSheet"));
+    sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
+    sheet->setAutoFillBackground(true);
+    QPalette pal = sheet->palette();
+    pal.setColor(QPalette::Window, QColor(QLatin1String(kSheetBg)));
+    sheet->setPalette(pal);
+
+    struct Placed {
+        QLabel* caption;
+        QLabel* image;
+        int width;
+        int height;
+    };
+    const int groupCount = static_cast<int>(groupTitles.size());
+    QVector<QLabel*> heads;
+    QVector<int> columnWidth(groupCount, 0);
+    for (int g = 0; g < groupCount; ++g) {
+        QLabel* head = textLabel(sheet.get(), groupTitles[g], kSheetTitleColour, 12, true);
+        heads.append(head);
+        columnWidth[g] = head->width();
+    }
+    std::vector<QVector<QVector<Placed>>> placed(rows.size());
+    int captionHeight = 0;
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        placed[r].resize(groupCount);
+        for (int g = 0; g < groupCount && g < rows[r].groups.size(); ++g) {
+            int width = 0;
+            for (const Shot& s : rows[r].groups[g]) {
+                QLabel* cap = textLabel(sheet.get(), s.caption, kSheetCaptionColour, 10);
+                auto* img = new QLabel(sheet.get());
+                img->setPixmap(QPixmap::fromImage(s.image));
+                const QSize logical = logicalSizeOf(s.image);
+                img->setFixedSize(logical);
+                const int w = qMax(logical.width(), cap->width());
+                placed[r][g].append({cap, img, w, logical.height()});
+                captionHeight = qMax(captionHeight, cap->height());
+                width += (width > 0 ? kShotGapPx : 0) + w;
+            }
+            columnWidth[g] = qMax(columnWidth[g], width);
+        }
+    }
+
+    QLabel* titleLabel = textLabel(sheet.get(), title, kSheetTitleColour, 15, true);
+    titleLabel->move(kSheetMarginPx, kSheetMarginPx);
+    QLabel* subtitleLabel = textLabel(sheet.get(), subtitle, kSheetTextColour, 11);
+    subtitleLabel->move(kSheetMarginPx, titleLabel->geometry().bottom() + 4);
+    int y = subtitleLabel->geometry().bottom() + 14;
+
+    QVector<int> columnX(groupCount, 0);
+    int x = kSheetMarginPx + kGridLabelWidth + kColumnGapPx;
+    for (int g = 0; g < groupCount; ++g) {
+        columnX[g] = x;
+        heads[g]->move(x, y);
+        x += columnWidth[g] + kColumnGapPx;
+    }
+    const int sheetWidth = qMax(x - kColumnGapPx + kSheetMarginPx,
+                                qMax(titleLabel->width(), subtitleLabel->width()) + 2 * kSheetMarginPx);
+    y += 24;
+
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        const GridRow& row = rows[r];
+        auto* rule = new QFrame(sheet.get());
+        rule->setStyleSheet(QStringLiteral("QFrame { background: %1; border: none; }").arg(QLatin1String(kSheetRule)));
+        rule->setGeometry(kSheetMarginPx, y, sheetWidth - 2 * kSheetMarginPx, 1);
+        y += kRowGapPx / 2;
+        QLabel* name = textLabel(sheet.get(), row.title, kSheetTextColour, 11, true);
+        name->setWordWrap(true);
+        name->setFixedWidth(kGridLabelWidth);
+        name->adjustSize();
+        name->move(kSheetMarginPx, y + captionHeight);
+        int labelBottom = name->geometry().bottom();
+        if (!row.note.isEmpty()) {
+            QLabel* note = textLabel(sheet.get(), row.note, kSheetCaptionColour, 10);
+            note->setWordWrap(true);
+            note->setFixedWidth(kGridLabelWidth);
+            note->adjustSize();
+            note->move(kSheetMarginPx, labelBottom + 4);
+            labelBottom = note->geometry().bottom();
+        }
+        int rowHeight = 0;
+        for (int g = 0; g < groupCount; ++g) {
+            int sx = columnX[g];
+            for (int i = 0; i < placed[r][g].size(); ++i) {
+                const Placed& p = placed[r][g][i];
+                const Shot& s = row.groups[g][i];
+                p.caption->move(sx, y);
+                p.image->move(sx, y + captionHeight + 2);
+                const double dpr = s.image.devicePixelRatio();
+                QJsonObject at{
+                    {QStringLiteral("row"), row.key},
+                    {QStringLiteral("group"), groupTitles[g]},
+                    {QStringLiteral("caption"), s.caption},
+                    {QStringLiteral("sheet_logical_rect"), rectArray(p.image->geometry())},
+                    {QStringLiteral("sheet_device_rect"), rectArray(toDevice(p.image->geometry(), dpr))},
+                };
+                if (!s.sizeHint.isEmpty()) {
+                    at.insert(QStringLiteral("size_hint"), sizeArray(s.sizeHint));
+                }
+                if (!s.source.isEmpty()) {
+                    at.insert(QStringLiteral("source"), s.source);
+                }
+                placements.append(at);
+                rowHeight = qMax(rowHeight, captionHeight + 2 + p.height);
+                sx += p.width + kShotGapPx;
+            }
+        }
+        y = qMax(y + rowHeight, labelBottom) + kRowGapPx;
+    }
+    sheet->resize(sheetWidth, y + kSheetMarginPx);
+    sheet->show();
+    pump(kSettleMs);
+    return grabImage(sheet.get());
+}
+
+Shot zoomShot(const Shot& s)
+{
+    const double dpr = s.image.devicePixelRatio();
+    const QRect device = toDevice(s.focus, dpr).intersected(s.image.rect());
+    const QImage cut = s.image.copy(device);
+    QImage big = cut.scaled(cut.width() * kZoomFactor, cut.height() * kZoomFactor, Qt::IgnoreAspectRatio,
+                            Qt::FastTransformation);
+    big.setDevicePixelRatio(dpr);
+    Shot z;
+    z.caption = s.caption;
+    z.image = big;
+    z.source = QJsonObject{{QStringLiteral("cell_device_rect"), rectArray(device)}};
+    return z;
+}
+
+// The zoom grid: every shot with a focus, 5x nearest-neighbour. With
+// `splitGroups`, each group of a row becomes its own row (keeps a wide
+// row of large cut-outs to a sane width).
+QVector<GridRow> zoomGrid(const QVector<GridRow>& rows, const QStringList& groupTitles, bool splitGroups,
+                          QStringList& outGroups)
+{
+    QVector<GridRow> out;
+    if (!splitGroups) {
+        outGroups = groupTitles;
+        for (const GridRow& row : rows) {
+            GridRow z{row.key, row.title, QString(), {}};
+            for (const QVector<Shot>& group : row.groups) {
+                QVector<Shot> zs;
+                for (const Shot& s : group) {
+                    if (!s.focus.isEmpty()) {
+                        zs.append(zoomShot(s));
+                    }
+                }
+                z.groups.append(zs);
+            }
+            out.append(z);
+        }
+        return out;
+    }
+    outGroups = QStringList{QStringLiteral("5x nearest-neighbour")};
+    for (const GridRow& row : rows) {
+        for (int g = 0; g < row.groups.size(); ++g) {
+            GridRow z{row.key + QLatin1Char('-') + QString::number(g),
+                      row.title + QStringLiteral(", ") + groupTitles.value(g), QString(), {}};
+            QVector<Shot> zs;
+            for (const Shot& s : row.groups[g]) {
+                if (!s.focus.isEmpty()) {
+                    zs.append(zoomShot(s));
+                }
+            }
+            z.groups.append(zs);
+            out.append(z);
+        }
+    }
+    return out;
+}
+
+// A cell painted in `bg` behind the control, whatever the look's palette
+// or app stylesheet says.
+QWidget* paintedCell(Column& col, const QSize& inner, const char* bg)
+{
+    QWidget* cell = col.cell(inner);
+    cell->setObjectName(QStringLiteral("choiceCell"));
+    cell->setAttribute(Qt::WA_StyledBackground, true);
+    cell->setStyleSheet(QStringLiteral("QWidget#choiceCell { background: %1; }").arg(QLatin1String(bg)));
+    return cell;
+}
+
+Shot cellShot(QWidget* cell, QWidget* control, const QString& caption, const QRect& focusInCell)
+{
+    Shot s;
+    s.caption = caption;
+    s.image = grabImage(cell);
+    s.focus = focusInCell;
+    s.sizeHint = control->sizeHint();
+    s.minimumHint = control->minimumSizeHint();
+    return s;
+}
+
+// The 32x24 zoom patch around an indicator, in cell coordinates.
+QRect patchAround(QWidget* control, QWidget* cell, const QRect& inControl)
+{
+    const QPoint centre = control->mapTo(cell, inControl.center());
+    return QRect(centre.x() - kZoomSourceWidth / 2, centre.y() - kZoomSourceHeight / 2, kZoomSourceWidth,
+                 kZoomSourceHeight);
+}
+
+void activate(QWidget* top)
+{
+    QT_WARNING_PUSH
+    QT_WARNING_DISABLE_DEPRECATED
+    QApplication::setActiveWindow(top);
+    QT_WARNING_POP
+}
+
+void setSheetImages(SceneContext& ctx, const QString& name, const QImage& image, const QJsonArray& placements,
+                    const QJsonObject& extra)
+{
+    CapturedImage c;
+    c.name = name;
+    c.kind = name.endsWith(QLatin1String("--zoom")) ? QStringLiteral("zoom") : QStringLiteral("sheet");
+    c.image = image;
+    c.dpr = image.devicePixelRatio();
+    c.logicalSize = logicalSizeOf(image);
+    c.extra = extra;
+    c.extra[QStringLiteral("window")] = QStringLiteral("its own top-level QWidget, not the MainWindow");
+    c.extra[QStringLiteral("placements")] = placements;
+    ctx.images.append(c);
+}
+
+bool startChoiceScene(SceneContext& ctx, const QString& scene)
+{
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no application or window");
+        return false;
+    }
+    if (WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": must start with the preview switch off");
+        return false;
+    }
+    return true;
+}
+
+// ---- checkbox and radio off states ----
+
+// One candidate. Empty strings keep Longpath's own value.
+struct IndicatorVariant {
+    QString key;
+    QString title;
+    QString note;
+    bool today{false};
+    QString offRim;
+    QString offFill;            // a stylesheet background value
+    QString disabledOffRim;
+    QString disabledOffFill;
+    QString disabledOn;         // fill and rim of a disabled, checked indicator
+};
+
+QString sunkenGradient(const char* top, const char* bottom)
+{
+    return QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2)")
+        .arg(QLatin1String(top), QLatin1String(bottom));
+}
+
+// Longpath's sheet at today's 16 px row height, with the candidate's off
+// and disabled values laid over it. Rules later in the sheet win at equal
+// specificity; Longpath's :hover and :checked rules are more specific than
+// the plain ::indicator override, so they keep Longpath's values.
+QString indicatorSheet(const char* widgetClass, const char* longpathSheet, const IndicatorVariant& v)
+{
+    const QLatin1String cls(widgetClass);
+    QString s = QString::fromLatin1(longpathSheet);
+    s += QStringLiteral("%1 { min-height: %2px; }").arg(cls).arg(kIndicatorRowHeight);
+    if (!v.offRim.isEmpty()) {
+        s += QStringLiteral("%1::indicator { border: 1px solid %2; }").arg(cls, v.offRim);
+    }
+    if (!v.offFill.isEmpty()) {
+        s += QStringLiteral("%1::indicator { background: %2; }").arg(cls, v.offFill);
+    }
+    if (!v.disabledOffRim.isEmpty()) {
+        s += QStringLiteral("%1::indicator:disabled { background: %2; border: 1px solid %3; }")
+                 .arg(cls, v.disabledOffFill, v.disabledOffRim);
+        s += QStringLiteral("%1::indicator:checked:disabled { background: %2; border: 1px solid %2; }")
+                 .arg(cls, v.disabledOn);
+    }
+    return s;
+}
+
+QVector<IndicatorVariant> indicatorVariants()
+{
+    const QString onNote = QStringLiteral(
+        "On: fill %1 to %2 (kGlassSelTop, kGlassSelBot), rim %3 (kGlassSelBorder), top edge "
+        "#4b88c1. No check mark.")
+                               .arg(QLatin1String(Workspace::kGlassSelTop), QLatin1String(Workspace::kGlassSelBot),
+                                    QLatin1String(Workspace::kGlassSelBorder));
+    QVector<IndicatorVariant> out;
+    out.append({QStringLiteral("today"), QStringLiteral("Today (for reference)"),
+                QStringLiteral("Style::kCheckBoxStyle and kRadioButtonStyle, switch off. Off: rim #304050, fill "
+                               "#1a2a3a. On: fill and rim #00b4d8. No disabled rule, so disabled looks enabled."),
+                true, {}, {}, {}, {}, {}});
+    out.append({QStringLiteral("longpath"), QStringLiteral("Longpath as is"),
+                QStringLiteral("Longpath's kCheckBoxStyle and kRadioButtonStyle, min-height 16. Off: rim %1 "
+                               "(kBorder) with a shade top edge rgba(0,0,0,160) and a light bottom edge "
+                               "rgba(255,255,255,18); fill #000000 to #08080c. Disabled on (box only): %2 "
+                               "(kDisabledBorder). Disabled off has no rule, and the radio has no disabled "
+                               "rule, so a disabled radio looks enabled. ")
+                        .arg(QLatin1String(Workspace::kBorder), QLatin1String(Workspace::kDisabledBorder))
+                    + onNote,
+                false, {}, {}, {}, {}, {}});
+    const auto variant = [&](const QString& key, const QString& title, const char* rim, const char* rimRole,
+                             const char* fillTop, const char* fillBottom, const QString& fillRoles,
+                             const char* dRim, const char* dRimRole, const char* dOn, const char* dOnRole) {
+        const QString fill = fillTop == nullptr ? QString() : sunkenGradient(fillTop, fillBottom);
+        const QString fillText = fillTop == nullptr
+                                     ? QStringLiteral("#000000 to #08080c (Longpath's)")
+                                     : QStringLiteral("%1 to %2 (%3)").arg(QLatin1String(fillTop),
+                                                                           QLatin1String(fillBottom), fillRoles);
+        const QString note =
+            QStringLiteral("Off: rim %1 (%2) all round, fill %3. Disabled off: rim %4 (%5), fill %6 (kInsetBg). "
+                           "Disabled on: fill and rim %7 (%8). On: as Longpath.")
+                .arg(QLatin1String(rim), QLatin1String(rimRole), fillText, QLatin1String(dRim),
+                     QLatin1String(dRimRole), QLatin1String(Workspace::kInsetBg), QLatin1String(dOn),
+                     QLatin1String(dOnRole));
+        out.append({key, title, note, false, QLatin1String(rim), fill, QLatin1String(dRim),
+                    QLatin1String(Workspace::kInsetBg), QLatin1String(dOn)});
+    };
+    variant(QStringLiteral("brighter-rim"), QStringLiteral("Brighter rim"), Workspace::kBorderMuted,
+            "kBorderMuted", nullptr, nullptr, QString(), Workspace::kBorder, "kBorder", Workspace::kBorderMuted,
+            "kBorderMuted");
+    variant(QStringLiteral("brighter-rim-fill"), QStringLiteral("Brighter rim and fill"), Workspace::kTextInactive,
+            "kTextInactive", Workspace::kInsetBg, Workspace::kButtonBg, QStringLiteral("kInsetBg to kButtonBg"),
+            Workspace::kBorderMuted, "kBorderMuted", Workspace::kDisabledText, "kDisabledText");
+    variant(QStringLiteral("strongest"), QStringLiteral("Strongest"), Workspace::kTextScale, "kTextScale",
+            Workspace::kGlassBtnBot, Workspace::kButtonHover, QStringLiteral("kGlassBtnBot to kButtonHover"),
+            Workspace::kTextInactive, "kTextInactive", Workspace::kTextInactive, "kTextInactive");
+    return out;
+}
+
+struct Background {
+    QString title;
+    const char* colour;
+};
+
+QVector<Background> indicatorBackgrounds()
+{
+    // Sampled from the preview's own captures: the Main Panel behind the
+    // applets (strip-fit-preview--panel) and the Setup page body
+    // (look-dialog-setup-*).
+    return {{QStringLiteral("On the Main Panel (%1, kPanelBg)").arg(QLatin1String(Workspace::kPanelBg)),
+             Workspace::kPanelBg},
+            {QStringLiteral("On a Setup page (%1, kAppBg)").arg(QLatin1String(Workspace::kAppBg)),
+             Workspace::kAppBg}};
+}
+
+// One variant's row: checkbox off, on, disabled off, disabled on, then the
+// same four for the radio button, on each background.
+GridRow captureIndicatorRow(const IndicatorVariant& v)
+{
+    const QString checkSheet = v.today ? QString::fromLatin1(Style::kCheckBoxStyle)
+                                       : indicatorSheet("QCheckBox", LongpathLook::kCheckBoxStyle, v);
+    const QString radioSheet = v.today ? QString::fromLatin1(Style::kRadioButtonStyle)
+                                       : indicatorSheet("QRadioButton", LongpathLook::kRadioButtonStyle, v);
+    const QVector<Background> backgrounds = indicatorBackgrounds();
+    const QSize size(kIndicatorWidth, kIndicatorRowHeight);
+    const std::array<QString, 4> states{QStringLiteral("off"), QStringLiteral("on"), QStringLiteral("disabled off"),
+                                        QStringLiteral("disabled on")};
+
+    Column col;
+    struct Cell {
+        QWidget* cell;
+        QAbstractButton* button;
+        QRect indicator;
+        QString caption;
+    };
+    QVector<QVector<Cell>> groups;
+    for (const Background& bg : backgrounds) {
+        QVector<Cell> cells;
+        for (int kind = 0; kind < 2; ++kind) {
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                QWidget* cell = paintedCell(col, size, bg.colour);
+                QAbstractButton* b = nullptr;
+                if (kind == 0) {
+                    auto* box = new ProbeCheckBox(QStringLiteral("Check box"), cell);
+                    box->setStyleSheet(checkSheet);
+                    b = box;
+                } else {
+                    auto* radio = new ProbeRadioButton(QStringLiteral("Radio"), cell);
+                    radio->setStyleSheet(radioSheet);
+                    b = radio;
+                }
+                col.place(b, size);
+                b->setChecked(i == 1 || i == 3);
+                b->setEnabled(i < 2);
+                cells.append({cell, b, {},
+                              (kind == 0 ? QStringLiteral("box ") : QStringLiteral("radio ")) + states[i]});
+            }
+        }
+        groups.append(cells);
+    }
+    col.finish();
+
+    GridRow row{v.key, v.title, v.note, {}};
+    for (QVector<Cell>& cells : groups) {
+        QVector<Shot> shots;
+        for (Cell& c : cells) {
+            QRect ind;
+            if (auto* box = dynamic_cast<ProbeCheckBox*>(c.button)) {
+                ind = box->indicatorRect();
+            } else if (auto* radio = dynamic_cast<ProbeRadioButton*>(c.button)) {
+                ind = radio->indicatorRect();
+            }
+            Shot s = cellShot(c.cell, c.button, c.caption, patchAround(c.button, c.cell, ind));
+            s.source = QJsonObject{{QStringLiteral("indicator_rect"), rectArray(ind)}};
+            shots.append(s);
+        }
+        row.groups.append(shots);
+    }
+    return row;
+}
+
+// ---- lit push buttons ----
+
+enum class Meaning { Green, Blue, Amber };
+
+struct LitLabel {
+    QString text;
+    Meaning meaning;
+};
+
+QVector<LitLabel> litLabels()
+{
+    return {{QStringLiteral("NR"), Meaning::Green},     {QStringLiteral("MON"), Meaning::Green},
+            {QStringLiteral("2.7K"), Meaning::Blue},    {QStringLiteral("ANT1"), Meaning::Blue},
+            {QStringLiteral("RIT"), Meaning::Amber},    {QStringLiteral("XIT"), Meaning::Amber},
+            {QStringLiteral("OPERATE"), Meaning::Green}};
+}
+
+// Longpath's amber roles in the raised form of its blueCheckedStyle
+// (raisedFill instead of a flat fill, a lighter top edge on the border).
+// Our composition: Longpath has no amberCheckedStyle.
+QString longpathAmberChecked()
+{
+    return QStringLiteral(
+        "QPushButton:checked {"
+        "  background: %1;"
+        "  color: %2; border: 1px solid %3; border-top-color: %4; }")
+        .arg(LongpathLook::raisedFill(Workspace::kAmberBg), QLatin1String(Workspace::kAmberText),
+             QLatin1String(Workspace::kAmberBorder), Workspace::shiftL(QColor(QLatin1String(Workspace::kAmberBorder)), 16));
+}
+
+struct LitVariant {
+    QString key;
+    QString title;
+    QString note;
+    bool today;
+    std::function<QString(Meaning)> sheet;
+};
+
+QVector<LitVariant> litVariants()
+{
+    QVector<LitVariant> out;
+    out.append({QStringLiteral("today"), QStringLiteral("Today: three meanings"),
+                QStringLiteral("Style::buttonBaseStyle plus greenCheckedStyle (processing on: NR, MON, OPERATE), "
+                               "blueCheckedStyle (selection: 2.7K, ANT1) or amberCheckedStyle (offsets: RIT, XIT), "
+                               "switch off. Green #006040 / #00ff88 / #00a060, blue #0070c0 / #ffffff / #0090e0, "
+                               "amber #604000 / #ffb800 / #906000 (fill / text / rim, STYLEGUIDE.md)."),
+                true, [](Meaning m) {
+                    switch (m) {
+                    case Meaning::Green: return Style::buttonBaseStyle() + Style::greenCheckedStyle();
+                    case Meaning::Blue: return Style::buttonBaseStyle() + Style::blueCheckedStyle();
+                    default: return Style::buttonBaseStyle() + Style::amberCheckedStyle();
+                    }
+                }});
+    out.append({QStringLiteral("longpath-three"), QStringLiteral("Longpath tones: three meanings"),
+                QStringLiteral("Longpath's raised buttonBaseStyle. Green: Longpath's greenCheckedStyle, a flat fill "
+                               "%1, text %2, rim %3 (Longpath's green is flat, not raised). Blue: Longpath's "
+                               "blueCheckedStyle, raised %4 to %5, text %6, rim %7. Amber: our composition from "
+                               "Longpath's roles in the raised form of its blue: raisedFill(%8), text %9, rim %10 "
+                               "with a lighter top edge.")
+                    .arg(QLatin1String(Workspace::kGreenBg), QLatin1String(Workspace::kGreenText),
+                         QLatin1String(Workspace::kGreenBorder), QLatin1String(Workspace::kGlassSelTop),
+                         QLatin1String(Workspace::kGlassSelBot), QLatin1String(Workspace::kGlassSelText),
+                         QLatin1String(Workspace::kGlassSelBorder), QLatin1String(Workspace::kAmberBg),
+                         QLatin1String(Workspace::kAmberText))
+                    .arg(QLatin1String(Workspace::kAmberBorder)),
+                false, [](Meaning m) {
+                    switch (m) {
+                    case Meaning::Green: return LongpathLook::buttonBaseStyle() + LongpathLook::greenCheckedStyle();
+                    case Meaning::Blue: return LongpathLook::buttonBaseStyle() + LongpathLook::blueCheckedStyle();
+                    default: return LongpathLook::buttonBaseStyle() + longpathAmberChecked();
+                    }
+                }});
+    out.append({QStringLiteral("longpath-one-blue"), QStringLiteral("Longpath's rule: one blue for every lit button"),
+                QStringLiteral("Longpath's raised buttonBaseStyle plus blueCheckedStyle on every button: raised %1 "
+                               "to %2, text %3, rim %4.")
+                    .arg(QLatin1String(Workspace::kGlassSelTop), QLatin1String(Workspace::kGlassSelBot),
+                         QLatin1String(Workspace::kGlassSelText), QLatin1String(Workspace::kGlassSelBorder)),
+                false, [](Meaning) { return LongpathLook::buttonBaseStyle() + LongpathLook::blueCheckedStyle(); }});
+    return out;
+}
+
+GridRow captureLitRow(const LitVariant& v)
+{
+    const QVector<LitLabel> labels = litLabels();
+    const QSize size(kLitButtonWidth, kLitButtonHeight);
+    Column col;
+    std::array<QVector<QPair<QWidget*, QPushButton*>>, 2> groups;
+    for (auto& group : groups) {
+        for (const LitLabel& l : labels) {
+            QWidget* cell = paintedCell(col, size, Workspace::kPanelBg);
+            auto* b = new QPushButton(l.text, cell);
+            b->setCheckable(true);
+            b->setChecked(true);
+            b->setStyleSheet(v.sheet(l.meaning));
+            col.place(b, size);
+            group.append({cell, b});
+        }
+    }
+    col.finish();
+    activate(col.top());
+    for (const auto& [cell, b] : groups[1]) {
+        hover(b, QPoint(kLitButtonWidth / 2, kLitButtonHeight / 2));
+    }
+    pump(kShortSettleMs);
+
+    GridRow row{v.key, v.title, v.note, {}};
+    for (const auto& group : groups) {
+        QVector<Shot> shots;
+        for (const auto& [cell, b] : group) {
+            shots.append(cellShot(cell, b, b->text(), QRect(b->pos(), b->size())));
+        }
+        row.groups.append(shots);
+    }
+    return row;
+}
+
+// ---- field and button sizes ----
+
+struct SizeSheets {
+    QString combo;
+    QString lineEdit;
+    QString spinBox;
+    QString tabs;
+    QString button;
+};
+
+struct SizeSet {
+    QSize combo;
+    QSize lineEdit;
+    QSize spinBox;
+    QSize tabs;
+    QSize button;
+    int tabBarHeight{0};
+};
+
+struct SizeControls {
+    QComboBox* combo{nullptr};
+    QLineEdit* lineEdit{nullptr};
+    QSpinBox* spinBox{nullptr};
+    QTabWidget* tabs{nullptr};
+    QPushButton* button{nullptr};
+};
+
+void fillSizeControls(SizeControls& c, QWidget* parent, const SizeSheets& sheets)
+{
+    c.combo = new QComboBox(parent);
+    c.combo->addItems({QStringLiteral("USB"), QStringLiteral("LSB"), QStringLiteral("CW"), QStringLiteral("DIGU")});
+    c.combo->setStyleSheet(sheets.combo);
+    c.lineEdit = new QLineEdit(QStringLiteral("14.225.000"), parent);
+    c.lineEdit->setStyleSheet(sheets.lineEdit);
+    c.lineEdit->setCursorPosition(0);
+    c.spinBox = new QSpinBox(parent);
+    c.spinBox->setRange(0, kSliderMax);
+    c.spinBox->setValue(kSpinValue);
+    c.spinBox->setStyleSheet(sheets.spinBox);
+    c.tabs = new QTabWidget(parent);
+    for (const QString& name : {QStringLiteral("RX"), QStringLiteral("TX"), QStringLiteral("Audio")}) {
+        auto* page = new QWidget;
+        auto* layout = new QVBoxLayout(page);
+        layout->addWidget(new QLabel(QStringLiteral("%1 page").arg(name), page));
+        c.tabs->addTab(page, name);
+    }
+    c.tabs->setStyleSheet(sheets.tabs);
+    c.button = new QPushButton(QStringLiteral("OPERATE"), parent);
+    c.button->setStyleSheet(sheets.button);
+}
+
+// Today's sizes: each control's sizeHint with today's stylesheet, in
+// today's look.
+SizeSet measureTodaySizes()
+{
+    QWidget holder;
+    holder.setAttribute(Qt::WA_DontShowOnScreen, true);
+    const LookSheets t = todaySheets();
+    SizeControls c;
+    fillSizeControls(c, &holder, SizeSheets{t.combo, t.lineEdit, t.spinBox, t.tabs, Style::buttonBaseStyle()});
+    holder.show();
+    pump(kShortSettleMs);
+    SizeSet s;
+    s.combo = c.combo->sizeHint();
+    s.lineEdit = c.lineEdit->sizeHint();
+    s.spinBox = c.spinBox->sizeHint();
+    s.tabs = c.tabs->sizeHint();
+    s.button = c.button->sizeHint();
+    s.tabBarHeight = c.tabs->tabBar()->sizeHint().height();
+    return s;
+}
+
+int scaledRadius(int height)
+{
+    return static_cast<int>(std::lround(static_cast<double>(height) * kLongpathRadiusPx / kLongpathFieldHeightPx));
+}
+
+// Longpath's sheets with today's geometry laid over them: today's
+// padding, font size and the given corner radii. Colours, borders and the
+// raised and sunken gradients stay Longpath's.
+SizeSheets longpathAtTodayGeometry(int comboR, int fieldR, int tabR, int buttonR)
+{
+    namespace LP = LongpathLook;
+    SizeSheets s;
+    s.combo = QString::fromLatin1(LP::kComboStyle)
+        + QStringLiteral("QComboBox { border-radius: %1px; padding: 2px 4px; font-size: 12px; }").arg(comboR);
+    s.lineEdit = LP::formFieldStyle()
+        + QStringLiteral("QLineEdit { border-radius: %1px; padding: 2px 4px; font-size: 12px; }").arg(fieldR);
+    s.spinBox = LP::formFieldStyle()
+        + QStringLiteral("QSpinBox { border-radius: %1px; padding: 2px 4px; font-size: 12px; }").arg(fieldR);
+    s.tabs = QString::fromLatin1(LP::kTabStyle)
+        + QStringLiteral("QTabWidget::pane { border-radius: %1px; }"
+                         "QTabBar::tab { border-top-left-radius: %1px; border-top-right-radius: %1px;"
+                         "  padding: 6px 16px; }")
+              .arg(tabR);
+    s.button = LP::buttonBaseStyle()
+        + QStringLiteral("QPushButton { border-radius: %1px; font-size: 10px; padding: 2px 4px; }").arg(buttonR);
+    return s;
+}
+
+GridRow captureSizeRow(const QString& key, const QString& title, const QString& note, const SizeSheets& sheets,
+                       const SizeSet* fixed)
+{
+    Column col;
+    QWidget scratch;
+    SizeControls probe;
+    fillSizeControls(probe, &scratch, sheets);
+    const std::array<QWidget*, 5> probes{probe.combo, probe.lineEdit, probe.spinBox, probe.tabs, probe.button};
+    std::array<QSize, 5> sizes{};
+    for (std::size_t i = 0; i < probes.size(); ++i) {
+        probes[i]->ensurePolished();
+        sizes[i] = probes[i]->sizeHint();
+    }
+    if (fixed != nullptr) {
+        sizes = {fixed->combo, fixed->lineEdit, fixed->spinBox, fixed->tabs, fixed->button};
+    }
+    std::array<QWidget*, 5> cells{};
+    for (std::size_t i = 0; i < cells.size(); ++i) {
+        cells[i] = paintedCell(col, sizes[i], Workspace::kPanelBg);
+    }
+    SizeControls c;
+    fillSizeControls(c, cells[0], sheets);
+    const std::array<QWidget*, 5> controls{c.combo, c.lineEdit, c.spinBox, c.tabs, c.button};
+    const std::array<QString, 5> names{QStringLiteral("combo"), QStringLiteral("line edit"),
+                                       QStringLiteral("spin box"), QStringLiteral("tabs"),
+                                       QStringLiteral("button")};
+    for (std::size_t i = 0; i < controls.size(); ++i) {
+        controls[i]->setParent(cells[i]);
+        col.place(controls[i], sizes[i]);
+    }
+    col.finish();
+    GridRow row{key, title, note, {}};
+    QVector<Shot> shots;
+    for (std::size_t i = 0; i < controls.size(); ++i) {
+        const QSize s = controls[i]->size();
+        Shot shot = cellShot(cells[i], controls[i],
+                             QStringLiteral("%1 %2x%3").arg(names[i]).arg(s.width()).arg(s.height()), {});
+        shot.source = QJsonObject{{QStringLiteral("logical_size"), sizeArray(s)}};
+        shots.append(shot);
+    }
+    row.groups.append(shots);
+    return row;
+}
+
+} // namespace
+
+void sceneIndicatorChoices(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("controls-sheet--indicators");
+    if (!startChoiceScene(ctx, scene)) {
+        return;
+    }
+    QApplication* a = app();
+    const AppLook today{a->palette(), a->styleSheet()};
+    QVector<GridRow> rows;
+    QJsonArray variants;
+    for (const IndicatorVariant& v : indicatorVariants()) {
+        applyLook(v.today ? kToday : kLongpath, today);
+        rows.append(captureIndicatorRow(v));
+        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
+                                    {QStringLiteral("title"), v.title},
+                                    {QStringLiteral("colours"), v.note},
+                                    {QStringLiteral("look"), v.today ? lookKey(kToday) : lookKey(kLongpath)}});
+    }
+    applyLook(kToday, today);
+
+    QStringList groups;
+    for (const Background& bg : indicatorBackgrounds()) {
+        groups.append(bg.title);
+    }
+    QJsonObject extra{{QStringLiteral("variants"), variants},
+                      {QStringLiteral("row_height"), kIndicatorRowHeight}};
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Checkbox and radio: off state choices"),
+        QStringLiteral("Real QCheckBox and QRadioButton widgets, %1 px row height, %2 px wide with a text label. "
+                       "Each row: box off, on, disabled off, disabled on, then the same for the radio.")
+            .arg(kIndicatorRowHeight)
+            .arg(kIndicatorWidth),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QStringList zoomGroups;
+    const QVector<GridRow> zoom = zoomGrid(rows, groups, false, zoomGroups);
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(
+        zoom, zoomGroups, QStringLiteral("Checkbox and radio off states, 5x nearest-neighbour"),
+        QStringLiteral("Each cut-out is %1x%2 logical px around the indicator, enlarged 5x.")
+            .arg(kZoomSourceWidth)
+            .arg(kZoomSourceHeight),
+        zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});
+}
+
+void sceneLitButtons(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("controls-sheet--lit-buttons");
+    if (!startChoiceScene(ctx, scene)) {
+        return;
+    }
+    QApplication* a = app();
+    const AppLook today{a->palette(), a->styleSheet()};
+    QVector<GridRow> rows;
+    QJsonArray variants;
+    for (const LitVariant& v : litVariants()) {
+        applyLook(v.today ? kToday : kLongpath, today);
+        rows.append(captureLitRow(v));
+        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
+                                    {QStringLiteral("title"), v.title},
+                                    {QStringLiteral("colours"), v.note}});
+    }
+    applyLook(kToday, today);
+
+    const QStringList groups{QStringLiteral("Checked, resting"), QStringLiteral("Checked, hovered")};
+    QJsonObject extra{{QStringLiteral("variants"), variants},
+                      {QStringLiteral("background"), QLatin1String(Workspace::kPanelBg)},
+                      {QStringLiteral("button_size"), sizeArray(QSize(kLitButtonWidth, kLitButtonHeight))}};
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Lit push buttons: which colour means what"),
+        QStringLiteral("Real checked QPushButtons, %1x%2 logical px, on the Main Panel background %3.")
+            .arg(kLitButtonWidth)
+            .arg(kLitButtonHeight)
+            .arg(QLatin1String(Workspace::kPanelBg)),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QStringList zoomGroups;
+    const QVector<GridRow> zoom = zoomGrid(rows, groups, true, zoomGroups);
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(zoom, zoomGroups,
+                                          QStringLiteral("Lit push buttons, 5x nearest-neighbour"),
+                                          QStringLiteral("Each cut-out is the whole button, enlarged 5x."),
+                                          zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});
+}
+
+void sceneControlSizes(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("controls-sheet--sizes");
+    if (!startChoiceScene(ctx, scene)) {
+        return;
+    }
+    QApplication* a = app();
+    const AppLook today{a->palette(), a->styleSheet()};
+    applyLook(kToday, today);
+    const SizeSet todaySize = measureTodaySizes();
+
+    applyLook(kLongpath, today);
+    QVector<GridRow> rows;
+    namespace LP = LongpathLook;
+    const LookSheets lp = longpathSheets();
+    rows.append(captureSizeRow(
+        QStringLiteral("longpath"), QStringLiteral("Longpath at its own sizes"),
+        QStringLiteral("Longpath's stylesheets as in the controls sheet: padding 3px 8px on fields, 4px 10px and "
+                       "11px bold on buttons, 5px 14px on tabs; corners %1 px (panes 10 px). Each control at its "
+                       "own sizeHint.")
+            .arg(kLongpathRadiusPx),
+        SizeSheets{lp.combo, lp.lineEdit, lp.spinBox, lp.tabs, LP::buttonBaseStyle()}, nullptr));
+    rows.append(captureSizeRow(
+        QStringLiteral("today-geometry"), QStringLiteral("Today's sizes and corners, Longpath shading"),
+        QStringLiteral("Longpath's colours, borders and raised and sunken gradients with today's padding "
+                       "(2px 4px, tabs 6px 16px), font size (12 px fields, 10 px bold buttons) and corners (%1 px; "
+                       "tabs %2 px). Each control at today's sizeHint.")
+            .arg(kTodayRadiusPx)
+            .arg(kTodayTabRadiusPx),
+        longpathAtTodayGeometry(kTodayRadiusPx, kTodayRadiusPx, kTodayTabRadiusPx, kTodayRadiusPx), &todaySize));
+    const int comboR = scaledRadius(todaySize.combo.height());
+    const int fieldR = scaledRadius(qMax(todaySize.lineEdit.height(), todaySize.spinBox.height()));
+    const int tabR = scaledRadius(todaySize.tabBarHeight);
+    const int buttonR = scaledRadius(todaySize.button.height());
+    rows.append(captureSizeRow(
+        QStringLiteral("today-geometry-round"), QStringLiteral("Today's sizes, rounder corners"),
+        QStringLiteral("As the row above, with each corner radius scaled to the control's height by Longpath's own "
+                       "ratio, %1 px on a %2 px field: combo %3 px, line edit and spin box %4 px, tabs and pane %5 "
+                       "px, button %6 px on a %7 px button. A pill would need half the height (%8 px).")
+            .arg(kLongpathRadiusPx)
+            .arg(kLongpathFieldHeightPx)
+            .arg(comboR)
+            .arg(fieldR)
+            .arg(tabR)
+            .arg(buttonR)
+            .arg(todaySize.button.height())
+            .arg(todaySize.button.height() / 2),
+        longpathAtTodayGeometry(comboR, fieldR, tabR, buttonR), &todaySize));
+    applyLook(kToday, today);
+
+    QJsonObject radii{{QStringLiteral("longpath"), kLongpathRadiusPx},
+                      {QStringLiteral("today"), kTodayRadiusPx},
+                      {QStringLiteral("today_tabs"), kTodayTabRadiusPx},
+                      {QStringLiteral("scaled_combo"), comboR},
+                      {QStringLiteral("scaled_field"), fieldR},
+                      {QStringLiteral("scaled_tabs"), tabR},
+                      {QStringLiteral("scaled_button"), buttonR}};
+    QJsonObject todaySizes{{QStringLiteral("combo"), sizeArray(todaySize.combo)},
+                           {QStringLiteral("line_edit"), sizeArray(todaySize.lineEdit)},
+                           {QStringLiteral("spin_box"), sizeArray(todaySize.spinBox)},
+                           {QStringLiteral("tabs"), sizeArray(todaySize.tabs)},
+                           {QStringLiteral("tab_bar_height"), todaySize.tabBarHeight},
+                           {QStringLiteral("button"), sizeArray(todaySize.button)}};
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, {QStringLiteral("Combo, line edit, spin box, tabs, push button (logical px)")},
+        QStringLiteral("Field and button sizes: Longpath's, or today's with Longpath shading"),
+        QStringLiteral("Real Qt widgets on the Main Panel background %1. Today's sizes are each control's "
+                       "sizeHint with today's stylesheet in today's look.")
+            .arg(QLatin1String(Workspace::kPanelBg)),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements,
+                   QJsonObject{{QStringLiteral("radii"), radii}, {QStringLiteral("today_sizes"), todaySizes}});
 }
 
 } // namespace NereusSDR::Preview

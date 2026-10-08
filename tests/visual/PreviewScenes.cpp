@@ -64,6 +64,9 @@
 //   2026-10-08 - strip-fit-today and strip-fit-preview: applet minimum
 //                 widths against the Main Panel viewport. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - controls-sheet--indicators, --lit-buttons and --sizes:
+//                 choice sheets for JJ (ControlsSheet.cpp). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -3751,6 +3754,21 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0);
         if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
+    }});
+    scenes.append({QStringLiteral("controls-sheet--indicators"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneIndicatorChoices(ctx); }
+    }});
+    scenes.append({QStringLiteral("controls-sheet--lit-buttons"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneLitButtons(ctx); }
+    }});
+    scenes.append({QStringLiteral("controls-sheet--sizes"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneControlSizes(ctx); }
     }});
 
     // ---- fixed dialogs ----
