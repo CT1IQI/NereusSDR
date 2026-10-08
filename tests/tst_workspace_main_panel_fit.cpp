@@ -10,6 +10,10 @@
 //                 (geometryCommitPendingForTest, the split it writes), not
 //                 a fixed time. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - stripFollowsAnAppletMinimumAtOnce: the preview's right
+//                 strip follows an applet's own minimum (TCI server
+//                 started and stopped) with no workspace change. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QJsonArray>
 #include <QLoggingCategory>
@@ -25,12 +29,16 @@
 #include "core/RadioDiscovery.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/MainWindow.h"
+#include "core/TciServer.h"
 #include "gui/applets/AppletWidget.h"
+#include "gui/applets/RxApplet.h"
+#include "gui/applets/TciApplet.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/EdgeDockStrip.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
@@ -380,6 +388,53 @@ private slots:
         QVERIFY(!widest->isHidden());
         QCOMPARE(w.panel()->minimumWidth(), before);
         QVERIFY2(w.panel()->width() >= before, qPrintable(QStringLiteral("%1 < %2").arg(w.panel()->width()).arg(before)));
+        clipped = clippedApplets(w);
+        QVERIFY2(clipped.isEmpty(), qPrintable(clipped));
+    }
+
+    // Workspace preview: an applet whose own minimum changes with no
+    // workspace change (the TCI applet's running controls appear when its
+    // server starts) moves the right strip's floor at once.
+    void stripFollowsAnAppletMinimumAtOnce()
+    {
+        PanelWindow w(true, QSize(1280, 800));
+        QVERIFY(w.panel() != nullptr && w.scroll() != nullptr);
+        EdgeDockStrip* strip = w.manager->edgeDockArea() != nullptr
+            ? w.manager->edgeDockArea()->strip(DockEdge::Right) : nullptr;
+        QVERIFY(strip != nullptr);
+        auto* tci = w.window->findChild<TciApplet*>();
+        auto* server = w.window->findChild<TciServer*>();
+        QVERIFY(tci != nullptr && server != nullptr);
+        QVERIFY(!server->isRunning());
+        auto* rx = w.window->findChild<RxApplet*>();
+        QVERIFY(rx != nullptr);
+
+        // Set up through the workspace: the RX applet hidden, so the TCI
+        // applet's width decides, and the strip dragged as narrow as it goes.
+        QVERIFY(w.setEntryVisible(typeIdOf(w, rx), false));
+        WorkspaceDocument document = w.manager->workspaceStore()->snapshot();
+        document.arrangement.strips[DockEdge::Right].thickness = 120;
+        QCOMPARE(w.manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
+        settle();
+        const int stoppedTci = minimumWidthOf(tci);
+        const int stoppedStrip = strip->width();
+        QVERIFY2(stoppedStrip >= contentWidth(w), qPrintable(QStringLiteral("%1 < %2").arg(stoppedStrip).arg(contentWidth(w))));
+        const quint64 revision = w.manager->workspaceStore()->snapshot().revision;
+
+        // The server starting, as the applet hears it (no socket is opened).
+        emit server->serverStarted(0);
+        settle();
+        QVERIFY2(minimumWidthOf(tci) > stoppedTci, qPrintable(QString::number(minimumWidthOf(tci))));
+        QVERIFY2(strip->width() > stoppedStrip, qPrintable(QStringLiteral("%1 vs %2").arg(strip->width()).arg(stoppedStrip)));
+        QVERIFY2(strip->width() >= contentWidth(w), qPrintable(QStringLiteral("%1 < %2").arg(strip->width()).arg(contentWidth(w))));
+        QString clipped = clippedApplets(w);
+        QVERIFY2(clipped.isEmpty(), qPrintable(clipped));
+        QCOMPARE(w.manager->workspaceStore()->snapshot().revision, revision);
+
+        // Stopped again, the floor comes back down.
+        emit server->serverStopped();
+        settle();
+        QCOMPARE(strip->width(), stoppedStrip);
         clipped = clippedApplets(w);
         QVERIFY2(clipped.isEmpty(), qPrintable(clipped));
     }
