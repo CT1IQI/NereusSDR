@@ -36,6 +36,13 @@
 //   2026-10-08 - Look variants only for dialog-* scenes (setup-look-*
 //                 are looks already). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The export-import scene runs on a fixed profile name, so
+//                 the settings path it shows is the same every run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - No re-theme before the grab (rethemeBeforeGrab removed):
+//                 the live pass themes every window, so the images show
+//                 what the app shows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -50,6 +57,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QScreen>
 #include <QStyle>
 #include <QStyleFactory>
@@ -75,8 +83,6 @@
 #include "gui/SpectrumWidget.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
-#include "gui/containers/ContainerContentHost.h"
-#include <QStatusBar>
 #include <algorithm>
 #include "models/RadioModel.h"
 
@@ -197,6 +203,15 @@ void applyAppTheme(QApplication& app)
     }
 }
 
+// ---- settings profile ------------------------------------------------------
+
+// The scene that shows the settings file path, and the fixed profile it runs
+// on (see main()).
+constexpr auto kFixedProfileScene = "dialog-setup-export-import";
+constexpr auto kFixedProfileName = "visual-preview-fixed";
+// Longer than one capture run of the scene; capture.py stops a run at 180 s.
+constexpr int kFixedProfileLockWaitMs = 170000;
+
 // ---- workspace look --------------------------------------------------------
 
 constexpr auto kLookPrefix = "look-";
@@ -236,30 +251,6 @@ QString lookSceneFor(const Scene& s)
     return QString();
 }
 
-// Re-runs the scoped stylesheet pass on the surfaces that use it, right
-// before a grab: container content (docked and floating), the status bar
-// content, and a dialog when the grab is a dialog.
-void rethemeBeforeGrab(QWidget* target)
-{
-    QVector<QWidget*> roots;
-    for (QWidget* top : QApplication::topLevelWidgets()) {
-        for (ContainerContentHost* host : top->findChildren<ContainerContentHost*>()) {
-            roots.append(host);
-        }
-        if (auto* mw = qobject_cast<MainWindow*>(top)) {
-            for (QWidget* child : mw->statusBar()->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-                roots.append(child);
-            }
-        }
-    }
-    if (target != nullptr && qobject_cast<MainWindow*>(target) == nullptr) {
-        roots.append(target);
-    }
-    for (QWidget* root : roots) {
-        WorkspacePreview::themeSubtree(root);
-    }
-}
-
 QJsonObject lookCoverageJson()
 {
     auto arr = [](std::initializer_list<const char*> items) {
@@ -281,10 +272,12 @@ QJsonObject lookCoverageJson()
              "ContainerWidget title bar, buttons, border, content background, resize grip",
              "ContainerContentHost insertion line, scroll bar, applets banner button, entry grip"})},
         {QStringLiteral("scoped_pass"), arr({
-             "container content (after every reconcile, and before each grab)",
-             "bottom status bar content",
-             "pan toolbar flyouts (when shown)",
-             "Setup, TX EQ, TX CFC, Container Settings, Pan Layout and PureSignal dialogs (on show)"})},
+             "every widget when it is shown: windows, dialogs, Setup pages and tabs, menus, "
+             "popups, tooltips and toasts, and once more when a shown widget sets a new "
+             "stylesheet (WorkspacePreview::installLiveTheming); the grab does not re-theme",
+             "container content (also after every reconcile)",
+             "bottom status bar content (also at startup)",
+             "pan toolbar flyouts (also when built)"})},
         {QStringLiteral("not_migrated"), arr({
              "slice flag (VfoWidget, VfoStyles helpers) and slice colours: excluded",
              "spectrum and waterfall plot colours, filter overlays, band-plan strip: excluded",
@@ -294,7 +287,9 @@ QJsonObject lookCoverageJson()
              "SpectrumWidget children other than the toolbar, corner buttons and badges "
              "(dBm range arrows, clarity badge): not migrated",
              "connection segment state dot, RTT and audio pip colours (state meaning): kept",
-             "dialogs outside the six named (Diversity, connection panel, ...): not migrated",
+             "native dialogs (file, colour) and the macOS native menu bar: outside Qt's widgets",
+             "painted colours, rgb(), named and 3/4/8-digit colours and 6-digit hex not in the "
+             "translator table: kept",
              "#203040 in the scoped pass: by context (groove, hover background, else border-subtle)"})},
     };
 }
@@ -593,7 +588,31 @@ int main(int argc, char** argv)
     OffScreenFilter offScreen;
     app.installEventFilter(&offScreen);
 
-    if (!Test::RemoteWindowHarness::useIsolatedProfile(QStringLiteral("visual-preview"))) {
+    // A scene that shows the settings path (Setup > Diagnostics > Export /
+    // Import) runs on a profile with a fixed name, so its text and layout do
+    // not change with the process id. One process at a time holds that name:
+    // the lock is taken before the profile is emptied and released after it
+    // is removed (declared before profileCleanup, so destroyed after it).
+    const bool fixedProfile = args.scene == QLatin1String(kFixedProfileScene);
+    const QString profileName = fixedProfile
+        ? QString::fromLatin1(kFixedProfileName)
+        : QStringLiteral("visual-preview-%1").arg(QCoreApplication::applicationPid());
+    std::unique_ptr<QLockFile> fixedProfileLock;
+    if (fixedProfile) {
+        const QDir profileDir = QFileInfo(AppSettings::resolveSettingsPath(profileName)).absoluteDir();
+        QDir parent = profileDir;
+        parent.cdUp();
+        parent.mkpath(QStringLiteral("."));
+        fixedProfileLock = std::make_unique<QLockFile>(
+            parent.filePath(QString::fromLatin1(kFixedProfileName) + QStringLiteral(".lock")));
+        fixedProfileLock->setStaleLockTime(0);
+        if (!fixedProfileLock->tryLock(kFixedProfileLockWaitMs)) {
+            std::fprintf(stderr, "nereus_visual_preview: another process holds the %s profile\n",
+                         kFixedProfileName);
+            return kExitUnsafeProfile;
+        }
+    }
+    if (!Test::RemoteWindowHarness::useNamedIsolatedProfile(profileName)) {
         std::fprintf(stderr, "nereus_visual_preview: the isolated profile is not active\n");
         return kExitUnsafeProfile;
     }
@@ -602,6 +621,7 @@ int main(int argc, char** argv)
     // file, then the profile's own folder (the DSP asset folders the app
     // creates in it), but only a folder named for this process.
     struct ProfileCleanup {
+        QString ownName;
         ~ProfileCleanup()
         {
             const QString settingsPath = AppSettings::instance().filePath();
@@ -609,13 +629,11 @@ int main(int argc, char** argv)
                 return;
             }
             QDir dir = QFileInfo(settingsPath).absoluteDir();
-            const QString ownName = QStringLiteral("visual-preview-%1")
-                                        .arg(QCoreApplication::applicationPid());
             if (dir.dirName() == ownName && dir.absolutePath().contains(QLatin1String("/.qttest/"))) {
                 dir.removeRecursively();
             }
         }
-    } profileCleanup;
+    } profileCleanup{profileName};
     QString why;
     if (!profileIsSafe(why)) {
         std::fprintf(stderr, "nereus_visual_preview: %s\n", qPrintable(why));
@@ -710,9 +728,8 @@ int main(int argc, char** argv)
     ctx.size = args.size;
     ctx.dpr = args.dpr;
     ctx.crops = !scene.dialog && args.profile == QLatin1String("mac-1512x869@2");
-    if (WorkspacePreview::enabled()) {
-        ctx.beforeGrab = rethemeBeforeGrab;
-    }
+    // No re-theme before the grab: every image shows what the live pass
+    // (WorkspacePreview::installLiveTheming) made of the window.
     ctx.geometryDump = args.geometryDump;
     scene.run(ctx);
     if (!ctx.failure.isEmpty()) {

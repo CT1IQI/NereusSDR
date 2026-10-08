@@ -53,6 +53,9 @@
 //   2026-10-08 - Upstream comments restored on the ported fills and edges;
 //                 the full header block; the licence note corrected.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - tableRules(): the grid and header colours of Longpath's
+//                 tableStyle(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -990,6 +993,36 @@ QString sunkenFill(const char* baseHex, int deepen, int lift)
 QString fieldFill()
 {
     return sunkenFill(kInsetBg, kFieldDeepen, kFieldLift);
+}
+
+/// Eine Tabelle hinter Glas (Glas & Tiefe, 2026-09-17): versenkt wie
+/// ein Zahlenfeld, Kopfzeile ohne Kaesten — nur eine Haarlinie unter
+/// den Titeln —, Auswahl im gedeckten Blauverlauf, Gitter leise. Keine
+/// Schriftangaben: Groesse und Versalien setzt der Aufrufer per
+/// setFont (Tabelle 11 px, Kopf capsFont 9 px), sonst kaskadiert eine
+/// font-size aus dem Stylesheet in den Kopf und schlaegt sie tot.
+// [original comment from StyleConstants.h:956-961]
+// Ported: the grid colour (gridline-color, kBorderSubtle) and the hairline
+// under the titles (border-bottom, kBorder). Not ported: the sunken table
+// fill, selection gradient, zebra colour, transparent header and its
+// 3 px padding.
+// From Longpath src/gui/StyleConstants.h:968, :984, :988, :992 [@551576e3]
+// NereusSDR: Fusion draws the grid in Window darker 120, which on the
+// workspace app-bg is the colour of the cells, so the grid vanished
+// (FreeDV Reporter). The header keeps a fill (button) and gets an edge in
+// border between sections, so the sections stay apart.
+QString tableRules()
+{
+    const auto& wp = WorkspacePalette::glassAndDepth();
+    const auto r = [&wp](const char* role) { return wp.qss(QString::fromLatin1(role)); };
+    return QStringLiteral(
+        "QTableView, QTableWidget { gridline-color: %1; }"
+        "QHeaderView::section {"
+        "  background: %2; color: %3; border: none;"
+        "  border-right: 1px solid %4; border-bottom: 1px solid %4;"
+        "  padding: 0px 4px;"
+        "}")
+        .arg(r("border-subtle"), r("button"), r("text"), r("border"));
 }
 
 int radiusFor(int heightPx)

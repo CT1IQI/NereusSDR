@@ -193,10 +193,15 @@ The look is applied two ways:
   stylesheet, the top strip and menu bar, the splitter handle, the pan
   toolbar and corner buttons, the pan badges, the status bar frame, the
   container title bars, borders and scroll bars.
-- (b) A scoped pass, `WorkspacePreview::themeSubtree`, that rewrites the
-  retained stylesheets of a subtree through `QssTranslator`: container
-  content, status bar content, pan toolbar flyouts and the Setup, TX EQ,
-  TX CFC, Container Settings, Pan Layout and PureSignal dialogs.
+- (b) A scoped pass that rewrites retained stylesheets through
+  `QssTranslator` and the component treatment. It runs live on every
+  widget when it is shown (windows, dialogs, Setup pages and tabs, menus,
+  popups, tooltips, toasts) and once more when a shown widget sets a new
+  stylesheet: `WorkspacePreview::installLiveTheming`, installed by
+  `applyWorkspacePalette`. A few call sites also run
+  `WorkspacePreview::themeSubtree` (container content after a reconcile,
+  status bar content, pan toolbar flyouts). The tool does not re-theme
+  before a grab, so every image shows what the running app shows.
 
 (b) is preview scaffolding, not the final migration: it shows what the
 look would be before each call site is moved to a role.

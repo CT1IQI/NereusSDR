@@ -55,6 +55,9 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The licence note corrected.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - tableRules(): the grid and header colours of Longpath's
+//                 tableStyle(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -80,6 +83,12 @@ QString fieldFill();
 // The radius for a control of the given height in device-independent
 // pixels: 4 up to 24 px, 6 above.
 int radiusFor(int heightPx);
+
+// Application-wide rules for tables and header sections in the
+// workspace look: grid lines, the line under the titles and the edges
+// between sections, from the workspace roles. Colours only, plus the
+// header's horizontal padding.
+QString tableRules();
 
 // Rewrites the background, border colours, text colour and radius of
 // every control block in `qss` (already translated to palette values)

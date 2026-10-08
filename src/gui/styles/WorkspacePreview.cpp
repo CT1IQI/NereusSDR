@@ -10,6 +10,9 @@
 //                 Anthropic Claude Code.
 //   2026-10-08 - themeOnShow() installs its filter once per dialog.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - installLiveTheming(): the application-wide live pass.
+//                 themeOne() records the themed sheet before it sets it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -18,7 +21,9 @@
 #include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
 
+#include <QApplication>
 #include <QEvent>
+#include <QMetaObject>
 #include <QObject>
 #include <QSet>
 #include <QVariant>
@@ -75,14 +80,47 @@ constexpr const char* kSkippedClasses[] = {
     "NereusSDR::GradientPickerWidget",
 };
 
+bool skippedClass(const QMetaObject* meta)
+{
+    // The live pass asks this for every ancestor of every widget shown,
+    // so the answer is kept per class.
+    static QHash<const QMetaObject*, bool> known;
+    const auto it = known.constFind(meta);
+    if (it != known.constEnd()) {
+        return it.value();
+    }
+    bool skip = false;
+    for (const QMetaObject* m = meta; m != nullptr && !skip; m = m->superClass()) {
+        for (const char* cls : kSkippedClasses) {
+            if (qstrcmp(m->className(), cls) == 0) {
+                skip = true;
+                break;
+            }
+        }
+    }
+    known.insert(meta, skip);
+    return skip;
+}
+
 bool skipped(const QWidget* w)
 {
     if (w->property(kSkipProperty).toBool()) {
         return true;
     }
-    for (const char* cls : kSkippedClasses) {
-        if (w->inherits(cls)) {
+    return skippedClass(w->metaObject());
+}
+
+// True when `w` or an ancestor in its own window is skipped. The walk
+// stops at the window: a menu or popup a skipped widget opens is a
+// surface of its own.
+bool skippedInWindow(const QWidget* w)
+{
+    for (const QWidget* p = w; p != nullptr; p = p->parentWidget()) {
+        if (skipped(p)) {
             return true;
+        }
+        if (p->isWindow()) {
+            break;
         }
     }
     return false;
@@ -126,10 +164,12 @@ void themeOne(QWidget* w)
         }
     }
     const QString look = Workspace::Components::componentize(r.qss, w);
+    // Recorded first: setStyleSheet() sends StyleChange, and the live
+    // pass must see this sheet as already themed.
+    w->setProperty(kThemedQssProperty, look);
     if (look != current) {
         w->setStyleSheet(look);
     }
-    w->setProperty(kThemedQssProperty, look);
 }
 
 void themeRecursive(QWidget* w)
@@ -160,6 +200,50 @@ protected:
             themeSubtree(static_cast<QWidget*>(watched));
         }
         return QObject::eventFilter(watched, event);
+    }
+};
+
+constexpr auto kLiveFilterName = "workspacePreviewLiveTheming";
+
+// The live pass for one widget, from a Show or StyleChange event. Its
+// children get their own Show events, so it does not recurse.
+void themeLive(QWidget* w)
+{
+    const QVariant themed = w->property(kThemedQssProperty);
+    if (themed.isValid() && themed.toString() == w->styleSheet()) {
+        return;
+    }
+    if (skippedInWindow(w)) {
+        return;
+    }
+    themeOne(w);
+}
+
+class LiveThemingFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        // Every event of the application passes here: anything but Show
+        // and StyleChange leaves after one comparison.
+        const QEvent::Type type = event->type();
+        if (type != QEvent::Show && type != QEvent::StyleChange) {
+            return false;
+        }
+        if (!watched->isWidgetType() || !enabled()) {
+            return false;
+        }
+        auto* w = static_cast<QWidget*>(watched);
+        // A new stylesheet on a hidden widget waits for its next Show,
+        // when its size (and so its radius) is known.
+        if (type == QEvent::StyleChange && !w->isVisible()) {
+            return false;
+        }
+        themeLive(w);
+        return false;
     }
 };
 
@@ -201,6 +285,20 @@ void themeOnShow(QWidget* dialog)
     auto* filter = new ShowFilter(dialog);
     filter->setObjectName(QString::fromLatin1(kShowFilterName));
     dialog->installEventFilter(filter);
+}
+
+void installLiveTheming(QApplication& app)
+{
+    if (!enabled()) {
+        return;
+    }
+    if (app.findChild<QObject*>(QString::fromLatin1(kLiveFilterName),
+                                Qt::FindDirectChildrenOnly) != nullptr) {
+        return;
+    }
+    auto* filter = new LiveThemingFilter(&app);
+    filter->setObjectName(QString::fromLatin1(kLiveFilterName));
+    app.installEventFilter(filter);
 }
 
 QString lookQss(const QString& original, const QWidget* owner)
