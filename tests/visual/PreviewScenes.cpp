@@ -41,6 +41,11 @@
 //                 pan separators and each VFO flag; fed readings name the
 //                 poller's reading-consumer path. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Round 2: plain-English plates, setup-look-* removed
+//                 (look-dialog-setup-* covers them), clean-spectrum-reveal,
+//                 full-content strip details, EdgeDropOverlay proposed, TX
+//                 profiles seeded for tx-processing. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -62,6 +67,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QStatusBar>
@@ -123,6 +129,7 @@
 #include "gui/widgets/BandwidthFilterPane.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "core/MicProfileManager.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/widgets/ProfileRail.h"
 #include "gui/widgets/ProfileRailDock.h"
@@ -616,7 +623,8 @@ QString classProvenance(QWidget* w)
     if (dynamic_cast<EdgeDockStrip*>(w) != nullptr || dynamic_cast<WorkspaceGroupHeader*>(w) != nullptr
         || dynamic_cast<WorkspaceEntryHeader*>(w) != nullptr || dynamic_cast<WorkspaceCornerGrip*>(w) != nullptr
         || dynamic_cast<ProfileRailDock*>(w) != nullptr || dynamic_cast<WorkspaceProfilesDialog*>(w) != nullptr
-        || w->objectName() == QLatin1String("profileRailPopover")) {
+        || w->objectName() == QLatin1String("profileRailPopover")
+        || w->objectName() == QLatin1String("edgeDropOverlay")) {
         return provProposed();
     }
     if (auto* handle = dynamic_cast<QSplitterHandle*>(w);
@@ -802,7 +810,16 @@ void walkRegions(QWidget* root, QWidget* w, const QString& inherited, int parent
 void appendRegions(QJsonArray& out, QWidget* top, const QPoint& offset, const QSize& imageSize)
 {
     tagTree(top);
-    const QString own = top->property(kProvenanceProperty).toString();
+    // A root that is not a top-level (a detail image of a strip's body)
+    // inherits from its nearest tagged ancestor, as it would in the window.
+    QString own = top->property(kProvenanceProperty).toString();
+    for (QWidget* up = top->parentWidget(); own.isEmpty() && up != nullptr && !top->isWindow();
+         up = up->parentWidget()) {
+        own = up->property(kProvenanceProperty).toString();
+        if (own.isEmpty()) {
+            own = classProvenance(up);
+        }
+    }
     const QRect clip = QRect(-offset, imageSize).intersected(top->rect());
     walkRegions(top, top, own.isEmpty() ? provRetained() : own, -1, clip, QPoint(0, 0) + offset, out);
 }
@@ -2481,6 +2498,11 @@ constexpr int kDialogInsetPx = 80;
 // The free container's clearance from the dB scale and the time scale.
 constexpr int kFreeScaleClearancePx = 72;
 constexpr int kFreeBottomClearancePx = 24;
+// The placeholder per-MAC scope tx-processing seeds TX profiles under,
+// in the throwaway test profile (a locally administered address).
+constexpr auto kPreviewTxProfileScope = "02:00:00:00:00:00";
+// At most this many window growths for a strip's full-content image.
+constexpr int kFullStripGrowSteps = 4;
 
 // Applets the source has but MainWindow does not construct (their lines
 // are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
@@ -2575,11 +2597,15 @@ QJsonObject bindingConfig(int binding)
     return QJsonObject{{QString::fromLatin1(LongpathContent::kBindingKey), binding}};
 }
 
-// A plate where a control does not exist in this build.
-QLabel* addNotImplementedPlate(QWidget* window, QWidget* near, const QString& what, const QString& reason,
-                               bool below = true)
+// A plate where a control does not exist in this build. `message` is the
+// plain-English text on the plate; `reason` (the technical cause) goes to
+// the sidecar notes, never onto the plate.
+QLabel* addNotImplementedPlate(SceneContext& ctx, QWidget* near, const QString& what, const QString& message,
+                               const QString& reason, bool below = true)
 {
-    auto* plate = new QLabel(QStringLiteral("not available in this build: %1").arg(reason), window);
+    QWidget* window = ctx.window;
+    ctx.notes.append(QStringLiteral("not-implemented plate \"%1\": %2").arg(message, reason));
+    auto* plate = new QLabel(message, window);
     plate->setObjectName(QStringLiteral("previewNotImplementedPlate"));
     plate->setWordWrap(true);
     plate->setStyleSheet(QStringLiteral(
@@ -2601,7 +2627,9 @@ QLabel* addNotImplementedPlate(QWidget* window, QWidget* near, const QString& wh
 
 // clean-spectrum: one pan, no docked containers, one free container with
 // a Longpath frequency and needle for slice A, header Reveal idle.
-void sceneCleanSpectrum(SceneContext& ctx)
+// clean-spectrum-reveal (`revealed`): the same with that header shown, as
+// when the pointer has rested in the container's top band.
+void sceneCleanSpectrum(SceneContext& ctx, bool revealed)
 {
     ctx.provenance = provProposed();
     ctx.proposedValues = proposedEdgeValues();
@@ -2651,22 +2679,105 @@ void sceneCleanSpectrum(SceneContext& ctx)
         if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
             c.failure = QStringLiteral("could not move the Instruments container");
         }
-    }, [id](SceneContext& c) {
+    }, [id, revealed](SceneContext& c) {
         // MeterPoller polls Longpath instruments on their own; with no
         // radio the needle gets slice A's reading through the poller's
         // signal, as it would live.
         auto* manager = c.window->findChild<ContainerManager*>();
         feedSliceInstruments(c, manager->contentHost(id));
+        if (revealed) {
+            ContainerWidget* box = manager->container(id);
+            if (box == nullptr) {
+                c.failure = QStringLiteral("the Instruments container is gone");
+                return;
+            }
+            // The pointer has been in the top band for 120 ms.
+            box->setHeaderRevealedForPreview(true);
+            c.notes.append(QStringLiteral("Instruments: ContainerWidget::setHeaderRevealedForPreview(true)"));
+        }
         pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
     ctx.notes.append(QStringLiteral("Main Panel hidden (visible false); Instruments: Place Free, Header Reveal, "
-                                    "pointer away"));
+                                    "%1").arg(revealed ? QStringLiteral("header shown") : QStringLiteral("pointer away")));
     noteStrips(ctx);
-    captureWindow(ctx, QStringLiteral("clean-spectrum"));
+    captureWindow(ctx, revealed ? QStringLiteral("clean-spectrum-reveal") : QStringLiteral("clean-spectrum"));
     annotateSlices(ctx);
+}
+
+// How far the scroll areas in `strip` (its own and each container's) are
+// scrolled past their viewports along the strip's axis, in logical px.
+int stripOverflow(EdgeDockStrip* strip)
+{
+    const bool vertical = strip->orientation() == Qt::Vertical;
+    int overflow = 0;
+    for (QScrollArea* sa : strip->findChildren<QScrollArea*>()) {
+        if (sa->widget() == nullptr || !sa->isVisibleTo(strip)) {
+            continue;
+        }
+        overflow += vertical ? sa->verticalScrollBar()->maximum() : sa->horizontalScrollBar()->maximum();
+    }
+    return overflow;
+}
+
+// `<scene>--strip-<edge>-full`: each strip that scrolls, rendered with its
+// whole content showing. The window is grown along the strip's axis until
+// nothing in the strip scrolls, the strip is grabbed, and the window is
+// put back; the window image (taken before) stays as the window looks.
+void captureStripsFull(SceneContext& ctx, const QString& scene)
+{
+    auto* area = ctx.window->findChild<EdgeDockArea*>();
+    if (area == nullptr) {
+        return;
+    }
+    const QPair<DockEdge, QString> edges[] = {{DockEdge::Left, QStringLiteral("strip-left")},
+                                              {DockEdge::Right, QStringLiteral("strip-right")},
+                                              {DockEdge::Top, QStringLiteral("strip-top")},
+                                              {DockEdge::Bottom, QStringLiteral("strip-bottom")}};
+    const QSize original = ctx.window->size();
+    for (const auto& [edge, edgeName] : edges) {
+        EdgeDockStrip* strip = area->strip(edge);
+        if (strip == nullptr || !strip->isVisible()) {
+            continue;
+        }
+        const int before = stripOverflow(strip);
+        if (before <= 0) {
+            continue;
+        }
+        const bool vertical = strip->orientation() == Qt::Vertical;
+        QSize grown = original;
+        int overflow = before;
+        for (int step = 0; step < kFullStripGrowSteps && overflow > 0; ++step) {
+            grown += vertical ? QSize(0, overflow) : QSize(overflow, 0);
+            ctx.window->resize(grown);
+            pump(kSettleMs);
+            overflow = stripOverflow(strip);
+        }
+        const QString name = scene + QStringLiteral("--") + edgeName + QStringLiteral("-full");
+        CapturedImage img;
+        img.name = name;
+        img.kind = QStringLiteral("detail");
+        img.image = grabWidget(strip);
+        img.logicalSize = strip->size();
+        img.dpr = img.image.devicePixelRatio();
+        img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(strip->metaObject()->className());
+        img.extra[QStringLiteral("full_content")] = QJsonObject{
+            {QStringLiteral("scrolled_px_in_window"), before},
+            {QStringLiteral("window_grown_to"), QJsonArray{grown.width(), grown.height()}},
+            {QStringLiteral("still_scrolled_px"), overflow},
+            {QStringLiteral("method"), QStringLiteral(
+                 "the window grown along the strip's axis until no scroll area in the strip scrolls, "
+                 "the strip grabbed, the window restored")}};
+        attachRegions(img, strip);
+        ctx.images.append(img);
+        ctx.notes.append(QStringLiteral("%1: %2 px scrolled in the window; grabbed with the window at %3x%4 "
+                                        "(%5 px still scrolled)")
+                             .arg(name).arg(before).arg(grown.width()).arg(grown.height()).arg(overflow));
+        ctx.window->resize(original);
+        pump(kSettleMs);
+    }
 }
 
 // cw-digital: slice A 14.030 CW and slice B 7.074 DIGU.
@@ -2718,9 +2829,11 @@ void sceneCwDigital(SceneContext& ctx)
             return;
         }
         auto* phcw = c.window->findChild<PhoneCwApplet*>();
-        addNotImplementedPlate(c.window, phcw, QStringLiteral("Phone / CW, CW page"),
-                               QStringLiteral("the Phone / CW applet's CW page (UnbuiltFeature::Cwx); "
-                                              "showPage(1) shows the Phone page."), false);
+        addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
+                               QStringLiteral("CW page: not built yet in NereusSDR"),
+                               QStringLiteral("the Phone / CW applet's CW page is gated by "
+                                              "UnbuiltFeature::Cwx; showPage(1) shows the Phone page"),
+                               false);
         c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
                                       "its Phone page and a not-implemented plate covers its top"));
     });
@@ -2729,6 +2842,7 @@ void sceneCwDigital(SceneContext& ctx)
     }
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("cw-digital"));
+    captureStripsFull(ctx, QStringLiteral("cw-digital"));
     annotateSlices(ctx);
 }
 
@@ -2777,6 +2891,30 @@ void poseLongpathTx(SceneContext& ctx, const QStringList& hostIds)
     }
 }
 
+// The TX profile selector reads MicProfileManager, which is scoped by the
+// radio's MAC and stays empty until a radio connects. The scene gives it a
+// placeholder scope in this process's throwaway test profile and runs its
+// own first-launch load(), which writes "Default" (active) and the factory
+// profiles there, as the first connect would. No radio, Core or real
+// settings are reached.
+QJsonObject seedTxProfiles(SceneContext& ctx)
+{
+    MicProfileManager* profiles = ctx.model->micProfileManager();
+    if (profiles == nullptr || !profiles->profileNames().isEmpty()) {
+        return {};
+    }
+    profiles->setMacAddress(QString::fromLatin1(kPreviewTxProfileScope));
+    profiles->load();
+    ctx.notes.append(QStringLiteral("TX profiles seeded in the test profile (see tx_profile_seed)"));
+    return QJsonObject{
+        {QStringLiteral("scope"), QString::fromLatin1(kPreviewTxProfileScope)},
+        {QStringLiteral("method"), QStringLiteral(
+             "MicProfileManager::setMacAddress(placeholder) then load() (its first-launch seed) in the "
+             "isolated test profile; no radio connected")},
+        {QStringLiteral("profiles"), QJsonArray::fromStringList(profiles->profileNames())},
+        {QStringLiteral("active"), profiles->activeProfileName()}};
+}
+
 void sceneTxProcessing(SceneContext& ctx)
 {
     // Display-only transmit state, as baseline-tx. Refuse to run if a
@@ -2790,7 +2928,8 @@ void sceneTxProcessing(SceneContext& ctx)
     ctx.extraCrops = addAllStripCrops;
     const QStringList meterHosts = {QStringLiteral("preview-tx-power"), QStringLiteral("preview-swr"),
                                     QStringLiteral("preview-alc")};
-    runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
+    QJsonObject txProfileSeed;
+    runWindowScene(ctx, twoBandPoses(), 0, [&txProfileSeed](SceneContext& c) {
         if (!registerPreviewApplets(c)) {
             return;
         }
@@ -2818,6 +2957,7 @@ void sceneTxProcessing(SceneContext& ctx)
         }
         c.notes.append(QStringLiteral("Main Panel in the left strip; TX, PureSignal and Mod Monitor moved "
                                       "to the right strip with EQ; TX Power, SWR and ALC on top"));
+        txProfileSeed = seedTxProfiles(c);
         poseTxBeforeFreeze(c);
     }, [meterHosts](SceneContext& c) {
         poseTxAfterFeed(c);
@@ -2838,6 +2978,12 @@ void sceneTxProcessing(SceneContext& ctx)
                                   : QStringLiteral("not visible")));
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("tx-processing"));
+    for (CapturedImage& img : ctx.images) {
+        if (img.name == QLatin1String("tx-processing") && !txProfileSeed.isEmpty()) {
+            img.extra[QStringLiteral("tx_profile_seed")] = txProfileSeed;
+        }
+    }
+    captureStripsFull(ctx, QStringLiteral("tx-processing"));
     // The CFC and TX EQ dialogs over the same state, alone.
     auto* action = ctx.window->findChild<QAction*>(QStringLiteral("toolsTxEqualizer"));
     if (action == nullptr) {
@@ -3009,9 +3155,9 @@ void sceneEditSourceSelect(SceneContext& ctx)
             c.failure = QStringLiteral("no visible source chip on the Station header");
             return;
         }
-        addNotImplementedPlate(c.window, chip, QStringLiteral("source chip menu"),
-                               QStringLiteral("the source chip menu (RX A to D, Active slice). "
-                                              "WorkspaceSourceChip only paints; it has no menu."));
+        addNotImplementedPlate(c, chip, QStringLiteral("source chip menu"),
+                               QStringLiteral("Source menu (RX A to D, Active slice): not built yet in NereusSDR"),
+                               QStringLiteral("WorkspaceSourceChip only paints; it has no menu"));
         c.notes.append(QStringLiteral("source chip \"%1\": paint-only, no menu; a not-implemented plate "
                                       "sits under it. The dialog shows the existing Source path for the "
                                       "Frequency entry").arg(chip->text()));
@@ -3075,49 +3221,6 @@ void sceneFourRxLook(SceneContext& ctx)
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("four-rx-look"));
     annotateSlices(ctx);
-}
-
-// setup-look-<page>: one Setup page with the workspace look.
-struct LookPage {
-    const char* scene;
-    const char* category;
-    const char* label;
-};
-
-constexpr LookPage kLookPages[] = {
-    {"setup-look-general", "General", "Options"},
-    {"setup-look-display", "Display", "Spectrum Defaults"},
-    {"setup-look-transmit", "Transmit", "Power"},
-    {"setup-look-audio", "Audio", "Devices"},
-    {"setup-look-dsp", "DSP", "Options"},
-    {"setup-look-appearance", "Appearance", "Colors & Theme"},
-};
-
-void sceneSetupLook(SceneContext& ctx, const LookPage& page)
-{
-    prepareForDialog(ctx);
-    SetupDialog* d = openSetupDialog(ctx.window);
-    if (d == nullptr) {
-        ctx.failure = QStringLiteral("Setup did not open");
-        return;
-    }
-    int index = -1;
-    for (const SetupLeaf& leaf : setupLeaves(d)) {
-        if (leaf.category == QLatin1String(page.category) && leaf.label == QLatin1String(page.label)) {
-            index = leaf.index;
-        }
-    }
-    auto* tree = d->findChild<QTreeWidget*>();
-    QTreeWidgetItem* item = tree != nullptr && index >= 0 ? treeItemForIndex(tree, index) : nullptr;
-    if (item == nullptr) {
-        ctx.failure = QStringLiteral("no Setup page %1 / %2").arg(QLatin1String(page.category),
-                                                                QLatin1String(page.label));
-        return;
-    }
-    tree->setCurrentItem(item);
-    ctx.notes.append(QStringLiteral("Setup page %1 / %2 (registry index %3) with the workspace look")
-                         .arg(QLatin1String(page.category), QLatin1String(page.label)).arg(index));
-    captureDialog(ctx, d, QString::fromLatin1(page.scene));
 }
 
 } // namespace
@@ -3526,7 +3629,9 @@ QVector<Scene> fixedScenes()
 
     // ---- coverage scenes (switch on) ----
     scenes.append({QStringLiteral("clean-spectrum"), QStringLiteral("1"), false,
-                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx); }, true});
+                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx, false); }, true});
+    scenes.append({QStringLiteral("clean-spectrum-reveal"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx, true); }, true});
     scenes.append({QStringLiteral("cw-digital"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneCwDigital(ctx); }, true});
     scenes.append({QStringLiteral("tx-processing"), QStringLiteral("2v"), false,
@@ -3539,10 +3644,6 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneEditProperties(ctx); }, true});
     scenes.append({QStringLiteral("four-rx-look"), QStringLiteral("2x2"), false,
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
-    for (const LookPage& page : kLookPages) {
-        scenes.append({QString::fromLatin1(page.scene), QStringLiteral("2v"), true,
-                       [page](SceneContext& ctx) { sceneSetupLook(ctx, page); }, true});
-    }
 
     // ---- fixed dialogs ----
     scenes.append({QStringLiteral("dialog-tx-eq"), QStringLiteral("2v"), true,

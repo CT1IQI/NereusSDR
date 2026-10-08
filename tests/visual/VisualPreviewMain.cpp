@@ -222,8 +222,9 @@ QString baseSceneFor(const QString& name)
 // The look name for a Task 1 scene, or empty when it has no look variant.
 QString lookSceneFor(const Scene& s)
 {
-    // Only the Task 1 dialog-* scenes have look variants; setup-look-*
-    // scenes are already looks.
+    // Only the Task 1 dialog-* scenes have look variants (no scene named
+    // otherwise gets one: the edit-* and other workspace scenes are looks
+    // already).
     if (s.dialog) {
         return s.name.startsWith(QLatin1String("dialog-")) ? QLatin1String(kLookPrefix) + s.name : QString();
     }
