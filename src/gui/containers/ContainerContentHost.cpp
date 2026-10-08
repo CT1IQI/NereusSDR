@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a factory widget's own config
+//                 edits (ContentConfigNotifier) go to the workspace document
+//                 through ContainerArrangeController::setEntryConfig, queued
+//                 so the commit never runs inside the widget's menu; a widget
+//                 that already shows the committed config is kept, not
+//                 rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - The host is never narrower than its contents: its minimum
 //                 width counts the widest visible row, the body margins and
 //                 the vertical bar, follows rows shown and hidden, and is
@@ -55,6 +62,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QTimer>
 #include <QSet>
 #include "ContainerContentRegistry.h"
+#include "core/LogCategories.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
@@ -80,6 +88,17 @@ int preferredWidgetHeight(const QWidget* widget, int width)
     const int wrapped = widget->hasHeightForWidth() ? widget->heightForWidth(width) : -1;
     const int preferred = wrapped >= 0 ? wrapped : widget->sizeHint().height();
     return qBound(widget->minimumHeight(), preferred, widget->maximumHeight());
+}
+// Workspace preview: a factory widget whose own controls set its config
+// (ContentConfigNotifier) already shows `current`; it may be kept when
+// nothing but the config differs from `previous`.
+bool showsConfigLive(const QWidget* widget, const ContentEntry& current, ContentEntry previous)
+{
+    if (!widget) { return false; }
+    const QVariant applied = widget->property(ContentConfigNotifier::kAppliedConfigProperty);
+    if (!applied.isValid() || applied.toJsonObject() != current.config) { return false; }
+    previous.config = current.config;
+    return previous == current;
 }
 } // namespace
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
@@ -232,6 +251,14 @@ bool ContainerContentHost::needsReconcile(const ContainerDocument& document) con
             comparable.extensions.remove("freeCanvasRect");previous.extensions.remove("freeCanvasRect");
             comparable.paintOrder=previous.paintOrder;comparable.visible=previous.visible;comparable.name=previous.name;
         }
+        if (comparable!=previous && m_registry.hasWidgetFactory(entry.typeId)) {
+            // Workspace preview: the widget's own config edit, already shown.
+            const auto row = std::find_if(m_rows.cbegin(), m_rows.cend(),
+                                          [&](const EntryRow& r) { return r.entryId == entry.id; });
+            if (row != m_rows.cend() && !row->item && showsConfigLive(row->widget, comparable, previous)) {
+                previous = comparable;
+            }
+        }
         if (comparable!=previous || effectiveContext(document,entry) != effectiveContext(m_document,prior)) { return true; }
         if (m_registry.isAvailable(entry.typeId) !=
             std::any_of(m_rows.cbegin(),m_rows.cend(),[&](const EntryRow& row){ return row.entryId==entry.id && row.effectiveVisible; }) && entry.visible) { return true; }
@@ -375,6 +402,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 finishRun();
                 widget->setProperty("containerSourceContext", row.context);
                 widget->setProperty(WorkspacePreview::kSkipProperty, true);
+                connectConfigNotifier(widget, entry.id);
                 row.widget = widget; m_layout->addWidget(widget);
                 widget->setVisible(row.effectiveVisible);
                 m_rows.append(row); continue;
@@ -484,13 +512,14 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 ContentEntry current=entry,previous;current.extensions.remove("freeCanvasRect");current.paintOrder=0;
                 for(const auto& candidate:prior.contents) {if(candidate.id==entry.id) {previous=candidate;previous.extensions.remove("freeCanvasRect");previous.paintOrder=0;break;}}
                 previous.visible=current.visible;previous.name=current.name;
-                if(previous==current && effectiveContext(prior,previous)==row.context) {row.widget=old->widget;}
+                if((previous==current || showsConfigLive(old->widget,current,previous)) && effectiveContext(prior,previous)==row.context) {row.widget=old->widget;}
             }
             if(!row.widget) {
                 ContentEntry effective=entry;effective.context=row.context;
                 if(QWidget* widget=m_registry.createWidget(effective,m_canvas)) {
                     widget->setProperty("containerSourceContext",row.context);
                     widget->setProperty(WorkspacePreview::kSkipProperty,true);
+                    connectConfigNotifier(widget,entry.id);
                     widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
                     widget->setProperty("freeCanvasHint",widget->sizeHint());
                     widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
@@ -541,6 +570,26 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
     m_canvas->project(sceneDocument,views);m_generation=m_registry.generation();m_materialized=true;
     updateContentMinimumWidth();
     emit reconciled();
+}
+void ContainerContentHost::connectConfigNotifier(QWidget* widget, const QString& entryId)
+{
+    auto* notifier = widget->findChild<ContentConfigNotifier*>(QString(), Qt::FindDirectChildrenOnly);
+    if (!notifier) { return; }
+    // Queued: the commit reconciles every host, which must not run inside
+    // the widget's own menu. Several edits before the first delivery each
+    // commit the widget's latest config (the applied-config property), so
+    // an earlier one never rebuilds the widget away from what it shows.
+    QPointer<QWidget> guard(widget);
+    connect(notifier, &ContentConfigNotifier::configEdited, this, [this, entryId, guard](const QJsonObject& edited) {
+        if (!m_arrange) {
+            qCWarning(lcContainer) << "entry" << entryId << "config not saved: no arrange controller";
+            return;
+        }
+        const QVariant applied = guard ? guard->property(ContentConfigNotifier::kAppliedConfigProperty) : QVariant();
+        const QJsonObject config = applied.isValid() ? applied.toJsonObject() : edited;
+        const ArrangeResult result = m_arrange->setEntryConfig(entryId, config);
+        if (!result.ok) { qCWarning(lcContainer) << "entry" << entryId << "config not saved:" << result.error; }
+    }, Qt::QueuedConnection);
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 {

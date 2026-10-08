@@ -4,6 +4,9 @@
 //   2026-10-08 - Workspace preview only: the header's hide button hides the
 //                 entry or container (Containers > Hidden brings it back).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: setEntryConfig commits an entry's
+//                 own settings. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "ContainerManager.h"
@@ -442,6 +445,19 @@ ArrangeResult ContainerArrangeController::setEntryVisible(const QString& id, boo
         container.visible = true;
         container.config["enabled"] = true;
     }
+    return commit(d);
+}
+ArrangeResult ContainerArrangeController::setEntryConfig(const QString& id, const QJsonObject& config)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) {
+        return failure(tr("Entry is unavailable"));
+    }
+    if (d.containers[source].contents[index].config == config) {
+        return {true, {}};
+    }
+    d.containers[source].contents[index].config = config;
     return commit(d);
 }
 ArrangeResult ContainerArrangeController::closeContainer(const QString& id)

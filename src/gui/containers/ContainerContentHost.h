@@ -1,6 +1,11 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a factory widget's own config
+//                 edits (ContentConfigNotifier) are committed through the
+//                 arrange controller, and a widget already showing the new
+//                 config is kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - The host's minimum width is what its contents need (the
 //                 widest visible row, the body margins and the vertical bar)
 //                 and contentMinimumWidthChanged tells the container; in the
@@ -88,6 +93,7 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     void reconcileFreeCanvas(const ContainerDocument&);
+    void connectConfigNotifier(QWidget* widget, const QString& entryId);
     void updateGrips();
     void scheduleStackProjection();
     void projectStackRows();

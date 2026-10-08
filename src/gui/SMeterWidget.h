@@ -75,6 +75,16 @@
 //                 does not send shows "--" with the reason, never 0.  The TX
 //                 readout text of both faces moved unchanged into txReadout().
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-08  Per-copy settings for a dial added to a container
+//                 (workspace preview) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 SettingsStore::Instance: the TX mode, RX mode, peak hold,
+//                 decay and face start at today's defaults and never read
+//                 or write the AppSettings keys; instanceSettingsChanged()
+//                 tells the owner to keep them.  peakHoldEnabled() and
+//                 peakDecayRate() accessors.  The Main Panel's dial
+//                 (SettingsStore::Global) is unchanged.
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #pragma once
 
@@ -110,6 +120,19 @@ class SMeterWidget : public QWidget {
 
 public:
     explicit SMeterWidget(QWidget* parent = nullptr);
+
+    // Where the widget keeps its TX mode, RX mode, peak hold, decay and
+    // face.  Global: the Main Panel's dial and its AppSettings keys
+    // (SMeter_TxSelect, SMeter_RxSelect, PeakHoldEnabled, PeakDecayRate,
+    // SMeter_FaceStyle), read in the constructor and written by the
+    // setters.  Instance: a dial added to a container (workspace preview);
+    // it starts at today's defaults (Power, Signal, peak hold on, Medium,
+    // Aged Cream), never touches those keys, and emits
+    // instanceSettingsChanged() when one of the five changes, so its owner
+    // keeps them in the workspace document.  NereusSDR-native.
+    enum class SettingsStore { Global, Instance };
+    explicit SMeterWidget(SettingsStore store, QWidget* parent = nullptr);
+    SettingsStore settingsStore() const { return m_settingsStore; }
 
     // Overload that subscribes to RadioModel::externalAmpOperateChanged so
     // the 2 kW power scale flips for both PGXL and RF-Kit without the caller
@@ -149,6 +172,9 @@ public:
     // NereusSDR-native (AetherSDR reads mode directly from its combo box).
     RxMode rxMode() const { return m_rxMode; }
     TxMode txMode() const { return m_txMode; }
+    // Peak hold state, as the right-click menu shows it.  NereusSDR-native.
+    bool peakHoldEnabled() const { return m_peakHoldEnabled; }
+    DecayRate peakDecayRate() const;
 
     // Test-only accessors. Production code uses paintEvent's internal logic.
     float testPowerScaleMax()  const { return m_powerScaleMax; }
@@ -202,6 +228,9 @@ signals:
     // R-R3-21: the face, peak hold or peak decay changed (and was saved),
     // from the right-click menu or from Setup.
     void settingsChanged();
+    // SettingsStore::Instance only: the TX mode, RX mode, peak hold, decay
+    // or face changed (from the right-click menu).  NereusSDR-native.
+    void instanceSettingsChanged();
 
 public slots:
     // Update the displayed RX level (S-meter dBm).
@@ -347,6 +376,10 @@ private:
     float   m_txSwr{1.0f};
     float   m_micLevel{-50.0f};
     float   m_compLevel{0.0f};
+
+    // Global (the AppSettings keys) or Instance (no AppSettings).
+    // NereusSDR-native.
+    SettingsStore m_settingsStore{SettingsStore::Global};
 
     // Mode state
     // From AetherSDR src/gui/SMeterWidget.h:92-94 [@0cd4559]
