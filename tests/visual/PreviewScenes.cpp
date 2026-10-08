@@ -71,6 +71,9 @@
 //   2026-10-08 - controls-sheet--indicators, --lit-buttons and --sizes:
 //                 choice sheets for JJ (ControlsSheet.cpp). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - controls-sheet--lit-green and --scrollbars: green and
+//                 scroll bar thickness choices (ControlsSheet.cpp).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Setup page scenes centre the page's tree item and keep
 //                 the pointer's hover out of the tree, and Radio Status
 //                 holds its uptime, so they are the same every run.
@@ -133,6 +136,7 @@
 #include "gui/PsForm.h"
 #include "gui/SMeterWidget.h"
 #include "gui/SetupDialog.h"
+#include "gui/SetupPage.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/TitleBar.h"
@@ -146,6 +150,7 @@
 #include "gui/applets/TxCfcDialog.h"
 #include "gui/applets/TxEqDialog.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerTypes.h"
 #include "gui/containers/ContainerWidget.h"
@@ -3337,6 +3342,106 @@ void sceneFourRxLook(SceneContext& ctx)
     annotateSlices(ctx);
 }
 
+
+// ---- live scroll bars (controls-sheet--scrollbars) ----
+
+QJsonObject barFacts(QScrollArea* area)
+{
+    QScrollBar* v = area->verticalScrollBar();
+    return QJsonObject{
+        {QStringLiteral("area_class"), QString::fromLatin1(area->metaObject()->className())},
+        {QStringLiteral("area_parent"), area->parentWidget() != nullptr
+             ? QString::fromLatin1(area->parentWidget()->metaObject()->className()) : QString()},
+        {QStringLiteral("area_size"), QJsonArray{area->width(), area->height()}},
+        {QStringLiteral("viewport_width"), area->viewport()->width()},
+        {QStringLiteral("vertical_bar_visible"), v->isVisible()},
+        {QStringLiteral("vertical_bar_width"), v->isVisible() ? v->width() : 0},
+        {QStringLiteral("vertical_bar_class"), QString::fromLatin1(v->metaObject()->className())},
+        {QStringLiteral("pm_scroll_bar_extent"), v->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, v)},
+    };
+}
+
+// The Main Panel's scroll areas in the live window.
+QJsonArray mainPanelBars(MainWindow* window)
+{
+    QJsonArray out;
+    auto* manager = window->findChild<ContainerManager*>();
+    QWidget* panel = manager != nullptr ? manager->panelContainer() : nullptr;
+    if (panel == nullptr) {
+        return out;
+    }
+    for (QScrollArea* area : panel->findChildren<QScrollArea*>()) {
+        if (area->isVisible() && area->widget() != nullptr) {
+            out.append(barFacts(area));
+        }
+    }
+    return out;
+}
+
+// The first Setup page, in tree order, whose page scroll area shows a
+// vertical bar. Leaves the dialog open on that page; returns its area.
+QScrollArea* setupPageWithBar(SetupDialog* dialog, QJsonObject& facts)
+{
+    auto* tree = dialog->findChild<QTreeWidget*>();
+    if (tree == nullptr) {
+        return nullptr;
+    }
+    for (const SetupLeaf& leaf : setupLeaves(dialog)) {
+        if (leaf.hidden) {
+            continue;
+        }
+        QTreeWidgetItem* item = treeItemForIndex(tree, leaf.index);
+        if (item == nullptr) {
+            continue;
+        }
+        tree->setCurrentItem(item);
+        pump(kFinalSettleMs);
+        for (SetupPage* page : dialog->findChildren<SetupPage*>()) {
+            if (!page->isVisible()) {
+                continue;
+            }
+            for (QScrollArea* area : page->findChildren<QScrollArea*>()) {
+                if (area->isVisible() && area->parentWidget() == page && area->verticalScrollBar()->isVisible()) {
+                    facts = barFacts(area);
+                    facts.insert(QStringLiteral("page"), leaf.category + QStringLiteral(" / ") + leaf.label);
+                    return area;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
+// Today's look, then the Setup page again with the preview switch on and
+// the preview's scoped pass over the dialog (WorkspacePreview::themeSubtree,
+// what themeOnShow runs on a dialog). The switch ends off.
+QJsonObject liveScrollBars(SceneContext& ctx)
+{
+    QJsonObject out{{QStringLiteral("main_panel_today"), mainPanelBars(ctx.window)}};
+    SetupDialog* dialog = openSetupDialog(ctx.window);
+    if (dialog == nullptr) {
+        out.insert(QStringLiteral("setup_error"), QStringLiteral("Setup did not open"));
+        return out;
+    }
+    QJsonObject today;
+    QScrollArea* area = setupPageWithBar(dialog, today);
+    if (area == nullptr) {
+        out.insert(QStringLiteral("setup_error"), QStringLiteral("no Setup page shows a vertical bar"));
+    } else {
+        out.insert(QStringLiteral("setup_today"), today);
+        WorkspacePreview::setEnabledForTest(true);
+        WorkspacePreview::themeSubtree(dialog);
+        pump(kFinalSettleMs);
+        QJsonObject preview = barFacts(area);
+        preview.insert(QStringLiteral("page"), today.value(QStringLiteral("page")));
+        out.insert(QStringLiteral("setup_preview_switch_on"), preview);
+        WorkspacePreview::setEnabledForTest(false);
+    }
+    dialog->close();
+    pump(kFinalSettleMs);
+    return out;
+}
+
 } // namespace
 
 void pump(int ms)
@@ -3797,6 +3902,26 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0);
         if (ctx.failure.isEmpty()) { sceneLitButtons(ctx); }
+    }});
+    scenes.append({QStringLiteral("controls-sheet--lit-green"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneLitGreenChoices(ctx); }
+    }});
+    scenes.append({QStringLiteral("controls-sheet--scrollbars"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) {
+            // The sheet first, with the switch off; then the live bars,
+            // which turn the switch on for the Setup page and off again.
+            sceneScrollBarChoices(ctx, QJsonObject());
+            const QJsonObject live = liveScrollBars(ctx);
+            for (CapturedImage& c : ctx.images) {
+                if (c.name == QLatin1String("controls-sheet--scrollbars")) {
+                    c.extra.insert(QStringLiteral("live_bars"), live);
+                }
+            }
+        }
     }});
     scenes.append({QStringLiteral("controls-sheet--sizes"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {

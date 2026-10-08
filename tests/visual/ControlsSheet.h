@@ -68,6 +68,15 @@ void sceneIndicatorChoices(SceneContext& ctx);
 // three meanings, Longpath's tones for the same three, and Longpath's one
 // blue; resting and hovered.
 void sceneLitButtons(SceneContext& ctx);
+// controls-sheet--lit-green (+ --zoom): Longpath's flat green and three
+// stronger raised greens built from palette roles, each next to the
+// Longpath blue and amber and one unlit button; resting.
+void sceneLitGreenChoices(SceneContext& ctx);
+// controls-sheet--scrollbars (+ --zoom): Longpath's scroll bar at 8, 10
+// and 14 px on a scrolled area the size of the Main Panel's; resting and
+// handle hovered. `liveBars` (the window's and Setup's real bars, measured
+// by the caller) goes into the sidecar.
+void sceneScrollBarChoices(SceneContext& ctx, const QJsonObject& liveBars);
 // controls-sheet--sizes: combo, line edit, spin box, tabs and push button
 // at Longpath's sizes, and at today's with Longpath shading (today's and
 // height-scaled corners).

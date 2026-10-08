@@ -15,6 +15,10 @@
 //   2026-10-08 - Choice sheets: checkbox and radio off states, lit push
 //                 buttons, field and button sizes. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - controls-sheet--lit-green: stronger greens for lit
+//                 buttons, from palette roles only; controls-sheet--
+//                 scrollbars: 8, 10 and 14 px bars. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - measureAppletFit: every visible container holding
 //                 applets, checked like the strip-fit scenes. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -31,6 +35,7 @@
 #include <QEnterEvent>
 #include <QFrame>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QHoverEvent>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -2093,6 +2098,273 @@ GridRow captureLitRow(const LitVariant& v)
     return row;
 }
 
+// ---- stronger greens for lit buttons ----
+//
+// JJ chose Longpath's tones with three meanings for lit buttons; next to
+// Longpath's raised blue its flat green reads as nearly off. Each row is
+// one green; the blue and amber are the "Longpath tones" row's. Every
+// green colour is a palette role, or Longpath's raisedFill / shiftL
+// applied to one. No new palette values.
+
+// Lit buttons on the green sheet, and the one unlit NR for comparison.
+constexpr auto kUnlitLabel = "NR";
+// Lightness steps (shiftL, 0..255) for the green rows below.
+constexpr int kGreenEdgeLift = 16;          // top edge, as blueCheckedStyle's
+constexpr int kGreenWeightedBaseLift = 14;  // row 3 fill base: kGreenBg lifted
+constexpr int kGreenWeightedTextLift = 80;  // row 3 text: kLiveGreen lifted
+constexpr int kGreenWeightedRimLift = 16;   // row 3 rim: kDspToggleBorder lifted
+constexpr int kGreenStrongTextLift = 100;   // row 4 text: kLiveGreen lifted
+
+QString lifted(const char* hex, int deltaL)
+{
+    return Workspace::shiftL(QColor(QLatin1String(hex)), deltaL);
+}
+
+// A raised green checked rule in the form of blueCheckedStyle: a raised
+// fill, a rim and a top edge kGreenEdgeLift lighter than the rim.
+QString raisedGreenChecked(const QString& fillBase, const QString& text, const QString& rim)
+{
+    return QStringLiteral(
+        "QPushButton:checked {"
+        "  background: %1;"
+        "  color: %2; border: 1px solid %3; border-top-color: %4; }")
+        .arg(LongpathLook::raisedFill(fillBase.toLatin1().constData()), text, rim,
+             Workspace::shiftL(QColor(rim), kGreenEdgeLift));
+}
+
+struct GreenVariant {
+    QString key;
+    QString title;
+    QString note;
+    QString greenSheet;   // the checked rule laid over Longpath's buttonBaseStyle
+};
+
+QVector<GreenVariant> greenVariants()
+{
+    namespace W = Workspace;
+    QVector<GreenVariant> out;
+    out.append({QStringLiteral("longpath"), QStringLiteral("Longpath as is (flat)"),
+                QStringLiteral("Longpath's greenCheckedStyle: flat fill %1 (kGreenBg), text %2 (kGreenText), rim %3 "
+                               "(kGreenBorder).")
+                    .arg(QLatin1String(W::kGreenBg), QLatin1String(W::kGreenText), QLatin1String(W::kGreenBorder)),
+                LongpathLook::greenCheckedStyle()});
+
+    const auto raised = [&](const QString& key, const QString& title, const QString& base, const QString& baseRole,
+                            const QString& text, const QString& textRole, const QString& rim,
+                            const QString& rimRole) {
+        const QString note =
+            QStringLiteral("raisedFill(%1, %2): %3 to %1 to %4. Text %5 (%6). Rim %7 (%8), top edge %9 "
+                           "(shiftL(rim, +%10)).")
+                .arg(base, baseRole, lifted(base.toLatin1().constData(), 16),
+                     lifted(base.toLatin1().constData(), -12), text, textRole, rim, rimRole,
+                     Workspace::shiftL(QColor(rim), kGreenEdgeLift))
+                .arg(kGreenEdgeLift);
+        out.append({key, title, note, raisedGreenChecked(base, text, rim)});
+    };
+    raised(QStringLiteral("raised"), QStringLiteral("Raised"), QLatin1String(W::kGreenBg),
+           QStringLiteral("kGreenBg"), QLatin1String(W::kDspToggleText), QStringLiteral("kDspToggleText"),
+           QLatin1String(W::kDspToggleBorder), QStringLiteral("kDspToggleBorder"));
+    raised(QStringLiteral("raised-bright"), QStringLiteral("Raised, brighter text (aimed at the blue)"),
+           lifted(W::kGreenBg, kGreenWeightedBaseLift),
+           QStringLiteral("shiftL(kGreenBg, +%1)").arg(kGreenWeightedBaseLift),
+           lifted(W::kLiveGreen, kGreenWeightedTextLift),
+           QStringLiteral("shiftL(kLiveGreen, +%1)").arg(kGreenWeightedTextLift),
+           lifted(W::kDspToggleBorder, kGreenWeightedRimLift),
+           QStringLiteral("shiftL(kDspToggleBorder, +%1)").arg(kGreenWeightedRimLift));
+    raised(QStringLiteral("strongest"), QStringLiteral("Strongest"), QLatin1String(W::kGreenBorder),
+           QStringLiteral("kGreenBorder"), lifted(W::kLiveGreen, kGreenStrongTextLift),
+           QStringLiteral("shiftL(kLiveGreen, +%1)").arg(kGreenStrongTextLift), QLatin1String(W::kLiveGreen),
+           QStringLiteral("kLiveGreen"));
+    return out;
+}
+
+// One green row: the seven lit buttons (green from the variant, blue and
+// amber as the "Longpath tones" row), then one unlit NR with the same
+// sheet. All resting.
+GridRow captureGreenRow(const GreenVariant& v)
+{
+    const QVector<LitLabel> labels = litLabels();
+    const QSize size(kLitButtonWidth, kLitButtonHeight);
+    const auto sheetFor = [&](Meaning m) {
+        switch (m) {
+        case Meaning::Green: return LongpathLook::buttonBaseStyle() + v.greenSheet;
+        case Meaning::Blue: return LongpathLook::buttonBaseStyle() + LongpathLook::blueCheckedStyle();
+        default: return LongpathLook::buttonBaseStyle() + longpathAmberChecked();
+        }
+    };
+    Column col;
+    std::array<QVector<QPair<QWidget*, QPushButton*>>, 2> groups;
+    for (const LitLabel& l : labels) {
+        QWidget* cell = paintedCell(col, size, Workspace::kPanelBg);
+        auto* b = new QPushButton(l.text, cell);
+        b->setCheckable(true);
+        b->setChecked(true);
+        b->setStyleSheet(sheetFor(l.meaning));
+        col.place(b, size);
+        groups[0].append({cell, b});
+    }
+    QWidget* unlitCell = paintedCell(col, size, Workspace::kPanelBg);
+    auto* unlit = new QPushButton(QLatin1String(kUnlitLabel), unlitCell);
+    unlit->setCheckable(true);
+    unlit->setChecked(false);
+    unlit->setStyleSheet(sheetFor(Meaning::Green));
+    col.place(unlit, size);
+    groups[1].append({unlitCell, unlit});
+    col.finish();
+    pump(kShortSettleMs);
+
+    GridRow row{v.key, v.title, v.note, {}};
+    for (const auto& group : groups) {
+        QVector<Shot> shots;
+        for (const auto& [cell, b] : group) {
+            shots.append(cellShot(cell, b, b->text(), QRect(b->pos(), b->size())));
+        }
+        row.groups.append(shots);
+    }
+    return row;
+}
+
+// ---- scroll bar thickness ----
+
+class ProbeScrollBar : public QScrollBar
+{
+public:
+    using QScrollBar::QScrollBar;
+    QRect handleRect() const
+    {
+        QStyleOptionSlider o;
+        initStyleOption(&o);
+        return style()->subControlRect(QStyle::CC_ScrollBar, &o, QStyle::SC_ScrollBarSlider, this);
+    }
+};
+
+// Thicknesses JJ chooses between (logical px): today's applet panel
+// sheet (AppletPanelWidget.cpp), Longpath's kScrollBarStyle, and the
+// Fusion PM_ScrollBarExtent the Main Panel's bar has in both looks
+// (strip-fit-today--panel and strip-fit-preview--panel sidecars).
+constexpr std::array<int, 3> kBarThicknesses{8, 10, 14};
+constexpr int kBarReferencePx = 8;
+// The Main Panel's scroll area at laptop-1280x800@1: 340 px wide (the
+// strip-fit-today--panel sidecar's area_width) and this tall (the live
+// window's area, measured by this scene: live_bars.main_panel_today).
+constexpr int kBarAreaWidth = 340;
+constexpr int kBarAreaHeight = 700;
+// The list in the area: label and slider rows, about three viewports tall,
+// scrolled to a third.
+constexpr int kBarListRows = 72;
+constexpr int kBarListRowHeight = 28;
+constexpr int kBarScrollPercent = 33;
+// The zoom patch: the bar plus some content, around the handle's top.
+constexpr int kBarZoomWidth = 40;
+constexpr int kBarZoomHeight = 48;
+constexpr int kBarZoomAboveHandle = 8;
+
+QString barSheet(int px)
+{
+    QString bars = QString::fromLatin1(Workspace::kScrollBarStyle);
+    bars.replace(QLatin1String("width: 10px; margin: 0;"), QStringLiteral("width: %1px; margin: 0;").arg(px));
+    bars.replace(QLatin1String("height: 10px; margin: 0;"), QStringLiteral("height: %1px; margin: 0;").arg(px));
+    return bars;
+}
+
+struct BarCell {
+    QWidget* cell;
+    QScrollArea* area;
+    ProbeScrollBar* bar;
+};
+
+BarCell barCell(Column& col, int px)
+{
+    const QSize size(kBarAreaWidth, kBarAreaHeight);
+    QWidget* cell = paintedCell(col, size, Workspace::kPanelBg);
+    auto* area = new QScrollArea(cell);
+    area->setObjectName(QStringLiteral("barArea"));
+    auto* bar = new ProbeScrollBar(Qt::Vertical);
+    area->setVerticalScrollBar(bar);
+    area->setFrameShape(QFrame::NoFrame);
+    area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    area->setWidgetResizable(true);
+    area->setStyleSheet(QStringLiteral("QScrollArea#barArea { background: %1; border: none; }"
+                                       "QWidget#barBody { background: %1; }")
+                            .arg(QLatin1String(Workspace::kPanelBg))
+                        + barSheet(px));
+    auto* body = new QWidget;
+    body->setObjectName(QStringLiteral("barBody"));
+    auto* layout = new QVBoxLayout(body);
+    layout->setContentsMargins(6, 4, 6, 4);
+    layout->setSpacing(0);
+    const QStringList names{QStringLiteral("AF gain"), QStringLiteral("AGC gain"), QStringLiteral("Squelch"),
+                            QStringLiteral("Pan"), QStringLiteral("NR level"), QStringLiteral("Mic gain")};
+    for (int i = 0; i < kBarListRows; ++i) {
+        auto* row = new QWidget(body);
+        row->setFixedHeight(kBarListRowHeight);
+        auto* rl = new QHBoxLayout(row);
+        rl->setContentsMargins(0, 0, 0, 0);
+        auto* label = new QLabel(QStringLiteral("%1 %2").arg(names[i % names.size()]).arg(i / names.size() + 1), row);
+        label->setFixedWidth(84);
+        label->setStyleSheet(QStringLiteral("color: %1; font-size: 11px;").arg(QLatin1String(Workspace::kTextPrimary)));
+        auto* slider = new QSlider(Qt::Horizontal, row);
+        slider->setRange(0, kSliderMax);
+        slider->setValue((i * 37) % kSliderMax);
+        slider->setFixedHeight(kHSliderHeight);
+        slider->setStyleSheet(LongpathLook::sliderHStyle());
+        rl->addWidget(label);
+        rl->addWidget(slider, 1);
+        layout->addWidget(row);
+    }
+    area->setWidget(body);
+    col.place(area, size);
+    return {cell, area, bar};
+}
+
+GridRow captureBarRow(int px, QJsonObject& measured)
+{
+    Column col;
+    std::array<BarCell, 2> cells{barCell(col, px), barCell(col, px)};
+    col.finish();
+    for (const BarCell& c : cells) {
+        c.bar->setValue(c.bar->maximum() * kBarScrollPercent / 100);
+    }
+    activate(col.top());
+    pump(kShortSettleMs);
+    hover(cells[1].bar, cells[1].bar->handleRect().center());
+    pump(kShortSettleMs);
+
+    const int width = cells[0].bar->isVisible() ? cells[0].bar->width() : 0;
+    const int viewport = cells[0].area->viewport()->width();
+    measured = QJsonObject{{QStringLiteral("stylesheet_px"), px},
+                           {QStringLiteral("bar_width"), width},
+                           {QStringLiteral("bar_visible"), cells[0].bar->isVisible()},
+                           {QStringLiteral("area_width"), cells[0].area->width()},
+                           {QStringLiteral("viewport_width"), viewport},
+                           {QStringLiteral("handle_rect"), rectArray(cells[0].bar->handleRect())}};
+
+    const QString note = px == kBarReferencePx
+        ? QStringLiteral("kScrollBarStyle at %1 px. Viewport %2 of %3 px: the reference.")
+              .arg(px)
+              .arg(viewport)
+              .arg(kBarAreaWidth)
+        : QStringLiteral("kScrollBarStyle at %1 px. Viewport %2 of %3 px: %4 px less content width than 8 px.")
+              .arg(px)
+              .arg(viewport)
+              .arg(kBarAreaWidth)
+              .arg(px - kBarReferencePx);
+    GridRow row{QStringLiteral("bar-%1").arg(px), QStringLiteral("%1 px").arg(px), note, {}};
+    const std::array<QString, 2> captions{QStringLiteral("resting"), QStringLiteral("handle hovered")};
+    for (std::size_t i = 0; i < cells.size(); ++i) {
+        const BarCell& c = cells[i];
+        const QRect handle = c.bar->handleRect().translated(c.bar->mapTo(c.cell, QPoint(0, 0)));
+        const QRect focus(c.area->geometry().right() + 1 - kBarZoomWidth, handle.top() - kBarZoomAboveHandle,
+                          kBarZoomWidth, kBarZoomHeight);
+        Shot shot = cellShot(c.cell, c.area, QStringLiteral("%1, viewport %2 px").arg(captions[i]).arg(viewport),
+                             focus);
+        shot.source = QJsonObject{{QStringLiteral("handle_in_cell"), rectArray(handle)}};
+        row.groups.append(QVector<Shot>{shot});
+    }
+    return row;
+}
+
 // ---- field and button sizes ----
 
 struct SizeSheets {
@@ -2329,6 +2601,111 @@ void sceneLitButtons(SceneContext& ctx)
                                           QStringLiteral("Lit push buttons, 5x nearest-neighbour"),
                                           QStringLiteral("Each cut-out is the whole button, enlarged 5x."),
                                           zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});
+}
+
+void sceneLitGreenChoices(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("controls-sheet--lit-green");
+    if (!startChoiceScene(ctx, scene)) {
+        return;
+    }
+    QApplication* a = app();
+    const AppLook today{a->palette(), a->styleSheet()};
+    applyLook(kLongpath, today);
+    QVector<GridRow> rows;
+    QJsonArray variants;
+    for (const GreenVariant& v : greenVariants()) {
+        rows.append(captureGreenRow(v));
+        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
+                                    {QStringLiteral("title"), v.title},
+                                    {QStringLiteral("colours"), v.note}});
+    }
+    applyLook(kToday, today);
+
+    const QString blueAmber =
+        QStringLiteral("Blue (2.7K, ANT1): Longpath's blueCheckedStyle, %1 to %2, text %3, rim %4. Amber (RIT, XIT): "
+                       "raisedFill(%5), text %6, rim %7. Both as the \"Longpath tones\" row of the lit-buttons sheet.")
+            .arg(QLatin1String(Workspace::kGlassSelTop), QLatin1String(Workspace::kGlassSelBot),
+                 QLatin1String(Workspace::kGlassSelText), QLatin1String(Workspace::kGlassSelBorder),
+                 QLatin1String(Workspace::kAmberBg), QLatin1String(Workspace::kAmberText),
+                 QLatin1String(Workspace::kAmberBorder));
+    const QStringList groups{QStringLiteral("Lit, resting"), QStringLiteral("Unlit, resting")};
+    QJsonObject extra{{QStringLiteral("variants"), variants},
+                      {QStringLiteral("blue_amber"), blueAmber},
+                      {QStringLiteral("background"), QLatin1String(Workspace::kPanelBg)},
+                      {QStringLiteral("button_size"), sizeArray(QSize(kLitButtonWidth, kLitButtonHeight))}};
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Lit buttons: green choices"),
+        QStringLiteral("Real QPushButtons, %1x%2 logical px, on the Main Panel background %3, Longpath's raised "
+                       "buttonBaseStyle. Green: NR, MON, OPERATE.\n%4")
+            .arg(kLitButtonWidth)
+            .arg(kLitButtonHeight)
+            .arg(QLatin1String(Workspace::kPanelBg), blueAmber),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QStringList zoomGroups;
+    const QVector<GridRow> zoom = zoomGrid(rows, groups, false, zoomGroups);
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(zoom, zoomGroups, QStringLiteral("Lit buttons: green choices, 5x"),
+                                          QStringLiteral("Each cut-out is the whole button, enlarged 5x "
+                                                         "nearest-neighbour."),
+                                          zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});
+}
+
+void sceneScrollBarChoices(SceneContext& ctx, const QJsonObject& liveBars)
+{
+    const QString scene = QStringLiteral("controls-sheet--scrollbars");
+    if (!startChoiceScene(ctx, scene)) {
+        return;
+    }
+    QApplication* a = app();
+    const AppLook today{a->palette(), a->styleSheet()};
+    applyLook(kLongpath, today);
+    QVector<GridRow> rows;
+    QJsonArray measured;
+    for (int px : kBarThicknesses) {
+        QJsonObject m;
+        rows.append(captureBarRow(px, m));
+        measured.append(m);
+    }
+    applyLook(kToday, today);
+
+    const QStringList groups{QStringLiteral("Resting"), QStringLiteral("Handle hovered")};
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Scroll bar thickness"),
+        QStringLiteral("Real QScrollArea, %1x%2 logical px (the Main Panel's area at laptop 1280x800), on %3, "
+                       "holding label and slider rows, scrolled to %4 %. Longpath's kScrollBarStyle with only the "
+                       "thickness changed: handle %5, hovered %6, 2 px margin.")
+            .arg(kBarAreaWidth)
+            .arg(kBarAreaHeight)
+            .arg(QLatin1String(Workspace::kPanelBg))
+            .arg(kBarScrollPercent)
+            .arg(QStringLiteral("#2c2c31"), QStringLiteral("#3a3a41")),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements,
+                   QJsonObject{{QStringLiteral("measured"), measured},
+                               {QStringLiteral("live_bars"), liveBars},
+                               {QStringLiteral("area_size"), sizeArray(QSize(kBarAreaWidth, kBarAreaHeight))}});
+
+    QStringList zoomGroups;
+    const QVector<GridRow> zoom = zoomGrid(rows, groups, false, zoomGroups);
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(
+        zoom, zoomGroups, QStringLiteral("Scroll bar thickness, 5x"),
+        QStringLiteral("Each cut-out is %1x%2 logical px at the area's right edge around the handle's top, "
+                       "enlarged 5x nearest-neighbour.")
+            .arg(kBarZoomWidth)
+            .arg(kBarZoomHeight),
+        zoomPlacements);
     setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
                    QJsonObject{{QStringLiteral("source"), scene},
                                {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});

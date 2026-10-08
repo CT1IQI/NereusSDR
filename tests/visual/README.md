@@ -348,7 +348,7 @@ python3 tests/visual/capture.py --out <dir> --scenes controls-sheet \
 
 ### Choice sheets
 
-Three scenes put a few candidate looks for one kind of control in rows,
+These scenes put a few candidate looks for one kind of control in rows,
 one candidate per row, for JJ to pick from. Every cell is a real Qt widget
 with the candidate's stylesheet, on a background painted as the preview
 paints it. Each row's note names every colour and the palette role it
@@ -364,6 +364,16 @@ comes from; the sidecar repeats them under `variants`.
   Panel. Rows: today's three meanings (green, blue, amber), the same three
   in Longpath's tones (the amber is a composition from Longpath's roles),
   and Longpath's one blue.
+- `controls-sheet--lit-green` (and `--zoom`, 5x): the same lit buttons
+  in Longpath's tones, one row per green: Longpath's flat green, then
+  three raised greens built from palette roles with Longpath's
+  `raisedFill` and `shiftL`. Each row has one unlit NR beside it.
+- `controls-sheet--scrollbars` (and `--zoom`, 5x): a real scrolled
+  QScrollArea the size of the Main Panel's at laptop 1280x800, with
+  Longpath's `kScrollBarStyle` at 8, 10 and 14 px, resting and with the
+  handle hovered. The sidecar has each bar's measured width and viewport
+  (`measured`), and the live Main Panel and Setup page bars
+  (`live_bars`; the Setup page again with the preview switch on).
 - `controls-sheet--sizes`: combo, line edit, spin box, tabs and a push
   button at Longpath's own sizes, then at today's sizes with Longpath's
   shading, with today's corners and with corners scaled to the control
