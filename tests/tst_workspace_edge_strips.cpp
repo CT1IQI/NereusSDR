@@ -7,6 +7,10 @@
 //                 opaque free containers, pop-out size, and Reveal and Hidden
 //                 inside strips, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The right strip and its handle take exactly today's Main
+//                 Panel and splitter handle width; the fixture's middle
+//                 splitter is the app's EdgeDockSplitter. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -38,7 +42,8 @@ void settle()
 }
 
 // Offline fixture: a main window whose central widget is the four-edge
-// area around a plain centre pane. No radio, discovery or poller.
+// area around a plain centre pane, in an EdgeDockSplitter as in
+// MainWindow. No radio, discovery or poller.
 struct EdgeFixture {
     QTemporaryDir directory;
     AppSettings settings{directory.filePath("edge-strips.xml")};
@@ -52,7 +57,7 @@ struct EdgeFixture {
 
     EdgeFixture()
     {
-        middle = new QSplitter(Qt::Horizontal, &window);
+        middle = new EdgeDockSplitter(Qt::Horizontal, &window);
         center = new QWidget(middle);
         center->setMinimumWidth(400);
         middle->addWidget(center);
@@ -228,17 +233,17 @@ private slots:
         QCOMPARE(f.area->verticalSplitter()->sizes().at(0), 0);
         QCOMPARE(f.area->verticalSplitter()->sizes().at(2), 0);
         QCOMPARE(f.area->middleSplitter()->sizes().at(0), 0);
-        // Only the right strip and its handle sit beside the centre.
+        // Only the right strip and its 3 px handle sit beside the centre.
         QCOMPARE(f.center->height(), f.area->height());
         QCOMPARE(f.center->width() + f.area->strip(DockEdge::Right)->width()
-                     + f.middle->handleWidth(), f.area->width());
+                     + EdgeDockStrip::kRightHandlePx, f.area->width());
         // Today's share: 256 of 1280.
-        // Today's Main Panel width is the strip's content width: the
-        // 3 px-handle splitter's 1024/256 split with the panel raised to
-        // its minimum. The strip adds its padding on both sides.
+        // Today's Main Panel width is the strip's width: the 3 px-handle
+        // splitter's 1024/256 split with the panel raised to its minimum.
+        // The right strip has no padding.
         f.window.resize(1512, 800);
         settle();
-        constexpr int kPadding = 2 * EdgeDockStrip::kPaddingPx;
+        constexpr int kPadding = 2 * EdgeDockStrip::kRightPaddingPx;
         const int minimum = qMax(f.manager->container("main")->minimumWidth(),
                                  f.manager->container("main")->minimumSizeHint().width());
         const int panel = qMax(256, minimum);
@@ -251,6 +256,78 @@ private slots:
                  qPrintable(QStringLiteral("%1 vs %2").arg(f.area->strip(DockEdge::Right)->width())
                                 .arg(share + kPadding)));
         QVERIFY(qAbs(f.manager->container("main")->width() - share) <= 2);
+    }
+
+    // JJ's choice (2026-10-08): the right strip and its handle take
+    // exactly the width today's Main Panel and splitter handle take, so
+    // the spectrum and the Main Panel come out the same size as today and
+    // the spectrum area is pixel-comparable with the baseline. "Today" is
+    // the switch-off layout itself: a 3 px-handle QSplitter of spectrum
+    // and a panel with the container's minimum, setSizes({1024, 256}).
+    void rightStripTakesTodaysPanelWidthExactly()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("main", DockEdge::Right)}));
+        f.show();
+        ContainerWidget* main = f.manager->container("main");
+        EdgeDockStrip* right = f.area->strip(DockEdge::Right);
+        const int minimum = qMax(main->minimumWidth(), main->minimumSizeHint().width());
+
+        QWidget today;
+        today.setAttribute(Qt::WA_DontShowOnScreen);
+        auto* splitter = new QSplitter(Qt::Horizontal, &today);
+        splitter->setChildrenCollapsible(false);
+        splitter->setHandleWidth(EdgeDockArea::kMigratedHandlePx);
+        auto* spectrum = new QWidget(splitter);
+        spectrum->setMinimumWidth(f.center->minimumWidth());
+        auto* panel = new QWidget(splitter);
+        panel->setMinimumWidth(minimum);
+        splitter->addWidget(spectrum);
+        splitter->addWidget(panel);
+        splitter->setSizes({EdgeDockArea::kMigratedTotalShare - EdgeDockArea::kMigratedPanelShare,
+                            EdgeDockArea::kMigratedPanelShare});
+        today.show();
+
+        // The window widths of the visual review profiles.
+        for (int width : {1280, 1512, 1920}) {
+            f.window.resize(width, 800);
+            settle();
+            today.resize(f.area->width(), 800);
+            splitter->setGeometry(today.rect());
+            splitter->setSizes({EdgeDockArea::kMigratedTotalShare - EdgeDockArea::kMigratedPanelShare,
+                                EdgeDockArea::kMigratedPanelShare});
+            settle();
+            const QString at = QStringLiteral("at %1 px").arg(width);
+            // No padding: the Main Panel's content is the whole strip.
+            QCOMPARE(main->width(), right->width());
+            QVERIFY2(main->width() == panel->width(),
+                     qPrintable(QStringLiteral("panel %1 vs today's %2 %3")
+                                    .arg(main->width()).arg(panel->width()).arg(at)));
+            // The handle on the spectrum side is today's 3 px.
+            QSplitterHandle* handle = f.middle->handle(f.middle->indexOf(right));
+            QVERIFY(handle != nullptr && handle->isVisible());
+            QCOMPARE(handle->width(), EdgeDockArea::kMigratedHandlePx);
+            QVERIFY2(f.center->width() == spectrum->width(),
+                     qPrintable(QStringLiteral("spectrum %1 vs today's %2 %3")
+                                    .arg(f.center->width()).arg(spectrum->width()).arg(at)));
+            QCOMPARE(right->mapTo(f.area, QPoint()).x(), panel->x());
+        }
+        // The value the 1512 px preview profile shows today (Qt 6.11): the
+        // spectrum 1203 px, the handle 3, the Main Panel 306 from x 1206.
+        if (minimum == 260) {
+            f.window.resize(1512, 800);
+            settle();
+            QCOMPARE(f.area->width(), 1512);
+            QCOMPARE(f.center->width(), 1203);
+            QCOMPARE(right->mapTo(f.area, QPoint()).x(), 1206);
+            QCOMPARE(main->width(), 306);
+        }
+        // A dragged thickness still wins.
+        f.area->setThickness(DockEdge::Right, 400);
+        settle();
+        QCOMPARE(right->width(), 400);
+        QCOMPARE(main->width(), 400);
+        QCOMPARE(f.center->width(), f.area->width() - 400 - EdgeDockStrip::kRightHandlePx);
     }
 
     void sideStripNeverClipsItsWidestContainer()

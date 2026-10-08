@@ -3,7 +3,7 @@
 #
 # tests/visual/compare_retained.py  (NereusSDR)
 #
-#   compare_retained.py <run-root> [--out <dir>]
+#   compare_retained.py <run-root> [--out <dir>] [--baseline <run-dir>]
 #
 # Proves the "retained" claims: for every proposed scene that shows the same
 # station data as a baseline scene (the two-band, four-rx and transmit data
@@ -33,7 +33,10 @@
 # dim grey, differing pixels in magenta, their bounding box in amber, the
 # excluded rects outlined in grey). --out defaults to the run root.
 # The JSON lists every comparison made and, for every proposed scene and
-# profile, why a comparison was not possible.
+# profile, why a comparison was not possible. --baseline reads the
+# baseline captures from another run dir (a stored gallery's baseline/)
+# instead of <run-root>/baseline; paths outside the run root are written
+# relative to it.
 #
 # Modification history (NereusSDR):
 #   2026-10-08 - Written for the workspace visual review. J.J. Boyd
@@ -45,10 +48,13 @@
 #                described; both sides of a spectrum pair use one method;
 #                a dialog or menu composited over a target is masked.
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - --baseline: the baseline captures from another run dir.
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import datetime
 import json
+import os
 import pathlib
 import sys
 
@@ -77,14 +83,17 @@ def image_part(meta, png):
     return stem.split("--", 1)[1] if "--" in stem else ""
 
 
-def catalogue(root):
+def catalogue(root, baseline=None):
     """{side: {profile: {scene: {"main": [...], "crops": [...]}}}}.
 
     Each image is a dict: png, json (Paths), meta, kind, part.
     A run dir without baseline/ and proposed/ is catalogued as "proposed".
+    `baseline`, when given, is the baseline run dir in place of
+    <root>/baseline.
     """
     cat = {s: {} for s in SIDES}
-    sides = [(s, root / s) for s in SIDES if (root / s).is_dir()]
+    dirs = {"baseline": baseline or root / "baseline", "proposed": root / "proposed"}
+    sides = [(s, dirs[s]) for s in SIDES if dirs[s].is_dir()]
     if not sides:
         sides = [("proposed", root)]
     for side, base in sides:
@@ -356,7 +365,8 @@ def clip(box, size):
 # --------------------------------------------------------------------------
 
 def rel(path, base):
-    return str(pathlib.Path(path).resolve().relative_to(base))
+    # A --baseline outside the run root is written relative to it ("../").
+    return os.path.relpath(pathlib.Path(path).resolve(), base)
 
 
 def compare_flag(root, out, profile, scene, bscene, pentry, bentry):
@@ -441,8 +451,8 @@ def compare_spectrum(root, out, profile, scene, bscene, pentry, bentry):
     return res, None
 
 
-def run(root, out):
-    cat = catalogue(root)
+def run(root, out, baseline=None):
+    cat = catalogue(root, baseline)
     comparisons, not_possible = [], []
     profiles = sorted(set(cat["proposed"]) | set(cat["baseline"]))
     for profile in profiles:
@@ -508,12 +518,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Compare retained components against the baseline.")
     ap.add_argument("root", help="the run root (baseline/ and proposed/)")
     ap.add_argument("--out", help="write retained/ here instead of into the run root")
+    ap.add_argument("--baseline", help="the baseline run dir (default: <root>/baseline)")
     args = ap.parse_args(argv)
     root = pathlib.Path(args.root).resolve()
     out = pathlib.Path(args.out).resolve() if args.out else root
-    if not (root / "baseline").is_dir() or not (root / "proposed").is_dir():
-        sys.exit("%s has no baseline/ and proposed/" % root)
-    doc, path = run(root, out)
+    baseline = pathlib.Path(args.baseline).resolve() if args.baseline else root / "baseline"
+    if not baseline.is_dir() or not (root / "proposed").is_dir():
+        sys.exit("%s has no proposed/ or %s is not a dir" % (root, baseline))
+    doc, path = run(root, out, baseline)
     for row in summary_rows(doc):
         print("%s  %s  %s  vs %s: %s" % row)
     compared = [c for c in doc["comparisons"] if c["status"] == "compared"]

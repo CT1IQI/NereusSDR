@@ -99,6 +99,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - The right strip has no padding and a 3 px handle on its
+//                 spectrum side, so it and its handle take exactly today's
+//                 Main Panel and splitter handle width (JJ's choice).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Review fixes: clear an edge thickness and reset
 //                 strip extents to the default split. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -129,8 +133,8 @@ constexpr int kWorkspaceSnapGridPx = 8;  // From Longpath src/gui/WindowPlacemen
 // a no-op. From Longpath src/gui/WindowPlacement.cpp:140-147 [@551576e3]
 QPoint workspaceSnappedTopLeft(const QPoint& pos, int grid = kWorkspaceSnapGridPx);
 
-// A QSplitter whose handles are 6 px with a 1 px centre line in the
-// border role, the accent role under the pointer.
+// A QSplitter whose handles are 6 px (3 px beside the right strip) with a
+// 1 px centre line in the border role, the accent role under the pointer.
 class EdgeDockSplitter : public QSplitter {
     Q_OBJECT
 public:
@@ -152,6 +156,14 @@ public:
     static constexpr int kPaddingPx = 6;  // From Longpath src/gui/applets/AppletGrid.cpp:24 [@551576e3]
     static constexpr int kGapPx = 6;      // From Longpath src/gui/applets/AppletGrid.cpp:24 [@551576e3]
     static constexpr int kHandlePx = 6;   // From Longpath src/gui/StyleConstants.h:750 [@551576e3]
+    // NereusSDR: the right strip, where the Main Panel lives by default,
+    // has no padding, and its handle on the spectrum side is today's 3 px
+    // splitter handle (MainWindow.cpp m_mainSplitter->setHandleWidth(3)),
+    // not Longpath's 6 px. JJ chose today's width for the right strip
+    // (2026-10-08): the spectrum and the Main Panel keep today's sizes.
+    // The left, top and bottom strips keep Longpath's padding and handle.
+    static constexpr int kRightPaddingPx = 0;
+    static constexpr int kRightHandlePx = 3;
     // Workspace review defaults (Task 4 brief), not Longpath values.
     static constexpr int kSideThicknessPx = 280;
     static constexpr int kEndThicknessPx = 112;
@@ -165,6 +177,13 @@ public:
     Qt::Orientation orientation() const;
     static Qt::Orientation orientationFor(DockEdge edge);
     static int defaultThickness(DockEdge edge);
+    // The padding inside a strip on every side: kRightPaddingPx for the
+    // right strip, kPaddingPx for the others.
+    static int paddingFor(DockEdge edge);
+    int padding() const { return paddingFor(m_edge); }
+    // The width of the area handle on the spectrum side of a strip:
+    // kRightHandlePx for the right strip, kHandlePx for the others.
+    static int handleExtentFor(DockEdge edge);
 
     // Places exactly these widgets, in this order. Widgets already in the
     // strip move; new ones are reparented into it.
@@ -213,12 +232,13 @@ class EdgeDockArea : public QWidget {
     Q_OBJECT
 public:
     // Today's first-run split of spectrum and Main Panel,
-    // MainWindow.cpp setSizes({1024, 256}): the Main Panel's width in the
-    // right strip (plus the strip's padding) until one is saved or dragged.
+    // MainWindow.cpp setSizes({1024, 256}): the right strip's width (it
+    // has no padding, so the Main Panel's) until one is saved or dragged.
     static constexpr int kMigratedPanelShare = 256;
     static constexpr int kMigratedTotalShare = 1280;
     // That splitter's handle, MainWindow.cpp m_mainSplitter->setHandleWidth(3).
-    static constexpr int kMigratedHandlePx = 3;
+    // The right strip's handle has the same width (kRightHandlePx).
+    static constexpr int kMigratedHandlePx = EdgeDockStrip::kRightHandlePx;
     // The edge bands' width and the room in from an edge that targets it.
     static constexpr int kTargetBandPx = 6;
     static constexpr int kEdgeHotZonePx = 48;

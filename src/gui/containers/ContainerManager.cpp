@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the right strip has no padding,
+//                 so a migrated Main Panel width is the strip's width.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: applyWorkspaceHeader hands the
 //                 container the slice its chip shows for the source menu
 //                 tick. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -683,12 +686,12 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
         }
     }
     // Migration: the right strip takes the Main Panel's saved width, plus
-    // the strip's padding so the panel keeps that width.
+    // the strip's padding (none on the right) so the panel keeps that width.
     if (!m_edgeArea->hasThickness(DockEdge::Right)) {
         const QJsonArray saved = document.extensions.value("splitterSizes").toArray();
         if (saved.size() == 2 && saved.at(1).toInt() > 0) {
             m_edgeArea->setThickness(DockEdge::Right,
-                                     saved.at(1).toInt() + 2 * EdgeDockStrip::kPaddingPx);
+                                     saved.at(1).toInt() + 2 * EdgeDockStrip::paddingFor(DockEdge::Right));
         }
     }
     // What each strip's containers need across it. The header counts only

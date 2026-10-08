@@ -85,6 +85,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - The right strip has no padding and a 3 px handle on its
+//                 spectrum side, so it and its handle take exactly today's
+//                 Main Panel and splitter handle width (JJ's choice).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Review fixes: clear an edge thickness and reset
 //                 strip extents to the default split. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -141,8 +145,9 @@ QString edgeObjectName(DockEdge edge)
 
 constexpr DockEdge kEdges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
 
-// 6 px handle, app background, a 1 px centre line in the border role
-// that takes the accent role under the pointer.
+// 6 px handle (3 px on the spectrum side of the right strip), app
+// background, a 1 px centre line in the border role that takes the accent
+// role under the pointer.
 class EdgeDockHandle : public QSplitterHandle {
 public:
     EdgeDockHandle(Qt::Orientation orientation, QSplitter* parent)
@@ -154,8 +159,20 @@ public:
     QSize sizeHint() const override
     {
         const QSize base = QSplitterHandle::sizeHint();
-        return orientation() == Qt::Horizontal ? QSize(EdgeDockStrip::kHandlePx, base.height())
-                                               : QSize(base.width(), EdgeDockStrip::kHandlePx);
+        const int px = extent();
+        return orientation() == Qt::Horizontal ? QSize(px, base.height()) : QSize(base.width(), px);
+    }
+
+private:
+    // A handle sits before the widget at its index: the strip it opens.
+    int extent() const
+    {
+        QSplitter* s = splitter();
+        const int index = s->indexOf(const_cast<EdgeDockHandle*>(this));
+        if (const auto* strip = qobject_cast<const EdgeDockStrip*>(s->widget(index))) {
+            return EdgeDockStrip::handleExtentFor(strip->edge());
+        }
+        return EdgeDockStrip::kHandlePx;
     }
 
 protected:
@@ -222,7 +239,8 @@ EdgeDockStrip::EdgeDockStrip(DockEdge edge, QWidget* parent)
     m_body->setObjectName(QStringLiteral("edgeDockStripBody"));
     fillWithAppBackground(m_body);
     auto* bodyLayout = new QVBoxLayout(m_body);
-    bodyLayout->setContentsMargins(kPaddingPx, kPaddingPx, kPaddingPx, kPaddingPx);
+    const int pad = paddingFor(edge);
+    bodyLayout->setContentsMargins(pad, pad, pad, pad);
     bodyLayout->setSpacing(0);
     m_splitter = new EdgeDockSplitter(orientation(), m_body);
     m_splitter->setHandleWidth(kGapPx);
@@ -246,6 +264,16 @@ Qt::Orientation EdgeDockStrip::orientation() const
 int EdgeDockStrip::defaultThickness(DockEdge edge)
 {
     return orientationFor(edge) == Qt::Vertical ? kSideThicknessPx : kEndThicknessPx;
+}
+
+int EdgeDockStrip::paddingFor(DockEdge edge)
+{
+    return edge == DockEdge::Right ? kRightPaddingPx : kPaddingPx;
+}
+
+int EdgeDockStrip::handleExtentFor(DockEdge edge)
+{
+    return edge == DockEdge::Right ? kRightHandlePx : kHandlePx;
 }
 
 void EdgeDockStrip::setContainers(const QList<QWidget*>& widgets)
@@ -337,7 +365,8 @@ int EdgeDockStrip::insertionIndexAt(const QPoint& pos) const
 QRect EdgeDockStrip::insertionRect(int index) const
 {
     const bool vertical = orientation() == Qt::Vertical;
-    const QRect inner = rect().adjusted(kPaddingPx, kPaddingPx, -kPaddingPx, -kPaddingPx);
+    const int pad = padding();
+    const QRect inner = rect().adjusted(pad, pad, -pad, -pad);
     QWidget* before = nullptr;
     QWidget* after = nullptr;
     for (int i = 0; i < m_splitter->count(); ++i) {
@@ -494,8 +523,9 @@ int EdgeDockArea::migratedRightThickness() const
     // Today's Main Panel width, as the 3 px-handle QSplitter lays out
     // setSizes({1024, 256}): each pane in proportion to its size raised to
     // its minimum, so a 260 px panel minimum gives 306 of 1509 px
-    // (measured on Qt 6.11). The strip adds its padding on both sides so
-    // the panel's content keeps that width.
+    // (measured on Qt 6.11). The right strip has no padding and its
+    // handle is that splitter's 3 px, so the panel keeps that width and
+    // the spectrum today's.
     const int space = qMax(1, total - kMigratedHandlePx);
     // The minimum that splitter saw: the widget's own, not its content's.
     int minimum = 0;
@@ -507,13 +537,13 @@ int EdgeDockArea::migratedRightThickness() const
     const int panel = qMax(kMigratedPanelShare, minimum);
     const int spectrum = kMigratedTotalShare - kMigratedPanelShare;
     return qMax(1, int(std::lround(space * double(panel) / (spectrum + panel))))
-        + 2 * EdgeDockStrip::kPaddingPx;
+        + 2 * EdgeDockStrip::paddingFor(DockEdge::Right);
 }
 
 int EdgeDockArea::thickness(DockEdge edge) const
 {
     const int i = indexOf(edge);
-    const int padding = 2 * EdgeDockStrip::kPaddingPx;
+    const int padding = 2 * EdgeDockStrip::paddingFor(edge);
     const bool side = EdgeDockStrip::orientationFor(edge) == Qt::Vertical;
     // A side strip is never narrower than its widest container's minimum.
     const int floor = side && m_minimumCross[i] > 0 ? m_minimumCross[i] + padding : 0;
@@ -537,7 +567,7 @@ void EdgeDockArea::setStripContentHint(DockEdge edge, int minimumCross, int pref
     m_minimumCross[i] = qMax(0, minimumCross);
     m_preferredCross[i] = qMax(0, preferredCross);
     EdgeDockStrip* s = strip(edge);
-    const int floor = m_minimumCross[i] > 0 ? m_minimumCross[i] + 2 * EdgeDockStrip::kPaddingPx : 0;
+    const int floor = m_minimumCross[i] > 0 ? m_minimumCross[i] + 2 * EdgeDockStrip::paddingFor(edge) : 0;
     if (EdgeDockStrip::orientationFor(edge) == Qt::Vertical) {
         s->setMinimumWidth(floor);
     }
@@ -603,17 +633,31 @@ void EdgeDockArea::applySizes()
     const auto across = [this](DockEdge edge) {
         return m_shown[indexOf(edge)] ? thickness(edge) : 0;
     };
+    // The handle that opens a strip, as the splitter lays it out: its
+    // size hint along the splitter (3 px beside the right strip).
+    const auto handle = [](QSplitter* splitter, QWidget* w) {
+        const int index = splitter->indexOf(w);
+        QSplitterHandle* h = index >= 0 ? splitter->handle(index) : nullptr;
+        if (h == nullptr) {
+            return splitter->handleWidth();
+        }
+        return splitter->orientation() == Qt::Horizontal ? h->sizeHint().width() : h->sizeHint().height();
+    };
     const int top = across(DockEdge::Top);
     const int bottom = across(DockEdge::Bottom);
-    const int verticalHandles = (top > 0 ? m_vertical->handleWidth() : 0)
-                              + (bottom > 0 ? m_vertical->handleWidth() : 0);
+    // The top strip's own handle is the first, hidden one; the handle
+    // below it opens the middle row.
+    const int verticalHandles = (top > 0 ? handle(m_vertical, m_middle) : 0)
+                              + (bottom > 0 ? handle(m_vertical, strip(DockEdge::Bottom)) : 0);
     const int height = qMax(1, m_vertical->height() - top - bottom - verticalHandles);
     m_vertical->setSizes({top, height, bottom});
 
     const int left = across(DockEdge::Left);
     const int right = across(DockEdge::Right);
-    const int middleHandles = (left > 0 ? m_middle->handleWidth() : 0)
-                            + (right > 0 ? m_middle->handleWidth() : 0);
+    // The left strip's own handle is the first, hidden one; the handle
+    // after it opens the centre.
+    const int middleHandles = (left > 0 ? handle(m_middle, m_center) : 0)
+                            + (right > 0 ? handle(m_middle, strip(DockEdge::Right)) : 0);
     const int width = qMax(1, m_middle->width() - left - right - middleHandles);
     QList<int> sizes;
     for (int i = 0; i < m_middle->count(); ++i) {
@@ -743,7 +787,7 @@ QRect EdgeDockArea::previewRectFor(DockEdge edge, int index) const
         r = QRect(width() - t, middle.top(), t, middle.height());
         break;
     }
-    constexpr int pad = EdgeDockStrip::kPaddingPx;
+    const int pad = EdgeDockStrip::paddingFor(edge);
     return r.adjusted(pad, pad, -pad, -pad);
 }
 

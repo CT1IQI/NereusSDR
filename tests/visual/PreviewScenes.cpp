@@ -55,6 +55,9 @@
 //                 controls are tagged proposed; the source menu note says
 //                 it was opened programmatically. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The edge values note the right strip's 0 px padding and
+//                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -1285,10 +1288,12 @@ QJsonObject proposedEdgeValues()
             "vertical splitter [top | middle | bottom], middle [left | spectrum | right]; "
             "top and bottom span the width; an empty strip takes no space")},
         {QStringLiteral("strip_padding_px"), EdgeDockStrip::kPaddingPx},
+        {QStringLiteral("strip_padding_right_px"), EdgeDockStrip::kRightPaddingPx},
         {QStringLiteral("strip_gap_px"), EdgeDockStrip::kGapPx},
         {QStringLiteral("strip_background"), QStringLiteral("app-bg")},
         {QStringLiteral("handle"), QStringLiteral(
-            "6 px, app-bg, 1 px centre line border role, accent role under the pointer")},
+            "6 px (3 px on the spectrum side of the right strip, today's splitter handle), "
+            "app-bg, 1 px centre line border role, accent role under the pointer")},
         {QStringLiteral("thickness_left_right_px"), EdgeDockStrip::kSideThicknessPx},
         {QStringLiteral("thickness_top_bottom_px"), EdgeDockStrip::kEndThicknessPx},
         {QStringLiteral("thickness_top_bottom_default"), QStringLiteral(
@@ -1298,7 +1303,7 @@ QJsonObject proposedEdgeValues()
             "widest container minimum + 2 x padding")},
         {QStringLiteral("thickness_right_first_run"), QStringLiteral(
             "today's Main Panel width (the 3 px-handle splitter's 1024/256 split, "
-            "the panel raised to its minimum) + 2 x padding, until dragged or saved")},
+            "the panel raised to its minimum), no padding, until dragged or saved")},
         {QStringLiteral("free_and_floating_background"), QStringLiteral(
             "opaque glass plate (panel-top to panel-bottom); floating shell panel role")},
         {QStringLiteral("target_band"), QStringLiteral("6 px at each edge, accent at 35%")},
