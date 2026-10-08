@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
+//                 removeReadingConsumer, so a Longpath needle or bar gets
+//                 readings for its own context on the same timer frame.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
@@ -608,6 +612,63 @@ void MeterPoller::setTargetContext(MeterWidget* widget, const QJsonObject& conte
     addTarget(widget);
     if (existing && changed) { replayReadings(widget, context); }
 }
+void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings)
+{
+    if (!owner) { return; }
+    removeReadingConsumer(owner);
+    ReadingConsumer consumer;
+    consumer.context = context;
+    consumer.bindings = bindings;
+    consumer.destroyed = connect(owner, &QObject::destroyed, this, [this, owner] { removeReadingConsumer(owner); });
+    m_readingConsumers.insert(owner, consumer);
+    // Global (TX, PA) readings reach every known context.
+    m_knownContexts[contextKey(context)] = context;
+    replayConsumerReadings(context, bindings);
+}
+void MeterPoller::removeReadingConsumer(QObject* owner)
+{
+    const auto it = m_readingConsumers.find(owner);
+    if (it == m_readingConsumers.end()) { return; }
+    disconnect(it->destroyed);
+    const QJsonObject context = it->context;
+    m_readingConsumers.erase(it);
+    // A context nobody uses leaves the poll set. The empty context is the
+    // legacy active RX, which the producers keep publishing regardless.
+    if (!context.isEmpty() && !contextInUse(context)) {
+        m_knownContexts.remove(contextKey(context));
+        m_contextReadings.remove(contextKey(context));
+    }
+}
+bool MeterPoller::contextInUse(const QJsonObject& context) const
+{
+    for (auto it = m_targetContexts.cbegin(); it != m_targetContexts.cend(); ++it) {
+        if (it.value() == context) { return true; }
+    }
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        if (it->context == context) { return true; }
+    }
+    return false;
+}
+void MeterPoller::replayConsumerReadings(const QJsonObject& context, const QList<int>& bindings)
+{
+    // The values copyCachedReadings seeds a target with, as readingUpdated.
+    const auto readings = m_contextReadings.value(contextKey(context));
+    const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
+    const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
+    for (int b : bindings) {
+        if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr) {
+            const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
+                ? (m_rxReadingSource ? m_rxReadingSource(context, b) : readings.value(b, kNoMeterReadingDbm)) : kNoMeterReadingDbm;
+            emit readingUpdated(context, b, std::isfinite(value) ? value : kNoMeterReadingDbm);
+        } else if (m_globalReadings.contains(b)) {
+            emit readingUpdated(context, b, remoteReady && sameCachedSession && acceptsGlobalReading(context)
+                ? m_globalReadings.value(b) : kNoMeterReadingDbm);
+        } else if ((b >= MeterBinding::TxPower && b <= MeterBinding::TxCfcPeak)
+                   || (b >= MeterBinding::HwVolts && b <= MeterBinding::HwTemperature)) {
+            emit readingUpdated(context, b, kNoMeterReadingDbm);
+        }
+    }
+}
 void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, int)> source)
 {
     m_rxReadingSource = std::move(source);
@@ -824,6 +885,7 @@ void MeterPoller::invalidateReadings(bool rx, bool tx, bool hardware)
             for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) { target->updateMeterValue(b, kNoMeterReadingDbm); }
             contexts.insert(contextKey(context));
         }
+        for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) { contexts.insert(contextKey(it->context)); }
         contexts.insert(contextKey({}));
         for (const QByteArray& key : contexts) {
             const QJsonObject context = QJsonDocument::fromJson(key).object();
@@ -865,6 +927,28 @@ void MeterPoller::pollContextReadings()
             for (const auto& recipient : m_targets) {
                 if (recipient && m_targetContexts.value(recipient) == context) { recipient->updateMeterValue(b, value); }
             }
+            emit readingUpdated(context, b, value);
+        }
+    }
+    // Task 5b: the contexts only non-MeterWidget readers use join the same
+    // frame, with only the RX bindings those readers asked for.
+    QHash<QByteArray, QList<int>> consumerBindings;
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        const QByteArray key = contextKey(it->context);
+        m_knownContexts[key] = it->context;
+        if (visited.contains(key)) { continue; }
+        QList<int>& wanted = consumerBindings[key];
+        for (int b : it->bindings) {
+            if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr && !wanted.contains(b)) { wanted.append(b); }
+        }
+    }
+    for (auto it = consumerBindings.begin(); it != consumerBindings.end(); ++it) {
+        const QJsonObject context = m_knownContexts.value(it.key());
+        std::sort(it->begin(), it->end());
+        for (int b : std::as_const(*it)) {
+            const double v = sourceReady ? m_rxReadingSource(context, b) : kNoMeterReadingDbm;
+            const double value = std::isfinite(v) ? v : kNoMeterReadingDbm;
+            m_contextReadings[it.key()][b] = value;
             emit readingUpdated(context, b, value);
         }
     }

@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
+//                 removeReadingConsumer, so a Longpath needle or bar gets
+//                 readings for its own context on the same timer frame.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
@@ -313,6 +317,15 @@ public:
     // otherwise the JSON source identity is resolved only by the GUI adapter.
     // A changed context clears old input/history before same-context replay.
     void setTargetContext(MeterWidget* widget, const QJsonObject& context);
+    // Workspace preview (Task 5b): a reader that is not a MeterWidget (a
+    // Longpath needle or bar) gets readings for its own context. The
+    // context and its bindings join the poll set on the same timer frame
+    // as the targets; readings arrive through readingUpdated. Registering
+    // replays the cached readings for the context. Registering an owner
+    // again replaces its context and bindings. The owner's destruction
+    // removes it, and a context nobody uses leaves the poll set.
+    void addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings);
+    void removeReadingConsumer(QObject* owner);
     void setSMeterContext(const QJsonObject& context) { m_sMeterContext = context; }
     SMeterWidget* smeterForTest() const;
     // One cached-source lookup per context/binding per existing timer frame.
@@ -448,6 +461,7 @@ public:
     void setMmioEndpointSourceForTest(std::function<MmioEndpoint*(const QUuid&)> source) { m_mmioEndpointLookup = std::move(source); }
     void setMonotonicSourceForTest(std::function<qint64()> source) { m_monotonicSource = std::move(source); }
     int targetCountForTest() const { return m_targets.size(); }
+    int readingConsumerCountForTest() const { return int(m_readingConsumers.size()); }
     // Test seam: what pollTxMeters() does when every WDSP meter reads
     // `rawValue`.
     void handOutTxReadingForTest(int bindingId, double rawValue)
@@ -504,6 +518,15 @@ private:
     void invalidateTxAudioReadings();
     void rememberPresentation(const MeterWidget* widget);
     QHash<MeterWidget*, QJsonObject> m_targetContexts;
+    // Task 5b: non-MeterWidget readers (addReadingConsumer).
+    struct ReadingConsumer {
+        QJsonObject context;
+        QList<int> bindings;
+        QMetaObject::Connection destroyed;
+    };
+    QHash<QObject*, ReadingConsumer> m_readingConsumers;
+    void replayConsumerReadings(const QJsonObject& context, const QList<int>& bindings);
+    bool contextInUse(const QJsonObject& context) const;
     QHash<QByteArray, QHash<int, double>> m_contextReadings;
     QHash<QByteArray, QJsonObject> m_knownContexts;
     QHash<int, double> m_globalReadings;

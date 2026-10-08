@@ -5,6 +5,9 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - frequencyRowUsesSliceLetters. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Needles read their own context through the poller's
+//                 reading consumers. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLabel>
@@ -350,6 +353,156 @@ private slots:
         emit poller.readingUpdated(entry.context, MeterBinding::TxSwr, 1.25);
         QVERIFY(bar->hasValue());
         emit poller.readingUpdated(entry.context, MeterBinding::TxSwr, kNoMeterReadingDbm);
+        QVERIFY(!bar->hasValue());
+    }
+
+    void needleReadsItsSliceWithoutAMeterWidget()
+    {
+        // Slice B has no MeterWidget target: only the needle asks for it.
+        MeterPoller poller;
+        QList<QJsonObject> polled;
+        poller.setRxReadingSource([&](const QJsonObject& context, int) {
+            polled.append(context);
+            return context.value(QStringLiteral("rxSource")).toInt() == 2 ? -73.0 : -93.0;
+        });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        const QJsonObject sliceB{{QStringLiteral("rxSource"), 2}};
+        entry.context = sliceB;
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* needle = qobject_cast<NeedleInstrument*>(widget.get());
+        QVERIFY(needle);
+        QCOMPARE(poller.targetCountForTest(), 0);
+        QCOMPARE(poller.readingConsumerCountForTest(), 1);
+
+        // The poller's own frame produces slice B's reading for the needle.
+        QList<double> delivered;
+        connect(&poller, &MeterPoller::readingUpdated, this, [&](const QJsonObject& context, int binding, double value) {
+            if (context == sliceB && binding == MeterBinding::SignalPeak) { delivered.append(value); }
+        });
+        polled.clear();
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QVERIFY(polled.contains(sliceB));
+        QCOMPARE(delivered, (QList<double>{-73.0}));
+        QVERIFY(needle->hasValue());
+        QVERIFY(!needle->isOffline());
+
+        // Destroying the needle drops its context from the poll set.
+        widget.reset();
+        QCOMPARE(poller.readingConsumerCountForTest(), 0);
+        polled.clear();
+        delivered.clear();
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QVERIFY(!polled.contains(sliceB));
+        QVERIFY(delivered.isEmpty());
+    }
+
+    void reRegisteringMovesTheContext()
+    {
+        MeterPoller poller;
+        QList<QJsonObject> polled;
+        poller.setRxReadingSource([&](const QJsonObject& context, int) { polled.append(context); return -80.0; });
+        const QJsonObject a{{QStringLiteral("rxSource"), 1}};
+        const QJsonObject b{{QStringLiteral("rxSource"), 2}};
+        QObject owner;
+        poller.addReadingConsumer(&owner, a, {MeterBinding::SignalPeak});
+        poller.addReadingConsumer(&owner, b, {MeterBinding::SignalPeak});
+        QCOMPARE(poller.readingConsumerCountForTest(), 1);
+        polled.clear();
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QCOMPARE(polled, (QList<QJsonObject>{b}));
+        poller.removeReadingConsumer(&owner);
+        polled.clear();
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QVERIFY(polled.isEmpty());
+    }
+
+    void sourceChangeMovesTheRegistration()
+    {
+        MeterPoller poller;
+        QList<QJsonObject> polled;
+        poller.setRxReadingSource([&](const QJsonObject& context, int) { polled.append(context); return -80.0; });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+
+        QTemporaryDir directory;
+        AppSettings settings{directory.filePath("longpath-source.xml")};
+        ContainerWorkspaceStore store{settings};
+        QWidget dock;
+        dock.resize(900, 900);
+        QSplitter splitter;
+        ContainerManager manager{&dock, &splitter};
+        manager.setWorkspaceAdapter(&store, &registry);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.id = QStringLiteral("station-needle");
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        ContainerDocument c;
+        c.id = QStringLiteral("station");
+        c.name = QStringLiteral("Station");
+        c.layout = ContentLayout::VerticalStack;
+        c.dockMode = DockMode::OverlayDocked;
+        c.geometry = QRect(10, 10, 380, 700);
+        c.contents = {entry};
+        WorkspaceDocument document;
+        document.containers.append(c);
+        document.mainContainerId = c.id;
+        auto committed = manager.commitWorkspace(document, 0);
+        QVERIFY2(committed.status == CommitStatus::Saved, qPrintable(committed.error));
+        dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dock));
+        settle();
+        auto* host = manager.contentHost(c.id);
+        QVERIFY(host);
+        auto needles = host->findChildren<NeedleInstrument*>();
+        QCOMPARE(needles.size(), 1);
+        const QJsonObject before = needles.first()->property("containerSourceContext").toJsonObject();
+        QCOMPARE(poller.readingConsumerCountForTest(), 1);
+
+        document.containers[0].contents[0].context = QJsonObject{{QStringLiteral("rxSource"), 2}};
+        committed = manager.commitWorkspace(document, committed.revision);
+        QVERIFY2(committed.status == CommitStatus::Saved, qPrintable(committed.error));
+        settle();
+        host = manager.contentHost(c.id);
+        QVERIFY(host);
+        needles = host->findChildren<NeedleInstrument*>();
+        QCOMPARE(needles.size(), 1);
+        const QJsonObject after = needles.first()->property("containerSourceContext").toJsonObject();
+        QVERIFY(after != before);
+        QCOMPARE(poller.readingConsumerCountForTest(), 1);
+        polled.clear();
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QVERIFY(polled.contains(after));
+        QVERIFY(!polled.contains(before));
+    }
+
+    void unavailableReadingShowsNoValue()
+    {
+        // No transmit source: the poller names the reason, as a MeterWidget
+        // shows the ALC binding disabled, and the bar shows no value.
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kBarType));
+        entry.config.insert(QString::fromLatin1(LongpathContent::kBindingKey), MeterBinding::TxAlc);
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 2}};
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* bar = qobject_cast<BarInstrument*>(widget.get());
+        QVERIFY(bar);
+        emit poller.readingUpdated(entry.context, MeterBinding::TxAlc, -3.0);
+        QVERIFY(bar->hasValue());
+        poller.setTxChannel(nullptr);
+        QVERIFY(!poller.bindingUnavailableReason(MeterBinding::TxAlc).isEmpty());
+        QVERIFY(!bar->hasValue());
+        emit poller.readingUpdated(entry.context, MeterBinding::TxAlc, -3.0);
         QVERIFY(!bar->hasValue());
     }
 

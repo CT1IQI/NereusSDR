@@ -39,6 +39,10 @@
 //   2026-10-08 - The frequency instrument's VFO row uses the slice
 //                 letters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - Needles and bars register their context with the
+//                 poller (MeterPoller::addReadingConsumer), so they read
+//                 live without a Thetis meter face in the same context.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/LongpathContent.h"
@@ -62,6 +66,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 namespace NereusSDR::LongpathContent {
 
@@ -175,6 +180,18 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
     return w;
 }
 
+// Task 5b: the poller reads this widget's context on its own timer frame,
+// whether or not a MeterWidget shares the context. Called on creation; the
+// container host builds a new widget when the source or binding changes,
+// and the old one's destruction drops its registration.
+void registerReadings(MeterPoller* poller, QWidget* widget, const QJsonObject& context,
+                      int primary, int secondary)
+{
+    QList<int> bindings{primary};
+    if (secondary >= 0 && secondary != primary) { bindings.append(secondary); }
+    poller->addReadingConsumer(widget, context, bindings);
+}
+
 } // namespace
 
 int primaryBinding(const QString& typeId, const QJsonObject& config)
@@ -226,15 +243,22 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         const bool available = descriptor && descriptor->available;
         QWidget* widget = nullptr;
         std::function<void(int, double)> onReading;
+        // The poller's reason the primary reading is unavailable (a Core
+        // that does not send it, no transmit source): no value, as a
+        // MeterWidget shows the binding disabled.
+        auto unavailable = std::make_shared<bool>(false);
         if (entry.typeId == QLatin1String(kBarType)) {
             auto* bar = new BarInstrument(parent);
             bar->setCompact(true);
             if (!bar->setPrimary(primary)) { delete bar; return nullptr; }
             if (secondary >= 0) { bar->setSecondary(secondary); }
             QPointer<BarInstrument> guard(bar);
-            onReading = [guard, primary](int binding, double value) {
+            onReading = [guard, primary, unavailable](int binding, double value) {
                 if (!guard) { return; }
-                if (isNoMeterReading(value)) { if (binding == primary) { guard->clearValue(); } return; }
+                if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
+                    if (binding == primary) { guard->clearValue(); }
+                    return;
+                }
                 guard->onReading(binding, value);
             };
             widget = bar;
@@ -246,9 +270,9 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             // good when NereusSDR has no producer for the reading.
             needle->setOffline(true);
             QPointer<NeedleInstrument> guard(needle);
-            onReading = [guard, primary, available](int binding, double value) {
+            onReading = [guard, primary, available, unavailable](int binding, double value) {
                 if (!guard) { return; }
-                if (isNoMeterReading(value)) {
+                if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); guard->setOffline(true); }
                     return;
                 }
@@ -265,6 +289,14 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                     if (from != context || (binding != primary && binding != secondary)) { return; }
                     onReading(binding, value);
                 });
+            *unavailable = !sources.poller->bindingUnavailableReason(primary).isEmpty();
+            QObject::connect(sources.poller, &MeterPoller::bindingAvailabilityChanged, widget,
+                [onReading, unavailable, primary](int binding, const QString& reason) {
+                    if (binding != primary) { return; }
+                    *unavailable = !reason.isEmpty();
+                    if (*unavailable) { onReading(primary, kNoMeterReadingDbm); }
+                });
+            registerReadings(sources.poller, widget, context, primary, secondary);
         }
         return widget;
     };
