@@ -13,6 +13,12 @@
 //                 rebuilt while hidden (a profile added) opens at its full
 //                 size, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - Keep-open decided from QCursor::pos() against the badge
+//                 and popover rects, sampled while open, instead of from
+//                 Enter/Leave and underMouse(), which macOS's per-view
+//                 routing can leave unpaired; nereus.gui.profilerail
+//                 debug category. By J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRailDock.h"
@@ -25,6 +31,7 @@
 
 #include <QApplication>
 #include <QColor>
+#include <QCursor>
 #include <QEvent>
 #include <QFocusEvent>
 #include <QFrame>
@@ -33,7 +40,13 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLayout>
+#include <QLoggingCategory>
 #include <QPushButton>
+#include <QRegion>
+
+// Off by default; QT_LOGGING_RULES="nereus.gui.profilerail.debug=true"
+// turns it on for a live run.
+Q_LOGGING_CATEGORY(lcProfileRail, "nereus.gui.profilerail", QtInfoMsg)
 
 namespace NereusSDR {
 
@@ -48,6 +61,11 @@ constexpr int kShadowAlpha = 150;
 // Width for a badge's letter: the letter plus the pill's 11 px side
 // padding and 1 px border on each side, rounded up as the rail does.
 constexpr int kBadgeTextPad = 20;
+
+QRect globalRectOf(const QWidget* w)
+{
+    return QRect(w->mapToGlobal(QPoint(0, 0)), w->size());
+}
 
 bool isInside(const QWidget* w, const QWidget* container)
 {
@@ -115,6 +133,12 @@ ProfileRailDock::ProfileRailDock(WorkspaceProfiles* profiles, QWidget* anchor,
     m_hideTimer.setInterval(kHideDelayMs);
     connect(&m_showTimer, &QTimer::timeout, this, [this]() { open(false); });
     connect(&m_hideTimer, &QTimer::timeout, this, &ProfileRailDock::hideSoon);
+    // Runs only while open. On macOS every badge in the popover is a
+    // native view and Enter/Leave arrive per view, so a move from the
+    // popover onto a badge can bring the popover a Leave with no Enter.
+    // The cursor position is the one signal that cannot go unpaired.
+    m_pointerTimer.setInterval(kPointerSampleMs);
+    connect(&m_pointerTimer, &QTimer::timeout, this, &ProfileRailDock::samplePointer);
 
     // A click opens it too (touch has no hover).
     connect(m_badge, &QPushButton::clicked, this, [this]() {
@@ -143,7 +167,7 @@ ProfileRailDock::ProfileRailDock(WorkspaceProfiles* profiles, QWidget* anchor,
             refreshBadge();
             hookRailBadges();
             // Picked: close right away.
-            close();
+            closeBecause("profile picked");
         });
     }
     if (m_anchor) {
@@ -160,7 +184,7 @@ ProfileRailDock::ProfileRailDock(WorkspaceProfiles* profiles, QWidget* anchor,
             return;
         }
         if (!isInside(now, m_popover) && now != m_badge) {
-            close();
+            closeBecause("focus left the rail");
         }
     });
     refreshBadge();
@@ -187,12 +211,23 @@ void ProfileRailDock::open(bool focusRail)
     if (!m_popover) {
         return;
     }
-    m_hideTimer.stop();
+    stopHideTimer("open");
     m_showTimer.stop();
     const bool was = isOpen();
     placePopover();
     m_popover->show();
     m_popover->raise();
+    // A rail opened from the keyboard with the pointer elsewhere stays
+    // open until the pointer has been in and left, as with Enter/Leave.
+    m_pointerWasInside = pointerInside(QCursor::pos());
+    m_pointerTimer.start();
+    if (!was) {
+        qCDebug(lcProfileRail) << "open" << (focusRail ? "(keyboard)" : "(pointer)")
+                               << "badge" << globalRectOf(m_badge)
+                               << "popover" << globalRectOf(m_popover)
+                               << "cursor" << QCursor::pos()
+                               << "inside" << m_pointerWasInside;
+    }
     if (!m_appFilter) {
         qApp->installEventFilter(this);
         m_appFilter = true;
@@ -209,8 +244,14 @@ void ProfileRailDock::open(bool focusRail)
 
 void ProfileRailDock::close()
 {
+    closeBecause("requested");
+}
+
+void ProfileRailDock::closeBecause(const char* reason)
+{
     m_showTimer.stop();
-    m_hideTimer.stop();
+    stopHideTimer("close");
+    m_pointerTimer.stop();
     if (m_appFilter) {
         qApp->removeEventFilter(this);
         m_appFilter = false;
@@ -218,6 +259,7 @@ void ProfileRailDock::close()
     if (!isOpen()) {
         return;
     }
+    qCDebug(lcProfileRail) << "close:" << reason << "cursor" << QCursor::pos();
     const bool focusWasInside = isInside(QApplication::focusWidget(), m_popover);
     m_popover->hide();
     if (focusWasInside) {
@@ -233,12 +275,63 @@ void ProfileRailDock::hideSoon()
     }
     // A menu or dialog from the rail (context menu, New menu, a name
     // prompt) keeps it open until it is done.
-    if (QApplication::activePopupWidget() || QApplication::activeModalWidget()
-        || m_popover->underMouse() || m_badge->underMouse()) {
-        m_hideTimer.start();
+    if (QApplication::activePopupWidget() || QApplication::activeModalWidget()) {
+        startHideTimer("a menu or dialog is open");
         return;
     }
-    close();
+    // From the cursor position, not underMouse(): an unpaired Leave
+    // (macOS, native badge views) clears WA_UnderMouse while the pointer
+    // is still on the rail.
+    if (pointerInside(QCursor::pos())) {
+        stopHideTimer("pointer still on the rail");
+        return;
+    }
+    closeBecause("pointer left the rail");
+}
+
+bool ProfileRailDock::pointerInside(const QPoint& global) const
+{
+    QRegion area;
+    if (m_badge->isVisible()) {
+        area += globalRectOf(m_badge);
+    }
+    if (isOpen()) {
+        area += globalRectOf(m_popover);
+    }
+    return area.contains(global);
+}
+
+void ProfileRailDock::samplePointer()
+{
+    if (!isOpen()) {
+        m_pointerTimer.stop();
+        return;
+    }
+    const bool inside = pointerInside(QCursor::pos());
+    if (inside) {
+        m_pointerWasInside = true;
+        stopHideTimer("pointer on the rail");
+    } else if (m_pointerWasInside) {
+        // Out of both rects: the usual delay, then hideSoon decides.
+        m_pointerWasInside = false;
+        startHideTimer("pointer left the rail");
+    }
+}
+
+void ProfileRailDock::startHideTimer(const char* reason)
+{
+    if (!m_hideTimer.isActive()) {
+        qCDebug(lcProfileRail) << "hide timer start:" << reason << "cursor" << QCursor::pos();
+    }
+    m_hideTimer.start();
+}
+
+void ProfileRailDock::stopHideTimer(const char* reason)
+{
+    if (m_hideTimer.isActive()) {
+        qCDebug(lcProfileRail) << "hide timer stop:" << reason << "cursor" << QCursor::pos();
+    }
+    m_hideTimer.stop();
 }
 
 void ProfileRailDock::refreshBadge()
@@ -265,7 +358,8 @@ void ProfileRailDock::hookRailBadges()
         b->setProperty("profileRailDockHooked", true);
         // A pick of the profile that is already active changes nothing,
         // so activeChanged does not close the popover; this does.
-        connect(b, &QPushButton::clicked, this, [this]() { close(); }, Qt::QueuedConnection);
+        connect(b, &QPushButton::clicked, this, [this]() { closeBecause("profile picked"); },
+                Qt::QueuedConnection);
     }
     if (isOpen()) {
         placePopover();
@@ -332,19 +426,37 @@ bool ProfileRailDock::eventFilter(QObject* watched, QEvent* event)
     if (m_appFilter && type == QEvent::KeyPress && isOpen()
         && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape
         && !QApplication::activePopupWidget() && !QApplication::activeModalWidget()) {
-        close();
+        closeBecause("Escape");
         return true;
+    }
+    if ((type == QEvent::Enter || type == QEvent::Leave) && lcProfileRail().isDebugEnabled()) {
+        auto* w = qobject_cast<QWidget*>(watched);
+        if (event == m_lastLoggedEvent) {
+            // The second pass (object filter) over an event the
+            // application filter already logged.
+            m_lastLoggedEvent = nullptr;
+        } else if (w && (w == m_badge || isInside(w, m_popover))) {
+            // While open, the application filter and the object filter
+            // both see an event for the badge or the popover; log it once.
+            m_lastLoggedEvent = m_appFilter && (w == m_badge || w == m_popover) ? event : nullptr;
+            qCDebug(lcProfileRail) << (type == QEvent::Enter ? "Enter" : "Leave")
+                                   << (w == m_badge ? QStringLiteral("collapsed badge")
+                                       : w == m_popover ? QStringLiteral("popover")
+                                       : QStringLiteral("%1 %2").arg(QString::fromLatin1(w->metaObject()->className()),
+                                                                     w->objectName()))
+                                   << "cursor" << QCursor::pos();
+        }
     }
     if (watched == m_badge) {
         if (type == QEvent::Enter) {
-            m_hideTimer.stop();
+            stopHideTimer("Enter on the collapsed badge");
             if (!isOpen()) {
                 m_showTimer.start();
             }
         } else if (type == QEvent::Leave) {
             m_showTimer.stop();
             if (isOpen()) {
-                m_hideTimer.start();
+                startHideTimer("Leave on the collapsed badge");
             }
         } else if (type == QEvent::FocusIn) {
             const auto reason = static_cast<QFocusEvent*>(event)->reason();
@@ -354,9 +466,9 @@ bool ProfileRailDock::eventFilter(QObject* watched, QEvent* event)
         }
     } else if (watched == m_popover) {
         if (type == QEvent::Enter) {
-            m_hideTimer.stop();
-        } else if (type == QEvent::Leave) {
-            m_hideTimer.start();
+            stopHideTimer("Enter on the popover");
+        } else if (type == QEvent::Leave && isOpen()) {
+            startHideTimer("Leave on the popover");
         }
     } else if (watched == m_anchor || watched == parentWidget()) {
         if (type == QEvent::Move || type == QEvent::Resize || type == QEvent::Show

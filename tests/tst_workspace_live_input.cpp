@@ -12,6 +12,10 @@
 //                 to another profile's button and the click, with enter,
 //                 leave and moves routed as Qt's cocoa plugin routes them, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The profile rail when macOS drops the popover's Enter (or
+//                 sends it a lone Leave): the pointer moves the cursor, and
+//                 the rail stays open or closes by where the cursor is, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -29,8 +33,10 @@
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
+#include <QCursor>
 #include <QDialog>
 #include <QDrag>
+#include <QElapsedTimer>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLoggingCategory>
@@ -170,6 +176,35 @@ QWindow* cocoaChildWindowAt(QWindow* window, const QPoint& local)
     return target;
 }
 
+// Moves the cursor (QCursor::pos(), as the Mac reports it) and nothing else.
+// The offscreen cursor also posts an enter and a move to the top-level window,
+// which Qt would route like alien widgets: a second route beside the cocoa
+// one below. Those are flushed and dropped here, before they reach a window.
+class QuietCursor : public QObject {
+public:
+    static void setPos(const QPoint& global)
+    {
+        QuietCursor quiet;
+        qApp->installEventFilter(&quiet);
+        QCursor::setPos(global);
+        QWindowSystemInterface::flushWindowSystemEvents();
+        qApp->removeEventFilter(&quiet);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        switch (event->type()) {
+        case QEvent::MouseMove:
+        case QEvent::Enter:
+        case QEvent::Leave:
+            return qobject_cast<QWindow*>(watched) != nullptr;
+        default:
+            return false;
+        }
+    }
+};
+
 class CocoaPointer {
 public:
     explicit CocoaPointer(QWidget* topLevel) : m_topLevel(topLevel) {}
@@ -191,6 +226,10 @@ public:
             m_under = target;
         }
         QTest::mouseMove(target, target->mapFromGlobal(global));
+        // The cursor moves too, as on the Mac. After the cocoa events, not
+        // before: set first, the badge offscreen intermittently never saw
+        // its Enter (the cause inside Qt's offscreen cursor was not traced).
+        QuietCursor::setPos(global);
     }
 
     // A hand moving from `from` to `to` in `steps` moves over `ms` of event
@@ -207,6 +246,72 @@ private:
     QWidget* m_topLevel;
     QWindow* m_under{nullptr};
 };
+
+// Enter and Leave that never arrive: swallowed for every widget under the
+// given roots, ahead of every other filter (an application filter installed
+// last runs first). WA_UnderMouse is still set by Qt's own routing, so a test
+// that wants the state macOS leaves behind clears it with clearUnderMouse().
+// `deliverLeave` sends the one lone Leave cocoa can send.
+class DroppedEnterLeave : public QObject {
+public:
+    explicit DroppedEnterLeave(QList<QWidget*> roots) : m_roots(std::move(roots))
+    {
+        qApp->installEventFilter(this);
+    }
+    ~DroppedEnterLeave() override { qApp->removeEventFilter(this); }
+
+    void clearUnderMouse()
+    {
+        for (QWidget* root : m_roots) {
+            root->setAttribute(Qt::WA_UnderMouse, false);
+            for (QWidget* child : root->findChildren<QWidget*>()) {
+                child->setAttribute(Qt::WA_UnderMouse, false);
+            }
+        }
+    }
+    void deliverLeave(QWidget* widget)
+    {
+        m_allow = true;
+        QEvent leave(QEvent::Leave);
+        QCoreApplication::sendEvent(widget, &leave);
+        m_allow = false;
+    }
+    int dropped() const { return m_dropped; }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (m_allow || (event->type() != QEvent::Enter && event->type() != QEvent::Leave)) {
+            return false;
+        }
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (!widget) {
+            return false;
+        }
+        for (QWidget* root : m_roots) {
+            if (widget == root || root->isAncestorOf(widget)) {
+                ++m_dropped;
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    QList<QWidget*> m_roots;
+    bool m_allow{false};
+    int m_dropped{0};
+};
+
+// Moves only the cursor, in `steps` over `ms`: no Enter or Leave from the
+// test itself.
+void glideCursor(const QPoint& from, const QPoint& to, int steps, int ms)
+{
+    for (int i = 1; i <= steps; ++i) {
+        QuietCursor::setPos(from + (to - from) * i / steps);
+        QTest::qWait(ms / steps);
+    }
+}
 
 // A mouse gesture as AppKit delivers it: the press goes to the view the
 // hit-test picks and the moves and the release follow the pressed view.
@@ -1211,6 +1316,100 @@ private slots:
         QCOMPARE(profiles->activeId(), target);
         QVERIFY(!dock->isOpen());
         QCOMPARE(badge->text(), ProfileRail::initialFor(profiles->name(target)));
+    }
+
+    // JJ on his Mac after 391a09306: the rail "closes when i try to move
+    // mouse". On macOS each badge in the popover is a native view and cocoa
+    // routes Enter/Leave per view, so the move from the popover onto a badge
+    // can bring the popover a Leave and no Enter, which clears WA_UnderMouse.
+    // Here no Enter or Leave reaches the badge or the popover while the
+    // cursor travels to the other profile, then the popover gets that lone
+    // Leave. The rail must stay open past the hide delay and the click must
+    // switch.
+    void profileRailStaysOpenWhenTheEnterNeverArrives()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        ProfileRailDock* dock = f.window->profileRailDock();
+        auto* profiles = f.window->findChild<WorkspaceProfiles*>();
+        QVERIFY(dock && profiles);
+        QVERIFY(f.resetProfiles(profiles));
+        QVERIFY(profiles->createEmpty(QStringLiteral("DX")).ok());
+        settle();
+        const QString target = profiles->ids().first();
+        QVERIFY(profiles->activeId() != target);
+
+        CocoaPointer pointer(f.window.get());
+        NativeMouse mouse(f.window.get());
+        ModalWatch modals;
+        QPushButton* badge = dock->collapsedBadge();
+        const QPoint rest = centreOf(badge) + QPoint(80, 0);
+        pointer.move(rest);
+        QVERIFY(f.hoverOpen(pointer, dock, rest));
+        settle();
+
+        QPushButton* targetButton = dock->rail()->badgeButton(target);
+        QVERIFY(targetButton);
+        const QPoint to = centreOf(targetButton);
+        {
+            DroppedEnterLeave dropped({badge, dock->popover()});
+            glideCursor(centreOf(badge), to, 12, 240);
+            settle();
+            dropped.clearUnderMouse();
+            dropped.deliverLeave(dock->popover());
+            QTest::qWait(ContainerWidget::kRevealHideMs + 300);
+            QVERIFY2(dock->isOpen(), "the rail closed with the cursor on the other profile");
+        }
+        mouse.click(to);
+        settle();
+        QVERIFY2(modals.seen.isEmpty(), qPrintable(QStringLiteral("the click opened ") + modals.seen.join(", ")));
+        QCOMPARE(profiles->activeId(), target);
+        QVERIFY(!dock->isOpen());
+    }
+
+    // The other half: with no Leave at all, the cursor leaving both the badge
+    // and the popover still closes the rail after the hide delay, and not
+    // before. A rail opened from the keyboard with the cursor elsewhere
+    // stays open.
+    void profileRailClosesWhenTheCursorLeavesWithoutALeave()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        ProfileRailDock* dock = f.window->profileRailDock();
+        auto* profiles = f.window->findChild<WorkspaceProfiles*>();
+        QVERIFY(dock && profiles);
+        QVERIFY(f.resetProfiles(profiles));
+        QVERIFY(profiles->createEmpty(QStringLiteral("DX")).ok());
+        settle();
+
+        CocoaPointer pointer(f.window.get());
+        QPushButton* badge = dock->collapsedBadge();
+        const QPoint rest = centreOf(badge) + QPoint(80, 0);
+        pointer.move(rest);
+        QVERIFY(f.hoverOpen(pointer, dock, rest));
+        settle();
+        const QRect popover = globalRect(dock->popover());
+        const QPoint outside(popover.left() - 40, popover.bottom() + 60);
+        {
+            DroppedEnterLeave dropped({badge, dock->popover()});
+            // Off the rail in one move, so the delay is timed from it.
+            QElapsedTimer left;
+            QuietCursor::setPos(outside);
+            left.start();
+            QVERIFY(dock->isOpen());
+            QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ContainerWidget::kRevealHideMs + 400);
+            // The hide delay, less the sampling interval and this check's
+            // own granularity.
+            QVERIFY2(left.elapsed() >= ContainerWidget::kRevealHideMs - ProfileRailDock::kPointerSampleMs,
+                     qPrintable(QStringLiteral("closed %1 ms after the cursor left").arg(left.elapsed())));
+        }
+
+        f.window->activateWindow();
+        badge->setFocus(Qt::TabFocusReason);
+        settle();
+        QVERIFY(dock->isOpen());
+        QTest::qWait(ContainerWidget::kRevealHideMs + 300);
+        QVERIFY2(dock->isOpen(), "a rail opened from the keyboard closed with the cursor elsewhere");
     }
 
     // What the fix must keep: the rail closes when the pointer really leaves
