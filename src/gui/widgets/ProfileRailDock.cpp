@@ -19,6 +19,10 @@
 //                 routing can leave unpaired; nereus.gui.profilerail
 //                 debug category. By J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The open rail keeps clear of the title bar widgets left
+//                 of the badge (the Core readout) and moves right instead.
+//                 By J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRailDock.h"
@@ -61,6 +65,8 @@ constexpr int kShadowAlpha = 150;
 // Width for a badge's letter: the letter plus the pill's 11 px side
 // padding and 1 px border on each side, rounded up as the rail does.
 constexpr int kBadgeTextPad = 20;
+// Clear space the open rail keeps from the title bar widget to its left.
+constexpr int kNeighbourGap = 8;
 
 QRect globalRectOf(const QWidget* w)
 {
@@ -412,7 +418,22 @@ void ProfileRailDock::placePopover()
     const QSize s = m_popover->sizeHint();
     const QPoint badgeTopLeft = m_badge->mapTo(m_overlayParent, QPoint(0, 0));
     const int right = badgeTopLeft.x() + m_badge->width();
-    const int x = qMax(0, right - s.width());
+    // The open rail never covers what sits left of the badge in the title
+    // bar (the Core readout): the PC and RADIO volume group moved the
+    // centre title left, and at 1280 px the rail reached over the readout.
+    // It moves right instead, over the title, while it is open.
+    int leftLimit = 0;
+    if (QWidget* bar = parentWidget()) {
+        for (QWidget* w : bar->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (w == this || w == m_anchor || !w->isVisible() || w->width() <= 0
+                || w->geometry().right() >= x()) {
+                continue;
+            }
+            const int wRight = w->mapTo(m_overlayParent, QPoint(w->width(), 0)).x();
+            leftLimit = qMax(leftLimit, wRight + kNeighbourGap);
+        }
+    }
+    const int x = qMax(leftLimit, right - s.width());
     const int y = qMax(0, badgeTopLeft.y() - kPopoverPadV - 1);
     m_popover->setGeometry(x, y, s.width(), s.height());
 }

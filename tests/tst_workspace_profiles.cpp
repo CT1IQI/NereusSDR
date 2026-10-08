@@ -17,6 +17,8 @@
 //                 validates entries, an edge drag ends with its container,
 //                 hidden strips drop deleted ids. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The open rail keeps clear of the readout on its left.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QHBoxLayout>
@@ -785,6 +787,53 @@ private slots:
         QVERIFY(dock.rail()->clickBadge(dx.id));
         settle();
         QVERIFY(!dock.isOpen());
+    }
+
+    void openRailKeepsClearOfTheReadoutOnItsLeft()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        for (const char* name : {"DX", "Contest", "FT8"}) {
+            QVERIFY(profiles.duplicate(profiles.activeId(), QString::fromLatin1(name)).ok());
+        }
+
+        // A readout on the left wide enough that the rail, opened leftward
+        // from its badge, would reach over it (the Core readout beside a
+        // title pushed left by the PC and RADIO volume group).
+        QWidget host;
+        host.resize(700, 300);
+        auto* bar = new QWidget(&host);
+        bar->setGeometry(0, 0, 700, 32);
+        auto* row = new QHBoxLayout(bar);
+        row->setContentsMargins(0, 0, 0, 0);
+        auto* readout = new QWidget(bar);
+        readout->setFixedWidth(200);
+        row->addWidget(readout);
+        row->addStretch(1);
+        auto* title = new QLabel(QStringLiteral("NereusSDR"), bar);
+        row->addWidget(title);
+        row->addStretch(1);
+        auto* right = new QWidget(bar);
+        right->setFixedWidth(260);
+        row->addWidget(right);
+        ProfileRailDock dock(&profiles, title, &host, bar);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        settle();
+        dock.reposition();
+
+        dock.open();
+        settle();
+        QVERIFY(dock.isOpen());
+        const QPoint badgeRight = dock.collapsedBadge()->mapTo(&host,
+            QPoint(dock.collapsedBadge()->width(), 0));
+        const int readoutRight = readout->mapTo(&host, QPoint(readout->width(), 0)).x();
+        // Leftward from the badge it would start over the readout.
+        QVERIFY(badgeRight.x() - dock.popover()->width() < readoutRight);
+        // It starts clear of the readout instead.
+        QVERIFY(dock.popover()->geometry().left() >= readoutRight);
     }
 };
 
