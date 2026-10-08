@@ -261,9 +261,8 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
     // Workspace preview: the same shapes in Glass and Depth roles. With
     // the switch off pick() returns the legacy colour unchanged.
     const bool workspaceLook = WorkspacePreview::enabled();
-    const auto& wp = Workspace::WorkspacePalette::glassAndDepth();
-    auto pick = [&](const QColor& legacy, const char* role) {
-        return workspaceLook ? wp.color(QString::fromLatin1(role), legacy) : legacy;
+    auto pick = [](const QColor& legacy, const char* role) {
+        return WorkspacePreview::roleColour(legacy, role);
     };
 
     // Background panel: rgba(20, 30, 45, 240) with subtle border.

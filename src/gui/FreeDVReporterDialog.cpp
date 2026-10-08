@@ -82,6 +82,7 @@
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/AppSettings.h"
 #include "core/FreeDVReporterClient.h"
@@ -571,14 +572,18 @@ public:
             // background. The three highlight colors are bright enough
             // that white text reads well on all of them.
             opt.palette.setBrush(QPalette::HighlightedText,
-                                 QBrush(Qt::white));
+                                 QBrush(WorkspacePreview::roleColour(
+                                     QColor(Qt::white), "selected-text")));
             // Override the normal-state text color too, since the
             // base paint will use QPalette::Text (not Highlight) on
             // unselected rows.  Without this the tint shows but text
             // disappears against a dark cyan/orange background on
             // some themes.
-            opt.palette.setBrush(QPalette::Text, QBrush(Qt::white));
-            opt.palette.setBrush(QPalette::WindowText, QBrush(Qt::white));
+            // Workspace preview: the text role, as on every other row;
+            // roleColour() returns white with the switch off.
+            const QColor rowText = WorkspacePreview::roleColour(QColor(Qt::white), "text");
+            opt.palette.setBrush(QPalette::Text, QBrush(rowText));
+            opt.palette.setBrush(QPalette::WindowText, QBrush(rowText));
         }
         QStyledItemDelegate::paint(painter, opt, index);
     }

@@ -11916,7 +11916,7 @@ void MainWindow::buildStatusBar()
         pm.fill(Qt::transparent);
         QPainter painter(&pm);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(QColor(0x40, 0x48, 0x58));
+        painter.setBrush(WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive"));
         painter.setPen(Qt::NoPen);
         for (int i = 0; i < 3; ++i) {
             painter.drawEllipse(0, i * 7, 9, 6);
@@ -11940,7 +11940,7 @@ void MainWindow::buildStatusBar()
         pm.fill(Qt::transparent);
         QPainter pp(&pm);
         pp.setRenderHint(QPainter::Antialiasing);
-        const QColor stroke(255, 255, 255, 210);
+        const QColor stroke = WorkspacePreview::roleColour(QColor(255, 255, 255, 210), "text");
         pp.setPen(QPen(stroke, 1.6));
         const QPointF pts[] = {
             { 0, 22}, { 1, 21}, { 2, 22}, { 3, 19}, { 4, 22},
@@ -18290,14 +18290,16 @@ void MainWindow::showFeatureRequestDialogImpl()
     vbox->setContentsMargins(16, 16, 16, 16);
 
     auto* header = new QLabel(QStringLiteral(
-        "<h3 style='color:#c8d8e8;'>AI-Assisted Issue Reporter</h3>"
-        "<p style='color:#8090a0;'>Use any AI assistant to write a detailed bug report or feature request.</p>"
-        "<ol style='color:#c8d8e8;'>"
+        "<h3 style='color:%1;'>AI-Assisted Issue Reporter</h3>"
+        "<p style='color:%2;'>Use any AI assistant to write a detailed bug report or feature request.</p>"
+        "<ol style='color:%1;'>"
         "<li><b>Choose your AI</b> below; the prompt is copied to your clipboard</li>"
         "<li><b>Paste the prompt</b> into the AI chat</li>"
         "<li><b>Describe your idea</b>: edit the [bracketed] section</li>"
         "<li><b>Copy the AI's output</b> and click <b>Submit Your Idea</b></li>"
-        "</ol>"));
+        "</ol>")
+        .arg(WorkspacePreview::roleColourName("#c8d8e8", "text"),
+             WorkspacePreview::roleColourName("#8090a0", "text-secondary")));
     header->setWordWrap(true);
     vbox->addWidget(header);
 

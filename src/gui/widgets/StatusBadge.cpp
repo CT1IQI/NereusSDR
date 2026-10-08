@@ -1,6 +1,7 @@
 // src/gui/widgets/StatusBadge.cpp
 #include "StatusBadge.h"
 
+#include "gui/styles/WorkspacePreview.h"
 #include <QColor>
 #include <QHBoxLayout>
 #include <QImage>
@@ -125,14 +126,18 @@ QColor StatusBadge::variantForegroundColor() const
 {
     // Mirror the colors used by applyStyle() so the SVG tint matches the
     // text color. If applyStyle() colors change, update both.
+    // Workspace preview: the roles the stylesheet translator gives the
+    // same literals as text (StylesheetColourTable), so tint and text
+    // still match.
+    using WorkspacePreview::roleColour;
     switch (m_variant) {
-        case Variant::Info: return QColor(QStringLiteral("#5fa8ff"));
-        case Variant::On:   return QColor(QStringLiteral("#5fff8a"));
-        case Variant::Off:  return QColor(QStringLiteral("#404858"));
-        case Variant::Warn: return QColor(QStringLiteral("#ffd700"));
-        case Variant::Tx:   return QColor(QStringLiteral("#ff6060"));
+        case Variant::Info: return roleColour(QColor(QStringLiteral("#5fa8ff")), "accent");
+        case Variant::On:   return roleColour(QColor(QStringLiteral("#5fff8a")), "ok");
+        case Variant::Off:  return roleColour(QColor(QStringLiteral("#404858")), "text-inactive");
+        case Variant::Warn: return roleColour(QColor(QStringLiteral("#ffd700")), "measured");
+        case Variant::Tx:   return roleColour(QColor(QStringLiteral("#ff6060")), "tx");
     }
-    return QColor(QStringLiteral("#5fa8ff"));
+    return roleColour(QColor(QStringLiteral("#5fa8ff")), "accent");
 }
 
 void StatusBadge::renderSvgIcon()

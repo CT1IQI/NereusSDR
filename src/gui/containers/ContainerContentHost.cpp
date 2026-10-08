@@ -649,12 +649,8 @@ class EntryGrip final : public QWidget
     {
         QPainter p(this);
         p.setPen(Qt::NoPen);
-        if (WorkspacePreview::enabled()) {
-            p.setBrush(underMouse() ? QColor(Workspace::role("accent", "#00b4d8"))
-                                    : QColor(Workspace::role("text-scale", "#8090a0")));
-        } else {
-            p.setBrush(underMouse() ? QColor("#00b4d8") : QColor("#8090a0"));
-        }
+        p.setBrush(underMouse() ? WorkspacePreview::roleColour(QColor("#00b4d8"), "accent")
+                                : WorkspacePreview::roleColour(QColor("#8090a0"), "text-scale"));
         for (int x : {5, 11}) {
             for (int y : {5, 11, 17}) {
                 p.drawEllipse(QPoint(x, y), 1, 1);

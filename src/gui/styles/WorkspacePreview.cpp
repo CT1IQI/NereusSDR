@@ -16,6 +16,9 @@
 //   2026-10-08 - The unknown-literal count leaves out the colours the
 //                 workspace look itself writes, not only palette values.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - roleColour() and roleColourName() for painted chrome
+//                 and rich text. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -332,6 +335,31 @@ QString lookQss(const QString& original, const QWidget* owner)
     options.resolveAmbiguousByContext = true;
     return Workspace::Components::componentize(
         QssTranslator::translate(original, options).qss, owner);
+}
+
+QColor roleColour(const QColor& legacy, const char* role)
+{
+    if (!enabled()) {
+        return legacy;
+    }
+    if (!legacy.isValid() || role == nullptr) {
+        return legacy;
+    }
+    QColor c = Workspace::WorkspacePalette::glassAndDepth().color(QString::fromLatin1(role));
+    if (!c.isValid()) {
+        return legacy;
+    }
+    c.setAlpha(legacy.alpha());
+    return c;
+}
+
+QString roleColourName(const char* legacy, const char* role)
+{
+    if (!enabled()) {
+        return QString::fromLatin1(legacy);
+    }
+    const QColor c = roleColour(QColor::fromString(QLatin1StringView(legacy)), role);
+    return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
 }
 
 QHash<QString, int> unknownLiteralCounts()

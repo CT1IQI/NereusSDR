@@ -11,6 +11,7 @@
 // =================================================================
 
 #include "SoundSystemLine.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/AudioEngine.h"
 
@@ -126,8 +127,9 @@ void SoundSystemLine::show(System system, LinuxAudioBackend backend)
     m_problem = isProblem(system, backend);
     m_dot->setStyleSheet(QLatin1String(m_problem ? kDotProblem : kDotOk));
     m_text->setStyleSheet(QLatin1String(m_problem ? kTextProblem : kTextOk));
-    m_text->setText(QStringLiteral("<b style=\"color:#c8d8e8\">%1</b> %2")
-                        .arg(tr("Sound system:"), m_described.toHtmlEscaped()));
+    m_text->setText(QStringLiteral("<b style=\"color:%3\">%1</b> %2")
+                        .arg(tr("Sound system:"), m_described.toHtmlEscaped(),
+                             WorkspacePreview::roleColourName("#c8d8e8", "text")));
 }
 
 } // namespace NereusSDR

@@ -2714,6 +2714,8 @@ target_compile_definitions(tst_ui_capability_gating PRIVATE NEREUS_BUILD_TESTS)
 # the source tree regardless of build directory.
 nereus_add_test(tst_workspace_qss_translator)
 nereus_add_test(tst_qss_translator_forms)
+# Painted chrome, palettes and rich text reach roles through one helper.
+nereus_add_test(tst_workspace_role_colour)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)

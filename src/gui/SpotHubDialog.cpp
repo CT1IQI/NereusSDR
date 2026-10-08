@@ -157,6 +157,7 @@
 //                                    Claude Code.
 
 #include "SpotHubDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/AppSettings.h"
 #include "core/DxClusterClient.h"
@@ -1792,10 +1793,11 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
         m_freedvIdentityLabel->setTextFormat(Qt::RichText);
         m_freedvIdentityLabel->setWordWrap(true);
         if (call.isEmpty() || gridSquare.isEmpty()) {
-            m_freedvIdentityLabel->setText(
-                "<b style='color:#e6c200;'>No identity set.</b> "
+            m_freedvIdentityLabel->setText(QStringLiteral(
+                "<b style='color:%1;'>No identity set.</b> "
                 "Go to the <b>Settings</b> tab and fill in your callsign "
-                "and grid square before starting FreeDV Reporter.");
+                "and grid square before starting FreeDV Reporter.")
+                .arg(WorkspacePreview::roleColourName("#e6c200", "warn")));
         } else {
             m_freedvIdentityLabel->setText(QString(
                 "Identity: <b>%1</b> / <b>%2</b> (set in Settings tab)")

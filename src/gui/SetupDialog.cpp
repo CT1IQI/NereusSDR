@@ -1376,7 +1376,7 @@ void SetupDialog::buildTree()
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
-        item->setForeground(0, QColor("#8aa8c0"));
+        item->setForeground(0, WorkspacePreview::roleColour(QColor("#8aa8c0"), "title-text"));
         return item;
     };
 

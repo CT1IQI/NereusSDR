@@ -37,6 +37,7 @@
 
 #include "gui/NetworkDiagnosticsDialog.h"
 #include "StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <optional>
 #include "models/RadioModel.h"
 #include "core/AudioEngine.h"
@@ -346,8 +347,10 @@ void NetworkDiagnosticsDialog::refresh()
         const bool connected = m_model && m_model->isConnected();
         m_statusLabel->setText(
             connected
-                ? QStringLiteral("<span style='color:#5fff8a;'>&#x25cf; Connected</span>")
-                : QStringLiteral("<span style='color:#ff6060;'>&#x25cf; Disconnected</span>"));
+                ? QStringLiteral("<span style='color:%1;'>&#x25cf; Connected</span>")
+                      .arg(WorkspacePreview::roleColourName("#5fff8a", "ok"))
+                : QStringLiteral("<span style='color:%1;'>&#x25cf; Disconnected</span>")
+                      .arg(WorkspacePreview::roleColourName("#ff6060", "danger")));
         m_statusLabel->setTextFormat(Qt::RichText);
     }
 
