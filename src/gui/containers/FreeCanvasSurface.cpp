@@ -6,6 +6,10 @@
 //                 inside its bounds, in place of the outside grip and
 //                 corner. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - Workspace preview only: a hover updates only the handles
+//                 whose reveal changed, in place of a full presentation
+//                 sync on every mouse move. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -159,12 +163,28 @@ QRect FreeCanvasSurface::entryBoundary(const QString& id) const {const auto leaf
 int FreeCanvasSurface::contentHeight() const {return pixels(m_extent.height());}
 void FreeCanvasSurface::selectEntry(const QString& id) {m_selected=id;updateReveal();}
 void FreeCanvasSurface::updateReveal(const QString& hover) {
+    if(WorkspacePreview::enabled()) {
+        // Workspace preview: only the handles whose reveal changed are
+        // shown or hidden; a mouse move that changes nothing restacks
+        // nothing. Placement stays with syncPresentation().
+        for(auto it=m_leaves.begin();it!=m_leaves.end();++it) {
+            const bool reveal=it.key()==m_selected || it.key()==hover || it.key()==m_active;
+            QWidget* grip=it->grip.data();QWidget* corner=it->corner.data();
+            if(!grip || !corner || grip->property("canvasReveal").toBool()==reveal) {continue;}
+            const bool visible=it->view && it->view->isVisibleTo(this) && it->rect.width()>0 && it->rect.height()>0;
+            for(QWidget* handle:{grip,corner}) {
+                handle->setProperty("canvasReveal",reveal);handle->setVisible(visible && reveal);
+                if(visible && reveal) {handle->raise();}
+                handle->update();
+            }
+        }
+        return;
+    }
     for(auto it=m_leaves.begin();it!=m_leaves.end();++it) {
         for(QWidget* handle:{it->grip.data(),it->corner.data()}) {
             if(handle) {handle->setProperty("canvasReveal",it.key()==m_selected || it.key()==hover || it.key()==m_active);handle->update();}
         }
     }
-    if(WorkspacePreview::enabled()) {syncPresentation();}
 }
 QString FreeCanvasSurface::hoverAt(const QPoint& position) const {
     // Workspace preview handles sit inside the bounds, so no outside margin.

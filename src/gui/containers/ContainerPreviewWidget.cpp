@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: widget-factory previews get the
+//                 entry's effective context. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-04 — Fit stacked button groups to compact shared rows by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Match individual control preview sizes to live controls by
@@ -93,7 +96,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
             }
         }
         if(view) { retained.insert(view); if(auto* meter=qobject_cast<MeterWidget*>(view)) { reusedMeters.insert(meter); } }
-        else { view=m_registry->createPreview(entry,this); }
+        else { view=m_registry->createPreview(entry,this,context); }
         if(document.layout==ContentLayout::FreeCanvas && entry.typeId.startsWith("applet:")) {
             view->setProperty("freeCanvasMinimum",QSizeF(m_registry->singletonCanvasMinimum(entry.typeId)));
             view->setProperty("freeCanvasHint",m_registry->singletonCanvasSizeHint(entry.typeId));

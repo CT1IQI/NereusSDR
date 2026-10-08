@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a reading consumer's cached
+//                 readings are replayed to that consumer alone (a callback,
+//                 not readingUpdated), and cachedReading() seeds inert
+//                 previews. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
 //                 removeReadingConsumer, so a Longpath needle or bar gets
 //                 readings for its own context on the same timer frame,
@@ -114,6 +119,7 @@ mw0lge@grange-lane.co.uk
 #include <QHash>
 
 #include <functional>  // std::function for setRxOffsetSource (RXOffset port)
+#include <optional>
 
 #include <QObject>
 #include <QPointer>
@@ -322,10 +328,16 @@ public:
     // Longpath needle or bar) gets readings for its own context. The
     // context and its bindings join the poll set on the same timer frame
     // as the targets; readings arrive through readingUpdated. Registering
-    // replays the cached readings for the context. Registering an owner
-    // again replaces its context and bindings. The owner's destruction
-    // removes it, and a context nobody uses leaves the poll set.
-    void addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings);
+    // replays the cached readings for the context to `replay` alone, so a
+    // sibling on the same context keeps its value and peak. Registering an
+    // owner again replaces its context and bindings. The owner's
+    // destruction removes it, and a context nobody uses leaves the poll set.
+    void addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings,
+                            const std::function<void(int, double)>& replay = {});
+    // The value copyCachedReadings would seed a target with for one
+    // binding of a context; empty for a binding it does not seed. Reads
+    // only the cache: nothing is registered or polled.
+    std::optional<double> cachedReading(const QJsonObject& context, int binding) const;
     void removeReadingConsumer(QObject* owner);
     void setSMeterContext(const QJsonObject& context) { m_sMeterContext = context; }
     SMeterWidget* smeterForTest() const;
@@ -534,7 +546,6 @@ private:
     // Last resolved source identity per consumer-only context key.
     QHash<QByteArray, QByteArray> m_consumerIdentities;
     void synchronizeConsumerSources();
-    void replayConsumerReadings(const QJsonObject& context, const QList<int>& bindings);
     bool contextInUse(const QJsonObject& context) const;
     QHash<QByteArray, QHash<int, double>> m_contextReadings;
     QHash<QByteArray, QJsonObject> m_knownContexts;

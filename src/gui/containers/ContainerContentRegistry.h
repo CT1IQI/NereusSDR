@@ -1,6 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: widget factories take a render
+//                 mode, and createPreview passes the effective context and
+//                 ContentRenderMode::Preview. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerDocument.h"
@@ -42,6 +46,9 @@ public:
     MeterItem* createMeterItem(const ContentEntry& entry, QObject* parent,
                               ContentRenderMode mode = ContentRenderMode::Live) const;
     QWidget* createPreview(const ContentEntry& entry, QWidget* parent) const;
+    // As above, for an entry shown under `context`, the effective source
+    // context (ContainerContentHost::effectiveContext) the live host uses.
+    QWidget* createPreview(const ContentEntry& entry, QWidget* parent, const QJsonObject& context) const;
     ContentEntry captureMeterItem(const MeterItem& item, const ContentEntry& prior = {}) const;
 
     // Per-instance QWidget content (workspace preview: the Longpath
@@ -51,11 +58,16 @@ public:
     // merged with the entry, see ContainerContentHost::effectiveContext),
     // and the parent the widget goes into. A factory returns nullptr when
     // it cannot build the entry; the host then shows its explanation row.
-    using WidgetFactory = std::function<QWidget*(const ContentEntry& entry, QWidget* parent)>;
+    // In ContentRenderMode::Preview the widget is inert: it registers no
+    // reading consumer, follows no slice and runs no timer, and shows the
+    // cached readings for its context.
+    using WidgetFactory = std::function<QWidget*(const ContentEntry& entry, QWidget* parent,
+                                                 ContentRenderMode mode)>;
     void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory);
     void unregisterWidgetFactory(const QString& typeId);
     bool hasWidgetFactory(const QString& typeId) const;
-    QWidget* createWidget(const ContentEntry& entry, QWidget* parent) const;
+    QWidget* createWidget(const ContentEntry& entry, QWidget* parent,
+                          ContentRenderMode mode = ContentRenderMode::Live) const;
 signals:
     void runtimeChanged();
 private:

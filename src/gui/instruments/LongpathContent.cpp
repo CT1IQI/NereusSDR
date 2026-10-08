@@ -50,6 +50,12 @@
 //                 the secondary binding clears it; the upstream comment on
 //                 the trace interval is copied to its constant.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Container Settings previews build the instruments inert
+//                 (ContentRenderMode::Preview): no reading consumer, slice
+//                 follower or trace timer, seeded once from the cached
+//                 readings and the slice. A needle or bar's registration
+//                 replay reaches that widget alone.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/LongpathContent.h"
@@ -74,6 +80,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 
 namespace NereusSDR::LongpathContent {
 
@@ -169,18 +176,25 @@ SliceModel* otherSlice(const Sources& sources, const SliceModel* slice)
     return nullptr;
 }
 
-QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources& sources)
+// An inert preview (ContentRenderMode::Preview) shows the slice behind its
+// context once and follows nothing.
+SliceModel* sliceNow(const Sources& sources, const QJsonObject& context)
+{
+    return sources.sliceForContext ? sources.sliceForContext(context) : nullptr;
+}
+
+QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources& sources, bool preview)
 {
     auto* w = new FrequencyInstrument(parent);
     const QString form = entry.config.value(QLatin1String(kFormKey)).toString();
     if (form == QLatin1String("bandStrip")) { w->setForm(FrequencyInstrument::Form::BandStrip); }
     else if (form == QLatin1String("flatArc")) { w->setForm(FrequencyInstrument::Form::FlatArc); }
     QPointer<FrequencyInstrument> guard(w);
-    auto* follower = new SliceFollower(w, sources, entry.context);
+    SliceFollower* follower = preview ? nullptr : new SliceFollower(w, sources, entry.context);
     auto bind = [guard, follower](SliceModel* slice) {
         if (!guard) { return; }
         guard->setFrequency(slice ? slice->frequency() : 0.0);
-        if (!slice) { return; }
+        if (!slice || !follower) { return; }
         follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
             if (guard) { guard->setFrequency(hz); }
         }));
@@ -203,13 +217,19 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
         const QChar fallbackOther = own == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
         guard->setSliceLetters(own, other ? other->sliceLetter() : fallbackOther);
         guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
-        if (slice && other) {
+        if (slice && other && follower) {
             follower->trackRefresh(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
                 if (guard) { guard->setOtherFrequency(hz); }
             }));
         }
     };
-    follower->start(bind, refresh);
+    if (follower) {
+        follower->start(bind, refresh);
+    } else {
+        SliceModel* slice = sliceNow(sources, entry.context);
+        bind(slice);
+        refresh(slice);
+    }
     return w;
 }
 
@@ -217,12 +237,14 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
 // whether or not a MeterWidget shares the context. Called on creation; the
 // container host builds a new widget when the source or binding changes,
 // and the old one's destruction drops its registration.
+// The registration replays the cached readings to this widget alone
+// (`replay`), so a sibling on the same context keeps its value and peak.
 void registerReadings(MeterPoller* poller, QWidget* widget, const QJsonObject& context,
-                      int primary, int secondary)
+                      int primary, int secondary, const std::function<void(int, double)>& replay)
 {
     QList<int> bindings{primary};
     if (secondary >= 0 && secondary != primary) { bindings.append(secondary); }
-    poller->addReadingConsumer(widget, context, bindings);
+    poller->addReadingConsumer(widget, context, bindings, replay);
 }
 
 } // namespace
@@ -264,11 +286,12 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
 {
     registry.registerWidgetFactory(QLatin1String(kFrequencyType),
         {QLatin1String(kFrequencyType), QStringLiteral("Frequency (Longpath)"), false, true, {}},
-        [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
-            return makeFrequency(entry, parent, sources);
+        [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return makeFrequency(entry, parent, sources, mode == ContentRenderMode::Preview);
         });
 
-    const auto meterFactory = [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
+    const auto meterFactory = [sources](const ContentEntry& entry, QWidget* parent,
+                                        ContentRenderMode mode) -> QWidget* {
         const int primary = primaryBinding(entry.typeId, entry.config);
         const QJsonValue secondaryValue = entry.config.value(QLatin1String(kSecondaryKey));
         const int secondary = secondaryValue.isDouble() ? secondaryValue.toInt() : -1;
@@ -319,7 +342,16 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
             widget = needle;
         }
         widget->setProperty("longpathPrimaryBinding", primary);
-        if (sources.poller && available) {
+        if (sources.poller && available && mode == ContentRenderMode::Preview) {
+            // Inert preview: the cached readings once, nothing registered.
+            *unavailable = !sources.poller->bindingUnavailableReason(primary).isEmpty();
+            for (int binding : {primary, secondary}) {
+                if (binding < 0) { continue; }
+                if (const std::optional<double> value = sources.poller->cachedReading(entry.context, binding)) {
+                    onReading(binding, *value);
+                }
+            }
+        } else if (sources.poller && available) {
             const QJsonObject context = entry.context;
             QObject::connect(sources.poller, &MeterPoller::readingUpdated, widget,
                 [onReading, context, primary, secondary](const QJsonObject& from, int binding, double value) {
@@ -340,7 +372,7 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                 [onReading, context, primary](const QJsonObject& from) {
                     if (from == context) { onReading(primary, kNoMeterReadingDbm); }
                 });
-            registerReadings(sources.poller, widget, context, primary, secondary);
+            registerReadings(sources.poller, widget, context, primary, secondary, onReading);
         }
         return widget;
     };
@@ -351,11 +383,12 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
 
     registry.registerWidgetFactory(QLatin1String(kFilterType),
         {QLatin1String(kFilterType), QStringLiteral("Filter passband (Longpath)"), false, true, {}},
-        [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
+        [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
             auto* pane = new BandwidthFilterPane(parent);
             QPointer<BandwidthFilterPane> guard(pane);
             auto slicePtr = std::make_shared<QPointer<SliceModel>>();
-            auto* follower = new SliceFollower(pane, sources, entry.context);
+            const bool preview = mode == ContentRenderMode::Preview;
+            SliceFollower* follower = preview ? nullptr : new SliceFollower(pane, sources, entry.context);
             auto bind = [guard, follower, slicePtr](SliceModel* slice) {
                 if (!guard) { return; }
                 *slicePtr = slice;
@@ -366,6 +399,7 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                 guard->setAccent(QColor::fromRgb(ControlRanges::sliceColour(slice->sliceIndex())));
                 guard->setVfoFrequency(slice->frequency());
                 guard->setFilter(slice->filterLow(), slice->filterHigh());
+                if (!follower) { return; }
                 follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
                     if (guard) { guard->setVfoFrequency(hz); }
                 }));
@@ -383,6 +417,11 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                     target->setFilter(centre - width / 2, centre - width / 2 + width);
                 }));
             };
+            if (preview) {
+                // Inert preview: the slice once, no trace timer.
+                bind(sliceNow(sources, entry.context));
+                return pane;
+            }
             follower->start(bind);
 
             // From Longpath src/gui/applets/BandwidthFilterApplet.cpp:779-837 [@551576e3]

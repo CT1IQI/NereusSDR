@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: createPreview passes the effective
+//                 context and the Preview render mode to widget factories.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Per-instance QWidget factories for the workspace preview
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Canonical independent control creation shortcuts by
@@ -408,11 +411,12 @@ void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
     emit runtimeChanged();
 }
 bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
-QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent) const
+QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent,
+                                                ContentRenderMode mode) const
 {
     const auto it = m_widgetFactories.constFind(entry.typeId);
     if (it == m_widgetFactories.constEnd() || !isAvailable(entry.typeId)) { return nullptr; }
-    QWidget* widget = it->factory(entry, parent);
+    QWidget* widget = it->factory(entry, parent, mode);
     if (!widget) { return nullptr; }
     if (widget->parentWidget() != parent) { widget->setParent(parent); }
     widget->setProperty("containerFactoryType", entry.typeId);
@@ -421,8 +425,17 @@ QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidg
 }
 QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent) const
 {
+    return createPreview(entry, parent, entry.context);
+}
+QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent,
+                                                 const QJsonObject& context) const
+{
     if (hasWidgetFactory(entry.typeId) && isAvailable(entry.typeId)) {
-        if (QWidget* view = createWidget(entry, parent)) {
+        // The live host's entry: the effective context in place of the
+        // entry's own, built inert.
+        ContentEntry effective = entry;
+        effective.context = context;
+        if (QWidget* view = createWidget(effective, parent, ContentRenderMode::Preview)) {
             view->setAttribute(Qt::WA_TransparentForMouseEvents);
             view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
             view->setProperty("freeCanvasHint", view->sizeHint());

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a free-canvas factory widget is not
+//                 reused as an explanation label (gated on the switch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: per-instance widget content rows from
 //                 ContainerContentRegistry widget factories, by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -438,7 +441,10 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 singleton->setProperty("freeCanvasMinimum",QSizeF(minimum));singleton->setMinimumSize(0,0);singleton->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                 row.widget=singleton;
             } else {
-                if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty() && qobject_cast<QLabel*>(old->widget.data())) {row.widget=old->widget;}
+                // Workspace preview: a factory widget (no item, no singleton) is
+                // never reused as the explanation label. With the switch off the
+                // old widget here is always that label.
+                if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
                 else {row.widget=new QLabel(m_canvas);}
                 if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
             }
@@ -488,7 +494,8 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {m_meters.append(meter);}
         }
         if(!row.widget) {
-            if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && qobject_cast<QLabel*>(old->widget.data())) {row.widget=old->widget;}
+            // Workspace preview: as above, a factory widget is not the label.
+            if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && (!WorkspacePreview::enabled() || qobject_cast<QLabel*>(old->widget.data()))) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
             if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
         }

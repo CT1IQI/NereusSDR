@@ -12,6 +12,9 @@
 //                 barFooterMakesRoomForTheSecondTrough and
 //                 noMeterReadingClearsTheSecondary. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - previewNeedleIsInertAndSeeded and
+//                 registrationReplayReachesOnlyTheNewWidget. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -26,6 +29,7 @@
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerPreviewWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
@@ -665,6 +669,103 @@ private slots:
         QVERIFY(!bar->hasValue());
         emit poller.readingUpdated(entry.context, MeterBinding::TxAlc, -3.0);
         QVERIFY(!bar->hasValue());
+    }
+
+    void previewNeedleIsInertAndSeeded()
+    {
+        // Container Settings preview: the needle shows the cached reading
+        // for the entry's effective context (slice B from the container
+        // default) and registers nothing with the poller.
+        MeterPoller poller;
+        QJsonObject effective;
+        poller.setRxReadingSource([&effective](const QJsonObject& context, int) {
+            return context == effective ? -73.0 : -93.0;
+        });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+
+        ContainerDocument document;
+        document.id = QStringLiteral("preview-container");
+        document.layout = ContentLayout::VerticalStack;
+        document.config.insert(QStringLiteral("rxSource"), 2);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.id = QStringLiteral("preview-needle");
+        entry.context = {};
+        document.contents.append(entry);
+        effective = ContainerContentHost::effectiveContext(document, entry);
+        QVERIFY(effective != entry.context);
+
+        ContainerPreviewWidget preview(registry, poller);
+        preview.setDocument(document);
+        const auto needles = preview.findChildren<NeedleInstrument*>();
+        QCOMPARE(needles.size(), 1);
+        NeedleInstrument* needle = needles.constFirst();
+        QCOMPARE(poller.readingConsumerCountForTest(), 0);
+        QVERIFY(needle->hasValue());
+        QCOMPARE(needle->peakHold().value(), -73.0);
+        QVERIFY(!needle->isOffline());
+
+        // Inert: a live reading for its context does not move it.
+        emit poller.readingUpdated(effective, MeterBinding::SignalPeak, -40.0);
+        QCOMPARE(needle->peakHold().value(), -73.0);
+
+        // The frequency and filter previews follow no slice and run no timer.
+        for (const char* type : {LongpathContent::kFrequencyType, LongpathContent::kFilterType}) {
+            const ContentEntry other = registry.makeEntry(QString::fromLatin1(type));
+            QWidget parent;
+            std::unique_ptr<QWidget> view(registry.createPreview(other, &parent, document.config));
+            QVERIFY(view);
+            QVERIFY(view->findChildren<QTimer*>().isEmpty());
+            for (QObject* child : view->findChildren<QObject*>(Qt::FindDirectChildrenOnly)) {
+                QVERIFY2(std::strcmp(child->metaObject()->className(), "QObject") != 0,
+                         "a preview holds no slice follower");
+            }
+        }
+    }
+
+    void registrationReplayReachesOnlyTheNewWidget()
+    {
+        // Two TX power needles on one context. Building the second replays
+        // the cache (no TX power reading: none) to it alone; the first
+        // keeps its value.
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.config.insert(QString::fromLatin1(LongpathContent::kDirectionKey), QStringLiteral("tx"));
+        entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+        QWidget parent;
+        std::unique_ptr<QWidget> first(registry.createWidget(entry, &parent));
+        auto* held = qobject_cast<NeedleInstrument*>(first.get());
+        QVERIFY(held);
+        QCOMPARE(held->primary(), int(MeterBinding::TxPower));
+        emit poller.readingUpdated(entry.context, MeterBinding::TxPower, 50.0);
+        QVERIFY(held->hasValue());
+
+        QSignalSpy shared(&poller, &MeterPoller::readingUpdated);
+        std::unique_ptr<QWidget> second(registry.createWidget(entry, &parent));
+        auto* fresh = qobject_cast<NeedleInstrument*>(second.get());
+        QVERIFY(fresh);
+        QCOMPARE(shared.count(), 0);
+        QVERIFY(held->hasValue());
+        QVERIFY(!fresh->hasValue());
+        QCOMPARE(poller.readingConsumerCountForTest(), 2);
+
+        // An RX needle's replay still seeds the new widget.
+        poller.setRxReadingSource([](const QJsonObject&, int) { return -81.0; });
+        shared.clear();
+        ContentEntry rx = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        rx.context = entry.context;
+        std::unique_ptr<QWidget> third(registry.createWidget(rx, &parent));
+        auto* seeded = qobject_cast<NeedleInstrument*>(third.get());
+        QVERIFY(seeded);
+        QVERIFY(seeded->hasValue());
+        QCOMPARE(seeded->peakHold().value(), -81.0);
+        QCOMPARE(shared.count(), 0);
     }
 
     void traceFromRenderedTakesBucketMaxima()

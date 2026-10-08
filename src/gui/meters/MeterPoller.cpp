@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a reading consumer's cached
+//                 readings are replayed to that consumer alone (a callback,
+//                 not readingUpdated), and cachedReading() seeds inert
+//                 previews. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
 //                 removeReadingConsumer, so a Longpath needle or bar gets
 //                 readings for its own context on the same timer frame,
@@ -613,7 +618,8 @@ void MeterPoller::setTargetContext(MeterWidget* widget, const QJsonObject& conte
     addTarget(widget);
     if (existing && changed) { replayReadings(widget, context); }
 }
-void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings)
+void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings,
+                                     const std::function<void(int, double)>& replay)
 {
     if (!owner) { return; }
     removeReadingConsumer(owner);
@@ -627,7 +633,11 @@ void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context,
     }
     // Global (TX, PA) readings reach every known context.
     m_knownContexts[contextKey(context)] = context;
-    replayConsumerReadings(context, bindings);
+    if (replay) {
+        for (int b : bindings) {
+            if (const std::optional<double> value = cachedReading(context, b)) { replay(b, *value); }
+        }
+    }
 }
 void MeterPoller::removeReadingConsumer(QObject* owner)
 {
@@ -680,25 +690,27 @@ bool MeterPoller::contextInUse(const QJsonObject& context) const
     }
     return false;
 }
-void MeterPoller::replayConsumerReadings(const QJsonObject& context, const QList<int>& bindings)
+std::optional<double> MeterPoller::cachedReading(const QJsonObject& context, int b) const
 {
-    // The values copyCachedReadings seeds a target with, as readingUpdated.
-    const auto readings = m_contextReadings.value(contextKey(context));
+    // The values copyCachedReadings seeds a target with.
     const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
-    const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
-    for (int b : bindings) {
-        if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr) {
-            const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
-                ? (m_rxReadingSource ? m_rxReadingSource(context, b) : readings.value(b, kNoMeterReadingDbm)) : kNoMeterReadingDbm;
-            emit readingUpdated(context, b, std::isfinite(value) ? value : kNoMeterReadingDbm);
-        } else if (m_globalReadings.contains(b)) {
-            emit readingUpdated(context, b, remoteReady && sameCachedSession && acceptsGlobalReading(context)
-                ? m_globalReadings.value(b) : kNoMeterReadingDbm);
-        } else if ((b >= MeterBinding::TxPower && b <= MeterBinding::TxCfcPeak)
-                   || (b >= MeterBinding::HwVolts && b <= MeterBinding::HwTemperature)) {
-            emit readingUpdated(context, b, kNoMeterReadingDbm);
-        }
+    if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr) {
+        const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
+            ? (m_rxReadingSource ? m_rxReadingSource(context, b)
+                                 : m_contextReadings.value(contextKey(context)).value(b, kNoMeterReadingDbm))
+            : kNoMeterReadingDbm;
+        return std::isfinite(value) ? value : kNoMeterReadingDbm;
     }
+    if (m_globalReadings.contains(b)) {
+        const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
+        return remoteReady && sameCachedSession && acceptsGlobalReading(context)
+            ? m_globalReadings.value(b) : kNoMeterReadingDbm;
+    }
+    if ((b >= MeterBinding::TxPower && b <= MeterBinding::TxCfcPeak)
+        || (b >= MeterBinding::HwVolts && b <= MeterBinding::HwTemperature)) {
+        return kNoMeterReadingDbm;
+    }
+    return std::nullopt;
 }
 void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, int)> source)
 {
