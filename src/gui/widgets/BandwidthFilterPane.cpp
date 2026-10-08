@@ -89,6 +89,11 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Native cursors: open hand over the body and closed
+//                 hand while dragging it, in place of Longpath's
+//                 Qt::SizeAllCursor, which crashes Qt 6.11.0 on macOS.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "gui/widgets/BandwidthFilterPane.h"
@@ -342,6 +347,18 @@ BandwidthFilterPane::Zone BandwidthFilterPane::zoneAt(int x) const
     if (nearHigh) { return Zone::HighEdge; }
     if (x > xl && x < xh) { return Zone::Body; }
     return Zone::None;
+}
+
+// NereusSDR-original: native cursor shapes only. Open hand over the body,
+// horizontal resize at the edges, arrow elsewhere. Qt::SizeAllCursor is
+// image-drawn on macOS and crashes Qt 6.11.0 (comment at the title bar
+// cursor in gui/containers/ContainerWidget.cpp; guarded by
+// scripts/verify-no-image-cursors.py and tst_native_cursors).
+Qt::CursorShape BandwidthFilterPane::hoverCursor(Zone z)
+{
+    if (z == Zone::LowEdge || z == Zone::HighEdge) { return Qt::SizeHorCursor; }
+    if (z == Zone::Body) { return Qt::OpenHandCursor; }
+    return Qt::ArrowCursor;
 }
 
 // ── Zeichnen ─────────────────────────────────────────────────────────
@@ -791,6 +808,9 @@ void BandwidthFilterPane::mousePressEvent(QMouseEvent* ev)
     m_dragStartX    = ev->pos().x();
     m_dragStartLow  = m_low;
     m_dragStartHigh = m_high;
+    // NereusSDR: closed hand while the body is dragged (native shape, see
+    // hoverCursor). The edges keep the horizontal resize arrow.
+    setCursor(m_drag == Zone::Body ? Qt::ClosedHandCursor : hoverCursor(m_drag));
     update();
 }
 
@@ -806,10 +826,11 @@ void BandwidthFilterPane::mouseMoveEvent(QMouseEvent* ev)
         const Zone z = zoneAt(x);
         if (z != m_hover) {
             m_hover = z;
-            const Qt::CursorShape want =
-                (z == Zone::LowEdge || z == Zone::HighEdge)
-                    ? Qt::SizeHorCursor
-                    : (z == Zone::Body ? Qt::SizeAllCursor : Qt::ArrowCursor);
+            // NereusSDR: the body shows the native open hand where Longpath
+            // shows Qt::SizeAllCursor, which crashes Qt 6.11.0 on macOS
+            // (2026-10-08, hover here). Root cause at the title bar cursor in
+            // gui/containers/ContainerWidget.cpp; shapes from hoverCursor().
+            const Qt::CursorShape want = hoverCursor(z);
             if (cursor().shape() != want) { setCursor(want); }
             update();
         }
@@ -844,9 +865,13 @@ void BandwidthFilterPane::mouseMoveEvent(QMouseEvent* ev)
 // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:739 [@551576e3]
 void BandwidthFilterPane::mouseReleaseEvent(QMouseEvent* ev)
 {
-    Q_UNUSED(ev)
     if (m_drag == Zone::None) { return; }
     m_drag = Zone::None;
+    // NereusSDR: leave the closed hand for the shape of whatever is now
+    // under the pointer.
+    m_hover = zoneAt(ev->pos().x());
+    const Qt::CursorShape want = hoverCursor(m_hover);
+    if (cursor().shape() != want) { setCursor(want); }
     update();
 }
 
