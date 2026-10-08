@@ -1,0 +1,91 @@
+// no-port-check: NereusSDR-original visual preview tool; scene table.
+// =================================================================
+// tests/visual/PreviewScenes.h  (NereusSDR)
+// =================================================================
+//
+// The scene table of the workspace visual preview tool. A scene is a named
+// function that poses an already-shown MainWindow (or one of its dialogs)
+// and adds the images to capture. Later tasks add proposed-design scenes
+// by appending rows to sceneTable().
+//
+// Modification history (NereusSDR):
+//   2026-10-07 - Written for the workspace visual review. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+// =================================================================
+
+#pragma once
+
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QRect>
+#include <QSize>
+#include <QString>
+#include <QStringList>
+#include <QVector>
+
+#include <functional>
+
+class QWidget;
+
+namespace NereusSDR {
+
+class MainWindow;
+class RadioModel;
+
+namespace Preview {
+
+// One crop of a full-window image, in logical and device pixels.
+struct CropRect {
+    QString name;
+    QRect logical;
+    QRect device;
+};
+
+// One image a scene produces.
+struct CapturedImage {
+    QString name;          // file stem, e.g. "baseline-two-band" or "...--flag"
+    QString kind;          // "window", "crop", "crop-3x", "floating", "dialog"
+    QImage image;
+    QSize logicalSize;     // logical size of what was grabbed
+    double dpr{1.0};
+    QVector<CropRect> crops;   // for a full-window image: every crop cut from it
+    QJsonObject extra;         // crop rectangle for a crop, widget class, ...
+};
+
+struct SceneContext {
+    MainWindow* window{nullptr};
+    RadioModel* model{nullptr};
+    QSize size;          // requested logical client size
+    double dpr{1.0};     // requested device pixel ratio
+    bool crops{false};   // write detail crops (the mac-1512x869@2 profile)
+    QVector<CapturedImage> images;
+    QJsonArray notShown;
+    QJsonArray unfrozen;
+    QJsonArray frozen;
+    QJsonArray stoppedTimers;
+    QJsonArray checks;
+    QJsonArray notes;
+    QString failure;     // non-empty: the scene could not run; exit non-zero
+};
+
+struct Scene {
+    QString name;
+    // "1", "2v", "2x2", ...: the PanLayoutId set before the window exists.
+    QString panLayout;
+    bool dialog{false};
+    std::function<void(SceneContext&)> run;
+};
+
+// Every fixed scene (non-dialog and fixed dialogs).
+QVector<Scene> fixedScenes();
+
+// Setup-page dialog scenes, one per pageLabelsForTest() leaf of a
+// SetupDialog the window creates (and closes again).
+QVector<Scene> setupPageScenes(MainWindow* window);
+
+// Pumps the event loop for `ms` milliseconds.
+void pump(int ms);
+
+} // namespace Preview
+} // namespace NereusSDR

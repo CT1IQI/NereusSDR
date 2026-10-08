@@ -1,0 +1,519 @@
+// no-port-check: NereusSDR-original visual preview tool; no upstream logic.
+// =================================================================
+// tests/visual/VisualPreviewMain.cpp  (NereusSDR)
+// =================================================================
+//
+// nereus_visual_preview: builds the real MainWindow on a test board with no
+// radio, poses one named scene with fixed illustrative data, and writes
+// full-resolution PNGs plus a JSON sidecar per PNG. One scene per process.
+// Every window stays off screen (Qt::WA_DontShowOnScreen) and is captured
+// in-process with QWidget::grab(), which includes the QRhiWidget spectrum.
+//
+//   nereus_visual_preview --probe
+//   nereus_visual_preview --list
+//   nereus_visual_preview --scene <name> --size <W>x<H> --dpr <d> --out <dir>
+//                         [--profile <name>]
+//
+// tests/visual/capture.py drives it; see tests/visual/README.md.
+//
+// Modification history (NereusSDR):
+//   2026-10-07 - Written for the workspace visual review, replacing the
+//                 feasibility spike. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+// =================================================================
+
+#include <QApplication>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFontInfo>
+#include <QGuiApplication>
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QScreen>
+#include <QStyle>
+#include <QStyleFactory>
+#include <QSysInfo>
+#include <QMenuBar>
+#include <QTextStream>
+#include <QWindow>
+
+#include <cmath>
+#include <cstdio>
+#include <memory>
+
+#include "NereusBuildTag.h"
+#include "PreviewScenes.h"
+#include "core/AppSettings.h"
+#include "core/BuildIdentity.h"
+#include "core/HpsdrModel.h"
+#include "fakes/MainWindowTestSettings.h"
+#include "fakes/RemoteWindowHarness.h"
+#include "gui/GuiApplication.h"
+#include "gui/MainWindow.h"
+#include "gui/PanadapterApplet.h"
+#include "gui/SpectrumWidget.h"
+#include "gui/styles/AppTheme.h"
+#include "models/RadioModel.h"
+
+using namespace NereusSDR;
+using namespace NereusSDR::Preview;
+
+namespace {
+
+constexpr int kExitBadArgs = 2;
+constexpr int kExitMismatch = 3;
+constexpr int kExitSceneFailed = 4;
+constexpr int kExitUnsafeProfile = 5;
+constexpr int kSliceWaitMs = 10000;
+constexpr int kStartupSettleMs = 1500;
+constexpr double kDprTolerance = 0.001;
+
+// Sets Qt::WA_DontShowOnScreen on every window before it reaches the screen,
+// so no capture ever shows a real window (dialogs and floating containers
+// included).
+class OffScreenFilter final : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::Polish || event->type() == QEvent::Show) {
+            if (auto* w = qobject_cast<QWidget*>(watched); w != nullptr && w->isWindow()) {
+                w->setAttribute(Qt::WA_DontShowOnScreen, true);
+            }
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+struct Args {
+    bool probe{false};
+    bool list{false};
+    QString scene;
+    QSize size{1512, 869};
+    double dpr{2.0};
+    QString out;
+    QString profile;
+};
+
+bool parseArgs(const QStringList& argv, Args& args, QString& error)
+{
+    for (int i = 1; i < argv.size(); ++i) {
+        const QString& a = argv.at(i);
+        auto value = [&](QString& out) {
+            if (i + 1 >= argv.size()) {
+                error = QStringLiteral("%1 needs a value").arg(a);
+                return false;
+            }
+            out = argv.at(++i);
+            return true;
+        };
+        QString v;
+        if (a == QLatin1String("--probe")) {
+            args.probe = true;
+        } else if (a == QLatin1String("--list")) {
+            args.list = true;
+        } else if (a == QLatin1String("--scene")) {
+            if (!value(args.scene)) { return false; }
+        } else if (a == QLatin1String("--out")) {
+            if (!value(args.out)) { return false; }
+        } else if (a == QLatin1String("--profile")) {
+            if (!value(args.profile)) { return false; }
+        } else if (a == QLatin1String("--size")) {
+            if (!value(v)) { return false; }
+            const QStringList wh = v.split(QLatin1Char('x'));
+            bool okW = false;
+            bool okH = false;
+            if (wh.size() == 2) {
+                args.size = QSize(wh[0].toInt(&okW), wh[1].toInt(&okH));
+            }
+            if (!okW || !okH || args.size.isEmpty()) {
+                error = QStringLiteral("bad --size %1 (want WxH)").arg(v);
+                return false;
+            }
+        } else if (a == QLatin1String("--dpr")) {
+            if (!value(v)) { return false; }
+            bool ok = false;
+            args.dpr = v.toDouble(&ok);
+            if (!ok || args.dpr <= 0.0) {
+                error = QStringLiteral("bad --dpr %1").arg(v);
+                return false;
+            }
+        } else {
+            error = QStringLiteral("unknown argument %1").arg(a);
+            return false;
+        }
+    }
+    if (!args.probe && !args.list && (args.scene.isEmpty() || args.out.isEmpty())) {
+        error = QStringLiteral("need --probe, --list, or --scene <name> --out <dir>");
+        return false;
+    }
+    return true;
+}
+
+void applyAppTheme(QApplication& app)
+{
+    // The startup sequence of src/main.cpp that gives the app its look.
+    app.setApplicationName(QStringLiteral("NereusSDR"));
+    app.setApplicationVersion(QStringLiteral(NEREUSSDR_VERSION));
+    app.setOrganizationName(QStringLiteral("NereusSDR"));
+    app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    applyDarkPalette(app);
+    applyAppBaselineQss(app);
+}
+
+// The settings file must be the isolated test profile under Qt's test-mode
+// locations, never the operator's real NereusSDR settings.
+bool profileIsSafe(QString& why)
+{
+    const QString path = AppSettings::instance().filePath();
+    const QString home = QDir::homePath();
+    const QStringList forbidden = {home + QStringLiteral("/.config/NereusSDR/"),
+                                   home + QStringLiteral("/Library/Preferences/NereusSDR/")};
+    for (const QString& f : forbidden) {
+        if (path.startsWith(f, Qt::CaseInsensitive)) {
+            why = QStringLiteral("settings path %1 is the operator's real profile").arg(path);
+            return false;
+        }
+    }
+    if (!path.contains(QStringLiteral("qttest"), Qt::CaseInsensitive)) {
+        why = QStringLiteral("settings path %1 is not under Qt's test-mode locations").arg(path);
+        return false;
+    }
+    return true;
+}
+
+bool waitForSlices(MainWindow* window, int panCount)
+{
+    QElapsedTimer t;
+    t.start();
+    while (t.elapsed() < kSliceWaitMs) {
+        int ready = 0;
+        for (PanadapterApplet* applet : window->findChildren<PanadapterApplet*>()) {
+            if (window->radioModel()->sliceById(applet->activeSliceIndex()) != nullptr) {
+                ++ready;
+            }
+        }
+        if (ready >= panCount) {
+            return true;
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    return false;
+}
+
+int panCountForLayout(const QString& layout)
+{
+    if (layout == QLatin1String("1")) { return 1; }
+    if (layout == QLatin1String("2v") || layout == QLatin1String("2h")) { return 2; }
+    if (layout == QLatin1String("2h1") || layout == QLatin1String("12h")
+        || layout == QLatin1String("3v")) {
+        return 3;
+    }
+    if (layout == QLatin1String("2x2") || layout == QLatin1String("4v")) { return 4; }
+    if (layout == QLatin1String("3h2")) { return 5; }
+    return 1;
+}
+
+std::unique_ptr<MainWindow> openWindow(const QString& layout, const QSize& size)
+{
+    AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), layout);
+    auto window = std::make_unique<MainWindow>(RemoteStationOptions{}, nullptr,
+                                               MainWindow::ConnectionStartup::Deferred);
+    RadioModel* model = window->radioModel();
+    model->setBoardForTest(HPSDRHW::Saturn);
+    model->configureStreamPool(5, 5, 192000);
+    window->setAttribute(Qt::WA_DontShowOnScreen, true);
+    // A window that is never ordered on screen gets a 32 px top safe-area
+    // margin on macOS at QT_SCALE_FACTOR 1 (none at other factors), which
+    // QWidget turns into a contents margin and an empty band above the
+    // title strip. A shown, titled window has no such margin, so the
+    // capture ignores it to match the app on screen.
+    window->setAttribute(Qt::WA_ContentsMarginsRespectsSafeArea, false);
+    window->resize(size);
+    window->show();
+    window->resize(size);
+    model->setConnectionStateForTest(ConnectionState::Connected);
+    return window;
+}
+
+// The window's safe-area margins (left, top, right, bottom), which the
+// capture does not let become contents margins.
+QString safeAreaText(MainWindow* window)
+{
+    if (window == nullptr || window->windowHandle() == nullptr) {
+        return QString();
+    }
+    const QMargins m = window->windowHandle()->safeAreaMargins();
+    return QStringLiteral("%1 %2 %3 %4").arg(m.left()).arg(m.top()).arg(m.right()).arg(m.bottom());
+}
+
+// Where the menus are: the macOS global menu bar (native) or in the window.
+QString menuBarText(MainWindow* window)
+{
+    QMenuBar* bar = window != nullptr ? window->findChild<QMenuBar*>() : nullptr;
+    if (bar == nullptr) {
+        return QStringLiteral("none");
+    }
+    return QStringLiteral("%1, %2 menus, in-window geometry %3x%4")
+        .arg(bar->isNativeMenuBar() ? QStringLiteral("native") : QStringLiteral("in-window"))
+        .arg(bar->actions().size()).arg(bar->width()).arg(bar->height());
+}
+
+QString spectrumBackend(MainWindow* window)
+{
+#ifdef NEREUS_GPU_SPECTRUM
+    // QRhiWidget::rhi() is protected; the requested API is what is public.
+    if (SpectrumWidget* sw = window->activeSpectrumWidget()) {
+        switch (sw->api()) {
+        case QRhiWidget::Api::Null:       return QStringLiteral("QRhiWidget api Null");
+        case QRhiWidget::Api::OpenGL:     return QStringLiteral("QRhiWidget api OpenGL");
+        case QRhiWidget::Api::Metal:      return QStringLiteral("QRhiWidget api Metal");
+        case QRhiWidget::Api::Vulkan:     return QStringLiteral("QRhiWidget api Vulkan");
+        case QRhiWidget::Api::Direct3D11: return QStringLiteral("QRhiWidget api Direct3D11");
+        case QRhiWidget::Api::Direct3D12: return QStringLiteral("QRhiWidget api Direct3D12");
+        }
+    }
+    return QStringLiteral("unknown");
+#else
+    Q_UNUSED(window);
+    return QStringLiteral("QPainter (NEREUS_GPU_SPECTRUM off)");
+#endif
+}
+
+QJsonObject cropJson(const CropRect& c)
+{
+    auto rect = [](const QRect& r) {
+        return QJsonArray{r.x(), r.y(), r.width(), r.height()};
+    };
+    return QJsonObject{{QStringLiteral("name"), c.name},
+                       {QStringLiteral("logical"), rect(c.logical)},
+                       {QStringLiteral("device"), rect(c.device)}};
+}
+
+QJsonObject environmentJson(QApplication& app, MainWindow* window, const Args& args)
+{
+    const QFontInfo fi(app.font());
+    QScreen* screen = QGuiApplication::primaryScreen();
+    return QJsonObject{
+        {QStringLiteral("qt_scale_factor"), qEnvironmentVariable("QT_SCALE_FACTOR")},
+        {QStringLiteral("primary_screen_dpr_scaled"), screen != nullptr ? screen->devicePixelRatio() : 0.0},
+        {QStringLiteral("build_tag"), BuildIdentity::buildTag()},
+        {QStringLiteral("version"), QStringLiteral(NEREUSSDR_VERSION)},
+        {QStringLiteral("qt_runtime"), QString::fromLatin1(qVersion())},
+        {QStringLiteral("qt_compiled"), QStringLiteral(QT_VERSION_STR)},
+        {QStringLiteral("platform"), QGuiApplication::platformName()},
+        {QStringLiteral("ignored_safe_area_margins"), safeAreaText(window)},
+        {QStringLiteral("menu_bar"), menuBarText(window)},
+        {QStringLiteral("os"), QSysInfo::prettyProductName()},
+        // The app sets Fusion, then its stylesheet wraps it in a
+        // QStyleSheetStyle, whose own name() is empty.
+        {QStringLiteral("style"), app.style() != nullptr
+             ? QStringLiteral("Fusion + app stylesheet (%1)")
+                   .arg(QString::fromLatin1(app.style()->metaObject()->className()))
+             : QString()},
+        {QStringLiteral("font"), QJsonObject{
+             {QStringLiteral("family"), fi.family()},
+             {QStringLiteral("point_size"), fi.pointSizeF()},
+             {QStringLiteral("pixel_size"), fi.pixelSize()}}},
+        {QStringLiteral("spectrum_rhi_backend"), spectrumBackend(window)},
+        {QStringLiteral("window_title"), window->windowTitle()},
+        {QStringLiteral("settings_file"), AppSettings::instance().filePath()},
+        {QStringLiteral("requested_size"), QJsonArray{args.size.width(), args.size.height()}},
+        {QStringLiteral("requested_dpr"), args.dpr},
+    };
+}
+
+bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneContext& ctx,
+                 const QString& sceneName)
+{
+    QDir().mkpath(args.out);
+    const QJsonObject env = environmentJson(app, window, args);
+    for (const CapturedImage& img : ctx.images) {
+        const QString pngPath = QDir(args.out).filePath(img.name + QStringLiteral(".png"));
+        if (!img.image.save(pngPath, "PNG")) {
+            std::fprintf(stderr, "cannot write %s\n", qPrintable(pngPath));
+            return false;
+        }
+        QFile f(pngPath);
+        QByteArray sha;
+        if (f.open(QIODevice::ReadOnly)) {
+            sha = QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256).toHex();
+        }
+        QJsonArray crops;
+        for (const CropRect& c : img.crops) {
+            crops.append(cropJson(c));
+        }
+        QJsonObject side{
+            {QStringLiteral("scene"), sceneName},
+            {QStringLiteral("profile"), args.profile},
+            {QStringLiteral("image"), img.name + QStringLiteral(".png")},
+            {QStringLiteral("kind"), img.kind},
+            {QStringLiteral("logical_size"), QJsonArray{img.logicalSize.width(), img.logicalSize.height()}},
+            {QStringLiteral("dpr"), img.dpr},
+            {QStringLiteral("device_size"), QJsonArray{img.image.width(), img.image.height()}},
+            {QStringLiteral("sha256"), QString::fromLatin1(sha)},
+            {QStringLiteral("crops"), crops},
+            {QStringLiteral("not_shown"), ctx.notShown},
+            {QStringLiteral("unfrozen"), ctx.unfrozen},
+            {QStringLiteral("frozen"), ctx.frozen},
+            {QStringLiteral("stopped_timers"), ctx.stoppedTimers},
+            {QStringLiteral("spectrum_checks"), ctx.checks},
+            {QStringLiteral("notes"), ctx.notes},
+            {QStringLiteral("provenance"), QStringLiteral("retained-current-app")},
+            {QStringLiteral("environment"), env},
+        };
+        for (auto it = img.extra.constBegin(); it != img.extra.constEnd(); ++it) {
+            side.insert(it.key(), it.value());
+        }
+        QFile sf(QDir(args.out).filePath(img.name + QStringLiteral(".json")));
+        if (!sf.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            std::fprintf(stderr, "cannot write sidecar for %s\n", qPrintable(img.name));
+            return false;
+        }
+        sf.write(QJsonDocument(side).toJson(QJsonDocument::Indented));
+    }
+    return true;
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    BuildIdentity::setBuildTag(QString::fromUtf8(NEREUSSDR_BUILD_TAG));
+    GuiApplication app(argc, argv);
+
+    Args args;
+    QString error;
+    if (!parseArgs(app.arguments(), args, error)) {
+        std::fprintf(stderr, "nereus_visual_preview: %s\n", qPrintable(error));
+        return kExitBadArgs;
+    }
+    if (args.probe) {
+        QScreen* screen = QGuiApplication::primaryScreen();
+        std::printf("primary_screen_dpr=%.4f\n", screen != nullptr ? screen->devicePixelRatio() : 0.0);
+        std::printf("qt_scale_factor=%s\n", qPrintable(qEnvironmentVariable("QT_SCALE_FACTOR")));
+        return 0;
+    }
+
+    applyAppTheme(app);
+    OffScreenFilter offScreen;
+    app.installEventFilter(&offScreen);
+
+    if (!Test::RemoteWindowHarness::useIsolatedProfile(QStringLiteral("visual-preview"))) {
+        std::fprintf(stderr, "nereus_visual_preview: the isolated profile is not active\n");
+        return kExitUnsafeProfile;
+    }
+    // Removes this process's settings file when main returns, after the
+    // window (declared later, so destroyed first) has saved into it.
+    struct ProfileCleanup {
+        ~ProfileCleanup() { (void)Test::RemoteWindowHarness::removeIsolatedProfile(); }
+    } profileCleanup;
+    QString why;
+    if (!profileIsSafe(why)) {
+        std::fprintf(stderr, "nereus_visual_preview: %s\n", qPrintable(why));
+        return kExitUnsafeProfile;
+    }
+    Test::markAudioFirstRunDone();
+
+    QVector<Scene> scenes = fixedScenes();
+    const bool wantsSetupPage = args.scene.startsWith(QLatin1String("dialog-setup-"));
+
+    Scene scene;
+    if (!args.list && !wantsSetupPage) {
+        bool found = false;
+        for (const Scene& s : scenes) {
+            if (s.name == args.scene) {
+                scene = s;
+                found = true;
+            }
+        }
+        if (!found) {
+            std::fprintf(stderr, "nereus_visual_preview: unknown scene %s\n", qPrintable(args.scene));
+            return kExitBadArgs;
+        }
+    }
+
+    const QString layout = (args.list || wantsSetupPage) ? QStringLiteral("2v") : scene.panLayout;
+    std::unique_ptr<MainWindow> window = openWindow(layout, args.size);
+    if (!waitForSlices(window.get(), panCountForLayout(layout))) {
+        std::fprintf(stderr, "nereus_visual_preview: slices did not appear on every pan\n");
+        return kExitSceneFailed;
+    }
+    pump(kStartupSettleMs);
+
+    if (args.list || wantsSetupPage) {
+        const QVector<Scene> setup = setupPageScenes(window.get());
+        if (args.list) {
+            QTextStream out(stdout);
+            for (const Scene& s : scenes) {
+                out << s.name << (s.dialog ? "\tdialog" : "\twindow") << '\n';
+            }
+            for (const Scene& s : setup) {
+                out << s.name << "\tdialog\n";
+            }
+            out.flush();
+            window.reset();
+            return 0;
+        }
+        bool found = false;
+        for (const Scene& s : setup) {
+            if (s.name == args.scene) {
+                scene = s;
+                found = true;
+            }
+        }
+        if (!found) {
+            std::fprintf(stderr, "nereus_visual_preview: unknown scene %s\n", qPrintable(args.scene));
+            return kExitBadArgs;
+        }
+        pump(kStartupSettleMs);
+    }
+
+    // The window must be exactly the profile: logical client size and DPR.
+    const double actualDpr = window->devicePixelRatioF();
+    if (std::abs(actualDpr - args.dpr) > kDprTolerance) {
+        std::fprintf(stderr,
+                     "nereus_visual_preview: window DPR %.4f differs from --dpr %.4f "
+                     "(QT_SCALE_FACTOR=%s)\n",
+                     actualDpr, args.dpr, qPrintable(qEnvironmentVariable("QT_SCALE_FACTOR")));
+        return kExitMismatch;
+    }
+    if (window->size() != args.size) {
+        std::fprintf(stderr,
+                     "nereus_visual_preview: client size %dx%d differs from --size %dx%d "
+                     "(minimum %dx%d)\n",
+                     window->width(), window->height(), args.size.width(), args.size.height(),
+                     window->minimumSizeHint().width(), window->minimumSizeHint().height());
+        return kExitMismatch;
+    }
+
+    SceneContext ctx;
+    ctx.window = window.get();
+    ctx.model = window->radioModel();
+    ctx.size = args.size;
+    ctx.dpr = args.dpr;
+    ctx.crops = !scene.dialog && args.profile == QLatin1String("mac-1512x869@2");
+    scene.run(ctx);
+    if (!ctx.failure.isEmpty()) {
+        std::fprintf(stderr, "nereus_visual_preview: %s: %s\n", qPrintable(scene.name),
+                     qPrintable(ctx.failure));
+        return kExitSceneFailed;
+    }
+    if (window->size() != args.size) {
+        std::fprintf(stderr, "nereus_visual_preview: the scene resized the window to %dx%d\n",
+                     window->width(), window->height());
+        return kExitMismatch;
+    }
+    if (!writeImages(app, window.get(), args, ctx, scene.name)) {
+        return kExitSceneFailed;
+    }
+    std::printf("%s: %lld images\n", qPrintable(scene.name), static_cast<long long>(ctx.images.size()));
+    window.reset();
+    return 0;
+}

@@ -9898,3 +9898,6 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# Workspace visual preview tool (not a test): tests/visual/.
+add_subdirectory(visual)
