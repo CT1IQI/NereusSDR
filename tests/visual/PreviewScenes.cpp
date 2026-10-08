@@ -1955,6 +1955,25 @@ void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWid
     }
 }
 
+// The scene runs inside the event loop, so processEvents never runs the
+// deleteLater() of the badges the rail dropped on its last rebuild; live,
+// the loop does on return. Hide them so they are not painted under the
+// current badges. (Flushing every deferred delete instead also drops what
+// the poses feed, so it is limited to the rail.)
+void hideStaleRailBadges(ProfileRail* rail)
+{
+    QSet<QPushButton*> current;
+    for (const QString& id : rail->badges()) {
+        current.insert(rail->badgeButton(id));
+    }
+    for (QPushButton* b : rail->findChildren<QPushButton*>(QStringLiteral("profileRailBadge"),
+                                                          Qt::FindDirectChildrenOnly)) {
+        if (!current.contains(b)) {
+            b->hide();
+        }
+    }
+}
+
 void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
                   const std::function<void(SceneContext&)>& pose = {},
                   const std::function<void(SceneContext&)>& afterCapture = {},
@@ -1966,17 +1985,10 @@ void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
     runWindowScene(ctx, twoBandPoses(), 0, [seeded, shown](SceneContext& c) {
         seedProfiles(c, shown, *seeded);
     }, [seeded, shown, pose](SceneContext& c) {
-        // The scene runs inside the event loop, so processEvents never
-        // runs the deleteLater() of the rail's rebuilt badges; live, the
-        // loop does on return. Without this the old badges stay painted
-        // under the new ones.
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         poseProfile(c, *seeded, shown);
         if (pose) {
             pose(c);
         }
-        pump(kFinalSettleMs);
-        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {
@@ -2250,6 +2262,7 @@ QVector<Scene> fixedScenes()
             ProfileRailDock* dock = c.window->profileRailDock();
             WorkspaceProfiles* profiles = c.window->workspaceProfiles();
             dock->open();
+            hideStaleRailBadges(dock->rail());
             pump(kFinalSettleMs);
             QPushButton* d = profiles->ids().size() > 1 ? dock->rail()->badgeButton(profiles->ids().at(1)) : nullptr;
             if (d == nullptr) {
@@ -2282,6 +2295,7 @@ QVector<Scene> fixedScenes()
         sceneProfile(ctx, QStringLiteral("profile-new-menu"), SceneProfile::Ssb, [menu](SceneContext& c) {
             ProfileRailDock* dock = c.window->profileRailDock();
             dock->open();
+            hideStaleRailBadges(dock->rail());
             pump(kFinalSettleMs);
             QWidget* plus = dock->rail()->plusButton();
             *menu = WorkspaceProfilesDialog::createNewMenu(c.window->workspaceProfiles(), c.window);
