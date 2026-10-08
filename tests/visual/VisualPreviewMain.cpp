@@ -33,6 +33,9 @@
 //   2026-10-07 - Scenes that carry their own workspace preview switch,
 //                 provenance and proposed values. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Look variants only for dialog-* scenes (setup-look-*
+//                 are looks already). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -219,8 +222,10 @@ QString baseSceneFor(const QString& name)
 // The look name for a Task 1 scene, or empty when it has no look variant.
 QString lookSceneFor(const Scene& s)
 {
+    // Only the Task 1 dialog-* scenes have look variants; setup-look-*
+    // scenes are already looks.
     if (s.dialog) {
-        return QLatin1String(kLookPrefix) + s.name;
+        return s.name.startsWith(QLatin1String("dialog-")) ? QLatin1String(kLookPrefix) + s.name : QString();
     }
     for (const char* base : {"baseline-two-band", "baseline-four-rx", "baseline-tx"}) {
         if (s.name == QLatin1String(base)) {

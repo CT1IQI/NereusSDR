@@ -32,6 +32,11 @@
 //                 profile-new-menu) with slice states and rail
 //                 measurements. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Whole-image provenance regions on every sidecar; coverage
+//                 scenes (clean-spectrum, cw-digital, tx-processing,
+//                 edit-add-content, edit-source-select, edit-properties,
+//                 four-rx-look, setup-look-*). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -53,10 +58,19 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QSplitter>
+#include <QSplitterHandle>
 #include <QStatusBar>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QAbstractItemView>
+#include <QComboBox>
+#include <QHash>
+#include <QJsonDocument>
+#include <QListWidget>
+#include <QSet>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -75,6 +89,12 @@
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/TitleBar.h"
+#include "gui/UnbuiltFeatures.h"
+#include "gui/applets/CwxApplet.h"
+#include "gui/applets/DigitalApplet.h"
+#include "gui/applets/DvkApplet.h"
+#include "gui/applets/EqApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxCfcDialog.h"
 #include "gui/applets/TxEqDialog.h"
@@ -550,6 +570,219 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+// ---- provenance regions ----------------------------------------------------
+
+// The dynamic property a widget's provenance is tagged with; untagged
+// widgets inherit from their nearest tagged ancestor, and an image root
+// with no tag is retained.
+constexpr auto kProvenanceProperty = "nereusPreviewProvenance";
+// Optional region name and content type for a tagged widget.
+constexpr auto kRegionNameProperty = "nereusPreviewRegionName";
+constexpr auto kRegionTypeProperty = "nereusPreviewRegionType";
+
+QString provRetained() { return QStringLiteral("retained"); }
+QString provLongpath() { return QStringLiteral("longpath-port"); }
+QString provProposed() { return QStringLiteral("proposed"); }
+QString provNotWired() { return QStringLiteral("exists-not-wired"); }
+QString provNotImplemented() { return QStringLiteral("not-implemented"); }
+
+void tagProvenance(QWidget* w, const QString& provenance, bool overwrite = true)
+{
+    if (w != nullptr && (overwrite || !w->property(kProvenanceProperty).isValid())) {
+        w->setProperty(kProvenanceProperty, provenance);
+    }
+}
+
+// Provenance by class. Container chrome stays retained (so containers in a
+// proposed strip read as retained); the proposed headers, strips, splitter
+// handles and profile chrome are proposed; the ported Longpath widgets are
+// longpath-port.
+QString classProvenance(QWidget* w)
+{
+    if (dynamic_cast<FrequencyInstrument*>(w) != nullptr || dynamic_cast<NeedleInstrument*>(w) != nullptr
+        || dynamic_cast<BarInstrument*>(w) != nullptr || dynamic_cast<BandwidthFilterPane*>(w) != nullptr
+        || dynamic_cast<ProfileRail*>(w) != nullptr) {
+        return provLongpath();
+    }
+    if (dynamic_cast<EdgeDockStrip*>(w) != nullptr || dynamic_cast<WorkspaceGroupHeader*>(w) != nullptr
+        || dynamic_cast<WorkspaceEntryHeader*>(w) != nullptr || dynamic_cast<WorkspaceCornerGrip*>(w) != nullptr
+        || dynamic_cast<ProfileRailDock*>(w) != nullptr || dynamic_cast<WorkspaceProfilesDialog*>(w) != nullptr
+        || w->objectName() == QLatin1String("profileRailPopover")) {
+        return provProposed();
+    }
+    if (auto* handle = dynamic_cast<QSplitterHandle*>(w);
+        handle != nullptr && dynamic_cast<EdgeDockSplitter*>(handle->splitter()) != nullptr) {
+        return provProposed();
+    }
+    if (dynamic_cast<ContainerWidget*>(w) != nullptr) {
+        return provRetained();
+    }
+    return {};
+}
+
+// Tags every widget under `root` by class (never over a scene's own tag),
+// and each container entry widget with its entry id, content type and,
+// for Longpath content, longpath-port.
+void tagTree(QWidget* root)
+{
+    QList<QWidget*> all = root->findChildren<QWidget*>();
+    all.prepend(root);
+    for (QWidget* w : all) {
+        const QString p = classProvenance(w);
+        if (!p.isEmpty()) {
+            tagProvenance(w, p, false);
+        }
+    }
+    QList<ContainerContentHost*> hosts = root->findChildren<ContainerContentHost*>();
+    if (auto* self = qobject_cast<ContainerContentHost*>(root)) {
+        hosts.prepend(self);
+    }
+    for (ContainerContentHost* host : hosts) {
+        const ContainerDocument doc = host->captureDocument();
+        for (const auto& row : host->entryRows()) {
+            if (row.widget == nullptr) {
+                continue;
+            }
+            QString typeId;
+            for (const ContentEntry& e : doc.contents) {
+                if (e.id == row.entryId) {
+                    typeId = e.typeId;
+                }
+            }
+            if (!row.widget->property(kRegionNameProperty).isValid()) {
+                row.widget->setProperty(kRegionNameProperty, row.entryId);
+                row.widget->setProperty(kRegionTypeProperty, typeId);
+            }
+            if (typeId.startsWith(QLatin1String("longpath."))) {
+                tagProvenance(row.widget, provLongpath(), false);
+            }
+        }
+    }
+}
+
+QJsonArray regionRectJson(const QRect& r)
+{
+    return QJsonArray{r.x(), r.y(), r.width(), r.height()};
+}
+
+QRect regionRectFrom(const QJsonValue& v)
+{
+    const QJsonArray a = v.toArray();
+    return QRect(a.at(0).toInt(), a.at(1).toInt(), a.at(2).toInt(), a.at(3).toInt());
+}
+
+// Appends the regions of `w` (and its subtree) to `out`. Rects are in
+// `root` coordinates moved by `offset`; `clip` is in root coordinates.
+void walkRegions(QWidget* root, QWidget* w, const QString& inherited, int parent, const QRect& clip,
+                 const QPoint& offset, QJsonArray& out)
+{
+    const QRect rect(w == root ? QPoint(0, 0) : w->mapTo(root, QPoint(0, 0)), w->size());
+    const QRect visible = rect.intersected(clip);
+    if (visible.isEmpty()) {
+        return;
+    }
+    const QString own = w->property(kProvenanceProperty).toString();
+    const QString provenance = own.isEmpty() ? inherited : own;
+    int index = parent;
+    if (w == root || provenance != inherited) {
+        index = int(out.size());
+        QString name = w->property(kRegionNameProperty).toString();
+        if (name.isEmpty()) {
+            name = w->objectName();
+        }
+        if (name.isEmpty()) {
+            name = QString::fromLatin1(w->metaObject()->className());
+        }
+        QString type = w->property(kRegionTypeProperty).toString();
+        if (type.isEmpty()) {
+            type = w->property("containerFactoryType").toString();
+        }
+        const int depth = parent < 0 ? 0 : out.at(parent).toObject().value(QStringLiteral("depth")).toInt() + 1;
+        out.append(QJsonObject{{QStringLiteral("name"), name},
+                               {QStringLiteral("provenance"), provenance},
+                               {QStringLiteral("rect"), regionRectJson(rect.translated(offset))},
+                               {QStringLiteral("visible_rect"), regionRectJson(visible.translated(offset))},
+                               {QStringLiteral("type"), type},
+                               {QStringLiteral("widget_class"), QString::fromLatin1(w->metaObject()->className())},
+                               {QStringLiteral("parent"), parent},
+                               {QStringLiteral("depth"), depth}});
+    }
+    for (QObject* o : w->children()) {
+        auto* child = qobject_cast<QWidget*>(o);
+        if (child == nullptr || child->isWindow() || !child->isVisibleTo(root)) {
+            continue;
+        }
+        walkRegions(root, child, provenance, index, visible, offset, out);
+    }
+}
+
+// The regions of the top-level `top` painted at `offset` into an image of
+// `imageSize`, appended to `out`.
+void appendRegions(QJsonArray& out, QWidget* top, const QPoint& offset, const QSize& imageSize)
+{
+    tagTree(top);
+    const QString own = top->property(kProvenanceProperty).toString();
+    const QRect clip = QRect(-offset, imageSize).intersected(top->rect());
+    walkRegions(top, top, own.isEmpty() ? provRetained() : own, -1, clip, QPoint(0, 0) + offset, out);
+}
+
+QString regionUnits()
+{
+    return QStringLiteral(
+        "rect and visible_rect are [x, y, width, height] in logical px from this image's top-left; "
+        "device px = logical px x dpr");
+}
+
+QString regionsContract()
+{
+    return QStringLiteral(
+        "regions: the top-most provenance regions covering the whole image, in paint order (a parent "
+        "before its children, siblings bottom to top; composited top-levels after the window). Each "
+        "widget carries nereusPreviewProvenance (retained, longpath-port, proposed, exists-not-wired, "
+        "not-implemented) or inherits it from its nearest tagged ancestor; an image root with no tag "
+        "is retained. A region is written for the root and for each visible widget whose provenance "
+        "differs from its parent's. A point's provenance is that of the last region whose visible_rect "
+        "contains it. Fields: name (entry id, object name or class), provenance, rect (the widget), "
+        "visible_rect (clipped to its ancestors and the image; regions with no visible area are "
+        "omitted), type (content type id for container content, else empty), widget_class, parent "
+        "(index of the enclosing region, -1 for an image root), depth (0 for a root)");
+}
+
+// Sets the whole-image regions of `img`, grabbed from `root`.
+void attachRegions(CapturedImage& img, QWidget* root)
+{
+    QJsonArray regions;
+    appendRegions(regions, root, QPoint(0, 0), img.logicalSize);
+    img.extra[QStringLiteral("regions")] = regions;
+    img.extra[QStringLiteral("region_units")] = regionUnits();
+    img.extra[QStringLiteral("regions_contract")] = regionsContract();
+}
+
+// The regions of `regions` inside `crop` (logical px of the source image),
+// moved to the crop's top-left and scaled by `scale`.
+QJsonArray cropRegions(const QJsonArray& regions, const QRect& crop, int scale)
+{
+    QJsonArray out;
+    QHash<int, int> remap;
+    const auto place = [&crop, scale](const QRect& r) {
+        const QRect m = r.translated(-crop.topLeft());
+        return QRect(m.x() * scale, m.y() * scale, m.width() * scale, m.height() * scale);
+    };
+    for (int i = 0; i < regions.size(); ++i) {
+        QJsonObject r = regions.at(i).toObject();
+        const QRect visible = regionRectFrom(r.value(QStringLiteral("visible_rect"))).intersected(crop);
+        if (visible.isEmpty()) {
+            continue;
+        }
+        remap.insert(i, int(out.size()));
+        r[QStringLiteral("rect")] = regionRectJson(place(regionRectFrom(r.value(QStringLiteral("rect")))));
+        r[QStringLiteral("visible_rect")] = regionRectJson(place(visible));
+        r[QStringLiteral("parent")] = remap.value(r.value(QStringLiteral("parent")).toInt(), -1);
+        out.append(r);
+    }
+    return out;
+}
+
 void appendCropImages(SceneContext& ctx, const CapturedImage& full, const QString& name);
 
 // Grabs the whole window and, at the crop profile, its detail crops.
@@ -597,6 +830,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
             ctx.extraCrops(ctx, full.crops, full.dpr);
         }
     }
+    attachRegions(full, ctx.window);
     ctx.images.append(full);
     appendCropImages(ctx, full, name);
 }
@@ -614,6 +848,12 @@ void appendCropImages(SceneContext& ctx, const CapturedImage& full, const QStrin
         c.dpr = full.dpr;
         c.crops = {crop};
         c.extra[QStringLiteral("source")] = name;
+        if (full.extra.contains(QStringLiteral("regions"))) {
+            c.extra[QStringLiteral("regions")] =
+                cropRegions(full.extra.value(QStringLiteral("regions")).toArray(), crop.logical, 1);
+            c.extra[QStringLiteral("region_units")] = regionUnits();
+            c.extra[QStringLiteral("regions_contract")] = regionsContract();
+        }
         ctx.images.append(c);
         CapturedImage big;
         big.name = c.name + QStringLiteral("@3x");
@@ -626,6 +866,12 @@ void appendCropImages(SceneContext& ctx, const CapturedImage& full, const QStrin
         big.crops = {crop};
         big.extra[QStringLiteral("source")] = name;
         big.extra[QStringLiteral("enlargement")] = QStringLiteral("3x nearest-neighbour");
+        if (full.extra.contains(QStringLiteral("regions"))) {
+            big.extra[QStringLiteral("regions")] =
+                cropRegions(full.extra.value(QStringLiteral("regions")).toArray(), crop.logical, 3);
+            big.extra[QStringLiteral("region_units")] = regionUnits();
+            big.extra[QStringLiteral("regions_contract")] = regionsContract();
+        }
         ctx.images.append(big);
     }
 }
@@ -798,6 +1044,8 @@ struct EdgeEntry {
     QString legacyRecord;
     // Source context keys merged into the entry's context (rxSource).
     QJsonObject context;
+    // Keys merged into the entry's config (a Longpath binding).
+    QJsonObject config;
 };
 
 // One row of buttons: every button in its own column, at `heightRatio`,
@@ -826,6 +1074,14 @@ ContainerDocument makeSceneContainer(ContainerManager* manager, const QString& n
     for (const EdgeEntry& e : entries) {
         ContentEntry entry = manager->contentRegistry()->makeEntry(e.typeId);
         entry.id = d.id + QStringLiteral("-") + slug(e.typeId);
+        // A second entry of the same type gets a numbered id.
+        for (int n = 2; std::any_of(d.contents.cbegin(), d.contents.cend(),
+                                    [&entry](const ContentEntry& c) { return c.id == entry.id; }); ++n) {
+            entry.id = d.id + QStringLiteral("-") + slug(e.typeId) + QStringLiteral("-%1").arg(n);
+        }
+        for (auto it = e.config.constBegin(); it != e.config.constEnd(); ++it) {
+            entry.config.insert(it.key(), it.value());
+        }
         if (!e.legacyRecord.isEmpty()) {
             entry.config.insert(QStringLiteral("legacyRecord"), e.legacyRecord);
         }
@@ -1232,7 +1488,11 @@ void sceneInstrumentsSheet(SceneContext& ctx)
                                             "the bar shows its unbound face, not ALC").arg(p.row->key));
         }
     }
-    img.extra[QStringLiteral("regions")] = regions;
+    // The per-instrument list (with its size column) predates the
+    // whole-image regions.
+    img.extra[QStringLiteral("sheet_regions")] = regions;
+    tagProvenance(sheet.get(), provProposed());
+    attachRegions(img, sheet.get());
     img.extra[QStringLiteral("window")] = QStringLiteral("its own top-level QWidget, not the MainWindow");
     if (ctx.crops) {
         const auto cropOf = [&](const QString& name, const QRect& logical) {
@@ -1396,7 +1656,7 @@ void sceneMixedContainer(SceneContext& ctx, const QString& name, HeaderMode head
     const QJsonArray regions = stationRegions(ctx, *stationId);
     for (CapturedImage& img : ctx.images) {
         if (img.name == name) {
-            img.extra[QStringLiteral("regions")] = regions;
+            img.extra[QStringLiteral("entry_regions")] = regions;
             img.extra[QStringLiteral("region_provenance")] = QStringLiteral(
                 "longpath-port: Longpath instruments; retained: Thetis meter faces; "
                 "proposed: headers, strips and the container viewport");
@@ -1427,6 +1687,7 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
     img.dpr = img.image.devicePixelRatio();
     img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(dialog->metaObject()->className());
     img.extra[QStringLiteral("window_title")] = dialog->windowTitle();
+    attachRegions(img, dialog);
     ctx.images.append(img);
 }
 
@@ -1924,7 +2185,7 @@ void annotateProfileImages(SceneContext& ctx, const QString& name, const SeededP
         img.extra[QStringLiteral("profiles")] = profiles;
         img.extra[QStringLiteral("profile_saved_at")] = profileClock().toString(Qt::ISODate);
         img.extra[QStringLiteral("rail_measure")] = measure;
-        img.extra[QStringLiteral("regions")] = regions;
+        img.extra[QStringLiteral("rail_regions")] = regions;
         img.extra[QStringLiteral("region_provenance")] = QStringLiteral(
             "longpath-port: the profile rail (fanned out) and the Longpath instruments; proposed: "
             "profiles, the collapsed badge wrapper, the popover, arrangements, the dialog");
@@ -1946,9 +2207,15 @@ void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWid
         if (img.name != name) {
             continue;
         }
+        QJsonArray regions = img.extra.value(QStringLiteral("regions")).toArray();
         for (QWidget* top : tops) {
             compositeOver(img, ctx.window, top);
+            if (top != nullptr && top->isVisible()) {
+                appendRegions(regions, top, top->mapToGlobal(QPoint(0, 0)) - ctx.window->mapToGlobal(QPoint(0, 0)),
+                              img.logicalSize);
+            }
         }
+        img.extra[QStringLiteral("regions")] = regions;
         const CapturedImage full = img;
         appendCropImages(ctx, full, name);
         return;
@@ -2005,6 +2272,694 @@ void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
     annotateProfileImages(ctx, name, *seeded, shown);
 }
 
+// The display-only transmit state of slice A (baseline-tx), before the
+// freeze.
+void poseTxBeforeFreeze(SceneContext& c)
+{
+    SliceModel* sliceA = c.model->sliceById(0);
+    if (auto* mox = c.window->findChild<MoxDisplayController*>()) {
+        mox->setKeyed(true, sliceA != nullptr ? sliceA->sliceIndex() : 0);
+        c.notes.append(QStringLiteral("MoxDisplayController::setKeyed(true, slice A)"));
+    } else {
+        c.notShown.append(QJsonObject{
+            {QStringLiteral("item"), QStringLiteral("MoxDisplayController keyed overlay")},
+            {QStringLiteral("reason"), QStringLiteral(
+                "a Deferred-startup local window builds no MoxDisplayController "
+                "(it needs the TX analyzer)")}});
+    }
+    if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0))) {
+        sw->setTxActiveForTest(true);
+        c.notes.append(QStringLiteral("SpectrumWidget::setTxActiveForTest(true) on pan-0"));
+    }
+    if (auto* poller = c.window->findChild<MeterPoller*>()) {
+        poller->stop();
+        poller->setInTx(true);
+        c.notes.append(QStringLiteral("MeterPoller::stop(), setInTx(true)"));
+    }
+}
+
+// The transmit display and S-meter levels, after the data is fed.
+void poseTxAfterFeed(SceneContext& c)
+{
+    // Pan 1 transmits: the transmit trace and waterfall a local
+    // window's LocalTxDisplaySource would draw, slice A's LSB at
+    // the default transmit filter 100..2900 Hz.
+    if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0))) {
+        feedTxPan(sw, kTwoBandCarrierHz, false, kTxFilterLowHz, kTxFilterHighHz,
+                  kTxPeakDbm, kTxFloorDbm, kTxSeed);
+        c.notes.append(QStringLiteral(
+            "pan-0 transmit display: updateSpectrumFromTxPixels and pushTxWaterfallRow, "
+            "LSB voice 100..2900 Hz, peak %1 dBm over %2 dBm").arg(kTxPeakDbm).arg(kTxFloorDbm));
+    }
+    for (SMeterWidget* meter : allMeters(c)) {
+        meter->setTransmitting(true);
+        meter->setTxMeters(kTxForwardWatts, kTxSwr);
+        meter->setMicMeters(kTxMicDb, 0.0f, kTxMicDb, -30.0f);
+        c.notes.append(QStringLiteral("SMeterWidget: transmitting, 85 W, SWR 1.25, mic -12 dB"));
+    }
+    c.notShown.append(QJsonObject{
+        {QStringLiteral("item"), QStringLiteral("ALC -2 dB")},
+        {QStringLiteral("reason"), QStringLiteral(
+            "SMeterWidget has no ALC input and the default panel has no ALC meter")}});
+}
+
+// ---- coverage scenes (workspace preview) -----------------------------------
+
+// The ALC level the transmit scenes pose (baseline-tx records it as not
+// shown on the default panel).
+constexpr double kTxAlcDb = -2.0;
+// A not-implemented plate: its width and its gap below what it explains.
+constexpr int kPlateWidthPx = 270;
+constexpr int kPlateGapPx = 6;
+// Container Settings is sized to the window less this much.
+constexpr int kDialogInsetPx = 80;
+// The free container's clearance from the dB scale and the time scale.
+constexpr int kFreeScaleClearancePx = 72;
+constexpr int kFreeBottomClearancePx = 24;
+
+// Applets the source has but MainWindow does not construct (their lines
+// are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
+// markers with no model, network or device access, so the preview builds
+// them standalone as container content, tagged exists-not-wired.
+constexpr auto kPreviewCwxType = "preview.cwx";
+constexpr auto kPreviewDvkType = "preview.dvk";
+constexpr auto kPreviewDigitalType = "preview.digital";
+constexpr auto kPreviewEqType = "preview.eq";
+
+// Every slice's state on every image of the scene.
+void annotateSlices(SceneContext& ctx)
+{
+    const QJsonArray slices = sliceStates(ctx);
+    for (CapturedImage& img : ctx.images) {
+        img.extra[QStringLiteral("slice_states")] = slices;
+    }
+}
+
+void addAllStripCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    addStripCrops(ctx, crops, dpr);
+    if (auto* area = ctx.window->findChild<EdgeDockArea*>()) {
+        addCrop(crops, QStringLiteral("strip-right"), ctx.window, area->strip(DockEdge::Right), dpr);
+    }
+}
+
+// Takes `typeIds` out of the Main Panel, so a singleton can be placed in
+// another container (its "Move").
+void takeFromMain(WorkspaceDocument& d, const QStringList& typeIds)
+{
+    for (ContainerDocument& c : d.containers) {
+        if (c.id == d.mainContainerId) {
+            c.contents.removeIf([&typeIds](const ContentEntry& e) { return typeIds.contains(e.typeId); });
+        }
+    }
+}
+
+bool registerPreviewApplets(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->contentRegistry() == nullptr || manager->workspaceStore() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return false;
+    }
+    ContainerContentRegistry* registry = manager->contentRegistry();
+    RadioModel* model = ctx.model;
+    using Make = std::function<QWidget*(RadioModel*, QWidget*)>;
+    const auto add = [registry, model](const char* typeId, const QString& title, const Make& make) {
+        const QString id = QString::fromLatin1(typeId);
+        if (registry->hasWidgetFactory(id)) {
+            return;
+        }
+        registry->registerWidgetFactory(id, {id, title, false, true, {}},
+            [model, make](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
+                QWidget* w = make(model, parent);
+                tagProvenance(w, provNotWired());
+                return w;
+            });
+    };
+    add(kPreviewCwxType, QStringLiteral("CWX (not wired)"),
+        [](RadioModel* m, QWidget* p) -> QWidget* { return new CwxApplet(m, p); });
+    add(kPreviewDvkType, QStringLiteral("DVK (not wired)"),
+        [](RadioModel* m, QWidget* p) -> QWidget* { return new DvkApplet(m, p); });
+    add(kPreviewDigitalType, QStringLiteral("Digital (not wired)"),
+        [](RadioModel* m, QWidget* p) -> QWidget* { return new DigitalApplet(m, p); });
+    add(kPreviewEqType, QStringLiteral("EQ (not wired)"),
+        [](RadioModel* m, QWidget* p) -> QWidget* { return new EqApplet(m, p); });
+    ctx.notes.append(QStringLiteral(
+        "CwxApplet, DvkApplet, DigitalApplet and EqApplet: constructed standalone through preview "
+        "widget factories (MainWindow leaves them commented out); exists-not-wired"));
+    return true;
+}
+
+bool commitScene(SceneContext& ctx, HeaderMode header,
+                 const std::function<void(WorkspaceDocument&, ContainerManager*)>& edit)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace: the workspace preview switch is off");
+        return false;
+    }
+    if (!commitArrangement(ctx, manager->workspaceStore()->snapshot(), header, edit)) {
+        ctx.failure = QStringLiteral("could not commit the scene arrangement");
+        return false;
+    }
+    return true;
+}
+
+QJsonObject bindingConfig(int binding)
+{
+    return QJsonObject{{QString::fromLatin1(LongpathContent::kBindingKey), binding}};
+}
+
+// A plate where a control does not exist in this build.
+QLabel* addNotImplementedPlate(QWidget* window, QWidget* near, const QString& what, const QString& reason,
+                               bool below = true)
+{
+    auto* plate = new QLabel(QStringLiteral("not available in this build: %1").arg(reason), window);
+    plate->setObjectName(QStringLiteral("previewNotImplementedPlate"));
+    plate->setWordWrap(true);
+    plate->setStyleSheet(QStringLiteral(
+        "QLabel { background: #1c1c20; color: #c8c8cd; border: 1px dashed #7e7e85; "
+        "border-radius: 6px; padding: 6px 8px; font-size: 11px; }"));
+    plate->setFixedWidth(below ? kPlateWidthPx : qMin(kPlateWidthPx, near->width() - 2 * kPlateGapPx));
+    plate->adjustSize();
+    QPoint at = below ? near->mapTo(window, QPoint(0, near->height() + kPlateGapPx))
+                      : near->mapTo(window, QPoint(kPlateGapPx, kPlateGapPx));
+    at.setX(qBound(0, at.x(), window->width() - plate->width()));
+    at.setY(qBound(0, at.y(), window->height() - plate->height()));
+    plate->move(at);
+    plate->raise();
+    plate->show();
+    tagProvenance(plate, provNotImplemented());
+    plate->setProperty(kRegionNameProperty, QStringLiteral("plate: %1").arg(what));
+    return plate;
+}
+
+// clean-spectrum: one pan, no docked containers, one free container with
+// a Longpath frequency and needle for slice A, header Reveal idle.
+void sceneCleanSpectrum(SceneContext& ctx)
+{
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addAllStripCrops;
+    const QString id = QStringLiteral("preview-instruments");
+    runWindowScene(ctx, defaultPoses(), 0, [id](SceneContext& c) {
+        if (!commitScene(c, HeaderMode::Reveal, [](WorkspaceDocument& d, ContainerManager* m) {
+                for (ContainerDocument& cd : d.containers) {
+                    if (cd.id == d.mainContainerId) {
+                        cd.visible = false;
+                    }
+                }
+                d.containers.append(onSlice(makeSceneContainer(
+                    m, QStringLiteral("Instruments"), DockEdge::Right, ContentLayout::VerticalStack,
+                    {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, rxSource(1)},
+                     {QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, rxSource(1)}}), 1));
+            })) {
+            return;
+        }
+        auto* manager = c.window->findChild<ContainerManager*>();
+        ContainerWidget* box = manager->container(id);
+        if (box == nullptr) {
+            c.failure = QStringLiteral("the Instruments container was not created");
+            return;
+        }
+        // Options > Place Free, then moved by its header to the lower right.
+        emit box->placeFreeRequested();
+        pump(kSettleMs);
+        QWidget* pane = box->parentWidget();
+        if (pane == nullptr) {
+            c.failure = QStringLiteral("the Instruments container was not placed free");
+            return;
+        }
+        WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+        for (auto& d : draft.containers) {
+            if (d.id == id) {
+                const QSize size = d.geometry.isValid() ? d.geometry.size() : box->size();
+                d.geometry = QRect(QPoint(pane->width() - size.width() - kFreeScaleClearancePx,
+                                          pane->height() - size.height() - kFreeBottomClearancePx),
+                                   size);
+                c.notes.append(QStringLiteral("Instruments placed free at %1,%2 %3x%4 in a %5x%6 pane")
+                                   .arg(d.geometry.x()).arg(d.geometry.y())
+                                   .arg(size.width()).arg(size.height())
+                                   .arg(pane->width()).arg(pane->height()));
+            }
+        }
+        if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+            c.failure = QStringLiteral("could not move the Instruments container");
+        }
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    ctx.notes.append(QStringLiteral("Main Panel hidden (visible false); Instruments: Place Free, Header Reveal, "
+                                    "pointer away"));
+    ctx.notes.append(QStringLiteral(
+        "Longpath needle (slice A): offline. MeterPoller polls RX only for contexts with a Thetis "
+        "MeterWidget and none is shown; no reading is faked"));
+    noteStrips(ctx);
+    captureWindow(ctx, QStringLiteral("clean-spectrum"));
+    annotateSlices(ctx);
+}
+
+// cw-digital: slice A 14.030 CW and slice B 7.074 DIGU.
+QVector<PanPose> cwDigitalPoses()
+{
+    const QVector<PanPose> four = fourRxPoses();
+    PanPose a = four.at(2);
+    a.panId = panIdAt(0);
+    a.spectrum.panId = a.panId;
+    PanPose b = four.at(1);
+    b.panId = panIdAt(1);
+    b.spectrum.panId = b.panId;
+    return {a, b};
+}
+
+void sceneCwDigital(SceneContext& ctx)
+{
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addAllStripCrops;
+    runWindowScene(ctx, cwDigitalPoses(), 0, [](SceneContext& c) {
+        if (!registerPreviewApplets(c)) {
+            return;
+        }
+        if (!commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+                placeMain(d, DockEdge::Left);
+                takeFromMain(d, {QStringLiteral("applet:PHCW")});
+                d.containers.append(makeSceneContainer(
+                    m, QStringLiteral("CW and Digital"), DockEdge::Right, ContentLayout::VerticalStack,
+                    {{QStringLiteral("applet:PHCW"), {}},
+                     {QString::fromLatin1(kPreviewCwxType), {}},
+                     {QString::fromLatin1(kPreviewDvkType), {}},
+                     {QString::fromLatin1(kPreviewDigitalType), {}}}));
+            })) {
+            return;
+        }
+        auto* phcw = c.window->findChild<PhoneCwApplet*>();
+        if (phcw == nullptr) {
+            c.failure = QStringLiteral("no PhoneCwApplet");
+            return;
+        }
+        phcw->showPage(1);
+        c.notes.append(QStringLiteral("Main Panel in the left strip; Phone / CW moved to the right strip, "
+                                      "PhoneCwApplet::showPage(1) (its CW page)"));
+    }, [](SceneContext& c) {
+        // The CW page is not built in this build: showPage(1) falls back to
+        // the Phone page, so a plate says so over the applet's top.
+        if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
+            return;
+        }
+        auto* phcw = c.window->findChild<PhoneCwApplet*>();
+        addNotImplementedPlate(c.window, phcw, QStringLiteral("Phone / CW, CW page"),
+                               QStringLiteral("the Phone / CW applet's CW page (UnbuiltFeature::Cwx); "
+                                              "showPage(1) shows the Phone page."), false);
+        c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
+                                      "its Phone page and a not-implemented plate covers its top"));
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, QStringLiteral("cw-digital"));
+    annotateSlices(ctx);
+}
+
+// After the data is fed: each Longpath TX instrument gets the reading
+// MeterPoller::publishGlobalReading would send every context in transmit.
+void poseLongpathTx(SceneContext& ctx, const QStringList& hostIds)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (manager == nullptr || poller == nullptr) {
+        ctx.failure = QStringLiteral("no ContainerManager or MeterPoller");
+        return;
+    }
+    const QHash<int, double> values{{MeterBinding::TxPower, kTxForwardWatts},
+                                    {MeterBinding::TxSwr, kTxSwr},
+                                    {MeterBinding::TxAlc, kTxAlcDb}};
+    for (const QString& id : hostIds) {
+        ContainerContentHost* host = manager->contentHost(id);
+        if (host == nullptr) {
+            ctx.failure = QStringLiteral("no %1 container").arg(id);
+            return;
+        }
+        QList<QWidget*> instruments;
+        for (NeedleInstrument* n : host->findChildren<NeedleInstrument*>()) {
+            instruments.append(n);
+        }
+        for (BarInstrument* b : host->findChildren<BarInstrument*>()) {
+            instruments.append(b);
+        }
+        for (QWidget* w : instruments) {
+            const int binding = w->property("longpathPrimaryBinding").toInt();
+            const QJsonObject context = w->property("containerSourceContext").toJsonObject();
+            emit poller->readingUpdated(context, binding, values.value(binding));
+            ctx.notes.append(QStringLiteral("%1 %2: readingUpdated binding %3 = %4, as MeterPoller "
+                                            "publishes a transmit reading to every context")
+                                 .arg(id, QString::fromLatin1(w->metaObject()->className()))
+                                 .arg(binding).arg(values.value(binding)));
+        }
+    }
+}
+
+void sceneTxProcessing(SceneContext& ctx)
+{
+    // Display-only transmit state, as baseline-tx. Refuse to run if a
+    // connection exists: these seams must never reach a radio.
+    if (ctx.model->connection() != nullptr) {
+        ctx.failure = QStringLiteral("a RadioConnection exists; refusing the transmit scene");
+        return;
+    }
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addAllStripCrops;
+    const QStringList meterHosts = {QStringLiteral("preview-tx-power"), QStringLiteral("preview-swr"),
+                                    QStringLiteral("preview-alc")};
+    runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
+        if (!registerPreviewApplets(c)) {
+            return;
+        }
+        if (!commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+                placeMain(d, DockEdge::Left);
+                takeFromMain(d, {QStringLiteral("applet:TX"), QStringLiteral("applet:pure_signal"),
+                                 QStringLiteral("applet:mod_monitor")});
+                d.containers.append(makeSceneContainer(
+                    m, QStringLiteral("TX Processing"), DockEdge::Right, ContentLayout::VerticalStack,
+                    {{QStringLiteral("applet:TX"), {}},
+                     {QString::fromLatin1(kPreviewEqType), {}},
+                     {QStringLiteral("applet:pure_signal"), {}},
+                     {QStringLiteral("applet:mod_monitor"), {}}}));
+                const QString needle = QString::fromLatin1(LongpathContent::kNeedleType);
+                const QString bar = QString::fromLatin1(LongpathContent::kBarType);
+                d.containers.append(makeSceneContainer(m, QStringLiteral("TX Power"), DockEdge::Top,
+                    ContentLayout::VerticalStack, {{needle, {}, {}, {}, bindingConfig(MeterBinding::TxPower)}}));
+                d.containers.append(makeSceneContainer(m, QStringLiteral("SWR"), DockEdge::Top,
+                    ContentLayout::VerticalStack, {{needle, {}, {}, {}, bindingConfig(MeterBinding::TxSwr)}}));
+                d.containers.append(makeSceneContainer(m, QStringLiteral("ALC"), DockEdge::Top,
+                    ContentLayout::VerticalStack, {{bar, {}, {}, {}, bindingConfig(MeterBinding::TxAlc)}}));
+                d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+            })) {
+            return;
+        }
+        c.notes.append(QStringLiteral("Main Panel in the left strip; TX, PureSignal and Mod Monitor moved "
+                                      "to the right strip with EQ; TX Power, SWR and ALC on top"));
+        poseTxBeforeFreeze(c);
+    }, [meterHosts](SceneContext& c) {
+        poseTxAfterFeed(c);
+        poseLongpathTx(c, meterHosts);
+        pump(kFinalSettleMs);
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    auto* tx = ctx.window->findChild<TxApplet*>();
+    if (tx == nullptr) {
+        ctx.failure = QStringLiteral("no TxApplet");
+        return;
+    }
+    ctx.notes.append(QStringLiteral("TxApplet TX profile selector: %1")
+                         .arg(tx->profileCombo() != nullptr && tx->profileCombo()->isVisible()
+                                  ? QStringLiteral("visible, \"%1\"").arg(tx->profileCombo()->currentText())
+                                  : QStringLiteral("not visible")));
+    noteStrips(ctx);
+    captureWindow(ctx, QStringLiteral("tx-processing"));
+    // The CFC and TX EQ dialogs over the same state, alone.
+    auto* action = ctx.window->findChild<QAction*>(QStringLiteral("toolsTxEqualizer"));
+    if (action == nullptr) {
+        ctx.failure = QStringLiteral("no toolsTxEqualizer action");
+        return;
+    }
+    action->trigger();
+    TxEqDialog* eq = visibleTopLevel<TxEqDialog>();
+    captureDialog(ctx, eq, QStringLiteral("tx-processing--tx-eq"));
+    if (eq != nullptr) {
+        eq->close();
+    }
+    tx->requestOpenCfcDialog();
+    TxCfcDialog* cfc = visibleTopLevel<TxCfcDialog>();
+    captureDialog(ctx, cfc, QStringLiteral("tx-processing--cfc"));
+    if (cfc != nullptr) {
+        cfc->close();
+    }
+    annotateSlices(ctx);
+}
+
+QListWidgetItem* rowContaining(QListWidget* list, const QString& text)
+{
+    for (int i = 0; list != nullptr && i < list->count(); ++i) {
+        if (list->item(i)->text().contains(text, Qt::CaseInsensitive)) {
+            return list->item(i);
+        }
+    }
+    return nullptr;
+}
+
+QJsonArray listTexts(QListWidget* list)
+{
+    QJsonArray out;
+    for (int i = 0; list != nullptr && i < list->count(); ++i) {
+        out.append(list->item(i)->text());
+    }
+    return out;
+}
+
+// What the entry property editor shows: its labels, the Source combo and
+// whether the advanced group is enabled.
+void noteEditor(SceneContext& ctx, ContainerSettingsDialog* dialog)
+{
+    QStringList labels;
+    for (QLabel* l : dialog->findChildren<QLabel*>()) {
+        if (l->isVisible() && !l->text().isEmpty()) {
+            labels.append(l->text());
+        }
+    }
+    ctx.notes.append(QStringLiteral("dialog labels: %1").arg(labels.join(QStringLiteral(" | "))));
+    if (auto* source = dialog->findChild<QComboBox*>(QStringLiteral("contentSlice"))) {
+        QStringList items;
+        for (int i = 0; i < source->count(); ++i) {
+            items.append(source->itemText(i));
+        }
+        ctx.notes.append(QStringLiteral("Source combo (contentSlice): %1, effectively %2, items [%3], current \"%4\"")
+                             .arg(source->isVisible() ? QStringLiteral("shown") : QStringLiteral("not shown"))
+                             .arg(source->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"))
+                             .arg(items.join(QStringLiteral(", ")), source->currentText()));
+    } else {
+        ctx.notes.append(QStringLiteral("no Source combo (contentSlice) in the dialog"));
+    }
+}
+
+// The Station container (slice A on its chip) in the left strip, the Main
+// Panel right, and Containers > Edit Container open on Station over the
+// window; `select` poses the dialog. With `composite` off the window
+// image leaves the dialog out (it would cover what the scene shows) and
+// the dialog has its own image only.
+void sceneEditDialog(SceneContext& ctx, const QString& name,
+                     const std::function<void(SceneContext&, ContainerSettingsDialog*)>& select,
+                     bool composite = true)
+{
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addAllStripCrops;
+    const QString id = QStringLiteral("preview-station");
+    auto dialog = std::make_shared<QPointer<ContainerSettingsDialog>>();
+    runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
+        commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Station"), DockEdge::Left,
+                                                           ContentLayout::VerticalStack, stationEntries()), 1));
+        });
+    }, [id, dialog, select](SceneContext& c) {
+        poseStation(c, id);
+        if (!c.failure.isEmpty()) {
+            return;
+        }
+        auto* manager = c.window->findChild<ContainerManager*>();
+        ContainerWidget* station = manager->container(id);
+        // The Containers > Edit Container path, shown instead of exec()'d
+        // so the grab needs no nested loop.
+        *dialog = new ContainerSettingsDialog(station, c.window, manager);
+        (*dialog)->selectDraftContainer(id);
+        (*dialog)->show();
+        pump(kDialogSettleMs);
+        // Its default size is larger than the window; sized down to the
+        // window as a user would (never below its minimum).
+        const QSize fit = (*dialog)->size().boundedTo(c.window->size() - QSize(kDialogInsetPx, kDialogInsetPx))
+                              .expandedTo((*dialog)->minimumSizeHint());
+        c.notes.append(QStringLiteral("Container Settings default %1x%2, shown at %3x%4 to fit the %5x%6 window")
+                           .arg((*dialog)->width()).arg((*dialog)->height())
+                           .arg(fit.width()).arg(fit.height())
+                           .arg(c.window->width()).arg(c.window->height()));
+        (*dialog)->resize(fit);
+        pump(kFinalSettleMs);
+        (*dialog)->move(c.window->mapToGlobal(c.window->rect().center()) - (*dialog)->rect().center());
+        select(c, dialog->data());
+        pump(kFinalSettleMs);
+        for (const QJsonValue& v : stopTimersUnder(dialog->data())) {
+            c.stoppedTimers.append(v);
+        }
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, name);
+    if (composite) {
+        compositeAndRecrop(ctx, name, {dialog->data()});
+    } else {
+        ctx.notes.append(QStringLiteral("the dialog is not composited into the window image; see %1--dialog")
+                             .arg(name));
+    }
+    captureDialog(ctx, dialog->data(), name + QStringLiteral("--dialog"));
+    annotateSlices(ctx);
+    if (*dialog) {
+        (*dialog)->reject();
+        (*dialog)->deleteLater();
+    }
+}
+
+void sceneEditAddContent(SceneContext& ctx)
+{
+    sceneEditDialog(ctx, QStringLiteral("edit-add-content"), [](SceneContext& c, ContainerSettingsDialog* d) {
+        auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
+        QListWidgetItem* longpath = rowContaining(available, QStringLiteral("(Longpath)"));
+        if (longpath == nullptr) {
+            c.failure = QStringLiteral("no Longpath entry in the Available list");
+            return;
+        }
+        available->setCurrentItem(longpath);
+        available->scrollToItem(longpath, QAbstractItemView::PositionAtCenter);
+        c.notes.append(QStringLiteral("Available list (containerAvailableContents), first Longpath row "
+                                      "selected and centred: %1")
+                           .arg(QString::fromUtf8(QJsonDocument(listTexts(available)).toJson(QJsonDocument::Compact))));
+    });
+}
+
+void sceneEditSourceSelect(SceneContext& ctx)
+{
+    sceneEditDialog(ctx, QStringLiteral("edit-source-select"), [](SceneContext& c, ContainerSettingsDialog* d) {
+        auto* contents = d->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
+        QListWidgetItem* frequency = rowContaining(contents, QStringLiteral("Frequency"));
+        if (frequency == nullptr) {
+            c.failure = QStringLiteral("no Frequency row in the Station contents");
+            return;
+        }
+        contents->setCurrentItem(frequency);
+        pump(kFinalSettleMs);
+        noteEditor(c, d);
+        auto* manager = c.window->findChild<ContainerManager*>();
+        ContainerWidget* station = manager->container(QStringLiteral("preview-station"));
+        WorkspaceGroupHeader* header = station != nullptr ? station->workspaceHeader() : nullptr;
+        auto* chip = header != nullptr ? header->findChild<WorkspaceSourceChip*>() : nullptr;
+        if (chip == nullptr || !chip->isVisible()) {
+            c.failure = QStringLiteral("no visible source chip on the Station header");
+            return;
+        }
+        addNotImplementedPlate(c.window, chip, QStringLiteral("source chip menu"),
+                               QStringLiteral("the source chip menu (RX A to D, Active slice). "
+                                              "WorkspaceSourceChip only paints; it has no menu."));
+        c.notes.append(QStringLiteral("source chip \"%1\": paint-only, no menu; a not-implemented plate "
+                                      "sits under it. The dialog shows the existing Source path for the "
+                                      "Frequency entry").arg(chip->text()));
+    }, false);
+}
+
+void sceneEditProperties(SceneContext& ctx)
+{
+    sceneEditDialog(ctx, QStringLiteral("edit-properties"), [](SceneContext& c, ContainerSettingsDialog* d) {
+        auto* contents = d->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
+        QListWidgetItem* needle = rowContaining(contents, QStringLiteral("Needle"));
+        if (needle == nullptr) {
+            c.failure = QStringLiteral("no Needle row in the Station contents");
+            return;
+        }
+        contents->setCurrentItem(needle);
+        pump(kFinalSettleMs);
+        c.notes.append(QStringLiteral("Station contents: %1, \"%2\" selected")
+                           .arg(QString::fromUtf8(QJsonDocument(listTexts(contents)).toJson(QJsonDocument::Compact)),
+                                needle->text()));
+        noteEditor(c, d);
+    });
+}
+
+// four-rx-look: four compact frequencies left, four Longpath S-meter bars
+// bottom, the Main Panel right.
+void sceneFourRxLook(SceneContext& ctx)
+{
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addAllStripCrops;
+    runWindowScene(ctx, fourRxPoses(), 2, [](SceneContext& c) {
+        commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            const QString freq = QString::fromLatin1(LongpathContent::kFrequencyType);
+            const QString bar = QString::fromLatin1(LongpathContent::kBarType);
+            for (int rx = 1; rx <= 4; ++rx) {
+                const QString letter(QChar('A' + rx - 1));
+                d.containers.append(onSlice(makeSceneContainer(
+                    m, QStringLiteral("Frequency %1").arg(letter), DockEdge::Left, ContentLayout::VerticalStack,
+                    {{freq, {}, {}, rxSource(rx)}}), rx));
+            }
+            for (int rx = 1; rx <= 4; ++rx) {
+                const QString letter(QChar('A' + rx - 1));
+                d.containers.append(onSlice(makeSceneContainer(
+                    m, QStringLiteral("S-Meter %1").arg(letter), DockEdge::Bottom, ContentLayout::VerticalStack,
+                    {{bar, {}, {}, rxSource(rx), bindingConfig(MeterBinding::SignalPeak)}}), rx));
+            }
+        });
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    ctx.notes.append(QStringLiteral(
+        "S-Meter A to D (Longpath bars, RX: Signal Peak): no reading is sent. MeterPoller polls RX "
+        "only for contexts with a Thetis MeterWidget; the bars show what the code does today"));
+    noteStrips(ctx);
+    captureWindow(ctx, QStringLiteral("four-rx-look"));
+    annotateSlices(ctx);
+}
+
+// setup-look-<page>: one Setup page with the workspace look.
+struct LookPage {
+    const char* scene;
+    const char* category;
+    const char* label;
+};
+
+constexpr LookPage kLookPages[] = {
+    {"setup-look-general", "General", "Options"},
+    {"setup-look-display", "Display", "Spectrum Defaults"},
+    {"setup-look-transmit", "Transmit", "Power"},
+    {"setup-look-audio", "Audio", "Devices"},
+    {"setup-look-dsp", "DSP", "Options"},
+    {"setup-look-appearance", "Appearance", "Colors & Theme"},
+};
+
+void sceneSetupLook(SceneContext& ctx, const LookPage& page)
+{
+    prepareForDialog(ctx);
+    SetupDialog* d = openSetupDialog(ctx.window);
+    if (d == nullptr) {
+        ctx.failure = QStringLiteral("Setup did not open");
+        return;
+    }
+    int index = -1;
+    for (const SetupLeaf& leaf : setupLeaves(d)) {
+        if (leaf.category == QLatin1String(page.category) && leaf.label == QLatin1String(page.label)) {
+            index = leaf.index;
+        }
+    }
+    auto* tree = d->findChild<QTreeWidget*>();
+    QTreeWidgetItem* item = tree != nullptr && index >= 0 ? treeItemForIndex(tree, index) : nullptr;
+    if (item == nullptr) {
+        ctx.failure = QStringLiteral("no Setup page %1 / %2").arg(QLatin1String(page.category),
+                                                                QLatin1String(page.label));
+        return;
+    }
+    tree->setCurrentItem(item);
+    ctx.notes.append(QStringLiteral("Setup page %1 / %2 (registry index %3) with the workspace look")
+                         .arg(QLatin1String(page.category), QLatin1String(page.label)).arg(index));
+    captureDialog(ctx, d, QString::fromLatin1(page.scene));
+}
+
 } // namespace
 
 void pump(int ms)
@@ -2046,49 +3001,7 @@ QVector<Scene> fixedScenes()
             ctx.failure = QStringLiteral("a RadioConnection exists; refusing the transmit scene");
             return;
         }
-        runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
-            SliceModel* sliceA = c.model->sliceById(0);
-            if (auto* mox = c.window->findChild<MoxDisplayController*>()) {
-                mox->setKeyed(true, sliceA != nullptr ? sliceA->sliceIndex() : 0);
-                c.notes.append(QStringLiteral("MoxDisplayController::setKeyed(true, slice A)"));
-            } else {
-                c.notShown.append(QJsonObject{
-                    {QStringLiteral("item"), QStringLiteral("MoxDisplayController keyed overlay")},
-                    {QStringLiteral("reason"), QStringLiteral(
-                        "a Deferred-startup local window builds no MoxDisplayController "
-                        "(it needs the TX analyzer)")}});
-            }
-            if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0))) {
-                sw->setTxActiveForTest(true);
-                c.notes.append(QStringLiteral("SpectrumWidget::setTxActiveForTest(true) on pan-0"));
-            }
-            if (auto* poller = c.window->findChild<MeterPoller*>()) {
-                poller->stop();
-                poller->setInTx(true);
-                c.notes.append(QStringLiteral("MeterPoller::stop(), setInTx(true)"));
-            }
-        }, [](SceneContext& c) {
-            // Pan 1 transmits: the transmit trace and waterfall a local
-            // window's LocalTxDisplaySource would draw, slice A's LSB at
-            // the default transmit filter 100..2900 Hz.
-            if (SpectrumWidget* sw = spectrumFor(c.window, panIdAt(0))) {
-                feedTxPan(sw, kTwoBandCarrierHz, false, kTxFilterLowHz, kTxFilterHighHz,
-                          kTxPeakDbm, kTxFloorDbm, kTxSeed);
-                c.notes.append(QStringLiteral(
-                    "pan-0 transmit display: updateSpectrumFromTxPixels and pushTxWaterfallRow, "
-                    "LSB voice 100..2900 Hz, peak %1 dBm over %2 dBm").arg(kTxPeakDbm).arg(kTxFloorDbm));
-            }
-            for (SMeterWidget* meter : allMeters(c)) {
-                meter->setTransmitting(true);
-                meter->setTxMeters(kTxForwardWatts, kTxSwr);
-                meter->setMicMeters(kTxMicDb, 0.0f, kTxMicDb, -30.0f);
-                c.notes.append(QStringLiteral("SMeterWidget: transmitting, 85 W, SWR 1.25, mic -12 dB"));
-            }
-            c.notShown.append(QJsonObject{
-                {QStringLiteral("item"), QStringLiteral("ALC -2 dB")},
-                {QStringLiteral("reason"), QStringLiteral(
-                    "SMeterWidget has no ALC input and the default panel has no ALC meter")}});
-        });
+        runWindowScene(ctx, twoBandPoses(), 0, poseTxBeforeFreeze, poseTxAfterFeed);
         if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-tx")); }
     }});
 
@@ -2146,6 +3059,7 @@ QVector<Scene> fixedScenes()
         img.logicalSize = floating->size();
         img.dpr = img.image.devicePixelRatio();
         img.extra[QStringLiteral("window_title")] = floating->windowTitle();
+        attachRegions(img, floating);
         ctx.images.append(img);
     }});
 
@@ -2299,6 +3213,7 @@ QVector<Scene> fixedScenes()
             pump(kFinalSettleMs);
             QWidget* plus = dock->rail()->plusButton();
             *menu = WorkspaceProfilesDialog::createNewMenu(c.window->workspaceProfiles(), c.window);
+            tagProvenance(menu->data(), provProposed());
             (*menu)->popup(plus->mapToGlobal(QPoint(0, plus->height())));
             pump(kFinalSettleMs);
             if (!(*menu)->isVisible()) {
@@ -2423,6 +3338,7 @@ QVector<Scene> fixedScenes()
         img.extra[QStringLiteral("window_title")] = floating->windowTitle();
         img.extra[QStringLiteral("frameless")] =
             floating->windowFlags().testFlag(Qt::FramelessWindowHint);
+        attachRegions(img, floating);
         ctx.images.append(img);
     }, true});
     scenes.append({QStringLiteral("drag-preview-left"), QStringLiteral("2v"), false,
@@ -2447,6 +3363,26 @@ QVector<Scene> fixedScenes()
                 "Arrange on; ContainerManager::showDropPreviewForTest(Right, 1)"));
         });
     }, true});
+
+    // ---- coverage scenes (switch on) ----
+    scenes.append({QStringLiteral("clean-spectrum"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx); }, true});
+    scenes.append({QStringLiteral("cw-digital"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneCwDigital(ctx); }, true});
+    scenes.append({QStringLiteral("tx-processing"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneTxProcessing(ctx); }, true});
+    scenes.append({QStringLiteral("edit-add-content"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneEditAddContent(ctx); }, true});
+    scenes.append({QStringLiteral("edit-source-select"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneEditSourceSelect(ctx); }, true});
+    scenes.append({QStringLiteral("edit-properties"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneEditProperties(ctx); }, true});
+    scenes.append({QStringLiteral("four-rx-look"), QStringLiteral("2x2"), false,
+                   [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
+    for (const LookPage& page : kLookPages) {
+        scenes.append({QString::fromLatin1(page.scene), QStringLiteral("2v"), true,
+                       [page](SceneContext& ctx) { sceneSetupLook(ctx, page); }, true});
+    }
 
     // ---- fixed dialogs ----
     scenes.append({QStringLiteral("dialog-tx-eq"), QStringLiteral("2v"), true,
