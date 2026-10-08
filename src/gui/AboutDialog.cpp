@@ -100,6 +100,7 @@ mw0lge@grange-lane.co.uk
 
 #include "AboutDialog.h"
 #include "StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -367,9 +368,10 @@ void AboutDialog::buildUI()
     for (const auto& lib : kLibraries) {
         // §D exception: #aabbcc — card subtitle blue-gray; lighter than kTitleText (#8aa8c0).
         auto* card = new QLabel(
-            QStringLiteral("<b>%1</b><br><span style=\"color:#aabbcc\">%2</span>")  // §D exception
+            QStringLiteral("<b>%1</b><br><span style=\"color:%3\">%2</span>")  // §D exception
                 .arg(QString::fromUtf8(lib.name),
-                     QString::fromUtf8(lib.desc)),
+                     QString::fromUtf8(lib.desc),
+                     WorkspacePreview::roleColourName("#aabbcc", "text-secondary")),
             this);
         card->setAlignment(Qt::AlignCenter);
         card->setStyleSheet(

@@ -100,6 +100,7 @@ mw0lge@grange-lane.co.uk
 
 #include "ConnectionPanel.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "AddCustomRadioDialog.h"
 #include "models/RadioModel.h"
 #include "core/AppSettings.h"
@@ -808,16 +809,19 @@ void ConnectionPanel::setStatusText(const QString& text)
 // The pill color is derived from the radio's last-seen timestamp (m_lastSeenMs).
 void ConnectionPanel::applyRowColor(int row, const RadioInfo& info)
 {
+    // Workspace preview: the row states take the status roles;
+    // roleColour() returns the legacy colour with the switch off.
+    using WorkspacePreview::roleColour;
     QColor bg;
-    QColor fg{0xc8, 0xd8, 0xe8};
+    QColor fg = roleColour(QColor{0xc8, 0xd8, 0xe8}, "text");
 
     if (info.inUse) {
-        bg = kColorOnlineInUse;
-        fg = QColor{0xe0, 0xc0, 0x80};
+        bg = roleColour(kColorOnlineInUse, "measured-bg");
+        fg = roleColour(QColor{0xe0, 0xc0, 0x80}, "measured");
     } else {
         // Radios in m_discoveredRadios are always "online" — seen in last scan.
-        bg = kColorOnlineFree;
-        fg = QColor{0x80, 0xe0, 0x80};
+        bg = roleColour(kColorOnlineFree, "ok-bg");
+        fg = roleColour(QColor{0x80, 0xe0, 0x80}, "ok");
     }
 
     for (int col = 0; col < ColCount; ++col) {
@@ -942,8 +946,9 @@ void ConnectionPanel::upsertRowForInfo(const RadioInfo& info, bool online)
         for (int col = 0; col < ColCount; ++col) {
             QTableWidgetItem* cell = m_radioTable->item(row, col);
             if (cell) {
-                cell->setBackground(kColorOffline);
-                cell->setForeground(QColor{0x60, 0x60, 0x70});
+                cell->setBackground(WorkspacePreview::roleColour(kColorOffline, "badge-off-bg"));
+                cell->setForeground(
+                    WorkspacePreview::roleColour(QColor{0x60, 0x60, 0x70}, "text-inactive"));
             }
         }
         if (QTableWidgetItem* inUse = m_radioTable->item(row, ColInUse)) {
@@ -1062,8 +1067,9 @@ void ConnectionPanel::onRadioLost(const QString& macAddress)
         for (int col = 0; col < ColCount; ++col) {
             QTableWidgetItem* cell = m_radioTable->item(row, col);
             if (cell) {
-                cell->setBackground(kColorOffline);
-                cell->setForeground(QColor{0x60, 0x60, 0x70});
+                cell->setBackground(WorkspacePreview::roleColour(kColorOffline, "badge-off-bg"));
+                cell->setForeground(
+                    WorkspacePreview::roleColour(QColor{0x60, 0x60, 0x70}, "text-inactive"));
             }
         }
         if (QTableWidgetItem* inUse = m_radioTable->item(row, ColInUse)) {

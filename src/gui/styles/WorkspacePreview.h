@@ -27,10 +27,14 @@
 //                 themes every widget when it is shown, so no window,
 //                 page, menu or popup needs a call site. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - roleColour() and roleColourName(): the one helper for
+//                 chrome colours that never pass through a stylesheet.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
+#include <QColor>
 #include <QHash>
 #include <QString>
 
@@ -78,6 +82,22 @@ void installLiveTheming(QApplication& app);
 // is for, or null. Returns `original` unchanged when the switch is off,
 // so a shared style builder can call it unconditionally.
 QString lookQss(const QString& original, const QWidget* owner = nullptr);
+
+// The colour of a chrome site that never passes through a stylesheet:
+// QPainter colours, Qt global colours, per-widget palettes. With the
+// switch off it returns `legacy` unchanged and looks nothing up. With it
+// on it returns the workspace role `role` carrying the alpha of `legacy`
+// (a translucent legacy fill stays translucent), or `legacy` itself when
+// the palette has no such role or `legacy` is invalid. Cheap enough to
+// call on every paint: one flag test off, one hash lookup on.
+QColor roleColour(const QColor& legacy, const char* role);
+
+// roleColour() for rich text, where the colour is written into HTML.
+// With the switch off it returns `legacy` exactly as written, so the
+// HTML is byte for byte what it was; with it on, roleColour()'s colour
+// as "#rrggbb" ("#aarrggbb" when translucent). Call it where the HTML
+// is built, so a later setText() writes the role colour again.
+QString roleColourName(const char* legacy, const char* role);
 
 // Unknown colour literals met by themeSubtree() since the last reset,
 // lower case, with their counts.

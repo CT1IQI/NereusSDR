@@ -47,6 +47,7 @@
 // =================================================================
 
 #include "RfKitPage.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "models/AccessoryDataModel.h"
 #include "models/RadioModel.h"
@@ -915,8 +916,10 @@ void RfKitPage::refreshLiveStatus()
     Rf2ksConnection* conn = m_model->rfKitConnection();
     if (!conn) { return; }
     const QString status = conn->isConnected()
-        ? QStringLiteral("<span style='color:#34c759;'>CONNECTED</span>")
-        : QStringLiteral("<span style='color:#e64949;'>DISCONNECTED</span>");
+        ? QStringLiteral("<span style='color:%1;'>CONNECTED</span>")
+              .arg(WorkspacePreview::roleColourName("#34c759", "ok"))
+        : QStringLiteral("<span style='color:%1;'>DISCONNECTED</span>")
+              .arg(WorkspacePreview::roleColourName("#e64949", "danger"));
     m_liveStatusLabel->setText(
         QStringLiteral("RF2K-S: %1 &nbsp; %2:%3 &nbsp; %4")
             .arg(status, conn->peerAddress())

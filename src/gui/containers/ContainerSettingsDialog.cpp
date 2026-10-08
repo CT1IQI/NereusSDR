@@ -737,8 +737,8 @@ void ContainerSettingsDialog::populateAvailableList()
         QFont f = h->font();
         f.setBold(true);
         h->setFont(f);
-        h->setForeground(QColor(0x8a, 0xa8, 0xc0));
-        h->setBackground(QColor(0x1a, 0x2a, 0x38));
+        h->setForeground(WorkspacePreview::roleColour(QColor(0x8a, 0xa8, 0xc0), "title-text"));
+        h->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
         h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
     };
     auto addEntry = [this](const Entry& e) {

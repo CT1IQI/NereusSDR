@@ -918,9 +918,10 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
 
     // "More Display Options →" footer link — B8 Task 24: wired to Setup → Display.
     {
-        auto* moreLbl = new QLabel("<a href=\"#more\" style=\"color: #00b4d8; "
+        auto* moreLbl = new QLabel(QStringLiteral("<a href=\"#more\" style=\"color: %1; "
                                    "text-decoration: none; font-size: 10px;\">"
-                                   "More Display Options &#x2192;</a>");
+                                   "More Display Options &#x2192;</a>")
+                                       .arg(WorkspacePreview::roleColourName("#00b4d8", "accent")));
         moreLbl->setTextFormat(Qt::RichText);
         moreLbl->setTextInteractionFlags(Qt::TextBrowserInteraction);
         moreLbl->setToolTip("Open full display settings in Setup → Display");

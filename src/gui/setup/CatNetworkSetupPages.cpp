@@ -15,6 +15,7 @@
 
 #include "CatNetworkSetupPages.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/LanScanDialog.h"
 #include "gui/OperatorReasonText.h"
 #include "core/AppSettings.h"
@@ -1136,12 +1137,14 @@ void CatTciServerPage::refreshTciStatusDisplay()
     if (m_statusLabel) {
         if (m_tciServerRunning) {
             m_statusLabel->setText(
-                tr("<span style='color:#3DD068'>●</span> Running (%1 %2)")
+                tr("<span style='color:%3'>●</span> Running (%1 %2)")
                     .arg(m_tciClientCount)
-                    .arg(m_tciClientCount == 1 ? tr("client") : tr("clients")));
+                    .arg(m_tciClientCount == 1 ? tr("client") : tr("clients"))
+                    .arg(WorkspacePreview::roleColourName("#3DD068", "ok")));
         } else {
             m_statusLabel->setText(
-                tr("<span style='color:#D04040'>●</span> Stopped"));
+                tr("<span style='color:%1'>●</span> Stopped")
+                    .arg(WorkspacePreview::roleColourName("#D04040", "danger")));
         }
         m_statusLabel->setTextFormat(Qt::RichText);
     }

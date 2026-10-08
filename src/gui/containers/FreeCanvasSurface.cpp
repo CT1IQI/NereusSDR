@@ -44,7 +44,7 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         if(!property("canvasReveal").toBool() && !underMouse() && !hasFocus()) {return;}
-        QPainter p(this);p.setPen(Qt::NoPen);p.setBrush(QColor("#00b4d8"));
+        QPainter p(this);p.setPen(Qt::NoPen);p.setBrush(WorkspacePreview::roleColour(QColor("#00b4d8"), "accent"));
         if(m_corner) {p.drawPolygon(QPolygon{QPoint(2,12),QPoint(12,2),QPoint(12,12)});}
         else {for(int x:{5,11}) {for(int y:{5,11,17}) {p.drawEllipse(QPoint(x,y),1,1);}}}
     }
