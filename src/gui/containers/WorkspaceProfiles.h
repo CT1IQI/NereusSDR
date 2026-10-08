@@ -31,7 +31,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-08 - Review fixes: settled suppression lift, checked
-//                 restores, Stale reload, validated import. J.J. Boyd (KG4VCF),
+//                 restores, Stale reload, validated import; the lift runs on
+//                 the manager. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -48,6 +49,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 
 namespace NereusSDR {
 
@@ -172,7 +174,9 @@ private:
     std::function<QDateTime()> m_clock;
     // Identifies the latest apply, whose queued lift of the geometry
     // capture suppression is the one that runs.
-    quint64 m_applyGeneration = 0;
+    // Shared with the queued suppression lift, which outlives this object
+    // when the profiles go first.
+    std::shared_ptr<quint64> m_applyGeneration = std::make_shared<quint64>(0);
 };
 
 } // namespace NereusSDR

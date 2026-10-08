@@ -69,7 +69,8 @@
 //                 role() looks up WorkspacePalette instead of
 //                 Longpath's runtime Theme.
 //   2026-10-08 - Upstream comments restored on the font ladder, caps
-//                 tracking and mono families; the licence note corrected.
+//                 tracking and mono families; the licence note corrected;
+//                 the shiftL() block cite covers its section title.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -223,7 +224,7 @@ void paintInsetTop(QPainter& p, const QRect& r);
 // From Longpath src/gui/StyleConstants.h:573-589 [@551576e3]
 void paintGlassChip(QPainter& p, const QRect& box, int radius);
 
-// [original comment block from StyleConstants.h:645-696 sits above
+// [original comment block from StyleConstants.h:644-696 sits above
 //  shiftL() in WorkspaceStyle.cpp]
 // From Longpath src/gui/StyleConstants.h:697-703 [@551576e3]
 QString shiftL(const QColor& base, int deltaL);

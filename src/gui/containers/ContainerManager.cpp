@@ -10,7 +10,9 @@
 //   2026-10-08 - Workspace preview review fixes: profile strips drop
 //                 carried thickness and extents, stale edge drags end,
 //                 hidden-strip extents prune deleted ids, Move/Resize honour
-//                 capture suppression. J.J. Boyd (KG4VCF),
+//                 capture suppression; a container moved into a strip
+//                 takes a default share and the saved split stays.
+//                 J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: geometry capture suppression for
 //                 workspace profile switches by J.J. Boyd (KG4VCF),
@@ -704,15 +706,35 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
         if (strip.size() < 2) {
             continue;
         }
+        // Saved sizes for the containers the strip knows; a container new
+        // to the strip (moved in since the last capture) gets the mean
+        // known share, so the known split keeps its ratio.
         QList<int> extents;
+        int knownTotal = 0;
+        int knownCount = 0;
+        bool anyMissing = false;
         for (const QString& id : strip) {
-            if (!saved.contains(id)) {
-                extents.clear();
-                break;
+            if (saved.contains(id)) {
+                const int size = saved.value(id);
+                extents.append(size);
+                if (size > 0) {
+                    knownTotal += size;
+                    ++knownCount;
+                }
+            } else {
+                extents.append(-1);
+                anyMissing = true;
             }
-            extents.append(saved.value(id));
         }
-        if (!extents.isEmpty()) {
+        if (anyMissing && knownCount > 0) {
+            const int share = knownTotal / knownCount;
+            for (int& size : extents) {
+                if (size < 0) {
+                    size = share;
+                }
+            }
+        }
+        if (!anyMissing || knownCount > 0) {
             m_edgeArea->strip(edge)->setExtents(extents);
         } else if (!m_geometryCommit.isActive()) {
             // No saved extents for these containers: the default split,

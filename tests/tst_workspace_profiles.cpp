@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original workspace preview profile regressions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Re-review: a container moved into a strip keeps the
+//                 split, suppressed moves commit nothing, a failed restore
+//                 is logged. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Named workspace profiles: switch and restore, last profile,
 //                 import, stale revision, remembered profile and the rail's
 //                 remove affordance, the collapsing rail dock, by J.J. Boyd (KG4VCF), AI-assisted via
@@ -261,6 +265,119 @@ private slots:
         QCOMPARE(plain.arrangement.strips.value(DockEdge::Left).thickness, 0);
         const auto savedExtents = plain.arrangement.strips.value(DockEdge::Left).extents;
         QVERIFY(savedExtents.value(QStringLiteral("one")) != dragged[0]);
+    }
+
+    void containerMovedInKeepsTheSplit()
+    {
+        // A dragged split survives a container moved into its strip; only
+        // the newcomer takes a default share.
+        ProfilesFixture f;
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always),
+                          f.container(QStringLiteral("three"), DockEdge::Right, HeaderMode::Always)}));
+        EdgeDockStrip* left = f.area->strip(DockEdge::Left);
+        const QList<int> before = left->extents();
+        QCOMPARE(before.size(), 2);
+        const int along = before[0] + before[1];
+        left->setExtents({along / 4, along - along / 4});
+        settle();
+        const QList<int> dragged = left->extents();
+        const double ratio = double(dragged[0]) / double(dragged[1]);
+        QVERIFY(ratio < 0.5);
+        f.manager->saveState();
+
+        f.manager->moveContainerToEdge(QStringLiteral("three"), DockEdge::Left);
+        settle();
+        const QList<int> after = left->extents();
+        QCOMPARE(after.size(), 3);
+        QVERIFY(after[2] > 0);
+        QVERIFY2(qAbs(double(after[0]) / double(after[1]) - ratio) < 0.05,
+                 qPrintable(QStringLiteral("%1:%2 after, %3:%4 dragged")
+                                .arg(after[0]).arg(after[1]).arg(dragged[0]).arg(dragged[1])));
+    }
+
+    void suppressedMovesAndResizesCommitNothing()
+    {
+        ProfilesFixture f;
+        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal);
+        floating.dockMode = DockMode::Floating;
+        floating.geometry = QRect(100, 100, 300, 200);
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal), floating}));
+        QWidget* form = f.manager->container(QStringLiteral("meters"))->window();
+        QVERIFY(form && form != &f.window);
+        const quint64 revision = f.store.snapshot().revision;
+
+        // Suppressed: the move and resize leave the store alone, before and
+        // after the lift.
+        f.manager->setGeometryCaptureSuppressed(true);
+        form->move(form->pos() + QPoint(40, 30));
+        form->resize(form->size() + QSize(50, 40));
+        settle();
+        QTest::qWait(350);
+        QCOMPARE(f.store.snapshot().revision, revision);
+        f.manager->setGeometryCaptureSuppressed(false);
+        QTest::qWait(350);
+        QCOMPARE(f.store.snapshot().revision, revision);
+
+        // The same edit unsuppressed is committed, so the test can see one.
+        form->resize(form->size() + QSize(50, 40));
+        QTRY_VERIFY_WITH_TIMEOUT(f.store.snapshot().revision > revision, 2000);
+    }
+
+    void suppressionLiftsWhenProfilesGoFirst()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        {
+            WorkspaceProfiles profiles(f.settings, f.manager.get());
+            QVERIFY(profiles.load().ok());
+            const QString first = profiles.activeId();
+            const auto second = profiles.createFromCurrent(QStringLiteral("Second"));
+            QVERIFY(second.ok());
+            QVERIFY(f.commitB());
+            QVERIFY(profiles.switchTo(first).ok());
+            QVERIFY(f.manager->geometryCaptureSuppressed());
+        }
+        settle();
+        QVERIFY(!f.manager->geometryCaptureSuppressed());
+    }
+
+    void failedRestoreIsLogged()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString first = profiles.activeId();
+        const auto second = profiles.createFromCurrent(QStringLiteral("Second"));
+        QVERIFY(second.ok());
+        QVERIFY(f.commitB());
+        settle();
+
+        // Another writer moves the profiles key, so the switch's commit is
+        // refused; once the switch has applied, another writer also moves
+        // the workspace key, so the restore is refused too.
+        WorkspaceProfiles other(f.settings, f.manager.get());
+        QVERIFY(other.load().ok());
+        QVERIFY(other.rename(first, QStringLiteral("Elsewhere")).ok());
+        const QString key = f.store.workspaceKey();
+        bool moved = false;
+        connect(&f.store, &ContainerWorkspaceStore::committed, &f.store, [&] {
+            // The switch's own apply (capture suppressed), not the flush
+            // of the live arrangement before it.
+            if (!moved && f.manager->geometryCaptureSuppressed()) {
+                moved = true;
+                WorkspaceDocument elsewhere = f.store.snapshot();
+                elsewhere.revision += 10;
+                f.settings.setValue(key, QString::fromUtf8(ContainerDocumentCodec::encode(elsewhere)));
+            }
+        });
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("could not restore")));
+        const auto refused = profiles.switchTo(first);
+        QCOMPARE(refused.status, WorkspaceProfiles::Status::Stale);
+        QVERIFY(moved);
+        settle();
     }
 
     void previewNeverWritesTheShippedWorkspace()

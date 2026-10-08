@@ -8,7 +8,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-08 - Review fixes: settled suppression lift, checked
-//                 restores, Stale reload, validated import. J.J. Boyd (KG4VCF),
+//                 restores, Stale reload, validated import; the lift runs on
+//                 the manager. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -381,10 +382,12 @@ WorkspaceProfiles::Result WorkspaceProfiles::applyLive(const WorkspaceProfile& t
     }
     // Moves and resizes the passes posted are delivered before capture
     // resumes: the lift is queued behind them. A later apply supersedes
-    // an earlier apply's lift.
-    const quint64 generation = ++m_applyGeneration;
-    QMetaObject::invokeMethod(this, [this, generation, manager = m_manager] {
-        if (manager && generation == m_applyGeneration) {
+    // an earlier apply's lift. The manager is the context: the lift runs
+    // even when these profiles are destroyed first.
+    const quint64 generation = ++*m_applyGeneration;
+    ContainerManager* manager = m_manager.data();
+    QMetaObject::invokeMethod(manager, [manager, generation, current = m_applyGeneration] {
+        if (generation == *current) {
             manager->setGeometryCaptureSuppressed(false);
         }
     }, Qt::QueuedConnection);

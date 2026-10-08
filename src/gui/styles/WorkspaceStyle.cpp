@@ -62,8 +62,8 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 hexRole(kX) becomes role("name", kX) against the
 //                 built-in WorkspacePalette.
-//   2026-10-08 - Upstream rationale restored above shiftL(); the licence
-//                 note corrected.
+//   2026-10-08 - Upstream rationale and its section title restored above
+//                 shiftL(); the licence note corrected.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -148,6 +148,7 @@ void paintGlassChip(QPainter& p, const QRect& box, int radius)
     p.restore();
 }
 
+// Shared Stylesheet Fragments
 // ── Flaechen mit Verlauf statt flacher Fuellung ──────────────────────
 //
 // Der Betreiber, 2026-08-21, mit einem Bildschirmfoto der Vorlage: „die
