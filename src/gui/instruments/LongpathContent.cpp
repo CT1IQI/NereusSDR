@@ -41,7 +41,9 @@
 //                 Claude Code.
 //   2026-10-08 - Needles and bars register their context with the
 //                 poller (MeterPoller::addReadingConsumer), so they read
-//                 live without a Thetis meter face in the same context.
+//                 live without a Thetis meter face in the same context,
+//                 and drop the old slice's value and peak when the slice
+//                 behind the context changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -295,6 +297,13 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                     if (binding != primary) { return; }
                     *unavailable = !reason.isEmpty();
                     if (*unavailable) { onReading(primary, kNoMeterReadingDbm); }
+                });
+            // The slice behind the context changed: the old slice's value and
+            // peak no longer apply, as MeterPoller::synchronizeRxSource resets
+            // a target (MeterWidget::resetRxSource) on the same check.
+            QObject::connect(sources.poller, &MeterPoller::rxSourceChanged, widget,
+                [onReading, context, primary](const QJsonObject& from) {
+                    if (from == context) { onReading(primary, kNoMeterReadingDbm); }
                 });
             registerReadings(sources.poller, widget, context, primary, secondary);
         }

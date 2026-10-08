@@ -11,7 +11,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
 //                 removeReadingConsumer, so a Longpath needle or bar gets
-//                 readings for its own context on the same timer frame.
+//                 readings for its own context on the same timer frame,
+//                 and rxSourceChanged when the slice behind it changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -418,6 +419,11 @@ signals:
     /// (bindingId is a MeterBinding Tx* id), for controls outside a meter
     /// container: the Phone/CW applet's compression gauge.
     void txMeterReading(int bindingId, double value);
+    /// Task 5b: the slice or stream behind a reading consumer's context
+    /// changed (a follow-selected context switched slice). Consumers drop
+    /// their reading history and peak, as a target does (resetRxSource).
+    /// Emitted before the new source's first reading on the same frame.
+    void rxSourceChanged(const QJsonObject& context);
 
 public:
     /// R-R3-21: the Compression reading Thetis shows for a raw TXA_COMP_AV
@@ -525,6 +531,9 @@ private:
         QMetaObject::Connection destroyed;
     };
     QHash<QObject*, ReadingConsumer> m_readingConsumers;
+    // Last resolved source identity per consumer-only context key.
+    QHash<QByteArray, QByteArray> m_consumerIdentities;
+    void synchronizeConsumerSources();
     void replayConsumerReadings(const QJsonObject& context, const QList<int>& bindings);
     bool contextInUse(const QJsonObject& context) const;
     QHash<QByteArray, QHash<int, double>> m_contextReadings;

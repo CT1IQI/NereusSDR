@@ -9,7 +9,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
 //                 removeReadingConsumer, so a Longpath needle or bar gets
-//                 readings for its own context on the same timer frame.
+//                 readings for its own context on the same timer frame,
+//                 and rxSourceChanged when the slice behind it changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -621,6 +622,9 @@ void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context,
     consumer.bindings = bindings;
     consumer.destroyed = connect(owner, &QObject::destroyed, this, [this, owner] { removeReadingConsumer(owner); });
     m_readingConsumers.insert(owner, consumer);
+    if (m_rxSourceIdentitySource && !m_consumerIdentities.contains(contextKey(context))) {
+        m_consumerIdentities.insert(contextKey(context), m_rxSourceIdentitySource(context));
+    }
     // Global (TX, PA) readings reach every known context.
     m_knownContexts[contextKey(context)] = context;
     replayConsumerReadings(context, bindings);
@@ -637,6 +641,33 @@ void MeterPoller::removeReadingConsumer(QObject* owner)
     if (!context.isEmpty() && !contextInUse(context)) {
         m_knownContexts.remove(contextKey(context));
         m_contextReadings.remove(contextKey(context));
+    }
+    bool consumerLeft = false;
+    for (auto c = m_readingConsumers.cbegin(); c != m_readingConsumers.cend(); ++c) {
+        if (c->context == context) { consumerLeft = true; break; }
+    }
+    if (!consumerLeft) { m_consumerIdentities.remove(contextKey(context)); }
+}
+void MeterPoller::synchronizeConsumerSources()
+{
+    // Mirrors synchronizeRxSource for targets: when the resolved identity
+    // behind a consumer's context changes, the old source's readings and
+    // peak no longer apply. Targets get MeterWidget::resetRxSource from
+    // the same check in pollContextReadings' reset pass.
+    if (!m_rxSourceIdentitySource) { return; }
+    QSet<QByteArray> checked;
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        const QByteArray key = contextKey(it->context);
+        if (checked.contains(key)) { continue; }
+        checked.insert(key);
+        const QByteArray identity = m_rxSourceIdentitySource(it->context);
+        const auto previous = m_consumerIdentities.constFind(key);
+        const bool changed = previous != m_consumerIdentities.cend() && previous.value() != identity;
+        m_consumerIdentities.insert(key, identity);
+        if (changed) {
+            m_contextReadings.remove(key);
+            emit rxSourceChanged(it->context);
+        }
     }
 }
 bool MeterPoller::contextInUse(const QJsonObject& context) const
@@ -912,6 +943,7 @@ void MeterPoller::pollContextReadings()
         const QJsonObject context = m_targetContexts.value(target);
         if (synchronizeRxSource(target, context)) { m_contextReadings.remove(contextKey(context)); }
     }
+    synchronizeConsumerSources();
     QSet<QByteArray> visited;
     for (const auto& target : m_targets) {
         if (!target) { continue; }

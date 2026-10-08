@@ -481,6 +481,51 @@ private slots:
         QVERIFY(!polled.contains(before));
     }
 
+    void sliceSwitchDropsTheOldPeak()
+    {
+        // A follow-selected context: the slice behind it is the selected one.
+        MeterPoller poller;
+        QByteArray selected("slice-a");
+        poller.setRxSourceIdentitySource([&](const QJsonObject&) { return selected; });
+        poller.setRxReadingSource([&](const QJsonObject&, int) {
+            return selected == "slice-a" ? -60.0 : -90.0;
+        });
+        const QJsonObject followsSelected{{QStringLiteral("rxSource"), 0}};
+        // Connected before the needle exists, so it runs before the needle
+        // takes each reading.
+        bool checkedFirstB = false;
+        NeedleInstrument* needle = nullptr;
+        connect(&poller, &MeterPoller::readingUpdated, this, [&](const QJsonObject& context, int binding, double value) {
+            if (!needle || checkedFirstB || context != followsSelected || binding != MeterBinding::SignalPeak || value != -90.0) { return; }
+            checkedFirstB = true;
+            QVERIFY(!needle->hasValue());
+            QVERIFY(needle->peakHold().value() != -60.0);
+        });
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        entry.context = followsSelected;
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        needle = qobject_cast<NeedleInstrument*>(widget.get());
+        QVERIFY(needle);
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QCOMPARE(needle->peakHold().value(), -60.0);
+
+        selected = "slice-b";
+        QSignalSpy reset(&poller, &MeterPoller::rxSourceChanged);
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QCOMPARE(reset.count(), 1);
+        QVERIFY(checkedFirstB);
+        QVERIFY(needle->hasValue());
+        QCOMPARE(needle->peakHold().value(), -90.0);
+        // The same slice again: no further reset.
+        QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        QCOMPARE(reset.count(), 1);
+    }
+
     void unavailableReadingShowsNoValue()
     {
         // No transmit source: the poller names the reason, as a MeterWidget
