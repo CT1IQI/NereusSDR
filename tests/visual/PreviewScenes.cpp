@@ -58,9 +58,10 @@
 //   2026-10-08 - The edge values note the right strip's 0 px padding and
 //                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
-//   2026-10-08 - Setup page scenes centre the page's tree item, so the
-//                 tree scroll is the same every run. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Setup page scenes centre the page's tree item and keep
+//                 the pointer's hover out of the tree, and Radio Status
+//                 holds its uptime, so they are the same every run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -3780,6 +3781,60 @@ QVector<Scene> fixedScenes()
     return scenes;
 }
 
+// Setup > Diagnostics > Radio Status shows the time since the bench
+// connection came up, which moved by a second between runs. Its clock is
+// a QTimer member of the page (not a child, so stopTimersUnder() cannot
+// reach it): cut every timer that ticks into the page as it fires, cut the
+// model's connection-state tick, then show a fixed time.
+constexpr auto kUptimeReadoutId = "diagnostics.radioStatus.uptime";
+constexpr auto kFrozenUptime = "14m 32s";
+// Longer than the page's 1000 ms uptime tick.
+constexpr int kUptimeCutWaitMs = 1300;
+
+void freezeRadioStatusUptime(SceneContext& ctx, QWidget* dialog)
+{
+    QLabel* uptime = nullptr;
+    for (QLabel* label : dialog->findChildren<QLabel*>()) {
+        if (label->property("nereusSetupId").toString() == QLatin1String(kUptimeReadoutId)) {
+            uptime = label;
+        }
+    }
+    if (uptime == nullptr) {
+        return;
+    }
+    QWidget* page = uptime->parentWidget();
+    while (page != nullptr && !page->inherits("NereusSDR::RadioStatusPage")) {
+        page = page->parentWidget();
+    }
+    if (page == nullptr) {
+        return;
+    }
+    class TimerCut : public QObject
+    {
+    public:
+        explicit TimerCut(QObject* target) : m_target(target) {}
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::Timer) {
+                if (auto* timer = qobject_cast<QTimer*>(watched);
+                    timer != nullptr && QObject::disconnect(timer, &QTimer::timeout, m_target, nullptr)) {
+                    timer->stop();
+                }
+            }
+            return false;
+        }
+
+    private:
+        QObject* m_target;
+    } cut(page);
+    qApp->installEventFilter(&cut);
+    pump(kUptimeCutWaitMs);
+    qApp->removeEventFilter(&cut);
+    QObject::disconnect(ctx.model, &RadioModel::connectionStateChanged, page, nullptr);
+    uptime->setText(QString::fromLatin1(kFrozenUptime));
+    ctx.notes.append(QStringLiteral("radio-status uptime held at %1").arg(QString::fromLatin1(kFrozenUptime)));
+}
+
 QVector<Scene> setupPageScenes(MainWindow* window)
 {
     QVector<Scene> scenes;
@@ -3821,6 +3876,13 @@ QVector<Scene> setupPageScenes(MainWindow* window)
             // Settle, then centre the item: the same tree scroll every run.
             pump(kFinalSettleMs);
             tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+            // Qt sends the tree a synthetic enter from the real pointer,
+            // wherever it is on screen, when the dialog shows, and one row
+            // stayed hovered in some runs: no hover in the page tree.
+            tree->viewport()->setAttribute(Qt::WA_Hover, false);
+            QEvent leave(QEvent::Leave);
+            QCoreApplication::sendEvent(tree->viewport(), &leave);
+            freezeRadioStatusUptime(ctx, d);
             ctx.notes.append(QStringLiteral("Setup page %1 / %2 (registry index %3)%4")
                                  .arg(category, label).arg(index)
                                  .arg(hidden ? QStringLiteral(", hidden in the tree") : QString()));
