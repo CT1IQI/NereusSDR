@@ -37,6 +37,10 @@
 //                 edit-add-content, edit-source-select, edit-properties,
 //                 four-rx-look, setup-look-*). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Named regions for each pan plot, the overlays on it, the
+//                 pan separators and each VFO flag; fed readings name the
+//                 poller's reading-consumer path. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -83,6 +87,7 @@
 #include "gui/MoxDisplayController.h"
 #include "gui/PanLayoutDialog.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/PanadapterStack.h"
 #include "gui/PsForm.h"
 #include "gui/SMeterWidget.h"
 #include "gui/SetupDialog.h"
@@ -579,6 +584,10 @@ constexpr auto kProvenanceProperty = "nereusPreviewProvenance";
 // Optional region name and content type for a tagged widget.
 constexpr auto kRegionNameProperty = "nereusPreviewRegionName";
 constexpr auto kRegionTypeProperty = "nereusPreviewRegionType";
+// Set on a widget that gets a region of its own even when its provenance
+// matches its parent's (pan plots, the overlays on them, pan separators
+// and VFO flags), so the retained-pixel proof can find them by name.
+constexpr auto kForceRegionProperty = "nereusPreviewForceRegion";
 
 QString provRetained() { return QStringLiteral("retained"); }
 QString provLongpath() { return QStringLiteral("longpath-port"); }
@@ -620,6 +629,77 @@ QString classProvenance(QWidget* w)
     return {};
 }
 
+void forceRegion(QWidget* w, const QString& name)
+{
+    if (!w->property(kRegionNameProperty).isValid()) {
+        w->setProperty(kRegionNameProperty, name);
+    }
+    w->setProperty(kForceRegionProperty, true);
+}
+
+// Names the panadapter regions under `root`: `pan-<n>-plot` for each pan's
+// SpectrumWidget (the widget's own rect: spectrum, frequency scale and
+// waterfall), `flag-<letter>` for each VFO flag on it, `pan-<n>-<object
+// name or class>` for every other widget painted over the plot (the pan
+// toolbar, corner buttons, status badges, hints; children of the
+// SpectrumWidget or of its PanadapterApplet), and `pan-separator-<k>` for
+// the splitter handles between pans. All keep the provenance they inherit.
+void tagPanRegions(QWidget* root)
+{
+    QList<PanadapterApplet*> applets = root->findChildren<PanadapterApplet*>();
+    if (auto* self = qobject_cast<PanadapterApplet*>(root)) {
+        applets.prepend(self);
+    }
+    for (PanadapterApplet* applet : applets) {
+        SpectrumWidget* plot = applet->spectrumWidget();
+        if (plot == nullptr) {
+            continue;
+        }
+        const QString pan = applet->panId();
+        forceRegion(plot, pan + QStringLiteral("-plot"));
+        QList<QWidget*> over;
+        for (QObject* o : plot->children()) {
+            if (auto* w = qobject_cast<QWidget*>(o)) {
+                over.append(w);
+            }
+        }
+        for (QObject* o : applet->children()) {
+            auto* w = qobject_cast<QWidget*>(o);
+            if (w != nullptr && w != plot && w->geometry().intersects(plot->geometry())) {
+                over.append(w);
+            }
+        }
+        QHash<QString, int> seen;
+        for (QWidget* w : over) {
+            if (w->isWindow()) {
+                continue;
+            }
+            if (auto* flag = qobject_cast<VfoWidget*>(w)) {
+                SliceModel* slice = flag->sliceForTest();
+                const QChar letter = slice != nullptr ? slice->sliceLetter() : QChar(QLatin1Char('?'));
+                forceRegion(flag, QStringLiteral("flag-%1").arg(letter));
+                continue;
+            }
+            const QString what = w->objectName().isEmpty() ? QString::fromLatin1(w->metaObject()->className())
+                                                             : w->objectName();
+            const int n = seen.value(what, 0);
+            seen.insert(what, n + 1);
+            forceRegion(w, n == 0 ? QStringLiteral("%1-%2").arg(pan, what)
+                                  : QStringLiteral("%1-%2-%3").arg(pan, what).arg(n + 1));
+        }
+    }
+    QList<PanadapterStack*> stacks = root->findChildren<PanadapterStack*>();
+    int separator = 0;
+    for (PanadapterStack* stack : stacks) {
+        for (QSplitterHandle* handle : stack->findChildren<QSplitterHandle*>()) {
+            if (!handle->isVisibleTo(root)) {
+                continue;
+            }
+            forceRegion(handle, QStringLiteral("pan-separator-%1").arg(separator++));
+        }
+    }
+}
+
 // Tags every widget under `root` by class (never over a scene's own tag),
 // and each container entry widget with its entry id, content type and,
 // for Longpath content, longpath-port.
@@ -633,6 +713,7 @@ void tagTree(QWidget* root)
             tagProvenance(w, p, false);
         }
     }
+    tagPanRegions(root);
     QList<ContainerContentHost*> hosts = root->findChildren<ContainerContentHost*>();
     if (auto* self = qobject_cast<ContainerContentHost*>(root)) {
         hosts.prepend(self);
@@ -684,7 +765,7 @@ void walkRegions(QWidget* root, QWidget* w, const QString& inherited, int parent
     const QString own = w->property(kProvenanceProperty).toString();
     const QString provenance = own.isEmpty() ? inherited : own;
     int index = parent;
-    if (w == root || provenance != inherited) {
+    if (w == root || provenance != inherited || w->property(kForceRegionProperty).toBool()) {
         index = int(out.size());
         QString name = w->property(kRegionNameProperty).toString();
         if (name.isEmpty()) {
@@ -741,7 +822,12 @@ QString regionsContract()
         "widget carries nereusPreviewProvenance (retained, longpath-port, proposed, exists-not-wired, "
         "not-implemented) or inherits it from its nearest tagged ancestor; an image root with no tag "
         "is retained. A region is written for the root and for each visible widget whose provenance "
-        "differs from its parent's. A point's provenance is that of the last region whose visible_rect "
+        "differs from its parent's, and for each named panadapter part whatever its provenance: pan-<n>-plot "
+        "(widget_class NereusSDR::SpectrumWidget, the pan's SpectrumWidget rect taken from the widget, not "
+        "computed: spectrum, frequency scale and waterfall), flag-<letter> (VfoWidget, the VFO flag of that "
+        "slice), pan-<n>-<object name or class> (each other widget over the plot: pan toolbar, corner "
+        "buttons, status badges, hints; a repeated name gets -2, -3) and pan-separator-<k> (k from 0 over the visible handles) (splitter handles between pans); the plot "
+        "minus the regions inside it is the plot area alone. A point's provenance is that of the last region whose visible_rect "
         "contains it. Fields: name (entry id, object name or class), provenance, rect (the widget), "
         "visible_rect (clipped to its ancestors and the image; regions with no visible area are "
         "omitted), type (content type id for container content, else empty), widget_class, parent "
@@ -1998,6 +2084,17 @@ constexpr double kFedPeakAboveDb = 5.0;
 // the reading MeterPoller would send for its slice: the slice's posed
 // signal level, after a peak kFedPeakAboveDb above it. Display-only: the
 // readingUpdated signal the instruments listen to, no radio or Core.
+// The seam a fed reading went through. Each Longpath needle and bar
+// registers its context with MeterPoller::addReadingConsumer on creation;
+// the poller is stopped (freeze), so the scene stands in for its timer
+// frame and emits readingUpdated for the registered context.
+QString consumerSeam(MeterPoller* poller)
+{
+    return QStringLiteral("MeterPoller::readingUpdated to a registered reading consumer "
+                          "(addReadingConsumer; poller stopped, %1 consumers; display-only)")
+        .arg(poller->readingConsumerCountForTest());
+}
+
 void feedSliceInstruments(SceneContext& ctx, QWidget* root)
 {
     auto* poller = ctx.window->findChild<MeterPoller*>();
@@ -2027,6 +2124,11 @@ void feedSliceInstruments(SceneContext& ctx, QWidget* root)
         }
         const int rx = sliceId + 1;
         const double level = slice->signalStrengthDbm();
+        const QString unavailable = poller->bindingUnavailableReason(MeterBinding::SignalPeak);
+        if (!unavailable.isEmpty()) {
+            ctx.notes.append(QStringLiteral("RX: Signal Peak unavailable (%1); the instrument shows no value")
+                                 .arg(unavailable));
+        }
         emit poller->readingUpdated(context, MeterBinding::SignalPeak, level + kFedPeakAboveDb);
         emit poller->readingUpdated(context, MeterBinding::SignalPeak, level);
         const QString entry = w->property(kRegionNameProperty).toString().isEmpty()
@@ -2038,7 +2140,7 @@ void feedSliceInstruments(SceneContext& ctx, QWidget* root)
             {QStringLiteral("slice"), QString(QChar('A' + rx - 1))},
             {QStringLiteral("binding"), QStringLiteral("RX: Signal Peak")},
             {QStringLiteral("values_dbm"), QJsonArray{level + kFedPeakAboveDb, level}},
-            {QStringLiteral("seam"), QStringLiteral("MeterPoller::readingUpdated (display-only)")}});
+            {QStringLiteral("seam"), consumerSeam(poller)}});
     }
 }
 
@@ -2666,7 +2768,7 @@ void poseLongpathTx(SceneContext& ctx, const QStringList& hostIds)
                 {QStringLiteral("context"), QStringLiteral("TX (every context)")},
                 {QStringLiteral("binding"), binding},
                 {QStringLiteral("values"), QJsonArray{values.value(binding)}},
-                {QStringLiteral("seam"), QStringLiteral("MeterPoller::readingUpdated (display-only)")}});
+                {QStringLiteral("seam"), consumerSeam(poller)}});
             ctx.notes.append(QStringLiteral("%1 %2: readingUpdated binding %3 = %4, as MeterPoller "
                                             "publishes a transmit reading to every context")
                                  .arg(id, QString::fromLatin1(w->metaObject()->className()))
