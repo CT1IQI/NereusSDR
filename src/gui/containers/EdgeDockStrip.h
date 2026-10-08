@@ -207,10 +207,12 @@ class EdgeDockArea : public QWidget {
     Q_OBJECT
 public:
     // Today's first-run split of spectrum and Main Panel,
-    // MainWindow.cpp setSizes({1024, 256}): the right strip's thickness
-    // until one is saved or dragged.
+    // MainWindow.cpp setSizes({1024, 256}): the Main Panel's width in the
+    // right strip (plus the strip's padding) until one is saved or dragged.
     static constexpr int kMigratedPanelShare = 256;
     static constexpr int kMigratedTotalShare = 1280;
+    // That splitter's handle, MainWindow.cpp m_mainSplitter->setHandleWidth(3).
+    static constexpr int kMigratedHandlePx = 3;
     // The edge bands' width and the room in from an edge that targets it.
     static constexpr int kTargetBandPx = 6;
     static constexpr int kEdgeHotZonePx = 48;
@@ -238,6 +240,12 @@ public:
     int thickness(DockEdge edge) const;
     bool hasThickness(DockEdge edge) const;
     void setThickness(DockEdge edge, int thickness);
+    // What the strip's containers need across it, without the strip's
+    // padding: `minimumCross` is the widest container minimum (a side
+    // strip is never narrower, so no container is clipped) and
+    // `preferredCross` the tallest preferred height (an end strip's
+    // default, so no scrollbar shows until the user makes it smaller).
+    void setStripContentHint(DockEdge edge, int minimumCross, int preferredCross);
     // The ☰ panel toggle collapses the right strip without emptying it.
     void setUserCollapsed(DockEdge edge, bool collapsed);
     bool userCollapsed(DockEdge edge) const;
@@ -274,6 +282,8 @@ private:
     EdgeDockSplitter* m_vertical{nullptr};
     EdgeDockStrip* m_strips[4]{};
     int m_thickness[4]{};
+    int m_minimumCross[4]{};
+    int m_preferredCross[4]{};
     bool m_explicit[4]{};
     bool m_collapsed[4]{};
     bool m_shown[4]{};

@@ -475,16 +475,56 @@ EdgeDockStrip* EdgeDockArea::strip(DockEdge edge) const
 int EdgeDockArea::migratedRightThickness() const
 {
     const int total = width() > 0 ? width() : m_middle->width();
-    return qMax(1, int(std::lround(total * double(kMigratedPanelShare) / kMigratedTotalShare)));
+    // Today's Main Panel width, as the 3 px-handle QSplitter lays out
+    // setSizes({1024, 256}): each pane in proportion to its size raised to
+    // its minimum, so a 260 px panel minimum gives 306 of 1509 px
+    // (measured on Qt 6.11). The strip adds its padding on both sides so
+    // the panel's content keeps that width.
+    const int space = qMax(1, total - kMigratedHandlePx);
+    // The minimum that splitter saw: the widget's own, not its content's.
+    int minimum = 0;
+    for (QWidget* w : strip(DockEdge::Right)->containers()) {
+        if (!w->isHidden()) {
+            minimum = qMax(minimum, qMax(w->minimumWidth(), w->minimumSizeHint().width()));
+        }
+    }
+    const int panel = qMax(kMigratedPanelShare, minimum);
+    const int spectrum = kMigratedTotalShare - kMigratedPanelShare;
+    return qMax(1, int(std::lround(space * double(panel) / (spectrum + panel))))
+        + 2 * EdgeDockStrip::kPaddingPx;
 }
 
 int EdgeDockArea::thickness(DockEdge edge) const
 {
     const int i = indexOf(edge);
+    const int padding = 2 * EdgeDockStrip::kPaddingPx;
+    const bool side = EdgeDockStrip::orientationFor(edge) == Qt::Vertical;
+    // A side strip is never narrower than its widest container's minimum.
+    const int floor = side && m_minimumCross[i] > 0 ? m_minimumCross[i] + padding : 0;
     if (m_explicit[i]) {
-        return m_thickness[i];
+        return qMax(m_thickness[i], floor);
     }
-    return edge == DockEdge::Right ? migratedRightThickness() : EdgeDockStrip::defaultThickness(edge);
+    if (side) {
+        const int base = edge == DockEdge::Right ? migratedRightThickness()
+                                                 : EdgeDockStrip::defaultThickness(edge);
+        return qMax(base, floor);
+    }
+    // An end strip shows its tallest container whole by default; 112 px
+    // stays the least it starts at. Made smaller by the user, it scrolls.
+    const int preferred = m_preferredCross[i] > 0 ? m_preferredCross[i] + padding : 0;
+    return qMax(EdgeDockStrip::defaultThickness(edge), preferred);
+}
+
+void EdgeDockArea::setStripContentHint(DockEdge edge, int minimumCross, int preferredCross)
+{
+    const int i = indexOf(edge);
+    m_minimumCross[i] = qMax(0, minimumCross);
+    m_preferredCross[i] = qMax(0, preferredCross);
+    EdgeDockStrip* s = strip(edge);
+    const int floor = m_minimumCross[i] > 0 ? m_minimumCross[i] + 2 * EdgeDockStrip::kPaddingPx : 0;
+    if (EdgeDockStrip::orientationFor(edge) == Qt::Vertical) {
+        s->setMinimumWidth(floor);
+    }
 }
 
 bool EdgeDockArea::hasThickness(DockEdge edge) const

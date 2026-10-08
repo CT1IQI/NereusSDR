@@ -18,7 +18,7 @@
 //                 arrange-on) with the Main Panel top crop. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Proposed four-edge workspace scenes (edge-right,
-//                 edge-left, edge-top-bottom, edge-all-four,
+//                 edge-left, edge-top-bottom, edge-all-four, edge-all-four-clean,
 //                 free-container, floating-container, drag-preview-left,
 //                 drag-preview-between). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -854,8 +854,16 @@ QJsonObject proposedEdgeValues()
             "6 px, app-bg, 1 px centre line border role, accent role under the pointer")},
         {QStringLiteral("thickness_left_right_px"), EdgeDockStrip::kSideThicknessPx},
         {QStringLiteral("thickness_top_bottom_px"), EdgeDockStrip::kEndThicknessPx},
+        {QStringLiteral("thickness_top_bottom_default"), QStringLiteral(
+            "max(112, tallest container's preferred height incl. header + 2 x padding); "
+            "scrolls only when made smaller")},
+        {QStringLiteral("thickness_side_minimum"), QStringLiteral(
+            "widest container minimum + 2 x padding")},
         {QStringLiteral("thickness_right_first_run"), QStringLiteral(
-            "256 of 1280 of the width (today's Main Panel share) until dragged or saved")},
+            "today's Main Panel width (the 3 px-handle splitter's 1024/256 split, "
+            "the panel raised to its minimum) + 2 x padding, until dragged or saved")},
+        {QStringLiteral("free_and_floating_background"), QStringLiteral(
+            "opaque glass plate (panel-top to panel-bottom); floating shell panel role")},
         {QStringLiteral("target_band"), QStringLiteral("6 px at each edge, accent at 35%")},
         {QStringLiteral("drop_preview"), QStringLiteral(
             "accent at 22% fill, 1 px #3d78b0, radius 6; 28 px between containers")},
@@ -892,15 +900,19 @@ void noteStrips(SceneContext& ctx)
             if (auto* c = qobject_cast<ContainerWidget*>(w); c != nullptr && !c->isHidden()) {
                 QString scroll;
                 if (auto* area = c->contentHolder()->findChild<QScrollArea*>()) {
-                    scroll = QStringLiteral(", viewport %1, body min %2")
+                    scroll = QStringLiteral(", viewport %1x%2, body min %3x%4")
+                                 .arg(area->viewport()->width())
                                  .arg(area->viewport()->height())
+                                 .arg(area->widget() ? area->widget()->minimumSizeHint().width() : -1)
                                  .arg(area->widget() ? area->widget()->minimumSizeHint().height() : -1);
                 }
-                titles.append(QStringLiteral("%1 (content %2x%3%4)")
+                titles.append(QStringLiteral("%1 (container %5x%6, minimum width %7, content %2x%3%4)")
                                   .arg(c->notes().isEmpty() ? c->id() : c->notes())
                                   .arg(c->contentHolder()->width())
                                   .arg(c->contentHolder()->height())
-                                  .arg(scroll));
+                                  .arg(scroll)
+                                  .arg(c->width()).arg(c->height())
+                                  .arg(qMax(c->minimumWidth(), c->minimumSizeHint().width())));
             }
         }
         ctx.notes.append(QStringLiteral("%1 strip: %2, %3x%4 [%5]")
@@ -911,15 +923,17 @@ void noteStrips(SceneContext& ctx)
 }
 
 // One proposed edge scene: the two-band data with the workspace look, every
-// container's header Always, `arrange` before the data and `pose` after.
+// container's header in `header` (Always unless a scene says otherwise),
+// `arrange` before the data and `pose` after.
 void sceneProposedEdges(SceneContext& ctx, const QString& name,
                         const std::function<void(SceneContext&)>& arrange,
-                        const std::function<void(SceneContext&)>& pose = {})
+                        const std::function<void(SceneContext&)>& pose = {},
+                        HeaderMode header = HeaderMode::Always)
 {
     ctx.provenance = QStringLiteral("proposed");
     ctx.proposedValues = proposedEdgeValues();
     ctx.extraCrops = addStripCrops;
-    runWindowScene(ctx, twoBandPoses(), 0, [arrange](SceneContext& c) {
+    runWindowScene(ctx, twoBandPoses(), 0, [arrange, header](SceneContext& c) {
         if (mainPanel(c) == nullptr || c.window->findChild<EdgeDockArea*>() == nullptr) {
             c.failure = QStringLiteral("no Main Panel container or edge area");
             return;
@@ -932,7 +946,7 @@ void sceneProposedEdges(SceneContext& ctx, const QString& name,
         }
         auto* manager = c.window->findChild<ContainerManager*>();
         for (ContainerWidget* container : manager->allContainers()) {
-            emit container->headerModeRequested(HeaderMode::Always);
+            emit container->headerModeRequested(header);
         }
     }, [pose](SceneContext& c) {
         if (pose) {
@@ -1279,6 +1293,17 @@ QVector<Scene> fixedScenes()
             addLevelsContainer(c, DockEdge::Left);
         });
     }, true});
+    scenes.append({QStringLiteral("edge-all-four-clean"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // edge-all-four with every container's header Reveal, idle: no
+        // group or entry header shows and none takes room.
+        sceneProposedEdges(ctx, QStringLiteral("edge-all-four-clean"), [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            addBandContainer(c, DockEdge::Bottom);
+            addLevelsContainer(c, DockEdge::Left);
+            c.notes.append(QStringLiteral("every container: Header Reveal, pointer away"));
+        }, {}, HeaderMode::Reveal);
+    }, true});
     scenes.append({QStringLiteral("free-container"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         sceneProposedEdges(ctx, QStringLiteral("free-container"), [](SceneContext& c) {
@@ -1289,6 +1314,33 @@ QVector<Scene> fixedScenes()
             // Options > Place Free.
             auto* manager = c.window->findChild<ContainerManager*>();
             emit manager->container(id)->placeFreeRequested();
+            // Moved by its header to the lower right of the 20 m waterfall,
+            // clear of every VFO flag and of the dB and time scales.
+            constexpr int kScaleClearancePx = 72;
+            constexpr int kBottomClearancePx = 24;
+            ContainerWidget* levels = manager->container(id);
+            QWidget* pane = levels != nullptr ? levels->parentWidget() : nullptr;
+            if (pane == nullptr) {
+                c.failure = QStringLiteral("the Levels container was not placed free");
+                return;
+            }
+            WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+            for (auto& d : draft.containers) {
+                if (d.id == id) {
+                    // The committed free size; the widget may not have taken it yet.
+                    const QSize size = d.geometry.isValid() ? d.geometry.size() : levels->size();
+                    d.geometry = QRect(QPoint(pane->width() - size.width() - kScaleClearancePx,
+                                              pane->height() - size.height() - kBottomClearancePx),
+                                       size);
+                    c.notes.append(QStringLiteral("Levels moved to %1,%2 %3x%4 in a %5x%6 pane")
+                                       .arg(d.geometry.x()).arg(d.geometry.y())
+                                       .arg(size.width()).arg(size.height())
+                                       .arg(pane->width()).arg(pane->height()));
+                }
+            }
+            if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+                c.failure = QStringLiteral("could not move the Levels container");
+            }
         }, [](SceneContext& c) {
             auto* manager = c.window->findChild<ContainerManager*>();
             ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));

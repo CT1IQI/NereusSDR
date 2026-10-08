@@ -79,6 +79,7 @@ mw0lge@grange-lane.co.uk
 #include <functional>
 
 class QSplitter;
+class QSplitterHandle;
 class QWidget;
 
 namespace NereusSDR {
@@ -228,6 +229,9 @@ private:
     bool edgeMode() const;
     void layoutEdgeStrips(const WorkspaceDocument& document);
     void captureArrangement(WorkspaceDocument& document) const;
+    // True when the edge-area handle borders a locked container, or a strip
+    // that holds one.
+    bool edgeHandleTouchesLockedContainer(QSplitterHandle* handle) const;
     void finishEdgeDrag(const QString& id, const QPoint& globalPos);
     // Size for a strip container leaving its strip: its width, its
     // content's height.

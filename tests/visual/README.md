@@ -138,15 +138,18 @@ colours the scene shows.
 ### Proposed four-edge workspace scenes
 
 `edge-right`, `edge-left`, `edge-top-bottom`, `edge-all-four`,
-`free-container`, `floating-container`, `drag-preview-left` and
+`edge-all-four-clean`, `free-container`, `floating-container`, `drag-preview-left` and
 `drag-preview-between` pose the two-band data with the workspace preview
 switch on and show containers docked in the strips on all four edges of
 the central workspace (`src/gui/containers/EdgeDockStrip`), free over the
 spectrum and floating in their own window. The scenes add containers
 from existing content types: "Meters" (the S-Meter preset and the
 Power/SWR face), "Band" (the band and mode button boxes, one row each)
-and "Levels" (two bar meters). `free-container` uses Options > Place Free
-with the header in Reveal, shown; `floating-container` also writes the
+and "Levels" (two bar meters). Every container's header is Always,
+except in `edge-all-four-clean`, where it is Reveal with the pointer away,
+so no header shows or takes room. `free-container` uses Options > Place
+Free, moves the container to the lower right of the 20 m waterfall and
+shows the header in Reveal, shown; `floating-container` also writes the
 floating window as `floating-container--floating`; the drag previews turn
 Arrange on and call `ContainerManager::showDropPreviewForTest`. At the
 crop profile each adds `strip-left`, `strip-top` and `strip-bottom` crops

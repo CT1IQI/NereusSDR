@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview: the floating shell paints the palette's
+//                 panel surface by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-04 — Application quit accepts structured form closure without
 //                 arrangement by J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -63,6 +66,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/GuiApplication.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 
 #include <QCloseEvent>
 #include <QGuiApplication>
@@ -78,6 +83,12 @@ FloatingContainer::FloatingContainer(int rxSource, QWidget* parent)
     setMinimumSize(ContainerWidget::kMinContainerWidth,
                    ContainerWidget::kMinContainerHeight);
     setStyleSheet(QStringLiteral("background: #0f0f1a;"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: an opaque surface behind the container's plate,
+        // so nothing beneath the window shows through its corners.
+        setStyleSheet(QStringLiteral("background: %1;")
+                          .arg(Workspace::role("panel", "#0f0f1a")));
+    }
     updateTitle();
     qCDebug(lcContainer) << "FloatingContainer created for RX" << rxSource;
 }

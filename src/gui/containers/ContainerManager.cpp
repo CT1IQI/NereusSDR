@@ -9,9 +9,10 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Workspace preview only: PanelDocked containers in the
 //                 strip for their edge, Move to Edge, Place Free, the
-//                 edge drag preview and commit, the strip arrangement and
-//                 grid alignment by J.J. Boyd (KG4VCF), AI-assisted via
-//                 Anthropic Claude Code.
+//                 edge drag preview and commit, the strip arrangement,
+//                 grid alignment, strip size hints, lock on strip handles
+//                 and the pop-out size by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: app-level Arrange mode, the group
 //                 header's title, source chip and lock request, and the
 //                 auto-height header extent by J.J. Boyd (KG4VCF),
@@ -81,6 +82,7 @@ mw0lge@grange-lane.co.uk
 #include <QGuiApplication>
 #include <QScreen>
 #include <QApplication>
+#include <QScrollArea>
 #include <QSplitterHandle>
 #include "ContainerWidget.h"
 #include "ContainerSettingsDialog.h"
@@ -254,6 +256,14 @@ void ContainerManager::setTransmitting(bool transmitting)
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 {
+    if (auto *handle = qobject_cast<QSplitterHandle *>(watched);
+        handle && edgeMode() && handle->splitter() != m_splitter &&
+        (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
+         event->type() == QEvent::MouseButtonRelease)) {
+        // Workspace preview: a strip's handle, or the handle beside a strip,
+        // does not resize a locked container.
+        return edgeHandleTouchesLockedContainer(handle);
+    }
     if (qobject_cast<QSplitterHandle *>(watched) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
          event->type() == QEvent::MouseButtonRelease)) {
@@ -535,6 +545,12 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             handle->installEventFilter(this);
         }
     }
+    if (edgeMode()) {
+        // installEventFilter ignores a filter that is already installed.
+        for (auto *handle : m_edgeArea->findChildren<QSplitterHandle *>()) {
+            handle->installEventFilter(this);
+        }
+    }
     const bool interactionActive = std::any_of(m_containers.cbegin(), m_containers.cend(),
         [](ContainerWidget* c) { return c->geometryInteractionActive(); });
     if (!m_pendingGeometry.isEmpty() && !interactionActive && m_storageError.isEmpty()) {
@@ -616,12 +632,41 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
             m_edgeArea->setThickness(edge, thickness);
         }
     }
-    // Migration: the right strip takes the Main Panel's saved width.
+    // Migration: the right strip takes the Main Panel's saved width, plus
+    // the strip's padding so the panel keeps that width.
     if (!m_edgeArea->hasThickness(DockEdge::Right)) {
         const QJsonArray saved = document.extensions.value("splitterSizes").toArray();
         if (saved.size() == 2 && saved.at(1).toInt() > 0) {
-            m_edgeArea->setThickness(DockEdge::Right, saved.at(1).toInt());
+            m_edgeArea->setThickness(DockEdge::Right,
+                                     saved.at(1).toInt() + 2 * EdgeDockStrip::kPaddingPx);
         }
+    }
+    // What each strip's containers need across it. The header counts only
+    // where it takes room (Always); Reveal and Hidden reserve none.
+    for (DockEdge edge : edges) {
+        int minimumCross = 0;
+        int preferredCross = 0;
+        for (QWidget* w : widgets.value(edge)) {
+            auto* c = qobject_cast<ContainerWidget*>(w);
+            if (c == nullptr || c->isHidden()) {
+                continue;
+            }
+            if (EdgeDockStrip::orientationFor(edge) == Qt::Vertical) {
+                // The container's own minimum, and its scrolling content's:
+                // a scroll area reports a small minimum of its own, so the
+                // content's width is read from the scrolled body.
+                int widest = qMax(c->minimumWidth(), c->minimumSizeHint().width());
+                if (auto* scroll = c->contentHolder()->findChild<QScrollArea*>();
+                    scroll != nullptr && scroll->widget() != nullptr) {
+                    widest = qMax(widest, scroll->widget()->minimumSizeHint().width());
+                }
+                minimumCross = qMax(minimumCross, widest);
+            } else if (auto* host = contentHost(c->id())) {
+                preferredCross = qMax(preferredCross,
+                                      host->preferredContentHeight() + c->headerExtent());
+            }
+        }
+        m_edgeArea->setStripContentHint(edge, minimumCross, preferredCross);
     }
     m_edgeArea->refreshLayout();
     for (DockEdge edge : edges) {
@@ -642,6 +687,34 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
             m_edgeArea->strip(edge)->setExtents(extents);
         }
     }
+}
+
+bool ContainerManager::edgeHandleTouchesLockedContainer(QSplitterHandle* handle) const
+{
+    QSplitter* splitter = handle->splitter();
+    if (splitter == nullptr) {
+        return false;
+    }
+    const auto locked = [](QWidget* w) {
+        if (auto* c = qobject_cast<ContainerWidget*>(w)) {
+            return c->isLocked();
+        }
+        if (auto* strip = qobject_cast<EdgeDockStrip*>(w)) {
+            const QList<QWidget*> held = strip->containers();
+            return std::any_of(held.cbegin(), held.cend(), [](QWidget* inner) {
+                auto* c = qobject_cast<ContainerWidget*>(inner);
+                return c != nullptr && !c->isHidden() && c->isLocked();
+            });
+        }
+        return false;
+    };
+    // Handle i sits between widget i - 1 and widget i.
+    for (int i = 1; i < splitter->count(); ++i) {
+        if (splitter->handle(i) == handle) {
+            return locked(splitter->widget(i - 1)) || locked(splitter->widget(i));
+        }
+    }
+    return false;
 }
 
 void ContainerManager::captureArrangement(WorkspaceDocument& document) const
@@ -891,6 +964,15 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
             if (d.locked) {
                 emit workspaceError(tr("Arrangement is locked"));
                 return true;
+            }
+            if (mode == DockMode::Floating && d.dockMode == DockMode::PanelDocked && edgeMode()) {
+                // Workspace preview: a strip container popped out keeps its
+                // own size (its width, its content's height plus the
+                // header), centred on the main window. The app has no
+                // pop-out default size to use instead.
+                const QSize size = freePlacementSize(id, d);
+                const QRect anchor = m_edgeArea->window()->geometry();
+                d.geometry = QRect(anchor.center() - QPoint(size.width() / 2, size.height() / 2), size);
             }
             d.dockMode = mode;
             commitWorkspace(document, document.revision);

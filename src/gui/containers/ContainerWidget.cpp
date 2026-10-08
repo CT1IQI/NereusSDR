@@ -40,8 +40,9 @@
 //   2026-10-07 - Workspace preview only: Move to Edge and Place Free,
 //                 the panel-docked header drag toward an edge, Escape
 //                 cancels a drag, the optional 8 px alignment at release
-//                 (Alt bypasses it) and the floating resize corner. J.J.
-//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 (Alt bypasses it), the floating resize corner and the
+//                 opaque panel surface behind a free or floating container.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -904,6 +905,18 @@ void ContainerWidget::setDockMode(DockMode mode)
 
     // Enforce minimum width in all dock modes so the applets are always usable.
     setMinimumWidth(260);
+
+    if (m_groupHeader) {
+        // Workspace preview: a free or floating container covers whatever
+        // lies beneath it (VFO flags, the spectrum) with the opaque panel
+        // surface over its whole rect, the plate's rounded corners included.
+        // In a strip the app background shows around the plate instead.
+        const bool covers = mode != DockMode::PanelDocked;
+        QPalette surface = palette();
+        surface.setColor(QPalette::Window, QColor(Workspace::role("panel", "#0f0f1a")));
+        setPalette(surface);
+        setAutoFillBackground(covers);
+    }
 
     if (changed) {
         updateTitleBar();

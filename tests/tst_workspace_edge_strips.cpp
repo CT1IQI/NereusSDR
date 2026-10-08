@@ -3,13 +3,20 @@
 //   2026-10-07 - Strip placement, Move to Edge, the drop preview and the
 //                 edge drag commit and cancel for the workspace preview by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Strip minimum and default thickness, lock on strip handles,
+//                 opaque free containers, pop-out size, and Reveal and Hidden
+//                 inside strips, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <memory>
 #include "core/AppSettings.h"
+#include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
@@ -70,6 +77,21 @@ struct EdgeFixture {
         entry.id = id + QStringLiteral("-meter");
         entry.context["sliceId"] = 0;
         result.contents.append(entry);
+        return result;
+    }
+
+    // A container of several stacked meters: taller than an end strip's
+    // 112 px floor.
+    ContainerDocument tallContainer(const QString& id, DockEdge edge, HeaderMode header)
+    {
+        ContainerDocument result = container(id, edge);
+        result.header = header;
+        for (const QString& type : {QStringLiteral("meter.comp"), QStringLiteral("meter.signalMaxBin")}) {
+            ContentEntry entry = registry.makeEntry(type);
+            entry.id = id + QStringLiteral("-") + type;
+            entry.context["sliceId"] = 0;
+            result.contents.append(entry);
+        }
         return result;
     }
 
@@ -211,7 +233,241 @@ private slots:
         QCOMPARE(f.center->width() + f.area->strip(DockEdge::Right)->width()
                      + f.middle->handleWidth(), f.area->width());
         // Today's share: 256 of 1280.
-        QVERIFY(qAbs(f.area->strip(DockEdge::Right)->width() - f.area->width() / 5) <= 2);
+        // Today's Main Panel width is the strip's content width: the
+        // 3 px-handle splitter's 1024/256 split with the panel raised to
+        // its minimum. The strip adds its padding on both sides.
+        f.window.resize(1512, 800);
+        settle();
+        constexpr int kPadding = 2 * EdgeDockStrip::kPaddingPx;
+        const int minimum = qMax(f.manager->container("main")->minimumWidth(),
+                                 f.manager->container("main")->minimumSizeHint().width());
+        const int panel = qMax(256, minimum);
+        const int share = int(std::lround((f.area->width() - 3) * double(panel) / (1024 + panel)));
+        if (minimum == 260) {
+            // The value the 1512 px preview profile shows today.
+            QCOMPARE(share, 306);
+        }
+        QVERIFY2(qAbs(f.area->strip(DockEdge::Right)->width() - (share + kPadding)) <= 2,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(f.area->strip(DockEdge::Right)->width())
+                                .arg(share + kPadding)));
+        QVERIFY(qAbs(f.manager->container("main")->width() - share) <= 2);
+    }
+
+    void sideStripNeverClipsItsWidestContainer()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("a", DockEdge::Left), f.container("main", DockEdge::Right)}));
+        f.show();
+        ContainerWidget* a = f.manager->container("a");
+        EdgeDockStrip* left = f.area->strip(DockEdge::Left);
+        int widest = qMax(a->minimumWidth(), a->minimumSizeHint().width());
+        if (auto* scroll = a->contentHolder()->findChild<QScrollArea*>(); scroll && scroll->widget()) {
+            widest = qMax(widest, scroll->widget()->minimumSizeHint().width());
+        }
+        constexpr int kPadding = 2 * EdgeDockStrip::kPaddingPx;
+        QCOMPARE(left->minimumWidth(), widest + kPadding);
+        // A thickness below the minimum (saved, or dragged) never clips it.
+        f.area->setThickness(DockEdge::Left, 100);
+        settle();
+        QVERIFY2(left->width() >= widest + kPadding, qPrintable(QString::number(left->width())));
+        QVERIFY(a->width() >= widest);
+        QCOMPARE(f.area->thickness(DockEdge::Left), widest + kPadding);
+        // Dragging the area handle cannot go below it either.
+        QSplitterHandle* handle = f.area->middleSplitter()->handle(1);
+        const QPoint grab = handle->mapToGlobal(handle->rect().center());
+        press(handle, grab);
+        move(handle, grab - QPoint(200, 0));
+        release(handle, grab - QPoint(200, 0));
+        settle();
+        QVERIFY2(left->width() >= widest + kPadding, qPrintable(QString::number(left->width())));
+    }
+
+    void endStripDefaultShowsTallestContainerWhole()
+    {
+        constexpr int kPadding = 2 * EdgeDockStrip::kPaddingPx;
+        for (HeaderMode header : {HeaderMode::Always, HeaderMode::Reveal, HeaderMode::Hidden}) {
+            EdgeFixture f;
+            QVERIFY(f.commit({f.tallContainer("top", DockEdge::Top, header),
+                              f.container("main", DockEdge::Right)}));
+            f.show();
+            ContainerWidget* top = f.manager->container("top");
+            const int content = f.manager->contentHost("top")->preferredContentHeight();
+            const int headerExtent = top->headerExtent();
+            // Reveal and Hidden reserve no header room.
+            QCOMPARE(headerExtent, header == HeaderMode::Always ? WorkspaceGroupHeader::kHeight : 0);
+            QVERIFY2(content + headerExtent + kPadding > EdgeDockStrip::kEndThicknessPx,
+                     qPrintable(QString::number(content)));
+            EdgeDockStrip* strip = f.area->strip(DockEdge::Top);
+            QCOMPARE(strip->height(), content + headerExtent + kPadding);
+            QVERIFY(top->contentHolder()->height() >= content);
+            // Made smaller by the user, the content scrolls instead of clipping.
+            const int smaller = content + headerExtent + kPadding - 30;
+            f.area->setThickness(DockEdge::Top, smaller);
+            settle();
+            QCOMPARE(strip->height(), smaller);
+            auto* scroll = top->contentHolder()->findChild<QScrollArea*>();
+            QVERIFY(scroll != nullptr);
+            QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        }
+        // 112 px stays the least a short container starts at.
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("top", DockEdge::Top), f.container("main", DockEdge::Right)}));
+        f.show();
+        const int content = f.manager->contentHost("top")->preferredContentHeight()
+            + f.manager->container("top")->headerExtent() + kPadding;
+        QCOMPARE(f.area->strip(DockEdge::Top)->height(),
+                 qMax(int(EdgeDockStrip::kEndThicknessPx), content));
+    }
+
+    void lockedContainerBlocksStripHandles()
+    {
+        EdgeFixture f;
+        ContainerDocument a = f.container("a", DockEdge::Left);
+        a.locked = true;
+        QVERIFY(f.commit({a, f.container("b", DockEdge::Left), f.container("main", DockEdge::Right)}));
+        f.show();
+        EdgeDockStrip* left = f.area->strip(DockEdge::Left);
+        const auto drag = [&](QSplitterHandle* handle, const QPoint& by) {
+            const QPoint grab = handle->mapToGlobal(handle->rect().center());
+            press(handle, grab);
+            move(handle, grab + by);
+            release(handle, grab + by);
+            settle();
+        };
+        const QList<int> before = left->extents();
+        drag(left->splitter()->handle(1), QPoint(0, 80));
+        QCOMPARE(left->extents(), before);
+        // The area handle beside the strip does not resize it either.
+        const int width = left->width();
+        drag(f.area->middleSplitter()->handle(1), QPoint(80, 0));
+        QCOMPARE(left->width(), width);
+
+        // Unlocked, the same drags resize.
+        WorkspaceDocument document = f.store.snapshot();
+        for (auto& d : document.containers) {
+            d.locked = false;
+        }
+        QCOMPARE(f.manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
+        settle();
+        drag(left->splitter()->handle(1), QPoint(0, 80));
+        QVERIFY(left->extents() != before);
+        drag(f.area->middleSplitter()->handle(1), QPoint(80, 0));
+        QVERIFY(left->width() != width);
+    }
+
+    void freeContainerPaintsItsWholeRect()
+    {
+        EdgeFixture f;
+        f.center->setAutoFillBackground(true);
+        QPalette red = f.center->palette();
+        red.setColor(QPalette::Window, Qt::red);
+        f.center->setPalette(red);
+        QVERIFY(f.commit({f.container("a", DockEdge::Left), f.container("main", DockEdge::Right)}));
+        f.show();
+        f.manager->placeContainerFree("a");
+        settle();
+        // Taller than its content, so part of it holds no content at all.
+        WorkspaceDocument document = f.store.snapshot();
+        for (auto& d : document.containers) {
+            if (d.id == "a") {
+                d.autoHeight = false;
+                d.geometry = QRect(40, 40, 300, 420);
+            }
+        }
+        QCOMPARE(f.manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
+        settle();
+        ContainerWidget* a = f.manager->container("a");
+        QCOMPARE(a->parentWidget(), f.center);
+        QCOMPARE(a->geometry(), QRect(40, 40, 300, 420));
+        const QImage image = f.window.grab().toImage();
+        const qreal dpr = image.devicePixelRatio();
+        const QRect r = a->geometry().translated(f.center->mapTo(&f.window, QPoint()));
+        // Its corners, outside the plate's radius, and inside it: its
+        // edges, its centre, its foot.
+        constexpr int kInset = 12;
+        for (const QPoint& p : {QPoint(r.left() + 1, r.bottom() - 1), QPoint(r.right() - 1, r.bottom() - 1),
+                                QPoint(r.left() + kInset, r.bottom() - kInset),
+                                QPoint(r.right() - kInset, r.bottom() - kInset),
+                                QPoint(r.center().x(), r.bottom() - kInset),
+                                QPoint(r.center().x(), r.center().y() + 100),
+                                QPoint(r.left() + kInset, r.center().y())}) {
+            const QColor c = image.pixelColor(QPoint(int(p.x() * dpr), int(p.y() * dpr)));
+            QVERIFY2(c.red() < 128, qPrintable(QStringLiteral("%1,%2 %3")
+                                                   .arg(p.x()).arg(p.y()).arg(c.name())));
+        }
+    }
+
+    void popOutFromAStripKeepsTheContainerSize()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("a", DockEdge::Left), f.container("main", DockEdge::Right)}));
+        f.show();
+        ContainerWidget* a = f.manager->container("a");
+        const int width = a->width();
+        const int preferred = f.manager->contentHost("a")->preferredContentHeight()
+            + WorkspaceGroupHeader::kHeight;
+        f.manager->floatContainer("a");
+        settle();
+        const ContainerDocument* d = f.document("a");
+        QCOMPARE(d->dockMode, DockMode::Floating);
+        QCOMPARE(d->geometry.width(), width);
+        QVERIFY2(d->geometry.height() <= qMax(120, preferred),
+                 qPrintable(QString::number(d->geometry.height())));
+        QVERIFY(a->window() != &f.window);
+        QCOMPARE(a->window()->size(), d->geometry.size());
+        // Docked back before teardown: see the Task 4 report on the Qt
+        // offscreen plugin's clearHash.
+        f.manager->moveContainerToEdge("a", DockEdge::Left);
+        settle();
+        QCOMPARE(f.document("a")->dockMode, DockMode::PanelDocked);
+    }
+
+    void revealAndHiddenRecoverInsideStrips()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.tallContainer("r", DockEdge::Top, HeaderMode::Reveal),
+                          f.tallContainer("h", DockEdge::Top, HeaderMode::Hidden),
+                          f.tallContainer("arr", DockEdge::Top, HeaderMode::Hidden),
+                          f.container("main", DockEdge::Right)}));
+        f.show();
+        const int thickness = f.area->strip(DockEdge::Top)->height();
+        ContainerWidget* r = f.manager->container("r");
+        ContainerWidget* h = f.manager->container("h");
+        ContainerWidget* arr = f.manager->container("arr");
+        for (ContainerWidget* c : {r, h, arr}) {
+            QCOMPARE(c->headerExtent(), 0);
+            QVERIFY(!c->chromeVisible());
+        }
+        const QPoint contentTop = r->contentHolder()->mapTo(r, QPoint());
+
+        // Reveal: 120 ms in the top band shows the header over the content.
+        const auto hover = [](QWidget* target, const QPoint& position) {
+            QMouseEvent event(QEvent::MouseMove, position, target->mapToGlobal(position),
+                              Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(target, &event);
+        };
+        hover(r, QPoint(40, 6));
+        QTRY_VERIFY_WITH_TIMEOUT(r->chromeVisible(), 1000);
+        QCOMPARE(r->contentHolder()->mapTo(r, QPoint()), contentTop);
+        QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
+        hover(r, QPoint(40, r->height() - 6));
+        QTRY_VERIFY_WITH_TIMEOUT(!r->chromeVisible(), 2000);
+
+        // Hidden: the context menu's Reveal controls recovers it.
+        h->recoverChrome();
+        settle();
+        QVERIFY(h->chromeVisible());
+        QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
+
+        // Hidden: Arrange recovers it, and turning Arrange off hides it.
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(arr->chromeVisible());
+        QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
+        f.manager->setArrangeMode(false);
+        settle();
+        QVERIFY(!arr->chromeVisible());
+        QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
     }
 
     void moveToEdgeReordersAndCommits()
