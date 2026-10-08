@@ -23,3 +23,15 @@ surviving row objects and persistent indexes are not reset. Data-only refreshes
 retain their accessibility IDs. The native regression reproduces the actual
 ConnectionSelector removal after rebuilding native rows and draining its pool.
 JJ Boyd (KG4VCF), 2026-10-03, with OpenAI Codex assistance.
+
+SpotHubDialog.cpp studies the same qtbase v6.11.0 sources (reference only; no
+method bodies copied). The Spot List shows SpotTableModel through
+BandFilterProxy, and its rows change whenever a spot arrives, the 500-spot cap
+trims one, or a band or source pill filters, so on Qt 6.11.0 Cocoa it invokes
+the public table-interface ModelReset handler before every row or column insert
+or removal the proxy announces. A spot arriving after Cocoa expired the table's
+native rows otherwise dereferenced a deleted cell interface inside
+QAccessibleTable::modelChange. The item model, proxy and persistent indexes are
+not reset. The offscreen regression deletes the cell interfaces through the
+public QAccessible API, the same cache call the Cocoa bridge makes.
+JJ Boyd (KG4VCF), 2026-10-08, with Anthropic Claude Code assistance.

@@ -146,6 +146,15 @@
 //                                    SpotSourceHost::reporterVersion(), not
 //                                    a "NereusSDR/<version>" variant.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Spot List crash fix: on Qt 6.11.0
+//                                    Cocoa, before every row insert or
+//                                    removal through the proxy, the
+//                                    table's accessibility child cache is
+//                                    cleared, so a spot arriving after
+//                                    the Cocoa bridge expired its rows no
+//                                    longer dereferences a deleted cell
+//                                    interface. AI tooling: Anthropic
+//                                    Claude Code.
 
 #include "SpotHubDialog.h"
 
@@ -165,12 +174,15 @@
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
 
+#include <QAbstractItemView>
+#include <QAccessible>
 #include <QCheckBox>
 #include <QSignalBlocker>
 #include <QColor>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
+#include <QGuiApplication>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -287,7 +299,48 @@ QString swatchStyle(const QColor& c) {
         "QPushButton:hover { border-color: #c8d8e8; }").arg(c.name());
 }
 
+bool g_accessibleTableCacheResetForced = false;
+
+// Qt 6.11.0 Cocoa expires the real cell interfaces of old native rows
+// (qcocoaaccessibilityelement.mm:219-226,257-267,342-362: removeElementsFromCache:
+// calls QAccessibleCache::deleteInterface), but QAccessibleTable keeps their
+// IDs in its child cache and calls role() on the null interface during the
+// next RowsInserted or RowsRemoved (itemviews.cpp:645-741). The same repair
+// as ConnectionSelector and RxApplet: clear only that cache through the
+// public table-interface ModelReset handler. The item model, proxy,
+// selection and persistent indexes are untouched.
+bool accessibleTableCacheResetNeeded()
+{
+    if (g_accessibleTableCacheResetForced) {
+        return true;
+    }
+#if defined(Q_OS_MAC)
+    return QGuiApplication::platformName() == QStringLiteral("cocoa")
+        && qVersion() == QStringLiteral("6.11.0");
+#else
+    return false;
+#endif
+}
+
+void resetAccessibleTableCache(QAbstractItemView* view)
+{
+    if (!QAccessible::isActive() || !accessibleTableCacheResetNeeded()) {
+        return;
+    }
+    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
+    if (accessible != nullptr && accessible->tableInterface() != nullptr) {
+        QAccessibleTableModelChangeEvent reset(
+            view, QAccessibleTableModelChangeEvent::ModelReset);
+        accessible->tableInterface()->modelChange(&reset);
+    }
+}
+
 } // namespace
+
+void SpotHubDialog::setAccessibleTableCacheResetForcedForTest(bool forced)
+{
+    g_accessibleTableCacheResetForced = forced;
+}
 
 // From AetherSDR src/gui/DxClusterDialog.cpp:230-273 [@0cd4559].
 // NereusSDR divergence: AetherSDR upstream takes a trailing
@@ -2469,6 +2522,22 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
 
     // No default sort - insertion order is newest-first.
     m_spotTable->horizontalHeader()->setSortIndicatorShown(false);
+
+    // Spots arrive from the Core at any moment, so the Qt 6.11.0 Cocoa
+    // accessibility repair (resetAccessibleTableCache above) runs before
+    // every row insert or removal the view will see: a new spot, the cap
+    // trimming the oldest, or a band or source pill filtering rows.
+    const auto resetAccessibleCache = [view = m_spotTable] {
+        resetAccessibleTableCache(view);
+    };
+    connect(m_spotProxyModel, &QAbstractItemModel::rowsAboutToBeInserted,
+            m_spotTable, resetAccessibleCache);
+    connect(m_spotProxyModel, &QAbstractItemModel::rowsAboutToBeRemoved,
+            m_spotTable, resetAccessibleCache);
+    connect(m_spotProxyModel, &QAbstractItemModel::columnsAboutToBeInserted,
+            m_spotTable, resetAccessibleCache);
+    connect(m_spotProxyModel, &QAbstractItemModel::columnsAboutToBeRemoved,
+            m_spotTable, resetAccessibleCache);
 
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {
