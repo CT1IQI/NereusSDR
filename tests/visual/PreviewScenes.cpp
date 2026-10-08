@@ -85,12 +85,24 @@
 //                 flag-fold--two-band, flag-fold--two-band-look,
 //                 flag-fold--states). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Scenes for every remaining dialog, the standard dialogs and
+//                 the remote set on a never-dialled remote window. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QColorDialog>
+#include <QDateTime>
+#include <QGridLayout>
+#include <QHostAddress>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QProgressDialog>
+#include <QTabWidget>
+#include <QUuid>
 #include <QCoreApplication>
 #include <QDialog>
 #include <QElapsedTimer>
@@ -129,6 +141,42 @@
 #include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/ControlRanges.h"
+#include "core/RadioDiscovery.h"
+#include "core/audio/VirtualCableDetector.h"
+#include "core/dsp/DspAssetValidation.h"
+#include "core/session/RemoteDevicesState.h"
+#include "core/session/SessionMessages.h"
+#include "core/session/StationClient.h"
+#include "gui/AboutDialog.h"
+#include "gui/AddCustomRadioDialog.h"
+#include "gui/AmpViewWindow.h"
+#include "gui/ConnectionPanel.h"
+#include "gui/ConnectionSelector.h"
+#include "gui/CoreTargetEditor.h"
+#include "gui/CoreTargetStore.h"
+#include "gui/DspAssetDialog.h"
+#include "gui/FreeDVReporterDialog.h"
+#include "gui/GuiSessionCoordinator.h"
+#include "gui/LanScanDialog.h"
+#include "gui/NetworkDiagnosticsDialog.h"
+#include "gui/PgxlSaveRebootDialog.h"
+#include "gui/RemoteConnectionController.h"
+#include "gui/RemoteDiagnosticsDialog.h"
+#include "gui/SpotHubDialog.h"
+#include "gui/StationStartupSelection.h"
+#include "gui/SupportDialog.h"
+#include "gui/VaxFirstRunDialog.h"
+#include "gui/containers/MmioEndpointsDialog.h"
+#include "gui/containers/MmioVariablePickerPopup.h"
+#include "gui/multidevice/ConfirmChangeDialog.h"
+#include "gui/multidevice/ReplaceDeviceDialog.h"
+#include "gui/multidevice/TakeReceiverDialog.h"
+#include "gui/multidevice/TakeTransmitDialog.h"
+#include "gui/setup/TciLogWindow.h"
+#include "gui/widgets/FilterPolicyDialog.h"
+#include "gui/widgets/FilterPresetEditDialog.h"
+#include "gui/widgets/TxBoundConfirmDialog.h"
+#include "models/Band.h"
 #include "core/WdspTypes.h"
 #include "core/meters/SliceMeterPump.h"
 #include "gui/DiversityDialog.h"
@@ -3446,6 +3494,838 @@ QJsonObject liveScrollBars(SceneContext& ctx)
     return out;
 }
 
+// ---- every other dialog (inventory 5.2) and the standard dialogs (5.5) ----
+
+// Longer than the 250 ms Network Diagnostics and 1000 ms Remote Diagnostics
+// refresh ticks.
+constexpr int kMemberTimerCutWaitMs = 1300;
+constexpr auto kFrozenNetworkUptime = "14m 32s";
+// The Spot Hub tabs are shown one by one; each settles before its grab.
+constexpr int kTabSettleMs = 300;
+// Wisdom progress as WdspEngine reports a 4096-point plan
+// (estimateWisdomPercent, WdspEngine.cpp:187-211: step 7 of 14).
+constexpr int kWisdomSamplePercent = 50;
+// The TCI log's sample lines start at this local time on the review date.
+constexpr int kTciLogYear = 2026;
+constexpr int kTciLogMonth = 10;
+constexpr int kTciLogDay = 8;
+constexpr int kTciLogHour = 14;
+constexpr int kTciLogMinute = 32;
+constexpr int kTciLogSecond = 5;
+constexpr int kTciLogLineGapMs = 37;
+constexpr quint16 kTgxlPort = 9010;
+constexpr quint16 kPgxlPort = 9008;
+
+// Member QTimers are not children, so stopTimersUnder() cannot reach them:
+// for `waitMs` (longer than the timer's interval), every QTimer whose
+// timeout reaches `target` is cut as it fires and stopped.
+void cutTimersInto(SceneContext& ctx, QObject* target, int waitMs)
+{
+    class Cut : public QObject
+    {
+    public:
+        Cut(QObject* target, QJsonArray* stopped) : m_target(target), m_stopped(stopped) {}
+        bool eventFilter(QObject* watched, QEvent* event) override
+        {
+            if (event->type() == QEvent::Timer) {
+                if (auto* timer = qobject_cast<QTimer*>(watched);
+                    timer != nullptr && timer->isActive()
+                    && QObject::disconnect(timer, &QTimer::timeout, m_target, nullptr)) {
+                    m_stopped->append(QJsonObject{
+                        {QStringLiteral("parent"),
+                         QStringLiteral("member timer feeding %1")
+                             .arg(QString::fromLatin1(m_target->metaObject()->className()))},
+                        {QStringLiteral("name"), timer->objectName()},
+                        {QStringLiteral("interval_ms"), timer->interval()}});
+                    timer->stop();
+                }
+            }
+            return false;
+        }
+
+    private:
+        QObject* m_target;
+        QJsonArray* m_stopped;
+    } cut(target, &ctx.stoppedTimers);
+    qApp->installEventFilter(&cut);
+    pump(waitMs);
+    qApp->removeEventFilter(&cut);
+}
+
+// Sets the value label beside a field label ("Uptime" or "Uptime:") in any
+// grid of `root`. False when there is no such field.
+bool pinValueBeside(QWidget* root, const QString& field, const QString& value)
+{
+    for (QGridLayout* grid : root->findChildren<QGridLayout*>()) {
+        for (int i = 0; i < grid->count(); ++i) {
+            auto* label = qobject_cast<QLabel*>(grid->itemAt(i)->widget());
+            if (label == nullptr) {
+                continue;
+            }
+            QString text = label->text().trimmed();
+            if (text.endsWith(QLatin1Char(':'))) {
+                text.chop(1);
+            }
+            if (text != field) {
+                continue;
+            }
+            int row = 0;
+            int column = 0;
+            int rowSpan = 0;
+            int columnSpan = 0;
+            grid->getItemPosition(i, &row, &column, &rowSpan, &columnSpan);
+            QLayoutItem* beside = grid->itemAtPosition(row, column + columnSpan);
+            if (auto* v = beside != nullptr ? qobject_cast<QLabel*>(beside->widget()) : nullptr) {
+                v->setText(value);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Opens a dialog through a MainWindow slot and grabs the one it shows.
+template <typename T>
+T* openThroughSlot(SceneContext& ctx, MainWindow* window, const char* slot)
+{
+    if (!QMetaObject::invokeMethod(window, slot, Qt::DirectConnection)) {
+        ctx.failure = QStringLiteral("MainWindow has no slot %1").arg(QString::fromLatin1(slot));
+        return nullptr;
+    }
+    return visibleTopLevel<T>();
+}
+
+void noteNotShown(SceneContext& ctx, const QString& item, const QString& reason)
+{
+    ctx.notShown.append(QJsonObject{{QStringLiteral("item"), item},
+                                    {QStringLiteral("reason"), reason}});
+}
+
+// The sample remote device lists (tst_multi_device_screens.cpp:1248-1282
+// and :1305-1360 build the same shapes).
+RemoteHeldList sampleHeldList()
+{
+    const auto entry = [](const QString& id, const QString& name, const QString& state,
+                          bool replaceable) {
+        RemoteHeldEntry e;
+        e.device.deviceId = id;
+        e.device.name = name;
+        e.device.shortName = name.section(QLatin1Char(' '), -1);
+        e.device.state = state;
+        e.device.connectedForSeconds = 3900;
+        e.device.lastActivitySeconds = 420;
+        e.device.awayForSeconds = state == QLatin1String("away") ? 95 : 0;
+        e.device.transmittingForSeconds = state == QLatin1String("transmitting") ? 130 : 0;
+        RemoteDeviceSlice slice;
+        slice.sliceId = 1;
+        slice.letter = QStringLiteral("B");
+        slice.band = static_cast<int>(Band::Band20m);
+        slice.frequencyHz = 14074000.0;
+        if (state == QLatin1String("transmitting")) {
+            e.device.holdsTransmit = true;
+            e.device.transmittingOn = slice;
+        } else if (state == QLatin1String("listening")) {
+            e.device.listeningOn = {slice};
+        }
+        e.replaceable = replaceable;
+        return e;
+    };
+    RemoteHeldList held;
+    held.revision = 3;
+    held.placeFreedSecondsAgo = 200;
+    held.receivedAt = QDateTime(QDate(kTciLogYear, kTciLogMonth, kTciLogDay),
+                                QTime(kTciLogHour, kTciLogMinute, kTciLogSecond));
+    held.entries = {entry(QStringLiteral("a"), QStringLiteral("Jo's iPad"), QStringLiteral("away"), true),
+                    entry(QStringLiteral("h"), QStringLiteral("Shack Mac mini"), QStringLiteral("listening"), false),
+                    entry(QStringLiteral("l"), QStringLiteral("Den MacBook"), QStringLiteral("listening"), true),
+                    entry(QStringLiteral("t"), QStringLiteral("Jo's iPhone"), QStringLiteral("transmitting"), true)};
+    return held;
+}
+
+QJsonObject sampleSlice(int id, const QString& letter, double hz, const QString& device)
+{
+    return QJsonObject{{QStringLiteral("sliceId"), id}, {QStringLiteral("letter"), letter},
+                       {QStringLiteral("frequencyHz"), hz}, {QStringLiteral("mode"), 1},
+                       {QStringLiteral("deviceName"), device}};
+}
+
+SessionPrompt sampleTakeReceiverPrompt()
+{
+    SessionPrompt take;
+    take.id = 8;
+    take.kind = QStringLiteral("takeReceiver");
+    QJsonObject txSlice = sampleSlice(1, QStringLiteral("B"), 14074000.0, QStringLiteral("Jo's iPhone"));
+    txSlice[QStringLiteral("txSlice")] = true;
+    take.choices = QJsonArray{
+        QJsonObject{{QStringLiteral("choice"), 0}, {QStringLiteral("streamIndex"), 0},
+                    {QStringLiteral("takeable"), false},
+                    {QStringLiteral("why"), QStringLiteral("Your panadapter already uses this receiver.")},
+                    {QStringLiteral("slices"),
+                     QJsonArray{sampleSlice(0, QStringLiteral("A"), 7074000.0, QStringLiteral("Shack MacBook"))}},
+                    {QStringLiteral("devices"), QJsonArray{QJsonObject{
+                         {QStringLiteral("name"), QStringLiteral("Shack MacBook")},
+                         {QStringLiteral("state"), QStringLiteral("listening")}}}}},
+        QJsonObject{{QStringLiteral("choice"), 1}, {QStringLiteral("streamIndex"), 1},
+                    {QStringLiteral("takeable"), true},
+                    {QStringLiteral("slices"), QJsonArray{txSlice}},
+                    {QStringLiteral("devices"), QJsonArray{QJsonObject{
+                         {QStringLiteral("name"), QStringLiteral("Jo's iPhone")},
+                         {QStringLiteral("state"), QStringLiteral("listening")}}}}}};
+    return take;
+}
+
+SessionPrompt sampleSharedSettingPrompt()
+{
+    SessionPrompt shared;
+    shared.id = 7;
+    shared.kind = QStringLiteral("sharedSetting");
+    shared.change = QJsonObject{{QStringLiteral("label"), QStringLiteral("Attenuator, ADC 1")},
+                                {QStringLiteral("from"), QStringLiteral("0 dB")},
+                                {QStringLiteral("to"), QStringLiteral("20 dB")}};
+    QJsonObject slice = sampleSlice(1, QStringLiteral("B"), 14074000.0, QString());
+    slice.remove(QStringLiteral("deviceName"));
+    slice[QStringLiteral("streamIndex")] = 1;
+    slice[QStringLiteral("effect")] = QStringLiteral("changes");
+    shared.affected = QJsonArray{QJsonObject{
+        {QStringLiteral("deviceName"), QStringLiteral("Jo's iPhone")},
+        {QStringLiteral("state"), QStringLiteral("listening")},
+        {QStringLiteral("slices"), QJsonArray{slice}}}};
+    return shared;
+}
+
+RadioInfo sampleRadio(const QString& name, const QString& mac, const QString& ip, HPSDRHW board,
+                      ProtocolVersion protocol, int firmware)
+{
+    RadioInfo info;
+    info.name = name;
+    info.macAddress = mac;
+    info.address = QHostAddress(ip);
+    info.boardType = board;
+    info.protocol = protocol;
+    info.firmwareVersion = firmware;
+    info.adcCount = RadioInfo::adcCountForBoard(board);
+    info.maxReceivers = RadioInfo::maxReceiversForBoard(board);
+    return info;
+}
+
+QList<ConnectionTargetRow> sampleConnectionRows()
+{
+    // The row shapes and words GuiConnectionController::refresh builds
+    // (GuiConnectionController.cpp:420-475) and lanCoreRow (:581-633).
+    QList<ConnectionTargetRow> rows;
+    rows.append({QStringLiteral("local"), ConnectionTargetKind::LocalRadio,
+                 QStringLiteral("This computer's Core"), QStringLiteral("Choose a local radio"),
+                 QStringLiteral("This computer"), QStringLiteral("Available"), true, false, false});
+    rows.append({QStringLiteral("radio:00:1C:C0:4E:21:0A"), ConnectionTargetKind::LocalRadio,
+                 QStringLiteral("ANAN-G2"), QStringLiteral("This computer's Core"),
+                 QStringLiteral("192.168.1.20"), QStringLiteral("Available"), true, true, true});
+    rows.append({QStringLiteral("radio:00:1C:C0:7B:90:3C"), ConnectionTargetKind::LocalRadio,
+                 QStringLiteral("Hermes Lite 2"), QStringLiteral("This computer's Core"),
+                 QStringLiteral("192.168.1.31"), QStringLiteral("Saved / not seen"), true, true, true});
+    rows.append({QStringLiteral("saved:hilltop"), ConnectionTargetKind::SavedCore,
+                 QStringLiteral("K1ABC Hilltop Core"), QStringLiteral("ANAN-7000DLE"),
+                 QStringLiteral("192.168.1.40:4433"), QStringLiteral("Saved, ready to connect"),
+                 true, true, true});
+    ConnectionTargetRow lan{QStringLiteral("lan:shack"), ConnectionTargetKind::LanCore,
+                            QStringLiteral("Shack Core (advertised)"),
+                            QStringLiteral("ANAN-G2 (advertised online)"),
+                            QStringLiteral("192.168.1.52:4433"), QStringLiteral("Not paired"),
+                            false, false, false};
+    lan.pairable = true;
+    rows.append(lan);
+    return rows;
+}
+
+SavedCoreTarget sampleSavedCore()
+{
+    SavedCoreTarget target;
+    target.id = QStringLiteral("hilltop");
+    target.label = QStringLiteral("K1ABC Hilltop Core");
+    target.connection.url = QStringLiteral("wss://192.168.1.40:4433");
+    target.connection.token = QStringLiteral("q7Lw2Rk9Tz4Hn8Vb");
+    target.connection.fingerprint =
+        QStringLiteral("3F:9A:C1:57:0B:E2:48:D6:91:7C:25:AE:63:F0:1D:84:"
+                       "B9:42:6E:D3:08:7A:CF:15:92:E4:3B:60:D8:21:7F:A5");
+    target.lastRadioName = QStringLiteral("ANAN-7000DLE");
+    return target;
+}
+
+// The sample TCI exchange a WSJT-X session starts with.
+void appendSampleTciLines(TciLogWindow* log)
+{
+    const qint64 start = QDateTime(QDate(kTciLogYear, kTciLogMonth, kTciLogDay),
+                                   QTime(kTciLogHour, kTciLogMinute, kTciLogSecond))
+                             .toMSecsSinceEpoch();
+    const QString peer = QStringLiteral("This window: 127.0.0.1:52144");
+    const QList<QPair<QString, QString>> lines = {
+        {QStringLiteral("out"), QStringLiteral("protocol:ExpertSDR3,1.9")},
+        {QStringLiteral("out"), QStringLiteral("device:ANAN-G2")},
+        {QStringLiteral("out"), QStringLiteral("receive_only:false")},
+        {QStringLiteral("out"), QStringLiteral("trx_count:2")},
+        {QStringLiteral("out"), QStringLiteral("vfo_limits:10000,61440000")},
+        {QStringLiteral("out"), QStringLiteral("modulations_list:AM,SAM,LSB,USB,CW,NFM,DIGL,DIGU")},
+        {QStringLiteral("out"), QStringLiteral("ready")},
+        {QStringLiteral("in"), QStringLiteral("vfo:0,0")},
+        {QStringLiteral("out"), QStringLiteral("vfo:0,0,14074000")},
+        {QStringLiteral("in"), QStringLiteral("modulation:0")},
+        {QStringLiteral("out"), QStringLiteral("modulation:0,DIGU")},
+        {QStringLiteral("in"), QStringLiteral("audio_start:0")},
+    };
+    qint64 at = start;
+    for (const auto& line : lines) {
+        log->appendEntry(line.first, peer, line.second, at);
+        at += kTciLogLineGapMs;
+    }
+}
+
+// The setup tree poses the setup page scenes use: the page's item
+// centred, no hover row from the pointer.
+void poseSetupTree(SetupDialog* dialog, const QString& label)
+{
+    auto* tree = dialog->findChild<QTreeWidget*>();
+    if (tree == nullptr) {
+        return;
+    }
+    pump(kFinalSettleMs);
+    if (tree->currentItem() != nullptr && tree->currentItem()->text(0) == label) {
+        tree->scrollToItem(tree->currentItem(), QAbstractItemView::PositionAtCenter);
+    }
+    tree->viewport()->setAttribute(Qt::WA_Hover, false);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(tree->viewport(), &leave);
+}
+
+// A remote window built as tests/tst_unbuilt_features.cpp:147 builds it:
+// replace(selection, false) makes the window without starting its
+// connection (tst_preview_dialog_seams proves no dial and no socket).
+MainWindow* openNeverDialledRemoteWindow(SceneContext& ctx, GuiSessionCoordinator& sessions)
+{
+    const StationStartupSelection core{{QStringLiteral("ws://127.0.0.1:4433"), {}, {}, true},
+                                       QStringLiteral("core")};
+    if (!sessions.replace(core, false)) {
+        ctx.failure = QStringLiteral("the remote window was not built");
+        return nullptr;
+    }
+    MainWindow* remote = sessions.window();
+    if (remote == nullptr) {
+        ctx.failure = QStringLiteral("the remote window was not built");
+        return nullptr;
+    }
+    remote->setAttribute(Qt::WA_DontShowOnScreen, true);
+    remote->setAttribute(Qt::WA_ContentsMarginsRespectsSafeArea, false);
+    remote->resize(ctx.size);
+    remote->show();
+    pump(kFinalSettleMs);
+    ctx.notes.append(QStringLiteral(
+        "remote window: GuiSessionCoordinator::replace(ws://127.0.0.1:4433, startConnection false); "
+        "never dialled"));
+    return remote;
+}
+
+// The remote set: opens one surface on a never-dialled remote window.
+void runRemoteDialogScene(SceneContext& ctx, const QString& name,
+                          const std::function<QWidget*(SceneContext&, MainWindow*)>& open)
+{
+    prepareForDialog(ctx);
+    RadioDiscovery holdOff;
+    holdOff.holdOffScans(std::chrono::minutes{5});
+    GuiSessionCoordinator sessions;
+    MainWindow* remote = openNeverDialledRemoteWindow(ctx, sessions);
+    if (remote != nullptr) {
+        QWidget* dialog = open(ctx, remote);
+        if (ctx.failure.isEmpty()) {
+            captureDialog(ctx, dialog, name);
+        }
+        for (StationClient* client : remote->findChildren<StationClient*>()) {
+            if (client->isConnectionActive() || client->isHandshakeComplete()) {
+                ctx.failure = QStringLiteral("%1: the remote window's connection started").arg(name);
+            }
+        }
+    }
+    sessions.shutdown();
+    RadioDiscovery::clearHoldOffForTest();
+}
+
+// One standard dialog, parented to the main window and then to a themed
+// dialog (Support, which sets its own stylesheet at SupportDialog.cpp:324).
+void runStandardDialogScene(SceneContext& ctx, const QString& name, const QString& source,
+                            const std::function<std::unique_ptr<QDialog>(QWidget*)>& make)
+{
+    prepareForDialog(ctx);
+    ctx.notes.append(QStringLiteral("built in the scene from the app's own words (%1), "
+                                    "the Qt widget dialog, never a native one").arg(source));
+    {
+        std::unique_ptr<QDialog> dialog = make(ctx.window);
+        dialog->show();
+        captureDialog(ctx, dialog.get(), name + QStringLiteral("--main-window"));
+        dialog->close();
+    }
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    auto* themed = openThroughSlot<SupportDialog>(ctx, ctx.window, "showSupportDialog");
+    if (themed == nullptr) {
+        ctx.failure = QStringLiteral("%1: the Support dialog did not open").arg(name);
+        return;
+    }
+    std::unique_ptr<QDialog> dialog = make(themed);
+    dialog->show();
+    captureDialog(ctx, dialog.get(), name + QStringLiteral("--themed-dialog"));
+    dialog->close();
+    ctx.notes.append(QStringLiteral("--themed-dialog is parented to the Support dialog"));
+}
+
+std::unique_ptr<QDialog> makeMessageBox(QWidget* parent, QMessageBox::Icon icon, const QString& title,
+                                        const QString& text, QMessageBox::StandardButtons buttons,
+                                        QMessageBox::StandardButton defaultButton)
+{
+    auto box = std::make_unique<QMessageBox>(icon, title, text, buttons, parent);
+    box->setOption(QMessageBox::Option::DontUseNativeDialog, true);
+    if (defaultButton != QMessageBox::NoButton) {
+        box->setDefaultButton(defaultButton);
+    }
+    return box;
+}
+
+void appendInventoryDialogScenes(QVector<Scene>& scenes)
+{
+    // D22: Tools > Network Diagnostics on the local window.
+    scenes.append({QStringLiteral("dialog-network-diagnostics"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        auto* dialog = openThroughSlot<NetworkDiagnosticsDialog>(ctx, ctx.window, "openNetworkDiagnostics");
+        if (dialog == nullptr) {
+            ctx.failure = QStringLiteral("Network Diagnostics did not open");
+            return;
+        }
+        cutTimersInto(ctx, dialog, kMemberTimerCutWaitMs);
+        if (!pinValueBeside(dialog, QStringLiteral("Uptime"), QString::fromLatin1(kFrozenNetworkUptime))) {
+            ctx.failure = QStringLiteral("no Uptime value in Network Diagnostics");
+            return;
+        }
+        ctx.notes.append(QStringLiteral("uptime held at %1; the 250 ms refresh timer is cut")
+                             .arg(QString::fromLatin1(kFrozenNetworkUptime)));
+        captureDialog(ctx, dialog, QStringLiteral("dialog-network-diagnostics"));
+    }});
+
+    // D18: Spot Hub through MainWindow::openSpotHub, one image per tab.
+    scenes.append({QStringLiteral("dialog-spot-hub"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        auto* hub = openThroughSlot<SpotHubDialog>(ctx, ctx.window, "openSpotHub");
+        auto* tabs = hub != nullptr ? hub->findChild<QTabWidget*>() : nullptr;
+        if (tabs == nullptr) {
+            ctx.failure = QStringLiteral("Spot Hub did not open with its tabs");
+            return;
+        }
+        for (int i = 0; i < tabs->count() && ctx.failure.isEmpty(); ++i) {
+            tabs->setCurrentIndex(i);
+            pump(kTabSettleMs);
+            captureDialog(ctx, hub, QStringLiteral("dialog-spot-hub--") + slug(tabs->tabText(i)));
+        }
+        ctx.notes.append(QStringLiteral("%1 tabs; no spot client is started (auto-start settings are "
+                                        "absent in the isolated profile)").arg(tabs->count()));
+    }});
+
+    // D19: FreeDV Reporter with no client.
+    scenes.append({QStringLiteral("dialog-freedv-reporter"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        FreeDVReporterDialog dialog(ctx.model->freeDvStationModel(), nullptr, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-freedv-reporter"));
+        dialog.close();
+    }});
+
+    // D24: Help > Support.
+    scenes.append({QStringLiteral("dialog-support"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        captureDialog(ctx, openThroughSlot<SupportDialog>(ctx, ctx.window, "showSupportDialog"),
+                      QStringLiteral("dialog-support"));
+        noteNotShown(ctx, QStringLiteral("dialog-feature-request (D41)"),
+                     QStringLiteral("opening it copies its prompt to the clipboard "
+                                    "(MainWindow.cpp:18384), and the preview runs on the cocoa "
+                                    "platform, so it would overwrite the operator's clipboard"));
+    }});
+
+    // D25: Help > About NereusSDR (MainWindow.cpp:11719, exec'd there).
+    scenes.append({QStringLiteral("dialog-about"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        AboutDialog dialog(ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-about"));
+        dialog.close();
+    }});
+
+    // D3: Add custom radio (ConnectionPanel.cpp:1185); Probe is never pressed.
+    scenes.append({QStringLiteral("dialog-add-custom-radio"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        AddCustomRadioDialog dialog(ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-add-custom-radio"));
+        dialog.close();
+    }});
+
+    // D12: NNR models (MainWindow.cpp:5202).
+    scenes.append({QStringLiteral("dialog-dsp-assets"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        DspAssetDialog dialog(ctx.model, DspAssetKind::NnrModel, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-dsp-assets"));
+        dialog.close();
+    }});
+
+    // D11: AmpView as the inventory opens it (no model, no PureSignal).
+    scenes.append({QStringLiteral("dialog-amp-view"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        AmpViewWindow dialog(nullptr, nullptr, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-amp-view"));
+        dialog.close();
+    }});
+
+    // D31: Edit this preset (MainWindow.cpp:13873) for USB, first preset.
+    scenes.append({QStringLiteral("dialog-filter-preset-edit"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        FilterPresetEditDialog dialog(ctx.model->filterPresetStore(), DSPMode::USB, 0, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-filter-preset-edit"));
+        dialog.close();
+    }});
+
+    // D30: Filter policy for chain 0 (MainWindow.cpp:6518, exec'd there).
+    scenes.append({QStringLiteral("dialog-filter-policy"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        FilterPolicyDialog dialog(0, ctx.model, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-filter-policy"));
+        dialog.close();
+    }});
+
+    // D28: TX-bound re-route (MainWindow.cpp:8859) with the window's slices.
+    scenes.append({QStringLiteral("dialog-tx-bound-confirm"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        TxBoundConfirmDialog dialog(QStringLiteral("ANT2"), QStringLiteral("ANT1"),
+                                    ctx.model->slices(), ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-tx-bound-confirm"));
+        dialog.close();
+    }});
+
+    // D32 to D35: the multi-device questions with sample values.
+    scenes.append({QStringLiteral("dialog-take-transmit"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        TakeTransmitDialog::Holder holder{QStringLiteral("Jo's iPhone"), QStringLiteral("iPhone"),
+                                          true, false, 0};
+        TakeTransmitDialog dialog(holder, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-take-transmit"));
+        dialog.close();
+    }});
+    scenes.append({QStringLiteral("dialog-take-receiver"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        TakeReceiverDialog dialog(sampleTakeReceiverPrompt(), ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-take-receiver"));
+        dialog.close();
+    }});
+    scenes.append({QStringLiteral("dialog-confirm-change"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ConfirmChangeDialog dialog(sampleSharedSettingPrompt(), ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-confirm-change"));
+        dialog.close();
+    }});
+    scenes.append({QStringLiteral("dialog-replace-device"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ReplaceDeviceDialog dialog(sampleHeldList(), ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-replace-device"));
+        dialog.close();
+    }});
+
+    // D26: VAX first run, the macOS screen and the Windows cables screen.
+    scenes.append({QStringLiteral("dialog-vax-first-run"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        {
+            VaxFirstRunDialog dialog(FirstRunScenario::MacNative, {}, ctx.window);
+            dialog.show();
+            captureDialog(ctx, &dialog, QStringLiteral("dialog-vax-first-run"));
+            dialog.close();
+        }
+        const QVector<DetectedCable> cables = {
+            {VirtualCableProduct::VbCable, QStringLiteral("CABLE Input (VB-Audio Virtual Cable)"), false, 0},
+            {VirtualCableProduct::VbCable, QStringLiteral("CABLE Output (VB-Audio Virtual Cable)"), true, 0},
+            {VirtualCableProduct::VbCableA, QStringLiteral("CABLE-A Input (VB-Audio Cable A)"), false, 1},
+            {VirtualCableProduct::VbCableA, QStringLiteral("CABLE-A Output (VB-Audio Cable A)"), true, 1},
+        };
+        VaxFirstRunDialog dialog(FirstRunScenario::WindowsCablesFound, cables, ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-vax-first-run--cables-found"));
+        dialog.close();
+    }});
+
+    // D37: PGXL save and reboot (PgxlAdvancedPage.cpp:997).
+    scenes.append({QStringLiteral("dialog-pgxl-save-reboot"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PgxlSaveRebootDialog dialog(ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-pgxl-save-reboot"));
+        dialog.close();
+    }});
+
+    // D15, D16: MMIO endpoints and the variable picker; both list saved
+    // endpoints only.
+    scenes.append({QStringLiteral("dialog-mmio-endpoints"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        MmioEndpointsDialog dialog(ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-mmio-endpoints"));
+        dialog.close();
+    }});
+    scenes.append({QStringLiteral("dialog-mmio-variable-picker"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        MmioVariablePickerPopup dialog(QUuid(), QString(), ctx.window);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-mmio-variable-picker"));
+        dialog.close();
+    }});
+
+    // D36: the TCI log with a sample WSJT-X exchange at a fixed time.
+    scenes.append({QStringLiteral("dialog-tci-log"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        TciLogWindow dialog(ctx.window);
+        appendSampleTciLines(&dialog);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-tci-log"));
+        dialog.close();
+    }});
+
+    // D5 to D7: the connection selector with sample rows, the Core editor
+    // and Add by code, parented to the selector as GuiConnectionController
+    // parents them (GuiConnectionController.cpp:896, :1136).
+    scenes.append({QStringLiteral("dialog-connection-selector"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ConnectionSelector selector;
+        selector.setTargets(sampleConnectionRows());
+        selector.setCurrentConnection(QStringLiteral("This computer's Core, with no radio connected"),
+                                      QString(), false, false);
+        selector.setDiscoveryStatus(QStringLiteral("LAN discovery is active."));
+        selector.setSelectedKey(QStringLiteral("radio:00:1C:C0:4E:21:0A"));
+        selector.show();
+        captureDialog(ctx, &selector, QStringLiteral("dialog-connection-selector"));
+        selector.close();
+    }});
+    scenes.append({QStringLiteral("dialog-core-target-editor"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ConnectionSelector selector;
+        CoreTargetEditor dialog(sampleSavedCore(), &selector);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-core-target-editor"));
+        dialog.close();
+    }});
+    scenes.append({QStringLiteral("dialog-add-core-by-code"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ConnectionSelector selector;
+        AddCoreByCodeDialog dialog(QString(), &selector);
+        dialog.show();
+        captureDialog(ctx, &dialog, QStringLiteral("dialog-add-core-by-code"));
+        dialog.close();
+    }});
+
+    // D29: the FFTW wisdom dialog from the builder the wisdomProgress
+    // handler uses, at a sample step.
+    scenes.append({QStringLiteral("dialog-wisdom-progress"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        std::unique_ptr<QProgressDialog> dialog(MainWindow::buildWisdomProgressDialog(ctx.window));
+        dialog->show();
+        dialog->setValue(kWisdomSamplePercent);
+        dialog->setLabelText(QStringLiteral("Optimizing FFT plans for DSP engine...\n\n%1")
+                                 .arg(QStringLiteral("Planning COMPLEX FORWARD  FFT size 4096")));
+        captureDialog(ctx, dialog.get(), QStringLiteral("dialog-wisdom-progress"));
+        dialog->close();
+    }});
+
+    // D2: the connection panel, discovery skipped by its seam, with two
+    // sample radios fed to its discovery slot.
+    scenes.append({QStringLiteral("dialog-connection-panel"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        ConnectionPanel::setDiscoveryStartSkippedForTest(true);
+        auto* panel = openThroughSlot<ConnectionPanel>(ctx, ctx.window, "showConnectionPanel");
+        if (panel != nullptr) {
+            panel->onRadioDiscovered(sampleRadio(QStringLiteral("ANAN-G2"), QStringLiteral("00:1C:C0:4E:21:0A"),
+                                                 QStringLiteral("192.168.1.20"), HPSDRHW::Saturn,
+                                                 ProtocolVersion::Protocol2, 27));
+            panel->onRadioDiscovered(sampleRadio(QStringLiteral("Hermes Lite 2"),
+                                                 QStringLiteral("00:1C:C0:7B:90:3C"),
+                                                 QStringLiteral("192.168.1.31"), HPSDRHW::HermesLite,
+                                                 ProtocolVersion::Protocol1, 73));
+            ctx.notes.append(QStringLiteral("discovery skipped (ConnectionPanel::"
+                                            "setDiscoveryStartSkippedForTest); two sample radios; the "
+                                            "15 s last-seen refresh does not fire before the grab"));
+        }
+        captureDialog(ctx, panel, QStringLiteral("dialog-connection-panel"));
+        ConnectionPanel::setDiscoveryStartSkippedForTest(false);
+    }});
+
+    // D4: the 4O3A LAN scan, no scan by its seam, two sample devices, then
+    // the scan's own finish.
+    scenes.append({QStringLiteral("dialog-lan-scan"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        LanScanDialog::setDiscoveryStartSkippedForTest(true);
+        {
+            LanScanDialog dialog(ctx.window);
+            const auto add = [&dialog](const QString& model, const QString& ip, quint16 port,
+                                       const QString& version, const QString& serial,
+                                       const QString& nickname) {
+                QMetaObject::invokeMethod(&dialog, "onDeviceDiscovered", Qt::DirectConnection,
+                                          Q_ARG(QString, model), Q_ARG(QString, ip), Q_ARG(quint16, port),
+                                          Q_ARG(QString, version), Q_ARG(QString, serial),
+                                          Q_ARG(QString, nickname));
+            };
+            add(QStringLiteral("TunerGeniusXL"), QStringLiteral("192.168.1.60"), kTgxlPort,
+                QStringLiteral("1.2.11"), QStringLiteral("1520-1104-8823"), QStringLiteral("Shack TGXL"));
+            add(QStringLiteral("PowerGeniusXL"), QStringLiteral("192.168.1.61"), kPgxlPort,
+                QStringLiteral("3.8.6"), QStringLiteral("4220-0317-1192"), QStringLiteral("Shack PGXL"));
+            QMetaObject::invokeMethod(&dialog, "onScanFinished", Qt::DirectConnection);
+            dialog.show();
+            ctx.notes.append(QStringLiteral("scan skipped (LanScanDialog::setDiscoveryStartSkippedForTest); "
+                                            "two sample devices, then the scan's finish"));
+            captureDialog(ctx, &dialog, QStringLiteral("dialog-lan-scan"));
+            dialog.close();
+        }
+        LanScanDialog::setDiscoveryStartSkippedForTest(false);
+    }});
+
+    // The one non-native colour dialog: the pan's fill colour
+    // (SpectrumOverlayPanel.cpp:821-823, DontUseNativeDialog).
+    scenes.append({QStringLiteral("dialog-overlay-colour"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        QPushButton* fill = nullptr;
+        for (QPushButton* b : ctx.window->findChildren<QPushButton*>()) {
+            if (b->toolTip() == QLatin1String("Choose spectrum fill color")) {
+                fill = b;
+                break;
+            }
+        }
+        if (fill == nullptr) {
+            ctx.failure = QStringLiteral("no fill colour button");
+            return;
+        }
+        captureModal<QColorDialog>(ctx, QStringLiteral("dialog-overlay-colour"), [fill] { fill->click(); });
+        ctx.notes.append(QStringLiteral("the file dialogs and the other colour dialogs are native on "
+                                        "macOS and are not captured"));
+    }});
+
+    // ---- standard dialogs ----
+    scenes.append({QStringLiteral("dialog-msgbox-information"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runStandardDialogScene(ctx, QStringLiteral("dialog-msgbox-information"),
+                               QStringLiteral("TxProfileSetupPage.cpp:484-489"), [](QWidget* parent) {
+            return makeMessageBox(parent, QMessageBox::Information, QStringLiteral("Cannot Delete Profile"),
+                                  QStringLiteral("It is not possible to delete the last remaining TX profile"),
+                                  QMessageBox::Ok, QMessageBox::NoButton);
+        });
+    }});
+    scenes.append({QStringLiteral("dialog-msgbox-warning"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runStandardDialogScene(ctx, QStringLiteral("dialog-msgbox-warning"),
+                               QStringLiteral("GeneralOptionsPage.cpp:551-555"), [](QWidget* parent) {
+            return makeMessageBox(parent, QMessageBox::Warning, QStringLiteral("Warning: Enable Transmit?"),
+                                  QStringLiteral("Unchecking Receive Only may cause damage to your hardware. "
+                                                 "Are you sure you want to enable transmit?"),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        });
+    }});
+    scenes.append({QStringLiteral("dialog-msgbox-question"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runStandardDialogScene(ctx, QStringLiteral("dialog-msgbox-question"),
+                               QStringLiteral("TxProfileSetupPage.cpp:441-445"), [](QWidget* parent) {
+            return makeMessageBox(parent, QMessageBox::Question, QStringLiteral("Overwrite TX Profile"),
+                                  QStringLiteral("A profile named \"ESSB 2.8k\" already exists.  Overwrite?"),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::NoButton);
+        });
+    }});
+    scenes.append({QStringLiteral("dialog-inputdialog-text"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runStandardDialogScene(ctx, QStringLiteral("dialog-inputdialog-text"),
+                               QStringLiteral("TxProfileSetupPage.cpp:416-422"), [](QWidget* parent) {
+            auto input = std::make_unique<QInputDialog>(parent);
+            input->setInputMode(QInputDialog::TextInput);
+            input->setWindowTitle(QStringLiteral("Save TX Profile"));
+            input->setLabelText(QStringLiteral("New profile name:"));
+            input->setTextEchoMode(QLineEdit::Normal);
+            input->setTextValue(QStringLiteral("ESSB 2.8k"));
+            return std::unique_ptr<QDialog>(std::move(input));
+        });
+    }});
+
+    // ---- the remote set, on a never-dialled remote window ----
+    scenes.append({QStringLiteral("dialog-remote-diagnostics"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runRemoteDialogScene(ctx, QStringLiteral("dialog-remote-diagnostics"),
+                             [](SceneContext& c, MainWindow* remote) -> QWidget* {
+            auto* dialog = openThroughSlot<RemoteDiagnosticsDialog>(c, remote, "openNetworkDiagnostics");
+            if (dialog != nullptr) {
+                cutTimersInto(c, dialog, kMemberTimerCutWaitMs);
+            }
+            return dialog;
+        });
+    }});
+    scenes.append({QStringLiteral("dialog-remote-connection"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runRemoteDialogScene(ctx, QStringLiteral("dialog-remote-connection"),
+                             [](SceneContext& c, MainWindow* remote) -> QWidget* {
+            return openThroughSlot<RemoteConnectionPanel>(c, remote, "showRemoteConnectionPanel");
+        });
+        noteNotShown(ctx, QStringLiteral("popup-connection-route (C1)"),
+                     QStringLiteral("a popup; the menus and popups task captures it"));
+    }});
+    // Setup's This Core page; not named dialog-setup-* (those names are the
+    // local window's setup page scenes).
+    scenes.append({QStringLiteral("dialog-remote-setup-this-core"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        runRemoteDialogScene(ctx, QStringLiteral("dialog-remote-setup-this-core"),
+                             [](SceneContext& c, MainWindow* remote) -> QWidget* {
+            const QString page = QStringLiteral("This Core");
+            if (!QMetaObject::invokeMethod(remote, "openSetupAtPage", Qt::DirectConnection,
+                                           Q_ARG(QString, page))) {
+                c.failure = QStringLiteral("MainWindow has no slot openSetupAtPage");
+                return nullptr;
+            }
+            auto* setup = visibleTopLevel<SetupDialog>();
+            if (setup != nullptr) {
+                poseSetupTree(setup, page);
+            }
+            return setup;
+        });
+    }});
+}
+
 } // namespace
 
 void pump(int ms)
@@ -4101,6 +4981,7 @@ QVector<Scene> fixedScenes()
         QMetaObject::invokeMethod(ctx.window, "openDiversityDialog", Qt::DirectConnection);
         captureDialog(ctx, visibleTopLevel<DiversityDialog>(), QStringLiteral("dialog-diversity"));
     }});
+    appendInventoryDialogScenes(scenes);
     return scenes;
 }
 

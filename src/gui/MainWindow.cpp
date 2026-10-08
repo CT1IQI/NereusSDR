@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
+//                 is built by one function the visual preview can call.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Containers > Hidden in both looks, so a container hidden
 //                 with the workspace preview off can come back. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1675,28 +1678,7 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
             this, [this](int percent, const QString& status) {
         // Create dialog on first progress signal
         if (!m_wisdomDialog && percent < 100) {
-            m_wisdomDialog = new QProgressDialog(this);
-            m_wisdomDialog->setWindowTitle(QStringLiteral("NereusSDR: FFTW Wisdom"));
-            m_wisdomDialog->setLabelText(
-                QStringLiteral("Optimizing FFT plans for DSP engine...\n\n"
-                               "This only happens on first run."));
-            m_wisdomDialog->setRange(0, 100);
-            m_wisdomDialog->setValue(0);
-            m_wisdomDialog->setCancelButton(nullptr);
-            m_wisdomDialog->setAutoClose(false);
-            m_wisdomDialog->setMinimumWidth(500);
-            m_wisdomDialog->setMinimumDuration(0);
-            m_wisdomDialog->setWindowModality(Qt::ApplicationModal);
-            m_wisdomDialog->setStyleSheet(QStringLiteral(
-                "QProgressDialog { background: #0f0f1a; }"
-                "QLabel { color: #c8d8e8; font-size: 13px; }"
-                "QProgressBar {"
-                "  text-align: center; font-size: 13px;"
-                "  font-weight: bold; color: #c8d8e8;"
-                "  background: #1a2a3a; border: 1px solid #2e4e6e;"
-                "  border-radius: 3px; min-height: 24px;"
-                "}"
-                "QProgressBar::chunk { background: #00b4d8; }"));
+            m_wisdomDialog = buildWisdomProgressDialog(this);
             m_wisdomDialog->show();
         }
 
@@ -15243,6 +15225,34 @@ void MainWindow::showConnectionPanel()
 // ---------------------------------------------------------------------------
 // Remote-daemon R2 Task 20: the two remaining halves of the remote gate.
 // ---------------------------------------------------------------------------
+
+QProgressDialog* MainWindow::buildWisdomProgressDialog(QWidget* parent)
+{
+    // The WDSP wisdom progress dialog of the wisdomProgress handler above.
+    auto* dialog = new QProgressDialog(parent);
+    dialog->setWindowTitle(QStringLiteral("NereusSDR: FFTW Wisdom"));
+    dialog->setLabelText(
+        QStringLiteral("Optimizing FFT plans for DSP engine...\n\n"
+                       "This only happens on first run."));
+    dialog->setRange(0, 100);
+    dialog->setValue(0);
+    dialog->setCancelButton(nullptr);
+    dialog->setAutoClose(false);
+    dialog->setMinimumWidth(500);
+    dialog->setMinimumDuration(0);
+    dialog->setWindowModality(Qt::ApplicationModal);
+    dialog->setStyleSheet(QStringLiteral(
+        "QProgressDialog { background: #0f0f1a; }"
+        "QLabel { color: #c8d8e8; font-size: 13px; }"
+        "QProgressBar {"
+        "  text-align: center; font-size: 13px;"
+        "  font-weight: bold; color: #c8d8e8;"
+        "  background: #1a2a3a; border: 1px solid #2e4e6e;"
+        "  border-radius: 3px; min-height: 24px;"
+        "}"
+        "QProgressBar::chunk { background: #00b4d8; }"));
+    return dialog;
+}
 
 void MainWindow::openNetworkDiagnostics()
 {
