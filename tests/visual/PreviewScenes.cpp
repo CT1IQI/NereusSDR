@@ -58,6 +58,9 @@
 //   2026-10-08 - The edge values note the right strip's 0 px padding and
 //                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - controls-sheet: today, preview now and Longpath controls
+//                 side by side (ControlsSheet.cpp). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -98,6 +101,7 @@
 #include <cmath>
 #include <memory>
 
+#include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
@@ -3715,6 +3719,15 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneEditProperties(ctx); }, true});
     scenes.append({QStringLiteral("four-rx-look"), QStringLiteral("2x2"), false,
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
+
+    // ---- controls: today, preview now and Longpath side by side ----
+    // Starts in today's look (switch off): the sheet switches the looks
+    // itself and returns to today's.
+    scenes.append({QStringLiteral("controls-sheet"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
+    }});
 
     // ---- fixed dialogs ----
     scenes.append({QStringLiteral("dialog-tx-eq"), QStringLiteral("2v"), true,

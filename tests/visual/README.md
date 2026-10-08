@@ -297,6 +297,44 @@ Every profile scene's sidecar carries a `rail_measure` object: the
 collapsed and open rail widths, the title and network readout edges, the
 free space between them and how far the open popover covers the readout.
 
+### Controls sheet scene
+
+`controls-sheet` puts the same real Qt controls, at the same fixed sizes,
+in three columns:
+
+- Today: the shipped look, workspace preview switch off.
+- Preview now: the workspace preview as built (QssTranslator and
+  Workspace::componentize over today's stylesheets, plus the workspace
+  palette and app stylesheet).
+- Longpath: Longpath's own control stylesheets, palette and app baseline
+  stylesheet, ported verbatim in `LongpathControlStyles.h` (preview tool
+  only).
+
+Rows: horizontal slider (resting, hover, pressed, disabled), vertical
+slider, checkbox and radio (off, on, disabled), combo (closed, and open
+with its popup), line edit and spin box (resting, focused), tab bar with
+its pane, scroll bar, group box, a menu with checked and disabled items, a
+tooltip, push buttons (resting, hovered, checked, disabled) and
+MeterSlider, which paints itself and takes no stylesheets. The last rows
+are crops of real panels in each look: the RX applet slider rows, TX power
+and tune power, microphone gain (PhoneCwApplet) and the TX EQ dialog
+sliders. Today's crops match `baseline-two-band` and `dialog-tx-eq`.
+
+`controls-sheet--zoom` cuts a 32x24 logical patch around each slider
+handle and indicator and scales it 5x nearest-neighbour, the three looks
+side by side.
+
+The sidecar lists every placement (sheet rect and crop source), each
+control's sizeHint and minimumSizeHint per look, and which look each
+column used. Offscreen, Qt paints the open combo popup's selected row
+without the stylesheet's selection colour; the sheet notes this, so check
+that row against a live popup before judging it.
+
+```
+python3 tests/visual/capture.py --out <dir> --scenes controls-sheet \
+    --profiles 'mac-1512x869@2,laptop-1280x800@1'
+```
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives

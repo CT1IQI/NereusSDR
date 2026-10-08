@@ -5,6 +5,7 @@
 add_executable(nereus_visual_preview EXCLUDE_FROM_ALL
     VisualPreviewMain.cpp
     PreviewScenes.cpp
+    ControlsSheet.cpp
     PreviewData.cpp
     ../fakes/RemoteWindowHarness.cpp
     $<TARGET_OBJECTS:nereus_test_sandbox>)
