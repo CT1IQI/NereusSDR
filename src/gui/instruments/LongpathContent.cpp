@@ -262,7 +262,7 @@ QVector<ContentPropertyChoice> readingChoices(bool withNone)
     }
     for (const ReadingDescriptor* d : readingsWithScale()) {
         out.append({d->label, d->bindingId, d->available,
-                    d->available ? QString() : QObject::tr("NereusSDR has no source for this reading yet")});
+                    d->available ? QString() : QObject::tr("NereusSDR has no source for this reading")});
     }
     return out;
 }
