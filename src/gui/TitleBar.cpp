@@ -88,6 +88,11 @@
 //                 read WorkspacePreview::statusColour() (the status colour
 //                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - The indicator tones are the product; the pulse's dimmer
+//                 step of Connected and Link lost mixes the bright tone with
+//                 titlebar-mid, and setPulsePausedForTest() can hold either
+//                 step. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -120,6 +125,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QHostAddress>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -232,11 +239,11 @@ ConnectionSegment::ConnectionSegment(QWidget* parent)
     updateRoutePopup();
 }
 
-void ConnectionSegment::setPulsePausedForTest(bool paused)
+void ConnectionSegment::setPulsePausedForTest(bool paused, bool brightStep)
 {
     if (paused) {
         m_pulseTimer.stop();
-        m_pulseOn = false;
+        m_pulseOn = brightStep;
     } else if (m_state == ConnectionState::Connected   ||
                m_state == ConnectionState::Probing     ||
                m_state == ConnectionState::Connecting  ||
@@ -535,10 +542,32 @@ void ConnectionSegment::frameTick()
     update();
 }
 
-// Workspace preview: the status colours take the semantic roles; each
-// pulse keeps a brighter and a dimmer step. statusColour() returns the
-// legacy colour with the switch off, and follows the status colour
-// choice with it on (WorkspacePreview::StatusTones).
+// Workspace preview: the status colours take Longpath's indicator tones
+// (statusColour()), and each pulse keeps a brighter and a dimmer step.
+// The tones make Connected's two steps one colour (live) and Link lost's
+// one colour (measured), so their dimmer step is the bright tone mixed
+// with the title bar's own middle tone, titlebar-mid (kTitleGradMid):
+// the same hue, darker, from colours the palette already holds. With the
+// switch off every step is the legacy colour.
+namespace {
+// About the legacy pulse's step: #3fcf6a is 81 % of #5fff8a's value.
+constexpr double kPulseDimMix = 0.25;
+
+QColor pulseDimStep(const QColor& legacyDim, const char* role)
+{
+    const QColor bright = WorkspacePreview::statusColour(legacyDim, role);
+    if (!WorkspacePreview::enabled()) {
+        return bright;
+    }
+    const QColor bar = WorkspacePreview::roleColour(legacyDim, "titlebar-mid");
+    const auto mix = [](int a, int b) {
+        return static_cast<int>(std::lround(a * (1.0 - kPulseDimMix) + b * kPulseDimMix));
+    };
+    return QColor(mix(bright.red(), bar.red()), mix(bright.green(), bar.green()),
+                  mix(bright.blue(), bar.blue()), bright.alpha());
+}
+} // namespace
+
 QColor ConnectionSegment::stateDotColor() const
 {
     using WorkspacePreview::statusColour;
@@ -546,14 +575,14 @@ QColor ConnectionSegment::stateDotColor() const
         case ConnectionState::Connected:
             // m_pulseOn alternates → slow green pulse encoding streaming activity
             return m_pulseOn ? statusColour(QColor("#5fff8a"), "live")
-                             : statusColour(QColor("#3fcf6a"), "ok");
+                             : pulseDimStep(QColor("#3fcf6a"), "ok");
         case ConnectionState::Probing:
         case ConnectionState::Connecting:
             return m_pulseOn ? statusColour(QColor("#5fa8ff"), "accent")
                              : statusColour(QColor("#3f78cf"), "sel-hover");
         case ConnectionState::LinkLost:
             return m_pulseOn ? statusColour(QColor("#ff8c00"), "measured")
-                             : statusColour(QColor("#cf6c00"), "warn");
+                             : pulseDimStep(QColor("#cf6c00"), "warn");
         case ConnectionState::Disconnected:
             return statusColour(QColor("#ff4040"), "danger");
     }

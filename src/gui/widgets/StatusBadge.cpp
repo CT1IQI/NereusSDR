@@ -145,8 +145,8 @@ QColor StatusBadge::variantForegroundColor() const
     // text color. If applyStyle() colors change, update both.
     // Workspace preview: the roles the stylesheet translator gives the
     // same literals as text (StylesheetColourTable), so tint and text
-    // still match. statusColour() follows the status colour choice;
-    // applyStyle() writes the same colours when the choice is not Muted.
+    // still match. statusColour() gives the indicator tones, and
+    // applyStyle() writes the same colours with the switch on.
     using WorkspacePreview::statusColour;
     switch (m_variant) {
         case Variant::Info: return statusColour(QColor(QStringLiteral("#5fa8ff")), "accent");
@@ -254,13 +254,11 @@ void StatusBadge::applyStyle()
             break;
     }
 
-    // Workspace preview, status choice Bright or Legacy: the badge writes
-    // the chosen colours itself and keeps the stylesheet pass (which
-    // would map today's literals to the Muted roles) out of its subtree.
-    // Muted, and the switch off, leave the sheet as it always was.
-    const bool resolved = WorkspacePreview::enabled()
-        && WorkspacePreview::statusTones() != WorkspacePreview::StatusTones::Muted;
-    if (resolved) {
+    // Workspace preview: the badge writes the indicator tones itself and
+    // keeps the stylesheet pass (which would map today's literals to the
+    // muted semantic roles) out of its subtree. The switch off leaves the
+    // sheet as it always was.
+    if (WorkspacePreview::enabled()) {
         const QColor text = WorkspacePreview::statusColour(QColor(fg), role);
         const QColor legacyFill = parseRgba(bg);
         const QColor fill = WorkspacePreview::statusColour(legacyFill, role);

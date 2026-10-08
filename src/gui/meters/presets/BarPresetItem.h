@@ -1,10 +1,5 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
-//   2026-10-08 - Workspace preview data colours: the default backdrop reads
-//                 WorkspacePreview::dataBackground() and the factory ink
-//                 WorkspacePreview::meterInk() (instrument tones under data
-//                 choice C only; a colour the user set is kept). J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-02 — Native complete faces by J.J. Boyd (KG4VCF), with AI-assisted
@@ -113,6 +108,5 @@ private:
     QImage m_scaleCache;
     QRect m_scaleRect;
     QFont m_scaleFont;
-    QColor m_scaleInk, m_scaleOverInk;   // the scale cache's ink (workspace preview)
 };
 }

@@ -22,6 +22,10 @@
 //   2026-10-08 - The status and data colour choices: statusColour(),
 //                 dataBackground() and meterInk(). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decisions are the product: the brighter indicator
+//                 tones and the container's background, the user's when
+//                 set. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -367,21 +371,9 @@ QString roleColourName(const char* legacy, const char* role)
 
 namespace {
 
-StatusTones& statusTonesState()
-{
-    static StatusTones tones = StatusTones::Muted;
-    return tones;
-}
-
-DataColours& dataColoursState()
-{
-    static DataColours colours = DataColours::Navy;
-    return colours;
-}
-
-// Bright: the indicator tones Longpath keeps for a live state, a reading
-// and transmit (WorkspacePalette.h kLiveGreen, kAmberText, kTxRed).
-const char* brightRole(const char* role)
+// The indicator tones Longpath keeps for a live state, a reading and
+// transmit (WorkspacePalette.h kLiveGreen, kAmberText, kTxRed).
+const char* indicatorRole(const char* role)
 {
     const QLatin1StringView r(role);
     if (r == QLatin1StringView("ok")) {
@@ -398,70 +390,50 @@ const char* brightRole(const char* role)
 
 } // namespace
 
-StatusTones statusTones()
-{
-    return statusTonesState();
-}
-
-void setStatusTonesForTest(StatusTones tones)
-{
-    statusTonesState() = tones;
-}
-
-DataColours dataColours()
-{
-    return dataColoursState();
-}
-
-void setDataColoursForTest(DataColours colours)
-{
-    dataColoursState() = colours;
-}
-
 QColor statusColour(const QColor& legacy, const char* role)
 {
     if (!enabled() || role == nullptr) {
         return legacy;
     }
-    switch (statusTones()) {
-        case StatusTones::Muted:
-            return roleColour(legacy, role);
-        case StatusTones::Bright:
-            return roleColour(legacy, brightRole(role));
-        case StatusTones::Legacy:
-            return legacy;
-    }
-    return legacy;
+    return roleColour(legacy, indicatorRole(role));
 }
 
 QString statusColourName(const char* legacy, const char* role)
 {
-    if (!enabled() || role == nullptr || statusTones() == StatusTones::Legacy) {
+    if (!enabled() || role == nullptr) {
         return QString::fromLatin1(legacy);
     }
     const QColor c = statusColour(QColor::fromString(QLatin1StringView(legacy)), role);
     return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
 }
 
-QColor dataBackground(const QColor& legacy, const char* role)
+QColor dataBackground(const QColor& legacy, const char* role, const QObject* surface)
 {
-    if (!enabled() || dataColours() == DataColours::Navy) {
+    if (!enabled()) {
         return legacy;
     }
-    return roleColour(legacy, role);
-}
-
-QColor meterInk(const QColor& current, std::initializer_list<QColor> defaults, const char* role)
-{
-    if (!enabled() || dataColours() != DataColours::NeutralInstrument) {
-        return current;
+    // A meter item: start from the widget that owns it.
+    const QObject* o = surface;
+    while (o != nullptr && !o->isWidgetType()) {
+        o = o->parent();
     }
-    for (const QColor& d : defaults) {
-        if (current.rgba() == d.rgba()) {
-            return roleColour(current, role);
+    // The nearest container around the surface decides: its user colour
+    // when it has one, otherwise its role.
+    for (auto* w = static_cast<const QWidget*>(o); w != nullptr; w = w->parentWidget()) {
+        const QVariant v = w->property(kUserBackgroundProperty);
+        if (!v.isValid()) {
+            continue;
         }
+        QColor user = v.value<QColor>();
+        if (!user.isValid() || !legacy.isValid()) {
+            break;
+        }
+        if (legacy.alpha() < 255) {
+            user.setAlpha(legacy.alpha());
+        }
+        return user;
     }
-    return current;
+    return roleColour(legacy, role);
 }
 
 QHash<QString, int> unknownLiteralCounts()

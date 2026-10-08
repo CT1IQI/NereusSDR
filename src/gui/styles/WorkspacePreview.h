@@ -34,6 +34,11 @@
 //                 choices, statusColour(), dataBackground() and
 //                 meterInk(), each through roleColour(). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decisions (B, B) are the product: the choice seams,
+//                 the unchosen branches and meterInk() are gone;
+//                 dataBackground() shows a container background the user
+//                 set (kUserBackgroundProperty). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -42,9 +47,8 @@
 #include <QHash>
 #include <QString>
 
-#include <initializer_list>
-
 class QApplication;
+class QObject;
 class QWidget;
 
 namespace NereusSDR::WorkspacePreview {
@@ -105,51 +109,32 @@ QColor roleColour(const QColor& legacy, const char* role);
 // is built, so a later setText() writes the role colour again.
 QString roleColourName(const char* legacy, const char* role);
 
-// Two colour choices JJ makes from the colour-choice sheets of the
-// visual preview tool. Each is real product code that acts only with the
-// switch on. Until a choice is made the product runs choice A (the
-// lane's state before the sheets); the ForTest setters let one build
-// render every choice. Neither is a setting.
+// The status and data colours JJ decided on 2026-10-08 (choice B of each
+// colour-choice sheet). Both act only with the switch on.
 //
-// Status indicators (state dots, latency and rate numbers, status words):
-//   Muted  (A) - Longpath's semantic roles: ok, warn, danger.
-//   Bright (B) - Longpath's brighter tones for indicators only:
-//                ok -> live, warn -> measured, danger -> tx; any other
-//                role as in A.
-//   Legacy (C) - today's saturated colours, the legacy values unchanged.
-enum class StatusTones { Muted, Bright, Legacy };
-StatusTones statusTones();
-void setStatusTonesForTest(StatusTones tones);
-
-// Data surfaces (spectrum, waterfall, meters, graphs):
-//   Navy               (A) - the default backgrounds stay navy; all ink
-//                            unchanged.
-//   Neutral            (B) - the default backgrounds take the role of the
-//                            surrounding container; all ink unchanged.
-//   NeutralInstrument  (C) - B, plus the Thetis bar meter items' default
-//                            ink in Longpath's instrument tones.
-enum class DataColours { Navy, Neutral, NeutralInstrument };
-DataColours dataColours();
-void setDataColoursForTest(DataColours colours);
-
-// A status indicator's colour: roleColour(legacy, role) under Muted,
-// roleColour() of the brighter role under Bright, `legacy` under Legacy.
-// `legacy` with the switch off, whatever the choice.
+// Status indicators (state dots, latency and rate numbers, status words)
+// take Longpath's brighter tones: ok -> live (kLiveGreen), warn ->
+// measured (kAmberText), danger -> tx (kTxRed); any other role is
+// roleColour()'s. `legacy` with the switch off.
 QColor statusColour(const QColor& legacy, const char* role);
 // statusColour() for rich text; byte for byte `legacy` with the switch
-// off and under Legacy.
+// off.
 QString statusColourName(const char* legacy, const char* role);
 
-// The DEFAULT background of a data surface: `legacy` under Navy,
-// roleColour(legacy, role) under Neutral and NeutralInstrument. Never
-// call it with a colour the user set: user colours always win.
-QColor dataBackground(const QColor& legacy, const char* role);
+// The DEFAULT background of a data surface (spectrum, waterfall, meters,
+// graphs): `legacy` with the switch off. With it on, the background of
+// the container around `surface` when the user has set one (the nearest
+// widget ancestor carrying kUserBackgroundProperty; `legacy`'s alpha is
+// kept when it is translucent), otherwise roleColour(legacy, role), the
+// role of the surrounding container. `surface` is the widget, or an object
+// owned by it (a meter item), or null. Ink is never routed here. Never call it with a
+// colour the user set on the surface itself: user colours always win.
+QColor dataBackground(const QColor& legacy, const char* role, const QObject* surface = nullptr);
 
-// A Thetis bar meter item's ink: roleColour(current, role) under
-// NeutralInstrument when `current` is one of the item's factory defaults
-// (`defaults`, alpha included); `current` otherwise, so a colour the user
-// set in the item's settings is never replaced.
-QColor meterInk(const QColor& current, std::initializer_list<QColor> defaults, const char* role);
+// Set by ContainerWidget on itself: the background colour the user chose
+// for the container, or an invalid QColor when it has the default one.
+// dataBackground() reads the nearest ancestor's.
+inline constexpr auto kUserBackgroundProperty = "nereusUserBackground";
 
 // Unknown colour literals met by themeSubtree() since the last reset,
 // lower case, with their counts.

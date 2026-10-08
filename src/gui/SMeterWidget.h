@@ -95,6 +95,13 @@
 //                 changes only in the rectangle the vintage plate is drawn
 //                 in; with the limit off (the product) it is rect().
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-08  JJ's dial decision (D20) by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 The plate limit is the product for every dial and
+//                 setPlateLimitForTest() is gone; outside the bezel the
+//                 vintage faces leave the widget clear, so the container
+//                 behind shows (updatePaintOpacity()).
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #pragma once
 
@@ -203,24 +210,17 @@ public:
     void setFollowsSetupFace(bool follow);
     bool followsSetupFace() const { return m_followsSetupFace; }
 
-    // Test-only (workspace preview look choice, NereusSDR-native): with the
-    // limit on, the plate of a vintage face stops growing wider than
-    // kPlateMaxAspect times its height and is centred, with whatever is
-    // behind the widget showing on both sides.  It applies to every
-    // SMeterWidget alive or made later (the Main Panel's dial and added
-    // copies alike).  Off, the product's behaviour, the plate fills the
-    // widget.  The Classic face has no plate and ignores it.
-    static void setPlateLimitForTest(bool on);
-    static bool plateLimitForTest();
     // The rectangle the vintage face (bezel, card, scale, pointer) is drawn
-    // in: rect(), or with the limit on and a widget wider than the limit,
-    // a centred rectangle kPlateMaxAspect times its height wide.
+    // in (NereusSDR-native): rect(), or for a widget wider than
+    // kPlateMaxAspect times its height, a centred rectangle that wide, with
+    // whatever is behind the widget showing on both sides.  Every dial (the
+    // Main Panel's and added copies alike) keeps the Main Panel dial's
+    // proportions this way.  The Classic face has no plate and ignores it.
     QRectF plateRect() const;
     // The Main Panel's dial at its normal width in the mixed-container and
     // profile-dx captures at mac-1512x869@2: the widget's rect, which the
     // plate is drawn in, is 298 x 140 logical px (596 x 280 device px; the
-    // bezel's outer edge, 1 px inside, is 296 x 138).  Used only with
-    // setPlateLimitForTest() on.
+    // bezel's outer edge, 1 px inside, is 296 x 138).
     static constexpr double kPlateMaxAspect = 298.0 / 140.0;
 
     // Current RX/TX mode accessors.
@@ -357,6 +357,11 @@ private:
     // paint body, unchanged; paintVintage draws via gui/VintageMeterFace.
     void paintClassic(QPainter& p);
     void paintVintage(QPainter& p);
+    // NereusSDR-native: the Classic face fills rect() and stays opaque; a
+    // vintage face leaves its corners outside the bezel clear, so Qt
+    // paints what is behind the widget first.  Call after m_faceStyle
+    // changes.
+    void updatePaintOpacity();
 
 
     void updateNeedleTarget();

@@ -31,12 +31,12 @@
 //                 telemetry bindings treat the sentinel as no reading
 //                 (isHardwareTelemetryBinding). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-10-08 - Workspace preview data colours: NeedleItem's default
-//                 background reads WorkspacePreview::dataBackground(), and
-//                 BarItem's and the linear ScaleItem's factory ink read
-//                 WorkspacePreview::meterInk() (instrument tones under data
-//                 choice C only; a colour the user set is kept). J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview data colours (JJ's decision B):
+//                 NeedleItem's default background reads
+//                 WorkspacePreview::dataBackground(), the role of the
+//                 container around its meter or the user's colour for that
+//                 container. Ink unchanged. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -635,20 +635,8 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     }
 
     const QRect rect = pixelRect(widgetW, widgetH);
-    // Workspace preview, data choice C: the bar row's factory ink
-    // (ItemGroup::buildBarRow) in the instrument tones; any other colour,
-    // including one the user set, is drawn as it is.
-    using WorkspacePreview::meterInk;
-    const QColor barInk = meterInk(m_barColor, {QColor(Qt::white)}, "measured");
-    const QColor barRedInk = meterInk(m_barRedColor, {QColor(Qt::red)}, "danger");
-    const QColor historyInk = meterInk(
-        m_historyColour, {QColor(255, 0, 0, 128), QColor(255, 250, 205, 128)}, "measured-dim");
-    const QColor markerInk = meterInk(m_markerColour, {QColor(Qt::yellow)}, "measured");
-    const QColor peakHoldInk = meterInk(m_peakHoldMarkerColour, {QColor(Qt::red)}, "text");
-    const QColor fontInk = meterInk(m_fontColour, {QColor(Qt::white)}, "measured");
-    const QColor peakFontInk = meterInk(peakFontColour(), {QColor(Qt::red)}, "text-secondary");
     const QColor& fillColor = (m_smoothedValue >= m_redThreshold)
-                                  ? barRedInk : barInk;
+                                  ? m_barRedColor : m_barColor;
 
     // Bar body. Uses valueToNormalizedX() so both the linear min..max
     // fallback (empty calibration) and the Phase A4 piecewise-linear
@@ -676,7 +664,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // m_historyColour. Older samples fade via the alpha in the colour
     // itself; a stronger trail effect will come with VBO work later.
     if (m_showHistory && !m_history.isEmpty()) {
-        p.setPen(QPen(historyInk, 1));
+        p.setPen(QPen(m_historyColour, 1));
         for (double v : m_history) {
             const float hx = valueToNormalizedX(v);
             const int px = rect.left() + static_cast<int>(hx * rect.width());
@@ -706,12 +694,12 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
     // MeterManager.cs:21543-21544). Thin vertical lines at the live
     // smoothed X and the separate peak X.
     if (m_showMarker) {
-        p.setPen(QPen(markerInk, 2));
+        p.setPen(QPen(m_markerColour, 2));
         const int liveX = rect.left() + static_cast<int>(fracLive * rect.width());
         p.drawLine(liveX, rect.top(), liveX, rect.bottom());
 
         if (std::isfinite(m_peakValue)) {
-            p.setPen(QPen(peakHoldInk, 2));
+            p.setPen(QPen(m_peakHoldMarkerColour, 2));
             const float fracPeak = valueToNormalizedX(m_peakValue);
             const int peakX = rect.left() + static_cast<int>(fracPeak * rect.width());
             p.drawLine(peakX, rect.top(), peakX, rect.bottom());
@@ -737,7 +725,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
 
         if (m_showValue
             && (std::isfinite(m_smoothedValue) || isNoReading(m_value))) {
-            p.setPen(fontInk);
+            p.setPen(m_fontColour);
             const QString s = valueText();
             p.drawText(rect.left() + 2,
                        rect.top() + fm.ascent(),
@@ -745,7 +733,7 @@ void BarItem::paint(QPainter& p, int widgetW, int widgetH)
         }
         if (m_showPeakValue) {
             const QString s = peakValueText();
-            p.setPen(peakFontInk);
+            p.setPen(peakFontColour());
             const int w = fm.horizontalAdvance(s);
             p.drawText(rect.right() - w - 2,
                        rect.top() + fm.ascent(),
@@ -1038,7 +1026,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             titleFont.setPixelSize(titleHeight);
             titleFont.setBold(true);
             p.setFont(titleFont);
-            p.setPen(WorkspacePreview::meterInk(m_titleColour, {QColor(Qt::red)}, "text-secondary"));
+            p.setPen(m_titleColour);
             const QRect titleRect(rect.left(),
                                   rect.top(),
                                   rect.width(),
@@ -1176,23 +1164,18 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
     font.setPixelSize(dynFontSize);
     p.setFont(font);
 
-    // Workspace preview, data choice C: the factory tick and label colours
-    // in the instrument tones; a colour the user set is drawn as it is.
-    const QColor tickInk = WorkspacePreview::meterInk(m_tickColor, {QColor(0xc8, 0xd8, 0xe8)}, "text-scale");
-    const QColor labelInk = WorkspacePreview::meterInk(m_labelColor, {QColor(0x80, 0x90, 0xa0)}, "text-scale");
-
     if (m_orientation == Orientation::Horizontal) {
         // Major ticks with labels — ticks go downward from top, labels below
         for (int i = 0; i < m_majorTicks; ++i) {
             const double frac = static_cast<double>(i) / (m_majorTicks - 1);
             const int x = rect.left() + static_cast<int>(frac * rect.width());
 
-            p.setPen(tickInk);
+            p.setPen(m_tickColor);
             p.drawLine(x, rect.top(), x, rect.top() + rect.height() / 3);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(labelInk);
+            p.setPen(m_labelColor);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             p.drawText(x - labelW / 2, rect.top() + rect.height() / 3 + fm.ascent(), label);
@@ -1203,7 +1186,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int mx = rect.left() + static_cast<int>(minorFrac * rect.width());
-                    p.setPen(tickInk);
+                    p.setPen(m_tickColor);
                     p.drawLine(mx, rect.top(), mx, rect.top() + rect.height() / 6);
                 }
             }
@@ -1215,12 +1198,12 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             // Top = maxVal, bottom = minVal for vertical orientation
             const int y = rect.top() + static_cast<int>((1.0 - frac) * rect.height());
 
-            p.setPen(tickInk);
+            p.setPen(m_tickColor);
             p.drawLine(rect.right(), y, rect.right() - rect.width() / 3, y);
 
             const double val = m_minVal + frac * range;
             const QString label = QString::number(val, 'f', 0);
-            p.setPen(labelInk);
+            p.setPen(m_labelColor);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
             const int labelX = rect.right() - rect.width() / 3 - labelW - 2;
@@ -1232,7 +1215,7 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
                 for (int j = 1; j <= m_minorTicks; ++j) {
                     const double minorFrac = frac + (nextFrac - frac) * (static_cast<double>(j) / (m_minorTicks + 1));
                     const int my = rect.top() + static_cast<int>((1.0 - minorFrac) * rect.height());
-                    p.setPen(tickInk);
+                    p.setPen(m_tickColor);
                     p.drawLine(rect.right(), my, rect.right() - rect.width() / 6, my);
                 }
             }
@@ -1685,7 +1668,7 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
     const float ph = static_cast<float>(rect.height());
 
     // Background fill — from AetherSDR SMeterWidget.cpp line 197
-    p.fillRect(rect, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel"));
+    p.fillRect(rect, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", parent()));
 
     // From AetherSDR: cx = width*0.5, radius = width*0.85
     // cy = height + radius - height*0.65

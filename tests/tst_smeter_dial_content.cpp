@@ -6,6 +6,9 @@
 //   2026-10-08 - The external amplifier, Setup's face, locked and editing,
 //                 and the test-only plate limit. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The plate limit is the product: limited and centred with
+//                 no seam, and the parent's background outside the bezel.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLabel>
@@ -598,36 +601,77 @@ private slots:
         QVERIFY(!dialPreview->findChild<ContentConfigNotifier*>());
     }
 
-    // The test-only plate limit (variant B of the wide-container look): off,
-    // the plate is the widget; on, a dial wider than kPlateMaxAspect times
-    // its height gets a centred plate that wide, and one at the Main Panel's
-    // own size (298 x 140) keeps its whole rect, pixel for pixel.
-    void plateLimitOnlyNarrowsWideDials()
+    // The plate limit is the product (JJ's decision D20): a dial wider than
+    // kPlateMaxAspect times its height gets a centred plate that wide; one
+    // at the Main Panel's own size (298 x 140) keeps its whole rect. A
+    // vintage face paints only its bezel, so it is never opaque; the Classic
+    // face still fills its rect.
+    void plateIsLimitedAndCentred()
     {
         QWidget parent;
         SMeterWidget mainSize(SMeterWidget::SettingsStore::Instance, &parent);
         SMeterWidget wide(SMeterWidget::SettingsStore::Instance, &parent);
+        SMeterWidget middle(SMeterWidget::SettingsStore::Instance, &parent);
         mainSize.setGeometry(0, 0, 298, 140);
         wide.setGeometry(0, 150, 1000, 140);
-        QCOMPARE(SMeterWidget::plateLimitForTest(), false);
-        QCOMPARE(wide.plateRect(), QRectF(0, 0, 1000, 140));
-        const QImage before = mainSize.grab().toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-
-        SMeterWidget::setPlateLimitForTest(true);
-        auto off = qScopeGuard([] { SMeterWidget::setPlateLimitForTest(false); });
+        middle.setGeometry(0, 300, 600, 140);
         QCOMPARE(mainSize.plateRect(), QRectF(0, 0, 298, 140));
         QCOMPARE(wide.plateRect(), QRectF(351, 0, 298, 140));
+        QCOMPARE(middle.plateRect(), QRectF(151, 0, 298, 140));
+        QVERIFY(!mainSize.testAttribute(Qt::WA_OpaquePaintEvent));
         QVERIFY(!wide.testAttribute(Qt::WA_OpaquePaintEvent));
-        // Same pixels; only the grab's format follows the opaque attribute.
-        QCOMPARE(mainSize.grab().toImage().convertToFormat(QImage::Format_ARGB32_Premultiplied), before);
-        // A dial made with the limit on takes it too.
-        SMeterWidget later(SMeterWidget::SettingsStore::Instance, &parent);
-        later.setGeometry(0, 300, 600, 140);
-        QCOMPARE(later.plateRect(), QRectF(151, 0, 298, 140));
-
-        SMeterWidget::setPlateLimitForTest(false);
-        QCOMPARE(wide.plateRect(), QRectF(0, 0, 1000, 140));
+        wide.setFaceStyle(SMeterWidget::FaceStyle::Classic);
         QVERIFY(wide.testAttribute(Qt::WA_OpaquePaintEvent));
+        wide.setFaceStyle(SMeterWidget::FaceStyle::AgedCream);
+        QVERIFY(!wide.testAttribute(Qt::WA_OpaquePaintEvent));
+    }
+
+    // Outside the bezel a dial paints nothing: the parent's background
+    // (here a user colour) shows at the plate's rounded corners and in the
+    // bands beside a limited plate, with the workspace preview off and on.
+    void parentBackgroundShowsOutsideTheBezel_data()
+    {
+        QTest::addColumn<bool>("preview");
+        QTest::newRow("preview off") << false;
+        QTest::newRow("preview on") << true;
+    }
+    void parentBackgroundShowsOutsideTheBezel()
+    {
+        QFETCH(bool, preview);
+        WorkspacePreview::setEnabledForTest(preview);
+        auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        const QColor user(0x2a, 0x1e, 0x14);
+        QWidget parent;
+        parent.setAutoFillBackground(true);
+        QPalette pal = parent.palette();
+        pal.setColor(QPalette::Window, user);
+        parent.setPalette(pal);
+        parent.resize(1000, 290);
+        SMeterWidget mainSize(SMeterWidget::SettingsStore::Instance, &parent);
+        SMeterWidget wide(SMeterWidget::SettingsStore::Instance, &parent);
+        mainSize.setGeometry(0, 0, 298, 140);
+        wide.setGeometry(0, 150, 1000, 140);
+        const QImage img = parent.grab().toImage().convertToFormat(QImage::Format_ARGB32);
+        struct Probe { QPoint at; const char* where; };
+        const Probe probes[] = {
+            {{0, 0}, "Main Panel size, top-left corner"},
+            {{2, 2}, "Main Panel size, inside the top-left corner"},
+            {{297, 139}, "Main Panel size, bottom-right corner"},
+            {{351, 150}, "wide copy, plate's top-left corner"},
+            {{353, 152}, "wide copy, inside the plate's top-left corner"},
+            {{10, 220}, "wide copy, band left of the plate"},
+            {{990, 220}, "wide copy, band right of the plate"},
+        };
+        for (const Probe& probe : probes) {
+            QVERIFY2(img.pixelColor(probe.at).rgb() == user.rgb(),
+                     qPrintable(QStringLiteral("%1 at (%2,%3): %4, expected %5")
+                                    .arg(QString::fromLatin1(probe.where))
+                                    .arg(probe.at.x()).arg(probe.at.y())
+                                    .arg(img.pixelColor(probe.at).name(), user.name())));
+        }
+        // The plate itself is painted.
+        QVERIFY(img.pixelColor(149, 70).rgb() != user.rgb());
+        QVERIFY(img.pixelColor(500, 220).rgb() != user.rgb());
     }
 
     void savedSingletonWorkspaceLoadsUnchanged()

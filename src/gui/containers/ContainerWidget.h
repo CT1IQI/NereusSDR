@@ -21,6 +21,9 @@
 //   2026-10-08 - Workspace preview only: the source menu ticks the slice
 //                 the chip shows (setSourceMenuRx). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - publishUserBackground(): the user's background colour as a
+//                 property its meters read (workspace preview). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -442,6 +445,9 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    // Sets WorkspacePreview::kUserBackgroundProperty from m_backgroundColor:
+    // the colour when the user chose one, an invalid colour for the default.
+    void publishUserBackground();
     void updateChrome();
     void updateWorkspaceChrome();
     void buildWorkspaceHeader();
