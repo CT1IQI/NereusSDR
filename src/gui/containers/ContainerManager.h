@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: app-level Arrange mode by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Track pending container placement by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -116,6 +118,10 @@ public:
     void setPreviewPoller(MeterPoller* poller);
     MeterPoller* previewPoller() const;
     ContainerArrangeController* arrangeController() const { return m_arrange; }
+    // Workspace preview: Arrange shows every header and the resize handles.
+    // Runtime only, never saved; locks still hold.
+    void setArrangeMode(bool on);
+    bool arrangeMode() const { return m_arrangeMode; }
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
 
@@ -188,11 +194,14 @@ signals:
     void workspaceReconciled();
     void previewPresentationRequested(MeterWidget* meter, const QJsonObject& context);
     void workspaceError(const QString& error);
+    void arrangeModeChanged(bool on);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     bool commitDockMode(const QString& id, DockMode mode);
+    void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
+    bool m_arrangeMode = false;
     ContainerArrangeController* m_arrange = nullptr;
     QPointer<MeterPoller> m_previewPoller;
     QPointer<ContainerWorkspaceStore> m_store;

@@ -1,7 +1,16 @@
 // no-port-check: NereusSDR-original native QWidget placement and geometry gestures.
 // Modification history (NereusSDR):
 //   2026-10-03 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-07 - Workspace preview only: each object's handle is an entry
+//                 header inside its top edge and its resize corner sits
+//                 inside its bounds, in place of the outside grip and
+//                 corner. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "FreeCanvasSurface.h"
+#include "WorkspaceHeader.h"
+#include "gui/styles/WorkspacePreview.h"
+#include <QCursor>
+#include <QPushButton>
 #include <QPainter>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -60,7 +69,17 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
         QWidget* view=views.value(entry.id);
         if(!view) {continue;}
         if(!m_leaves.contains(entry.id)) {
-            Leaf leaf;leaf.grip=new CanvasHandle(false,this);leaf.corner=new CanvasHandle(true,this);
+            Leaf leaf;
+            if(WorkspacePreview::enabled()) {
+                // Workspace preview: the handle is a header inside the object.
+                auto* header=new WorkspaceEntryHeader(entry.id,this);header->setOverlay(true);header->hide();
+                const QString id=entry.id;
+                connect(header,&WorkspaceEntryHeader::optionsClicked,this,[this,id,header]{
+                    QPushButton* button=header->optionsButton();
+                    emit entryContextMenuRequested(id,button->mapToGlobal(QPoint(0,button->height())));
+                });
+                leaf.grip=header;leaf.corner=new WorkspaceCornerGrip(this);leaf.corner->hide();
+            } else {leaf.grip=new CanvasHandle(false,this);leaf.corner=new CanvasHandle(true,this);}
             for(QWidget* handle:{leaf.grip.data(),leaf.corner.data()}) {
                 handle->setProperty("canvasEntryId",entry.id);handle->installEventFilter(this);
             }
@@ -68,6 +87,7 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
             leaf.corner->setProperty("canvasResize",true);m_leaves.insert(entry.id,leaf);
         }
         auto& leaf=m_leaves[entry.id];leaf.view=view;leaf.order=entry.paintOrder;view->setProperty("freeCanvasEntryId",entry.id);
+        if(auto* header=qobject_cast<WorkspaceEntryHeader*>(leaf.grip.data())) {header->setTitle(entry.name.isEmpty()?entry.id:entry.name);}
         if(view->parentWidget()!=this) {view->setParent(this);}
         view->installEventFilter(this);
         const QSize hint=(view->property("freeCanvasHint").isValid()?view->property("freeCanvasHint").toSize():view->sizeHint()).expandedTo(QSize(320,80));
@@ -116,9 +136,18 @@ void FreeCanvasSurface::syncPresentation() {
         auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
         const QRect rect=projectedBoundary(leaf.view);leaf.view->raise();
         extent=extent.expandedTo(QSize(rect.x()+rect.width()+kMargin,rect.y()+rect.height()+kMargin));
-        leaf.grip->move(rect.x()-kGripWidth,rect.y());leaf.corner->move(rect.x()+rect.width(),rect.y()+rect.height());
         const bool visible=leaf.view->isVisibleTo(this) && leaf.rect.width()>0 && leaf.rect.height()>0;
-        leaf.grip->setVisible(visible);leaf.corner->setVisible(visible);
+        if(WorkspacePreview::enabled()) {
+            // Workspace preview: header and corner inside the bounds, shown
+            // while the object is hovered, selected or being edited.
+            leaf.grip->setGeometry(rect.x(),rect.y(),rect.width(),WorkspaceEntryHeader::kHeight);
+            leaf.corner->move(rect.x()+rect.width()-WorkspaceCornerGrip::kSize,rect.y()+rect.height()-WorkspaceCornerGrip::kSize);
+            const bool revealed=visible && leaf.grip->property("canvasReveal").toBool();
+            leaf.grip->setVisible(revealed);leaf.corner->setVisible(revealed);
+        } else {
+            leaf.grip->move(rect.x()-kGripWidth,rect.y());leaf.corner->move(rect.x()+rect.width(),rect.y()+rect.height());
+            leaf.grip->setVisible(visible);leaf.corner->setVisible(visible);
+        }
         leaf.grip->setCursor(m_document.locked?Qt::ArrowCursor:Qt::OpenHandCursor);
         leaf.corner->setCursor(m_document.locked?Qt::ArrowCursor:Qt::SizeFDiagCursor);
         leaf.grip->raise();leaf.corner->raise();
@@ -135,12 +164,18 @@ void FreeCanvasSurface::updateReveal(const QString& hover) {
             if(handle) {handle->setProperty("canvasReveal",it.key()==m_selected || it.key()==hover || it.key()==m_active);handle->update();}
         }
     }
+    if(WorkspacePreview::enabled()) {syncPresentation();}
+}
+QString FreeCanvasSurface::hoverAt(const QPoint& position) const {
+    // Workspace preview handles sit inside the bounds, so no outside margin.
+    const int left=WorkspacePreview::enabled()?0:-kGripWidth;
+    const int extra=WorkspacePreview::enabled()?0:kCornerSize;
+    auto ids=m_leaves.keys();std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a>b:m_leaves[a].order>m_leaves[b].order;});
+    for(const QString& id:ids) {const auto& leaf=m_leaves[id];if(leaf.view && leaf.view->isVisibleTo(this) && projectedBoundary(leaf.view).adjusted(left,0,extra,extra).contains(position)) {return id;}}
+    return {};
 }
 void FreeCanvasSurface::mouseMoveEvent(QMouseEvent* event) {
-    QString hover;
-    auto ids=m_leaves.keys();std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a>b:m_leaves[a].order>m_leaves[b].order;});
-    for(const QString& id:ids) {const auto& leaf=m_leaves[id];if(leaf.view && leaf.view->isVisibleTo(this) && projectedBoundary(leaf.view).adjusted(-kGripWidth,0,kCornerSize,kCornerSize).contains(event->position().toPoint())) {hover=id;break;}}
-    updateReveal(hover);QWidget::mouseMoveEvent(event);
+    updateReveal(hoverAt(event->position().toPoint()));QWidget::mouseMoveEvent(event);
 }
 void FreeCanvasSurface::changeRect(const QString& id,const QRectF& rect) {
     if(!m_leaves.contains(id)) {return;}m_leaves[id].rect=rect;for(auto& entry:m_document.contents) {if(entry.id==id) {entry.setFreeCanvasRect(rect);break;}}placeViews();emit geometryEdited(id,rect);
@@ -162,7 +197,11 @@ bool FreeCanvasSurface::eventFilter(QObject* watched,QEvent* event) {
     if(id.isEmpty()) {
         const QString leafId=handle->property("freeCanvasEntryId").toString();
         if(!leafId.isEmpty() && (event->type()==QEvent::Enter || event->type()==QEvent::FocusIn)) {updateReveal(leafId);}
-        if(event->type()==QEvent::Leave) {updateReveal();}
+        if(event->type()==QEvent::Leave) {
+            // Workspace preview: moving onto the object's own header is not
+            // leaving the object.
+            updateReveal(WorkspacePreview::enabled()?hoverAt(mapFromGlobal(QCursor::pos())):QString());
+        }
         if(!leafId.isEmpty() && (event->type()==QEvent::Show || event->type()==QEvent::Move || event->type()==QEvent::Resize)) {queuePresentationSync();}
         return false;
     }

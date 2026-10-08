@@ -122,6 +122,19 @@ EQ/CFC graph band colours are excluded. The sidecar of a look image has
 scoped pass, not migrated) and `unknown_literals_top30`, the colour
 literals the scoped pass met and left alone.
 
+### Proposed header scenes
+
+`header-always`, `header-reveal-idle`, `header-reveal-shown`,
+`header-hidden` and `arrange-on` pose the two-band data with the workspace
+preview switch on (the binary sets it for these scenes) and show the
+proposed compact container headers: the Main Panel in Always, Reveal (idle,
+then revealed through `ContainerWidget::setHeaderRevealedForPreview`),
+Hidden, and Always with Arrange on (`ContainerManager::setArrangeMode`).
+At the crop profile each adds a `panel-top` crop, the Main Panel's top
+120 logical px, and its @3x enlargement. Their sidecars have
+`provenance: proposed` and a `proposed_values` block with the sizes and
+colours the scene shows.
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives
@@ -168,4 +181,5 @@ non-zero on any difference. What makes it repeatable:
 - Amp, Tuner and RF-Kit applets are not shown: they appear only once a
   device setting that starts discovery or a connection is on.
 - The tool shows the current app, plus the proposed workspace look in the
-  `look-*` scenes. Other proposed designs are added as new scenes.
+  `look-*` scenes and the proposed headers in the `header-*` and
+  `arrange-on` scenes. Other proposed designs are added as new scenes.

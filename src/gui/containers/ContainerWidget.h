@@ -28,6 +28,10 @@
 //   2026-09-28 - vfoFilterContextRequested: the VFO display's filter
 //                 right-click, apart from a filter button's. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Workspace preview: the compact group header (Always in
+//                 the layout, Reveal as a zero-space overlay, Hidden),
+//                 Arrange presentation and inside resize handles. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -158,6 +162,8 @@ mw0lge@grange-lane.co.uk
 #include "ContainerTypes.h"
 
 #include <QWidget>
+#include <QPointer>
+#include <QTimer>
 #include <QPoint>
 #include <QSize>
 #include <QColor>
@@ -166,6 +172,9 @@ mw0lge@grange-lane.co.uk
 
 class QLabel;
 class QPushButton;
+class QGraphicsOpacityEffect;
+class QPropertyAnimation;
+class QMenu;
 
 namespace NereusSDR {
 
@@ -173,6 +182,7 @@ struct BoardCapabilities;
 class MeterItem;
 
 class FloatingContainer;
+class WorkspaceGroupHeader;
 
 class ContainerWidget : public QWidget {
     Q_OBJECT
@@ -254,6 +264,34 @@ public:
     bool isTitleBarVisible() const { return m_titleBarVisible; }
     void setTitleBarVisible(bool visible);
 
+    // --- Workspace preview header (WorkspacePreview::enabled() only) ---
+    // The Reveal band: the top strip whose hover reveals the header.
+    static constexpr int kRevealBand = 18;
+    static constexpr int kRevealDelayMs = 120;
+    static constexpr int kRevealFadeMs = 90;
+    static constexpr int kRevealHideMs = 600;
+    static constexpr double kRevealOpacity = 0.96;
+    static constexpr int kRevealShadowPx = 6;
+    static constexpr int kArrangeEdgePx = 4;
+    // The header extent the layout reserves: the legacy 22 px slot with
+    // the preview off; with it on, 18 px in Always (and while minimised)
+    // and 0 in Reveal and Hidden.
+    int headerExtent() const;
+    // App-level Arrange (ContainerManager::setArrangeMode): every header
+    // shows, the outline and the inside resize handles appear. Not saved.
+    void setArrangeActive(bool active);
+    bool arrangeActive() const { return m_arrangeActive; }
+    // Test and preview seam: shows (or hides) the Reveal header at once,
+    // without the hover delay or the fade, and holds it there.
+    void setHeaderRevealedForPreview(bool revealed);
+    bool headerRevealed() const { return m_headerRevealed; }
+    // The title the group header shows (a single-content container passes
+    // its entry's name) and its source chip ("RX A"); empty hides the chip.
+    void setWorkspaceTitle(const QString& title);
+    void setWorkspaceSource(const QString& text, const QColor& colour);
+    WorkspaceGroupHeader* workspaceHeader() const { return m_groupHeader; }
+    QWidget* contentHolder() const { return m_contentHolder; }
+
     // Minimised collapse state (runtime only; not persisted). Collapses
     // a floating container to just its title bar. From Thetis
     // ContainerMinimised runtime flag (MeterManager.cs usage). Whether a
@@ -306,6 +344,9 @@ signals:
     void returnContainerRequested();
     void hideContainerRequested();
     void headerModeRequested(HeaderMode mode);
+    // Workspace preview: the options menu's Lock and Arrange workspace.
+    void lockRequested(bool locked);
+    void arrangeWorkspaceRequested(bool active);
     void floatRequested();
     void dockRequested();
     void settingsRequested();
@@ -345,10 +386,19 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void updateChrome();
+    void updateWorkspaceChrome();
+    void buildWorkspaceHeader();
+    void placeWorkspaceOverlays();
+    void trackRevealBand(const QPoint& globalPos);
+    void setHeaderRevealed(bool revealed, bool animate);
+    bool headerHasFocus() const;
+    void showWorkspaceOptions();
+    void populateWorkspaceMenu(QMenu& menu);
     void buildUI();
     void updateTitleBar();
     void updateTitle();
@@ -425,6 +475,23 @@ private:
     QPushButton* m_btnAxis{nullptr};
     QPushButton* m_btnPin{nullptr};
     QPushButton* m_btnSettings{nullptr};
+
+    // --- Workspace preview header ---
+    WorkspaceGroupHeader* m_groupHeader{nullptr};
+    QWidget* m_revealShadow{nullptr};
+    QWidget* m_arrangeFrame{nullptr};
+    QWidget* m_edgeRight{nullptr};
+    QWidget* m_edgeBottom{nullptr};
+    QGraphicsOpacityEffect* m_headerOpacity{nullptr};
+    QPropertyAnimation* m_revealFade{nullptr};
+    QTimer m_revealDelay;
+    QTimer m_revealHide;
+    bool m_arrangeActive{false};
+    bool m_headerRevealed{false};
+    bool m_revealHeld{false};
+    bool m_keyboardFocus{false};
+    bool m_workspaceMenuOpen{false};
+    Qt::Orientations m_resizeAxes{Qt::Horizontal | Qt::Vertical};
 
     // Phase 3P-I-a T17 — cached hasAlex flag so items added via
     // wireInteractiveItem() after setBoardCapabilities() still inherit

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: app-level Arrange mode, the group
+//                 header's title, source chip and lock request, and the
+//                 auto-height header extent by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Follow responsive content height in auto-height containers by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Preserve pending container placement and initialize overlay
@@ -92,6 +96,8 @@ mw0lge@grange-lane.co.uk
 #include "ContainerWorkspaceStore.h"
 #include "gui/GuiApplication.h"
 #include "ContainerDocumentCodec.h"
+#include "core/ControlRanges.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <algorithm>
 
 namespace NereusSDR {
@@ -360,6 +366,17 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                         }
                         commitWorkspace(draft, draft.revision);
                     });
+            // Workspace preview: the header's Lock item and Arrange toggle.
+            connect(c, &ContainerWidget::lockRequested, this, [this, id = d.id](bool locked) {
+                auto draft = m_store->snapshot();
+                for (auto &value : draft.containers) {
+                    if (value.id == id) {
+                        value.locked = locked;
+                    }
+                }
+                commitWorkspace(draft, draft.revision);
+            });
+            connect(c, &ContainerWidget::arrangeWorkspaceRequested, this, &ContainerManager::setArrangeMode);
         }
         auto* host = contentHost(d.id);
         const bool reparent = fresh || c->dockMode() != d.dockMode;
@@ -375,6 +392,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         c->setAxisLock(d.anchor); c->setLocked(d.locked); c->setAutoHeight(d.autoHeight);
         c->setPopOutShell(d.popOutShell);
         c->setHeaderMode(d.header);
+        if (WorkspacePreview::enabled()) {
+            applyWorkspaceHeader(c, d);
+        }
         c->setContainerEnabled(d.config.value("enabled").toBool(true));
         c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
         c->setContainerMinimises(d.config.value("containerMinimises").toBool(false));
@@ -419,7 +439,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 if (!target) {
                     return;
                 }
-                int height = content->preferredContentHeight() + ContainerWidget::kTitleBarHeight;
+                int height = content->preferredContentHeight() + view->headerExtent();
                 if (placement->layout == ContentLayout::FreeCanvas && target->screen()) {
                     height = qMin(height, target->screen()->availableGeometry().height());
                 }
@@ -434,10 +454,14 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             c->setContent(host);
         }
         host->setArrangeController(m_arrange);
+        // Workspace preview: entry headers follow the container's header mode
+        // and the app-level Arrange (both inert with the switch off).
+        host->setContainerHeaderMode(d.header);
+        host->setArrangeActive(m_arrangeMode);
         host->reconcile(d);
         if (d.autoHeight && d.dockMode != DockMode::PanelDocked) {
             QWidget *target = d.dockMode == DockMode::Floating ? static_cast<QWidget *>(form) : c;
-            int height=host->preferredContentHeight()+ContainerWidget::kTitleBarHeight;
+            int height=host->preferredContentHeight()+c->headerExtent();
             if(d.layout==ContentLayout::FreeCanvas && target->screen()) {height=qMin(height,target->screen()->availableGeometry().height());}
             target->resize(qMax(target->width(), c->minimumSizeHint().width()),height);
         }
@@ -470,6 +494,59 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         m_geometryCommit.start();
     }
     emit workspaceReconciled();
+}
+void ContainerManager::setArrangeMode(bool on)
+{
+    if (m_arrangeMode == on) {
+        return;
+    }
+    // Arrange is runtime only, never saved.
+    m_arrangeMode = on;
+    for (auto it = m_containers.cbegin(); it != m_containers.cend(); ++it) {
+        if (!it.value()) {
+            continue;
+        }
+        it.value()->setArrangeActive(on);
+        if (auto *host = contentHost(it.key())) {
+            host->setArrangeActive(on);
+        }
+    }
+    emit arrangeModeChanged(on);
+}
+void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerDocument &d)
+{
+    // A single entry's title is the header, so there is never a second bar.
+    QString title = d.name;
+    if (d.contents.size() == 1) {
+        const auto &entry = d.contents.constFirst();
+        title = entry.name;
+        if (title.isEmpty() && m_registry) {
+            for (const auto &descriptor : m_registry->descriptors()) {
+                if (descriptor.typeId == entry.typeId) {
+                    title = descriptor.title;
+                }
+            }
+        }
+        if (title.isEmpty()) {
+            title = d.name;
+        }
+    }
+    c->setWorkspaceTitle(title.isEmpty() ? d.id : title);
+    // The source chip names a fixed slice; a container following the
+    // selected receiver shows none.
+    QString source;
+    QColor colour;
+    if (d.config.value("rxSourceMode").toString() != QStringLiteral("followSelectedRx")
+        && (d.config.contains("sliceId") || d.config.contains("rxSource"))) {
+        const int slice = d.config.contains("sliceId") ? d.config.value("sliceId").toInt()
+                                                       : d.config.value("rxSource").toInt(1) - 1;
+        if (slice >= 0 && slice < 26) {
+            source = QStringLiteral("RX %1").arg(QChar('A' + slice));
+            colour = QColor::fromRgb(ControlRanges::sliceColour(slice));
+        }
+    }
+    c->setWorkspaceSource(source, colour);
+    c->setArrangeActive(m_arrangeMode);
 }
 bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
 {

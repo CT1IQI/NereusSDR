@@ -16,6 +16,9 @@
 #   2026-10-07 - --against (compare with a stored run) and the
 #                proposed-look provenance for look-* scenes. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-07 - "proposed" provenance for proposed-design scenes (any
+#                scene not named baseline-*, dialog-* or look-*). J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -53,6 +56,16 @@ NOT_SHOWN = [
      "reason": "needs an RF-Kit setting that starts a device connection"},
 ]
 RUN_TIMEOUT_S = 180
+
+
+def scene_provenance(name):
+    # look-* is the proposed workspace look over a current scene; any other
+    # scene that is not a baseline or dialog scene is a proposed design.
+    if name.startswith("look-"):
+        return "proposed-look"
+    if name.startswith("baseline-") or name.startswith("dialog-"):
+        return "retained-current-app"
+    return "proposed"
 
 
 def child_env(scale_factor=None):
@@ -339,9 +352,9 @@ def main():
 
     manifest = {
         "tool": "nereus_visual_preview",
-        # Per run: look-* scenes are the proposed workspace look.
-        "provenance": ("proposed-look" if runs and all(s.startswith("look-") for s, _ in runs)
-                       else "retained-current-app" if not any(s.startswith("look-") for s, _ in runs)
+        # Per run: see scene_provenance(); one value when every run agrees.
+        "provenance": (scene_provenance(runs[0][0])
+                       if runs and len({scene_provenance(s) for s, _ in runs}) == 1
                        else "mixed; see each sidecar"),
         "started_utc": started,
         "git_head": head,

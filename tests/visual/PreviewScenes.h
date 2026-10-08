@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Proposed header scenes: per-scene workspace preview
+//                 switch, extra crops, provenance and proposed values.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,6 +78,11 @@ struct SceneContext {
     // widget in the right panel and the first pan's toolbar to this
     // file, so two runs can be compared for moved or resized widgets.
     QString geometryDump;
+    // Proposed-design scenes: extra detail crops at the crop profile, the
+    // sidecar provenance ("proposed") and the values the scene shows.
+    std::function<void(SceneContext&, QVector<CropRect>&, double dpr)> extraCrops;
+    QString provenance;
+    QJsonObject proposedValues;
 };
 
 struct Scene {
@@ -83,6 +91,8 @@ struct Scene {
     QString panLayout;
     bool dialog{false};
     std::function<void(SceneContext&)> run;
+    // true: the scene always runs with the workspace preview switch on.
+    bool workspacePreview{false};
 };
 
 // Every fixed scene (non-dialog and fixed dialogs).

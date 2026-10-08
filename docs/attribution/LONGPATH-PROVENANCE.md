@@ -44,6 +44,8 @@ block carries an inline cite of the form
 | src/gui/styles/WorkspaceStyle.cpp | src/gui/StyleConstants.h; src/gui/styles/ThemeQss.cpp | StyleConstants.h 544-1401; ThemeQss.cpp 284-288 | Port (helpers) | capsFont, monoFont, paintInsetTop, paintGlassChip, shiftL, glassPanelFill, titleBarStyle. |
 | src/gui/styles/WorkspaceComponents.h | src/gui/StyleConstants.h | StyleConstants.h 723-1121 | Port (values) | Raised, pressed, glass-selected and sunken fills and edges for the component treatment. Workspace preview only. |
 | src/gui/styles/WorkspaceComponents.cpp | src/gui/StyleConstants.h | StyleConstants.h 723-1121 | Port (fills) | Fill and edge values only; Longpath padding, font and handle sizes and its 7 px radius are not ported. componentize() itself is NereusSDR-original. |
+| src/gui/containers/WorkspaceHeader.h | src/gui/applets/GridCellWidget.cpp | GridCellWidget.cpp 1-10 (banner) | Port (structure) | The group header's row (stripe, grab handle, title, buttons) follows GridCellWidget's title bar. The source chip, lock glyph, entry header and dot corner are NereusSDR-original. Workspace preview only. |
+| src/gui/containers/WorkspaceHeader.cpp | src/gui/applets/GridCellWidget.cpp | GridCellWidget.cpp 59-155 | Port (values) | Header stylesheet and top radius, margins and spacing, 3 px stripe, ⋮⋮ grip at 11 px, 16x14 buttons and their stylesheet. Height 18 (Longpath 22), the entry header and the chip are the workspace review's proposal. |
 
 NereusSDR-original files that use the palette but port nothing
 (QssTranslator, WorkspacePreview and the call-site branches) carry a

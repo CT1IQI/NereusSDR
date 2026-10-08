@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: entry headers (in a reserved 16 px
+//                 slot in Always, over the content in Arrange) replace the
+//                 20 px left gutter and its grips by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Project native bar rows into responsive viewport allocations by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Fit stacked button groups to compact shared rows by
@@ -15,6 +19,7 @@
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "FreeCanvasSurface.h"
+#include "WorkspaceHeader.h"
 #include <QLoggingCategory>
 Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QDrag>
@@ -162,6 +167,10 @@ void ContainerContentHost::releaseViews()
     }
     m_rows.clear();m_canvas->clearViews();m_canvas->hide();
     for(const auto& grip:m_grips) {if(grip) {delete grip.data();}} m_grips.clear();
+    for (const auto& header : std::as_const(m_entryHeaders)) {
+        if (header) { delete header.data(); }
+    }
+    m_entryHeaders.clear();
     while (QLayoutItem* child = m_layout->takeAt(0)) {
         if (child->widget() && child->widget()!=m_canvas) { delete child->widget(); }
         delete child;
@@ -373,15 +382,19 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 child->setProperty("unsupportedSourceReason",item->property("unsupportedSourceReason"));
             }
         }
-        row.widget = run; row.item = item; row.offset = runHeight; row.height = height;
+        // Workspace preview, Always: each entry keeps a header slot above it.
+        const int headerGap = entryHeaderReserve();
+        row.widget = run; row.item = item; row.offset = runHeight + headerGap; row.height = height;
         row.baseHeight = height;
-        runHeight += height; runRows.append(m_rows.size()); m_rows.append(row);
+        runHeight += headerGap + height; runRows.append(m_rows.size()); m_rows.append(row);
         run->addItem(item);
     }
     finalRun = true; finishRun(); m_layout->addStretch();
     m_generation = m_registry.generation(); m_materialized = true;
     int minimumWidth=0; for (auto* meter : meterSurfaces()) { minimumWidth=qMax(minimumWidth,meter->minimumWidth()); }
-    setMinimumWidth(minimumWidth ? minimumWidth + (m_arrange ? 28 : 8) : 0);
+    // Workspace preview: no left gutter, so Arrange adds no width.
+    const int gutter = m_arrange && !WorkspacePreview::enabled() ? 28 : 8;
+    setMinimumWidth(minimumWidth ? minimumWidth + gutter : 0);
     scheduleStackProjection();
     updateGrips();
     emit reconciled();
@@ -579,7 +592,9 @@ class EntryGrip final : public QWidget
 void ContainerContentHost::setArrangeController(ContainerArrangeController *controller)
 {
     m_arrange = controller;
-    m_layout->setContentsMargins(controller ? 20 : 0, 0, 8, 0);
+    // Workspace preview: entry headers replace the 20 px grip gutter.
+    const int gutter = controller && !WorkspacePreview::enabled() ? 20 : 0;
+    m_layout->setContentsMargins(gutter, 0, 8, 0);
     if (!controller) {
         for (const auto& grip : m_grips) {
             if (grip) { grip->hide(); }
@@ -611,9 +626,11 @@ void ContainerContentHost::projectStackRows()
     if (usableWidth <= 0) { return; }
     double responsiveBaseHeight = 0;
     double fixedHeight = margins.top() + margins.bottom() + (m_bannerMenu ? 22 : 0);
+    const int headerGap = entryHeaderReserve();
     QSet<QWidget*> fixedWidgets;
     for (const auto& row : std::as_const(m_rows)) {
         if (!row.widget || !row.presentationVisible) { continue; }
+        fixedHeight += headerGap;
         if (row.item) {
             if (qobject_cast<BarPresetItem*>(row.item.data())) {
                 responsiveBaseHeight += row.baseHeight;
@@ -625,13 +642,17 @@ void ContainerContentHost::projectStackRows()
             fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
         }
     }
-    if (responsiveBaseHeight <= 0) { return; }
-    const double widthRatio = double(usableWidth) / kBarReferenceWidth;
-    const double availableRatio = qMax(0.0, m_scroll->viewport()->height() - fixedHeight) / responsiveBaseHeight;
-    const double desiredScale = m_document.autoHeight ? widthRatio : qMin(widthRatio, qMax(1.0, availableRatio));
-    // Bound presentation arithmetic to Qt's representable widget extent even
-    // when an imported calibration is huge; the stored value remains intact.
-    const double scale = qMin(desiredScale, double(QWIDGETSIZE_MAX) / responsiveBaseHeight);
+    // Workspace preview: header slots still need placing without bar rows.
+    if (responsiveBaseHeight <= 0 && headerGap == 0) { return; }
+    double scale = 1.0;
+    if (responsiveBaseHeight > 0) {
+        const double widthRatio = double(usableWidth) / kBarReferenceWidth;
+        const double availableRatio = qMax(0.0, m_scroll->viewport()->height() - fixedHeight) / responsiveBaseHeight;
+        const double desiredScale = m_document.autoHeight ? widthRatio : qMin(widthRatio, qMax(1.0, availableRatio));
+        // Bound presentation arithmetic to Qt's representable widget extent even
+        // when an imported calibration is huge; the stored value remains intact.
+        scale = qMin(desiredScale, double(QWIDGETSIZE_MAX) / responsiveBaseHeight);
+    }
     // Carry fractional rounding across all runs, so their combined allocation
     // fits the available height without one rounding pixel per row/run causing
     // a scrollbar to appear, shrink the width, then disappear again.
@@ -650,10 +671,10 @@ void ContainerContentHost::projectStackRows()
                 height = qMax(1, bottom - responsiveBottom);
                 responsiveBottom += height;
             }
-            changed = changed || row.offset != runHeight || row.height != height;
-            row.offset = runHeight;
+            changed = changed || row.offset != runHeight + headerGap || row.height != height;
+            row.offset = runHeight + headerGap;
             row.height = height;
-            runHeight += height;
+            runHeight += headerGap + height;
             runRows.append(&row);
         }
         if (runHeight <= 0) { continue; }
@@ -678,6 +699,10 @@ void ContainerContentHost::projectStackRows()
 }
 void ContainerContentHost::updateGrips()
 {
+    if (WorkspacePreview::enabled()) {
+        updateEntryHeaders();
+        return;
+    }
     if (!m_arrange || m_document.layout==ContentLayout::FreeCanvas) {
         return;
     }
@@ -724,6 +749,11 @@ int ContainerContentHost::preferredContentHeight() const
             continue;
         }
         seen.insert(row.widget);
+        if (!row.item) {
+            // Workspace preview, Always: the header slot above a widget row
+            // (meter runs carry theirs inside their fixed height).
+            height += entryHeaderReserve();
+        }
         height += m_document.layout == ContentLayout::VerticalStack ? preferredWidgetHeight(row.widget, usableWidth)
             : qBound(row.widget->minimumHeight(), row.widget->sizeHint().height(), row.widget->maximumHeight());
     }
@@ -738,7 +768,145 @@ QRect ContainerContentHost::gripGeometry(const QString &id) const
                          grip->size());
         }
     }
+    if (auto *header = entryHeader(id); header && header->isVisible()) {
+        return QRect(header->mapTo(const_cast<ContainerContentHost *>(this), QPoint()), header->size());
+    }
     return {};
+}
+void ContainerContentHost::setArrangeActive(bool active)
+{
+    if (m_arrangeActive == active) {
+        return;
+    }
+    m_arrangeActive = active;
+    updateEntryHeaders();
+}
+void ContainerContentHost::setContainerHeaderMode(HeaderMode mode)
+{
+    if (m_containerHeaderMode == mode) {
+        return;
+    }
+    m_containerHeaderMode = mode;
+    if (!WorkspacePreview::enabled()) {
+        return;
+    }
+    updateEntryHeaders();
+    scheduleStackProjection();
+}
+WorkspaceEntryHeader *ContainerContentHost::entryHeader(const QString &entryId) const
+{
+    return m_entryHeaders.value(entryId).data();
+}
+int ContainerContentHost::entryHeaderReserve() const
+{
+    // Workspace preview, Always: a multi-content stack keeps a 16 px slot
+    // above each entry. Other modes show the headers over the content.
+    const bool reserve = WorkspacePreview::enabled() && m_document.layout == ContentLayout::VerticalStack
+        && m_document.contents.size() > 1 && m_containerHeaderMode == HeaderMode::Always;
+    return reserve ? WorkspaceEntryHeader::kHeight : 0;
+}
+QString ContainerContentHost::entryTitle(const ContentEntry &entry) const
+{
+    if (!entry.name.isEmpty()) {
+        return entry.name;
+    }
+    for (const auto &descriptor : m_registry.descriptors()) {
+        if (descriptor.typeId == entry.typeId) {
+            return descriptor.title;
+        }
+    }
+    return entry.id;
+}
+void ContainerContentHost::updateEntryHeaders()
+{
+    if (!WorkspacePreview::enabled()) {
+        return;
+    }
+    // A single entry's title is the container's header, so it never gets a
+    // second bar. Free canvas leaves carry their own headers.
+    const bool shown = m_materialized && m_document.layout != ContentLayout::FreeCanvas
+        && m_document.contents.size() > 1
+        && (m_containerHeaderMode == HeaderMode::Always || m_arrangeActive);
+    const bool reserve = shown && entryHeaderReserve() > 0;
+    const QMargins margins = m_layout->contentsMargins();
+    QSet<QString> live;
+    for (int i = 0; i < m_rows.size(); ++i) {
+        const auto &row = m_rows[i];
+        live.insert(row.entryId);
+        const bool visible = shown && row.widget
+            && (m_document.layout == ContentLayout::VerticalStack ? row.presentationVisible : row.effectiveVisible);
+        WorkspaceEntryHeader *header = entryHeader(row.entryId);
+        if (!header && !visible) {
+            continue;
+        }
+        if (!header) {
+            header = new WorkspaceEntryHeader(row.entryId, m_body);
+            header->setProperty("entryGripId", row.entryId);
+            header->installEventFilter(this);
+            const QString id = row.entryId;
+            connect(header, &WorkspaceEntryHeader::optionsClicked, this, [this, id] {
+                auto *source = entryHeader(id);
+                if (!source) {
+                    return;
+                }
+                QMenu menu(this);
+                addEntryActions(menu, id);
+                if (!menu.isEmpty()) {
+                    QPushButton *button = source->optionsButton();
+                    menu.exec(button->mapToGlobal(QPoint(0, button->height())));
+                }
+            });
+            m_entryHeaders.insert(row.entryId, header);
+        }
+        if (row.widget && !row.widget->property("workspaceHeaderWatched").toBool()) {
+            row.widget->setProperty("workspaceHeaderWatched", true);
+            row.widget->installEventFilter(this);
+        }
+        if (i < m_document.contents.size() && m_document.contents[i].id == row.entryId) {
+            header->setTitle(entryTitle(m_document.contents[i]));
+        }
+        header->setCursor(m_document.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+        const bool inLayout = visible && reserve && !row.item;
+        const int position = m_layout->indexOf(header);
+        if (inLayout) {
+            const int target = m_layout->indexOf(row.widget);
+            if (position < 0 || position + 1 != target) {
+                if (position >= 0) {
+                    m_layout->removeWidget(header);
+                }
+                m_layout->insertWidget(qMax(0, m_layout->indexOf(row.widget)), header);
+            }
+            header->setOverlay(false);
+            header->setVisible(true);
+            continue;
+        }
+        if (position >= 0) {
+            m_layout->removeWidget(header);
+        }
+        header->setVisible(visible);
+        if (!visible) {
+            continue;
+        }
+        const QRect boundary = entryBoundary(row.entryId);
+        const int top = m_body->mapFrom(this, boundary.topLeft()).y() - (reserve ? WorkspaceEntryHeader::kHeight : 0);
+        const QRect target(margins.left(), top, qMax(0, m_body->width() - margins.left() - margins.right()),
+                           WorkspaceEntryHeader::kHeight);
+        if (header->geometry() != target) {
+            header->setGeometry(target);
+        }
+        header->setOverlay(!reserve);
+        header->raise();
+    }
+    for (auto it = m_entryHeaders.begin(); it != m_entryHeaders.end();) {
+        if (!it.value() || !live.contains(it.key())) {
+            if (it.value()) {
+                delete it.value().data();
+            }
+            it = m_entryHeaders.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 int ContainerContentHost::insertionIndex(const QPoint &position) const
 {

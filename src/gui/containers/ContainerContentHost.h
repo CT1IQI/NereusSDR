@@ -1,11 +1,17 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: entry headers in place of the
+//                 left gutter grips, Arrange and the container's header
+//                 mode by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-04 — Runtime responsive stack projection by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerDocument.h"
+#include "ContainerTypes.h"
+#include <QHash>
 #include <QWidget>
 #include <QPointer>
 #include <QVector>
@@ -18,6 +24,7 @@ class ContainerContentRegistry;
 class MeterWidget;
 class MeterItem;
 class FreeCanvasSurface;
+class WorkspaceEntryHeader;
 class ContainerContentHost : public QWidget {
     Q_OBJECT
 public:
@@ -47,6 +54,13 @@ public:
     int insertionIndex(const QPoint& position) const;
     int preferredContentHeight() const;
     QRect gripGeometry(const QString& entryId) const;
+    // Workspace preview: Arrange shows every entry header; the container's
+    // header mode decides whether they show outside Arrange (Always only).
+    void setArrangeActive(bool active);
+    bool arrangeActive() const { return m_arrangeActive; }
+    void setContainerHeaderMode(HeaderMode mode);
+    // Workspace preview: the entry header of one entry, or nullptr.
+    WorkspaceEntryHeader* entryHeader(const QString& entryId) const;
     static QJsonObject effectiveContext(const ContainerDocument& document, const ContentEntry& entry);
 signals:
     void meterSurfaceReady(MeterWidget* meter, const QJsonObject& context);
@@ -60,6 +74,12 @@ private:
     void scheduleStackProjection();
     void projectStackRows();
     void addEntryActions(QMenu& menu, const QString& entryId);
+    void updateEntryHeaders();
+    int entryHeaderReserve() const;
+    QString entryTitle(const ContentEntry& entry) const;
+    QHash<QString, QPointer<WorkspaceEntryHeader>> m_entryHeaders;
+    HeaderMode m_containerHeaderMode = HeaderMode::Always;
+    bool m_arrangeActive = false;
     QPointer<ContainerArrangeController> m_arrange;
     QVector<QPointer<QWidget>> m_grips;
     QWidget* m_indicator = nullptr;

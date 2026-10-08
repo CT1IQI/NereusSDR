@@ -32,6 +32,7 @@ private:
     void syncPresentation();
     void queuePresentationSync();
     void updateReveal(const QString& hover={});
+    QString hoverAt(const QPoint& position) const;
     void changeRect(const QString&,const QRectF&);
     void finishGesture(bool cancel);
     QHash<QString,Leaf> m_leaves;

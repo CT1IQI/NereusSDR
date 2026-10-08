@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: Containers > Arrange Workspace
+//                 (Ctrl+Shift+A). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -11184,6 +11187,20 @@ void MainWindow::buildMenuBar()
         QAction* resetAction = containersMenu->addAction(QStringLiteral("&Reset Default Layout"));
         connect(resetAction, &QAction::triggered, this,
                 &MainWindow::resetDefaultLayout);
+    }
+    if (WorkspacePreview::enabled() && m_containerManager) {
+        // Workspace preview: Arrange Workspace shows every header, the
+        // entry headers and the resize handles. Runtime only, not saved.
+        QAction* arrangeAction = containersMenu->addAction(QStringLiteral("&Arrange Workspace"));
+        arrangeAction->setObjectName(QStringLiteral("containersArrangeWorkspace"));
+        arrangeAction->setCheckable(true);
+        arrangeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+        arrangeAction->setShortcutContext(Qt::ApplicationShortcut);
+        connect(arrangeAction, &QAction::toggled, m_containerManager, &ContainerManager::setArrangeMode);
+        connect(m_containerManager, &ContainerManager::arrangeModeChanged, arrangeAction, [arrangeAction](bool on) {
+            QSignalBlocker block(arrangeAction);
+            arrangeAction->setChecked(on);
+        });
     }
 
     containersMenu->addSeparator();

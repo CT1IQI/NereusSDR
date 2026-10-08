@@ -30,6 +30,9 @@
 //   2026-10-07 - Workspace look scenes (look-*), --workspace-preview and
 //                 the look coverage sidecar fields. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Scenes that carry their own workspace preview switch,
+//                 provenance and proposed values. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -520,10 +523,14 @@ bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneC
             {QStringLiteral("stopped_timers"), ctx.stoppedTimers},
             {QStringLiteral("spectrum_checks"), ctx.checks},
             {QStringLiteral("notes"), ctx.notes},
-            {QStringLiteral("provenance"), WorkspacePreview::enabled()
-                 ? QStringLiteral("proposed-look") : QStringLiteral("retained-current-app")},
+            {QStringLiteral("provenance"), !ctx.provenance.isEmpty() ? ctx.provenance
+                 : WorkspacePreview::enabled() ? QStringLiteral("proposed-look")
+                                               : QStringLiteral("retained-current-app")},
             {QStringLiteral("environment"), env},
         };
+        if (!ctx.proposedValues.isEmpty()) {
+            side.insert(QStringLiteral("proposed_values"), ctx.proposedValues);
+        }
         if (WorkspacePreview::enabled()) {
             side.insert(QStringLiteral("look_coverage"), lookCoverageJson());
             side.insert(QStringLiteral("unknown_literals_top30"), unknownLiteralsJson(30));
@@ -564,10 +571,14 @@ int main(int argc, char** argv)
     // A look scene, or --workspace-preview, turns the workspace preview
     // switch on before anything is themed or constructed.
     const QString sceneName = args.scene;
-    if (args.workspacePreview || isLookScene(sceneName)) {
+    args.scene = baseSceneFor(sceneName);
+    bool sceneWantsPreview = false;
+    for (const Scene& s : fixedScenes()) {
+        sceneWantsPreview = sceneWantsPreview || (s.name == args.scene && s.workspacePreview);
+    }
+    if (args.workspacePreview || isLookScene(sceneName) || sceneWantsPreview) {
         WorkspacePreview::setEnabledForTest(true);
     }
-    args.scene = baseSceneFor(sceneName);
 
     applyAppTheme(app);
     OffScreenFilter offScreen;

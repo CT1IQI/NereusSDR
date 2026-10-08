@@ -13,6 +13,10 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Proposed workspace header scenes (header-always,
+//                 header-reveal-idle, header-reveal-shown, header-hidden,
+//                 arrange-on) with the Main Panel top crop. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -54,6 +58,8 @@
 #include "gui/containers/ContainerTypes.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/FloatingContainer.h"
+#include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/WorkspaceHeader.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
@@ -545,6 +551,9 @@ void captureWindow(SceneContext& ctx, const QString& name)
         SpectrumWidget* pan1 = spectrumFor(ctx.window, panIdAt(0));
         addCrop(full.crops, QStringLiteral("pan1-toolbar"), ctx.window,
                 pan1 != nullptr ? pan1->findChild<SpectrumOverlayPanel*>() : nullptr, full.dpr);
+        if (ctx.extraCrops) {
+            ctx.extraCrops(ctx, full.crops, full.dpr);
+        }
     }
     ctx.images.append(full);
     for (const CropRect& crop : full.crops) {
@@ -634,6 +643,86 @@ void sceneHeaderMode(SceneContext& ctx, HeaderMode mode, const QString& name)
     if (ctx.failure.isEmpty()) {
         captureWindow(ctx, name);
     }
+}
+
+// ---- proposed workspace headers -------------------------------------------
+
+// The Main Panel's top band, where the group and first entry headers sit.
+constexpr int kPanelTopCropPx = 120;
+
+void addPanelTopCrop(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    ContainerWidget* panel = mainPanel(ctx);
+    if (panel == nullptr || !panel->isVisible() || !ctx.window->isAncestorOf(panel)) {
+        return;
+    }
+    const QRect logical(panel->mapTo(ctx.window, QPoint(0, 0)),
+                        QSize(panel->width(), qMin(panel->height(), kPanelTopCropPx)));
+    const QRect clipped = logical.intersected(QRect(QPoint(0, 0), ctx.window->size()));
+    if (!clipped.isEmpty()) {
+        crops.append({QStringLiteral("panel-top"), clipped, deviceRect(clipped, dpr)});
+    }
+}
+
+QJsonObject proposedHeaderValues()
+{
+    return QJsonObject{
+        {QStringLiteral("group_header_height_px"), WorkspaceGroupHeader::kHeight},
+        {QStringLiteral("group_header_background"), QStringLiteral(
+            "titleBarStyle(): #26262b / #1c1c20 / #141417, bottom #0d0d0f, top rgba(255,255,255,18), top radius 9")},
+        {QStringLiteral("group_header_margins"), QStringLiteral("2,0,4,0, spacing 4")},
+        {QStringLiteral("stripe"), QStringLiteral("3 px #d8a55f")},
+        {QStringLiteral("grip"), QStringLiteral("U+22EE U+22EE, 11 px #7e7e85 (hover #dcdce1), hit 14x18")},
+        {QStringLiteral("title"), QStringLiteral("capsFont 9 px DemiBold #828288")},
+        {QStringLiteral("source_chip"), QStringLiteral(
+            "mono 9 px slice colour on #16161c, 1 px slice colour at 60%, radius 4, height 13")},
+        {QStringLiteral("buttons"), QStringLiteral("16x14, glyph #7e7e85, hover #26262b radius 7: pop out, options")},
+        {QStringLiteral("plate"), QStringLiteral("glassPanelFill #17171b..#0e0e10, 1 px #1f1f23, radius 10")},
+        {QStringLiteral("entry_header_height_px"), WorkspaceEntryHeader::kHeight},
+        {QStringLiteral("entry_header"), QStringLiteral(
+            "transparent, bottom hairline #1f1f23, grip 10 px #58585e (hover #a6a6ac), "
+            "title capsFont 9 #7e7e85, options 14x12")},
+        {QStringLiteral("content_left_gutter_px"), 0},
+        {QStringLiteral("reveal"), QStringLiteral(
+            "zero extent; after 120 ms in the top 18 px band or keyboard focus; fade 0 to 0.96 in 90 ms; "
+            "6 px shadow rgba(0,0,0,110) to transparent; hides 600 ms after leaving the band")},
+        {QStringLiteral("arrange"), QStringLiteral(
+            "header bottom border #4a7ba8; 1 px dashed #4a7ba8 at 60% outline; 12x12 dot corner #7e7e85; "
+            "4 px inside edge zones; Ctrl+Shift+A; not saved")},
+    };
+}
+
+// One proposed header scene: the two-band data with the workspace look,
+// the Main Panel in `mode`, then `pose` (after the data is fed).
+void sceneProposedHeader(SceneContext& ctx, HeaderMode mode, const QString& name,
+                         const std::function<void(SceneContext&, ContainerWidget*)>& pose = {})
+{
+    ctx.provenance = QStringLiteral("proposed");
+    ctx.proposedValues = proposedHeaderValues();
+    ctx.extraCrops = addPanelTopCrop;
+    runWindowScene(ctx, twoBandPoses(), 0, [mode](SceneContext& c) {
+        ContainerWidget* panel = mainPanel(c);
+        if (panel == nullptr) {
+            c.failure = QStringLiteral("no Main Panel container");
+            return;
+        }
+        // The options menu's Header > Always / Reveal / Hidden path.
+        emit panel->headerModeRequested(mode);
+    }, [pose](SceneContext& c) {
+        if (pose) {
+            pose(c, mainPanel(c));
+        }
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    if (ContainerWidget* panel = mainPanel(ctx)) {
+        ctx.notes.append(QStringLiteral("Main Panel header extent %1 px, header visible %2, arrange %3")
+                             .arg(panel->headerExtent())
+                             .arg(panel->chromeVisible() ? QStringLiteral("yes") : QStringLiteral("no"))
+                             .arg(panel->arrangeActive() ? QStringLiteral("on") : QStringLiteral("off")));
+    }
+    captureWindow(ctx, name);
 }
 
 // ---- dialogs ---------------------------------------------------------------
@@ -919,6 +1008,41 @@ QVector<Scene> fixedScenes()
         img.extra[QStringLiteral("window_title")] = floating->windowTitle();
         ctx.images.append(img);
     }});
+
+    // ---- proposed workspace headers (workspace preview switch on) ----
+    scenes.append({QStringLiteral("header-always"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedHeader(ctx, HeaderMode::Always, QStringLiteral("header-always"));
+    }, true});
+    scenes.append({QStringLiteral("header-reveal-idle"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedHeader(ctx, HeaderMode::Reveal, QStringLiteral("header-reveal-idle"));
+    }, true});
+    scenes.append({QStringLiteral("header-reveal-shown"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedHeader(ctx, HeaderMode::Reveal, QStringLiteral("header-reveal-shown"),
+                            [](SceneContext& c, ContainerWidget* panel) {
+            if (panel != nullptr) {
+                // The pointer has been in the top band for 120 ms.
+                panel->setHeaderRevealedForPreview(true);
+                c.notes.append(QStringLiteral("ContainerWidget::setHeaderRevealedForPreview(true)"));
+            }
+        });
+    }, true});
+    scenes.append({QStringLiteral("header-hidden"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedHeader(ctx, HeaderMode::Hidden, QStringLiteral("header-hidden"));
+    }, true});
+    scenes.append({QStringLiteral("arrange-on"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedHeader(ctx, HeaderMode::Always, QStringLiteral("arrange-on"),
+                            [](SceneContext& c, ContainerWidget*) {
+            if (auto* manager = c.window->findChild<ContainerManager*>()) {
+                manager->setArrangeMode(true);
+                c.notes.append(QStringLiteral("ContainerManager::setArrangeMode(true)"));
+            }
+        });
+    }, true});
 
     // ---- fixed dialogs ----
     scenes.append({QStringLiteral("dialog-tx-eq"), QStringLiteral("2v"), true,
