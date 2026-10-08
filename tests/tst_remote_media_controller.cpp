@@ -2065,6 +2065,10 @@ private slots:
         disconnect(refusalView);
         QCOMPARE(viewAtRefusal.size(), 1);
         QVERIFY(std::abs(viewAtRefusal.first() - centre) < 1.0);
+        // The refusal returns the view to the Core's source. A context still
+        // settling from before the drag may land after that and move the view
+        // to its bin-aligned crop, as the check before the drag allows; the
+        // refused drag itself was 300 px away.
         QVERIFY(std::abs(widget->centerFrequency() - centre) <= sourceBinHz);
         record("first-final-refusal", 0);
         for (int step = 1; step <= 5; ++step) {
@@ -9825,10 +9829,10 @@ private slots:
         // the worker returns after the first, so exactly one is reported.
         const QString timingText = QStringLiteral(
             "The headphones stopped reporting their timing. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         const QString writeText = QStringLiteral(
             "Audio could not be sent to the headphones. Turn the headphones off and on in "
-            "Setup, Audio, Devices to try again.");
+            "Setup, Audio, Outputs to try again.");
         QCOMPARE(RemoteMediaController::headphonesFaultText(
                      RemoteAudioReceiver::Fault::SpeakerTimingUnavailable), timingText);
         QCOMPARE(RemoteMediaController::headphonesFaultText(

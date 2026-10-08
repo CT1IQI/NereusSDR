@@ -173,8 +173,14 @@ find_package(Qt6 REQUIRED COMPONENTS
 
 # Optional Qt components
 find_package(Qt6 QUIET COMPONENTS SerialPort)
+# Release builds ship serial CAT, PTT and CW on every platform, so they set
+# NEREUS_REQUIRE_SERIALPORT and refuse to configure without the module, as
+# WebSockets does above. Developer builds may leave it out.
+option(NEREUS_REQUIRE_SERIALPORT "Fail configure when Qt6::SerialPort is missing" OFF)
 if(Qt6SerialPort_FOUND)
     message(STATUS "Qt6::SerialPort found — serial PTT/CW support enabled")
+elseif(NEREUS_REQUIRE_SERIALPORT)
+    message(FATAL_ERROR "Qt6::SerialPort not found and NEREUS_REQUIRE_SERIALPORT is ON")
 else()
     message(STATUS "Qt6::SerialPort not found — serial PTT/CW support disabled")
 endif()
@@ -956,6 +962,26 @@ endif()
 set(CORE_SOURCES
     src/core/antenna/AmateurBands.cpp
     src/core/antenna/AmateurBands.h
+    src/core/cat/CatModelAdapter.cpp
+    src/core/cat/CatSettings.cpp
+    src/core/cat/CatSession.cpp
+    src/core/cat/RigctlProtocol.cpp
+    src/core/cat/CatTxCoordinator.cpp
+    src/core/cat/CatRxCommands.cpp
+    src/core/cat/CatDspCommands.cpp
+    src/core/cat/CatTxCommands.cpp
+    src/core/cat/CatGlobalCommands.cpp
+    src/core/cat/CatService.cpp
+    src/core/cat/StationCatController.cpp
+    src/core/cat/CatControl.cpp
+    src/core/cat/CatStreamFramer.cpp
+    src/core/cat/CatTcpTransport.cpp
+    src/core/cat/CatSerialTransport.cpp
+    src/core/cat/CatPtyTransport.cpp
+    src/core/cat/CatReporter.cpp
+    src/core/cat/CatParser.cpp
+    src/core/cat/CatCommandRouter.cpp
+    src/core/cat/CatCommandCatalog.cpp
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
     src/core/settings/SettingsBackup.cpp
@@ -1165,6 +1191,7 @@ set(CORE_SOURCES
     src/models/AmplifierModel.cpp
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
+    src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
     src/core/FaultLog.cpp
     src/core/TuneMemoryStore.cpp
@@ -1736,6 +1763,8 @@ set(GUI_SOURCES
     src/gui/widgets/VfoModeContainers.h
     src/gui/widgets/VaxChannelSelector.cpp
     src/gui/widgets/MasterOutputWidget.cpp
+    src/gui/widgets/RadioSpeakerWidget.cpp
+    src/gui/widgets/RadioSpeakerWidget.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
     src/gui/widgets/MetricLabel.cpp
@@ -1751,6 +1780,8 @@ set(GUI_SOURCES
     src/gui/widgets/AdcOverloadBadge.h
     src/gui/widgets/OverflowChip.cpp
     src/gui/widgets/OverflowChip.h
+    src/gui/widgets/AppIcon.cpp
+    src/gui/widgets/AppIcon.h
     src/gui/widgets/RxDashboard.cpp
     src/gui/widgets/RxDashboard.h
     src/gui/SliceChooser.cpp
@@ -1954,13 +1985,14 @@ set(GUI_SOURCES
     src/gui/setup/hardware/Hl2OptionsTab.cpp
     src/gui/setup/hardware/BandwidthMonitorTab.cpp
     src/gui/setup/AudioAdvancedPage.cpp
-    src/gui/setup/AudioBackendStrip.cpp
-    src/gui/setup/AudioDevicesPage.cpp
+    src/gui/setup/AudioOutputsPage.cpp
     src/gui/setup/AudioTxInputPage.cpp
+    src/gui/setup/SoundSystemLine.cpp
     src/gui/setup/CaptureStatusText.cpp
     src/gui/setup/TestTwoTonePage.cpp
     src/gui/setup/TxProfileSetupPage.cpp
     src/gui/setup/AudioTciPage.cpp
+    src/gui/setup/AudioDigitalModesPage.cpp
     src/gui/setup/AudioVaxPage.cpp
     src/gui/setup/DeviceCard.cpp
     src/gui/setup/DspSetupPages.cpp
@@ -1973,6 +2005,8 @@ set(GUI_SOURCES
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp
+    src/gui/setup/CatLiveSetupPages.cpp
+    src/gui/setup/CatLogWindow.cpp
     src/gui/setup/RemoteStationPage.cpp
     src/gui/setup/PgxlAdvancedPage.cpp
     src/gui/setup/TgxlAdvancedPage.cpp
@@ -2039,7 +2073,7 @@ qt_add_resources(RESOURCES resources.qrc)
 # iPhone app Task 14 (R-IOS-08): the pairing code's word list belongs to the
 # Core too (PairingCode, which calls Q_INIT_RESOURCE(pairing) likewise). The
 # iPhone app carries a byte-for-byte copy of the same file.
-qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc)
+qt_add_resources(CORE_RESOURCES resources/bandplans.qrc resources/pairing.qrc resources/setup.qrc resources/cat.qrc)
 
 # --------------------------------------------------------------------------
 # App icon (per-platform) — from main (PR #11)

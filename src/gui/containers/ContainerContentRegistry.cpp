@@ -153,7 +153,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
         {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
-        {"Amp","amp"},{"Tuner","tuner"},{"RfKit","RfKit"},{"SMeter","s_meter"}};
+        {"Cat","cat"},{"Amp","amp"},{"Tuner","tuner"},{"RfKit","RfKit"},{"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
 }
 void ContainerContentRegistry::attachSingleton(const QString& typeId, QWidget* widget)
@@ -282,6 +282,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     result.append({QStringLiteral("applet:vax"), QStringLiteral("VAX"), true, true, {}});
     result.append({QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), true, true, {}});
     result.append({QStringLiteral("applet:mod_monitor"), QStringLiteral("Mod Monitor"), true, true, {}});
+    result.append({QStringLiteral("applet:cat"), QStringLiteral("CAT"), true, true, {}});
     result.append({QStringLiteral("applet:tci"), QStringLiteral("TCI"), true, true, {}});
     result.append({QStringLiteral("applet:tci_clients"), QStringLiteral("Client Chain"), true, true, {}});
     result.append({QStringLiteral("applet:amp"), QStringLiteral("Amplifier"), true, true, {}});
