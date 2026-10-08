@@ -31,6 +31,8 @@
 # Modification history (NereusSDR):
 #   2026-10-08 - Written for the workspace visual review. J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - A source map is never mapped again. J.J. Boyd (KG4VCF),
+#                AI-assisted via Anthropic Claude Code.
 
 import argparse
 import json
@@ -318,7 +320,8 @@ def sidecars(root):
     for path in sorted(root.rglob("*.json")):
         if path.name.startswith("manifest") or path.parent == root:
             continue
-        if path.with_suffix(".png").exists():
+        png = path.with_suffix(".png")
+        if png.exists() and not png.name.endswith(SUFFIX):
             yield path
 
 

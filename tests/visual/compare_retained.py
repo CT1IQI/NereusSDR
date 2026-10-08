@@ -40,6 +40,10 @@
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
 #   2026-10-08 - setup-look-* counterparts dropped (scenes removed).
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - Source maps never catalogued as captures; same-dialog
+#                pairs listed as not possible; both spectrum-area paths
+#                described. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+#                Claude Code.
 
 import argparse
 import datetime
@@ -50,6 +54,8 @@ import sys
 from PIL import Image, ImageChops, ImageDraw
 
 CROP_KINDS = ("crop", "crop-3x")
+# sourcemap.py's SUFFIX: a source map is never a capture.
+MAP_SUFFIX = ".sourcemap.png"
 SIDES = ("baseline", "proposed")
 DATA_SET_PREFERENCE = ("baseline-two-band", "baseline-four-rx", "baseline-tx")
 RESULT_DIR = "retained"
@@ -84,7 +90,7 @@ def catalogue(root):
         for prof_dir in sorted(p for p in base.iterdir() if p.is_dir()):
             for js in sorted(prof_dir.glob("*.json")):
                 png = js.with_suffix(".png")
-                if not png.exists():
+                if not png.exists() or png.name.endswith(MAP_SUFFIX):
                     continue
                 try:
                     meta = json.loads(js.read_text())
@@ -395,7 +401,11 @@ def run(root, out):
         for scene in sorted(cat["proposed"].get(profile, {})):
             pentry = cat["proposed"][profile][scene]
             bscene, how = counterpart(cat, scene, profile)
-            if not bscene or how == "same dialog" or not window_image(pentry):
+            if bscene and how == "same dialog":
+                not_possible.append({"profile": profile, "scene": scene, "baseline_scene": bscene,
+                                     "reason": "dialog: compared only side by side on the page"})
+                continue
+            if not bscene or not window_image(pentry):
                 if not bscene and window_image(pentry):
                     not_possible.append({"profile": profile, "scene": scene, "reason": how})
                 continue
@@ -417,8 +427,11 @@ def run(root, out):
             "counterparts": "same spectrum_checks data (pan centre, sample rate, span, reference level, "
                             "seeded signals) and transmit keying; plain data-set baseline preferred",
             "flag": "the flag crop, pixel by pixel, whole crop",
-            "spectrum": "the spectrum plot area from SpectrumWidget regions, else from the crops; "
-                        "flag and pan 1 toolbar crops excluded; grid included",
+            "spectrum": "the spectrum plot area, grid included. Regions path (sidecar has SpectrumWidget "
+                        "regions): the union of the pan plots, excluding every smaller region inside them "
+                        "(flags, toolbars, buttons, badges), listed per row. Crops path (no such regions): "
+                        "the area between the strip, bar and panel crops, with the flag and pan 1 toolbar "
+                        "crops excluded",
             "large_delta": kLargeDelta,
         },
         "comparisons": comparisons,

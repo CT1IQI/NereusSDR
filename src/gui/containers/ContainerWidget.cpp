@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the source menu ticks the slice
+//                 the chip shows, not the legacy rxSource key. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the header source chip opens the
 //                 source menu (slices A to D, Active slice) and emits
 //                 sourceRequested. J.J. Boyd (KG4VCF), AI-assisted via
@@ -687,12 +690,15 @@ void ContainerWidget::setSliceAvailability(std::function<bool(int sliceId)> avai
 void ContainerWidget::populateSourceMenu(QMenu& menu)
 {
     menu.setToolTipsVisible(true);
+    // The tick follows the slice the chip names (sliceId first), so a
+    // container keyed by sliceId never ticks its stale rxSource.
+    const int checkedRx = m_sourceMenuRx > 0 ? m_sourceMenuRx : m_rxSource;
     for (int rx = kFirstRxSource; rx <= kLastRxSource; ++rx) {
         const QChar letter(QLatin1Char(static_cast<char>('A' + rx - 1)));
         auto* action = menu.addAction(tr("RX %1").arg(letter), this,
                                       [this, rx] { emit sourceRequested(rx); });
         action->setCheckable(true);
-        action->setChecked(!m_followsSelectedRx && m_rxSource == rx);
+        action->setChecked(!m_followsSelectedRx && checkedRx == rx);
         const bool exists = !m_sliceAvailable || m_sliceAvailable(sliceIdForRxSource(rx));
         action->setEnabled(exists);
         if (!exists) {

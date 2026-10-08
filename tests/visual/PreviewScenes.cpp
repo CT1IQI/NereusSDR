@@ -51,6 +51,10 @@
 //                 edit-properties notes the declared property controls;
 //                 preview factories take the render mode. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Review C: the declared-property group and property_*
+//                 controls are tagged proposed; the source menu note says
+//                 it was opened programmatically. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -632,6 +636,13 @@ QString classProvenance(QWidget* w)
         || dynamic_cast<ProfileRailDock*>(w) != nullptr || dynamic_cast<WorkspaceProfilesDialog*>(w) != nullptr
         || w->objectName() == QLatin1String("profileRailPopover")
         || w->objectName() == QLatin1String("edgeDropOverlay")) {
+        return provProposed();
+    }
+    // The property editor's declared-property group and controls
+    // (ContentPropertyEditor, preview only); the rest of Container Settings
+    // stays retained.
+    if (w->objectName() == QLatin1String("declaredProperties")
+        || w->objectName().startsWith(QLatin1String("property_"))) {
         return provProposed();
     }
     if (auto* handle = dynamic_cast<QSplitterHandle*>(w);
@@ -3154,8 +3165,8 @@ void sceneEditAddContent(SceneContext& ctx)
 
 void sceneEditSourceSelect(SceneContext& ctx)
 {
-    // The Station header's source chip clicked: its menu open over the
-    // window, as ContainerWidget shows it. The dialog has its own image.
+    // The Station header's source menu opened programmatically, as a chip
+    // click opens it, over the window as ContainerWidget shows it. The dialog has its own image.
     auto menu = std::make_shared<QPointer<QMenu>>();
     sceneEditDialog(ctx, QStringLiteral("edit-source-select"), [menu](SceneContext& c, ContainerSettingsDialog* d) {
         auto* contents = d->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
@@ -3196,7 +3207,8 @@ void sceneEditSourceSelect(SceneContext& ctx)
                 a->isChecked() ? QStringLiteral(" (checked)") : QString(),
                 a->isEnabled() ? QString() : QStringLiteral(" (disabled)")));
         }
-        c.notes.append(QStringLiteral("source chip \"%1\" clicked: its menu open below it, items [%2]. "
+        c.notes.append(QStringLiteral("source chip \"%1\": menu opened programmatically, as a chip click "
+                                      "opens it, below the chip, items [%2]. "
                                       "A choice commits the container source as Container Settings' "
                                       "Slice combo does").arg(chip->text(), items.join(QStringLiteral(", "))));
     }, false, menu);

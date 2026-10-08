@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: applyWorkspaceHeader hands the
+//                 container the slice its chip shows for the source menu
+//                 tick. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: the header source menu commits the
 //                 container source as Container Settings does (and Active
 //                 slice as rxSourceMode followSelectedRx); a following
@@ -1020,6 +1024,7 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
     // selected receiver shows none.
     QString source;
     QColor colour;
+    int menuRx = 0;
     if (d.config.value("rxSourceMode").toString() != QStringLiteral("followSelectedRx")
         && (d.config.contains("sliceId") || d.config.contains("rxSource"))) {
         const int slice = d.config.contains("sliceId") ? d.config.value("sliceId").toInt()
@@ -1027,6 +1032,7 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
         if (slice >= 0 && slice < 26) {
             source = QStringLiteral("RX %1").arg(QChar('A' + slice));
             colour = QColor::fromRgb(ControlRanges::sliceColour(slice));
+            menuRx = slice + 1;
         }
     }
     // Workspace preview: a following container's chip reads Active, so the
@@ -1037,6 +1043,7 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
         colour = QColor(Workspace::role("label-mid", Workspace::kLabelMid));
     }
     c->setFollowsSelectedRx(follows);
+    c->setSourceMenuRx(menuRx);
     c->setWorkspaceSource(source, colour);
     c->setArrangeActive(m_arrangeMode);
 }
@@ -1049,6 +1056,8 @@ void ContainerManager::setSliceAvailability(std::function<bool(int sliceId)> ava
 }
 bool ContainerManager::commitContainerSource(const QString& id, int rxSource)
 {
+    // No lock check: the source is not geometry, and the Container Settings
+    // Source combo does not check the lock either.
     if (!m_store || m_reconciling) {
         return false;
     }

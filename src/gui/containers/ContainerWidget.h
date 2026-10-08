@@ -15,6 +15,9 @@
 //                 source menu (slices A to D, Active slice) and emits
 //                 sourceRequested. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: the source menu ticks the slice
+//                 the chip shows (setSourceMenuRx). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
@@ -305,6 +308,9 @@ public:
     // The saved choice the menu checks: Active slice, or rxSource().
     void setFollowsSelectedRx(bool follows) { m_followsSelectedRx = follows; }
     bool followsSelectedRx() const { return m_followsSelectedRx; }
+    // Workspace preview: the receiver source (1 to 4) the chip shows, which
+    // the source menu ticks; 0 falls back to rxSource().
+    void setSourceMenuRx(int rxSource) { m_sourceMenuRx = rxSource; }
     void populateSourceMenu(QMenu& menu);
     WorkspaceGroupHeader* workspaceHeader() const { return m_groupHeader; }
     QWidget* contentHolder() const { return m_contentHolder; }
@@ -533,6 +539,7 @@ private:
     bool m_keyboardFocus{false};
     bool m_workspaceMenuOpen{false};
     bool m_followsSelectedRx{false};
+    int m_sourceMenuRx{0};
     std::function<bool(int)> m_sliceAvailable;
     Qt::Orientations m_resizeAxes{Qt::Horizontal | Qt::Vertical};
     DockEdge m_dockEdge{DockEdge::Right};

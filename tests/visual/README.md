@@ -73,6 +73,7 @@ A run root holds two capture runs side by side:
 python3 tests/visual/sourcemap.py <run-root-or-run-dir> [--out <dir>] [--force] [--quiet]
 python3 tests/visual/compare_retained.py <run-root> [--out <dir>]
 python3 tests/visual/build_gallery.py <run-root> [--out <dir>] [--verify-log <file>] [--no-tools]
+python3 tests/visual/check_recapture.py [--binary <path>]   # re-capture never lists a source map
 ```
 
 With no `--out` each tool writes into the run root. `--out` mirrors the

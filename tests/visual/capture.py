@@ -19,6 +19,10 @@
 #   2026-10-07 - "proposed" provenance for proposed-design scenes (any
 #                scene not named baseline-*, dialog-* or look-*). J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - Source maps are never taken for captures; a scene's earlier
+#                files are cleared before it is captured again; --against
+#                reports stored images a run no longer produces. J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -56,6 +60,9 @@ NOT_SHOWN = [
      "reason": "needs an RF-Kit setting that starts a device connection"},
 ]
 RUN_TIMEOUT_S = 180
+# sourcemap.py writes <image>.sourcemap.png next to each capture (its
+# SUFFIX); those are never captures.
+MAP_SUFFIX = ".sourcemap.png"
 
 
 def scene_provenance(name):
@@ -138,10 +145,20 @@ def plan_runs(scenes, scene_patterns, profile_patterns):
     return runs
 
 
+def clear_scene(out_dir, scene):
+    """Removes the scene's earlier captures, sidecars and source maps from
+    out_dir, so a re-capture lists only what this run wrote."""
+    for p in list(out_dir.iterdir()) if out_dir.is_dir() else []:
+        stem = p.name.split(".", 1)[0]
+        if p.is_file() and p.suffix in (".png", ".json") and (stem == scene or stem.startswith(scene + "--")):
+            p.unlink()
+
+
 def capture_one(binary, screen_dpr, scene, profile, out_dir):
     w, h, dpr = PROFILES[profile]
     factor = dpr / screen_dpr
     out_dir.mkdir(parents=True, exist_ok=True)
+    clear_scene(out_dir, scene)
     args = ["--scene", scene, "--size", "%dx%d" % (w, h), "--dpr", format_factor(dpr),
             "--out", str(out_dir), "--profile", profile]
     try:
@@ -157,7 +174,8 @@ def capture_one(binary, screen_dpr, scene, profile, out_dir):
 def images_of(out_dir, scene):
     # A scene's images are <scene>.png and <scene>--<part>.png.
     return sorted(p for p in out_dir.glob("*.png")
-                  if p.stem == scene or p.stem.startswith(scene + "--"))
+                  if not p.name.endswith(MAP_SUFFIX)
+                  and (p.stem == scene or p.stem.startswith(scene + "--")))
 
 
 def stamp_sidecars(out_dir, scene, head, dirty, screen_dpr, factor):
@@ -213,6 +231,10 @@ def verify_against(binary, screen_dpr, runs, jobs, stored):
                     scene, profile, r["returncode"], r["stderr"].strip().splitlines()[-1:]))
                 failures += 1
                 continue
+            produced = {png.name for png in images_of(work / profile, scene)}
+            for name in sorted({p.name for p in images_of(stored / profile, scene)} - produced):
+                print("%s @ %s: stored %s is no longer produced" % (scene, profile, name))
+                failures += 1
             for png in images_of(work / profile, scene):
                 ref = stored / profile / png.name
                 if not ref.exists():

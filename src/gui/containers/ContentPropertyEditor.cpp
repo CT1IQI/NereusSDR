@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the declared-property group is
+//                 built only when it has rows (named declaredProperties), and
+//                 Advanced bindings are disabled while a declared type is
+//                 unavailable. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: controls for the properties a
 //                 widget type declares (ContentProperty), written to the
 //                 entry config; Longpath instruments get a real editor.
@@ -15,6 +20,7 @@
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include <QFormLayout>
+#include <algorithm>
 #include <QVBoxLayout>
 #include <QGroupBox>
 #include <QLineEdit>
@@ -250,11 +256,17 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     if(!reason.isEmpty() || (!m_item && !entry.typeId.startsWith("applet:") && !declared)) {
         auto* note=new QLabel(reason.isEmpty()?tr("Unsupported configuration. Original data is retained; this object can be removed explicitly."):reason,this); note->setWordWrap(true); root->addWidget(note);
     } else if(declared) {
-        auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group);
-        for(const auto& p:schema) {
-            if(p.kind!=ContentProperty::Kind::Reading) {fields->addRow(p.label,declaredControl(p,group));}
+        // The group exists only when it has rows, so nothing is built and
+        // thrown away.
+        const bool hasRows=std::any_of(schema.cbegin(),schema.cend(),
+            [](const ContentProperty& p){return p.kind!=ContentProperty::Kind::Reading;});
+        if(hasRows) {
+            auto* group=new QGroupBox(tr("Appearance and behavior"),this); group->setObjectName("declaredProperties");
+            auto* fields=new QFormLayout(group); root->addWidget(group);
+            for(const auto& p:schema) {
+                if(p.kind!=ContentProperty::Kind::Reading) {fields->addRow(p.label,declaredControl(p,group));}
+            }
         }
-        if(fields->rowCount()>0) {root->addWidget(group);} else {delete group;}
     } else if(auto* composite=qobject_cast<CompositePresetItem*>(m_item.get())) {
         const auto props=composite->configuration();
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
@@ -310,6 +322,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     } else if(applet && entry.typeId!="applet:s_meter") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This applet keeps its current radio and slice. Saved source choices are retained."));
     } else if(!m_item && !applet && !declared) {advanced->setEnabled(false);advanced->setToolTip(tr("Unsupported content retains its stored bindings."));}
+    else if(declared && !reason.isEmpty()) {advanced->setEnabled(false);advanced->setToolTip(reason);}
     auto* source=new QComboBox(advanced); source->setObjectName("contentSlice");
     const int inherited=m_defaults.contains("sliceId")?m_defaults["sliceId"].toInt():m_defaults["rxSource"].toInt(1)-1;
     source->addItem(m_defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")

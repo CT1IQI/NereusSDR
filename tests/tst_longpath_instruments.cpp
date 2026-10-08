@@ -19,11 +19,16 @@
 //                 compactAndLabelReachTheWidgets and
 //                 sourceMenuCommitsTheContainerSource. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Review C: the source menu tick for a sliceId config,
+//                 Advanced disabled for an unavailable declared type, named
+//                 reading ids. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QGroupBox>
 #include <QLineEdit>
 #include <QMenu>
 #include <QSignalSpy>
@@ -80,6 +85,11 @@ QString vfoRowText(const QWidget& w)
 }
 
 } // namespace
+
+// Longpath's NoiseFloor and RadeSnr reading ids, kept local in
+// ReadingSource.cpp (LongpathBinding); MeterBinding has neither.
+constexpr int kNoiseFloorReading = 9;
+constexpr int kRadeSnrReading = 10;
 
 class TstLongpathInstruments : public QObject {
     Q_OBJECT
@@ -218,7 +228,7 @@ private slots:
     {
         // NoiseFloor (9) and RadeSnr (10) keep their descriptors but have no
         // NereusSDR producer.
-        for (int id : {9, 10}) {
+        for (int id : {kNoiseFloorReading, kRadeSnrReading}) {
             const ReadingDescriptor* d = readingFor(id);
             QVERIFY(d);
             QVERIFY(d->hasScale);
@@ -798,7 +808,7 @@ private slots:
         QVERIFY(binding->isEnabled());
         auto* model = qobject_cast<QStandardItemModel*>(binding->model());
         QVERIFY(model);
-        for (int id : {9, 10}) {
+        for (int id : {kNoiseFloorReading, kRadeSnrReading}) {
             const int row = binding->findData(id);
             QVERIFY(row >= 0);
             QVERIFY(!model->item(row)->isEnabled());
@@ -855,6 +865,28 @@ private slots:
         emit label->editingFinished();
         entry = edited.takeLast().at(0).value<ContentEntry>();
         QVERIFY(!entry.config.contains(QString::fromLatin1(LongpathContent::kLabelKey)));
+        QVERIFY(editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
+
+        // A needle declares only readings: no empty appearance group.
+        editor.setEntry(registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType)));
+        QVERIFY(!editor.findChild<QGroupBox*>(QStringLiteral("declaredProperties")));
+        const auto advancedGroup = [&editor]() -> QGroupBox* {
+            for (QGroupBox* g : editor.findChildren<QGroupBox*>()) {
+                if (g->title() == QStringLiteral("Advanced bindings")) { return g; }
+            }
+            return nullptr;
+        };
+        QVERIFY(advancedGroup() && advancedGroup()->isEnabled());
+
+        // An unavailable declared type: Advanced bindings disabled, not hidden.
+        ContentEntry unavailable = registry.makeEntry(QString::fromLatin1(LongpathContent::kNeedleType));
+        unavailable.extensions.insert(QStringLiteral("unavailableReason"), QStringLiteral("Not in this build."));
+        editor.setEntry(unavailable);
+        QGroupBox* advanced = advancedGroup();
+        QVERIFY(advanced);
+        QVERIFY(!advanced->isEnabled());
+        QVERIFY(!advanced->isHidden());
+        QCOMPARE(advanced->toolTip(), QStringLiteral("Not in this build."));
     }
 
     void compactAndLabelReachTheWidgets()
@@ -969,6 +1001,15 @@ private slots:
         QVERIFY(manager.commitContainerSource(c.id, 2));
         QCOMPARE(config().value("sliceId").toInt(), 1);
         QVERIFY(!config().contains("rxSource"));
+        settle();
+        // The menu ticks the slice the chip shows (sliceId), not a stale
+        // rxSource.
+        QCOMPARE(widget->workspaceHeader()->sourceText(), QStringLiteral("RX B"));
+        {
+            auto [menu, actions] = menuActions();
+            QVERIFY(!actions.at(0)->isChecked());
+            QVERIFY(actions.at(1)->isChecked());
+        }
 
         // A click on the chip opens the menu.
         dock.show();
