@@ -6162,14 +6162,19 @@ void appendMenuScenes(QVector<Scene>& scenes)
             recordMenuNotShown(c);
             if (badge == nullptr) {
                 noteNotShown(c, QStringLiteral("menu-rx-slice (C44)"), QStringLiteral("no slice badge is shown"));
+                appendPopupImages(c, QStringLiteral("menu-rx-slice"), c.window, {}, nullptr);
                 return;
             }
-            shootPopup(c, QStringLiteral("menu-rx-slice"),
+            const bool shown = shootPopup(c, QStringLiteral("menu-rx-slice"),
                        [badge] { emit badge->customContextMenuRequested(middleOf(badge)); },
                        {.anchor = globalAt(badge, middleOf(badge)),
                         .optionalReason = QStringLiteral(
                             "RxApplet::showSliceMenu shows nothing when the slice has no access actions "
                             "(an unshared slice on a window that is not hosting)")});
+            if (!shown) {
+                // The window carries the not-shown records (C44 to C47).
+                appendPopupImages(c, QStringLiteral("menu-rx-slice"), c.window, {}, nullptr);
+            }
         });
     });
 
