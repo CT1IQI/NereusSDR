@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: Containers > Hidden lists every
+//                 hidden container and widget and shows one again where it
+//                 was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-08 - Workspace preview only: the container source menu's slice
 //                 availability comes from the RadioModel. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -9233,6 +9237,36 @@ void MainWindow::rebuildEditContainerSubmenu()
     }
 }
 
+void MainWindow::rebuildHiddenSubmenu()
+{
+    if (!m_hiddenMenu) {
+        return;
+    }
+    m_hiddenMenu->clear();
+    const QVector<ContainerManager::HiddenItem> items =
+        m_containerManager ? m_containerManager->hiddenItems() : QVector<ContainerManager::HiddenItem>{};
+    if (items.isEmpty()) {
+        m_hiddenMenu->addAction(tr("Nothing hidden"))->setEnabled(false);
+        return;
+    }
+    for (const ContainerManager::HiddenItem& item : items) {
+        QAction* act = m_hiddenMenu->addAction(item.label);
+        act->setToolTip(tr("Show it again where it was"));
+        const QString containerId = item.containerId;
+        const QString entryId = item.entryId;
+        connect(act, &QAction::triggered, this, [this, containerId, entryId]() {
+            if (!m_containerManager) {
+                return;
+            }
+            if (entryId.isEmpty()) {
+                m_containerManager->showHiddenContainer(containerId);
+            } else {
+                m_containerManager->showHiddenEntry(entryId);
+            }
+        });
+    }
+}
+
 void MainWindow::resetDefaultLayout()
 {
     if (!m_containerManager) { return; }
@@ -11407,6 +11441,16 @@ void MainWindow::buildMenuBar()
         QAction* profilesAction = containersMenu->addAction(QStringLiteral("Manage Workspace &Profiles\u2026"));
         profilesAction->setObjectName(QStringLiteral("containersManageProfiles"));
         connect(profilesAction, &QAction::triggered, this, &MainWindow::showWorkspaceProfilesDialog);
+        // Everything the header hide buttons (or Hide container, or a
+        // closed floating window) took off the screen, one click from
+        // coming back where it was.
+        m_hiddenMenu = containersMenu->addMenu(QStringLiteral("&Hidden"));
+        m_hiddenMenu->setObjectName(QStringLiteral("containersHidden"));
+        rebuildHiddenSubmenu();
+        if (auto* store = m_containerManager->workspaceStore()) {
+            connect(store, &ContainerWorkspaceStore::committed, this,
+                    [this](quint64) { rebuildHiddenSubmenu(); });
+        }
     }
 
     containersMenu->addSeparator();

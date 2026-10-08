@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: hidden containers and entries are
+//                 listed for Containers > Hidden and shown again where they
+//                 were; a container whose entries are all hidden leaves the
+//                 screen with them. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the right strip has no padding,
 //                 so a migrated Main Panel width is the strip's width.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -120,6 +125,7 @@ mw0lge@grange-lane.co.uk
 #include <QJsonArray>
 #include <QEvent>
 #include <QUuid>
+#include <algorithm>
 #include "ContainerContentHost.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerWorkspaceStore.h"
@@ -263,6 +269,15 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
 }
 bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
 {
+    // Workspace preview: a container whose entries are all hidden (the
+    // entry header's hide button, Containers > Applets) leaves the screen
+    // with them and comes back when any of them is shown. An empty
+    // container stays, as before.
+    if (WorkspacePreview::enabled() && !document.contents.isEmpty()
+        && std::none_of(document.contents.cbegin(), document.contents.cend(),
+                        [](const ContentEntry &entry) { return entry.visible; })) {
+        return false;
+    }
     return document.visible && document.config.value("enabled").toBool(true) &&
            !document.config.value("hiddenByMacro").toBool(false) &&
            document.config.value(m_transmitting ? "showOnTx" : "showOnRx").toBool(true);
@@ -1583,6 +1598,71 @@ ContainerWidget* ContainerManager::panelContainer() const
 int ContainerManager::containerCount() const
 {
     return m_containers.size();
+}
+
+QString ContainerManager::entryTitle(const ContentEntry& entry) const
+{
+    if (!entry.name.isEmpty()) {
+        return entry.name;
+    }
+    if (m_registry) {
+        for (const auto& descriptor : m_registry->descriptors()) {
+            if (descriptor.typeId == entry.typeId) {
+                return descriptor.title;
+            }
+        }
+    }
+    return entry.id;
+}
+
+QVector<ContainerManager::HiddenItem> ContainerManager::hiddenItems() const
+{
+    QVector<HiddenItem> items;
+    if (!m_store) {
+        return items;
+    }
+    const WorkspaceDocument document = m_store->snapshot();
+    for (const auto& d : document.containers) {
+        const QString name = d.name.isEmpty() ? d.id : d.name;
+        if (!d.visible || !d.config.value("enabled").toBool(true)) {
+            items.append({d.id, {}, name});
+        }
+        for (const auto& entry : d.contents) {
+            if (!entry.visible) {
+                items.append({d.id, entry.id, QStringLiteral("%1 (%2)").arg(entryTitle(entry), name)});
+            }
+        }
+    }
+    return items;
+}
+
+bool ContainerManager::showHiddenContainer(const QString& id)
+{
+    if (!m_store) {
+        return false;
+    }
+    WorkspaceDocument document = m_store->snapshot();
+    bool found = false;
+    for (auto& d : document.containers) {
+        if (d.id == id) {
+            d.visible = true;
+            d.config["enabled"] = true;
+            found = true;
+        }
+    }
+    return found && commitWorkspace(document, document.revision).status == CommitStatus::Saved;
+}
+
+bool ContainerManager::showHiddenEntry(const QString& entryId)
+{
+    if (!m_arrange) {
+        return false;
+    }
+    const ArrangeResult result = m_arrange->setEntryVisible(entryId, true);
+    if (!result.ok) {
+        qCWarning(lcContainer) << "showHiddenEntry:" << result.error;
+    }
+    return result.ok;
 }
 
 void ContainerManager::setContainerVisible(const QString& id, bool visible)

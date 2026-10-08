@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header's hide button hides the
+//                 entry or container (Containers > Hidden brings it back).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the entry header's pop-out button
 //                 runs the entry menu's Pop Out and is enabled when that
 //                 item is. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -94,6 +97,7 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
     });
     connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
     connect(m_canvas,&FreeCanvasSurface::entryPopOutRequested,this,&ContainerContentHost::popOutEntry);
+    connect(m_canvas,&FreeCanvasSurface::entryHideRequested,this,&ContainerContentHost::hideEntry);
     if (WorkspacePreview::enabled()) {
         // Workspace preview, explicit roles: the insertion line, the
         // applets banner button and Longpath's narrow scroll bar. The
@@ -668,6 +672,18 @@ void ContainerContentHost::popOutEntry(const QString &entryId)
         qWarning() << result.error;
     }
 }
+void ContainerContentHost::hideEntry(const QString &entryId)
+{
+    // The entry header's hide button: the entry's saved visibility, the
+    // state Containers > Applets also writes for an applet.
+    if (!m_arrange || m_document.locked) {
+        return;
+    }
+    const ArrangeResult result = m_arrange->setEntryVisible(entryId, false);
+    if (!result.ok) {
+        qWarning() << result.error;
+    }
+}
 void ContainerContentHost::scheduleStackProjection()
 {
     if (!m_materialized || m_document.layout != ContentLayout::VerticalStack || m_projectionPending) {
@@ -912,6 +928,8 @@ void ContainerContentHost::updateEntryHeaders()
             const QString id = row.entryId;
             connect(header, &WorkspaceEntryHeader::popOutClicked, this,
                     [this, id] { popOutEntry(id); });
+            connect(header, &WorkspaceEntryHeader::hideClicked, this,
+                    [this, id] { hideEntry(id); });
             connect(header, &WorkspaceEntryHeader::optionsClicked, this, [this, id] {
                 auto *source = entryHeader(id);
                 if (!source) {
@@ -934,8 +952,8 @@ void ContainerContentHost::updateEntryHeaders()
             header->setTitle(entryTitle(m_document.contents[i]));
         }
         header->setCursor(m_document.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
-        // Enabled exactly when the entry menu's Pop Out is.
-        header->popOutButton()->setEnabled(m_arrange && !m_document.locked);
+        // Pop out and hide: enabled exactly when the entry menu's Pop Out is.
+        header->setActionsEnabled(m_arrange && !m_document.locked);
         const bool inLayout = visible && reserve && !row.item;
         const int position = m_layout->indexOf(header);
         if (inLayout) {

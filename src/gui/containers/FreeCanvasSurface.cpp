@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original native QWidget placement and geometry gestures.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header's hide button hides the
+//                 entry or container (Containers > Hidden brings it back).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-07 - Workspace preview only: each object's handle is an entry
 //                 header inside its top edge and its resize corner sits
@@ -87,6 +90,7 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
                     emit entryContextMenuRequested(id,button->mapToGlobal(QPoint(0,button->height())));
                 });
                 connect(header,&WorkspaceEntryHeader::popOutClicked,this,[this,id]{emit entryPopOutRequested(id);});
+                connect(header,&WorkspaceEntryHeader::hideClicked,this,[this,id]{emit entryHideRequested(id);});
                 leaf.grip=header;leaf.corner=new WorkspaceCornerGrip(this);leaf.corner->hide();
             } else {leaf.grip=new CanvasHandle(false,this);leaf.corner=new CanvasHandle(true,this);}
             for(QWidget* handle:{leaf.grip.data(),leaf.corner.data()}) {
@@ -99,7 +103,7 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
         if(auto* header=qobject_cast<WorkspaceEntryHeader*>(leaf.grip.data())) {
             header->setTitle(entry.name.isEmpty()?entry.id:entry.name);
             // The host projects locked when there is no arrange controller, as the entry menu is then empty.
-            header->popOutButton()->setEnabled(!document.locked);
+            header->setActionsEnabled(!document.locked);
         }
         if(view->parentWidget()!=this) {view->setParent(this);}
         view->installEventFilter(this);

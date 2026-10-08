@@ -49,6 +49,9 @@
 //   2026-10-08 - The entry header carries a pop-out button left of its
 //                 options button. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Both headers end with a hide button (Longpath's close
+//                 cross, last and rightmost); it hides, never deletes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -127,12 +130,16 @@ public:
     QWidget* grip() const;
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
+    // The hide button, last and rightmost. Enabled exactly when the
+    // pop-out button is (setLocked).
+    QPushButton* hideButton() const { return m_hide; }
     WorkspaceSourceChip* sourceChip() const { return m_chip; }
 
 signals:
     void popOutClicked();
     void optionsClicked();
     void sourceClicked();
+    void hideClicked();
 
 private:
     void applyStyle();
@@ -143,13 +150,15 @@ private:
     WorkspaceLockGlyph* m_lock{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
+    QPushButton* m_hide{nullptr};
     bool m_arrange{false};
 };
 
 // The header above one entry of a multi-content container. The owner
-// sets its drag property on the header itself; the pop-out and options
-// buttons accept their own presses. The owner enables the pop-out button
-// exactly when the entry menu's Pop Out is enabled; it is never hidden.
+// sets its drag property on the header itself; the pop-out, options and
+// hide buttons accept their own presses. The owner enables the pop-out
+// button exactly when the entry menu's Pop Out is enabled, and the hide
+// button with it (setActionsEnabled); neither is ever hidden.
 class WorkspaceEntryHeader final : public QWidget {
     Q_OBJECT
 public:
@@ -164,10 +173,14 @@ public:
     void setOverlay(bool overlay);
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
+    QPushButton* hideButton() const { return m_hide; }
+    // Pop out and hide, enabled together.
+    void setActionsEnabled(bool enabled);
 
 signals:
     void popOutClicked();
     void optionsClicked();
+    void hideClicked();
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -178,6 +191,7 @@ private:
     QLabel* m_title{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
+    QPushButton* m_hide{nullptr};
     bool m_overlay{false};
 };
 

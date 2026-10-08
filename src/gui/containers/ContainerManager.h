@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: hidden containers and entries are
+//                 listed for Containers > Hidden and shown again where they
+//                 were; a container whose entries are all hidden leaves the
+//                 screen with them. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the header source menu commits the
 //                 container source as Container Settings does (and Active
 //                 slice as rxSourceMode followSelectedRx); a following
@@ -224,6 +229,25 @@ public:
 
     // --- Visibility ---
     void setContainerVisible(const QString& id, bool visible);
+
+    // --- Workspace preview: Containers > Hidden ---
+    // One hidden thing: a container (entryId empty) or an entry. `label`
+    // is the container's name, or "Entry (Container)".
+    struct HiddenItem {
+        QString containerId;
+        QString entryId;
+        QString label;
+    };
+    // Every hidden container (its saved visibility off, or disabled) and
+    // every hidden entry, in document order. Empty with no store.
+    QVector<HiddenItem> hiddenItems() const;
+    // Shows a hidden container where it was (visible and enabled; its
+    // placement and geometry are kept). Returns true when saved.
+    bool showHiddenContainer(const QString& id);
+    // Shows a hidden entry, and its container with it, where it was.
+    bool showHiddenEntry(const QString& entryId);
+    // The title an entry is shown with: its name, else its type's title.
+    QString entryTitle(const ContentEntry& entry) const;
 
 signals:
     void containerAdded(const QString& id);

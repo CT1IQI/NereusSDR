@@ -78,6 +78,7 @@ private:
     void projectStackRows();
     void addEntryActions(QMenu& menu, const QString& entryId);
     void popOutEntry(const QString& entryId);
+    void hideEntry(const QString& entryId);
     void updateEntryHeaders();
     int entryHeaderReserve() const;
     QString entryTitle(const ContentEntry& entry) const;

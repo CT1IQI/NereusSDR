@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original atomic layout transactions; no radio/model access.
 // Modification history (NereusSDR):
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-08 - Workspace preview only: the header's hide button hides the
+//                 entry or container (Containers > Hidden brings it back).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "ContainerManager.h"
@@ -420,6 +423,24 @@ ArrangeResult ContainerArrangeController::returnEntry(const QString& id)
     }
     if (d.containers[source].popOutShell && d.containers[source].contents.isEmpty()) {
         d.containers.removeAt(source);
+    }
+    return commit(d);
+}
+ArrangeResult ContainerArrangeController::setEntryVisible(const QString& id, bool visible)
+{
+    auto d = m_store.snapshot();
+    const auto [source, index] = locate(d, id);
+    if (source < 0) {
+        return failure(tr("Entry is unavailable"));
+    }
+    auto& container = d.containers[source];
+    if (!visible && container.locked) {
+        return failure(tr("Arrangement is locked"));
+    }
+    container.contents[index].visible = visible;
+    if (visible) {
+        container.visible = true;
+        container.config["enabled"] = true;
     }
     return commit(d);
 }
