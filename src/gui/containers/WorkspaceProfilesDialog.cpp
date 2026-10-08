@@ -9,15 +9,20 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Letter badges in the rail's pill style; long summaries
+//                 elided with the full text in a tooltip. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceProfilesDialog.h"
 
 #include "WorkspaceProfiles.h"
 #include "gui/styles/WorkspacePalette.h"
+#include "gui/widgets/PillStyle.h"
 #include "gui/widgets/ProfileRail.h"
 
 #include <QDir>
+#include <QFontMetrics>
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -26,15 +31,22 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QStandardPaths>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace NereusSDR {
 
 namespace {
 
-constexpr int kBadgeSide = 30;
+// Room either side of the letter in a badge, as the rail sizes its pills
+// (ProfileRail::setzeMasse: horizontalAdvance + 20).
+constexpr int kBadgeTextPad = 20;
+// The badge column's width, so the names line up whatever the letter.
+constexpr int kBadgeSlot = 32;
 constexpr int kRowHeight = 52;
 constexpr int kMinWidth = 600;
 constexpr int kMinHeight = 380;
@@ -68,16 +80,31 @@ QString dialogStyle()
         .arg(latin(kTextInactive));
 }
 
-QString badgeStyle(bool active)
-{
-    using namespace Workspace;
-    return QStringLiteral(
-        "QLabel { background: %1; border: 1px solid %2; color: %3;"
-        "  border-radius: %4px; font-size: 13px; font-weight: bold; }")
-        .arg(latin(active ? kBlueBg : kButtonBg), latin(active ? kBlueBorder : kBorder),
-             latin(active ? kBlueText : kTextSecondary))
-        .arg(kBadgeSide / 2);
-}
+// A one-line label that elides its text with "…" to the width it
+// gets and shows the full text as a tooltip when it does.
+class ElidedLabel : public QLabel {
+public:
+    ElidedLabel(const QString& full, QWidget* parent) : QLabel(parent), m_full(full)
+    {
+        setMinimumWidth(0);
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        setText(full);
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QLabel::resizeEvent(event);
+        const QString shown = fontMetrics().elidedText(m_full, Qt::ElideRight, contentsRect().width());
+        if (shown != text()) {
+            setText(shown);
+        }
+        setToolTip(shown == m_full ? QString() : m_full);
+    }
+
+private:
+    QString m_full;
+};
 
 void reportFailure(QWidget* parent, const QString& what, const WorkspaceProfiles::Result& r)
 {
@@ -223,11 +250,18 @@ QWidget* WorkspaceProfilesDialog::makeRow(const QString& id) const
     h->setContentsMargins(8, 6, 10, 6);
     h->setSpacing(10);
 
-    auto* badge = new QLabel(ProfileRail::initialFor(p->name), row);
-    badge->setFixedSize(kBadgeSide, kBadgeSide);
-    badge->setAlignment(Qt::AlignCenter);
-    badge->setStyleSheet(badgeStyle(active));
-    h->addWidget(badge);
+    // The same pill as the rail's badge: lit (checked) for the active
+    // profile. It only shows; the row takes the clicks.
+    auto* badge = new QPushButton(ProfileRail::initialFor(p->name), row);
+    badge->setObjectName(QStringLiteral("workspaceProfilesBadge"));
+    badge->setCheckable(true);
+    badge->setChecked(active);
+    badge->setFocusPolicy(Qt::NoFocus);
+    badge->setAttribute(Qt::WA_TransparentForMouseEvents);
+    badge->setStyleSheet(PillStyle::pillStyle());
+    badge->setFixedWidth(std::max(kBadgeSlot,
+                                  badge->fontMetrics().horizontalAdvance(badge->text()) + kBadgeTextPad));
+    h->addWidget(badge, 0, Qt::AlignVCenter);
 
     auto* text = new QVBoxLayout;
     text->setSpacing(2);
@@ -240,7 +274,8 @@ QWidget* WorkspaceProfilesDialog::makeRow(const QString& id) const
     name->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 13px; font-weight: 600; }")
                             .arg(latin(kTextPrimary)));
     text->addWidget(name);
-    auto* summary = new QLabel(m_profiles->summary(id), row);
+    auto* summary = new ElidedLabel(m_profiles->summary(id), row);
+    summary->setObjectName(QStringLiteral("workspaceProfilesSummary"));
     summary->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 11px; }")
                                .arg(latin(kTextSecondary)));
     text->addWidget(summary);

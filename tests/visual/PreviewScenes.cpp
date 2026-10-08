@@ -1966,10 +1966,17 @@ void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
     runWindowScene(ctx, twoBandPoses(), 0, [seeded, shown](SceneContext& c) {
         seedProfiles(c, shown, *seeded);
     }, [seeded, shown, pose](SceneContext& c) {
+        // The scene runs inside the event loop, so processEvents never
+        // runs the deleteLater() of the rail's rebuilt badges; live, the
+        // loop does on return. Without this the old badges stay painted
+        // under the new ones.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         poseProfile(c, *seeded, shown);
         if (pose) {
             pose(c);
         }
+        pump(kFinalSettleMs);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {

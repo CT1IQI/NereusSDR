@@ -36,6 +36,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The frequency instrument's VFO row uses the slice
+//                 letters. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/instruments/LongpathContent.h"
@@ -144,6 +147,13 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
         guard->setFrequency(slice ? slice->frequency() : 0.0);
         SliceModel* other = otherSlice(sources, slice);
         guard->setOtherFrequency(other ? other->frequency() : 0.0);
+        // The bound slice's own letter first, then the other slice's.
+        // "Other" is otherSlice(): the first slice in RadioModel::slices()
+        // that is not this one. With no other slice the second letter is
+        // B for slice A and A otherwise (no slice keeps upstream "A"/"B").
+        const QChar own = slice ? slice->sliceLetter() : QLatin1Char('A');
+        const QChar fallbackOther = own == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
+        guard->setSliceLetters(own, other ? other->sliceLetter() : fallbackOther);
         guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
         if (!slice) { return; }
         follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {

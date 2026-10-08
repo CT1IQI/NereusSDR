@@ -3,9 +3,14 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - frequencyRowUsesSliceLetters. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
+#include <QLabel>
 #include <QLayout>
+#include <QLoggingCategory>
+#include <QScopeGuard>
 #include <QSplitter>
 #include <QTemporaryDir>
 #include "core/AppSettings.h"
@@ -23,6 +28,8 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/BandwidthFilterPane.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 using namespace NereusSDR;
 
@@ -34,6 +41,16 @@ void settle()
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         QCoreApplication::processEvents(QEventLoop::AllEvents);
     }
+}
+
+// The rich text of the instrument's VFO row (the only label with two
+// <font> runs).
+QString vfoRowText(const QWidget& w)
+{
+    for (const QLabel* l : w.findChildren<QLabel*>()) {
+        if (l->text().count(QStringLiteral("<font")) == 2) { return l->text(); }
+    }
+    return {};
 }
 
 } // namespace
@@ -258,6 +275,57 @@ private slots:
         QSet<int> primaries;
         for (auto* n : needles) { primaries.insert(n->primary()); }
         QCOMPARE(primaries, (QSet<int>{MeterBinding::SignalPeak, MeterBinding::TxPower}));
+    }
+
+    void frequencyRowUsesSliceLetters()
+    {
+        // Upstream defaults: A for this instrument, B for the other.
+        FrequencyInstrument plain;
+        QCOMPARE(plain.ownLetter(), QLatin1Char('A'));
+        QCOMPARE(plain.otherLetter(), QLatin1Char('B'));
+
+        // No radio here: a slice's frequency change warns that the TX
+        // frequency is not pushed. Expected, so kept out of the output.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 2);
+        SliceModel* sliceA = model.slices().at(0);
+        SliceModel* sliceB = model.slices().at(1);
+        QCOMPARE(sliceA->sliceLetter(), QLatin1Char('A'));
+        QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
+        sliceA->setFrequency(7185000.0);
+        sliceB->setFrequency(14225000.0);
+
+        SliceModel* target = sliceB;
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [&target](const QJsonObject&) { return target; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyType));
+
+        QWidget parent;
+        std::unique_ptr<QWidget> onB(registry.createWidget(entry, &parent));
+        auto* freqB = qobject_cast<FrequencyInstrument*>(onB.get());
+        QVERIFY(freqB);
+        QCOMPARE(freqB->ownLetter(), QLatin1Char('B'));
+        QCOMPARE(freqB->otherLetter(), QLatin1Char('A'));
+        const QString rowB = vfoRowText(*freqB);
+        QVERIFY2(rowB.contains(QStringLiteral(">B 14.225.000<")), qPrintable(rowB));
+        QVERIFY2(rowB.contains(QStringLiteral(">A 7.185.000<")), qPrintable(rowB));
+        QVERIFY(rowB.indexOf(QStringLiteral(">B ")) < rowB.indexOf(QStringLiteral(">A ")));
+
+        target = sliceA;
+        std::unique_ptr<QWidget> onA(registry.createWidget(entry, &parent));
+        auto* freqA = qobject_cast<FrequencyInstrument*>(onA.get());
+        QVERIFY(freqA);
+        const QString rowA = vfoRowText(*freqA);
+        QVERIFY2(rowA.contains(QStringLiteral(">A 7.185.000<")), qPrintable(rowA));
+        QVERIFY2(rowA.contains(QStringLiteral(">B 14.225.000<")), qPrintable(rowA));
+        QVERIFY(rowA.indexOf(QStringLiteral(">A ")) < rowA.indexOf(QStringLiteral(">B ")));
     }
 
     void barDefaultsAndReadings()

@@ -93,6 +93,9 @@
 //                 m_stack (which also spans the row's trailing stretch).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - VFO row letters from setSliceLetters() instead of the
+//                 hard-coded A and B. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -583,11 +586,14 @@ void FrequencyInstrument::refreshVfoRow()
     };
     const QString on  = QString::fromLatin1(Style::kAmberText);
     const QString off = QString::fromLatin1(Style::kAmberDim);
+    // NereusSDR: the letters come from setSliceLetters() (upstream
+    // hard-codes "A %2" and "B %4"; the defaults are the same).
     m_vfoRow->setText(
-        QStringLiteral("<font color='%1'>A %2</font>"
-                       "&nbsp;&nbsp;<font color='%3'>B %4</font>")
+        QStringLiteral("<font color='%1'>%5 %2</font>"
+                       "&nbsp;&nbsp;<font color='%3'>%6 %4</font>")
             .arg(m_activeIsThis ? on : off, fmt(m_hz),
-                 m_activeIsThis ? off : on, fmt(m_otherHz)));
+                 m_activeIsThis ? off : on, fmt(m_otherHz),
+                 QString(m_ownLetter), QString(m_otherLetter)));
 }
 
 // ── Bedienen ─────────────────────────────────────────────────────────
@@ -765,6 +771,14 @@ void FrequencyInstrument::setOtherFrequency(double hz)
 void FrequencyInstrument::setActiveIsThis(bool active)
 {
     m_activeIsThis = active;
+    refreshVfoRow();
+}
+
+// NereusSDR-original setter; see the header.
+void FrequencyInstrument::setSliceLetters(QChar own, QChar other)
+{
+    m_ownLetter = own;
+    m_otherLetter = other;
     refreshVfoRow();
 }
 

@@ -4,10 +4,14 @@
 //                 import, stale revision, remembered profile and the rail's
 //                 remove affordance, the collapsing rail dock, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Fix round 1: the remove cross beside the letter, the
+//                 dialog's pill badges and elided summaries. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -20,6 +24,7 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceProfiles.h"
+#include "gui/containers/WorkspaceProfilesDialog.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/ProfileRail.h"
 #include "gui/widgets/ProfileRailDock.h"
@@ -221,6 +226,62 @@ private slots:
         QCOMPARE(rail.badges().size(), 2);
         for (const QString& id : rail.badges()) {
             QCOMPARE(rail.badgeButton(id)->findChildren<QPushButton*>().size(), 1);
+        }
+
+        // Horizontal: the cross sits right of the centred letter, inside
+        // the badge (Longpath placed it over the letter's right half).
+        rail.show();
+        settle();
+        for (const QString& id : rail.badges()) {
+            QPushButton* badge = rail.badgeButton(id);
+            QPushButton* cross = badge->findChildren<QPushButton*>().constFirst();
+            const int letter = badge->fontMetrics().horizontalAdvance(badge->text());
+            const int letterRight = (badge->width() + letter) / 2;
+            QVERIFY2(cross->x() >= letterRight,
+                     qPrintable(QStringLiteral("cross at %1, letter ends at %2, badge %3 wide")
+                                    .arg(cross->x()).arg(letterRight).arg(badge->width())));
+            QVERIFY(cross->geometry().right() < badge->width());
+        }
+    }
+
+    void dialogBadgesArePillsAndSummariesElide()
+    {
+        ProfilesFixture f;
+        const QString longName = QStringLiteral("a-container-with-a-rather-long-name");
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                          f.container(longName + QStringLiteral("-one"), DockEdge::Left, HeaderMode::Always),
+                          f.container(longName + QStringLiteral("-two"), DockEdge::Left, HeaderMode::Always),
+                          f.container(longName + QStringLiteral("-three"), DockEdge::Top, HeaderMode::Always)}));
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString first = profiles.activeId();
+        QVERIFY(profiles.duplicate(first, QStringLiteral("Copy")).ok());
+
+        WorkspaceProfilesDialog dialog(&profiles);
+        dialog.resize(600, 400);
+        dialog.show();
+        settle();
+
+        // One pill per row, checked only for the active profile.
+        const auto badges = dialog.findChildren<QPushButton*>(QStringLiteral("workspaceProfilesBadge"));
+        QCOMPARE(badges.size(), 2);
+        int checked = 0;
+        for (QPushButton* b : badges) {
+            QVERIFY(b->isCheckable());
+            checked += b->isChecked() ? 1 : 0;
+        }
+        QCOMPARE(checked, 1);
+
+        // The long summary is elided with an ellipsis and carried whole
+        // in the tooltip.
+        const QString full = profiles.summary(first);
+        QVERIFY(full.contains(longName + QStringLiteral("-three")));
+        const auto summaries = dialog.findChildren<QLabel*>(QStringLiteral("workspaceProfilesSummary"));
+        QCOMPARE(summaries.size(), 2);
+        for (QLabel* l : summaries) {
+            QVERIFY2(l->text().endsWith(QChar(0x2026)), qPrintable(l->text()));
+            QCOMPARE(l->toolTip(), full);
+            QVERIFY(l->fontMetrics().horizontalAdvance(l->text()) <= l->contentsRect().width());
         }
     }
 

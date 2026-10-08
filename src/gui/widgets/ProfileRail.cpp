@@ -92,6 +92,10 @@
 //   2026-10-08 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 Rewired to WorkspaceProfiles (ids, not names).
+//   2026-10-08 - Horizontal rail: the hover remove cross no longer sits
+//                 on the badge letter (shared Longpath defect, fixed in
+//                 our copy; see kCloserReservePx). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRail.h"
@@ -108,12 +112,24 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace NereusSDR {
 
 // NereusSDR: the Longpath values, see gui/instruments/InstrumentStyle.h.
 namespace Style = ::NereusSDR::InstrumentStyle;
 
 namespace {
+
+// NereusSDR: room on the right of a horizontal badge for the hover
+// remove cross (14 px wide, 1 px from the edge, plus a 1 px gap), so the
+// cross sits beside the letter, not on it. Upstream sizes the badge to
+// the letter alone (horizontalAdvance + 20, about 29 px for one letter)
+// and puts the cross at sizeHint().width() - 15, which covers the right
+// half of the centred letter ("D" reads "D×"). Longpath has the same
+// defect at 551576e3; ours differs to fix it. The vertical rail keeps
+// its square badges and the upstream placement.
+constexpr int kCloserReservePx = 16;
 
 // Die Schiene ist so hoch wie eine Pille AUSSEN: Inhaltshoehe plus die
 // beiden Raender. Siehe die Begruendung an kLeistenSeite.
@@ -390,7 +406,17 @@ void ProfileRail::rebuild()
             // Waagrecht ist die Breite nicht mehr die Kantenlaenge
             // (siehe setzeMasse), darum an der tatsaechlichen Breite
             // ausrichten -- sonst saesse das Kreuz mitten im Buchstaben.
-            x->move(b->sizeHint().width() - 15, 1);
+            if (m_richtung == Qt::Vertical) {
+                x->move(b->sizeHint().width() - 15, 1);
+            } else {
+                // NereusSDR: widen the badge by kCloserReservePx and
+                // place the cross against its real width (the minimum
+                // width can exceed sizeHint), beside the letter. From
+                // Longpath src/gui/widgets/ProfileRail.cpp:293 [@551576e3]
+                // for the original line above.
+                b->setMinimumWidth(b->minimumWidth() + kCloserReservePx);
+                x->move(std::max(b->sizeHint().width(), b->minimumWidth()) - 15, 1);
+            }
             x->setToolTip(QStringLiteral("Remove profile “%1”").arg(name));
             x->setStyleSheet(QStringLiteral(
                 // `padding: 0` auch hier: 14 Pixel Kantenlaenge minus

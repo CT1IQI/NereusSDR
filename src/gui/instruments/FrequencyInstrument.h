@@ -75,6 +75,10 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - setSliceLetters(): the VFO row labels come from the
+//                 bound slices' letters; upstream hard-codes A and B.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -112,6 +116,14 @@ public:
     /// ohne ein zweites Feld sichtbar ist.
     void setOtherFrequency(double hz);
     void setActiveIsThis(bool active);
+
+    // NereusSDR: the letters on the VFO row, this instrument's slice
+    // first, then the other one. Upstream hard-codes "A" and "B", which
+    // labels slice B as A when the instrument is bound to slice B. The
+    // defaults keep the upstream labels.
+    void setSliceLetters(QChar own, QChar other);
+    QChar ownLetter() const { return m_ownLetter; }
+    QChar otherLetter() const { return m_otherLetter; }
 
     void setForm(Form f);
     Form form() const { return m_form; }
@@ -186,6 +198,9 @@ private:
     double m_hz{0.0};
     double m_otherHz{0.0};
     bool   m_activeIsThis{true};
+    // NereusSDR: see setSliceLetters().
+    QChar  m_ownLetter{QLatin1Char('A')};
+    QChar  m_otherLetter{QLatin1Char('B')};
     // War Form::BandStrip. Betreiber 2026-08-30, zum Streifen unter der
     // Zahl (der seit heute erst sichtbar wurde): "MHZ Balken benätige
     // ich nie, löschen!" -- die blosse Zahl ist die Vorgabe, keine
