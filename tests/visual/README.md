@@ -88,13 +88,29 @@ identical pixels; `capture.py --verify` runs each pair twice and prints
 `IDENTICAL`, or the differing pixel count and bounding box, and exits
 non-zero on any difference. What makes it repeatable:
 
-- The spectrum and waterfall come from a seeded generator (noise
-  +/-1.5 dB, SSB voice contours, CW carriers, FT8 tones), never from a radio
-  or the clock. Each pan logs one check: the displayed level at its
-  strongest signal, which must be within 1 dB of the stated level.
+- The spectrum and waterfall come from a seeded band model, never from a
+  radio or the clock. Each band has its own noise floor (80 m -100,
+  40 m -104, 20 m -110, 15 m -114 dBm, measured as the median of the
+  displayed trace). The spectrum is one settled frame with about 3 dB of
+  per-bin jitter. Waterfall rows are generated one per row period (30 ms by
+  default, the waterfall's own setting), each row a fresh draw of Rayleigh
+  noise (its deepest nulls held at -4 dB, see below) under the band's
+  signals at that instant: SSB voices with a syllabic envelope, pauses and
+  formant contours across 300-2700 Hz, CW keyed in Morse at 22 wpm, and FT8
+  as 8-tone FSK at 6.25 Hz spacing and 0.16 s symbols in 15 s cycles. Each
+  pan logs one check: the displayed level at its strongest signal, which
+  must be within 1 dB of the stated level, and the displayed noise median.
+- The waterfall AGC (on by default) keys its palette to each row's minimum
+  and maximum less and plus 12 dB. Unbounded Rayleigh nulls drag the low end
+  down and paint the noise green, so the row noise is held at no more than
+  4 dB under its mean, and rows run hotter than the averaged trace (speech
+  peaks +6 dB, CW key-down +3 dB), as live rows do. 120 rows are pushed
+  ahead of the visible ones so the AGC has settled. A band whose strongest
+  signal is only a little over the noise still paints its noise lighter,
+  as the app does live.
 - The waterfall ticker is paused and every row is pushed explicitly.
 - Every running timer under the window is stopped, as are the meter poller
-  and the slice meter pump; the UTC clock reads 14:32:07 UTC, the network,
+  and the slice meter pump; the UTC clock reads 14:32:10 UTC, the network,
   latency and CPU readouts are fixed, and the S-meter needle is allowed to
   settle before capture.
 - Anything that could not be frozen is listed under `unfrozen` in the

@@ -14,6 +14,7 @@
 
 #include <QJsonObject>
 #include <QLabel>
+#include <QPair>
 #include <QRegularExpression>
 #include <QTimer>
 
@@ -30,30 +31,65 @@ namespace NereusSDR::Preview {
 
 namespace {
 
-// Voice-like SSB contour in dB relative to the peak, over audio frequency:
-// a rise from 300 Hz, flat 500 to 1000 Hz, then a slope to -12 dB at 2.7 kHz.
+// ---- constants -------------------------------------------------------------
+
+// SSB voice passband (audio Hz) and its long-term contour: a rise from
+// 300 Hz, flat 500 to 1000 Hz, then a slope to -12 dB at 2.7 kHz.
 constexpr double kSsbLowHz = 300.0;
 constexpr double kSsbHighHz = 2700.0;
+// Formants: three bumps whose centres move syllable to syllable.
+constexpr double kFormantGainDb[3] = {6.0, 4.0, 3.0};
+constexpr double kFormantWidthHz[3] = {140.0, 200.0, 240.0};
+constexpr double kFormantBaseDb = -5.0;   // contour under the formants
+constexpr double kTraceFormantHz[3] = {600.0, 1500.0, 2450.0};
+// Speech timing: talk spans and pauses, syllables of 3 to 6 per second.
+constexpr double kTalkMinSec = 1.8;
+constexpr double kTalkMaxSec = 4.8;
+constexpr double kPauseMinSec = 0.25;
+constexpr double kPauseMaxSec = 1.6;
+constexpr double kSyllableMinSec = 0.13;
+constexpr double kSyllableMaxSec = 0.26;
+constexpr double kSyllableGapMaxSec = 0.08;
+constexpr double kSyllableMinDb = -11.0;
+constexpr double kSpeechFloor = 1e-3;     // envelope below this: silent
+// Waterfall rows: Rayleigh (exponential) power per bin. The deepest nulls are
+// held at -4 dB under the mean: the waterfall AGC sets its low threshold
+// from the row minimum, and an unbounded tail drags it far enough down to
+// paint the noise green instead of the dark blue of a live band.
+constexpr double kRowNoiseMinFraction = 0.4;
+// The settled trace is an average; a waterfall row is one instant. A
+// stated level is the trace's, so instantaneous rows run hotter: loud
+// syllables peak above the averaged voice, and a keyed carrier above its
+// average over the keying (about half on, so 3 dB).
+constexpr double kSpeechRowPeakOverTraceDb = 6.0;
+constexpr double kCwKeyDownOverTraceDb = 3.0;
+// CW: a carrier about 60 Hz wide, keyed in Morse.
 constexpr double kCwHalfWidthHz = 30.0;
-constexpr double kFt8HalfWidthHz = 25.0;
-constexpr double kNoiseJitterDb = 1.5;
-constexpr double kSsbRippleDb = 2.0;
-// Waterfall time base: one row per 33 ms tick, so 15 s is 450 rows.
-constexpr int kRowsPerFt8Cycle = 450;
-constexpr int kFt8TxRows = 380;      // 12.6 s of a 15 s cycle
-constexpr int kRowsPerSyllable = 9;  // ~300 ms
-constexpr int kRowsPerCwElement = 4; // ~130 ms
+// FT8: 15 s cycles, 79 symbols of 0.16 s from 0.5 s, 8 tones 6.25 Hz apart.
+constexpr double kFt8CycleSec = 15.0;
+constexpr double kFt8StartSec = 0.5;
+constexpr double kFt8SymbolSec = 0.16;
+constexpr int kFt8Symbols = 79;
+constexpr double kFt8ToneStepHz = 6.25;
+constexpr double kFt8HalfWidthHz = 25.0;  // trace frame: the 8 tones' 50 Hz
+constexpr int kFt8Costas[7] = {3, 1, 4, 0, 6, 5, 2};
+constexpr double kFt8ActiveFraction = 0.8;
+// How far back the activity tracks start before the oldest row.
+constexpr double kTrackLeadSec = 20.0;
+// Render a frame after this many rows so every row reaches the GPU texture.
+constexpr int kRowsPerRender = 8;
+// Rows pushed ahead of the visible ones. The waterfall AGC is a slow
+// one-pole follower on each row's min and max; these rows scroll off the
+// bottom and let it settle, so the visible rows share one colour scale.
+constexpr int kAgcSettleRows = 120;
+// Noise floor calibration: settle the trace, measure its median, correct.
+constexpr double kNoiseToleranceDb = 0.25;
 
-double voiceContourDb(double audioHz)
-{
-    if (audioHz < 500.0) {
-        return -6.0 + 6.0 * (audioHz - kSsbLowHz) / (500.0 - kSsbLowHz);
-    }
-    if (audioHz <= 1000.0) {
-        return 0.0;
-    }
-    return -12.0 * (audioHz - 1000.0) / (kSsbHighHz - 1000.0);
-}
+const char* const kMorse[36] = {
+    ".-", "-...", "-.-.", "-..", ".", "..-.", "--.", "....", "..", ".---", "-.-", ".-..", "--",
+    "-.", "---", ".--.", "--.-", ".-.", "...", "-", "..-", "...-", ".--", "-..-", "-.--", "--..",
+    "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----.",
+};
 
 // Mixes three values into one well-spread seed (a 32-bit finaliser), so
 // neighbouring signals and rows do not draw correlated values.
@@ -75,71 +111,212 @@ double dbmToMw(double dbm)
     return std::pow(10.0, dbm / 10.0);
 }
 
-// Per-row level offset for one signal, or NaN when it is silent that row.
-double rowModulationDb(const SignalSpec& sig, int sigIndex, int row, quint32 seed)
+double baseContourDb(double audioHz)
 {
-    if (row < 0) {
+    if (audioHz < 500.0) {
+        return -6.0 + 6.0 * (audioHz - kSsbLowHz) / (500.0 - kSsbLowHz);
+    }
+    if (audioHz <= 1000.0) {
         return 0.0;
     }
-    switch (sig.shape) {
-    case SignalShape::Usb:
-    case SignalShape::Lsb: {
-        SeededRng rng(mixSeed(seed, static_cast<quint32>(sigIndex + 1),
-                              static_cast<quint32>(row / kRowsPerSyllable + 1)));
-        const double r = rng.uniform(0.0, 1.0);
-        if (r < 0.18) {
-            return std::nan("");  // pause between words
-        }
-        return rng.uniform(-9.0, 0.0);
-    }
-    case SignalShape::Cw: {
-        SeededRng rng(mixSeed(seed ^ 0xC3u, static_cast<quint32>(sigIndex + 1),
-                              static_cast<quint32>(row / kRowsPerCwElement + 1)));
-        return rng.uniform(0.0, 1.0) < 0.42 ? std::nan("") : 0.0;
-    }
-    case SignalShape::Ft8: {
-        const int inCycle = row % kRowsPerFt8Cycle;
-        if (inCycle >= kFt8TxRows) {
-            return std::nan("");
-        }
-        // Each tone is one station: on for the whole transmit period of
-        // most cycles, at a level that differs a little cycle to cycle.
-        SeededRng rng(mixSeed(seed ^ 0xF8u, static_cast<quint32>(sigIndex + 1),
-                              static_cast<quint32>(row / kRowsPerFt8Cycle + 1)));
-        if (rng.uniform(0.0, 1.0) < 0.2) {
-            return std::nan("");
-        }
-        return rng.uniform(-4.0, 0.0);
-    }
-    }
-    return 0.0;
+    return -12.0 * (audioHz - 1000.0) / (kSsbHighHz - 1000.0);
 }
 
-// The signal's level (dBm) at frequency f, or NaN when it has no energy there.
-double signalDbmAt(const SignalSpec& sig, double f, double binWidthHz, double rippleDb)
+// The voice contour with formants at `f`, before normalising its peak.
+double formantContourDb(double audioHz, const double f[3])
 {
-    switch (sig.shape) {
-    case SignalShape::Usb:
-    case SignalShape::Lsb: {
-        const double audio = sig.shape == SignalShape::Usb ? f - sig.hz : sig.hz - f;
-        if (audio < kSsbLowHz || audio > kSsbHighHz) {
-            return std::nan("");
+    double bumps = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        const double x = (audioHz - f[i]) / kFormantWidthHz[i];
+        bumps += kFormantGainDb[i] * std::exp(-x * x);
+    }
+    return baseContourDb(audioHz) + kFormantBaseDb + bumps;
+}
+
+// The contour's maximum over the passband, so a shape can be normalised to
+// peak at 0 dB.
+double formantContourMaxDb(const double f[3])
+{
+    double best = -1000.0;
+    for (double a = kSsbLowHz; a <= kSsbHighHz; a += 10.0) {
+        best = std::max(best, formantContourDb(a, f));
+    }
+    return best;
+}
+
+// ---- activity tracks -------------------------------------------------------
+
+struct Syllable {
+    double start{0.0};
+    double dur{0.0};
+    double amp{1.0};       // linear power at the syllable's centre
+    double formants[3]{};
+};
+
+// Seeded speech: talk spans of syllables separated by pauses.
+QVector<Syllable> speechTrack(quint32 seed, double from, double to)
+{
+    QVector<Syllable> out;
+    SeededRng rng(seed);
+    double t = from - rng.uniform(0.0, kTalkMaxSec);
+    while (t < to) {
+        const double talkEnd = t + rng.uniform(kTalkMinSec, kTalkMaxSec);
+        while (t < talkEnd) {
+            Syllable s;
+            s.start = t;
+            s.dur = rng.uniform(kSyllableMinSec, kSyllableMaxSec);
+            s.amp = dbmToMw(rng.uniform(0.0, 1.0) < 0.25 ? 0.0 : rng.uniform(kSyllableMinDb, -1.0));
+            s.formants[0] = rng.uniform(350.0, 850.0);
+            s.formants[1] = rng.uniform(1000.0, 2200.0);
+            s.formants[2] = rng.uniform(2300.0, 2650.0);
+            out.append(s);
+            t += s.dur + rng.uniform(0.0, kSyllableGapMaxSec);
         }
-        return sig.dbm + voiceContourDb(audio) + rippleDb;
+        t += rng.uniform(kPauseMinSec, kPauseMaxSec);
     }
-    case SignalShape::Cw:
-    case SignalShape::Ft8: {
-        const double half = sig.shape == SignalShape::Cw ? kCwHalfWidthHz : kFt8HalfWidthHz;
-        if (std::abs(f - sig.hz) > std::max(half, binWidthHz / 2.0)) {
-            return std::nan("");
+    return out;
+}
+
+// Speech power envelope at time t (0..1) and the formants then.
+double speechAt(const QVector<Syllable>& track, double t, const double** formants)
+{
+    // Syllables do not overlap; find the one covering t.
+    auto it = std::upper_bound(track.cbegin(), track.cend(), t,
+                               [](double v, const Syllable& s) { return v < s.start; });
+    if (it == track.cbegin()) {
+        return 0.0;
+    }
+    --it;
+    const double x = (t - it->start) / it->dur;
+    if (x < 0.0 || x > 1.0) {
+        return 0.0;
+    }
+    *formants = it->formants;
+    const double shape = std::sin(M_PI * x);
+    return it->amp * shape * shape;
+}
+
+// Seeded Morse keying at kCwWpm: on intervals [start, end).
+QVector<QPair<double, double>> cwTrack(quint32 seed, double from, double to)
+{
+    QVector<QPair<double, double>> on;
+    SeededRng rng(seed);
+    const double dit = 1.2 / kCwWpm;
+    double t = from - rng.uniform(0.0, 4.0);
+    auto sendChar = [&](int index) {
+        for (const char* p = kMorse[index]; *p != '\0'; ++p) {
+            const double len = *p == '.' ? dit : 3.0 * dit;
+            on.append({t, t + len});
+            t += len + dit;
         }
-        return sig.dbm;
+        t += 2.0 * dit;  // letter gap: 3 dits in all
+    };
+    auto sendWord = [&](const QVector<int>& word) {
+        for (int c : word) {
+            sendChar(c);
+        }
+        t += 4.0 * dit;  // word gap: 7 dits in all
+    };
+    // A seeded callsign: letter, letter or nothing, digit, two or three letters.
+    QVector<int> call;
+    call.append(static_cast<int>(rng.uniform(0.0, 26.0)));
+    if (rng.uniform(0.0, 1.0) < 0.5) {
+        call.append(static_cast<int>(rng.uniform(0.0, 26.0)));
     }
+    call.append(26 + static_cast<int>(rng.uniform(0.0, 10.0)));
+    const int suffix = rng.uniform(0.0, 1.0) < 0.5 ? 2 : 3;
+    for (int i = 0; i < suffix; ++i) {
+        call.append(static_cast<int>(rng.uniform(0.0, 26.0)));
     }
-    return std::nan("");
+    const QVector<int> cq = {2, 16};          // C Q
+    const QVector<int> de = {3, 4};           // D E
+    const QVector<int> k = {10};              // K
+    const QVector<int> rst = {31, 13, 13};    // 5 N N
+    const QVector<int> tu = {19, 20};         // T U
+    while (t < to) {
+        if (rng.uniform(0.0, 1.0) < 0.5) {
+            sendWord(cq);
+            sendWord(cq);
+            sendWord(de);
+            sendWord(call);
+            sendWord(call);
+            sendWord(k);
+        } else {
+            sendWord(tu);
+            sendWord(rst);
+            sendWord(rst);
+            sendWord(call);
+        }
+        t += rng.uniform(1.0, 4.0);  // the other station's turn
+    }
+    return on;
+}
+
+// The keyed fraction of [a, b).
+double keyedFraction(const QVector<QPair<double, double>>& on, double a, double b)
+{
+    double keyed = 0.0;
+    auto it = std::upper_bound(on.cbegin(), on.cend(), a,
+                               [](double v, const QPair<double, double>& e) { return v < e.second; });
+    for (; it != on.cend() && it->first < b; ++it) {
+        keyed += std::min(b, it->second) - std::max(a, it->first);
+    }
+    return std::clamp(keyed / (b - a), 0.0, 1.0);
+}
+
+struct Ft8Cycle {
+    bool active{false};
+    double levelDb{0.0};
+    int symbols[kFt8Symbols]{};
+};
+
+Ft8Cycle ft8Cycle(quint32 seed, long long cycleIndex)
+{
+    SeededRng rng(mixSeed(seed, 0xF8F8u, static_cast<quint32>(cycleIndex)));
+    Ft8Cycle c;
+    c.active = rng.uniform(0.0, 1.0) < kFt8ActiveFraction;
+    c.levelDb = rng.uniform(-3.0, 0.0);
+    for (int i = 0; i < kFt8Symbols; ++i) {
+        c.symbols[i] = static_cast<int>(rng.uniform(0.0, 8.0));
+    }
+    // The three Costas sync arrays at symbols 0, 36 and 72.
+    for (int base : {0, 36, 72}) {
+        for (int i = 0; i < 7; ++i) {
+            c.symbols[base + i] = kFt8Costas[i];
+        }
+    }
+    return c;
+}
+
+// Adds `mw` at frequency f to the bins, split between the two nearest bins.
+void addTone(QVector<double>& mwBins, double fftLow, double binWidth, double f, double mw)
+{
+    const double pos = (f - fftLow) / binWidth;
+    const int i0 = static_cast<int>(std::floor(pos));
+    const double frac = pos - i0;
+    if (i0 >= 0 && i0 < mwBins.size()) {
+        mwBins[i0] += mw * (1.0 - frac);
+    }
+    if (i0 + 1 >= 0 && i0 + 1 < mwBins.size()) {
+        mwBins[i0 + 1] += mw * frac;
+    }
+}
+
+QVector<float> toLinear(const QVector<double>& mwBins)
+{
+    // updateSpectrumLinear folds dbmOffset into the avenger's scale:
+    // displayed dBm = 10*log10(linear) + dbmOffset.
+    QVector<float> bins(mwBins.size());
+    const double scale = std::pow(10.0, -kDbmOffset / 10.0);
+    for (int i = 0; i < mwBins.size(); ++i) {
+        bins[i] = static_cast<float>(mwBins[i] * scale);
+    }
+    return bins;
 }
 
 } // namespace
+
+// ---- SeededRng -------------------------------------------------------------
 
 quint32 SeededRng::next()
 {
@@ -156,47 +333,200 @@ double SeededRng::uniform(double lo, double hi)
     return lo + (hi - lo) * (static_cast<double>(next()) / 4294967296.0);
 }
 
-QVector<float> binsForFrame(const SpectrumWidget& sw, const PanSpectrum& spec, int row)
+double SeededRng::gaussian()
 {
+    const double u1 = uniform(1e-12, 1.0);
+    const double u2 = uniform(0.0, 1.0);
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
+}
+
+double SeededRng::exponential()
+{
+    return -std::log(uniform(1e-12, 1.0));
+}
+
+// ---- BandModel -------------------------------------------------------------
+
+struct BandModel::Impl {
+    PanSpectrum spec;
+    int binCount{kBinCount};
+    double binWidth{0.0};
+    double fftLow{0.0};
+    double newestSec{kSceneTimeSec};
+    QVector<QVector<Syllable>> speech;                    // per signal (SSB)
+    QVector<QVector<QPair<double, double>>> keying;       // per signal (CW)
+
+    void addSignalsTrace(QVector<double>& mw) const;
+    void addSignalsRow(QVector<double>& mw, double t, double rowSec) const;
+};
+
+BandModel::BandModel(const SpectrumWidget& sw, const PanSpectrum& spec, int rows)
+    : m_impl(std::make_unique<Impl>())
+{
+    Impl& d = *m_impl;
+    d.spec = spec;
     const double sampleRate = sw.sampleRate();
     // A fixed bin width (kBinCount bins per 192 kHz), so a wider stream
     // gets proportionally more bins, as a fixed-resolution FFT would.
-    const int binCount = std::max(kBinCount, static_cast<int>(std::lround(
+    d.binCount = std::max(kBinCount, static_cast<int>(std::lround(
         kBinCount * sampleRate / kReferenceRateHz)));
-    const double binWidth = sampleRate / binCount;
-    const double fftLow = sw.ddcCenterFrequency() - sampleRate / 2.0;
-    // The trace frame uses the pan's own seed; each waterfall row its own.
-    SeededRng noise(mixSeed(spec.seed, 0x4E01u, static_cast<quint32>(row + 2)));
-    SeededRng ripple(spec.seed * 40503u + 17u);
-
-    QVector<double> rowOffsets(spec.signalList.size());
+    d.binWidth = sampleRate / d.binCount;
+    d.fftLow = sw.ddcCenterFrequency() - sampleRate / 2.0;
+    // One waterfall row per update period, as the strip's time labels read.
+    m_rowSec = std::max(1, sw.wfUpdatePeriodMs()) / 1000.0;
+    const double oldest = d.newestSec - rows * m_rowSec - kTrackLeadSec;
+    d.speech.resize(spec.signalList.size());
+    d.keying.resize(spec.signalList.size());
     for (int s = 0; s < spec.signalList.size(); ++s) {
-        rowOffsets[s] = rowModulationDb(spec.signalList[s], s, row, spec.seed);
+        const quint32 seed = mixSeed(spec.seed, 0x5160u, static_cast<quint32>(s + 1));
+        switch (spec.signalList[s].shape) {
+        case SignalShape::Usb:
+        case SignalShape::Lsb:
+            d.speech[s] = speechTrack(seed, oldest, d.newestSec + 1.0);
+            break;
+        case SignalShape::Cw:
+            d.keying[s] = cwTrack(seed, oldest, d.newestSec + 1.0);
+            break;
+        case SignalShape::Ft8:
+            break;
+        }
     }
+}
 
-    QVector<float> bins(binCount);
-    for (int i = 0; i < binCount; ++i) {
-        const double f = fftLow + i * binWidth;
-        double mw = dbmToMw(spec.noiseDbm + noise.uniform(-kNoiseJitterDb, kNoiseJitterDb));
-        // The ripple is negative only, so the peak of each passband is the
-        // stated level.
-        const double rippleDb = ripple.uniform(-kSsbRippleDb, 0.0);
-        for (int s = 0; s < spec.signalList.size(); ++s) {
-            if (std::isnan(rowOffsets[s])) {
-                continue;
+BandModel::~BandModel() = default;
+
+void BandModel::Impl::addSignalsTrace(QVector<double>& mw) const
+{
+    const double traceMax = formantContourMaxDb(kTraceFormantHz);
+    for (const SignalSpec& sig : spec.signalList) {
+        for (int i = 0; i < binCount; ++i) {
+            const double f = fftLow + i * binWidth;
+            switch (sig.shape) {
+            case SignalShape::Usb:
+            case SignalShape::Lsb: {
+                const double audio = sig.shape == SignalShape::Usb ? f - sig.hz : sig.hz - f;
+                if (audio >= kSsbLowHz && audio <= kSsbHighHz) {
+                    mw[i] += dbmToMw(sig.dbm + formantContourDb(audio, kTraceFormantHz) - traceMax);
+                }
+                break;
             }
-            const double dbm = signalDbmAt(spec.signalList[s], f, binWidth, rippleDb);
-            if (!std::isnan(dbm)) {
-                mw += dbmToMw(dbm + rowOffsets[s]);
+            case SignalShape::Cw:
+            case SignalShape::Ft8: {
+                const double half = sig.shape == SignalShape::Cw ? kCwHalfWidthHz : kFt8HalfWidthHz;
+                const double centre = sig.shape == SignalShape::Ft8
+                    ? sig.hz + 3.5 * kFt8ToneStepHz : sig.hz;
+                if (std::abs(f - centre) <= std::max(half, binWidth / 2.0)) {
+                    mw[i] += dbmToMw(sig.dbm);
+                }
+                break;
+            }
             }
         }
-        // updateSpectrumLinear folds dbmOffset into the avenger's scale:
-        // displayed dBm = 10*log10(linear) + dbmOffset.
-        const double dbmTotal = 10.0 * std::log10(mw);
-        bins[i] = static_cast<float>(std::pow(10.0, (dbmTotal - kDbmOffset) / 10.0));
     }
-    return bins;
 }
+
+void BandModel::Impl::addSignalsRow(QVector<double>& mw, double t, double rowSec) const
+{
+    for (int s = 0; s < spec.signalList.size(); ++s) {
+        const SignalSpec& sig = spec.signalList[s];
+        switch (sig.shape) {
+        case SignalShape::Usb:
+        case SignalShape::Lsb: {
+            const double* formants = nullptr;
+            const double env = speechAt(speech[s], t, &formants);
+            if (env < kSpeechFloor || formants == nullptr) {
+                break;
+            }
+            const double peak = formantContourMaxDb(formants);
+            const double levelDb = sig.dbm + kSpeechRowPeakOverTraceDb + 10.0 * std::log10(env) - peak;
+            const double sign = sig.shape == SignalShape::Usb ? 1.0 : -1.0;
+            const double fLow = sign > 0 ? sig.hz + kSsbLowHz : sig.hz - kSsbHighHz;
+            const double fHigh = sign > 0 ? sig.hz + kSsbHighHz : sig.hz - kSsbLowHz;
+            const int lo = static_cast<int>(std::floor((fLow - fftLow) / binWidth));
+            const int hi = static_cast<int>(std::ceil((fHigh - fftLow) / binWidth));
+            for (int i = std::max(0, lo); i <= std::min(binCount - 1, hi); ++i) {
+                const double audio = sign * (fftLow + i * binWidth - sig.hz);
+                if (audio >= kSsbLowHz && audio <= kSsbHighHz) {
+                    mw[i] += dbmToMw(levelDb + formantContourDb(audio, formants));
+                }
+            }
+            break;
+        }
+        case SignalShape::Cw: {
+            const double frac = keyedFraction(keying[s], t - rowSec / 2.0, t + rowSec / 2.0);
+            if (frac > 0.0) {
+                addTone(mw, fftLow, binWidth, sig.hz,
+                        dbmToMw(sig.dbm + kCwKeyDownOverTraceDb) * frac);
+            }
+            break;
+        }
+        case SignalShape::Ft8: {
+            const long long cycle = static_cast<long long>(std::floor(t / kFt8CycleSec));
+            const double inCycle = t - cycle * kFt8CycleSec - kFt8StartSec;
+            const int symbol = static_cast<int>(std::floor(inCycle / kFt8SymbolSec));
+            if (inCycle < 0.0 || symbol >= kFt8Symbols) {
+                break;
+            }
+            const Ft8Cycle c = ft8Cycle(mixSeed(spec.seed, 0xF7u, static_cast<quint32>(s + 1)), cycle);
+            if (!c.active) {
+                break;
+            }
+            addTone(mw, fftLow, binWidth, sig.hz + c.symbols[symbol] * kFt8ToneStepHz,
+                    dbmToMw(sig.dbm + c.levelDb));
+            break;
+        }
+        }
+    }
+}
+
+QVector<float> BandModel::traceFrame(double noiseOffsetDb) const
+{
+    const Impl& d = *m_impl;
+    SeededRng noise(mixSeed(d.spec.seed, 0x7EACu, 1u));
+    QVector<double> mw(d.binCount);
+    for (int i = 0; i < d.binCount; ++i) {
+        mw[i] = dbmToMw(d.spec.noiseDbm + noiseOffsetDb + kTraceJitterDb * noise.gaussian());
+    }
+    d.addSignalsTrace(mw);
+    return toLinear(mw);
+}
+
+QVector<float> BandModel::rowFrame(int row, double noiseOffsetDb) const
+{
+    const Impl& d = *m_impl;
+    const double t = d.newestSec - row * m_rowSec;
+    SeededRng noise(mixSeed(d.spec.seed, 0x4E01u, static_cast<quint32>(row + 2)));
+    const double floorMw = dbmToMw(d.spec.noiseDbm + noiseOffsetDb);
+    QVector<double> mw(d.binCount);
+    for (int i = 0; i < d.binCount; ++i) {
+        mw[i] = floorMw * std::max(noise.exponential(), kRowNoiseMinFraction);
+    }
+    d.addSignalsRow(mw, t, m_rowSec);
+    return toLinear(mw);
+}
+
+// ---- feeding ---------------------------------------------------------------
+
+namespace {
+
+double medianOf(QVector<float> v)
+{
+    if (v.isEmpty()) {
+        return 0.0;
+    }
+    const auto mid = v.begin() + v.size() / 2;
+    std::nth_element(v.begin(), mid, v.end());
+    return *mid;
+}
+
+void settleTrace(SpectrumWidget* sw, const QVector<float>& frame)
+{
+    for (int i = 0; i < kTraceFrames; ++i) {
+        sw->updateSpectrumLinear(0, frame, kWindowEnb, kDbmOffset);
+    }
+}
+
+} // namespace
 
 SpectrumCheck feedPan(SpectrumWidget* sw, const PanSpectrum& spec)
 {
@@ -207,34 +537,44 @@ SpectrumCheck feedPan(SpectrumWidget* sw, const PanSpectrum& spec)
     }
     sw->setWaterfallTickerPausedForTest(true);
 
-    // Enough rows to fill the waterfall at its current height.
-    // The GPU path uploads only the rows written since its last frame, and
-    // no more than one texture's height of them, so more rows than that
-    // between two frames would leave most of the texture stale. Render a
-    // frame after every eight rows (the live app pushes about one row per
-    // frame, so it never meets this).
     const int height = sw->waterfallHeightForTest();
-    const int rows = height + 8;
-    const int chunk = 8;
+    const int rows = height + 8 + kAgcSettleRows;
+    const BandModel model(*sw, spec, rows);
+
+    // The detector shows each pixel's strongest bin, so the displayed floor
+    // sits above the bin mean. Settle once, measure, and move the mean so
+    // the median of the settled trace lands on the stated floor.
+    settleTrace(sw, model.traceFrame(0.0));
+    double offset = spec.noiseDbm - medianOf(sw->renderedPixels());
+    if (std::abs(offset) < kNoiseToleranceDb) {
+        offset = 0.0;
+    }
+
+    // Oldest row first, one generated row per waterfall row. The GPU path
+    // uploads only the rows written since its last frame, and no more than
+    // one texture's height of them, so render a frame every few rows (the
+    // live app pushes about one row per frame, so it never meets this).
     for (int r = rows - 1; r >= 0; --r) {
-        sw->updateSpectrumLinear(0, binsForFrame(*sw, spec, r), kWindowEnb, kDbmOffset);
+        sw->updateSpectrumLinear(0, model.rowFrame(r, offset), kWindowEnb, kDbmOffset);
         sw->tickWaterfallForTest();
 #ifdef NEREUS_GPU_SPECTRUM
-        if (r % chunk == 0) {
+        if (r % kRowsPerRender == 0) {
             (void)sw->grabFramebuffer();
         }
 #endif
     }
-    const QVector<float> trace = binsForFrame(*sw, spec, -1);
-    for (int i = 0; i < kTraceFrames; ++i) {
-        sw->updateSpectrumLinear(0, trace, kWindowEnb, kDbmOffset);
-    }
+    settleTrace(sw, model.traceFrame(offset));
 
     check.centreHz = sw->centerFrequency();
     check.spanHz = sw->bandwidth();
     check.ddcCentreHz = sw->ddcCenterFrequency();
     check.sampleRateHz = sw->sampleRate();
     check.waterfallRows = rows;
+    check.rowPeriodMs = model.rowPeriodSec() * 1000.0;
+    check.noiseTargetDbm = spec.noiseDbm;
+    check.noiseOffsetDb = offset;
+    const QVector<float>& px = sw->renderedPixels();
+    check.noiseDisplayedDbm = medianOf(px);
 
     // The check value: the trace's maximum over the strongest signal.
     const SignalSpec* strongest = nullptr;
@@ -243,7 +583,6 @@ SpectrumCheck feedPan(SpectrumWidget* sw, const PanSpectrum& spec)
             strongest = &sig;
         }
     }
-    const QVector<float>& px = sw->renderedPixels();
     if (strongest == nullptr || px.isEmpty() || check.spanHz <= 0.0) {
         return check;
     }
@@ -255,6 +594,8 @@ SpectrumCheck feedPan(SpectrumWidget* sw, const PanSpectrum& spec)
     } else if (strongest->shape == SignalShape::Lsb) {
         lo = strongest->hz - kSsbHighHz;
         hi = strongest->hz - kSsbLowHz;
+    } else if (strongest->shape == SignalShape::Ft8) {
+        hi = strongest->hz + 8.0 * kFt8ToneStepHz + 100.0;
     }
     const double left = check.centreHz - check.spanHz / 2.0;
     const int n = px.size();
@@ -283,35 +624,50 @@ void feedTxPan(SpectrumWidget* sw, double carrierHz, bool usb, int lowHz, int hi
     // One point per pixel, as the transmit analyzer is set up.
     const int pixels = std::max(800, sw->width());
     const double left = carrierHz - span / 2.0;
+    const int height = sw->waterfallHeightForTest();
+    const int rows = height + 8;
+    const double rowSec = std::max(1, sw->wfUpdatePeriodMs()) / 1000.0;
+    const QVector<Syllable> speech = speechTrack(mixSeed(seed, 0x7A02u, 1u),
+                                                 kSceneTimeSec - rows * rowSec - kTrackLeadSec,
+                                                 kSceneTimeSec + 1.0);
+    const double traceMax = formantContourMaxDb(kTraceFormantHz);
 
+    // row < 0: the settled trace; otherwise waterfall row `row`.
     auto frame = [&](int row) {
         SeededRng noise(mixSeed(seed, 0x7A01u, static_cast<quint32>(row + 2)));
-        double rowDb = 0.0;
+        double levelDb = peakDbm - traceMax;
+        const double* formants = kTraceFormantHz;
+        bool silent = false;
         if (row >= 0) {
-            SeededRng syl(mixSeed(seed, 0x7A02u, static_cast<quint32>(row / kRowsPerSyllable + 1)));
-            rowDb = syl.uniform(0.0, 1.0) < 0.18 ? -60.0 : syl.uniform(-9.0, 0.0);
+            const double* f = nullptr;
+            const double env = speechAt(speech, kSceneTimeSec - row * rowSec, &f);
+            silent = env < kSpeechFloor || f == nullptr;
+            if (!silent) {
+                formants = f;
+                levelDb = peakDbm + 10.0 * std::log10(env) - formantContourMaxDb(f);
+            }
         }
         QVector<float> px(pixels);
         for (int x = 0; x < pixels; ++x) {
             const double f = left + (x + 0.5) * span / pixels;
             const double audio = usb ? f - carrierHz : carrierHz - f;
-            double mw = dbmToMw(floorDbm + noise.uniform(-kNoiseJitterDb, kNoiseJitterDb));
-            if (audio >= lowHz && audio <= highHz) {
-                mw += dbmToMw(peakDbm + voiceContourDb(std::clamp(audio, kSsbLowHz, kSsbHighHz))
-                              + rowDb);
+            const double noiseDb = row >= 0 ? 10.0 * std::log10(std::max(noise.exponential(), kRowNoiseMinFraction))
+                                            : kTraceJitterDb * noise.gaussian();
+            double mw = dbmToMw(floorDbm + noiseDb);
+            if (!silent && audio >= lowHz && audio <= highHz) {
+                mw += dbmToMw(levelDb + formantContourDb(
+                    std::clamp(audio, kSsbLowHz, kSsbHighHz), formants));
             }
             px[x] = static_cast<float>(10.0 * std::log10(mw));
         }
         return px;
     };
 
-    const int height = sw->waterfallHeightForTest();
-    const int rows = height + 8;
     for (int r = rows - 1; r >= 0; --r) {
         sw->pushTxWaterfallRow(-1, frame(r));
         sw->tickWaterfallForTest();
 #ifdef NEREUS_GPU_SPECTRUM
-        if (r % 8 == 0) {
+        if (r % kRowsPerRender == 0) {
             (void)sw->grabFramebuffer();
         }
 #endif

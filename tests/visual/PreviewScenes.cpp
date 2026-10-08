@@ -80,6 +80,13 @@ constexpr double kTxPeakDbm = -12.0;
 constexpr double kTxFloorDbm = -100.0;
 constexpr quint32 kTxSeed = 0x7E11u;
 
+// Displayed noise floors per band (the median of the settled trace), as a
+// live pan reads them on the default -60 to -115 dBm scale.
+constexpr double kNoise80mDbm = -100.0;
+constexpr double kNoise40mDbm = -104.0;
+constexpr double kNoise20mDbm = -110.0;
+constexpr double kNoise15mDbm = -114.0;
+
 // ---- small helpers ---------------------------------------------------------
 
 PanadapterApplet* appletFor(MainWindow* window, const QString& panId)
@@ -152,7 +159,7 @@ PanSpectrum twentyMetres(const QString& panId)
 {
     PanSpectrum s;
     s.panId = panId;
-    s.noiseDbm = -126.0;
+    s.noiseDbm = kNoise20mDbm;
     s.seed = 20;
     s.signalList = {
         {14195000.0, -88.0, SignalShape::Usb},
@@ -169,7 +176,7 @@ PanSpectrum fortyMetresPhone(const QString& panId)
 {
     PanSpectrum s;
     s.panId = panId;
-    s.noiseDbm = -121.0;
+    s.noiseDbm = kNoise40mDbm;
     s.seed = 40;
     s.signalList = {
         {7160000.0, -78.0, SignalShape::Lsb},
@@ -212,7 +219,7 @@ QVector<PanPose> fourRxPoses()
     a.filterHi = -150;
     a.sMeterDbm = -84.0;
     a.spectrum.panId = a.panId;
-    a.spectrum.noiseDbm = -118.0;
+    a.spectrum.noiseDbm = kNoise80mDbm;
     a.spectrum.seed = 80;
     a.spectrum.signalList = {
         {3760000.0, -90.0, SignalShape::Lsb},
@@ -228,7 +235,7 @@ QVector<PanPose> fourRxPoses()
     b.filterLo = 100;
     b.filterHi = 3100;
     b.spectrum.panId = b.panId;
-    b.spectrum.noiseDbm = -121.0;
+    b.spectrum.noiseDbm = kNoise40mDbm;
     b.spectrum.seed = 74;
     // 14 FT8 tones between 7.0742 and 7.0768 MHz, -95 to -70 dBm.
     constexpr int kTones = 14;
@@ -252,7 +259,7 @@ QVector<PanPose> fourRxPoses()
     c.filterHi = 900;
     c.sMeterDbm = -76.0;
     c.spectrum.panId = c.panId;
-    c.spectrum.noiseDbm = -126.0;
+    c.spectrum.noiseDbm = kNoise20mDbm;
     c.spectrum.seed = 14;
     c.spectrum.signalList = {
         {14012000.0, -88.0, SignalShape::Cw},
@@ -269,7 +276,7 @@ QVector<PanPose> fourRxPoses()
     d.filterHi = 2850;
     d.sMeterDbm = -83.0;
     d.spectrum.panId = d.panId;
-    d.spectrum.noiseDbm = -128.0;
+    d.spectrum.noiseDbm = kNoise15mDbm;
     d.spectrum.seed = 21;
     d.spectrum.signalList = {
         {21285000.0, -96.0, SignalShape::Usb},
@@ -427,14 +434,17 @@ void feedSpectra(SceneContext& ctx, const QVector<PanPose>& poses)
             {QStringLiteral("waterfall_low_dbm"), sw->wfActiveLowThreshold()},
             {QStringLiteral("waterfall_high_dbm"), sw->wfActiveHighThreshold()},
             {QStringLiteral("waterfall_agc"), sw->wfAgcEnabled()},
-            {QStringLiteral("noise_dbm"), pose.spectrum.noiseDbm},
+            {QStringLiteral("noise_target_dbm"), c.noiseTargetDbm},
+            {QStringLiteral("noise_displayed_median_dbm"), std::round(c.noiseDisplayedDbm * 100.0) / 100.0},
+            {QStringLiteral("noise_bin_mean_offset_db"), std::round(c.noiseOffsetDb * 100.0) / 100.0},
+            {QStringLiteral("waterfall_row_period_ms"), c.rowPeriodMs},
             {QStringLiteral("signals"), sigs}};
         ctx.checks.append(check);
         qInfo("check %s: target %.0f Hz %.1f dBm, displayed %.2f dBm (centre %.0f span %.0f ddc %.0f rate %.0f, "
-              "waterfall %.1f..%.1f dBm)",
+              "waterfall %.1f..%.1f dBm, noise median %.1f for %.1f)",
               qPrintable(c.panId), c.targetHz, c.targetDbm, c.displayedDbm, c.centreHz,
               c.spanHz, c.ddcCentreHz, c.sampleRateHz, sw->wfActiveLowThreshold(),
-              sw->wfActiveHighThreshold());
+              sw->wfActiveHighThreshold(), c.noiseDisplayedDbm, c.noiseTargetDbm);
     }
 }
 
