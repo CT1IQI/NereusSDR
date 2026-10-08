@@ -15,6 +15,8 @@
 //   2026-10-08 - The header hide buttons (entry, free canvas leaf, group) and
 //                 Containers > Hidden, with real clicks, by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The profile rail's remove cross renders 14x14, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The profile rail when macOS drops the popover's Enter (or
 //                 sends it a lone Leave): the pointer moves the cursor, and
 //                 the rail stays open or closes by where the cursor is, by
@@ -1701,6 +1703,49 @@ private slots:
         QVERIFY(dock->isOpen());
         QTest::qWait(ContainerWidget::kRevealHideMs + 300);
         QVERIFY2(dock->isOpen(), "a rail opened from the keyboard closed with the cursor elsewhere");
+    }
+
+    // The remove cross on a profile badge is Longpath's 14x14 disc
+    // (setFixedSize(14, 14), border-radius 7px). In the top bar the badge's
+    // pill style (min-height = max-height = the pill height) cascaded to the
+    // cross and drew it 14x27, the full badge height, where a click aimed at
+    // a profile could land on it.
+    void profileRailRemoveCrossIsFourteenSquare()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        ProfileRailDock* dock = f.window->profileRailDock();
+        auto* profiles = f.window->findChild<WorkspaceProfiles*>();
+        QVERIFY(dock && profiles);
+        QVERIFY(f.resetProfiles(profiles));
+        QVERIFY(profiles->createEmpty(QStringLiteral("DX")).ok());
+        settle();
+        dock->open(false);
+        settle();
+        for (const QString& id : dock->rail()->badges()) {
+            QPushButton* badge = dock->rail()->badgeButton(id);
+            QVERIFY(badge);
+            QPushButton* cross = nullptr;
+            for (QPushButton* child : badge->findChildren<QPushButton*>(Qt::FindDirectChildrenOnly)) {
+                if (child->toolTip().startsWith(QStringLiteral("Remove profile"))) {
+                    cross = child;
+                }
+            }
+            QVERIFY(cross);
+            QEvent enter(QEvent::Enter);
+            QCoreApplication::sendEvent(badge, &enter);
+            settle();
+            QVERIFY(cross->isVisible());
+            QCOMPARE(cross->size(), QSize(14, 14));
+            QVERIFY(badge->rect().contains(cross->geometry()));
+            // Beside the letter, never on the badge's centre.
+            QVERIFY(!cross->geometry().contains(badge->rect().center()));
+            QEvent leave(QEvent::Leave);
+            QCoreApplication::sendEvent(badge, &leave);
+            settle();
+            QVERIFY(!cross->isVisible());
+        }
+        dock->close();
     }
 
     // What the fix must keep: the rail closes when the pointer really leaves

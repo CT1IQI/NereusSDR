@@ -100,6 +100,10 @@
 //                 the rail paints no fill or border of its own, as in
 //                 Longpath.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The remove cross keeps its 14x14 size in the top bar
+//                 (shared Longpath defect, fixed in our copy; see
+//                 kCloserSidePx). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRail.h"
@@ -134,6 +138,16 @@ namespace {
 // defect at 551576e3; ours differs to fix it. The vertical rail keeps
 // its square badges and the upstream placement.
 constexpr int kCloserReservePx = 16;
+
+// The remove cross's side: a 14x14 disc (radius 7). From Longpath
+// src/gui/widgets/ProfileRail.cpp:288 [@551576e3] (setFixedSize(14, 14)).
+// NereusSDR: the cross also states it as min-/max-height in its style
+// sheet. In the top bar its badge carries the pill style, whose
+// `min-height: 27px; max-height: 27px` cascades to every child button
+// that is silent about its height, and a style sheet height beats
+// setFixedSize: the cross drew 14x27, the badge's full height. Longpath
+// has the same defect at 551576e3; ours differs to fix it.
+constexpr int kCloserSidePx = 14;
 
 // Die Schiene ist so hoch wie eine Pille AUSSEN: Inhaltshoehe plus die
 // beiden Raender. Siehe die Begruendung an kLeistenSeite.
@@ -413,7 +427,7 @@ void ProfileRail::rebuild()
         // ein Profil selten.
         if (ids.size() > 1) {
             auto* x = new QPushButton(QStringLiteral("×"), b);
-            x->setFixedSize(14, 14);
+            x->setFixedSize(kCloserSidePx, kCloserSidePx);
             x->setCursor(Qt::PointingHandCursor);
             // Waagrecht ist die Breite nicht mehr die Kantenlaenge
             // (siehe setzeMasse), darum an der tatsaechlichen Breite
@@ -437,11 +451,14 @@ void ProfileRail::rebuild()
                 // „der geerbte Innenabstand".
                 "QPushButton { background: %1; color: %2; border: none;"
                 "  border-radius: 7px; font-size: 11px; font-weight: bold;"
-                "  padding: 0; }"
+                "  padding: 0;"
+                // NereusSDR: see kCloserSidePx.
+                "  min-height: %4px; max-height: %4px; }"
                 "QPushButton:hover { background: %3; color: #ffffff; }")
                     .arg(QString::fromLatin1(Style::kButtonBg),
                          QString::fromLatin1(Style::kTextSecondary),
-                         QString::fromLatin1(Style::kRedBg)));
+                         QString::fromLatin1(Style::kRedBg))
+                    .arg(kCloserSidePx));
             x->hide();
             b->installEventFilter(this);
             m_closers.insert(id, x);
