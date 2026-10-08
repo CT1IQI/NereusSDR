@@ -39,6 +39,9 @@
 //   2026-10-08 - The entry header carries a pop-out button left of its
 //                 options button. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Both headers end with a hide button (Longpath's close
+//                 cross, last and rightmost); it hides, never deletes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -299,6 +302,15 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
     connect(m_options, &QPushButton::clicked, this, &WorkspaceGroupHeader::optionsClicked);
     row->addWidget(m_options);
 
+    // From Longpath src/gui/applets/GridCellWidget.cpp:170-180 [@551576e3]
+    // ("Ausblenden": the cross hides, it never deletes; the last button,
+    // rightmost). NereusSDR: it comes back from Containers > Hidden.
+    m_hide = makeButton(QStringLiteral("\u2715"), kGroupButtonWidth, kGroupButtonHeight,
+                        tr("Hide. Bring it back from the Containers menu."), this);
+    m_hide->setObjectName(QStringLiteral("workspaceHide"));
+    connect(m_hide, &QPushButton::clicked, this, &WorkspaceGroupHeader::hideClicked);
+    row->addWidget(m_hide);
+
     applyStyle();
 }
 
@@ -328,6 +340,7 @@ void WorkspaceGroupHeader::setLocked(bool locked)
 {
     m_lock->setVisible(locked);
     m_popOut->setEnabled(!locked);
+    m_hide->setEnabled(!locked);
 }
 void WorkspaceGroupHeader::setFloating(bool floating)
 {
@@ -380,6 +393,21 @@ WorkspaceEntryHeader::WorkspaceEntryHeader(const QString& entryId, QWidget* pare
                            tr("Entry options"), this);
     connect(m_options, &QPushButton::clicked, this, &WorkspaceEntryHeader::optionsClicked);
     row->addWidget(m_options);
+
+    // From Longpath src/gui/applets/GridCellWidget.cpp:170-180 [@551576e3]
+    // (the same cross, last and rightmost). NereusSDR: at the entry
+    // header's button size; it comes back from Containers > Hidden.
+    m_hide = makeButton(QStringLiteral("\u2715"), kEntryButtonWidth, kEntryButtonHeight,
+                        tr("Hide. Bring it back from the Containers menu."), this);
+    m_hide->setObjectName(QStringLiteral("workspaceEntryHide"));
+    connect(m_hide, &QPushButton::clicked, this, &WorkspaceEntryHeader::hideClicked);
+    row->addWidget(m_hide);
+}
+
+void WorkspaceEntryHeader::setActionsEnabled(bool enabled)
+{
+    m_popOut->setEnabled(enabled);
+    m_hide->setEnabled(enabled);
 }
 
 void WorkspaceEntryHeader::setTitle(const QString& title) { m_title->setText(title); }

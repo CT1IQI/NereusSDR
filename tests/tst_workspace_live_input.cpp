@@ -12,6 +12,9 @@
 //                 to another profile's button and the click, with enter,
 //                 leave and moves routed as Qt's cocoa plugin routes them, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The header hide buttons (entry, free canvas leaf, group) and
+//                 Containers > Hidden, with real clicks, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The profile rail when macOS drops the popover's Enter (or
 //                 sends it a lone Leave): the pointer moves the cursor, and
 //                 the rail stays open or closes by where the cursor is, by
@@ -670,6 +673,66 @@ struct LiveFixture {
     }
 
     // Commits a change to the current workspace.
+    ContentEntry entry(const QString& containerId, const QString& entryId) const
+    {
+        for (const auto& d : store->snapshot().containers) {
+            if (d.id != containerId) {
+                continue;
+            }
+            for (const auto& e : d.contents) {
+                if (e.id == entryId) {
+                    return e;
+                }
+            }
+        }
+        return {};
+    }
+
+    QMenu* hiddenMenu() const
+    {
+        return window->findChild<QMenu*>(QStringLiteral("containersHidden"));
+    }
+
+    // Opens Containers > Hidden, reads it, and clicks `item` (empty: closes
+    // it). Returns the items as listed, with "!" before a disabled one.
+    QStringList openHidden(const QString& item = {})
+    {
+        QMenu* menu = hiddenMenu();
+        if (!menu) {
+            return {QStringLiteral("(no Hidden menu)")};
+        }
+        QStringList listed;
+        QTimer::singleShot(50, qApp, [&listed, item] {
+            auto* open = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (!open) {
+                return;
+            }
+            for (QAction* action : open->actions()) {
+                listed.append((action->isEnabled() ? QString() : QStringLiteral("!")) + action->text());
+            }
+            if (item.isEmpty()) {
+                open->close();
+            } else {
+                clickItem(open, item);
+            }
+        });
+        menu->exec(window->mapToGlobal(QPoint(200, 200)));
+        settle();
+        return listed;
+    }
+
+    // The Containers > Applets item for an applet.
+    QAction* appletAction(const QString& text) const
+    {
+        for (QAction* action : window->findChildren<QAction*>()) {
+            if (action->isCheckable() && action->text() == text
+                && action->toolTip().startsWith(QStringLiteral("Show or hide the"))) {
+                return action;
+            }
+        }
+        return nullptr;
+    }
+
     bool edit(const std::function<void(WorkspaceDocument&)>& change)
     {
         WorkspaceDocument document = store->snapshot();
@@ -990,7 +1053,8 @@ private slots:
         // Immediately left of ⋯: nothing between them but the row spacing.
         QVERIFY(popOut->geometry().right() < header->optionsButton()->geometry().left());
         for (QWidget* child : header->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-            if (child != popOut && child != header->optionsButton() && child->isVisible()) {
+            if (child != popOut && child != header->optionsButton() && child != header->hideButton()
+                && child->isVisible()) {
                 QVERIFY(child->geometry().right() < popOut->geometry().left());
             }
         }
@@ -1029,6 +1093,8 @@ private slots:
         f.reveal(header);
         QVERIFY(header->popOutButton()->isVisible());
         QVERIFY(!header->popOutButton()->isEnabled());
+        QVERIFY(header->hideButton()->isVisible());
+        QVERIFY(!header->hideButton()->isEnabled());
         MenuProbe probe;
         probe.arm();
         NativeMouse mouse(f.window.get());
@@ -1039,6 +1105,9 @@ private slots:
         mouse.click(centreOf(header->popOutButton()));
         settle();
         QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
+        mouse.click(centreOf(header->hideButton()));
+        settle();
+        QVERIFY(f.entry(f.mainId, f.rxEntryId).visible);
 
         QVERIFY(f.edit([&](WorkspaceDocument& d) {
             for (auto& c : d.containers) {
@@ -1049,14 +1118,18 @@ private slots:
         }));
         header = f.entryHeader(f.rxEntryId);
         QVERIFY(header && header->popOutButton()->isEnabled());
+        QVERIFY(header->hideButton()->isEnabled());
         ContainerContentHost* host = f.host();
         host->setArrangeController(nullptr);
         settle();
         QVERIFY(header->popOutButton()->isVisible());
         QVERIFY(!header->popOutButton()->isEnabled());
+        QVERIFY(header->hideButton()->isVisible());
+        QVERIFY(!header->hideButton()->isEnabled());
         host->setArrangeController(f.manager->arrangeController());
         settle();
         QVERIFY(header->popOutButton()->isEnabled());
+        QVERIFY(header->hideButton()->isEnabled());
     }
 
     // A free canvas leaf's header carries the same ↗.
@@ -1316,6 +1389,224 @@ private slots:
         QCOMPARE(profiles->activeId(), target);
         QVERIFY(!dock->isOpen());
         QCOMPARE(badge->text(), ProfileRail::initialFor(profiles->name(target)));
+    }
+
+    // JJ's decision: every entry header ends with a hide button (Longpath's
+    // close cross), and Containers > Hidden brings the entry back where it
+    // was. An applet hidden this way is unticked under Containers > Applets.
+    void entryHideButtonHidesAndHiddenBringsItBack()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QVERIFY(f.enterArrange());
+        WorkspaceEntryHeader* header = f.entryHeader(f.rxEntryId);
+        QVERIFY(header);
+        f.reveal(header);
+        QPushButton* hide = header->hideButton();
+        QVERIFY(hide && hide->isVisible() && hide->isEnabled());
+        QCOMPARE(hide->objectName(), QStringLiteral("workspaceEntryHide"));
+        QCOMPARE(hide->text(), QStringLiteral("\u2715"));
+        QCOMPARE(hide->toolTip(), QStringLiteral("Hide. Bring it back from the Containers menu."));
+        QCOMPARE(hide->size(), header->optionsButton()->size());
+        // Last and rightmost: right of ⋯, nothing right of it.
+        QVERIFY(header->optionsButton()->geometry().right() < hide->geometry().left());
+        for (QWidget* child : header->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            if (child != hide && child->isVisible()) {
+                QVERIFY(child->geometry().right() < hide->geometry().left());
+            }
+        }
+        QAction* rxApplet = f.appletAction(QStringLiteral("RX"));
+        QVERIFY(rxApplet && rxApplet->isChecked());
+        // Before: only the fixture's hidden floating container.
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("Meter Bars")});
+
+        QWidget* view = nullptr;
+        for (const auto& row : f.host()->entryRows()) {
+            if (row.entryId == f.rxEntryId) {
+                view = row.widget;
+            }
+        }
+        QVERIFY(view && view->isVisible());
+        NativeMouse mouse(f.window.get());
+        const QPoint at = centreOf(hide);
+        QWidget* hit = mouse.targetAt(at);
+        QVERIFY2(hit == header || header->isAncestorOf(hit),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(at);
+        settle();
+        QVERIFY(!f.entry(f.mainId, f.rxEntryId).visible);
+        QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);   // hidden, never moved or deleted
+        QVERIFY(!view->isVisible());
+        QVERIFY(!rxApplet->isChecked());
+        QVERIFY(f.mainContainer()->isVisible());
+
+        const QString label = QStringLiteral("RX (Main Panel)");
+        QCOMPARE(f.openHidden(label), (QStringList{label, QStringLiteral("Meter Bars")}));
+        QVERIFY(f.entry(f.mainId, f.rxEntryId).visible);
+        QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
+        QVERIFY(rxApplet->isChecked());
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("Meter Bars")});
+
+        // Both ways: unticking the applet lists it under Hidden.
+        rxApplet->trigger();
+        settle();
+        QVERIFY(!f.entry(f.mainId, f.rxEntryId).visible);
+        QCOMPARE(f.openHidden(label), (QStringList{label, QStringLiteral("Meter Bars")}));
+        QVERIFY(rxApplet->isChecked());
+    }
+
+    // A hidden container is listed by name and comes back where it was: the
+    // fixture's floating Meter Bars, and a copy saved hidden as Duplicate
+    // made JJ's "Container2 copy" (Floating, visible false). Then the empty
+    // state.
+    void hiddenContainersComeBackWhereTheyWere()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument copy;
+            copy.id = QStringLiteral("container2-copy");
+            copy.name = QStringLiteral("Container2 copy");
+            copy.layout = ContentLayout::VerticalStack;
+            copy.dockMode = DockMode::Floating;
+            copy.visible = false;
+            copy.geometry = QRect(530, 295, 450, 404);
+            ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+            entry.context["sliceId"] = 0;
+            copy.contents.append(entry);
+            d.containers.append(copy);
+        }));
+        QCOMPARE(f.openHidden(), (QStringList{QStringLiteral("Meter Bars"), QStringLiteral("Container2 copy")}));
+        QCOMPARE(f.openHidden(QStringLiteral("Container2 copy")), (QStringList{QStringLiteral("Meter Bars"), QStringLiteral("Container2 copy")}));
+        const ContainerDocument* copy = f.document(QStringLiteral("container2-copy"));
+        QVERIFY(copy->visible);
+        QCOMPARE(copy->dockMode, DockMode::Floating);
+        QCOMPARE(copy->geometry, QRect(530, 295, 450, 404));
+        ContainerWidget* widget = f.manager->container(QStringLiteral("container2-copy"));
+        QVERIFY(widget && widget->window()->isVisible());
+
+        QCOMPARE(f.openHidden(QStringLiteral("Meter Bars")), QStringList{QStringLiteral("Meter Bars")});
+        QVERIFY(f.document(QStringLiteral("meter-bars"))->visible);
+        QVERIFY(f.manager->container(QStringLiteral("meter-bars"))->window()->isVisible());
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("!Nothing hidden")});
+    }
+
+    // The group header's hide button hides the container (the menu's "Hide
+    // container"); disabled, never hidden, when its pop-out is (locked).
+    void groupHideButtonHidesTheContainer()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QVERIFY(f.enterArrange());
+        WorkspaceGroupHeader* header = f.groupHeader();
+        QVERIFY(header && header->isVisible());
+        QPushButton* hide = header->hideButton();
+        QVERIFY(hide && hide->isVisible() && hide->isEnabled());
+        QCOMPARE(hide->objectName(), QStringLiteral("workspaceHide"));
+        QCOMPARE(hide->text(), QStringLiteral("\u2715"));
+        QCOMPARE(hide->toolTip(), QStringLiteral("Hide. Bring it back from the Containers menu."));
+        QCOMPARE(hide->size(), header->optionsButton()->size());
+        QVERIFY(header->optionsButton()->geometry().right() < hide->geometry().left());
+        for (QWidget* child : header->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            if (child != hide && child->isVisible()) {
+                QVERIFY(child->geometry().right() < hide->geometry().left());
+            }
+        }
+
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            for (auto& c : d.containers) {
+                if (c.id == f.mainId) {
+                    c.locked = true;
+                }
+            }
+        }));
+        NativeMouse mouse(f.window.get());
+        QVERIFY(!header->popOutButton()->isEnabled());
+        QVERIFY(hide->isVisible() && !hide->isEnabled());
+        mouse.click(centreOf(hide));
+        settle();
+        QVERIFY(f.document(f.mainId)->visible);
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            for (auto& c : d.containers) {
+                if (c.id == f.mainId) {
+                    c.locked = false;
+                }
+            }
+        }));
+        QVERIFY(header->popOutButton()->isEnabled() && hide->isEnabled());
+
+        const QPoint at = centreOf(hide);
+        QWidget* hit = mouse.targetAt(at);
+        QVERIFY2(hit == header || header->isAncestorOf(hit),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(at);
+        settle();
+        QVERIFY(!f.document(f.mainId)->visible);
+        QVERIFY(!f.mainContainer()->isVisible());
+        QCOMPARE(f.openHidden(QStringLiteral("Main Panel")),
+                 (QStringList{QStringLiteral("Main Panel"), QStringLiteral("Meter Bars")}));
+        QVERIFY(f.document(f.mainId)->visible);
+        QVERIFY(f.mainContainer()->isVisible());
+        QCOMPARE(f.document(f.mainId)->edge, DockEdge::Right);
+    }
+
+    // A free canvas leaf's header has the same hide button. Hiding the last
+    // visible widget takes the container off the screen with it; showing any
+    // of them brings it back.
+    void hidingTheLastWidgetHidesItsContainer()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        QStringList leaves;
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument canvas;
+            canvas.id = QStringLiteral("canvas");
+            canvas.name = QStringLiteral("Canvas");
+            canvas.layout = ContentLayout::FreeCanvas;
+            canvas.dockMode = DockMode::PanelDocked;
+            canvas.edge = DockEdge::Left;
+            for (int i = 0; i < 2; ++i) {
+                ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+                entry.context["sliceId"] = 0;
+                entry.name = QStringLiteral("Bar %1").arg(i + 1);
+                entry.setFreeCanvasRect(QRectF(0, i * 120, 300, 100));
+                canvas.contents.append(entry);
+                leaves.append(entry.id);
+            }
+            d.containers.append(canvas);
+            d.arrangement.strips[DockEdge::Left].thickness = 360;
+        }));
+        QVERIFY(f.enterArrange());
+        ContainerWidget* canvasWidget = f.manager->container(QStringLiteral("canvas"));
+        QVERIFY(canvasWidget && canvasWidget->isVisible());
+        NativeMouse mouse(f.window.get());
+        for (const QString& leaf : leaves) {
+            auto* surface = f.manager->contentHost(QStringLiteral("canvas"))->findChild<FreeCanvasSurface*>();
+            QVERIFY(surface);
+            surface->selectEntry(leaf);
+            settle();
+            auto* header = surface->findChild<WorkspaceEntryHeader*>(QStringLiteral("freeCanvasGrip_") + leaf);
+            QVERIFY(header && header->isVisible());
+            QPushButton* hide = header->hideButton();
+            QCOMPARE(hide->objectName(), QStringLiteral("workspaceEntryHide"));
+            QVERIFY(hide->isEnabled());
+            const QPoint at = centreOf(hide);
+            QWidget* hit = mouse.targetAt(at);
+            QVERIFY2(hit == header || header->isAncestorOf(hit),
+                     qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+            mouse.click(at);
+            settle();
+            QVERIFY(!f.entry(QStringLiteral("canvas"), leaf).visible);
+        }
+        // Both hidden: the container leaves the screen, its own saved
+        // visibility untouched.
+        QVERIFY(f.document(QStringLiteral("canvas"))->visible);
+        QVERIFY(!canvasWidget->isVisible());
+        QCOMPARE(f.openHidden(QStringLiteral("Bar 2 (Canvas)")),
+                 (QStringList{QStringLiteral("Meter Bars"), QStringLiteral("Bar 1 (Canvas)"),
+                              QStringLiteral("Bar 2 (Canvas)")}));
+        QVERIFY(f.entry(QStringLiteral("canvas"), leaves[1]).visible);
+        QVERIFY(canvasWidget->isVisible());
     }
 
     // JJ on his Mac after 391a09306: the rail "closes when i try to move

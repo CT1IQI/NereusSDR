@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the header's hide button hides the
+//                 entry or container (Containers > Hidden brings it back).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: Arrange's outline and the Reveal
 //                 shadow let clicks through as native views (macOS), so
 //                 the header under them answers. J.J. Boyd (KG4VCF),
@@ -403,6 +406,9 @@ void ContainerWidget::buildWorkspaceHeader()
             &ContainerWidget::showWorkspaceOptions);
     connect(m_groupHeader, &WorkspaceGroupHeader::sourceClicked, this,
             &ContainerWidget::showSourceMenu);
+    // The hide button: the same as the menu's "Hide container".
+    connect(m_groupHeader, &WorkspaceGroupHeader::hideClicked, this,
+            &ContainerWidget::hideContainerRequested);
 
     m_headerOpacity = new QGraphicsOpacityEffect(m_groupHeader);
     m_headerOpacity->setOpacity(kRevealOpacity);
