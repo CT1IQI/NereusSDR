@@ -30,6 +30,10 @@
 //                 original, from the manager and from Container Settings, in
 //                 both looks, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Menus are read by a wait that polls until the popup is
+//                 shown (PopupWait), not a fixed 50 ms shot that missed it
+//                 under load and left exec() waiting; generous waits, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -87,7 +91,12 @@ using namespace NereusSDR;
 
 namespace {
 
-constexpr int kMenuWaitMs = 2000;
+// Generous on purpose: the waits below return as soon as their condition
+// holds, so a long limit costs nothing on a quiet machine and keeps a
+// loaded one from failing a test that is right.
+constexpr int kMenuWaitMs = 30000;
+// How long a PopupWait keeps looking for its popup.
+constexpr int kPopupWaitMs = 60000;
 
 // Known lines this test filters, so the log shows only what is new:
 // - the offscreen platform has no GPU and does not move or stack native
@@ -419,23 +428,52 @@ QPoint centreOf(const QWidget* widget)
     return widget->mapToGlobal(widget->rect().center());
 }
 
+// Waits for a popup menu to be on screen, then acts on it once. Polls every
+// 10 ms from the event loop, so it runs inside the menu's exec() loop and
+// never acts before the popup is shown, however long the machine takes to
+// open it. A fixed single shot (the old 50 ms probe) fired before the popup
+// under load, found nothing, and left the menu's exec() waiting forever.
+// `accept` picks which popup (a submenu, say); empty takes any. Stops by
+// itself after `timeoutMs`, and when it is destroyed.
+struct PopupWait {
+    QTimer poll;
+    QElapsedTimer clock;
+
+    void start(std::function<bool(QMenu*)> accept, std::function<void(QMenu*)> act, int timeoutMs = kPopupWaitMs)
+    {
+        poll.disconnect();
+        poll.setInterval(10);
+        clock.start();
+        QObject::connect(&poll, &QTimer::timeout, [this, accept, act, timeoutMs] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (menu && menu->isVisible() && (!accept || accept(menu))) {
+                poll.stop();
+                act(menu);
+                return;
+            }
+            if (clock.elapsed() > timeoutMs) {
+                poll.stop();
+            }
+        });
+        poll.start();
+    }
+};
+
 // Reads the popup a click opened, from inside its exec() loop, and acts on
 // it with real clicks. Records what it saw; closes the menu when `act` does
-// not pick an item.
+// not pick an item. `sub` is for a test that goes on into a submenu.
 struct MenuProbe {
     bool opened{false};
     QStringList actions;
     QWindow* transientParent{nullptr};
     bool transientIsTopLevel{false};
     QHash<QString, bool> enabled;
+    PopupWait wait;
+    PopupWait sub;
 
     void arm(std::function<void(QMenu*)> act = {})
     {
-        QTimer::singleShot(50, qApp, [this, act] {
-            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-            if (!menu) {
-                return;
-            }
+        wait.start({}, [this, act](QMenu* menu) {
             opened = true;
             for (QAction* action : menu->actions()) {
                 if (!action->isSeparator()) {
@@ -453,6 +491,12 @@ struct MenuProbe {
                 menu->close();
             }
         });
+    }
+
+    // After `menu` opened a submenu: acts on the submenu once it is shown.
+    void onSubmenu(QMenu* menu, std::function<void(QMenu*)> act)
+    {
+        sub.start([menu](QMenu* open) { return open != menu; }, std::move(act));
     }
 };
 
@@ -732,11 +776,8 @@ struct LiveFixture {
             return {QStringLiteral("(no Hidden menu)")};
         }
         QStringList listed;
-        QTimer::singleShot(50, qApp, [&listed, item] {
-            auto* open = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-            if (!open) {
-                return;
-            }
+        PopupWait wait;
+        wait.start({}, [&listed, item](QMenu* open) {
             for (QAction* action : open->actions()) {
                 listed.append((action->isEnabled() ? QString() : QStringLiteral("!")) + action->text());
             }
@@ -778,11 +819,8 @@ struct LiveFixture {
     bool pickFromContainerMenu(ContainerWidget* container, const QString& item)
     {
         bool picked = false;
-        QTimer::singleShot(50, qApp, [&picked, item] {
-            auto* open = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-            if (!open) {
-                return;
-            }
+        PopupWait wait;
+        wait.start({}, [&picked, item](QMenu* open) {
             picked = actionNamed(open, item) != nullptr;
             clickItem(open, item);
         });
@@ -1031,16 +1069,11 @@ private slots:
         MenuProbe probe;
         bool submenuOpened = false;
         probe.arm([&](QMenu* menu) {
-            clickItem(menu, QStringLiteral("Move to Edge"));
-            QTimer::singleShot(400, qApp, [&, menu] {
-                auto* sub = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-                if (!sub || sub == menu) {
-                    menu->close();
-                    return;
-                }
+            probe.onSubmenu(menu, [&](QMenu* sub) {
                 submenuOpened = true;
                 clickItem(sub, QStringLiteral("Left"));
             });
+            clickItem(menu, QStringLiteral("Move to Edge"));
         });
         mouse.click(centreOf(f.groupHeader()->optionsButton()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
@@ -1318,8 +1351,8 @@ private slots:
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
         settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!f.shellHolding(popId).isEmpty(), kMenuWaitMs);
         const QString shell = f.shellHolding(popId);
-        QVERIFY(!shell.isEmpty());
         ContainerWidget* shellWidget = f.manager->container(shell);
         QVERIFY(shellWidget);
         WorkspaceGroupHeader* shellHeader = shellWidget->workspaceHeader();
@@ -1329,16 +1362,11 @@ private slots:
         MenuProbe probe;
         bool submenuOpened = false;
         probe.arm([&](QMenu* menu) {
-            clickItem(menu, QStringLiteral("Move to Edge"));
-            QTimer::singleShot(400, qApp, [&, menu] {
-                auto* sub = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-                if (!sub || sub == menu) {
-                    menu->close();
-                    return;
-                }
+            probe.onSubmenu(menu, [&](QMenu* sub) {
                 submenuOpened = true;
                 clickItem(sub, QStringLiteral("Bottom"));
             });
+            clickItem(menu, QStringLiteral("Move to Edge"));
         });
         shellMouse.click(centreOf(shellHeader->optionsButton()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
