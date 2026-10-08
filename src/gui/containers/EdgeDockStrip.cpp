@@ -1,0 +1,722 @@
+// src/gui/containers/EdgeDockStrip.cpp
+
+// --- From src/gui/applets/AppletGrid.cpp ---
+// =================================================================
+// src/gui/applets/AppletGrid.cpp  (Longpath)
+// =================================================================
+// Siehe AppletGrid.h — Schritt 1 des freien Rasters.
+
+// --- From src/gui/StyleConstants.h ---
+// =================================================================
+// src/gui/StyleConstants.h  (Longpath)
+// =================================================================
+//
+// Source attribution (AetherSDR — GPLv3):
+//
+//   Copyright (C) 2024-2026  Jeremy (KK7GWY) / AetherSDR contributors
+//       — per https://github.com/ten9876/AetherSDR (GPLv3; see LICENSE
+//       and About dialog for the live contributor list)
+//
+//   This file is a port or structural derivative of AetherSDR source.
+//   AetherSDR is licensed under the GNU General Public License v3.
+//   Longpath is also GPLv3. Attribution follows GPLv3 §5 requirements.
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
+//                 J.J. Boyd (KG4VCF), with AI-assisted transformation
+//                 via Anthropic Claude Code.
+//                 Theme palette imported from AetherSDR `src/gui/ComboStyle.h` /
+//                 `HGauge.h` / `SliceColors.h` and inline QColor calls
+//                 in `MainWindow.cpp` / `VfoWidget.cpp`.
+// =================================================================
+
+// --- From src/gui/WindowPlacement.h ---
+// =================================================================
+// src/gui/WindowPlacement.h  (Longpath)
+// =================================================================
+//
+// Longpath-original.
+//
+// ── Ein Fenster auf einen sichtbaren Schirm holen ────────────────────
+//
+// Der Rumpf dieser Funktion stand seit 2026-04-17 als
+// FloatingContainer::ensureVisiblePosition() im Baum und löste den Fall
+// „der Monitor ist beim Start nicht mehr da" bereits vollständig. Er
+// hing dort nur an einer Klasse fest, die ein Meter-Fenster ist — er
+// fasst nichts von ihr an ausser zwei Grössenkonstanten.
+//
+// Am 2026-08-16 wurde er hierher gehoben, damit die Applet-Fenster
+// dieselbe Lösung BENUTZEN, statt eine zweite halbe zu bekommen.
+// Verhalten unverändert; FloatingContainer ruft jetzt hierher.
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-04-17 — Ursprung als FloatingContainer::ensureVisiblePosition,
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-08-16 — Als freie Funktion herausgezogen, Verhalten
+//                 unverändert. Martin Fischer, AI-assisted via
+//                 Anthropic Claude (Cowork).
+//   2026-09-25 — coveredFraction(): eingeschaltete Applets nach vorne.
+//                 Martin Fischer, AI-assisted via Anthropic Claude.
+//   2026-09-27 — fitFrameIntoArea(): Werkzeugfenster nie groesser als
+//                 der Schirm. Martin Fischer, AI-assisted via Anthropic
+//                 Claude.
+// =================================================================
+
+// --- From src/gui/WindowPlacement.cpp ---
+// =================================================================
+// src/gui/WindowPlacement.cpp  (Longpath)
+// =================================================================
+// Siehe WindowPlacement.h für Herkunft und die zwei bekannten
+// Schwächen, die hier bewusst unverändert bleiben.
+// =================================================================
+
+// =================================================================
+// src/gui/containers/EdgeDockStrip.cpp  (NereusSDR)
+// =================================================================
+//
+// Ported from Longpath source at revision
+//   551576e30c42731c6d51ce005c5f23ec38be391c,
+//   https://github.com/oe5sos/Longpath, primary author Martin Fischer
+//   (OE5SOS). The upstream banners are copied above. See
+//   EdgeDockStrip.h for what is ported; everything else here is
+//   NereusSDR-original.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-07 - Written for the workspace visual review by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+// =================================================================
+
+#include "EdgeDockStrip.h"
+
+#include "gui/styles/WorkspacePalette.h"
+
+#include <QApplication>
+#include <QPainter>
+#include <QPainterPath>
+#include <QResizeEvent>
+#include <QScopedValueRollback>
+#include <QScrollArea>
+#include <QSplitterHandle>
+#include <QVBoxLayout>
+
+#include <cmath>
+
+namespace NereusSDR {
+
+namespace {
+
+QColor role(const char* name)
+{
+    return Workspace::WorkspacePalette::glassAndDepth().color(QString::fromLatin1(name));
+}
+
+void fillWithAppBackground(QWidget* w)
+{
+    QPalette palette = w->palette();
+    palette.setColor(QPalette::Window, role("app-bg"));
+    w->setPalette(palette);
+    w->setAutoFillBackground(true);
+}
+
+QString edgeObjectName(DockEdge edge)
+{
+    switch (edge) {
+    case DockEdge::Left:
+        return QStringLiteral("edgeDockStripLeft");
+    case DockEdge::Right:
+        return QStringLiteral("edgeDockStripRight");
+    case DockEdge::Top:
+        return QStringLiteral("edgeDockStripTop");
+    case DockEdge::Bottom:
+        return QStringLiteral("edgeDockStripBottom");
+    }
+    return {};
+}
+
+constexpr DockEdge kEdges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
+
+// 6 px handle, app background, a 1 px centre line in the border role
+// that takes the accent role under the pointer.
+class EdgeDockHandle : public QSplitterHandle {
+public:
+    EdgeDockHandle(Qt::Orientation orientation, QSplitter* parent)
+        : QSplitterHandle(orientation, parent)
+    {
+        setAttribute(Qt::WA_Hover);
+    }
+
+    QSize sizeHint() const override
+    {
+        const QSize base = QSplitterHandle::sizeHint();
+        return orientation() == Qt::Horizontal ? QSize(EdgeDockStrip::kHandlePx, base.height())
+                                               : QSize(base.width(), EdgeDockStrip::kHandlePx);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), role("app-bg"));
+        const QColor line = underMouse() ? role("accent") : role("border");
+        if (orientation() == Qt::Horizontal) {
+            painter.fillRect(QRect(width() / 2, 0, 1, height()), line);
+        } else {
+            painter.fillRect(QRect(0, height() / 2, width(), 1), line);
+        }
+    }
+};
+
+} // namespace
+
+// From Longpath src/gui/WindowPlacement.cpp:140-147 [@551576e3]
+QPoint workspaceSnappedTopLeft(const QPoint& pos, int grid)
+{
+    if (grid <= 1) { return pos; }
+    const auto snapAxis = [grid](int v) {
+        return static_cast<int>(std::lround(v / static_cast<double>(grid))) * grid;
+    };
+    return QPoint(snapAxis(pos.x()), snapAxis(pos.y()));
+}
+
+// ---- EdgeDockSplitter -----------------------------------------------------
+
+EdgeDockSplitter::EdgeDockSplitter(Qt::Orientation orientation, QWidget* parent)
+    : QSplitter(orientation, parent)
+{
+    setHandleWidth(EdgeDockStrip::kHandlePx);
+    setChildrenCollapsible(false);
+}
+
+QSplitterHandle* EdgeDockSplitter::createHandle()
+{
+    return new EdgeDockHandle(orientation(), this);
+}
+
+// ---- EdgeDockStrip --------------------------------------------------------
+
+EdgeDockStrip::EdgeDockStrip(DockEdge edge, QWidget* parent)
+    : QWidget(parent)
+    , m_edge(edge)
+{
+    setObjectName(edgeObjectName(edge));
+    fillWithAppBackground(this);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+
+    m_scroll = new QScrollArea(this);
+    m_scroll->setFrameShape(QFrame::NoFrame);
+    m_scroll->setWidgetResizable(true);
+    const bool vertical = orientation() == Qt::Vertical;
+    m_scroll->setHorizontalScrollBarPolicy(vertical ? Qt::ScrollBarAlwaysOff : Qt::ScrollBarAsNeeded);
+    m_scroll->setVerticalScrollBarPolicy(vertical ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    fillWithAppBackground(m_scroll->viewport());
+
+    m_body = new QWidget(m_scroll);
+    m_body->setObjectName(QStringLiteral("edgeDockStripBody"));
+    fillWithAppBackground(m_body);
+    auto* bodyLayout = new QVBoxLayout(m_body);
+    bodyLayout->setContentsMargins(kPaddingPx, kPaddingPx, kPaddingPx, kPaddingPx);
+    bodyLayout->setSpacing(0);
+    m_splitter = new EdgeDockSplitter(orientation(), m_body);
+    m_splitter->setHandleWidth(kGapPx);
+    bodyLayout->addWidget(m_splitter);
+    m_scroll->setWidget(m_body);
+    outer->addWidget(m_scroll);
+
+    connect(m_splitter, &QSplitter::splitterMoved, this, &EdgeDockStrip::extentsChanged);
+}
+
+Qt::Orientation EdgeDockStrip::orientationFor(DockEdge edge)
+{
+    return edge == DockEdge::Left || edge == DockEdge::Right ? Qt::Vertical : Qt::Horizontal;
+}
+
+Qt::Orientation EdgeDockStrip::orientation() const
+{
+    return orientationFor(m_edge);
+}
+
+int EdgeDockStrip::defaultThickness(DockEdge edge)
+{
+    return orientationFor(edge) == Qt::Vertical ? kSideThicknessPx : kEndThicknessPx;
+}
+
+void EdgeDockStrip::setContainers(const QList<QWidget*>& widgets)
+{
+    for (int i = 0; i < widgets.size(); ++i) {
+        if (m_splitter->indexOf(widgets[i]) != i) {
+            m_splitter->insertWidget(i, widgets[i]);
+        }
+    }
+}
+
+QList<QWidget*> EdgeDockStrip::containers() const
+{
+    QList<QWidget*> result;
+    for (int i = 0; i < m_splitter->count(); ++i) {
+        result.append(m_splitter->widget(i));
+    }
+    return result;
+}
+
+int EdgeDockStrip::count() const
+{
+    return m_splitter->count();
+}
+
+QList<QWidget*> EdgeDockStrip::shownContainers() const
+{
+    QList<QWidget*> result;
+    for (QWidget* w : containers()) {
+        if (!w->isHidden()) {
+            result.append(w);
+        }
+    }
+    return result;
+}
+
+bool EdgeDockStrip::hasShownContainer() const
+{
+    return !shownContainers().isEmpty();
+}
+
+QList<int> EdgeDockStrip::extents() const
+{
+    return m_splitter->sizes();
+}
+
+void EdgeDockStrip::setExtents(const QList<int>& extents)
+{
+    if (extents.size() == m_splitter->count()) {
+        m_splitter->setSizes(extents);
+    }
+}
+
+QRect EdgeDockStrip::containerRect(QWidget* w) const
+{
+    return QRect(w->mapTo(this, QPoint(0, 0)), w->size());
+}
+
+int EdgeDockStrip::insertionIndexAt(const QPoint& pos) const
+{
+    const bool vertical = orientation() == Qt::Vertical;
+    const int along = vertical ? pos.y() : pos.x();
+    for (int i = 0; i < m_splitter->count(); ++i) {
+        QWidget* w = m_splitter->widget(i);
+        if (w->isHidden()) {
+            continue;
+        }
+        const QRect r = containerRect(w);
+        if (along < (vertical ? r.center().y() : r.center().x())) {
+            return i;
+        }
+    }
+    return m_splitter->count();
+}
+
+QRect EdgeDockStrip::insertionRect(int index) const
+{
+    const bool vertical = orientation() == Qt::Vertical;
+    const QRect inner = rect().adjusted(kPaddingPx, kPaddingPx, -kPaddingPx, -kPaddingPx);
+    QWidget* before = nullptr;
+    QWidget* after = nullptr;
+    for (int i = 0; i < m_splitter->count(); ++i) {
+        QWidget* w = m_splitter->widget(i);
+        if (w->isHidden()) {
+            continue;
+        }
+        if (i < index) {
+            before = w;
+        } else if (after == nullptr) {
+            after = w;
+        }
+    }
+    if (before == nullptr && after == nullptr) {
+        return inner;
+    }
+    const auto start = [&](QWidget* w) {
+        return vertical ? containerRect(w).top() : containerRect(w).left();
+    };
+    const auto end = [&](QWidget* w) {
+        return vertical ? containerRect(w).bottom() + 1 : containerRect(w).right() + 1;
+    };
+    int from = 0;
+    if (before != nullptr && after != nullptr) {
+        from = (end(before) + start(after)) / 2 - kInsertPreviewPx / 2;
+    } else if (before == nullptr) {
+        from = start(after);
+    } else {
+        from = end(before) - kInsertPreviewPx;
+    }
+    QRect r = vertical ? QRect(inner.left(), from, inner.width(), kInsertPreviewPx)
+                       : QRect(from, inner.top(), kInsertPreviewPx, inner.height());
+    if (vertical) {
+        r.moveTop(qBound(inner.top(), r.top(), qMax(inner.top(), inner.bottom() + 1 - kInsertPreviewPx)));
+    } else {
+        r.moveLeft(qBound(inner.left(), r.left(), qMax(inner.left(), inner.right() + 1 - kInsertPreviewPx)));
+    }
+    return r;
+}
+
+// ---- EdgeDropOverlay ------------------------------------------------------
+
+class EdgeDropOverlay : public QWidget {
+public:
+    explicit EdgeDropOverlay(EdgeDockArea* area)
+        : QWidget(area)
+        , m_area(area)
+    {
+        setObjectName(QStringLiteral("edgeDropOverlay"));
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        hide();
+    }
+
+    bool bands{false};
+    bool preview{false};
+    QRect previewRect;
+
+    void sync()
+    {
+        setGeometry(m_area->rect());
+        setVisible(bands || preview);
+        if (isVisible()) {
+            raise();
+        }
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        const QColor accent = role("accent");
+        if (bands) {
+            QColor band = accent;
+            band.setAlphaF(EdgeDockArea::kTargetBandAlpha);
+            for (DockEdge edge : kEdges) {
+                painter.fillRect(m_area->targetBandRect(edge), band);
+            }
+        }
+        if (preview && previewRect.isValid()) {
+            painter.setRenderHint(QPainter::Antialiasing);
+            QColor fill = accent;
+            fill.setAlphaF(EdgeDockArea::kPreviewFillAlpha);
+            QPainterPath path;
+            path.addRoundedRect(QRectF(previewRect).adjusted(0.5, 0.5, -0.5, -0.5),
+                                EdgeDockArea::kPreviewRadiusPx, EdgeDockArea::kPreviewRadiusPx);
+            painter.fillPath(path, fill);
+            painter.setPen(QPen(QColor::fromRgba(EdgeDockArea::kPreviewBorder), 1.0));
+            painter.drawPath(path);
+        }
+    }
+
+private:
+    EdgeDockArea* m_area;
+};
+
+// ---- EdgeDockArea ---------------------------------------------------------
+
+EdgeDockArea::EdgeDockArea(QSplitter* middle, QWidget* center, QWidget* parent)
+    : QWidget(parent)
+    , m_middle(middle)
+    , m_center(center)
+{
+    setObjectName(QStringLiteral("edgeDockArea"));
+    fillWithAppBackground(this);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    m_vertical = new EdgeDockSplitter(Qt::Vertical, this);
+    m_vertical->setObjectName(QStringLiteral("edgeDockVertical"));
+    for (DockEdge edge : kEdges) {
+        auto* strip = new EdgeDockStrip(edge, this);
+        strip->hide();
+        m_strips[indexOf(edge)] = strip;
+        connect(strip, &EdgeDockStrip::extentsChanged, this, [this] {
+            if (!m_applying) {
+                emit thicknessChanged();
+            }
+        });
+    }
+    m_vertical->addWidget(strip(DockEdge::Top));
+    m_vertical->addWidget(m_middle);
+    m_vertical->addWidget(strip(DockEdge::Bottom));
+    m_middle->insertWidget(0, strip(DockEdge::Left));
+    m_middle->addWidget(strip(DockEdge::Right));
+    m_middle->setChildrenCollapsible(false);
+    // Only the middle row and the centre stretch: a strip keeps its
+    // thickness when the window is resized.
+    m_vertical->setStretchFactor(1, 1);
+    m_middle->setStretchFactor(m_middle->indexOf(m_center), 1);
+    layout->addWidget(m_vertical);
+
+    connect(m_vertical, &QSplitter::splitterMoved, this, &EdgeDockArea::captureThickness);
+    connect(m_middle, &QSplitter::splitterMoved, this, &EdgeDockArea::captureThickness);
+
+    m_overlay = new EdgeDropOverlay(this);
+}
+
+int EdgeDockArea::indexOf(DockEdge edge) const
+{
+    return qBound(0, int(edge), 3);
+}
+
+EdgeDockStrip* EdgeDockArea::strip(DockEdge edge) const
+{
+    return m_strips[indexOf(edge)];
+}
+
+int EdgeDockArea::migratedRightThickness() const
+{
+    const int total = width() > 0 ? width() : m_middle->width();
+    return qMax(1, int(std::lround(total * double(kMigratedPanelShare) / kMigratedTotalShare)));
+}
+
+int EdgeDockArea::thickness(DockEdge edge) const
+{
+    const int i = indexOf(edge);
+    if (m_explicit[i]) {
+        return m_thickness[i];
+    }
+    return edge == DockEdge::Right ? migratedRightThickness() : EdgeDockStrip::defaultThickness(edge);
+}
+
+bool EdgeDockArea::hasThickness(DockEdge edge) const
+{
+    return m_explicit[indexOf(edge)];
+}
+
+void EdgeDockArea::setThickness(DockEdge edge, int thickness)
+{
+    const int i = indexOf(edge);
+    if (thickness <= 0 || (m_explicit[i] && m_thickness[i] == thickness)) {
+        return;
+    }
+    m_thickness[i] = thickness;
+    m_explicit[i] = true;
+    applySizes();
+}
+
+void EdgeDockArea::setUserCollapsed(DockEdge edge, bool collapsed)
+{
+    m_collapsed[indexOf(edge)] = collapsed;
+    refreshLayout();
+}
+
+bool EdgeDockArea::userCollapsed(DockEdge edge) const
+{
+    return m_collapsed[indexOf(edge)];
+}
+
+void EdgeDockArea::refreshLayout()
+{
+    for (DockEdge edge : kEdges) {
+        const int i = indexOf(edge);
+        const bool shown = strip(edge)->hasShownContainer() && !m_collapsed[i];
+        m_shown[i] = shown;
+        if (strip(edge)->isHidden() == shown) {
+            strip(edge)->setVisible(shown);
+        }
+    }
+    applySizes();
+}
+
+void EdgeDockArea::applySizes()
+{
+    if (m_applying) {
+        return;
+    }
+    QScopedValueRollback<bool> guard(m_applying, true);
+    const auto across = [this](DockEdge edge) {
+        return m_shown[indexOf(edge)] ? thickness(edge) : 0;
+    };
+    const int top = across(DockEdge::Top);
+    const int bottom = across(DockEdge::Bottom);
+    const int verticalHandles = (top > 0 ? m_vertical->handleWidth() : 0)
+                              + (bottom > 0 ? m_vertical->handleWidth() : 0);
+    const int height = qMax(1, m_vertical->height() - top - bottom - verticalHandles);
+    m_vertical->setSizes({top, height, bottom});
+
+    const int left = across(DockEdge::Left);
+    const int right = across(DockEdge::Right);
+    const int middleHandles = (left > 0 ? m_middle->handleWidth() : 0)
+                            + (right > 0 ? m_middle->handleWidth() : 0);
+    const int width = qMax(1, m_middle->width() - left - right - middleHandles);
+    QList<int> sizes;
+    for (int i = 0; i < m_middle->count(); ++i) {
+        QWidget* w = m_middle->widget(i);
+        sizes.append(w == strip(DockEdge::Left) ? left : w == strip(DockEdge::Right) ? right : width);
+    }
+    m_middle->setSizes(sizes);
+}
+
+void EdgeDockArea::captureThickness()
+{
+    if (m_applying) {
+        return;
+    }
+    const QList<int> vertical = m_vertical->sizes();
+    const QList<int> middle = m_middle->sizes();
+    for (DockEdge edge : kEdges) {
+        const int i = indexOf(edge);
+        if (!m_shown[i]) {
+            continue;
+        }
+        QSplitter* splitter = EdgeDockStrip::orientationFor(edge) == Qt::Vertical ? m_middle : m_vertical;
+        const int index = splitter->indexOf(strip(edge));
+        const QList<int>& sizes = splitter == m_middle ? middle : vertical;
+        if (index >= 0 && index < sizes.size() && sizes[index] > 0) {
+            m_thickness[i] = sizes[index];
+            m_explicit[i] = true;
+        }
+    }
+    emit thicknessChanged();
+}
+
+void EdgeDockArea::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    m_overlay->sync();
+    // Until a thickness is saved or dragged, the right strip keeps
+    // today's share of the window, as the Main Panel did.
+    if (!m_explicit[indexOf(DockEdge::Right)] && m_shown[indexOf(DockEdge::Right)]) {
+        applySizes();
+    }
+}
+
+QRect EdgeDockArea::stripRect(DockEdge edge) const
+{
+    EdgeDockStrip* s = strip(edge);
+    return QRect(s->mapTo(this, QPoint(0, 0)), s->size());
+}
+
+QRect EdgeDockArea::targetBandRect(DockEdge edge) const
+{
+    switch (edge) {
+    case DockEdge::Left:
+        return QRect(0, 0, kTargetBandPx, height());
+    case DockEdge::Right:
+        return QRect(width() - kTargetBandPx, 0, kTargetBandPx, height());
+    case DockEdge::Top:
+        return QRect(0, 0, width(), kTargetBandPx);
+    case DockEdge::Bottom:
+        return QRect(0, height() - kTargetBandPx, width(), kTargetBandPx);
+    }
+    return {};
+}
+
+EdgeDockArea::DropTarget EdgeDockArea::dropTargetAt(const QPoint& globalPos) const
+{
+    DropTarget target;
+    // Pulled well outside the main window: detach to a floating shell.
+    const QWidget* win = window();
+    const int threshold = QApplication::startDragDistance();
+    const QRect windowRect(win->mapToGlobal(QPoint(0, 0)), win->size());
+    if (!windowRect.adjusted(-threshold, -threshold, threshold, threshold).contains(globalPos)) {
+        target.detach = true;
+        return target;
+    }
+    const QPoint p = mapFromGlobal(globalPos);
+    for (DockEdge edge : kEdges) {
+        if (!m_shown[indexOf(edge)]) {
+            continue;
+        }
+        if (stripRect(edge).contains(p)) {
+            target.valid = true;
+            target.edge = edge;
+            target.index = strip(edge)->insertionIndexAt(strip(edge)->mapFrom(this, p));
+            return target;
+        }
+    }
+    if (!rect().contains(p)) {
+        return target;
+    }
+    const int distances[4] = {p.x(), width() - 1 - p.x(), p.y(), height() - 1 - p.y()};
+    int nearest = 0;
+    for (int i = 1; i < 4; ++i) {
+        if (distances[i] < distances[nearest]) {
+            nearest = i;
+        }
+    }
+    if (distances[nearest] < kEdgeHotZonePx) {
+        target.valid = true;
+        target.edge = kEdges[nearest];
+        target.index = strip(target.edge)->count();
+    }
+    return target;
+}
+
+QRect EdgeDockArea::previewRectFor(DockEdge edge, int index) const
+{
+    if (m_shown[indexOf(edge)]) {
+        EdgeDockStrip* s = strip(edge);
+        return s->insertionRect(index).translated(s->mapTo(this, QPoint(0, 0)));
+    }
+    // An empty strip: where it would open, between the strips that exist.
+    const int t = thickness(edge);
+    const QRect middle(m_middle->mapTo(this, QPoint(0, 0)), m_middle->size());
+    QRect r;
+    switch (edge) {
+    case DockEdge::Top:
+        r = QRect(0, 0, width(), t);
+        break;
+    case DockEdge::Bottom:
+        r = QRect(0, height() - t, width(), t);
+        break;
+    case DockEdge::Left:
+        r = QRect(0, middle.top(), t, middle.height());
+        break;
+    case DockEdge::Right:
+        r = QRect(width() - t, middle.top(), t, middle.height());
+        break;
+    }
+    constexpr int pad = EdgeDockStrip::kPaddingPx;
+    return r.adjusted(pad, pad, -pad, -pad);
+}
+
+void EdgeDockArea::setTargetBandsVisible(bool visible)
+{
+    if (m_overlay->bands != visible) {
+        m_overlay->bands = visible;
+        m_overlay->sync();
+    }
+}
+
+bool EdgeDockArea::targetBandsVisible() const
+{
+    return m_overlay->bands;
+}
+
+void EdgeDockArea::showDropPreview(DockEdge edge, int index)
+{
+    m_overlay->preview = true;
+    m_overlay->previewRect = previewRectFor(edge, index);
+    m_overlay->sync();
+}
+
+void EdgeDockArea::clearDropPreview()
+{
+    if (m_overlay->preview) {
+        m_overlay->preview = false;
+        m_overlay->previewRect = QRect();
+        m_overlay->sync();
+    }
+}
+
+bool EdgeDockArea::dropPreviewVisible() const
+{
+    return m_overlay->preview;
+}
+
+QRect EdgeDockArea::dropPreviewRect() const
+{
+    return m_overlay->preview ? m_overlay->previewRect : QRect();
+}
+
+} // namespace NereusSDR

@@ -17,6 +17,11 @@
 //                 header-reveal-idle, header-reveal-shown, header-hidden,
 //                 arrange-on) with the Main Panel top crop. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Proposed four-edge workspace scenes (edge-right,
+//                 edge-left, edge-top-bottom, edge-all-four,
+//                 free-container, floating-container, drag-preview-left,
+//                 drag-preview-between). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -30,6 +35,7 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QTimer>
 #include <QTreeWidget>
@@ -59,8 +65,13 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceHeader.h"
+#include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/ModeButtonItem.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -738,6 +749,203 @@ T* visibleTopLevel()
     return nullptr;
 }
 
+// ---- proposed four-edge workspace -----------------------------------------
+
+QString slug(const QString& text);
+
+struct EdgeEntry {
+    QString typeId;
+    // FreeCanvas placement in container pixels; empty for a stack.
+    QRectF rect;
+    // A legacy record for the item's own settings (button columns).
+    QString legacyRecord;
+};
+
+// One row of buttons: every button in its own column, at `heightRatio`,
+// as Container Settings sets them for a short strip.
+template <typename Item>
+QString singleRowRecord(float heightRatio)
+{
+    Item item;
+    item.setColumns(qMax(1, item.buttonCount()));
+    item.setHeightRatio(heightRatio);
+    return item.serialize();
+}
+
+// Adds a container to the committed workspace, as the Containers menu and
+// the settings dialog do: a draft with registry entries, committed.
+QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
+                          ContentLayout layout, const QVector<EdgeEntry>& entries)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return {};
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    ContainerDocument d;
+    d.id = QStringLiteral("preview-") + slug(name);
+    d.name = name;
+    d.layout = layout;
+    d.dockMode = DockMode::PanelDocked;
+    d.edge = edge;
+    d.header = HeaderMode::Always;
+    for (const EdgeEntry& e : entries) {
+        ContentEntry entry = manager->contentRegistry()->makeEntry(e.typeId);
+        entry.id = d.id + QStringLiteral("-") + slug(e.typeId);
+        if (!e.legacyRecord.isEmpty()) {
+            entry.config.insert(QStringLiteral("legacyRecord"), e.legacyRecord);
+        }
+        if (!e.rect.isNull()) {
+            entry.extensions[QStringLiteral("freeCanvasRect")] =
+                QJsonArray{e.rect.x(), e.rect.y(), e.rect.width(), e.rect.height()};
+        }
+        d.contents.append(entry);
+    }
+    draft.containers.append(d);
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not add the %1 container").arg(name);
+        return {};
+    }
+    return d.id;
+}
+
+// Free canvas rows for a 112 px strip: a meter view is at least 49 px
+// tall, and the canvas keeps 20 px above and below, so the 82 px under an
+// Always header scrolls by 7 px (recorded in the Task 4 report).
+constexpr double kEndRowHeightPx = 49.0;
+
+// "Meters": the Thetis S-Meter preset and the Power/SWR face side by side.
+QString addMetersContainer(SceneContext& ctx, DockEdge edge)
+{
+    return addSceneContainer(ctx, QStringLiteral("Meters"), edge, ContentLayout::FreeCanvas,
+                             {{QStringLiteral("meter.sMeter"), QRectF(0, 0, 420, kEndRowHeightPx)},
+                              {QStringLiteral("meter.powerSwr"), QRectF(440, 0, 420, kEndRowHeightPx)}});
+}
+
+// "Band": the band and mode button boxes side by side, one row each.
+QString addBandContainer(SceneContext& ctx, DockEdge edge)
+{
+    return addSceneContainer(ctx, QStringLiteral("Band"), edge, ContentLayout::FreeCanvas,
+                             {{QStringLiteral("BANDBTNS"), QRectF(0, 0, 840, kEndRowHeightPx),
+                               singleRowRecord<BandButtonItem>(0.4f)},
+                              {QStringLiteral("MODEBTNS"), QRectF(860, 0, 520, kEndRowHeightPx),
+                               singleRowRecord<ModeButtonItem>(0.4f)}});
+}
+
+// "Levels": two bar meters stacked, a container that reads well on a side.
+QString addLevelsContainer(SceneContext& ctx, DockEdge edge)
+{
+    return addSceneContainer(ctx, QStringLiteral("Levels"), edge, ContentLayout::VerticalStack,
+                             {{QStringLiteral("meter.signalMaxBin"), {}},
+                              {QStringLiteral("meter.comp"), {}}});
+}
+
+QJsonObject proposedEdgeValues()
+{
+    return QJsonObject{
+        {QStringLiteral("layout"), QStringLiteral(
+            "vertical splitter [top | middle | bottom], middle [left | spectrum | right]; "
+            "top and bottom span the width; an empty strip takes no space")},
+        {QStringLiteral("strip_padding_px"), EdgeDockStrip::kPaddingPx},
+        {QStringLiteral("strip_gap_px"), EdgeDockStrip::kGapPx},
+        {QStringLiteral("strip_background"), QStringLiteral("app-bg")},
+        {QStringLiteral("handle"), QStringLiteral(
+            "6 px, app-bg, 1 px centre line border role, accent role under the pointer")},
+        {QStringLiteral("thickness_left_right_px"), EdgeDockStrip::kSideThicknessPx},
+        {QStringLiteral("thickness_top_bottom_px"), EdgeDockStrip::kEndThicknessPx},
+        {QStringLiteral("thickness_right_first_run"), QStringLiteral(
+            "256 of 1280 of the width (today's Main Panel share) until dragged or saved")},
+        {QStringLiteral("target_band"), QStringLiteral("6 px at each edge, accent at 35%")},
+        {QStringLiteral("drop_preview"), QStringLiteral(
+            "accent at 22% fill, 1 px #3d78b0, radius 6; 28 px between containers")},
+        {QStringLiteral("grid"), QStringLiteral("8 px, off by default, Alt places freely")},
+    };
+}
+
+void addStripCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    auto* area = ctx.window->findChild<EdgeDockArea*>();
+    if (area == nullptr) {
+        return;
+    }
+    addCrop(crops, QStringLiteral("strip-left"), ctx.window, area->strip(DockEdge::Left), dpr);
+    addCrop(crops, QStringLiteral("strip-top"), ctx.window, area->strip(DockEdge::Top), dpr);
+    addCrop(crops, QStringLiteral("strip-bottom"), ctx.window, area->strip(DockEdge::Bottom), dpr);
+}
+
+void noteStrips(SceneContext& ctx)
+{
+    auto* area = ctx.window->findChild<EdgeDockArea*>();
+    if (area == nullptr) {
+        ctx.notes.append(QStringLiteral("no EdgeDockArea: the workspace preview switch is off"));
+        return;
+    }
+    const QPair<DockEdge, QString> edges[] = {{DockEdge::Left, QStringLiteral("left")},
+                                              {DockEdge::Right, QStringLiteral("right")},
+                                              {DockEdge::Top, QStringLiteral("top")},
+                                              {DockEdge::Bottom, QStringLiteral("bottom")}};
+    for (const auto& [edge, name] : edges) {
+        EdgeDockStrip* strip = area->strip(edge);
+        QStringList titles;
+        for (QWidget* w : strip->containers()) {
+            if (auto* c = qobject_cast<ContainerWidget*>(w); c != nullptr && !c->isHidden()) {
+                QString scroll;
+                if (auto* area = c->contentHolder()->findChild<QScrollArea*>()) {
+                    scroll = QStringLiteral(", viewport %1, body min %2")
+                                 .arg(area->viewport()->height())
+                                 .arg(area->widget() ? area->widget()->minimumSizeHint().height() : -1);
+                }
+                titles.append(QStringLiteral("%1 (content %2x%3%4)")
+                                  .arg(c->notes().isEmpty() ? c->id() : c->notes())
+                                  .arg(c->contentHolder()->width())
+                                  .arg(c->contentHolder()->height())
+                                  .arg(scroll));
+            }
+        }
+        ctx.notes.append(QStringLiteral("%1 strip: %2, %3x%4 [%5]")
+                             .arg(name, strip->isVisible() ? QStringLiteral("shown") : QStringLiteral("empty"))
+                             .arg(strip->width()).arg(strip->height())
+                             .arg(titles.join(QStringLiteral(", "))));
+    }
+}
+
+// One proposed edge scene: the two-band data with the workspace look, every
+// container's header Always, `arrange` before the data and `pose` after.
+void sceneProposedEdges(SceneContext& ctx, const QString& name,
+                        const std::function<void(SceneContext&)>& arrange,
+                        const std::function<void(SceneContext&)>& pose = {})
+{
+    ctx.provenance = QStringLiteral("proposed");
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addStripCrops;
+    runWindowScene(ctx, twoBandPoses(), 0, [arrange](SceneContext& c) {
+        if (mainPanel(c) == nullptr || c.window->findChild<EdgeDockArea*>() == nullptr) {
+            c.failure = QStringLiteral("no Main Panel container or edge area");
+            return;
+        }
+        if (arrange) {
+            arrange(c);
+        }
+        if (!c.failure.isEmpty()) {
+            return;
+        }
+        auto* manager = c.window->findChild<ContainerManager*>();
+        for (ContainerWidget* container : manager->allContainers()) {
+            emit container->headerModeRequested(HeaderMode::Always);
+        }
+    }, [pose](SceneContext& c) {
+        if (pose) {
+            pose(c);
+        }
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, name);
+}
+
 void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
 {
     if (dialog == nullptr) {
@@ -1041,6 +1249,113 @@ QVector<Scene> fixedScenes()
                 manager->setArrangeMode(true);
                 c.notes.append(QStringLiteral("ContainerManager::setArrangeMode(true)"));
             }
+        });
+    }, true});
+
+    // ---- proposed four-edge workspace (workspace preview switch on) ----
+    scenes.append({QStringLiteral("edge-right"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("edge-right"), {});
+    }, true});
+    scenes.append({QStringLiteral("edge-left"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("edge-left"), [](SceneContext& c) {
+            // Options > Move to Edge > Left.
+            emit mainPanel(c)->moveToEdgeRequested(DockEdge::Left);
+        });
+    }, true});
+    scenes.append({QStringLiteral("edge-top-bottom"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("edge-top-bottom"), [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            addBandContainer(c, DockEdge::Bottom);
+        });
+    }, true});
+    scenes.append({QStringLiteral("edge-all-four"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("edge-all-four"), [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            addBandContainer(c, DockEdge::Bottom);
+            addLevelsContainer(c, DockEdge::Left);
+        });
+    }, true});
+    scenes.append({QStringLiteral("free-container"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("free-container"), [](SceneContext& c) {
+            const QString id = addLevelsContainer(c, DockEdge::Left);
+            if (id.isEmpty()) {
+                return;
+            }
+            // Options > Place Free.
+            auto* manager = c.window->findChild<ContainerManager*>();
+            emit manager->container(id)->placeFreeRequested();
+        }, [](SceneContext& c) {
+            auto* manager = c.window->findChild<ContainerManager*>();
+            ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));
+            if (levels == nullptr) {
+                c.failure = QStringLiteral("the Levels container was not created");
+                return;
+            }
+            emit levels->headerModeRequested(HeaderMode::Reveal);
+            pump(kSettleMs);
+            // The pointer has been in the top band for 120 ms.
+            levels->setHeaderRevealedForPreview(true);
+            c.notes.append(QStringLiteral("Levels: Place Free, Header Reveal, "
+                                          "ContainerWidget::setHeaderRevealedForPreview(true)"));
+        });
+    }, true});
+    scenes.append({QStringLiteral("floating-container"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("floating-container"), [](SceneContext& c) {
+            const QString id = addLevelsContainer(c, DockEdge::Left);
+            if (id.isEmpty()) {
+                return;
+            }
+            c.window->findChild<ContainerManager*>()->floatContainer(id);
+        });
+        if (!ctx.failure.isEmpty()) {
+            return;
+        }
+        auto* floating = visibleTopLevel<FloatingContainer>();
+        if (floating == nullptr) {
+            ctx.failure = QStringLiteral("the Levels container did not float");
+            return;
+        }
+        if (ctx.beforeGrab) {
+            ctx.beforeGrab(floating);
+            pump(kFinalSettleMs);
+        }
+        CapturedImage img;
+        img.name = QStringLiteral("floating-container--floating");
+        img.kind = QStringLiteral("floating");
+        img.image = grabWidget(floating);
+        img.logicalSize = floating->size();
+        img.dpr = img.image.devicePixelRatio();
+        img.extra[QStringLiteral("window_title")] = floating->windowTitle();
+        img.extra[QStringLiteral("frameless")] =
+            floating->windowFlags().testFlag(Qt::FramelessWindowHint);
+        ctx.images.append(img);
+    }, true});
+    scenes.append({QStringLiteral("drag-preview-left"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("drag-preview-left"), {}, [](SceneContext& c) {
+            auto* manager = c.window->findChild<ContainerManager*>();
+            manager->setArrangeMode(true);
+            manager->showDropPreviewForTest(DockEdge::Left, 0);
+            c.notes.append(QStringLiteral(
+                "Arrange on; ContainerManager::showDropPreviewForTest(Left, 0)"));
+        });
+    }, true});
+    scenes.append({QStringLiteral("drag-preview-between"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("drag-preview-between"), [](SceneContext& c) {
+            addLevelsContainer(c, DockEdge::Right);
+        }, [](SceneContext& c) {
+            auto* manager = c.window->findChild<ContainerManager*>();
+            manager->setArrangeMode(true);
+            manager->showDropPreviewForTest(DockEdge::Right, 1);
+            c.notes.append(QStringLiteral(
+                "Arrange on; ContainerManager::showDropPreviewForTest(Right, 1)"));
         });
     }, true});
 

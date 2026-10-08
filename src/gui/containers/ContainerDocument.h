@@ -1,7 +1,12 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
+// Modification history (NereusSDR):
+//   2026-10-07 - The panel-docked edge and the workspace arrangement
+//                 (strip thickness, extents, grid alignment) by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerTypes.h"
 #include <QJsonObject>
+#include <QMap>
 #include <QRect>
 #include <QRectF>
 #include <QString>
@@ -33,6 +38,8 @@ struct ContainerDocument {
     QVector<ContentEntry> contents;
     ContentLayout layout = ContentLayout::LegacyCanvas;
     DockMode dockMode = DockMode::PanelDocked;
+    // The strip a PanelDocked container sits in (workspace preview).
+    DockEdge edge = DockEdge::Right;
     AxisLock anchor = AxisLock::Left;
     HeaderMode header = HeaderMode::Always;
     QRect geometry;
@@ -46,11 +53,31 @@ struct ContainerDocument {
     bool operator==(const ContainerDocument&) const = default;
 };
 
+// One edge strip's saved size: its thickness across the strip and each
+// container's extent along it. Zero thickness means the edge default.
+struct EdgeStripLayout {
+    int thickness = 0;
+    QMap<QString, int> extents;
+    QJsonObject extensions;
+    bool operator==(const EdgeStripLayout&) const = default;
+};
+
+// Workspace preview arrangement. Empty (the default) is not written, so
+// a workspace saved with the preview off keeps its exact bytes.
+struct WorkspaceArrangement {
+    QMap<DockEdge, EdgeStripLayout> strips;
+    bool gridAlignment = false;
+    QJsonObject extensions;
+    bool isEmpty() const { return strips.isEmpty() && !gridAlignment && extensions.isEmpty(); }
+    bool operator==(const WorkspaceArrangement&) const = default;
+};
+
 struct WorkspaceDocument {
     int schemaVersion = 1;
     quint64 revision = 0;
     QString mainContainerId;
     QVector<ContainerDocument> containers;
+    WorkspaceArrangement arrangement;
     QJsonObject extensions;
     bool operator==(const WorkspaceDocument&) const = default;
 };

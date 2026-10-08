@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: four-edge strips, Move to Edge,
+//                 Place Free, the edge drag preview and grid alignment by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: app-level Arrange mode by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Track pending container placement by J.J. Boyd (KG4VCF),
@@ -81,6 +84,7 @@ class QWidget;
 namespace NereusSDR {
 
 class ContainerWorkspaceStore;
+class EdgeDockArea;
 class ContainerContentRegistry;
 class ContainerContentHost;
 class ContainerWidget;
@@ -124,6 +128,26 @@ public:
     bool arrangeMode() const { return m_arrangeMode; }
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
+
+    // --- Workspace preview: four-edge strips ---
+    // Set before the first reconcile. With an area and the preview on,
+    // PanelDocked containers go to the strip for their edge, in document
+    // order, instead of the splitter.
+    void setEdgeDockArea(EdgeDockArea* area);
+    EdgeDockArea* edgeDockArea() const;
+    // Docks a container in `edge`'s strip at `index` (the position among
+    // the strip's containers as shown; -1 appends). Commits a draft.
+    void moveContainerToEdge(const QString& id, DockEdge edge, int index = -1);
+    // Places a container free over the spectrum pane (OverlayDocked).
+    void placeContainerFree(const QString& id);
+    // Optional 8 px alignment for free and floating placement, saved in
+    // the workspace arrangement. Off by default.
+    void setGridAlignment(bool on);
+    bool gridAlignment() const;
+    // Test and preview seam: the target bands and a destination preview
+    // at `edge`, `index`, as during a header drag.
+    void showDropPreviewForTest(DockEdge edge, int index);
+    void clearDropPreviewForTest();
 
     // --- Container lifecycle ---
     ContainerWidget* createContainer(int rxSource, DockMode mode);
@@ -195,11 +219,21 @@ signals:
     void previewPresentationRequested(MeterWidget* meter, const QJsonObject& context);
     void workspaceError(const QString& error);
     void arrangeModeChanged(bool on);
+    void gridAlignmentChanged(bool on);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     bool commitDockMode(const QString& id, DockMode mode);
+    bool edgeMode() const;
+    void layoutEdgeStrips(const WorkspaceDocument& document);
+    void captureArrangement(WorkspaceDocument& document) const;
+    void finishEdgeDrag(const QString& id, const QPoint& globalPos);
+    // Size for a strip container leaving its strip: its width, its
+    // content's height.
+    QSize freePlacementSize(const QString& id, const ContainerDocument& d) const;
+    QPointer<EdgeDockArea> m_edgeArea;
+    QString m_edgeDragId;
     void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
     bool m_arrangeMode = false;
     ContainerArrangeController* m_arrange = nullptr;

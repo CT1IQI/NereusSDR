@@ -7,6 +7,9 @@
 //   2026-10-02 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Share saved enum values without a QWidget dependency.
 //                 Header/layout modes and DockMode are NereusSDR-original.
+//   2026-10-07 - DockEdge for the workspace preview's four-edge strips
+//                 (NereusSDR-original) by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -66,5 +69,8 @@ enum class DockMode {
 
 enum class HeaderMode { Always, Reveal, Hidden };
 enum class ContentLayout { LegacyCanvas = 0, VerticalStack = 1, FreeCanvas = 2 };
+// Workspace preview: the strip a PanelDocked container sits in. Saved by
+// name ("Left", "Top", "Bottom"); Right is the default and is not written.
+enum class DockEdge { Left = 0, Right = 1, Top = 2, Bottom = 3 };
 
 } // namespace NereusSDR

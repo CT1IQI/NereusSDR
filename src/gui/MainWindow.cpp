@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: the four-edge container area,
+//                 the right-strip panel toggle and Containers > Align to
+//                 8 px Grid. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: Containers > Arrange Workspace
 //                 (Ctrl+Shift+A). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -906,6 +910,7 @@ warren@wpratt.com
 #include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
+#include "containers/EdgeDockStrip.h"
 #include "containers/ContainerContentRegistry.h"
 #include "containers/ContainerContentHost.h"
 #include "containers/ContainerWorkspaceStore.h"
@@ -6970,9 +6975,15 @@ void MainWindow::buildUI()
 
     // --- Main QSplitter: spectrum (left) + container panel (right) ---
     // AetherSDR pattern: right panel is a proper layout element, not an overlay.
-    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    // Workspace preview: the splitter is the middle row of the four-edge
+    // area, with Longpath-width handles (EdgeDockSplitter sets its own).
+    m_mainSplitter = WorkspacePreview::enabled()
+        ? new EdgeDockSplitter(Qt::Horizontal, this)
+        : new QSplitter(Qt::Horizontal, this);
     m_mainSplitter->setChildrenCollapsible(false);
-    m_mainSplitter->setHandleWidth(3);
+    if (!WorkspacePreview::enabled()) {
+        m_mainSplitter->setHandleWidth(3);
+    }
     m_mainSplitter->setStyleSheet(QStringLiteral(
         "QSplitter::handle { background: #203040; }"));
     if (WorkspacePreview::enabled()) {
@@ -7320,10 +7331,19 @@ void MainWindow::buildUI()
     m_mainSplitter->addWidget(spectrumPane);
 
     // Right side: Container #0 will be added by ContainerManager
-    setCentralWidget(m_mainSplitter);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: strips on all four edges around the spectrum.
+        m_edgeDockArea = new EdgeDockArea(m_mainSplitter, spectrumPane, this);
+        setCentralWidget(m_edgeDockArea);
+    } else {
+        setCentralWidget(m_mainSplitter);
+    }
 
     // --- Container Infrastructure (Phase 3G-1) ---
     m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+    if (m_edgeDockArea) {
+        m_containerManager->setEdgeDockArea(m_edgeDockArea);
+    }
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
@@ -7756,7 +7776,8 @@ void MainWindow::buildUI()
     }
 
     // Default splitter sizes on first run: ~80% spectrum, ~20% panel
-    if (!AppSettings::instance().contains(QStringLiteral("MainSplitterSizes"))) {
+    // (Workspace preview: the edge area sizes its strips itself.)
+    if (!m_edgeDockArea && !AppSettings::instance().contains(QStringLiteral("MainSplitterSizes"))) {
         m_mainSplitter->setSizes({1024, 256});
     }
 
@@ -11200,6 +11221,18 @@ void MainWindow::buildMenuBar()
         connect(m_containerManager, &ContainerManager::arrangeModeChanged, arrangeAction, [arrangeAction](bool on) {
             QSignalBlocker block(arrangeAction);
             arrangeAction->setChecked(on);
+        });
+        // Optional 8 px alignment for free and floating containers.
+        QAction* gridAction = containersMenu->addAction(QStringLiteral("Align to 8 px &Grid"));
+        gridAction->setObjectName(QStringLiteral("containersAlignToGrid"));
+        gridAction->setCheckable(true);
+        gridAction->setChecked(m_containerManager->gridAlignment());
+        gridAction->setToolTip(QStringLiteral(
+            "Free and floating containers settle on an 8 px grid when moved. Hold Alt to place freely."));
+        connect(gridAction, &QAction::toggled, m_containerManager, &ContainerManager::setGridAlignment);
+        connect(m_containerManager, &ContainerManager::gridAlignmentChanged, gridAction, [gridAction](bool on) {
+            QSignalBlocker block(gridAction);
+            gridAction->setChecked(on);
         });
     }
 
@@ -14745,7 +14778,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Update axis-lock positions for overlay-docked containers
     if (m_mainSplitter && m_containerManager) {
         // Use the spectrum pane (first splitter child) as reference
-        QWidget* spectrumPane = m_mainSplitter->widget(0);
+        QWidget* spectrumPane = m_edgeDockArea ? m_edgeDockArea->center() : m_mainSplitter->widget(0);
         if (spectrumPane) {
             m_hDelta = spectrumPane->width();
             m_vDelta = spectrumPane->height();
@@ -14816,6 +14849,15 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
         if (label && label->property("isPanelToggle").toBool()) {
+            if (m_edgeDockArea) {
+                // Workspace preview: collapse the right strip, keep its contents.
+                const bool collapse = !m_edgeDockArea->userCollapsed(DockEdge::Right);
+                m_edgeDockArea->setUserCollapsed(DockEdge::Right, collapse);
+                label->setStyleSheet(collapse
+                    ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
+                    : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+                return true;
+            }
             // Toggle QSplitter right pane (index 1) visibility.
             // Save/restore sizes so spectrum expands when panel is hidden.
             if (!m_mainSplitter || m_mainSplitter->count() < 2) {

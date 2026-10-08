@@ -37,6 +37,11 @@
 //                 accent, dashed outline, inside corner and edge resize
 //                 handles) and the glass plate. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Workspace preview only: Move to Edge and Place Free,
+//                 the panel-docked header drag toward an edge, Escape
+//                 cancels a drag, the optional 8 px alignment at release
+//                 (Alt bypasses it) and the floating resize corner. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -101,6 +106,7 @@ mw0lge@grange-lane.co.uk
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/styles/WorkspaceStyle.h"
 #include "WorkspaceHeader.h"
+#include "EdgeDockStrip.h"
 
 #include <QUuid>
 #include <QVBoxLayout>
@@ -551,7 +557,9 @@ void ContainerWidget::updateWorkspaceChrome()
     m_groupHeader->setFloating(isFloating());
 
     const bool resizable = m_arrangeActive && !m_locked && !isPanelDocked();
-    m_resizeGrip->setVisible(resizable && !m_autoHeight);
+    // A frameless floating window keeps its resize corner, inside its bounds.
+    const bool floatingCorner = isFloating() && !m_locked;
+    m_resizeGrip->setVisible((resizable || floatingCorner) && !m_autoHeight);
     m_edgeRight->setVisible(resizable);
     m_edgeBottom->setVisible(resizable && !m_autoHeight);
     m_arrangeFrame->setVisible(m_arrangeActive);
@@ -624,10 +632,24 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
         action->setChecked(mode == m_headerMode);
         connect(action, &QAction::triggered, this, [this, mode] { emit headerModeRequested(mode); });
     }
-    // Edges arrive with the four-edge strips; the entries are shown now.
+    // Docks in the strip for that edge; Place Free puts the container over
+    // the spectrum, which a drop never does.
     auto* edge = menu.addMenu(tr("Move to Edge"));
-    for (const QString& name : {tr("Left"), tr("Right"), tr("Top"), tr("Bottom")}) {
-        edge->addAction(name)->setEnabled(false);
+    const std::pair<DockEdge, QString> edges[] = {{DockEdge::Left, tr("Left")},
+                                                  {DockEdge::Right, tr("Right")},
+                                                  {DockEdge::Top, tr("Top")},
+                                                  {DockEdge::Bottom, tr("Bottom")}};
+    for (const auto& [value, name] : edges) {
+        auto* action = edge->addAction(name, this, [this, value] { emit moveToEdgeRequested(value); });
+        action->setCheckable(true);
+        action->setChecked(isPanelDocked() && m_dockEdge == value);
+        action->setEnabled(!m_locked);
+    }
+    edge->setEnabled(!m_locked);
+    if (!isOverlayDocked()) {
+        auto* free = menu.addAction(tr("Place Free"), this, [this] { emit placeFreeRequested(); });
+        free->setToolTip(tr("Place over the spectrum, inside the main window"));
+        free->setEnabled(!m_locked);
     }
     auto* arrange = menu.addAction(tr("Arrange Workspace"), this,
                                    [this] { emit arrangeWorkspaceRequested(!m_arrangeActive); });
@@ -1154,6 +1176,17 @@ void ContainerWidget::leaveEvent(QEvent* event)
 
 bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    // Workspace preview: Escape cancels a drag or an edge drag; nothing of
+    // it is kept.
+    if (m_groupHeader && (m_edgePressed || m_dragging) && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
+        if (m_edgePressed) {
+            endEdgeDrag(true, QCursor::pos());
+        } else {
+            cancelDrag();
+        }
+        return true;
+    }
     if (m_structuredChrome && m_groupHeader) {
         // Workspace preview: only the top band reveals the header; Shift
         // does not (Hidden recovers through the menu and Arrange).
@@ -1205,9 +1238,30 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
             if (me->button() == Qt::LeftButton) {
                 if (!m_locked && !isPanelDocked()) {
                     beginDrag(me->globalPosition().toPoint());
+                } else if (!m_locked) {
+                    // A docked container moves between strips: past the
+                    // drag distance the manager shows the destinations.
+                    m_edgePressed = true;
+                    m_edgeDragging = false;
+                    m_edgePressGlobal = me->globalPosition().toPoint();
                 }
                 return true;
             }
+        } else if (event->type() == QEvent::MouseMove && m_edgePressed) {
+            const QPoint global = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+            if (!m_edgeDragging
+                && (global - m_edgePressGlobal).manhattanLength() >= QApplication::startDragDistance()) {
+                m_edgeDragging = true;
+                m_groupHeader->setCursor(Qt::ClosedHandCursor);
+                emit edgeDragStarted();
+            }
+            if (m_edgeDragging) {
+                emit edgeDragMoved(global);
+            }
+            return true;
+        } else if (event->type() == QEvent::MouseButtonRelease && m_edgePressed) {
+            endEdgeDrag(false, static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
+            return true;
         } else if (event->type() == QEvent::MouseMove && m_dragging) {
             updateDrag(static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
             return true;
@@ -1315,9 +1369,11 @@ void ContainerWidget::beginDrag(const QPoint& globalPos)
     }
     if (isFloating()) {
         m_dragStartPos = globalPos - parentWidget()->pos();
+        m_dragOrigin = parentWidget()->pos();
     } else {
         raise();
         m_dragStartPos = globalPos - pos();
+        m_dragOrigin = pos();
     }
 }
 
@@ -1359,6 +1415,23 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
 
 void ContainerWidget::endDrag()
 {
+    // Workspace preview: optional grid alignment after release; Alt at
+    // release places without it.
+    if (m_groupHeader && m_gridPx > 1 && !(QApplication::keyboardModifiers() & Qt::AltModifier)) {
+        if (isFloating() && parentWidget()) {
+            const QPoint snapped = workspaceSnappedTopLeft(parentWidget()->pos(), m_gridPx);
+            if (snapped != parentWidget()->pos()) {
+                parentWidget()->move(snapped);
+            }
+        } else if (isOverlayDocked() && parentWidget()) {
+            QPoint snapped = workspaceSnappedTopLeft(pos(), m_gridPx);
+            snapped.setX(std::clamp(snapped.x(), 0, std::max(0, parentWidget()->width() - width())));
+            snapped.setY(std::clamp(snapped.y(), 0, std::max(0, parentWidget()->height() - height())));
+            if (snapped != pos()) {
+                move(snapped);
+            }
+        }
+    }
     m_dragging = false;
     emit geometryInteractionFinished();
     m_dragStartPos = QPoint();
@@ -1370,6 +1443,45 @@ void ContainerWidget::endDrag()
     if (isOverlayDocked()) {
         m_dockedLocation = pos();
         emit dockedMoved();
+    }
+}
+
+void ContainerWidget::cancelDrag()
+{
+    // Back to where the drag began, so the commit after it changes nothing.
+    if (!m_dragging) {
+        return;
+    }
+    if (isFloating() && parentWidget()) {
+        parentWidget()->move(m_dragOrigin);
+    } else {
+        move(m_dragOrigin);
+    }
+    m_dragging = false;
+    emit geometryInteractionFinished();
+    m_dragStartPos = QPoint();
+    m_titleBar->unsetCursor();
+    m_titleLabel->setCursor(Qt::OpenHandCursor);
+    if (m_groupHeader) {
+        m_groupHeader->setCursor(Qt::OpenHandCursor);
+    }
+}
+
+void ContainerWidget::endEdgeDrag(bool cancelled, const QPoint& globalPos)
+{
+    const bool wasDragging = m_edgeDragging;
+    m_edgePressed = false;
+    m_edgeDragging = false;
+    if (m_groupHeader) {
+        m_groupHeader->setCursor(Qt::OpenHandCursor);
+    }
+    if (!wasDragging) {
+        return;
+    }
+    if (cancelled) {
+        emit edgeDragCancelled();
+    } else {
+        emit edgeDragFinished(globalPos);
     }
 }
 

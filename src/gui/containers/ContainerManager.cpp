@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: PanelDocked containers in the
+//                 strip for their edge, Move to Edge, Place Free, the
+//                 edge drag preview and commit, the strip arrangement and
+//                 grid alignment by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: app-level Arrange mode, the group
 //                 header's title, source chip and lock request, and the
 //                 auto-height header extent by J.J. Boyd (KG4VCF),
@@ -98,6 +103,8 @@ mw0lge@grange-lane.co.uk
 #include "ContainerDocumentCodec.h"
 #include "core/ControlRanges.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "EdgeDockStrip.h"
+#include "WorkspaceHeader.h"
 #include <algorithm>
 
 namespace NereusSDR {
@@ -377,6 +384,37 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 commitWorkspace(draft, draft.revision);
             });
             connect(c, &ContainerWidget::arrangeWorkspaceRequested, this, &ContainerManager::setArrangeMode);
+            // Workspace preview: edges, free placement and the edge drag.
+            connect(c, &ContainerWidget::moveToEdgeRequested, this,
+                    [this, id = d.id](DockEdge edge) { moveContainerToEdge(id, edge); });
+            connect(c, &ContainerWidget::placeFreeRequested, this,
+                    [this, id = d.id] { placeContainerFree(id); });
+            connect(c, &ContainerWidget::edgeDragStarted, this, [this, id = d.id] {
+                if (edgeMode()) {
+                    m_edgeDragId = id;
+                    m_edgeArea->setTargetBandsVisible(true);
+                }
+            });
+            connect(c, &ContainerWidget::edgeDragMoved, this, [this, id = d.id](const QPoint& global) {
+                if (!edgeMode() || m_edgeDragId != id) {
+                    return;
+                }
+                const auto target = m_edgeArea->dropTargetAt(global);
+                if (target.valid) {
+                    m_edgeArea->showDropPreview(target.edge, target.index);
+                } else {
+                    m_edgeArea->clearDropPreview();
+                }
+            });
+            connect(c, &ContainerWidget::edgeDragFinished, this,
+                    [this, id = d.id](const QPoint& global) { finishEdgeDrag(id, global); });
+            connect(c, &ContainerWidget::edgeDragCancelled, this, [this] {
+                m_edgeDragId.clear();
+                if (m_edgeArea) {
+                    m_edgeArea->clearDropPreview();
+                    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+                }
+            });
         }
         auto* host = contentHost(d.id);
         const bool reparent = fresh || c->dockMode() != d.dockMode;
@@ -385,6 +423,10 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (reparent) {
             c->hide(); form->hide(); form->setContainerFloating(d.dockMode == DockMode::Floating);
             if (d.dockMode == DockMode::Floating) { form->takeOwner(c); }
+            else if (d.dockMode == DockMode::PanelDocked && edgeMode()) {
+                // Workspace preview: its edge's strip; layoutEdgeStrips orders it.
+                m_edgeArea->strip(d.edge)->splitter()->addWidget(c);
+            }
             else if (d.dockMode == DockMode::PanelDocked) { c->setParent(m_splitter); m_splitter->addWidget(c); }
             else { c->setParent(m_dockParent); }
         }
@@ -394,6 +436,8 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         c->setHeaderMode(d.header);
         if (WorkspacePreview::enabled()) {
             applyWorkspaceHeader(c, d);
+            c->setDockEdge(d.edge);
+            c->setGridAlignment(document.arrangement.gridAlignment ? kWorkspaceSnapGridPx : 0);
         }
         c->setContainerEnabled(d.config.value("enabled").toBool(true));
         c->setShowOnRx(d.config.value("showOnRx").toBool(true)); c->setShowOnTx(d.config.value("showOnTx").toBool(true));
@@ -483,6 +527,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (fresh) { emit containerAdded(d.id); }
         m_documentGeometry[d.id] = d.geometry;
     }
+    if (edgeMode()) {
+        layoutEdgeStrips(document);
+    }
     if (m_splitter) {
         for (auto *handle : m_splitter->findChildren<QSplitterHandle *>()) {
             handle->installEventFilter(this);
@@ -511,7 +558,294 @@ void ContainerManager::setArrangeMode(bool on)
             host->setArrangeActive(on);
         }
     }
+    // The edge target bands show through Arrange and while dragging.
+    if (edgeMode()) {
+        m_edgeArea->setTargetBandsVisible(on || !m_edgeDragId.isEmpty());
+    }
     emit arrangeModeChanged(on);
+}
+
+// ---- Workspace preview: four-edge strips ----------------------------------
+
+bool ContainerManager::edgeMode() const
+{
+    return m_edgeArea && WorkspacePreview::enabled();
+}
+
+void ContainerManager::setEdgeDockArea(EdgeDockArea* area)
+{
+    if (m_edgeArea) {
+        disconnect(m_edgeArea, nullptr, this, nullptr);
+    }
+    m_edgeArea = area;
+    if (!area) {
+        return;
+    }
+    // A dragged strip edge or extent is a geometry edit like any other.
+    connect(area, &EdgeDockArea::thicknessChanged, this, [this] {
+        if (m_store && !m_reconciling) {
+            m_geometryCommit.start();
+        }
+    });
+}
+
+EdgeDockArea* ContainerManager::edgeDockArea() const
+{
+    return m_edgeArea;
+}
+
+void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
+{
+    // Document order is strip order.
+    QMap<DockEdge, QList<QWidget*>> widgets;
+    QMap<DockEdge, QStringList> ids;
+    for (const auto& d : document.containers) {
+        if (d.dockMode != DockMode::PanelDocked) {
+            continue;
+        }
+        if (auto* c = container(d.id)) {
+            widgets[d.edge].append(c);
+            ids[d.edge].append(d.id);
+        }
+    }
+    const DockEdge edges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
+    for (DockEdge edge : edges) {
+        m_edgeArea->strip(edge)->setContainers(widgets.value(edge));
+        const int thickness = document.arrangement.strips.value(edge).thickness;
+        if (thickness > 0) {
+            m_edgeArea->setThickness(edge, thickness);
+        }
+    }
+    // Migration: the right strip takes the Main Panel's saved width.
+    if (!m_edgeArea->hasThickness(DockEdge::Right)) {
+        const QJsonArray saved = document.extensions.value("splitterSizes").toArray();
+        if (saved.size() == 2 && saved.at(1).toInt() > 0) {
+            m_edgeArea->setThickness(DockEdge::Right, saved.at(1).toInt());
+        }
+    }
+    m_edgeArea->refreshLayout();
+    for (DockEdge edge : edges) {
+        const QStringList strip = ids.value(edge);
+        const auto saved = document.arrangement.strips.value(edge).extents;
+        if (strip.size() < 2) {
+            continue;
+        }
+        QList<int> extents;
+        for (const QString& id : strip) {
+            if (!saved.contains(id)) {
+                extents.clear();
+                break;
+            }
+            extents.append(saved.value(id));
+        }
+        if (!extents.isEmpty()) {
+            m_edgeArea->strip(edge)->setExtents(extents);
+        }
+    }
+}
+
+void ContainerManager::captureArrangement(WorkspaceDocument& document) const
+{
+    WorkspaceArrangement& arrangement = document.arrangement;
+    const DockEdge edges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
+    for (DockEdge edge : edges) {
+        EdgeStripLayout layout = arrangement.strips.value(edge);
+        if (m_edgeArea->hasThickness(edge)) {
+            layout.thickness = m_edgeArea->thickness(edge);
+        }
+        EdgeDockStrip* strip = m_edgeArea->strip(edge);
+        const QList<int> sizes = strip->extents();
+        const QList<QWidget*> widgets = strip->containers();
+        int total = 0;
+        for (int size : sizes) {
+            total += size;
+        }
+        // Extents are read only from a laid-out strip.
+        if (strip->isVisible() && total > 0) {
+            layout.extents.clear();
+            for (int i = 0; i < widgets.size() && i < sizes.size(); ++i) {
+                auto* c = qobject_cast<ContainerWidget*>(widgets[i]);
+                if (c && !c->isHidden()) {
+                    layout.extents.insert(c->id(), sizes[i]);
+                }
+            }
+        }
+        if (layout.thickness > 0 || !layout.extents.isEmpty() || !layout.extensions.isEmpty()) {
+            arrangement.strips.insert(edge, layout);
+        } else {
+            arrangement.strips.remove(edge);
+        }
+    }
+}
+
+void ContainerManager::moveContainerToEdge(const QString& id, DockEdge edge, int index)
+{
+    if (!m_store || m_reconciling) {
+        return;
+    }
+    WorkspaceDocument draft = m_store->snapshot();
+    const auto indexOfId = [&draft](const QString& value) {
+        for (int i = 0; i < draft.containers.size(); ++i) {
+            if (draft.containers[i].id == value) {
+                return i;
+            }
+        }
+        return -1;
+    };
+    const int position = indexOfId(id);
+    if (position < 0) {
+        return;
+    }
+    if (draft.containers[position].locked) {
+        emit workspaceError(tr("Arrangement is locked"));
+        return;
+    }
+    QStringList order;
+    for (const auto& d : draft.containers) {
+        if (d.dockMode == DockMode::PanelDocked && d.edge == edge) {
+            order.append(d.id);
+        }
+    }
+    int target = index < 0 ? order.size() : qBound(0, index, int(order.size()));
+    const int self = order.indexOf(id);
+    if (self >= 0) {
+        if (self < target) {
+            --target;
+        }
+        order.removeAt(self);
+    }
+    ContainerDocument moved = draft.containers.takeAt(position);
+    moved.dockMode = DockMode::PanelDocked;
+    moved.edge = edge;
+    int insertAt = draft.containers.size();
+    if (target < order.size()) {
+        insertAt = indexOfId(order[target]);
+    } else if (!order.isEmpty()) {
+        insertAt = indexOfId(order.last()) + 1;
+    }
+    draft.containers.insert(insertAt, moved);
+    if (draft != m_store->snapshot()) {
+        commitWorkspace(draft, draft.revision);
+    }
+}
+
+void ContainerManager::placeContainerFree(const QString& id)
+{
+    if (!m_store || m_reconciling) {
+        return;
+    }
+    WorkspaceDocument draft = m_store->snapshot();
+    for (auto& d : draft.containers) {
+        if (d.id != id) {
+            continue;
+        }
+        if (d.locked) {
+            emit workspaceError(tr("Arrangement is locked"));
+            return;
+        }
+        // Centred over the spectrum pane, at its strip width and its
+        // content's height (a strip stretches it), where it fits.
+        QSize size = freePlacementSize(id, d);
+        if (m_dockParent) {
+            size = size.boundedTo(m_dockParent->size());
+        }
+        const QPoint origin = m_dockParent
+            ? QPoint(qMax(0, (m_dockParent->width() - size.width()) / 2),
+                     qMax(0, (m_dockParent->height() - size.height()) / 2))
+            : QPoint();
+        d.dockMode = DockMode::OverlayDocked;
+        d.geometry = QRect(origin, size);
+        commitWorkspace(draft, draft.revision);
+        return;
+    }
+}
+
+QSize ContainerManager::freePlacementSize(const QString& id, const ContainerDocument& d) const
+{
+    constexpr QSize kFallback(360, 300);
+    constexpr int kMinimumHeight = 120;
+    ContainerWidget* c = container(id);
+    if (c == nullptr || c->width() <= 0) {
+        return d.geometry.isValid() ? d.geometry.size() : kFallback;
+    }
+    if (d.dockMode != DockMode::PanelDocked) {
+        return c->size();
+    }
+    int height = c->height();
+    if (auto* host = contentHost(id)) {
+        height = qMin(height, qMax(kMinimumHeight,
+                                   host->preferredContentHeight() + WorkspaceGroupHeader::kHeight));
+    }
+    // A top or bottom strip spans the window; free, it takes a usual width.
+    constexpr int kEndStripFreeWidth = 640;
+    const bool endStrip = d.edge == DockEdge::Top || d.edge == DockEdge::Bottom;
+    return QSize(endStrip ? qMin(c->width(), kEndStripFreeWidth) : c->width(), height);
+}
+
+void ContainerManager::setGridAlignment(bool on)
+{
+    if (!m_store || m_reconciling || gridAlignment() == on) {
+        return;
+    }
+    WorkspaceDocument draft = m_store->snapshot();
+    draft.arrangement.gridAlignment = on;
+    if (commitWorkspace(draft, draft.revision).status == CommitStatus::Saved) {
+        emit gridAlignmentChanged(on);
+    }
+}
+
+bool ContainerManager::gridAlignment() const
+{
+    return m_store && m_store->snapshot().arrangement.gridAlignment;
+}
+
+void ContainerManager::showDropPreviewForTest(DockEdge edge, int index)
+{
+    if (!m_edgeArea) {
+        return;
+    }
+    m_edgeArea->setTargetBandsVisible(true);
+    m_edgeArea->showDropPreview(edge, index);
+}
+
+void ContainerManager::clearDropPreviewForTest()
+{
+    if (!m_edgeArea) {
+        return;
+    }
+    m_edgeArea->clearDropPreview();
+    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+}
+
+void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos)
+{
+    if (!edgeMode() || m_edgeDragId != id) {
+        return;
+    }
+    const auto target = m_edgeArea->dropTargetAt(globalPos);
+    m_edgeDragId.clear();
+    m_edgeArea->clearDropPreview();
+    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+    if (target.valid) {
+        moveContainerToEdge(id, target.edge, target.index);
+        return;
+    }
+    if (!target.detach || !m_store) {
+        // An invalid release restores: the container never left its strip.
+        return;
+    }
+    // Pulled out of the main window: a floating shell under the pointer.
+    WorkspaceDocument draft = m_store->snapshot();
+    for (auto& d : draft.containers) {
+        if (d.id != id) {
+            continue;
+        }
+        const QSize size = freePlacementSize(id, d);
+        d.dockMode = DockMode::Floating;
+        d.geometry = QRect(globalPos - QPoint(size.width() / 2, WorkspaceGroupHeader::kHeight / 2), size);
+        commitWorkspace(draft, draft.revision);
+        return;
+    }
 }
 void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerDocument &d)
 {
@@ -998,7 +1332,7 @@ void ContainerManager::saveSplitterState()
 void ContainerManager::restoreSplitterState()
 {
     if (m_store) {
-        if (!m_splitter) { return; }
+        if (!m_splitter || edgeMode()) { return; }
         const QJsonArray saved = m_store->snapshot().extensions.value("splitterSizes").toArray();
         QList<int> sizes; for (const auto& value : saved) { sizes.append(value.toInt()); }
         if (sizes.size() == m_splitter->count()) { QScopedValueRollback<bool> guard(m_reconciling, true); m_splitter->setSizes(sizes); }
@@ -1113,7 +1447,9 @@ void ContainerManager::saveState()
             d.config["showOnRx"] = c->showOnRx(); d.config["showOnTx"] = c->showOnTx();
             d.config["border"] = c->hasBorder(); d.config["pinOnTop"] = c->isPinOnTop();
         }
-        if (m_splitter) { QJsonArray sizes; for (int size : m_splitter->sizes()) { sizes.append(size); } document.extensions["splitterSizes"] = sizes; }
+        if (m_splitter && !edgeMode()) { QJsonArray sizes; for (int size : m_splitter->sizes()) { sizes.append(size); } document.extensions["splitterSizes"] = sizes; }
+        // Workspace preview: strip thickness and extents, not the splitter.
+        if (edgeMode()) { captureArrangement(document); }
         if (document == m_store->snapshot()) { return; }
         if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) { reconcileWorkspace(m_store->snapshot()); }
         return;

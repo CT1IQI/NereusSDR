@@ -291,6 +291,16 @@ public:
     void setWorkspaceSource(const QString& text, const QColor& colour);
     WorkspaceGroupHeader* workspaceHeader() const { return m_groupHeader; }
     QWidget* contentHolder() const { return m_contentHolder; }
+    // Workspace preview: the strip a panel-docked container sits in, and
+    // the alignment grid for free and floating placement (0 is off; Alt
+    // at release bypasses it).
+    void setDockEdge(DockEdge edge) { m_dockEdge = edge; }
+    DockEdge dockEdge() const { return m_dockEdge; }
+    void setGridAlignment(int gridPx) { m_gridPx = gridPx; }
+    int gridAlignment() const { return m_gridPx; }
+    // True while a panel-docked container's header is being dragged
+    // toward an edge (ContainerManager shows the destination preview).
+    bool edgeDragActive() const { return m_edgeDragging; }
 
     // Minimised collapse state (runtime only; not persisted). Collapses
     // a floating container to just its title bar. From Thetis
@@ -347,6 +357,15 @@ signals:
     // Workspace preview: the options menu's Lock and Arrange workspace.
     void lockRequested(bool locked);
     void arrangeWorkspaceRequested(bool active);
+    // Workspace preview: the options menu's Move to Edge and Place Free,
+    // and a panel-docked header drag (global pointer positions). Only a
+    // release on a valid destination commits; Escape cancels.
+    void moveToEdgeRequested(DockEdge edge);
+    void placeFreeRequested();
+    void edgeDragStarted();
+    void edgeDragMoved(const QPoint& globalPos);
+    void edgeDragFinished(const QPoint& globalPos);
+    void edgeDragCancelled();
     void floatRequested();
     void dockRequested();
     void settingsRequested();
@@ -407,6 +426,8 @@ private:
     void beginDrag(const QPoint& pos);
     void updateDrag(const QPoint& globalPos);
     void endDrag();
+    void cancelDrag();
+    void endEdgeDrag(bool cancelled, const QPoint& globalPos);
 
     void beginResize(const QPoint& globalPos);
     void updateResize(const QPoint& globalPos);
@@ -492,6 +513,12 @@ private:
     bool m_keyboardFocus{false};
     bool m_workspaceMenuOpen{false};
     Qt::Orientations m_resizeAxes{Qt::Horizontal | Qt::Vertical};
+    DockEdge m_dockEdge{DockEdge::Right};
+    int m_gridPx{0};
+    bool m_edgePressed{false};
+    bool m_edgeDragging{false};
+    QPoint m_edgePressGlobal;
+    QPoint m_dragOrigin;
 
     // Phase 3P-I-a T17 — cached hasAlex flag so items added via
     // wireInteractiveItem() after setBoardCapabilities() still inherit

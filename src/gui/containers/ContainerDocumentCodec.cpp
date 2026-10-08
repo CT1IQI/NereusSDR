@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
+// Modification history (NereusSDR):
+//   2026-10-07 - The panel-docked edge and the workspace arrangement, each
+//                 written only when not the default by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "ContainerDocumentCodec.h"
 #include "LegacyContainerImporter.h"
 #include "ContainerContentRegistry.h"
@@ -12,9 +16,38 @@
 
 namespace NereusSDR {
 namespace {
-const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers"};
-const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "anchor", "header",
+const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers", "arrangement"};
+const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
                                    "geometry", "visible", "locked", "autoHeight", "popOutShell", "config"};
+const QStringList kArrangementFields{"strips", "gridAlignment"};
+const QStringList kStripFields{"thickness", "extents"};
+
+// Edge names as saved. Right is the default and is never written.
+QString edgeName(DockEdge edge)
+{
+    switch (edge) {
+    case DockEdge::Left:
+        return QStringLiteral("Left");
+    case DockEdge::Right:
+        return QStringLiteral("Right");
+    case DockEdge::Top:
+        return QStringLiteral("Top");
+    case DockEdge::Bottom:
+        return QStringLiteral("Bottom");
+    }
+    return {};
+}
+
+bool edgeFromName(const QString& name, DockEdge& out)
+{
+    for (DockEdge edge : {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom}) {
+        if (name == edgeName(edge)) {
+            out = edge;
+            return true;
+        }
+    }
+    return false;
+}
 const QStringList kContentFields{"id", "typeId", "name", "context", "config", "canvasRect", "paintOrder",
                                  "visible", "returnLocation"};
 const QStringList kReturnFields{"containerId", "beforeId", "afterId"};
@@ -178,6 +211,82 @@ bool geometryField(const QJsonObject& object, QRect& out)
     return true;
 }
 
+bool nonNegativeInteger(const QJsonValue& value, int& out)
+{
+    return integer(value, out) && out >= 0;
+}
+
+// The arrangement is strict about the fields it knows and keeps any other
+// member as an extension, like every other record.
+bool decodeArrangement(const QJsonValue& value, WorkspaceArrangement& arrangement)
+{
+    if (!value.isObject()) {
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    if (!boolField(object, "gridAlignment", arrangement.gridAlignment)) {
+        return false;
+    }
+    if (object.contains("strips")) {
+        if (!object["strips"].isObject()) {
+            return false;
+        }
+        const QJsonObject strips = object["strips"].toObject();
+        for (auto it = strips.constBegin(); it != strips.constEnd(); ++it) {
+            DockEdge edge = DockEdge::Right;
+            if (!edgeFromName(it.key(), edge) || !it.value().isObject()) {
+                return false;
+            }
+            const QJsonObject stripObject = it.value().toObject();
+            EdgeStripLayout strip;
+            if (stripObject.contains("thickness")
+                && !nonNegativeInteger(stripObject["thickness"], strip.thickness)) {
+                return false;
+            }
+            if (stripObject.contains("extents")) {
+                if (!stripObject["extents"].isObject()) {
+                    return false;
+                }
+                const QJsonObject extents = stripObject["extents"].toObject();
+                for (auto e = extents.constBegin(); e != extents.constEnd(); ++e) {
+                    int extent = 0;
+                    if (!nonNegativeInteger(e.value(), extent)) {
+                        return false;
+                    }
+                    strip.extents.insert(e.key(), extent);
+                }
+            }
+            strip.extensions = extensions(stripObject, kStripFields);
+            arrangement.strips.insert(edge, strip);
+        }
+    }
+    arrangement.extensions = extensions(object, kArrangementFields);
+    return true;
+}
+
+QJsonObject encodeArrangement(const WorkspaceArrangement& arrangement)
+{
+    QJsonObject object = arrangement.extensions;
+    if (!arrangement.strips.isEmpty()) {
+        QJsonObject strips;
+        for (auto it = arrangement.strips.constBegin(); it != arrangement.strips.constEnd(); ++it) {
+            QJsonObject strip = it.value().extensions;
+            strip["thickness"] = it.value().thickness;
+            QJsonObject extents;
+            for (auto e = it.value().extents.constBegin(); e != it.value().extents.constEnd(); ++e) {
+                extents[e.key()] = e.value();
+            }
+            strip["extents"] = extents;
+            strips[edgeName(it.key())] = strip;
+        }
+        object["strips"] = strips;
+    }
+    if (arrangement.gridAlignment) {
+        object["gridAlignment"] = true;
+    }
+    return object;
+}
+
 bool decodeEntry(const QJsonObject& object, ContentEntry& entry)
 {
     if (!stringField(object, "id", entry.id) || !stringField(object, "typeId", entry.typeId)
@@ -216,6 +325,10 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
         || !boolField(object, "locked", container.locked) || !boolField(object, "autoHeight", container.autoHeight)
         || !boolField(object, "popOutShell", container.popOutShell) || !objectField(object, "config", container.config)
         || !object["contents"].isArray()) {
+        return false;
+    }
+    if (object.contains("edge")
+        && (!object["edge"].isString() || !edgeFromName(object["edge"].toString(), container.edge))) {
         return false;
     }
     for (const QJsonValue value : object["contents"].toArray()) {
@@ -264,6 +377,10 @@ QJsonObject encodeContainer(const ContainerDocument& container)
     object["contents"] = contents;
     object["layout"] = int(container.layout);
     object["dockMode"] = int(container.dockMode);
+    // Written only off the default, so existing documents keep their bytes.
+    if (container.edge != DockEdge::Right) {
+        object["edge"] = edgeName(container.edge);
+    }
     object["anchor"] = int(container.anchor);
     object["header"] = int(container.header);
     object["geometry"] = QJsonArray{container.geometry.x(), container.geometry.y(),
@@ -302,6 +419,9 @@ DocumentResult ContainerDocumentCodec::decode(const QByteArray& json)
         return {false, {}, QStringLiteral("Invalid workspace revision, mainContainerId or containers")};
     }
     document.mainContainerId = root["mainContainerId"].toString();
+    if (root.contains("arrangement") && !decodeArrangement(root["arrangement"], document.arrangement)) {
+        return {false, {}, QStringLiteral("Invalid workspace arrangement")};
+    }
     for (const QJsonValue value : root["containers"].toArray()) {
         ContainerDocument container;
         if (!value.isObject() || !decodeContainer(value.toObject(), container)) {
@@ -328,6 +448,9 @@ QByteArray ContainerDocumentCodec::encode(const WorkspaceDocument& document)
         containers.append(encodeContainer(container));
     }
     root["containers"] = containers;
+    if (!document.arrangement.isEmpty()) {
+        root["arrangement"] = encodeArrangement(document.arrangement);
+    }
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
@@ -348,7 +471,8 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
         if (int(container.layout) < 0 || int(container.layout) > int(ContentLayout::FreeCanvas)
             || int(container.dockMode) < 0 || int(container.dockMode) > int(DockMode::Floating)
             || int(container.anchor) < 0 || int(container.anchor) > int(AxisLock::BottomLeft)
-            || int(container.header) < 0 || int(container.header) > int(HeaderMode::Hidden)) {
+            || int(container.header) < 0 || int(container.header) > int(HeaderMode::Hidden)
+            || int(container.edge) < 0 || int(container.edge) > int(DockEdge::Bottom)) {
             return QStringLiteral("Invalid layout mode in container %1").arg(container.id);
         }
         if (container.geometry.width() < 0 || container.geometry.height() < 0) {
@@ -377,6 +501,20 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
                 return QStringLiteral("Return location extensions collide with known fields: %1").arg(entry.id);
             }
         }
+    }
+    for (auto it = document.arrangement.strips.constBegin(); it != document.arrangement.strips.constEnd(); ++it) {
+        if (int(it.key()) < 0 || int(it.key()) > int(DockEdge::Bottom) || it.value().thickness < 0
+            || collides(it.value().extensions, kStripFields)) {
+            return QStringLiteral("Invalid edge strip in the workspace arrangement");
+        }
+        for (int extent : it.value().extents) {
+            if (extent < 0) {
+                return QStringLiteral("Invalid edge strip extent in the workspace arrangement");
+            }
+        }
+    }
+    if (collides(document.arrangement.extensions, kArrangementFields)) {
+        return QStringLiteral("Workspace arrangement extensions collide with known fields");
     }
     if (!document.mainContainerId.isEmpty() && !containerIds.contains(document.mainContainerId)) {
         return QStringLiteral("mainContainerId does not name a container");

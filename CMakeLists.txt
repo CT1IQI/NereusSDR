@@ -1789,6 +1789,8 @@ set(GUI_SOURCES
     src/gui/containers/ContainerWidget.cpp
     src/gui/containers/WorkspaceHeader.h
     src/gui/containers/WorkspaceHeader.cpp
+    src/gui/containers/EdgeDockStrip.h
+    src/gui/containers/EdgeDockStrip.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp

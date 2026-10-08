@@ -1,4 +1,8 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
+// Modification history (NereusSDR):
+//   2026-10-07 - Container edge and workspace arrangement round trips for
+//                 the workspace preview by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include <QtTest>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -154,6 +158,67 @@ private slots:
         containers[0] = container;
         root["containers"] = containers;
         QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+    }
+    void documentWithoutEdgesStaysByteIdentical()
+    {
+        // A document from before edges: every container on the right, no
+        // arrangement. Neither member is written, so it re-encodes exactly.
+        const QByteArray json = ContainerDocumentCodec::encode(sample());
+        QVERIFY(!json.contains("\"edge\""));
+        QVERIFY(!json.contains("\"arrangement\""));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document.containers.first().edge, DockEdge::Right);
+        QVERIFY(decoded.document.arrangement.isEmpty());
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+    }
+    void edgeAndArrangementRoundTrip()
+    {
+        QCOMPARE(int(DockEdge::Left), 0);
+        QCOMPARE(int(DockEdge::Right), 1);
+        QCOMPARE(int(DockEdge::Top), 2);
+        QCOMPARE(int(DockEdge::Bottom), 3);
+        WorkspaceDocument doc = sample();
+        doc.containers[0].dockMode = DockMode::PanelDocked;
+        doc.containers[0].edge = DockEdge::Bottom;
+        EdgeStripLayout left;
+        left.thickness = 300;
+        left.extents = {{"main", 420}, {"other", 210}};
+        left.extensions = {{"futureStrip", QJsonArray{1, 2}}};
+        doc.arrangement.strips.insert(DockEdge::Left, left);
+        EdgeStripLayout top;
+        top.thickness = 112;
+        doc.arrangement.strips.insert(DockEdge::Top, top);
+        doc.arrangement.gridAlignment = true;
+        doc.arrangement.extensions = {{"futureArrangement", "kept"}};
+        const QByteArray json = ContainerDocumentCodec::encode(doc);
+        const QJsonObject root = QJsonDocument::fromJson(json).object();
+        QCOMPARE(root["containers"].toArray().first().toObject()["edge"].toString(), QStringLiteral("Bottom"));
+        QVERIFY(root["arrangement"].toObject()["strips"].toObject().contains("Left"));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+    }
+    void unknownEdgeIsRejected()
+    {
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(sample())).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject container = containers.first().toObject();
+        for (const QJsonValue& bad : {QJsonValue("Middle"), QJsonValue(2), QJsonValue("left")}) {
+            container["edge"] = bad;
+            containers[0] = container;
+            root["containers"] = containers;
+            QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+        }
+        root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(sample())).object();
+        root["arrangement"] = QJsonObject{{"strips", QJsonObject{{"Middle", QJsonObject{{"thickness", 10}}}}}};
+        QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+        root["arrangement"] = QJsonObject{{"strips", QJsonObject{{"Left", QJsonObject{{"thickness", -4}}}}}};
+        QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+        WorkspaceDocument doc = sample();
+        doc.containers[0].edge = static_cast<DockEdge>(9);
+        QVERIFY(!ContainerDocumentCodec::validate(doc).isEmpty());
     }
 };
 QTEST_GUILESS_MAIN(TstContainerDocument)

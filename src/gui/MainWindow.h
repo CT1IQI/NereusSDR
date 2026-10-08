@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: the four-edge container area
+//                 member. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -248,6 +251,7 @@ class PanadapterStack;
 class ClarityController;
 class PanClarityRegistry;
 class ContainerManager;
+class EdgeDockArea;
 class MeterWidget;
 class MeterPoller;
 class TitleBar;
@@ -1678,6 +1682,8 @@ private:
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};
     QSplitter* m_mainSplitter{nullptr};
+    // Workspace preview only: the four-edge area around the spectrum.
+    EdgeDockArea* m_edgeDockArea{nullptr};
     int m_hDelta{0};
     int m_vDelta{0};
 

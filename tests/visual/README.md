@@ -135,6 +135,25 @@ At the crop profile each adds a `panel-top` crop, the Main Panel's top
 `provenance: proposed` and a `proposed_values` block with the sizes and
 colours the scene shows.
 
+### Proposed four-edge workspace scenes
+
+`edge-right`, `edge-left`, `edge-top-bottom`, `edge-all-four`,
+`free-container`, `floating-container`, `drag-preview-left` and
+`drag-preview-between` pose the two-band data with the workspace preview
+switch on and show containers docked in the strips on all four edges of
+the central workspace (`src/gui/containers/EdgeDockStrip`), free over the
+spectrum and floating in their own window. The scenes add containers
+from existing content types: "Meters" (the S-Meter preset and the
+Power/SWR face), "Band" (the band and mode button boxes, one row each)
+and "Levels" (two bar meters). `free-container` uses Options > Place Free
+with the header in Reveal, shown; `floating-container` also writes the
+floating window as `floating-container--floating`; the drag previews turn
+Arrange on and call `ContainerManager::showDropPreviewForTest`. At the
+crop profile each adds `strip-left`, `strip-top` and `strip-bottom` crops
+for the strips in use. Their sidecars have `provenance: proposed` and a
+`proposed_values` block, and the notes list each strip's size and
+containers.
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives
@@ -181,5 +200,6 @@ non-zero on any difference. What makes it repeatable:
 - Amp, Tuner and RF-Kit applets are not shown: they appear only once a
   device setting that starts discovery or a connection is on.
 - The tool shows the current app, plus the proposed workspace look in the
-  `look-*` scenes and the proposed headers in the `header-*` and
-  `arrange-on` scenes. Other proposed designs are added as new scenes.
+  `look-*` scenes, the proposed headers in the `header-*` and
+  `arrange-on` scenes and the four-edge workspace in the `edge-*`,
+  `free-container`, `floating-container` and `drag-preview-*` scenes. Other proposed designs are added as new scenes.
