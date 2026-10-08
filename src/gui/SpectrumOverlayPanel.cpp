@@ -70,9 +70,13 @@
 //   2026-09-30 - TX rulings (item 3, JJ): the ATT flyout is held, with the
 //                reason, on a pan whose slice this window only listens to.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "StyleConstants.h"
 #include "gui/styles/WorkspaceComponents.h"
@@ -592,6 +596,8 @@ void SpectrumOverlayPanel::buildAntFlyout()
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_rxAntCmb = new QComboBox;
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
+        installQtCocoaAccessibleTableCacheRepair(m_rxAntCmb->view());
         m_rxAntCmb->setObjectName(QStringLiteral("m_rxAntCmb"));
         // Seed with default labels; setBoardCapabilities replaces once
         // a radio is connected.
@@ -627,6 +633,8 @@ void SpectrumOverlayPanel::buildAntFlyout()
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_txAntCmb = new QComboBox;
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
+        installQtCocoaAccessibleTableCacheRepair(m_txAntCmb->view());
         m_txAntCmb->setObjectName(QStringLiteral("m_txAntCmb"));
         m_txAntCmb->addItems(QStringList{"ANT1", "ANT2", "ANT3"});
         m_txAntCmb->setFixedHeight(kBtnH);

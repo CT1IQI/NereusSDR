@@ -12,9 +12,13 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids,
 //                 and the reset wording says "defaults" in plain words.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPresetsSetupPage.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "models/FilterPresetStore.h"
 #include "models/SliceModel.h"
 
@@ -104,6 +108,8 @@ void FilterPresetsSetupPage::buildUi()
     auto* tableBoxLayout = qobject_cast<QBoxLayout*>(tableBox->layout());
 
     m_table = new QTableWidget(0, 6, tableBox);  // rows filled by populateTable()
+    // Qt 6.11.0 Cocoa accessibility cache repair. Resized per mode and preset edit.
+    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setProperty("nereusSetupId", "dsp.filterPresets.presets");
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("#"),

@@ -18,6 +18,7 @@
 // via Anthropic Claude Code.
 
 #include "gui/LanScanDialog.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/LanDiscovery.h"
 #include "core/session/IStationLink.h"
@@ -175,6 +176,8 @@ void LanScanDialog::buildUi(const QString& status)
 
     // 6-column table: Model, IP, Port, Version, Serial, Nickname.
     m_table = new QTableWidget(0, 6, this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Rows arrive as devices answer the scan.
+    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setHorizontalHeaderLabels({
         tr("Model"), tr("IP"), tr("Port"),
         tr("Version"), tr("Serial"), tr("Nickname")

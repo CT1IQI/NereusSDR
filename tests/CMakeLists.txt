@@ -6225,6 +6225,14 @@ nereus_add_test(tst_spot_table_model)
 # SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
 nereus_add_test(tst_spot_list_accessibility)
 
+# The same Qt 6.11.0 Cocoa accessibility cache repair
+# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
+# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
+# rows after the cell interfaces were deleted the way the Cocoa bridge
+# deletes them, the real FreeDVReporterDialog's proxied station table, and
+# the gate leaving the cache alone on every other platform.
+nereus_add_test(tst_qt_cocoa_accessible_table_cache)
+
 # ── Phase 3J-2 Task D3: FreeDVStationModel (live station map) ──────────────
 # Pins the contract that FreeDVStationModel is a QHash<QString sid,
 # FreeDVStation> sink keyed by Socket.IO session ID, with four public

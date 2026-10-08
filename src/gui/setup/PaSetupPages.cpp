@@ -161,6 +161,9 @@
 //                 transmit band change, which holds while keyed, not the
 //                 slice's band. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -209,6 +212,7 @@
 //============================================================================================//
 
 #include "PaSetupPages.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -471,6 +475,8 @@ PaGainByBandPage::PaGainByBandPage(RadioModel* model, QWidget* parent)
     toolbar->setSpacing(6);
 
     m_profileCombo = new QComboBox(this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the PA profile list changes.
+    installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
     m_profileCombo->setMinimumWidth(220);
     // R-R3-49: plain words (it named the audio-volume scalar).
     m_profileCombo->setToolTip(QStringLiteral(

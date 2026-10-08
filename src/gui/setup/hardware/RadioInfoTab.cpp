@@ -43,6 +43,9 @@
 //                 (BoardCapsTable::effectiveReceiverCount, read in
 //                 radioInfoFacts), the count the stream pool uses. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -91,6 +94,7 @@
 //============================================================================================//
 
 #include "RadioInfoTab.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -169,6 +173,8 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
     // RX1 sample rate combo — entries populated in populate() from
     // allowedSampleRates(proto, caps, model). Matches Thetis setup.cs:847-852.
     m_sampleRateRx1Combo = new QComboBox(paramGroup);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when a radio connects.
+    installQtCocoaAccessibleTableCacheRepair(m_sampleRateRx1Combo->view());
     applyComboStyle(m_sampleRateRx1Combo);
     m_sampleRateRx1Combo->setMinimumWidth(120);
     m_sampleRateRx1Combo->setMaximumWidth(160);

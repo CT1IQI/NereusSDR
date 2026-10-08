@@ -13,6 +13,9 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -96,6 +99,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ConnectionPanel.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "AddCustomRadioDialog.h"
 #include "models/RadioModel.h"
 #include "core/AppSettings.h"
@@ -322,6 +326,8 @@ void ConnectionPanel::buildUI()
     auto* radioLayout = new QVBoxLayout(radioGroup);
 
     m_radioTable = new QTableWidget(0, ColCount, this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Discovery adds radios; Edit and Forget remove rows.
+    installQtCocoaAccessibleTableCacheRepair(m_radioTable);
 
     // Column headers — mapping clsDiscoveredRadioPicker.cs columns (~:99) to 8-col layout.
     // Phase 3Q Task 5: ColMac replaced by ColLastSeen; MAC moves to detail panel.
@@ -434,6 +440,8 @@ void ConnectionPanel::buildUI()
     auto* modelLabel = new QLabel(QStringLiteral("Radio Model:"), m_detailGroup);
     modelLabel->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-weight: bold; }"));
     m_modelCombo = new QComboBox(m_detailGroup);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled for each selected radio.
+    installQtCocoaAccessibleTableCacheRepair(m_modelCombo->view());
     m_modelCombo->setMinimumWidth(200);
     m_modelCombo->setStyleSheet(QStringLiteral(
         "QComboBox { background: #1a2a3a; color: #c8d8e8; border: 1px solid #304050;"

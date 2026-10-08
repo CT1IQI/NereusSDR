@@ -50,6 +50,9 @@
 //               title and the detected log line use plain punctuation,
 //               not em dashes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -193,6 +196,7 @@ mw0lge@grange-lane.co.uk
 // =================================================================
 
 #include "Hl2IoBoardTab.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/HermesLiteBandwidthMonitor.h"
@@ -606,6 +610,8 @@ void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
     auto* i2cLayout = new QVBoxLayout(i2cGroup);
 
     m_i2cLog = new QListWidget(i2cGroup);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Appended and trimmed with live I2C traffic.
+    installQtCocoaAccessibleTableCacheRepair(m_i2cLog);
     QFont mono;
     mono.setFamily(QStringLiteral("Monospace"));
     mono.setStyleHint(QFont::TypeWriter);

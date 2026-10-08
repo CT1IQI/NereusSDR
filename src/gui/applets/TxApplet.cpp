@@ -219,6 +219,9 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I7: PS-A greyed by the
 //                PureSignal facade carries the facade's reason.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -321,6 +324,7 @@
 // 15.  SWR protection LED — QLabel indicator (NYI — 3M-3)
 
 #include "TxApplet.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "gui/HGauge.h"
@@ -925,6 +929,8 @@ void TxApplet::buildUI()
         // Right-click → emit txProfileMenuRequested (mirrors Thetis
         // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
+        installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);
