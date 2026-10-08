@@ -22,6 +22,7 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QMetaObject>
 #include <QPointer>
 #include <QRegularExpression>
@@ -473,6 +474,36 @@ VfoWidget* flagForSlice(MainWindow* window, SliceModel* slice)
     return nullptr;
 }
 
+// One line per visible widget under `root`: region, a path of class
+// names with sibling indexes, and the rectangle relative to `root`.
+void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
+{
+    if (root == nullptr) {
+        lines << region + QStringLiteral(" <missing>");
+        return;
+    }
+    std::function<void(QWidget*, const QString&)> walk = [&](QWidget* w, const QString& path) {
+        if (!w->isVisible()) {
+            return;
+        }
+        const QRect r(w->mapTo(root, QPoint(0, 0)), w->size());
+        lines << QStringLiteral("%1 %2 %3,%4 %5x%6")
+                     .arg(region, path)
+                     .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+        int index = 0;
+        for (QObject* o : w->children()) {
+            if (!o->isWidgetType()) {
+                continue;
+            }
+            auto* child = static_cast<QWidget*>(o);
+            walk(child, path + QLatin1Char('/') + QString::fromLatin1(child->metaObject()->className())
+                            + QLatin1Char('[') + QString::number(index) + QLatin1Char(']'));
+            ++index;
+        }
+    };
+    walk(root, QString::fromLatin1(root->metaObject()->className()));
+}
+
 // Grabs the whole window and, at the crop profile, its detail crops.
 void captureWindow(SceneContext& ctx, const QString& name)
 {
@@ -485,6 +516,22 @@ void captureWindow(SceneContext& ctx, const QString& name)
     full.kind = QStringLiteral("window");
     full.image = grabWidget(ctx.window);
     full.logicalSize = ctx.window->size();
+    if (!ctx.geometryDump.isEmpty()) {
+        QStringList lines;
+        auto* manager = ctx.window->findChild<ContainerManager*>();
+        dumpGeometry(manager != nullptr ? manager->panelContainer() : nullptr,
+                     QStringLiteral("right-panel"), lines);
+        SpectrumWidget* pan = spectrumFor(ctx.window, panIdAt(0));
+        dumpGeometry(pan != nullptr ? pan->findChild<SpectrumOverlayPanel*>() : nullptr,
+                     QStringLiteral("pan1-toolbar"), lines);
+        QFile f(ctx.geometryDump);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            f.write(lines.join(QLatin1Char('\n')).toUtf8());
+            f.write("\n");
+        } else {
+            ctx.notes.append(QStringLiteral("could not write the geometry dump"));
+        }
+    }
     full.dpr = full.image.devicePixelRatio();
     if (ctx.crops) {
         SliceModel* sliceA = ctx.model->sliceById(0);

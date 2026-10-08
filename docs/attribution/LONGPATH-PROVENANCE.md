@@ -42,6 +42,8 @@ block carries an inline cite of the form
 | src/gui/styles/WorkspacePalette.cpp | src/gui/styles/ThemeQss.cpp; src/gui/StyleConstants.h | ThemeQss.cpp 36-153 | Port (table) | Role table and the legacy-colour table. Differs from upstream: no blanket #203040 row, no inset row, no identity, instrument or txfilter rows, no current-value rows. |
 | src/gui/styles/WorkspaceStyle.h | src/gui/StyleConstants.h; src/gui/styles/ThemeQss.cpp | StyleConstants.h 70-1401; ThemeQss.cpp 284-288 | Port (values) | Font ladder, caps tracking, mono families, scroll bar stylesheet. |
 | src/gui/styles/WorkspaceStyle.cpp | src/gui/StyleConstants.h; src/gui/styles/ThemeQss.cpp | StyleConstants.h 544-1401; ThemeQss.cpp 284-288 | Port (helpers) | capsFont, monoFont, paintInsetTop, paintGlassChip, shiftL, glassPanelFill, titleBarStyle. |
+| src/gui/styles/WorkspaceComponents.h | src/gui/StyleConstants.h | StyleConstants.h 723-1121 | Port (values) | Raised, pressed, glass-selected and sunken fills and edges for the component treatment. Workspace preview only. |
+| src/gui/styles/WorkspaceComponents.cpp | src/gui/StyleConstants.h | StyleConstants.h 723-1121 | Port (fills) | Fill and edge values only; Longpath padding, font and handle sizes and its 7 px radius are not ported. componentize() itself is NereusSDR-original. |
 
 NereusSDR-original files that use the palette but port nothing
 (QssTranslator, WorkspacePreview and the call-site branches) carry a

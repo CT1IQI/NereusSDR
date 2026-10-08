@@ -5,19 +5,56 @@
 // Covers the translator checks of the Longpath theme design: complete
 // tokens, six versus eight digits, alpha and url() preservation,
 // selectors, unknown literals, one left-to-right pass, and overlapping
-// mappings generated afresh from the retained original.
+// mappings generated afresh from the retained original. Also covers
+// the component treatment (src/gui/styles/WorkspaceComponents): raised,
+// pressed, selected and sunken controls, semantic colours kept, the
+// treatment idempotent, states that render distinct, and size hints
+// that do not change.
 
 #include <QtTest/QtTest>
 
+#include <QComboBox>
+#include <QImage>
 #include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QSlider>
+#include <QSpinBox>
 #include <QWidget>
 
 #include "gui/styles/QssTranslator.h"
+#include "gui/styles/WorkspaceComponents.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 
 using namespace NereusSDR;
 namespace QT = NereusSDR::QssTranslator;
+namespace WC = NereusSDR::Workspace::Components;
+
+namespace {
+
+// The colour at the centre of a widget, rendered offscreen.
+QColor centreColour(QWidget& w)
+{
+    const QImage img = w.grab().toImage();
+    return img.pixelColor(img.width() / 2, img.height() / 2);
+}
+
+// The colour a few pixels below the top edge, where the raised and the
+// pressed (flipped) fills differ most; at mid-height they are equal.
+QColor upperColour(QWidget& w)
+{
+    const QImage img = w.grab().toImage();
+    return img.pixelColor(img.width() / 2, 4);
+}
+
+int distance(const QColor& a, const QColor& b)
+{
+    return std::abs(a.red() - b.red()) + std::abs(a.green() - b.green())
+        + std::abs(a.blue() - b.blue());
+}
+
+} // namespace
 
 class TestWorkspaceQssTranslator : public QObject
 {
@@ -218,6 +255,228 @@ private slots:
         QCOMPARE(dialog.styleSheet(), QStringLiteral("background: #0f0f1a;"));
         dialog.show();
         QCOMPARE(dialog.styleSheet(), QStringLiteral("background: #08080a;"));
+    }
+
+    void componentRaisedButton()
+    {
+        const QString out = WC::componentize(QStringLiteral(
+            "QPushButton { background: #1a1a1e; border: 1px solid #2c2c31; border-radius: 3px;"
+            " color: #dcdce1; padding: 2px 4px; }"), nullptr);
+        QVERIFY2(out.contains(WC::raisedFill()), qPrintable(out));
+        QVERIFY(out.contains(QStringLiteral("border-top-color: #38383e")));
+        QVERIFY(out.contains(QStringLiteral("border-bottom-color: #1f1f23")));
+        QVERIFY(out.contains(QStringLiteral("border-radius: 4px")));
+        // Padding and border width stay.
+        QVERIFY(out.contains(QStringLiteral("padding: 2px 4px")));
+        QVERIFY(out.contains(QStringLiteral("border: 1px solid #2c2c31")));
+    }
+
+    void componentCheckedIsGlass()
+    {
+        const QString out = WC::componentize(QStringLiteral(
+            "QPushButton:checked { background: #3576e0; color: #ffffff; border: 1px solid #2a5fbe; }"),
+            nullptr);
+        QVERIFY2(out.contains(WC::glassFill()), qPrintable(out));
+        QVERIFY(out.contains(QStringLiteral("color: #dbe9f8")));
+        QVERIFY(out.contains(QStringLiteral("border-color: #3d78b0")));
+    }
+
+    void componentKeepsSemanticAndClearBackgrounds()
+    {
+        const QString green = QStringLiteral(
+            "QPushButton:checked { background: #1c3a2a; color: #6fa384; border: 1px solid #2c5c44; }");
+        QCOMPARE(WC::componentize(green, nullptr), green);
+        const QString clear = QStringLiteral("QPushButton { background: transparent; border: none; }");
+        QCOMPARE(WC::componentize(clear, nullptr), clear);
+        const QString slice = QStringLiteral("QPushButton { background: #00d4ff; }");
+        QCOMPARE(WC::componentize(slice, nullptr), slice);
+        const QString translucent = QStringLiteral("QPushButton { background: rgba(20, 30, 45, 240); }");
+        QCOMPARE(WC::componentize(translucent, nullptr), translucent);
+    }
+
+    void componentFieldsAndChipsAreSunken()
+    {
+        const QString field = WC::componentize(QStringLiteral(
+            "QLineEdit { background: #1a1a1e; border: 1px solid #2c2c31; border-radius: 3px; }"),
+            nullptr);
+        QVERIFY2(field.contains(QStringLiteral("background: #050507")), qPrintable(field));
+        QVERIFY(field.contains(QStringLiteral("border-top-color: rgba(0, 0, 0, 160)")));
+        const QString chip = WC::componentize(QStringLiteral(
+            "QLabel { background: #050507; border: 1px solid #232329; color: #dcdce1; }"), nullptr);
+        QVERIFY2(chip.contains(WC::fieldFill()), qPrintable(chip));
+        // A label without a border is text, not a chip.
+        const QString text = QStringLiteral("QLabel { background: #0c0c0e; color: #dcdce1; }");
+        QCOMPARE(WC::componentize(text, nullptr), text);
+    }
+
+    void componentSliderGetsFillAndPill()
+    {
+        const QString out = WC::componentize(QStringLiteral(
+            "QSlider::groove:horizontal { height: 4px; background: #1f1f23; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+            " background: #4a7ba8; border-radius: 5px; }"), nullptr);
+        QVERIFY2(out.contains(WC::fieldFill()), qPrintable(out));
+        QVERIFY(out.contains(QStringLiteral("QSlider::sub-page:horizontal { background: #4a7ba8;")));
+        QVERIFY(out.contains(QStringLiteral("width: 10px; height: 10px; margin: -3px 0")));
+    }
+
+    void componentIsIdempotent()
+    {
+        const QString src = QStringLiteral(
+            "QPushButton { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px; }"
+            "QPushButton:hover { background: #203040; }"
+            "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }"
+            "QPushButton:checked { background: #0070c0; color: #ffffff; border: 1px solid #0090e0; }"
+            "QPushButton:disabled { background: #1a1a2a; color: #556070; }"
+            "QLineEdit, QSpinBox { background: #1a2a3a; border: 1px solid #304050; }"
+            "QSlider::groove:horizontal { height: 4px; background: #203040; }"
+            "QSlider::handle:horizontal { width: 10px; background: #00b4d8; }");
+        WorkspacePreview::setEnabledForTest(true);
+        const QString once = WorkspacePreview::lookQss(src);
+        QVERIFY(once != src);
+        QCOMPARE(WorkspacePreview::lookQss(once), once);
+        // Every value the treatment writes is a palette value, never a
+        // legacy key the translator would move again.
+        for (const QT::Rule& rule : QT::defaultTable()) {
+            QVERIFY2(!WC::componentize(once, nullptr).contains(rule.legacyHex), qPrintable(rule.legacyHex));
+        }
+    }
+
+    void componentSwitchOffIsIdentity()
+    {
+        const QString src = QStringLiteral("QPushButton { background: #1a2a3a; }");
+        QCOMPARE(WorkspacePreview::lookQss(src), src);
+    }
+
+    // The look must not move anything: same size hint before and after.
+    void componentKeepsSizeHints()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        const QString btnQss = QStringLiteral(
+            "QPushButton { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px;"
+            " color: #c8d8e8; font-size: 10px; font-weight: bold; padding: 2px 4px; }"
+            "QPushButton:checked { background: #0070c0; color: #ffffff; border: 1px solid #0090e0; }");
+        QPushButton a(QStringLiteral("TX I/Q"));
+        QPushButton b(QStringLiteral("TX I/Q"));
+        a.setStyleSheet(btnQss);
+        b.setStyleSheet(WorkspacePreview::lookQss(btnQss, &b));
+        QCOMPARE(b.sizeHint(), a.sizeHint());
+
+        const QString fieldQss = QStringLiteral(
+            "QSpinBox { background: #1a2a3a; border: 1px solid #304050;"
+            " border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }");
+        QSpinBox s1;
+        QSpinBox s2;
+        s1.setStyleSheet(fieldQss);
+        s2.setStyleSheet(WorkspacePreview::lookQss(fieldQss, &s2));
+        QCOMPARE(s2.sizeHint(), s1.sizeHint());
+
+        // The shared spin box builder's shape, with styled buttons.
+        const QString spinQss = QStringLiteral(
+            "QAbstractSpinBox { background: #1a2a3a; color: #c8d8e8;"
+            " border: 1px solid #205070; border-radius: 3px; padding: 1px 4px; font-size: 10px; }"
+            "QAbstractSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right;"
+            " width: 16px; border-left: 1px solid #205070; background: #1a2a3a; }"
+            "QAbstractSpinBox::down-button { subcontrol-origin: border;"
+            " subcontrol-position: bottom right; width: 16px; border-left: 1px solid #205070;"
+            " border-top: 1px solid #205070; background: #1a2a3a; }"
+            "QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {"
+            " background: #203040; }");
+        QSpinBox t1;
+        QSpinBox t2;
+        t1.setStyleSheet(spinQss);
+        t2.setStyleSheet(WorkspacePreview::lookQss(spinQss, &t2));
+        QCOMPARE(t2.sizeHint(), t1.sizeHint());
+
+        const QString editQss = QStringLiteral(
+            "QLineEdit { background: #1a2a3a; border: 1px solid #304050;"
+            " border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }");
+        QLineEdit e1;
+        QLineEdit e2;
+        e1.setStyleSheet(editQss);
+        e2.setStyleSheet(WorkspacePreview::lookQss(editQss, &e2));
+        QCOMPARE(e2.sizeHint(), e1.sizeHint());
+
+        const QString comboQss = QStringLiteral(
+            "QComboBox { background: #1a2a3a; border: 1px solid #304050;"
+            " border-radius: 3px; color: #c8d8e8; font-size: 12px; padding: 2px 4px; }");
+        QComboBox c1;
+        QComboBox c2;
+        c1.addItem(QStringLiteral("Med"));
+        c2.addItem(QStringLiteral("Med"));
+        c1.setStyleSheet(comboQss);
+        c2.setStyleSheet(WorkspacePreview::lookQss(comboQss, &c2));
+        QCOMPARE(c2.sizeHint(), c1.sizeHint());
+
+        const QString sliderQss = QStringLiteral(
+            "QSlider::groove:horizontal { height: 4px; background: #203040; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+            " background: #00b4d8; border-radius: 5px; }");
+        QSlider l1(Qt::Horizontal);
+        QSlider l2(Qt::Horizontal);
+        l1.setStyleSheet(sliderQss);
+        l2.setStyleSheet(WorkspacePreview::lookQss(sliderQss, &l2));
+        QCOMPARE(l2.sizeHint(), l1.sizeHint());
+    }
+
+    // Rendered, not assumed: normal, pressed and checked differ, and the
+    // treated states win over the original rules.
+    void componentStatesRenderDistinct()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        const QString qss = QStringLiteral(
+            "QPushButton { background: #1a2a3a; border: 1px solid #205070; border-radius: 3px; }"
+            "QPushButton:pressed { background: #00b4d8; }"
+            "QPushButton:checked { background: #0070c0; color: #ffffff; }");
+        QPushButton b;
+        b.setCheckable(true);
+        b.resize(60, 22);
+        b.setStyleSheet(WorkspacePreview::lookQss(qss, &b));
+        const QColor normal = centreColour(b);
+        const QColor normalTop = upperColour(b);
+        b.setDown(true);
+        const QColor pressed = centreColour(b);
+        const QColor pressedTop = upperColour(b);
+        b.setDown(false);
+        b.setChecked(true);
+        const QColor checked = centreColour(b);
+        // Normal is the raised grey, checked the glass blue.
+        QVERIFY2(normal.blue() - normal.red() < 8, qPrintable(normal.name()));
+        QVERIFY2(checked.blue() - checked.red() > 40, qPrintable(checked.name()));
+        Q_UNUSED(pressed);
+        // Raised is lighter at the top, pressed darker.
+        QVERIFY2(normalTop.lightness() > pressedTop.lightness() + 4,
+                 qPrintable(normalTop.name() + pressedTop.name()));
+        QVERIFY2(distance(normal, checked) > 60, qPrintable(normal.name() + checked.name()));
+    }
+
+    // A brace-less sheet on a checkable button: Qt treats it as a "*"
+    // rule, and the state rules the treatment adds win over it.
+    void componentSelectorlessCheckableButton()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        QPushButton b;
+        b.setCheckable(true);
+        b.resize(60, 22);
+        b.setStyleSheet(WorkspacePreview::lookQss(
+            QStringLiteral("background: #1a2a3a; border: 1px solid #205070; color: #c8d8e8;"), &b));
+        QVERIFY(b.styleSheet().startsWith(QStringLiteral("* {")));
+        const QColor normal = centreColour(b);
+        b.setChecked(true);
+        const QColor checked = centreColour(b);
+        QVERIFY2(distance(normal, checked) > 60, qPrintable(normal.name() + checked.name()));
+        // A higher-specificity original rule keeps its meaning: an
+        // id-qualified green checked state stays green.
+        QPushButton g;
+        g.setObjectName(QStringLiteral("g"));
+        g.setCheckable(true);
+        g.setChecked(true);
+        g.resize(60, 22);
+        g.setStyleSheet(WorkspacePreview::lookQss(QStringLiteral(
+            "QPushButton#g { background: #1a2a3a; border: 1px solid #205070; }"
+            "QPushButton#g:checked { background: #006040; }"), &g));
+        const QColor green = centreColour(g);
+        QVERIFY2(green.green() > green.blue() && green.green() > green.red(), qPrintable(green.name()));
     }
 
     void cleanupTestCase()

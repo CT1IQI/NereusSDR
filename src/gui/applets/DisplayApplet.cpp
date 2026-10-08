@@ -15,6 +15,8 @@
 #include "gui/ComboStyle.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include "gui/widgets/GuardedComboBox.h"
 #include "gui/widgets/GuardedSlider.h"
 #include "models/DisplaySettingsModel.h"
@@ -78,6 +80,16 @@ void DisplayApplet::buildUI()
         lbl->setStyleSheet(QStringLiteral(
             "QLabel { color: %1; font-size: 10px; font-weight: bold; }"
         ).arg(Style::kAccent));
+        if (WorkspacePreview::enabled()) {
+            // Workspace preview: a tracked caps caption. The row keeps the
+            // original label's height so nothing below it moves; caps
+            // have no descenders, so the 9 px line fits.
+            const int rowHeight = lbl->sizeHint().height();
+            lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; }")
+                                   .arg(Workspace::role("label-mid", "#828288")));
+            lbl->setFont(Workspace::capsFont(lbl->font(), 9));
+            lbl->setFixedHeight(rowHeight);
+        }
         vbox->addWidget(lbl);
     };
 

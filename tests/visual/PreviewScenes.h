@@ -71,6 +71,10 @@ struct SceneContext {
     // workspace look re-runs its scoped stylesheet pass here). Empty for
     // the retained baseline, which then captures exactly as before.
     std::function<void(QWidget*)> beforeGrab;
+    // Non-empty: captureWindow writes the rectangle of every visible
+    // widget in the right panel and the first pan's toolbar to this
+    // file, so two runs can be compared for moved or resized widgets.
+    QString geometryDump;
 };
 
 struct Scene {

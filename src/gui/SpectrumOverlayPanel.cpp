@@ -75,6 +75,7 @@
 #include "SpectrumOverlayPanel.h"
 
 #include "StyleConstants.h"
+#include "gui/styles/WorkspaceComponents.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/styles/WorkspaceStyle.h"
 #include "core/AntennaLabels.h"
@@ -165,21 +166,37 @@ QString wsRgba(const char* role, const char* fallback, int alpha)
         .arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
 }
 
+// A vertical gradient between two palette roles at one alpha: the
+// buttons float over the spectrum, so they keep their translucency.
+QString wsGrad(const char* topRole, const char* topFallback,
+               const char* bottomRole, const char* bottomFallback, int alpha)
+{
+    return QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2)")
+        .arg(wsRgba(topRole, topFallback, alpha), wsRgba(bottomRole, bottomFallback, alpha));
+}
+
+// Raised (light top, dark bottom), radius 4, light top edge and dark
+// bottom edge; hover lighter; pressed flipped. Sizes and fonts are the
+// legacy ones, so no button moves.
 QString wsMenuBtnStyle(int fontPx, int bgAlpha)
 {
     return QStringLiteral(
         "QPushButton { background: %1; "
-        "border: 1px solid rgba(255, 255, 255, 40); border-radius: 2px; "
-        "color: %2; font-size: %3px; font-weight: bold; }"
-        "QPushButton:hover { background: %4; "
-        "border: 1px solid %5; }"
-        "QPushButton:pressed { background: %6; }")
-        .arg(wsRgba("raised-top", "#222227", bgAlpha),
-             Workspace::role("text", "#dcdce1"))
+        "border: 1px solid %2; border-top-color: %3; border-bottom-color: %4; "
+        "border-radius: %5px; "
+        "color: %6; font-size: %7px; font-weight: bold; }"
+        "QPushButton:hover { background: %8; }"
+        "QPushButton:pressed { background: %9; "
+        "border-top-color: %4; border-bottom-color: %3; }")
+        .arg(wsGrad("raised-top", "#222227", "raised-bottom", "#141417", bgAlpha),
+             Workspace::role("border", "#2c2c31"),
+             Workspace::role("edge-light", "#38383e"),
+             Workspace::role("edge-dark", "#1f1f23"))
+        .arg(Workspace::Components::radiusFor(kBtnH))
+        .arg(Workspace::role("text", "#dcdce1"))
         .arg(fontPx)
-        .arg(wsRgba("button-alt-hover", "#2f3138", 240),
-             Workspace::role("border-muted", "#3d3d41"),
-             wsRgba("selected-bottom", "#1e3d5f", 220));
+        .arg(wsGrad("button-alt-hover", "#2f3138", "button", "#1a1a1e", 240),
+             wsGrad("raised-bottom", "#141417", "raised-top", "#222227", bgAlpha));
 }
 
 QString menuBtnNormalStyle()
@@ -195,13 +212,17 @@ QString menuBtnActiveStyle()
     if (!WorkspacePreview::enabled()) {
         return QString::fromLatin1(OverlayColors::kMenuBtnActive);
     }
+    // The selected state: the glass gradient, its border and a lighter
+    // top edge.
     return QStringLiteral(
         "QPushButton { background: %1; "
-        "border: 1px solid %2; border-radius: 2px; "
-        "color: %3; font-size: 11px; font-weight: bold; }")
-        .arg(wsRgba("selected-top", "#2f5f92", 230),
+        "border: 1px solid %2; border-top-color: %3; border-radius: %4px; "
+        "color: %5; font-size: 11px; font-weight: bold; }")
+        .arg(wsGrad("selected-top", "#2f5f92", "selected-bottom", "#1e3d5f", 230),
              Workspace::role("selected-border", "#3d78b0"),
-             Workspace::role("selected-text", "#dbe9f8"));
+             Workspace::shiftL(QColor(Workspace::role("selected-border", "#3d78b0")), 16))
+        .arg(Workspace::Components::radiusFor(kBtnH))
+        .arg(Workspace::role("selected-text", "#dbe9f8"));
 }
 
 QString panelStyle()

@@ -37,6 +37,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QLabel>
 #include <QPushButton>
 #include <QMenu>
+#include <QStyle>
 #include <QJsonArray>
 #include <QScrollArea>
 #include <algorithm>
@@ -82,11 +83,21 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         // pass after every reconcile.
         m_indicator->setStyleSheet(QStringLiteral("background:%1;")
                                        .arg(Workspace::role("accent", "#00b4d8")));
-        setStyleSheet(QString::fromLatin1(Workspace::kScrollBarStyle)
+        // Longpath's scroll bar is 10 px thick; the preview keeps the
+        // thickness the platform style gives the legacy bar, so the
+        // content area does not change width.
+        const int barPx = style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, this);
+        QString scrollBars = QString::fromLatin1(Workspace::kScrollBarStyle);
+        scrollBars.replace(QLatin1String("width: 10px; margin: 0;"),
+                           QStringLiteral("width: %1px; margin: 0;").arg(barPx));
+        scrollBars.replace(QLatin1String("height: 10px; margin: 0;"),
+                           QStringLiteral("height: %1px; margin: 0;").arg(barPx));
+        setStyleSheet(scrollBars
             + QStringLiteral(
                   "QPushButton#containerAppletsMenu {"
                   " background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2);"
-                  " border: 1px solid %3; border-radius: 3px; color: %4; }"
+                  " border: 1px solid %3; border-top-color: %7; border-bottom-color: %8;"
+                  " border-radius: 4px; color: %4; }"
                   "QPushButton#containerAppletsMenu:hover { background: %5; color: %6; }"
                   "QPushButton#containerAppletsMenu::menu-indicator { image: none; width: 0; }")
                   .arg(Workspace::role("raised-top", "#222227"),
@@ -94,7 +105,9 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
                        Workspace::role("border", "#2c2c31"),
                        Workspace::role("text-secondary", "#a6a6ac"),
                        Workspace::role("button-hover", "#26262b"),
-                       Workspace::role("text", "#dcdce1")));
+                       Workspace::role("text", "#dcdce1"),
+                       Workspace::role("edge-light", "#38383e"),
+                       Workspace::role("edge-dark", "#1f1f23")));
         connect(this, &ContainerContentHost::reconciled, this,
                 [this]() { WorkspacePreview::themeSubtree(m_body); });
     }

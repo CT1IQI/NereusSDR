@@ -13,6 +13,7 @@
 #include "WorkspacePreview.h"
 
 #include "QssTranslator.h"
+#include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
 
 #include <QEvent>
@@ -121,10 +122,11 @@ void themeOne(QWidget* w)
             }
         }
     }
-    if (r.qss != current) {
-        w->setStyleSheet(r.qss);
+    const QString look = Workspace::Components::componentize(r.qss, w);
+    if (look != current) {
+        w->setStyleSheet(look);
     }
-    w->setProperty(kThemedQssProperty, r.qss);
+    w->setProperty(kThemedQssProperty, look);
 }
 
 void themeRecursive(QWidget* w)
@@ -188,6 +190,17 @@ void themeOnShow(QWidget* dialog)
     // The filter is a child of the dialog, so it goes with it.
     auto* filter = new ShowFilter(dialog);
     dialog->installEventFilter(filter);
+}
+
+QString lookQss(const QString& original, const QWidget* owner)
+{
+    if (!enabled()) {
+        return original;
+    }
+    QssTranslator::Options options;
+    options.resolveAmbiguousByContext = true;
+    return Workspace::Components::componentize(
+        QssTranslator::translate(original, options).qss, owner);
 }
 
 QHash<QString, int> unknownLiteralCounts()

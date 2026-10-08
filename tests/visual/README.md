@@ -32,6 +32,10 @@ python3 tests/visual/build_gallery.py <run-dir>            # writes <run-dir>/in
 directory and compares it with the stored `<dir>/<profile>/<image>.png`;
 it never writes into `<dir>`.
 
+`nereus_visual_preview --dump-geometry <file>` writes one line per visible
+widget of the right panel and the pan 1 toolbar (`region path x,y wxh`),
+so two scenes can be diffed to prove the workspace look moves nothing.
+
 Each run writes `<run-dir>/<profile>/<image>.png` with a `<image>.json`
 sidecar next to it, and `<run-dir>/manifest.json`. The sidecar records the
 scene, profile, logical and device sizes, DPR, `QT_SCALE_FACTOR`, the screen

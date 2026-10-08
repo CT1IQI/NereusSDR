@@ -54,6 +54,13 @@ void themeSubtree(QWidget* root);
 // is shown. Does nothing when the switch is off.
 void themeOnShow(QWidget* dialog);
 
+// The workspace look of one stylesheet: QssTranslator (with the
+// context rule for #203040) followed by the component treatment
+// (raised, pressed, selected, sunken). `owner` is the widget the sheet
+// is for, or null. Returns `original` unchanged when the switch is off,
+// so a shared style builder can call it unconditionally.
+QString lookQss(const QString& original, const QWidget* owner = nullptr);
+
 // Unknown colour literals met by themeSubtree() since the last reset,
 // lower case, with their counts.
 QHash<QString, int> unknownLiteralCounts();

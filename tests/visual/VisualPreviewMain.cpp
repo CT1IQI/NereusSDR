@@ -13,10 +13,13 @@
 //   nereus_visual_preview --list
 //   nereus_visual_preview --scene <name> --size <W>x<H> --dpr <d> --out <dir>
 //                         [--profile <name>] [--workspace-preview]
+//                         [--dump-geometry <file>]
 //
 // A scene named look-<x> is the Task 1 scene <x> (baseline-<x>, or
 // dialog-<x> for look-dialog-<x>) with the workspace preview switch on;
 // --workspace-preview turns the switch on for any scene.
+// --dump-geometry <file> writes the rectangle of every visible widget in
+// the right panel and the first pan's toolbar (window scenes only).
 //
 // tests/visual/capture.py drives it; see tests/visual/README.md.
 //
@@ -112,6 +115,7 @@ struct Args {
     QString out;
     QString profile;
     bool workspacePreview{false};
+    QString geometryDump;
 };
 
 bool parseArgs(const QStringList& argv, Args& args, QString& error)
@@ -135,6 +139,8 @@ bool parseArgs(const QStringList& argv, Args& args, QString& error)
             args.workspacePreview = true;
         } else if (a == QLatin1String("--scene")) {
             if (!value(args.scene)) { return false; }
+        } else if (a == QLatin1String("--dump-geometry")) {
+            if (!value(args.geometryDump)) { return false; }
         } else if (a == QLatin1String("--out")) {
             if (!value(args.out)) { return false; }
         } else if (a == QLatin1String("--profile")) {
@@ -687,6 +693,7 @@ int main(int argc, char** argv)
     if (WorkspacePreview::enabled()) {
         ctx.beforeGrab = rethemeBeforeGrab;
     }
+    ctx.geometryDump = args.geometryDump;
     scene.run(ctx);
     if (!ctx.failure.isEmpty()) {
         std::fprintf(stderr, "nereus_visual_preview: %s: %s\n", qPrintable(scene.name),
