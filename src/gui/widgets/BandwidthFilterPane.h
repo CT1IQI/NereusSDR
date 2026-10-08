@@ -72,6 +72,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - hoverCursor(): native cursor shapes in place of
+//                 Qt::SizeAllCursor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -162,6 +165,9 @@ private:
     // Welcher Bereich liegt unter x? Auch fuer den Zeigercursor: er
     // soll VORHER sagen, was ein Ziehen tun wird.
     Zone zoneAt(int x) const;
+
+    // NereusSDR: the native cursor shape for a zone (see the .cpp).
+    static Qt::CursorShape hoverCursor(Zone z);
 
     int    hzToX(int hz) const;
     int    xToHz(int x) const;
