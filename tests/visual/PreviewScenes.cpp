@@ -26,6 +26,12 @@
 //                 mixed-container, mixed-container-reveal) with region
 //                 provenance. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Workspace profile scenes (profile-ssb, profile-dx,
+//                 profile-contest, profile-ft8, profile-rail-rest,
+//                 profile-rail-open, profile-manage-dialog,
+//                 profile-new-menu) with slice states and rail
+//                 measurements. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -36,7 +42,13 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QEnterEvent>
 #include <QLabel>
+#include <QMenu>
+#include <QPainter>
+#include <QPushButton>
+#include <QTimeZone>
+#include <QToolTip>
 #include <QMetaObject>
 #include <QPointer>
 #include <QRegularExpression>
@@ -76,6 +88,8 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceHeader.h"
+#include "gui/containers/WorkspaceProfiles.h"
+#include "gui/containers/WorkspaceProfilesDialog.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
 #include "gui/instruments/InstrumentFooter.h"
@@ -85,6 +99,8 @@
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/ModeButtonItem.h"
+#include "gui/widgets/ProfileRail.h"
+#include "gui/widgets/ProfileRailDock.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -797,15 +813,9 @@ QString singleRowRecord(float heightRatio)
 
 // Adds a container to the committed workspace, as the Containers menu and
 // the settings dialog do: a draft with registry entries, committed.
-QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
-                          ContentLayout layout, const QVector<EdgeEntry>& entries)
+ContainerDocument makeSceneContainer(ContainerManager* manager, const QString& name, DockEdge edge,
+                                     ContentLayout layout, const QVector<EdgeEntry>& entries)
 {
-    auto* manager = ctx.window->findChild<ContainerManager*>();
-    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
-        ctx.failure = QStringLiteral("no container workspace");
-        return {};
-    }
-    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
     ContainerDocument d;
     d.id = QStringLiteral("preview-") + slug(name);
     d.name = name;
@@ -828,6 +838,19 @@ QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
         }
         d.contents.append(entry);
     }
+    return d;
+}
+
+QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
+                          ContentLayout layout, const QVector<EdgeEntry>& entries)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return {};
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    const ContainerDocument d = makeSceneContainer(manager, name, edge, layout, entries);
     draft.containers.append(d);
     if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
         ctx.failure = QStringLiteral("could not add the %1 container").arg(name);
@@ -842,29 +865,40 @@ QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
 constexpr double kEndRowHeightPx = 49.0;
 
 // "Meters": the Thetis S-Meter preset and the Power/SWR face side by side.
+QVector<EdgeEntry> metersEntries()
+{
+    return {{QStringLiteral("meter.sMeter"), QRectF(0, 0, 420, kEndRowHeightPx)},
+            {QStringLiteral("meter.powerSwr"), QRectF(440, 0, 420, kEndRowHeightPx)}};
+}
+
 QString addMetersContainer(SceneContext& ctx, DockEdge edge)
 {
-    return addSceneContainer(ctx, QStringLiteral("Meters"), edge, ContentLayout::FreeCanvas,
-                             {{QStringLiteral("meter.sMeter"), QRectF(0, 0, 420, kEndRowHeightPx)},
-                              {QStringLiteral("meter.powerSwr"), QRectF(440, 0, 420, kEndRowHeightPx)}});
+    return addSceneContainer(ctx, QStringLiteral("Meters"), edge, ContentLayout::FreeCanvas, metersEntries());
 }
 
 // "Band": the band and mode button boxes side by side, one row each.
+QVector<EdgeEntry> bandEntries()
+{
+    return {{QStringLiteral("BANDBTNS"), QRectF(0, 0, 840, kEndRowHeightPx),
+             singleRowRecord<BandButtonItem>(0.4f)},
+            {QStringLiteral("MODEBTNS"), QRectF(860, 0, 520, kEndRowHeightPx),
+             singleRowRecord<ModeButtonItem>(0.4f)}};
+}
+
 QString addBandContainer(SceneContext& ctx, DockEdge edge)
 {
-    return addSceneContainer(ctx, QStringLiteral("Band"), edge, ContentLayout::FreeCanvas,
-                             {{QStringLiteral("BANDBTNS"), QRectF(0, 0, 840, kEndRowHeightPx),
-                               singleRowRecord<BandButtonItem>(0.4f)},
-                              {QStringLiteral("MODEBTNS"), QRectF(860, 0, 520, kEndRowHeightPx),
-                               singleRowRecord<ModeButtonItem>(0.4f)}});
+    return addSceneContainer(ctx, QStringLiteral("Band"), edge, ContentLayout::FreeCanvas, bandEntries());
 }
 
 // "Levels": two bar meters stacked, a container that reads well on a side.
+QVector<EdgeEntry> levelsEntries()
+{
+    return {{QStringLiteral("meter.signalMaxBin"), {}}, {QStringLiteral("meter.comp"), {}}};
+}
+
 QString addLevelsContainer(SceneContext& ctx, DockEdge edge)
 {
-    return addSceneContainer(ctx, QStringLiteral("Levels"), edge, ContentLayout::VerticalStack,
-                             {{QStringLiteral("meter.signalMaxBin"), {}},
-                              {QStringLiteral("meter.comp"), {}}});
+    return addSceneContainer(ctx, QStringLiteral("Levels"), edge, ContentLayout::VerticalStack, levelsEntries());
 }
 
 QJsonObject proposedEdgeValues()
@@ -1235,16 +1269,20 @@ void sceneInstrumentsSheet(SceneContext& ctx)
 }
 
 // "Station": Longpath instruments mixed with Thetis meter faces, slice A.
-QString addStationContainer(SceneContext& ctx, DockEdge edge)
+QVector<EdgeEntry> stationEntries()
 {
     const QJsonObject sliceA{{QStringLiteral("rxSource"), 1}};
-    return addSceneContainer(ctx, QStringLiteral("Station"), edge, ContentLayout::VerticalStack,
-                             {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, sliceA},
-                              {QString::fromLatin1(LongpathContent::kFilterType), {}, {}, sliceA},
-                              {QStringLiteral("meter.sMeter"), {}, {}, sliceA},
-                              {QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, sliceA},
-                              {QStringLiteral("meter.crossNeedle"), {}, {}, sliceA},
-                              {QString::fromLatin1(LongpathContent::kBarType), {}, {}, sliceA}});
+    return {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, sliceA},
+            {QString::fromLatin1(LongpathContent::kFilterType), {}, {}, sliceA},
+            {QStringLiteral("meter.sMeter"), {}, {}, sliceA},
+            {QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, sliceA},
+            {QStringLiteral("meter.crossNeedle"), {}, {}, sliceA},
+            {QString::fromLatin1(LongpathContent::kBarType), {}, {}, sliceA}};
+}
+
+QString addStationContainer(SceneContext& ctx, DockEdge edge)
+{
+    return addSceneContainer(ctx, QStringLiteral("Station"), edge, ContentLayout::VerticalStack, stationEntries());
 }
 
 // After the data is fed (the poller and timers are stopped): one reading
@@ -1493,6 +1531,461 @@ QTreeWidgetItem* treeItemForIndex(QTreeWidget* tree, int index)
     return nullptr;
 }
 
+// ---- workspace profiles (workspace preview) --------------------------------
+
+// The fixed "last saved" time the preview's profiles show.
+QDateTime profileClock()
+{
+    return QDateTime(QDate(2026, 10, 7), QTime(14, 32), QTimeZone::utc());
+}
+
+QJsonObject rxSource(int rx)
+{
+    return QJsonObject{{QStringLiteral("rxSource"), rx}};
+}
+
+// A container bound to one slice: the header's source chip names it.
+ContainerDocument onSlice(ContainerDocument d, int rx)
+{
+    d.config.insert(QStringLiteral("rxSource"), rx);
+    return d;
+}
+
+// The DX top strip: room for the needles without taking half the window.
+constexpr int kDxTopStripPx = 190;
+
+// The four seeded profiles, in rail order (S, D, C, F).
+enum class SceneProfile { Ssb, Dx, Contest, Ft8 };
+
+QString profileName(SceneProfile p)
+{
+    switch (p) {
+    case SceneProfile::Ssb: return QStringLiteral("SSB");
+    case SceneProfile::Dx: return QStringLiteral("DX");
+    case SceneProfile::Contest: return QStringLiteral("Contest");
+    case SceneProfile::Ft8: return QStringLiteral("FT8");
+    }
+    return {};
+}
+
+struct SeededProfiles {
+    QMap<SceneProfile, QString> ids;
+    // Containers to pose after the data is fed: needles fed for slice A
+    // (as MeterPoller would), filter panes given one trace refresh.
+    QMap<SceneProfile, QStringList> needleHosts;
+    QMap<SceneProfile, QStringList> filterHosts;
+    QMap<SceneProfile, QString> description;
+};
+
+void placeMain(WorkspaceDocument& d, DockEdge edge)
+{
+    for (ContainerDocument& c : d.containers) {
+        if (c.id == d.mainContainerId) {
+            c.dockMode = DockMode::PanelDocked;
+            c.edge = edge;
+            c.visible = true;
+        }
+    }
+}
+
+// Commits `base` edited by `edit`, every container's header `header`.
+bool commitArrangement(SceneContext& ctx, const WorkspaceDocument& base, HeaderMode header,
+                       const std::function<void(WorkspaceDocument&, ContainerManager*)>& edit)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    WorkspaceDocument draft = base;
+    draft.revision = manager->workspaceStore()->snapshot().revision;
+    edit(draft, manager);
+    for (ContainerDocument& c : draft.containers) {
+        c.header = header;
+    }
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        return false;
+    }
+    pump(kSettleMs);
+    return true;
+}
+
+// Seeds SSB, DX, Contest and FT8 through the same calls the rail and the
+// manage dialog make (rename, save, New > From Current Arrangement), then
+// switches to `show`.
+bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
+{
+    WorkspaceProfiles* profiles = ctx.window->workspaceProfiles();
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (profiles == nullptr || manager == nullptr || manager->workspaceStore() == nullptr) {
+        ctx.failure = QStringLiteral("no workspace profiles: the workspace preview switch is off");
+        return false;
+    }
+    if (profiles->ids().size() != 1) {
+        ctx.failure = QStringLiteral("expected the first-run Default profile only");
+        return false;
+    }
+    profiles->setClock(&profileClock);
+    const WorkspaceDocument base = manager->workspaceStore()->snapshot();
+
+    // SSB: Main Panel right, the Station mixed container left, Reveal.
+    if (!commitArrangement(ctx, base, HeaderMode::Reveal, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            d.containers.append(makeSceneContainer(m, QStringLiteral("Station"), DockEdge::Left,
+                                                   ContentLayout::VerticalStack, stationEntries()));
+        })) {
+        ctx.failure = QStringLiteral("could not commit the SSB arrangement");
+        return false;
+    }
+    const QString first = profiles->activeId();
+    if (!profiles->rename(first, QStringLiteral("SSB")).ok() || !profiles->save().ok()) {
+        ctx.failure = QStringLiteral("could not rename and save SSB");
+        return false;
+    }
+    seeded.ids[SceneProfile::Ssb] = first;
+    seeded.needleHosts[SceneProfile::Ssb] = {QStringLiteral("preview-station")};
+    seeded.filterHosts[SceneProfile::Ssb] = {QStringLiteral("preview-station")};
+    seeded.description[SceneProfile::Ssb] = QStringLiteral(
+        "Main Panel right; Station (Longpath frequency, filter, needle and bar with Thetis "
+        "S-Meter and cross needle, slice A) left; every header Reveal");
+
+    const auto create = [&](SceneProfile p, HeaderMode header,
+                            const std::function<void(WorkspaceDocument&, ContainerManager*)>& edit) {
+        if (!commitArrangement(ctx, base, header, edit)) {
+            ctx.failure = QStringLiteral("could not commit the %1 arrangement").arg(profileName(p));
+            return false;
+        }
+        const auto r = profiles->createFromCurrent(profileName(p));
+        if (!r.ok()) {
+            ctx.failure = QStringLiteral("could not create %1: %2").arg(profileName(p), r.error);
+            return false;
+        }
+        seeded.ids[p] = r.id;
+        return true;
+    };
+
+    // DX: Main Panel right; a Frequency (Longpath) per slice left, with
+    // source chips; signal needles for A and B on top; Always.
+    if (!create(SceneProfile::Dx, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            const QString freq = QString::fromLatin1(LongpathContent::kFrequencyType);
+            const QString needle = QString::fromLatin1(LongpathContent::kNeedleType);
+            d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Frequency A"), DockEdge::Left,
+                                                   ContentLayout::VerticalStack, {{freq, {}, {}, rxSource(1)}}), 1));
+            d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Frequency B"), DockEdge::Left,
+                                                   ContentLayout::VerticalStack, {{freq, {}, {}, rxSource(2)}}), 2));
+            d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal A"), DockEdge::Top,
+                                                   ContentLayout::VerticalStack, {{needle, {}, {}, rxSource(1)}}), 1));
+            d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal B"), DockEdge::Top,
+                                                   ContentLayout::VerticalStack, {{needle, {}, {}, rxSource(2)}}), 2));
+            d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+        })) {
+        return false;
+    }
+    seeded.needleHosts[SceneProfile::Dx] = {QStringLiteral("preview-signal-a")};
+    seeded.description[SceneProfile::Dx] = QStringLiteral(
+        "Main Panel right; Frequency A and Frequency B (Longpath, source chips RX A / RX B) "
+        "left; Signal A and Signal B (Longpath needles) top; every header Always");
+
+    // Contest: all four strips, dense, Always.
+    if (!create(SceneProfile::Contest, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            d.containers.append(makeSceneContainer(m, QStringLiteral("Meters"), DockEdge::Top,
+                                                   ContentLayout::FreeCanvas, metersEntries()));
+            d.containers.append(makeSceneContainer(m, QStringLiteral("Levels"), DockEdge::Left,
+                                                   ContentLayout::VerticalStack, levelsEntries()));
+            d.containers.append(onSlice(makeSceneContainer(
+                m, QStringLiteral("Filter A"), DockEdge::Left, ContentLayout::VerticalStack,
+                {{QString::fromLatin1(LongpathContent::kFilterType), {}, {}, rxSource(1)}}), 1));
+            d.containers.append(makeSceneContainer(m, QStringLiteral("Band"), DockEdge::Bottom,
+                                                   ContentLayout::FreeCanvas, bandEntries()));
+        })) {
+        return false;
+    }
+    seeded.filterHosts[SceneProfile::Contest] = {QStringLiteral("preview-filter-a")};
+    seeded.description[SceneProfile::Contest] = QStringLiteral(
+        "Meters top, Levels and Filter A (Longpath filter passband, slice A) left, Main Panel "
+        "right, Band bottom; every header Always");
+
+    // FT8: a narrow right strip with only slice B's frequency and filter;
+    // the Main Panel moves to the left strip; Hidden.
+    if (!create(SceneProfile::Ft8, HeaderMode::Hidden, [](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Left);
+            d.containers.append(onSlice(makeSceneContainer(
+                m, QStringLiteral("FT8"), DockEdge::Right, ContentLayout::VerticalStack,
+                {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, rxSource(2)},
+                 {QString::fromLatin1(LongpathContent::kFilterType), {}, {}, rxSource(2)}}), 2));
+            d.arrangement.strips[DockEdge::Right].thickness = EdgeDockStrip::kSideThicknessPx;
+        })) {
+        return false;
+    }
+    seeded.filterHosts[SceneProfile::Ft8] = {QStringLiteral("preview-ft8")};
+    seeded.description[SceneProfile::Ft8] = QStringLiteral(
+        "FT8 (Longpath frequency and filter passband, slice B) alone in a narrow right strip; "
+        "Main Panel in the left strip; every header Hidden");
+
+    const auto r = profiles->switchTo(seeded.ids.value(show));
+    if (!r.ok()) {
+        ctx.failure = QStringLiteral("could not switch to %1: %2").arg(profileName(show), r.error);
+        return false;
+    }
+    pump(kSettleMs);
+    return true;
+}
+
+void poseProfile(SceneContext& ctx, const SeededProfiles& seeded, SceneProfile p)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    for (const QString& id : seeded.needleHosts.value(p)) {
+        ContainerContentHost* host = manager->contentHost(id);
+        if (host == nullptr || poller == nullptr) {
+            continue;
+        }
+        for (NeedleInstrument* needle : host->findChildren<NeedleInstrument*>()) {
+            const QJsonObject context = needle->property("containerSourceContext").toJsonObject();
+            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalPeakDbm);
+            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalDbm);
+            ctx.notes.append(QStringLiteral("%1 Longpath needle (slice A): readingUpdated SignalPeak "
+                                            "-68 then -73 dBm, as MeterPoller sends for slice A").arg(id));
+        }
+    }
+    for (const QString& id : seeded.filterHosts.value(p)) {
+        ContainerContentHost* host = manager->contentHost(id);
+        if (host == nullptr) {
+            continue;
+        }
+        for (BandwidthFilterPane* pane : host->findChildren<BandwidthFilterPane*>()) {
+            for (QTimer* timer : pane->findChildren<QTimer*>()) {
+                QMetaObject::invokeMethod(timer, "timeout");
+            }
+            ctx.notes.append(QStringLiteral("%1 Longpath filter pane: one trace refresh from the fed pan").arg(id));
+        }
+    }
+    if (p == SceneProfile::Dx) {
+        ctx.notes.append(QStringLiteral(
+            "Signal B needle: offline. MeterPoller polls RX only for contexts with a Thetis "
+            "MeterWidget, and slice B has none in this profile; no reading is faked"));
+    }
+    if (p == SceneProfile::Ssb) {
+        ctx.notes.append(QStringLiteral("Station Longpath bar (TX: SWR): no reading in receive, shows its dash"));
+    }
+}
+
+QJsonArray sliceStates(SceneContext& ctx)
+{
+    QJsonArray out;
+    for (SliceModel* s : ctx.model->slices()) {
+        out.append(QJsonObject{{QStringLiteral("slice"), QString(QChar('A' + s->sliceIndex()))},
+                               {QStringLiteral("frequency_hz"), s->frequency()},
+                               {QStringLiteral("mode"), SliceModel::modeName(s->dspMode())},
+                               {QStringLiteral("filter_low_hz"), s->filterLow()},
+                               {QStringLiteral("filter_high_hz"), s->filterHigh()}});
+    }
+    return out;
+}
+
+QLabel* titleLabel(TitleBar* bar)
+{
+    for (QLabel* label : bar->findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (label->text() == QStringLiteral("NereusSDR")) {
+            return label;
+        }
+    }
+    return nullptr;
+}
+
+// Logical-px measurements of the rail against the network readout and
+// the title, in window coordinates.
+QJsonObject railMeasure(SceneContext& ctx)
+{
+    ProfileRailDock* dock = ctx.window->profileRailDock();
+    auto* bar = ctx.window->findChild<TitleBar*>();
+    QLabel* title = bar != nullptr ? titleLabel(bar) : nullptr;
+    if (dock == nullptr || title == nullptr) {
+        return QJsonObject{{QStringLiteral("error"), QStringLiteral("no rail dock or title")}};
+    }
+    QWidget* readout = bar->connectionSegment();
+    const int readoutRight = readout->mapTo(ctx.window, QPoint(readout->width(), 0)).x();
+    const int textWidth = title->fontMetrics().horizontalAdvance(title->text());
+    const int titleTextLeft = title->mapTo(ctx.window, QPoint((title->width() - textWidth) / 2, 0)).x();
+    QPushButton* badge = dock->collapsedBadge();
+    const QRect badgeRect(badge->mapTo(ctx.window, QPoint(0, 0)), badge->size());
+    const int openWidth = dock->isOpen() ? dock->popover()->width() : dock->popover()->sizeHint().width();
+    const int openLeft = badgeRect.x() + badgeRect.width() - openWidth;
+    QJsonArray barChildren;
+    for (QWidget* w : bar->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (w->isVisible()) {
+            barChildren.append(QStringLiteral("%1 %2x%3 at x %4")
+                                   .arg(QString::fromLatin1(w->metaObject()->className()))
+                                   .arg(w->width()).arg(w->height())
+                                   .arg(w->mapTo(ctx.window, QPoint(0, 0)).x()));
+        }
+    }
+    return QJsonObject{
+        {QStringLiteral("window_width"), ctx.window->width()},
+        {QStringLiteral("collapsed_badge"), rectJson(badgeRect)},
+        {QStringLiteral("collapsed_width"), badgeRect.width()},
+        {QStringLiteral("collapsed_height"), badgeRect.height()},
+        {QStringLiteral("open_width"), openWidth},
+        {QStringLiteral("open_height"), dock->isOpen() ? dock->popover()->height()
+                                                       : dock->popover()->sizeHint().height()},
+        {QStringLiteral("open_left"), openLeft},
+        {QStringLiteral("network_readout_right"), readoutRight},
+        {QStringLiteral("title_text_left"), titleTextLeft},
+        {QStringLiteral("free_readout_to_title"), titleTextLeft - readoutRight},
+        {QStringLiteral("free_readout_to_badge"), badgeRect.x() - readoutRight},
+        {QStringLiteral("open_covers_readout_px"), qMax(0, readoutRight - openLeft)},
+        {QStringLiteral("title_bar_children"), barChildren},
+    };
+}
+
+QJsonArray railRegions(SceneContext& ctx)
+{
+    QJsonArray regions;
+    ProfileRailDock* dock = ctx.window->profileRailDock();
+    if (dock == nullptr) {
+        return regions;
+    }
+    QPushButton* badge = dock->collapsedBadge();
+    regions.append(QJsonObject{
+        {QStringLiteral("name"), QStringLiteral("profile-rail-collapsed")},
+        {QStringLiteral("provenance"), QStringLiteral("proposed")},
+        {QStringLiteral("note"), QStringLiteral("NereusSDR wrapper; Longpath pill style")},
+        {QStringLiteral("rect"), rectJson(QRect(badge->mapTo(ctx.window, QPoint(0, 0)), badge->size()))}});
+    if (dock->isOpen()) {
+        regions.append(QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("profile-rail-popover")},
+            {QStringLiteral("provenance"), QStringLiteral("proposed")},
+            {QStringLiteral("rect"), rectJson(dock->popover()->geometry())}});
+        ProfileRail* rail = dock->rail();
+        regions.append(QJsonObject{
+            {QStringLiteral("name"), QStringLiteral("profile-rail")},
+            {QStringLiteral("provenance"), QStringLiteral("longpath-port")},
+            {QStringLiteral("rect"), rectJson(QRect(rail->mapTo(ctx.window, QPoint(0, 0)), rail->size()))}});
+    }
+    return regions;
+}
+
+// Paints a separate top-level (menu, tooltip, dialog) into a window image
+// where it sits on screen.
+void compositeOver(CapturedImage& img, QWidget* window, QWidget* top)
+{
+    if (top == nullptr || !top->isVisible()) {
+        return;
+    }
+    const QImage over = grabWidget(top);
+    const QPoint at = top->mapToGlobal(QPoint(0, 0)) - window->mapToGlobal(QPoint(0, 0));
+    QPainter painter(&img.image);
+    painter.drawImage(QRect(at, top->size()), over);
+}
+
+QWidget* visibleToolTip()
+{
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (w->isVisible() && w->inherits("QTipLabel")) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
+void addTopStripCropImage(SceneContext& ctx, const QString& name)
+{
+    // At the crop profile captureWindow already cut it.
+    if (ctx.crops) {
+        return;
+    }
+    for (const CapturedImage& img : ctx.images) {
+        if (img.name != name) {
+            continue;
+        }
+        CapturedImage full = img;
+        full.crops.clear();
+        addCrop(full.crops, QStringLiteral("top-strip"), ctx.window, ctx.window->findChild<TitleBar*>(), full.dpr);
+        appendCropImages(ctx, full, name);
+        return;
+    }
+}
+
+void annotateProfileImages(SceneContext& ctx, const QString& name, const SeededProfiles& seeded,
+                           SceneProfile shown)
+{
+    QJsonObject profiles;
+    for (auto it = seeded.ids.constBegin(); it != seeded.ids.constEnd(); ++it) {
+        profiles.insert(profileName(it.key()), it.value());
+    }
+    const QJsonArray slices = sliceStates(ctx);
+    const QJsonObject measure = railMeasure(ctx);
+    const QJsonArray regions = railRegions(ctx);
+    for (CapturedImage& img : ctx.images) {
+        if (img.name != name && img.extra.value(QStringLiteral("source")).toString() != name) {
+            continue;
+        }
+        img.extra[QStringLiteral("slice_states")] = slices;
+        img.extra[QStringLiteral("active_profile")] = profileName(shown);
+        img.extra[QStringLiteral("arrangement")] = seeded.description.value(shown);
+        img.extra[QStringLiteral("profiles")] = profiles;
+        img.extra[QStringLiteral("profile_saved_at")] = profileClock().toString(Qt::ISODate);
+        img.extra[QStringLiteral("rail_measure")] = measure;
+        img.extra[QStringLiteral("regions")] = regions;
+        img.extra[QStringLiteral("region_provenance")] = QStringLiteral(
+            "longpath-port: the profile rail (fanned out) and the Longpath instruments; proposed: "
+            "profiles, the collapsed badge wrapper, the popover, arrangements, the dialog");
+    }
+}
+
+// One profile scene: the two-band station, profiles seeded, `shown`
+// active, the rail at rest unless `pose` changes it.
+// Paints `tops` into the window image `name` and cuts its crops again
+// from the composited image.
+void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWidget*>& tops)
+{
+    for (int i = ctx.images.size() - 1; i >= 0; --i) {
+        if (ctx.images[i].extra.value(QStringLiteral("source")).toString() == name) {
+            ctx.images.removeAt(i);
+        }
+    }
+    for (CapturedImage& img : ctx.images) {
+        if (img.name != name) {
+            continue;
+        }
+        for (QWidget* top : tops) {
+            compositeOver(img, ctx.window, top);
+        }
+        const CapturedImage full = img;
+        appendCropImages(ctx, full, name);
+        return;
+    }
+}
+
+void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
+                  const std::function<void(SceneContext&)>& pose = {},
+                  const std::function<void(SceneContext&)>& afterCapture = {},
+                  bool topStripCrop = false)
+{
+    ctx.provenance = QStringLiteral("proposed");
+    ctx.extraCrops = addStripCrops;
+    auto seeded = std::make_shared<SeededProfiles>();
+    runWindowScene(ctx, twoBandPoses(), 0, [seeded, shown](SceneContext& c) {
+        seedProfiles(c, shown, *seeded);
+    }, [seeded, shown, pose](SceneContext& c) {
+        poseProfile(c, *seeded, shown);
+        if (pose) {
+            pose(c);
+        }
+        pump(kFinalSettleMs);
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, name);
+    if (afterCapture) {
+        afterCapture(ctx);
+    }
+    if (topStripCrop) {
+        addTopStripCropImage(ctx, name);
+    }
+    annotateProfileImages(ctx, name, *seeded, shown);
+}
+
 } // namespace
 
 void pump(int ms)
@@ -1721,6 +2214,111 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) {
         // mixed-container with every header Reveal, pointer away.
         sceneMixedContainer(ctx, QStringLiteral("mixed-container-reveal"), HeaderMode::Reveal);
+    }, true});
+    // ---- workspace profiles (switch on) ----
+    scenes.append({QStringLiteral("profile-ssb"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneProfile(ctx, QStringLiteral("profile-ssb"), SceneProfile::Ssb); },
+                   true});
+    scenes.append({QStringLiteral("profile-dx"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneProfile(ctx, QStringLiteral("profile-dx"), SceneProfile::Dx); },
+                   true});
+    scenes.append({QStringLiteral("profile-contest"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProfile(ctx, QStringLiteral("profile-contest"), SceneProfile::Contest);
+    }, true});
+    scenes.append({QStringLiteral("profile-ft8"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneProfile(ctx, QStringLiteral("profile-ft8"), SceneProfile::Ft8); },
+                   true});
+    scenes.append({QStringLiteral("profile-rail-rest"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // SSB with the rail at rest: the active badge only.
+        sceneProfile(ctx, QStringLiteral("profile-rail-rest"), SceneProfile::Ssb, {}, {}, true);
+    }, true});
+    scenes.append({QStringLiteral("profile-rail-open"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // The fan-out through the dock's open() seam, the pointer over the
+        // D badge (hover state, its remove cross) and its tooltip.
+        auto tip = std::make_shared<QPointer<QWidget>>();
+        sceneProfile(ctx, QStringLiteral("profile-rail-open"), SceneProfile::Ssb, [tip](SceneContext& c) {
+            ProfileRailDock* dock = c.window->profileRailDock();
+            WorkspaceProfiles* profiles = c.window->workspaceProfiles();
+            dock->open();
+            pump(kFinalSettleMs);
+            QPushButton* d = profiles->ids().size() > 1 ? dock->rail()->badgeButton(profiles->ids().at(1)) : nullptr;
+            if (d == nullptr) {
+                c.failure = QStringLiteral("no D badge in the rail");
+                return;
+            }
+            const QPointF local(d->width() / 2.0, d->height() / 2.0);
+            d->setAttribute(Qt::WA_UnderMouse, true);
+            QEnterEvent enter(local, d->mapTo(d->window(), local), d->mapToGlobal(local));
+            QCoreApplication::sendEvent(d, &enter);
+            d->update();
+            // The pointer's spot; Qt offsets the tooltip from it as it does live.
+            QToolTip::showText(d->mapToGlobal(local.toPoint()), d->toolTip(), d);
+            pump(kFinalSettleMs);
+            *tip = visibleToolTip();
+            c.notes.append(*tip ? QStringLiteral("pointer over the D badge: hover state set, Enter sent, "
+                                                 "tooltip \"%1\" composited where it shows").arg(d->toolTip())
+                                : QStringLiteral("pointer over the D badge: hover state set; the tooltip did "
+                                                 "not show (background-only process), not composited"));
+        }, [tip](SceneContext& c) {
+            if (*tip) {
+                compositeAndRecrop(c, QStringLiteral("profile-rail-open"), {tip->data()});
+            }
+        }, true);
+    }, true});
+    scenes.append({QStringLiteral("profile-new-menu"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // The + in the fanned-out rail: the New menu, as MainWindow shows it.
+        auto menu = std::make_shared<QPointer<QMenu>>();
+        sceneProfile(ctx, QStringLiteral("profile-new-menu"), SceneProfile::Ssb, [menu](SceneContext& c) {
+            ProfileRailDock* dock = c.window->profileRailDock();
+            dock->open();
+            pump(kFinalSettleMs);
+            QWidget* plus = dock->rail()->plusButton();
+            *menu = WorkspaceProfilesDialog::createNewMenu(c.window->workspaceProfiles(), c.window);
+            (*menu)->popup(plus->mapToGlobal(QPoint(0, plus->height())));
+            pump(kFinalSettleMs);
+            if (!(*menu)->isVisible()) {
+                c.failure = QStringLiteral("the New menu did not show");
+            }
+        }, [menu](SceneContext& c) {
+            if (!*menu) {
+                return;
+            }
+            compositeAndRecrop(c, QStringLiteral("profile-new-menu"), {menu->data()});
+            captureDialog(c, menu->data(), QStringLiteral("profile-new-menu--menu"));
+            (*menu)->close();
+        });
+    }, true});
+    scenes.append({QStringLiteral("profile-manage-dialog"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // Containers > Manage Workspace Profiles over the SSB window, and the
+        // dialog alone.
+        sceneProfile(ctx, QStringLiteral("profile-manage-dialog"), SceneProfile::Ssb, [](SceneContext& c) {
+            auto* action = c.window->findChild<QAction*>(QStringLiteral("containersManageProfiles"));
+            if (action == nullptr) {
+                c.failure = QStringLiteral("no containersManageProfiles action");
+                return;
+            }
+            action->trigger();
+            pump(kDialogSettleMs);
+            auto* dialog = c.window->findChild<WorkspaceProfilesDialog*>();
+            if (dialog == nullptr) {
+                c.failure = QStringLiteral("the manage dialog did not open");
+                return;
+            }
+            dialog->move(c.window->mapToGlobal(c.window->rect().center()) - dialog->rect().center());
+            pump(kFinalSettleMs);
+        }, [](SceneContext& c) {
+            auto* dialog = c.window->findChild<WorkspaceProfilesDialog*>();
+            compositeAndRecrop(c, QStringLiteral("profile-manage-dialog"), {dialog});
+            captureDialog(c, dialog, QStringLiteral("profile-manage-dialog--dialog"));
+            if (dialog != nullptr) {
+                dialog->close();
+            }
+        });
     }, true});
     scenes.append({QStringLiteral("free-container"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {

@@ -183,6 +183,35 @@ the fed pan. The sidecars carry a `regions` array (each entry's rect and
 visible rect, headers, viewport and strips in window coordinates) with a
 per-region provenance: `longpath-port`, `retained` or `proposed`.
 
+### Workspace profile scenes
+
+The profile scenes seed four workspace profiles into the isolated settings
+profile (fixed save time 2026-10-07 14:32 UTC) on the same two-band
+station: slice A 7.185 LSB on 40 m, slice B 14.225 USB on 20 m. A profile
+holds container arrangement only, so each sidecar's `slices` array shows
+the same slice states in all four.
+
+- `profile-ssb`: Main Panel right, Station container left, headers Reveal.
+- `profile-dx`: Main Panel right, Longpath frequency A and B left, Longpath
+  signal needles A and B top, headers Always with source chips. Needle B
+  stays offline: the meter poller has no slice B reading in the preview, and the scene does not fake one.
+- `profile-contest`: all four strips (Meters top, Levels and Filter A
+  left, Band bottom, Main Panel right), headers Always.
+- `profile-ft8`: a narrow right strip with frequency and filter for slice
+  B, the Main Panel in the left strip, headers Hidden.
+- `profile-rail-rest`: the profile rail at rest (only the active badge, left
+  of the centre title), plus a `top-strip` crop.
+- `profile-rail-open`: the rail fanned out as a popover, the pointer over
+  the D badge and its tooltip composited.
+- `profile-new-menu` and `profile-manage-dialog`: the rail's New menu and
+  the Workspace Profiles dialog, composited over the window and also
+  captured alone (`--menu`, `--dialog`). Capture them at
+  `mac-1512x869@2` and `laptop-1280x800@1`.
+
+Every profile scene's sidecar carries a `rail_measure` object: the
+collapsed and open rail widths, the title and network readout edges, the
+free space between them and how far the open popover covers the readout.
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives
@@ -232,4 +261,5 @@ non-zero on any difference. What makes it repeatable:
   `look-*` scenes, the proposed headers in the `header-*` and
   `arrange-on` scenes and the four-edge workspace in the `edge-*`,
   `free-container`, `floating-container` and `drag-preview-*` scenes and the
-  Longpath instruments in `instruments-sheet` and `mixed-container*`. Other proposed designs are added as new scenes.
+  Longpath instruments in `instruments-sheet` and `mixed-container*` and the
+  workspace profiles in the `profile-*` scenes. Other proposed designs are added as new scenes.
