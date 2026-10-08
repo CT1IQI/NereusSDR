@@ -75,6 +75,9 @@
 //                 the pointer's hover out of the tree, and Radio Status
 //                 holds its uptime, so they are the same every run.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Window images carry applet_fit for every container
+//                 holding applets. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -993,6 +996,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
             ctx.extraCrops(ctx, full.crops, full.dpr);
         }
     }
+    full.extra[QStringLiteral("applet_fit")] = measureAppletFit(ctx.window);
     attachRegions(full, ctx.window);
     ctx.images.append(full);
     appendCropImages(ctx, full, name);

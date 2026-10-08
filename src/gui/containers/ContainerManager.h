@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - applyEdgeStripContentHints and
+//                 scheduleEdgeStripContentHints: a strip's floor follows
+//                 its containers' content minimum at once. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - geometryCommitPendingForTest, so tests wait on the
+//                 geometry capture itself rather than a fixed time. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - A duplicated container is always shown, floating, next
 //                 to its original (showDuplicate), in both looks. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -175,6 +182,8 @@ public:
     // at `edge`, `index`, as during a header drag.
     void showDropPreviewForTest(DockEdge edge, int index);
     void clearDropPreviewForTest();
+    // Test seam: a geometry capture is scheduled and has not run yet.
+    bool geometryCommitPendingForTest() const { return m_geometryCommit.isActive(); }
 
     // --- Workspace preview: the header source menu ---
     // Whether a slice id exists, for the menu's enabled slices. MainWindow
@@ -293,6 +302,10 @@ private:
     bool commitDockMode(const QString& id, DockMode mode);
     bool edgeMode() const;
     void layoutEdgeStrips(const WorkspaceDocument& document);
+    // Each edge strip's floor and preferred cross size from its containers
+    // (the side strips' floors alone when `sideStripsOnly`).
+    void applyEdgeStripContentHints(bool sideStripsOnly);
+    void scheduleEdgeStripContentHints();
     void captureArrangement(WorkspaceDocument& document) const;
     // True when the edge-area handle borders a locked container, or a strip
     // that holds one.
@@ -318,6 +331,7 @@ private:
     bool effectiveVisible(const ContainerDocument& document) const;
     QString m_storageError;
     QTimer m_geometryCommit;
+    bool m_edgeHintsPending = false;
     QSet<QString> m_pendingGeometry;
     QMap<QString, QRect> m_documentGeometry;
     void setMeterFloating(ContainerWidget* container, FloatingContainer* form);

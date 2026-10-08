@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - The minimum width in every dock mode is the larger of
+//                 260 px and what the content needs (setContentMinimumWidth),
+//                 so a docked, overlaid or floating container never cuts its
+//                 applets. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: the header's hide button hides the
 //                 entry or container (Containers > Hidden brings it back).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -854,9 +859,23 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
     m_workspaceMenuOpen = false;
 }
 
+void ContainerWidget::setContentMinimumWidth(int width)
+{
+    // JJ's choice (2026-10-08): never narrower than the content. A splitter,
+    // edge strip or floating window holding the container then keeps the
+    // content whole, and the 260 px floor still applies.
+    m_contentMinimumWidth = qMax(0, width);
+    const int minimum = qMax(kMinContainerWidth, m_contentMinimumWidth);
+    if (minimumWidth() != minimum) {
+        setMinimumWidth(minimum);
+    }
+}
+
 void ContainerWidget::setContent(QWidget* widget)
 {
     QLayout* layout = m_contentHolder->layout();
+    // A new content announces its own minimum width.
+    setContentMinimumWidth(0);
     if (m_content) {
         layout->removeWidget(m_content);
         // Detach SYNCHRONOUSLY before deleteLater. When the content is a
@@ -979,7 +998,8 @@ void ContainerWidget::setDockMode(DockMode mode)
     m_dockMode = mode;
 
     // Enforce minimum width in all dock modes so the applets are always usable.
-    setMinimumWidth(260);
+    // Never below what the content needs either (JJ, 2026-10-08).
+    setMinimumWidth(qMax(kMinContainerWidth, m_contentMinimumWidth));
 
     if (m_groupHeader) {
         // Workspace preview: a free or floating container covers whatever

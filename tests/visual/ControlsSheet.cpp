@@ -15,6 +15,9 @@
 //   2026-10-08 - Choice sheets: checkbox and radio off states, lit push
 //                 buttons, field and button sizes. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - measureAppletFit: every visible container holding
+//                 applets, checked like the strip-fit scenes. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -1434,6 +1437,63 @@ QJsonObject measurePanelFit(SceneContext& ctx, const QString& look)
         });
     }
     out[QStringLiteral("scroll_areas")] = areas;
+    return out;
+}
+
+QJsonArray measureAppletFit(QWidget* window)
+{
+    QJsonArray out;
+    auto* manager = window != nullptr ? window->findChild<ContainerManager*>() : nullptr;
+    if (manager == nullptr) {
+        return out;
+    }
+    for (ContainerWidget* c : manager->allContainers()) {
+        if (c == nullptr || !c->isVisible()) {
+            continue;
+        }
+        const QList<QWidget*> applets = outerApplets(c);
+        if (applets.isEmpty()) {
+            continue;
+        }
+        int hidden = 0;
+        int viewportWidth = 0;
+        QJsonArray cut;
+        for (QWidget* a : applets) {
+            QWidget* vp = c;
+            for (QWidget* p = a->parentWidget(); p != nullptr && p != c; p = p->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(p)) {
+                    vp = area->viewport();
+                    break;
+                }
+            }
+            viewportWidth = qMax(viewportWidth, vp->width());
+            const QPoint at = a->mapTo(vp, QPoint(0, 0));
+            const int minW = minWidthOf(a);
+            const int left = qMax(0, -at.x());
+            const int right = qMax(0, at.x() + a->width() - vp->width());
+            const int over = qMax(0, minW - vp->width());
+            const int px = qMax(left + right, over);
+            hidden += px;
+            if (px > 0) {
+                cut.append(QJsonObject{
+                    {QStringLiteral("class"), QString::fromLatin1(a->metaObject()->className())},
+                    {QStringLiteral("clipped_left_px"), left},
+                    {QStringLiteral("clipped_right_px"), right},
+                    {QStringLiteral("minimum_over_viewport_px"), over},
+                });
+            }
+        }
+        out.append(QJsonObject{
+            {QStringLiteral("id"), c->id()},
+            {QStringLiteral("dock_mode"), static_cast<int>(c->dockMode())},
+            {QStringLiteral("floating"), c->isFloating()},
+            {QStringLiteral("width"), c->width()},
+            {QStringLiteral("viewport_width"), viewportWidth},
+            {QStringLiteral("applets"), applets.size()},
+            {QStringLiteral("hidden_px"), hidden},
+            {QStringLiteral("cut"), cut},
+        });
+    }
     return out;
 }
 

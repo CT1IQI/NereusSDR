@@ -587,6 +587,8 @@ nereus_add_test(tst_workspace_header_modes)
 nereus_add_test(tst_workspace_edge_strips)
 nereus_add_test(tst_workspace_live_input)
 nereus_add_test(tst_workspace_profiles)
+# The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
+nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_longpath_instruments)
 nereus_add_test(tst_container_document)
 nereus_add_test(tst_container_workspace_store)

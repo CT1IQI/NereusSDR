@@ -7,6 +7,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - An edge strip's floor follows a container's content
+//                 minimum at once (scheduleEdgeStripContentHints, one
+//                 layout per burst), not only on the next reconcile. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - A container's minimum width follows what its content host
+//                 needs (the widest visible applet, the margins, the
+//                 vertical bar), and today's Main Panel splitter applies it
+//                 at once without capturing it as a geometry change. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - A duplicated container is always shown, floating, next
 //                 to its original, in both looks (showDuplicate). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -539,6 +548,30 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 emit meterReadyForPolling(meter);
             });
             connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
+            // The container is never narrower than its content (JJ,
+            // 2026-10-08). Queued: a split set while the window is built
+            // (MainWindow's first-run setSizes({1024, 256}), a restored
+            // size) is set against the 260 px container floor as it always
+            // was, and only then raised, so the Main Panel keeps today's
+            // width wherever that already fits and takes its content's
+            // minimum where it does not. The raise is the content's need,
+            // not a user resize: the splitter applies it now, inside the
+            // reconcile guard, and no geometry is captured for it.
+            connect(host, &ContainerContentHost::contentMinimumWidthChanged, this,
+                    [this, view = QPointer<ContainerWidget>(c), content = QPointer<ContainerContentHost>(host)] {
+                if (!view || !content || view->content() != content.data()) {
+                    return;
+                }
+                QScopedValueRollback<bool> guard(m_reconciling, true);
+                view->setContentMinimumWidth(content->contentMinimumWidth());
+                if (m_splitter && view->parentWidget() == m_splitter) {
+                    m_splitter->refresh();
+                }
+                if (view->isPanelDocked()) {
+                    // Workspace preview: the edge strip holding it.
+                    scheduleEdgeStripContentHints();
+                }
+            }, Qt::QueuedConnection);
             connect(host, &ContainerContentHost::preferredContentHeightChanged, this,
                     [this, id = d.id, content = QPointer<ContainerContentHost>(host),
                      view = QPointer<ContainerWidget>(c), shell = QPointer<FloatingContainer>(form)] {
@@ -676,6 +709,67 @@ EdgeDockArea* ContainerManager::edgeDockArea() const
     return m_edgeArea;
 }
 
+void ContainerManager::applyEdgeStripContentHints(bool sideStripsOnly)
+{
+    if (!m_edgeArea) {
+        return;
+    }
+    const DockEdge edges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
+    // What each strip's containers need across it. The header counts only
+    // where it takes room (Always); Reveal and Hidden reserve none.
+    for (DockEdge edge : edges) {
+        if (sideStripsOnly && EdgeDockStrip::orientationFor(edge) != Qt::Vertical) {
+            // An end strip's preferred height follows its own signal
+            // (preferredContentHeightChanged).
+            continue;
+        }
+        int minimumCross = 0;
+        int preferredCross = 0;
+        for (QWidget* w : m_edgeArea->strip(edge)->containers()) {
+            auto* c = qobject_cast<ContainerWidget*>(w);
+            if (c == nullptr || c->isHidden()) {
+                continue;
+            }
+            if (EdgeDockStrip::orientationFor(edge) == Qt::Vertical) {
+                // The container's own minimum, and its scrolling content's:
+                // a scroll area reports a small minimum of its own, so the
+                // content's width is read from the scrolled body.
+                int widest = qMax(c->minimumWidth(), c->minimumSizeHint().width());
+                if (auto* scroll = c->contentHolder()->findChild<QScrollArea*>();
+                    scroll != nullptr && scroll->widget() != nullptr) {
+                    widest = qMax(widest, scroll->widget()->minimumSizeHint().width());
+                }
+                minimumCross = qMax(minimumCross, widest);
+            } else if (auto* host = contentHost(c->id())) {
+                preferredCross = qMax(preferredCross,
+                                      host->preferredContentHeight() + c->headerExtent());
+            }
+        }
+        m_edgeArea->setStripContentHint(edge, minimumCross, preferredCross);
+    }
+}
+
+void ContainerManager::scheduleEdgeStripContentHints()
+{
+    // A container's content minimum changed with no workspace change (an
+    // applet showed wider controls): the side strip's floor follows at once.
+    // Coalesced, so a burst of changes lays the strips out once.
+    if (!m_edgeArea || m_edgeHintsPending) {
+        return;
+    }
+    m_edgeHintsPending = true;
+    QTimer::singleShot(0, this, [this] {
+        m_edgeHintsPending = false;
+        if (!m_edgeArea) {
+            return;
+        }
+        // The content's need, not a user resize: nothing is captured.
+        QScopedValueRollback<bool> guard(m_reconciling, true);
+        applyEdgeStripContentHints(true);
+        m_edgeArea->refreshLayout();
+    });
+}
+
 void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
 {
     // Document order is strip order.
@@ -712,33 +806,7 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
                                      saved.at(1).toInt() + 2 * EdgeDockStrip::paddingFor(DockEdge::Right));
         }
     }
-    // What each strip's containers need across it. The header counts only
-    // where it takes room (Always); Reveal and Hidden reserve none.
-    for (DockEdge edge : edges) {
-        int minimumCross = 0;
-        int preferredCross = 0;
-        for (QWidget* w : widgets.value(edge)) {
-            auto* c = qobject_cast<ContainerWidget*>(w);
-            if (c == nullptr || c->isHidden()) {
-                continue;
-            }
-            if (EdgeDockStrip::orientationFor(edge) == Qt::Vertical) {
-                // The container's own minimum, and its scrolling content's:
-                // a scroll area reports a small minimum of its own, so the
-                // content's width is read from the scrolled body.
-                int widest = qMax(c->minimumWidth(), c->minimumSizeHint().width());
-                if (auto* scroll = c->contentHolder()->findChild<QScrollArea*>();
-                    scroll != nullptr && scroll->widget() != nullptr) {
-                    widest = qMax(widest, scroll->widget()->minimumSizeHint().width());
-                }
-                minimumCross = qMax(minimumCross, widest);
-            } else if (auto* host = contentHost(c->id())) {
-                preferredCross = qMax(preferredCross,
-                                      host->preferredContentHeight() + c->headerExtent());
-            }
-        }
-        m_edgeArea->setStripContentHint(edge, minimumCross, preferredCross);
-    }
+    applyEdgeStripContentHints(false);
     m_edgeArea->refreshLayout();
     for (DockEdge edge : edges) {
         const QStringList strip = ids.value(edge);

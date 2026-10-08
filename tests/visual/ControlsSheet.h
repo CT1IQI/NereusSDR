@@ -22,12 +22,18 @@
 //                 sceneControlSizes: candidate looks for JJ to pick from.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - measureAppletFit for every container holding applets.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #pragma once
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
+
+class QWidget;
 
 namespace NereusSDR::Preview {
 
@@ -41,6 +47,11 @@ void sceneControlsSheet(SceneContext& ctx);
 // it: width, minimum width and how much of it falls outside the scroll
 // viewport, in logical px. `look` names the look in the result.
 QJsonObject measurePanelFit(SceneContext& ctx, const QString& look);
+
+// Every visible container (docked, edge strip or floating) that holds
+// applets: its applet count, viewport width and the applet px that fall
+// outside the viewport or exceed it by minimum width.
+QJsonArray measureAppletFit(QWidget* window);
 
 // Appends `<scene>--panel`: the Main Panel container cut from the last
 // window image, with `fit` (from measurePanelFit) in its sidecar, and

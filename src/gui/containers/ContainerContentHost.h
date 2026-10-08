@@ -1,6 +1,12 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-08 - The host's minimum width is what its contents need (the
+//                 widest visible row, the body margins and the vertical bar)
+//                 and contentMinimumWidthChanged tells the container; in the
+//                 workspace preview the body gives its right margin to the
+//                 bar while the bar shows. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: popOutEntry for the entry header's
 //                 pop-out button. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -65,10 +71,19 @@ public:
     // Workspace preview: the entry header of one entry, or nullptr.
     WorkspaceEntryHeader* entryHeader(const QString& entryId) const;
     static QJsonObject effectiveContext(const ContainerDocument& document, const ContentEntry& entry);
+    // The width the contents need: the scrolled body's minimum (the widest
+    // visible row and the body margins) and the vertical bar's extent. A
+    // free canvas needs none. Also the host's own minimum width.
+    int contentMinimumWidth() const { return qMax(0, m_contentMinimumWidth); }
+    // The body's right margin with no vertical bar beside it (it matches the
+    // 8 px bar of the legacy applet panel).
+    static constexpr int kBodyRightMarginPx = 8;
 signals:
     void meterSurfaceReady(MeterWidget* meter, const QJsonObject& context);
     void reconciled();
     void preferredContentHeightChanged();
+    // The content's minimum width changed (contentMinimumWidth()).
+    void contentMinimumWidthChanged(int width);
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 private:
@@ -82,6 +97,9 @@ private:
     void updateEntryHeaders();
     int entryHeaderReserve() const;
     QString entryTitle(const ContentEntry& entry) const;
+    void updateContentMinimumWidth();
+    int verticalBarExtent() const;
+    void applyPreviewRightMargin();
     QHash<QString, QPointer<WorkspaceEntryHeader>> m_entryHeaders;
     HeaderMode m_containerHeaderMode = HeaderMode::Always;
     bool m_arrangeActive = false;
@@ -103,6 +121,8 @@ private:
     bool m_projectionPending = false;
     int m_lastPreferredHeight = -1;
     bool m_materialized = false;
+    int m_surfaceMinimumWidth = 0;   // the meter surfaces' minimum and gutter
+    int m_contentMinimumWidth = -1;  // last value announced; -1 before the first
     QPointer<QMenu> m_bannerMenu;
 };
 }
