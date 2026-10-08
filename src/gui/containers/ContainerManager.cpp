@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: geometry capture suppression for
+//                 workspace profile switches by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: PanelDocked containers in the
 //                 strip for their edge, Move to Edge, Place Free, the
 //                 edge drag preview and commit, the strip arrangement,
@@ -1509,10 +1512,19 @@ void ContainerManager::setContentFactory(ContainerContentFactory factory)
     m_contentFactory = std::move(factory);
 }
 
+void ContainerManager::setGeometryCaptureSuppressed(bool on)
+{
+    m_geometryCaptureSuppressed = on;
+    m_geometryCommit.stop();
+    if (!on) {
+        m_pendingGeometry.clear();
+    }
+}
+
 void ContainerManager::saveState()
 {
     if (m_store) {
-        if (m_reconciling || !m_store->loadError().isEmpty()) { return; }
+        if (m_reconciling || m_geometryCaptureSuppressed || !m_store->loadError().isEmpty()) { return; }
         // Publication projects the final captured geometry; rejection restores
         // committed placement rather than preserving the rejected live draft.
         m_geometryCommit.stop();

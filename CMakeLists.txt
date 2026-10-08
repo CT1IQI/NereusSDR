@@ -1682,6 +1682,12 @@ set(GUI_SOURCES
     src/gui/instruments/ReadingSource.h
     src/gui/widgets/BandwidthFilterPane.cpp
     src/gui/widgets/BandwidthFilterPane.h
+    src/gui/widgets/PillStyle.cpp
+    src/gui/widgets/PillStyle.h
+    src/gui/widgets/ProfileRail.cpp
+    src/gui/widgets/ProfileRail.h
+    src/gui/widgets/ProfileRailDock.cpp
+    src/gui/widgets/ProfileRailDock.h
     src/gui/RelayBar.cpp
     src/gui/SMeterWidget.cpp
     src/gui/VintageMeterFace.cpp
@@ -1813,6 +1819,10 @@ set(GUI_SOURCES
     src/gui/containers/WorkspaceHeader.cpp
     src/gui/containers/EdgeDockStrip.h
     src/gui/containers/EdgeDockStrip.cpp
+    src/gui/containers/WorkspaceProfiles.h
+    src/gui/containers/WorkspaceProfiles.cpp
+    src/gui/containers/WorkspaceProfilesDialog.h
+    src/gui/containers/WorkspaceProfilesDialog.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp

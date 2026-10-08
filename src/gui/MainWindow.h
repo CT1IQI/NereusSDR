@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: workspace profiles, the
+//                 collapsing profile rail and Ctrl+1..9. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: the four-edge container area
 //                 member. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -252,6 +255,9 @@ class ClarityController;
 class PanClarityRegistry;
 class ContainerManager;
 class EdgeDockArea;
+class ProfileRail;
+class ProfileRailDock;
+class WorkspaceProfiles;
 class MeterWidget;
 class MeterPoller;
 class TitleBar;
@@ -372,6 +378,12 @@ signals:
     void setupDialogCreated(NereusSDR::SetupDialog* dialog);
 
 public:
+    // Workspace preview only: the profile rail, collapsed to the active
+    // badge just left of the title in the top status strip.
+    ProfileRailDock* profileRailDock() const { return m_profileRailDock; }
+    WorkspaceProfiles* workspaceProfiles() const { return m_workspaceProfiles; }
+    void showWorkspaceProfilesDialog();
+
     /// Ruling U1 and U2's reveal (revealSliceInWindow), for tests.
     void revealSliceInWindowForTest(int sliceId) { revealSliceInWindow(sliceId); }
 
@@ -1684,6 +1696,11 @@ private:
     QSplitter* m_mainSplitter{nullptr};
     // Workspace preview only: the four-edge area around the spectrum.
     EdgeDockArea* m_edgeDockArea{nullptr};
+    // Workspace preview only: named profiles and their rail.
+    WorkspaceProfiles* m_workspaceProfiles{nullptr};
+    ProfileRailDock* m_profileRailDock{nullptr};
+    void setupWorkspaceProfiles();
+    void connectProfileRail();
     int m_hDelta{0};
     int m_vDelta{0};
 

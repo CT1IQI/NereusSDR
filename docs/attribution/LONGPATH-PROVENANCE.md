@@ -69,8 +69,13 @@ block carries an inline cite of the form
 | src/core/antenna/AmateurBands.h | src/core/antenna/AmateurBands.h | AmateurBands.h 1-89 | Port | Namespace Longpath becomes NereusSDR. IARU band plan table (Qt only). Namespace Longpath::AmateurBands becomes NereusSDR::AmateurBands. |
 | src/core/antenna/AmateurBands.cpp | src/core/antenna/AmateurBands.h; src/core/antenna/AmateurBands.cpp | AmateurBands.h 1-89; AmateurBands.cpp 1-163 | Port | Namespace Longpath becomes NereusSDR. |
 | src/gui/instruments/LongpathContent.cpp | src/gui/applets/BandwidthFilterApplet.cpp | BandwidthFilterApplet.cpp 779-837 | Port (values) | Passband trace refresh interval (50 ms) and density (one point per 12 device pixels, 64 to 400). The registry factories, the slice and MeterPoller bindings and the trace accessor over SpectrumWidget::renderedPixels() are NereusSDR-original. Workspace preview only. |
+| src/gui/widgets/PillStyle.h | src/gui/widgets/CommandBar.h | CommandBar.h 3-58 (banner), 167-183 | Port (values) | CommandBar::pillStyle(), kPillHeight (27) and kPillRadius (6) only, as namespace PillStyle. CommandBar itself is not ported. Workspace preview only. |
+| src/gui/widgets/PillStyle.cpp | src/gui/widgets/CommandBar.h; src/gui/widgets/CommandBar.cpp | CommandBar.h 3-58 (banner); CommandBar.cpp 1-17 (banner), 59-98 | Port | pillStyle() verbatim. Style:: resolves through InstrumentStyle.h. |
+| src/gui/widgets/ProfileRail.h | src/gui/widgets/ProfileRail.h | ProfileRail.h 3-44 (banner), 46-198 | Port | Namespace Longpath becomes NereusSDR. Reads WorkspaceProfiles (ids) instead of LayoutProfiles (names); adds manageRequested(), badgeButton(), plusButton() and setPlacementToggleOffered(). Workspace preview only. |
+| src/gui/widgets/ProfileRail.cpp | src/gui/widgets/ProfileRail.h; src/gui/widgets/ProfileRail.cpp | ProfileRail.h 3-44 (banner); ProfileRail.cpp 1-421 | Port | User strings in English, comments verbatim. ScopedChildWidget replaced by a window-parented QPointer menu. Context menu gains Manage Profiles; the move-the-rail item can be left out. |
 
 NereusSDR-original files that use the palette but port nothing
-(QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h
-and the call-site branches) carry a
+(QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h,
+WorkspaceProfiles, WorkspaceProfilesDialog, ProfileRailDock and the
+call-site branches) carry a
 `no-port-check:` marker and are not listed.

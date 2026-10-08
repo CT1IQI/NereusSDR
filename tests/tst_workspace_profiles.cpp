@@ -1,0 +1,380 @@
+// no-port-check: NereusSDR-original workspace preview profile regressions.
+// Modification history (NereusSDR):
+//   2026-10-08 - Named workspace profiles: switch and restore, last profile,
+//                 import, stale revision, remembered profile and the rail's
+//                 remove affordance, the collapsing rail dock, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+#include <QtTest>
+#include <QApplication>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QMainWindow>
+#include <QPushButton>
+#include <QSignalSpy>
+#include <QSplitter>
+#include <QTemporaryDir>
+#include <memory>
+#include "core/AppSettings.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/EdgeDockStrip.h"
+#include "gui/containers/WorkspaceProfiles.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/widgets/ProfileRail.h"
+#include "gui/widgets/ProfileRailDock.h"
+#include "models/SliceModel.h"
+
+using namespace NereusSDR;
+
+namespace {
+
+void settle()
+{
+    for (int pass = 0; pass < 6; ++pass) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+    }
+}
+
+// The arrangement of a workspace, independent of revision and geometry
+// noise: id, mode, edge, header and visibility per container, plus the
+// strip thicknesses that are set.
+QStringList arrangement(const WorkspaceDocument& doc)
+{
+    QStringList out;
+    for (const auto& c : doc.containers) {
+        out << QStringLiteral("%1 mode=%2 edge=%3 header=%4 visible=%5 locked=%6")
+                   .arg(c.id)
+                   .arg(int(c.dockMode))
+                   .arg(int(c.edge))
+                   .arg(int(c.header))
+                   .arg(c.visible)
+                   .arg(c.locked);
+    }
+    out.sort();
+    for (auto it = doc.arrangement.strips.cbegin(); it != doc.arrangement.strips.cend(); ++it) {
+        if (it.value().thickness == 0) {
+            continue;   // a strip at its default thickness: nothing set
+        }
+        out << QStringLiteral("strip %1 thickness=%2").arg(int(it.key())).arg(it.value().thickness);
+    }
+    return out;
+}
+
+// Offline fixture: a main window whose central widget is the four-edge
+// area around a plain centre pane. No radio, discovery or poller.
+struct ProfilesFixture {
+    QTemporaryDir directory;
+    QString path{directory.filePath(QStringLiteral("profiles.xml"))};
+    AppSettings settings{path};
+    ContainerWorkspaceStore store{settings};
+    ContainerContentRegistry registry;
+    QMainWindow window;
+    QSplitter* middle{nullptr};
+    QWidget* center{nullptr};
+    EdgeDockArea* area{nullptr};
+    std::unique_ptr<ContainerManager> manager;
+
+    ProfilesFixture()
+    {
+        middle = new QSplitter(Qt::Horizontal, &window);
+        center = new QWidget(middle);
+        center->setMinimumWidth(400);
+        middle->addWidget(center);
+        area = new EdgeDockArea(middle, center, &window);
+        window.setCentralWidget(area);
+        window.resize(1200, 800);
+        manager = std::make_unique<ContainerManager>(center, middle);
+        manager->setEdgeDockArea(area);
+        manager->setWorkspaceAdapter(&store, &registry);
+        window.show();
+        settle();
+    }
+
+    ContainerDocument container(const QString& id, DockEdge edge, HeaderMode header)
+    {
+        ContainerDocument result;
+        result.id = id;
+        result.name = id;
+        result.layout = ContentLayout::VerticalStack;
+        result.dockMode = DockMode::PanelDocked;
+        result.edge = edge;
+        result.header = header;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("meter.signalMaxBin"));
+        entry.id = id + QStringLiteral("-meter");
+        entry.context["sliceId"] = 0;
+        result.contents.append(entry);
+        return result;
+    }
+
+    bool commit(const QList<ContainerDocument>& containers)
+    {
+        WorkspaceDocument document = store.snapshot();
+        document.containers = containers;
+        document.mainContainerId = containers.first().id;
+        const auto result = manager->commitWorkspace(document, document.revision);
+        settle();
+        return result.status == CommitStatus::Saved;
+    }
+
+    // Arrangement A: main on the right, meters on the left.
+    bool commitA()
+    {
+        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal),
+                       container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal)});
+    }
+
+    // Arrangement B: main on the right, meters on top, headers always,
+    // and a hidden third container.
+    bool commitB()
+    {
+        ContainerDocument extra = container(QStringLiteral("band"), DockEdge::Bottom, HeaderMode::Hidden);
+        extra.visible = false;
+        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                       container(QStringLiteral("meters"), DockEdge::Top, HeaderMode::Always), extra});
+    }
+};
+
+} // namespace
+
+class TestWorkspaceProfiles : public QObject {
+    Q_OBJECT
+
+private slots:
+    void initTestCase() { WorkspacePreview::setEnabledForTest(true); }
+
+    void createFromCurrentSwitchAndBackRestoresArrangement()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+
+        SliceModel slice(0);
+        slice.setFrequency(7185000.0);
+        slice.setDspMode(DSPMode::LSB);
+        slice.setFilter(-2850, -150);
+        QSignalSpy frequencySpy(&slice, &SliceModel::frequencyChanged);
+        QSignalSpy modeSpy(&slice, &SliceModel::dspModeChanged);
+        QSignalSpy filterSpy(&slice, &SliceModel::filterChanged);
+
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        QCOMPARE(profiles.ids().size(), 1);
+        const QString first = profiles.activeId();
+        // A as captured into "Default" (the capture records the strips).
+        const QStringList a = arrangement(f.store.snapshot());
+        QCOMPARE(arrangement(profiles.profile(first)->workspace), a);
+
+        const auto created = profiles.createFromCurrent(QStringLiteral("Contest"));
+        QVERIFY2(created.ok(), qPrintable(created.error));
+        QCOMPARE(profiles.activeId(), created.id);
+        QVERIFY(created.id != first);
+
+        // Rearrange live, then switch away: the switch flushes B into
+        // "Contest" and applies A.
+        QVERIFY(f.commitB());
+        const QStringList b = arrangement(f.store.snapshot());
+        QVERIFY(a != b);
+
+        auto r = profiles.switchTo(first);
+        QVERIFY2(r.ok(), qPrintable(r.error));
+        settle();
+        QCOMPARE(arrangement(f.store.snapshot()), a);
+        QCOMPARE(profiles.activeId(), first);
+
+        r = profiles.switchTo(created.id);
+        QVERIFY2(r.ok(), qPrintable(r.error));
+        settle();
+        QCOMPARE(arrangement(f.store.snapshot()), b);
+
+        // Arrangement only: the slice never moved.
+        QCOMPARE(slice.frequency(), 7185000.0);
+        QCOMPARE(slice.dspMode(), DSPMode::LSB);
+        QCOMPARE(slice.filterLow(), -2850);
+        QCOMPARE(slice.filterHigh(), -150);
+        QCOMPARE(frequencySpy.count(), 0);
+        QCOMPARE(modeSpy.count(), 0);
+        QCOMPARE(filterSpy.count(), 0);
+    }
+
+    void lastProfileCannotBeRemoved()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString only = profiles.activeId();
+        const quint64 revision = profiles.revision();
+
+        const auto r = profiles.remove(only);
+        QCOMPARE(r.status, WorkspaceProfiles::Status::LastProfile);
+        QCOMPARE(profiles.ids(), QStringList{only});
+        QCOMPARE(profiles.revision(), revision);
+
+        // The rail offers no remove cross on the last badge, and one on
+        // each badge once there are two.
+        ProfileRail rail(&profiles, Qt::Horizontal);
+        QVERIFY(rail.badgeButton(only));
+        QVERIFY(rail.badgeButton(only)->findChildren<QPushButton*>().isEmpty());
+        QVERIFY(profiles.duplicate(only, QStringLiteral("Copy")).ok());
+        settle();
+        QCOMPARE(rail.badges().size(), 2);
+        for (const QString& id : rail.badges()) {
+            QCOMPARE(rail.badgeButton(id)->findChildren<QPushButton*>().size(), 1);
+        }
+    }
+
+    void importCreatesANewId()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString original = profiles.activeId();
+        const QByteArray bytes = profiles.exportProfile(original);
+        QVERIFY(!bytes.isEmpty());
+
+        const auto first = profiles.importProfile(bytes);
+        QVERIFY2(first.ok(), qPrintable(first.error));
+        const auto second = profiles.importProfile(bytes);
+        QVERIFY2(second.ok(), qPrintable(second.error));
+
+        QCOMPARE(profiles.ids().size(), 3);
+        QVERIFY(first.id != original);
+        QVERIFY(second.id != original);
+        QVERIFY(first.id != second.id);
+        // Import never activates or replaces.
+        QCOMPARE(profiles.activeId(), original);
+        QCOMPARE(profiles.name(first.id), profiles.name(original));
+        QCOMPARE(arrangement(profiles.profile(first.id)->workspace),
+                 arrangement(profiles.profile(original)->workspace));
+
+        QVERIFY(!profiles.importProfile(QByteArrayLiteral("{\"format\":\"other\"}")).ok());
+        QCOMPARE(profiles.ids().size(), 3);
+    }
+
+    void staleRevisionIsRejected()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const quint64 revision = profiles.revision();
+        const QString before = f.settings.value(QString::fromLatin1(WorkspaceProfiles::kSettingsKey)).toString();
+
+        WorkspaceProfilesState next = profiles.state();
+        next.profiles.first().name = QStringLiteral("Renamed");
+        const auto stale = profiles.commit(next, revision - 1);
+        QCOMPARE(stale.status, WorkspaceProfiles::Status::Stale);
+        QCOMPARE(profiles.revision(), revision);
+        QCOMPARE(f.settings.value(QString::fromLatin1(WorkspaceProfiles::kSettingsKey)).toString(), before);
+
+        // A second writer on the same settings moves the key; the first
+        // instance's next write is refused rather than lost over it.
+        WorkspaceProfiles other(f.settings, f.manager.get());
+        QVERIFY(other.load().ok());
+        QVERIFY(other.rename(other.activeId(), QStringLiteral("Other")).ok());
+        const auto refused = profiles.rename(profiles.activeId(), QStringLiteral("Mine"));
+        QCOMPARE(refused.status, WorkspaceProfiles::Status::Stale);
+        QVERIFY(profiles.load().ok());
+        QCOMPARE(profiles.name(profiles.activeId()), QStringLiteral("Other"));
+
+        // An invalid state is refused before anything is written.
+        WorkspaceProfilesState broken = profiles.state();
+        broken.activeId = QStringLiteral("missing");
+        QCOMPARE(profiles.commit(broken, profiles.revision()).status, WorkspaceProfiles::Status::Invalid);
+    }
+
+    void lastSelectedProfileSurvivesReload()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        QString chosen;
+        QStringList ids;
+        {
+            WorkspaceProfiles profiles(f.settings, f.manager.get());
+            QVERIFY(profiles.load().ok());
+            const auto created = profiles.createFromCurrent(QStringLiteral("DX"));
+            QVERIFY(created.ok());
+            QVERIFY(profiles.createFromCurrent(QStringLiteral("FT8")).ok());
+            QVERIFY(profiles.switchTo(created.id).ok());
+            chosen = created.id;
+            ids = profiles.ids();
+        }
+
+        AppSettings reloaded(f.path);
+        reloaded.load();
+        WorkspaceProfiles again(reloaded, nullptr);
+        QVERIFY(again.load().ok());
+        QCOMPARE(again.activeId(), chosen);
+        QCOMPARE(again.ids(), ids);
+        QCOMPARE(again.name(chosen), QStringLiteral("DX"));
+    }
+
+    void railDockRestsCollapsedAndFansOutLeftward()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        QVERIFY(profiles.rename(profiles.activeId(), QStringLiteral("SSB")).ok());
+        const auto dx = profiles.duplicate(profiles.activeId(), QStringLiteral("DX"));
+        QVERIFY(dx.ok());
+
+        QWidget host;
+        host.resize(1000, 300);
+        auto* bar = new QWidget(&host);
+        bar->setGeometry(0, 0, 1000, 32);
+        auto* row = new QHBoxLayout(bar);
+        row->addStretch(1);
+        auto* title = new QLabel(QStringLiteral("NereusSDR"), bar);
+        row->addWidget(title);
+        row->addStretch(1);
+        ProfileRailDock dock(&profiles, title, &host, bar);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        settle();
+        dock.reposition();
+
+        // At rest: one checked pill with the active letter, left of the
+        // title text with the gap; no popover.
+        QVERIFY(!dock.isOpen());
+        QCOMPARE(dock.collapsedBadge()->text(), QStringLiteral("S"));
+        QVERIFY(dock.collapsedBadge()->isChecked());
+        const int textLeft = title->x()
+            + (title->width() - title->fontMetrics().horizontalAdvance(title->text())) / 2;
+        QCOMPARE(dock.geometry().right() + 1 + ProfileRailDock::kTitleGap, textLeft);
+
+        // A click fans it out leftward: right edges line up.
+        QTest::mouseClick(dock.collapsedBadge(), Qt::LeftButton);
+        settle();
+        QVERIFY(dock.isOpen());
+        QCOMPARE(dock.rail()->badges().size(), 2);
+        const QPoint badgeRight = dock.collapsedBadge()->mapTo(&host,
+            QPoint(dock.collapsedBadge()->width(), 0));
+        QCOMPARE(dock.popover()->geometry().right() + 1, badgeRight.x());
+        QVERIFY(dock.popover()->width() > dock.width());
+
+        // Escape closes it.
+        QTest::keyClick(&host, Qt::Key_Escape);
+        settle();
+        QVERIFY(!dock.isOpen());
+
+        // Picking a profile switches and closes.
+        dock.open();
+        QVERIFY(dock.rail()->clickBadge(dx.id));
+        settle();
+        QCOMPARE(profiles.activeId(), dx.id);
+        QVERIFY(!dock.isOpen());
+        QCOMPARE(dock.collapsedBadge()->text(), QStringLiteral("D"));
+
+        // Picking the profile that is already active closes it too.
+        dock.open();
+        QVERIFY(dock.rail()->clickBadge(dx.id));
+        settle();
+        QVERIFY(!dock.isOpen());
+    }
+};
+
+QTEST_MAIN(TestWorkspaceProfiles)
+#include "tst_workspace_profiles.moc"

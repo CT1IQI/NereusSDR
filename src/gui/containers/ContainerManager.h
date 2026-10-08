@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: geometry capture suppression for
+//                 workspace profile switches by J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: four-edge strips, Move to Edge,
 //                 Place Free, the edge drag preview and grid alignment by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -129,6 +132,11 @@ public:
     bool arrangeMode() const { return m_arrangeMode; }
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
+    // Workspace profiles: while suppressed, no geometry is captured into
+    // the workspace (a profile apply settles its layout first). Turning it
+    // off drops what the apply's layout passes queued.
+    void setGeometryCaptureSuppressed(bool on);
+    bool geometryCaptureSuppressed() const { return m_geometryCaptureSuppressed; }
 
     // --- Workspace preview: four-edge strips ---
     // Set before the first reconcile. With an area and the preview on,
@@ -240,6 +248,7 @@ private:
     QString m_edgeDragId;
     void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
     bool m_arrangeMode = false;
+    bool m_geometryCaptureSuppressed = false;
     ContainerArrangeController* m_arrange = nullptr;
     QPointer<MeterPoller> m_previewPoller;
     QPointer<ContainerWorkspaceStore> m_store;

@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: named workspace profiles, the
+//                 collapsing profile rail left of the title, Ctrl+1..9 and
+//                 Containers > Manage Workspace Profiles. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: the Longpath instruments are
 //                 registered as container content. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -914,6 +918,10 @@ warren@wpratt.com
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
 #include "containers/EdgeDockStrip.h"
+#include "containers/WorkspaceProfiles.h"
+#include "containers/WorkspaceProfilesDialog.h"
+#include "gui/widgets/ProfileRail.h"
+#include "gui/widgets/ProfileRailDock.h"
 #include "containers/ContainerContentRegistry.h"
 #include "containers/ContainerContentHost.h"
 #include "containers/ContainerWorkspaceStore.h"
@@ -1402,6 +1410,11 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     m_titleBar = new TitleBar(m_radioModel->localAudioDevices(), this);
     m_titleBar->setMenuBar(menuBar());
     setMenuWidget(m_titleBar);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview only: named profiles and the rail. With the
+        // switch off nothing reads or writes the WorkspaceProfiles key.
+        setupWorkspaceProfiles();
+    }
 
     // Wire the MasterOutputWidget device picker → AudioEngine so picking
     // an output device rebuilds the speakers bus. Task 10b exposes only
@@ -10269,6 +10282,105 @@ void MainWindow::populateDefaultMeter()
     qCDebug(lcContainer) << "Container #0: Meters + RxApplet + TxApplet + PhoneCwApplet + VaxApplet + TciApplet + ClientChainApplet";
 }
 
+// Workspace preview only. The profiles read the live arrangement from
+// the ContainerManager, so this runs after buildUI() reconciled it.
+void MainWindow::setupWorkspaceProfiles()
+{
+    if (!m_containerManager || m_workspaceProfiles) {
+        return;
+    }
+    m_workspaceProfiles = new WorkspaceProfiles(AppSettings::instance(), m_containerManager, this);
+    m_workspaceProfiles->setObjectName(QStringLiteral("workspaceProfiles"));
+    const auto loaded = m_workspaceProfiles->load();
+    if (!loaded.ok()) {
+        qCWarning(lcContainer) << "Workspace profiles:" << loaded.error;
+        showToast(tr("Workspace profiles are read-only: %1").arg(loaded.error),
+                  ToastSeverity::Warning, 6000);
+    }
+    connect(m_workspaceProfiles, &WorkspaceProfiles::profileError, this, [this](const QString& error) {
+        showToast(tr("Workspace profile: %1").arg(error), ToastSeverity::Warning, 6000);
+    });
+    // The rail rests as the active badge just left of the centre title
+    // and fans out on hover, click or Tab. The title label is found by
+    // its text: TitleBar has no accessor for it.
+    QLabel* title = nullptr;
+    for (QLabel* label : m_titleBar->findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (label->text() == QStringLiteral("NereusSDR")) {
+            title = label;
+            break;
+        }
+    }
+    if (!title) {
+        qCWarning(lcContainer) << "Profile rail: no title label in the status strip";
+        return;
+    }
+    m_profileRailDock = new ProfileRailDock(m_workspaceProfiles, title, this, m_titleBar);
+    m_profileRailDock->show();
+    connectProfileRail();
+    // Ctrl+1 to Ctrl+9 (Cmd on macOS) switch to profile N.
+    for (int n = 1; n <= 9; ++n) {
+        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key(Qt::Key_0 + n)), this);
+        shortcut->setObjectName(QStringLiteral("workspaceProfileShortcut%1").arg(n));
+        connect(shortcut, &QShortcut::activated, this, [this, n]() {
+            const QStringList ids = m_workspaceProfiles->ids();
+            if (n <= ids.size()) {
+                m_workspaceProfiles->switchTo(ids.at(n - 1));
+            }
+        });
+    }
+}
+
+void MainWindow::connectProfileRail()
+{
+    ProfileRail* rail = m_profileRailDock->rail();
+    WorkspaceProfiles* profiles = m_workspaceProfiles;
+    connect(rail, &ProfileRail::newProfileRequested, this, [this, rail, profiles]() {
+        QMenu* menu = WorkspaceProfilesDialog::createNewMenu(profiles, this);
+        const QPointer<QMenu> guard(menu);
+        QWidget* anchor = rail->plusButton();
+        menu->exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+        if (guard) {
+            guard->deleteLater();
+        }
+    });
+    connect(rail, &ProfileRail::renameRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::renameProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::duplicateRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::duplicateProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::removeRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::removeProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::saveRequested, this, [this, profiles](const QString&) {
+        if (WorkspaceProfilesDialog::saveProfile(profiles, this)) {
+            showToast(tr("Profile saved"), ToastSeverity::Info, 2000);
+        }
+    });
+    connect(rail, &ProfileRail::exportRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::exportProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::importRequested, this, [this, profiles](const QString&) {
+        WorkspaceProfilesDialog::importProfile(profiles, this);
+    });
+    connect(rail, &ProfileRail::manageRequested, this, &MainWindow::showWorkspaceProfilesDialog);
+}
+
+void MainWindow::showWorkspaceProfilesDialog()
+{
+    if (!m_workspaceProfiles) {
+        return;
+    }
+    if (auto* open = findChild<WorkspaceProfilesDialog*>(QString(), Qt::FindDirectChildrenOnly)) {
+        open->raise();
+        open->activateWindow();
+        return;
+    }
+    auto* dialog = new WorkspaceProfilesDialog(m_workspaceProfiles, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+}
+
 void MainWindow::buildMenuBar()
 {
     // =========================================================================
@@ -11251,6 +11363,10 @@ void MainWindow::buildMenuBar()
             QSignalBlocker block(gridAction);
             gridAction->setChecked(on);
         });
+        // Named arrangements: switch, save and share them.
+        QAction* profilesAction = containersMenu->addAction(QStringLiteral("Manage Workspace &Profiles\u2026"));
+        profilesAction->setObjectName(QStringLiteral("containersManageProfiles"));
+        connect(profilesAction, &QAction::triggered, this, &MainWindow::showWorkspaceProfilesDialog);
     }
 
     containersMenu->addSeparator();
