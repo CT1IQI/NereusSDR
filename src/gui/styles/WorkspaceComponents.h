@@ -37,8 +37,8 @@
 //   https://github.com/oe5sos/Longpath, primary author Martin Fischer
 //   (OE5SOS). The upstream banner is copied above.
 //
-//   Upstream source has no top-of-file copyright or GPL header; the
-//   project-level LICENSE (GPLv3) applies.
+//   The upstream file carries the AetherSDR copyright and GPLv3
+//   notice reproduced above. Longpath's project LICENSE is GPLv3.
 //
 //   Only the colour values and fills are ported. Longpath's padding,
 //   font sizes and handle sizes are not: the workspace preview must not
@@ -53,6 +53,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The licence note corrected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once

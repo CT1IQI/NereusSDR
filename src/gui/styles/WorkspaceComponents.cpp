@@ -29,18 +29,30 @@
 // src/gui/styles/WorkspaceComponents.cpp  (NereusSDR)
 // =================================================================
 //
-// Ported from Longpath src/gui/StyleConstants.h at revision
-// 551576e30c42731c6d51ce005c5f23ec38be391c (values and fills only);
-// see WorkspaceComponents.h. The upstream banner is copied above.
+// Ported from Longpath source:
+//   src/gui/StyleConstants.h (the raised, pressed, selected and sunken
+//   fills and edges of buttonBaseStyle, blueCheckedStyle, sunkenFill,
+//   sliderHStyle, glassFieldStyle, insetValueStyle and kComboStyle) at
+//   revision 551576e30c42731c6d51ce005c5f23ec38be391c,
+//   https://github.com/oe5sos/Longpath, primary author Martin Fischer
+//   (OE5SOS). The upstream banner is copied above.
 //
-//   Upstream source has no top-of-file copyright or GPL header; the
-//   project-level LICENSE (GPLv3) applies.
+//   The upstream file carries the AetherSDR copyright and GPLv3
+//   notice reproduced above. Longpath's project LICENSE is GPLv3.
+//
+//   Only the colour values and fills are ported. Longpath's padding,
+//   font sizes and handle sizes are not: the workspace preview must not
+//   move or resize any widget. The radius rule (4 px up to 24 px high,
+//   6 px above) is the workspace design's, not Longpath's 7 px.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 componentize() is NereusSDR-original.
+//   2026-10-08 - Upstream comments restored on the ported fills and edges;
+//                 the full header block; the licence note corrected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -64,13 +76,16 @@ namespace {
 constexpr auto kRaisedHoverTop = "#2a2a30";
 constexpr auto kRaisedHoverBot = "#1a1a1e";
 // Fields and value chips: sunkenFill(kInsetBg, 8, 4).
+// [original comment from StyleConstants.h:1000-1005 is at sunkenEdges() below]
 // From Longpath src/gui/StyleConstants.h:1020 [@551576e3]
 constexpr int kFieldDeepen = 8;
 constexpr int kFieldLift = 4;
 // The light top edge of the selected border: shiftL(kGlassSelBorder, 16).
+// [original comment from StyleConstants.h:808-816 is at glassTreatment() below]
 // From Longpath src/gui/StyleConstants.h:823 [@551576e3]
 constexpr int kGlassBorderTopLift = 16;
 // The light top edge of the slider handle border: shiftL(kAccent, 18).
+// [original comment from StyleConstants.h:899-902 is at the Handle case below]
 // From Longpath src/gui/StyleConstants.h:918 [@551576e3]
 constexpr int kHandleBorderTopLift = 18;
 
@@ -688,6 +703,9 @@ void setBackground(Decls& d, int bgIndex, const QString& v)
 
 void raisedEdges(Decls& d)
 {
+    // Glas & Tiefe (2026-09-17): ein erhabener Knopf hat oben eine
+    // Lichtkante und unten eine dunkle Kante — der Rahmen ist
+    // nicht rundum gleich, sondern das Licht kommt von oben.
     // From Longpath src/gui/StyleConstants.h:778 [@551576e3]
     d.set("border-top-color", hex(kGlassEdgeLight));
     d.set("border-bottom-color", hex(kGlassEdgeDark));
@@ -695,14 +713,22 @@ void raisedEdges(Decls& d)
 
 void pressedEdges(Decls& d)
 {
+    // Gedrueckt: der Verlauf kippt. Ein Knopf, der sich beim
+    // Druecken nicht bewegt, fuehlt sich tot an — und das kostet
+    // hier kein einziges Pixel Verschiebung.
     // From Longpath src/gui/StyleConstants.h:786 [@551576e3]
-    // Gedrueckt: der Verlauf kippt.
     d.set("border-top-color", hex(kGlassEdgeDark));
     d.set("border-bottom-color", hex(kGlassEdgeLight));
 }
 
 void sunkenEdges(Decls& d)
 {
+    /// Ein Zahlenfeld hinter Glas (Glas & Tiefe, 2026-09-17): schwarz,
+    /// feiner Rahmen, oben die dunkle Kante des Innenschattens, unten eine
+    /// Lichtkante — und KEINE Pfeile. Mausrad, Pfeiltasten und Tippen
+    /// bleiben; die Pfeilknoepfe waren Qt-Optik und nahmen dem Feld die
+    /// Ruhe. Die Schrift setzt der Aufrufer per setFont (Monospace, Regel
+    /// 4) — Groesse gehoert nicht ins Stylesheet (HAUSSTIL.md, die Falle).
     // From Longpath src/gui/StyleConstants.h:1014-1015 [@551576e3]
     d.set("border-top-color", hex(kGlassShade));
     d.set("border-bottom-color", hex(kGlassLight));
@@ -710,6 +736,15 @@ void sunkenEdges(Decls& d)
 
 void glassTreatment(Decls& d)
 {
+    // raisedFill statt einer flachen Fuellung: der aktive Knopf ist
+    // dieselbe aufgesetzte Flaeche wie jeder andere, nur in der
+    // Akzentfarbe. Zwei verschiedene Bauarten fuer denselben Knopf
+    // waeren genau die Art Unstimmigkeit, die man als „unfertig" liest.
+    // Glas & Tiefe (2026-09-17): der gedeckte Auswahlverlauf der
+    // Kopfleisten-Pillen (kGlassSel*) statt des flachen kBlueBg — auf
+    // den Applet-Blaettern leuchteten "Stereo", "Phone", "5.0k", "ON/RX/
+    // TX" und die Scheibenmarke "A" in einem Blau, das die Kopfleiste
+    // laengst nicht mehr trug. Eine Auswahl, eine Farbe.
     // From Longpath src/gui/StyleConstants.h:815-823 [@551576e3]
     setBackground(d, d.findLast({ "background", "background-color" }), glassFill());
     if (d.has("color")) {
@@ -805,6 +840,11 @@ QString processBody(const QString& body, const Target& t, bool* restyledOut = nu
             setBackground(d, bg, t.kind == Kind::Label ? fieldFill() : hex(kInsetBg));
             if (b.has && neutralBorder) {
                 if (t.kind == Kind::Label) {
+                    // VERSENKT: oben dunkel, unten heller — siehe die Notiz bei
+                    // buttonBaseStyle. Dasselbe Mittel wie bei der Platte, nur
+                    // umgedreht, und das Feld liegt drin statt drauf.
+                    // Glas & Tiefe (2026-09-17): ein Glaschip wie im Bandfilter — oben
+                    // die dunkle Kante, unten Licht, Monospace fuer die Zahl (Regel 4).
                     // From Longpath src/gui/StyleConstants.h:1045 [@551576e3]
                     d.set("border-color", hex(kInsetBorder));
                 }
@@ -841,6 +881,10 @@ QString processBody(const QString& body, const Target& t, bool* restyledOut = nu
     case Kind::Handle:
         if (t.state == State::Normal) {
             if (b.has) {
+                // Glas & Tiefe (2026-09-17): die Rinne ist VERSENKT (schwarz, oben
+                // die dunkle Kante, unten Licht), der Griff ERHABEN — eine Pille im
+                // Knopfverlauf mit Akzentrand, nicht mehr die blaue Kugel von Qt.
+                // Blau bleibt am Rand: der Griff ist anfassbar.
                 // From Longpath src/gui/StyleConstants.h:906-918 [@551576e3]
                 setBackground(d, bg, raisedFill());
                 d.set("border-color", hex(kAccent));
@@ -929,6 +973,7 @@ QString pressedFill()
 
 QString glassFill()
 {
+    // [original comment from StyleConstants.h:808-816 is at glassTreatment()]
     // From Longpath src/gui/StyleConstants.h:819 [@551576e3]
     return vgrad(hex(kGlassSelTop), hex(kGlassSelBot));
 }

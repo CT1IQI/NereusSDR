@@ -52,8 +52,9 @@
 //   https://github.com/oe5sos/Longpath, primary author Martin Fischer
 //   (OE5SOS). The upstream banners are copied above.
 //
-//   Upstream source has no top-of-file copyright or GPL header; the
-//   project-level LICENSE (GPLv3) applies.
+//   src/gui/StyleConstants.h carries the AetherSDR copyright and
+//   GPLv3 notice reproduced above; src/gui/styles/ThemeQss.cpp has
+//   no copyright or GPL header. Longpath's project LICENSE is GPLv3.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -64,6 +65,9 @@
 //                 no identity rows, no instrument-face or TX filter
 //                 overlay rows (meter artwork and filter overlays keep
 //                 their colours in NereusSDR's preview).
+//   2026-10-08 - Upstream table comments restored; the licence note
+//                 corrected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePalette.h"
@@ -225,6 +229,23 @@ const QVector<WorkspacePalette::LegacyRow>& WorkspacePalette::legacyRows()
         //  drops the row and names the role at the call site, LT:90]
         { "#204060", "button-alt-hover" },
         { "#205070", "border" },
+        // ── Der GRUND des Eingabefelds fehlte hier ──────────────────
+        //
+        // Bis zum 2026-08-21 fuehrte die Tabelle nur den Rahmen
+        // (inset-border), nicht die Fuellung. kInsetBg (#08080a) kam
+        // hier null Mal vor — jedes Eingabefeld und jedes Drehfeld
+        // folgte also KEINEM Thema und blieb im hellen Thema
+        // „Kreide" fast schwarz. Dieselbe Krankheit wie beim
+        // Panadapter (siehe panadapter-bg weiter unten), nur an einer
+        // Stelle, an der sie niemandem aufgefallen ist, weil die
+        // Felder klein sind.
+        //
+        // Gefunden von tst_theme_form_knobs, nicht von mir: die
+        // Pruefung verlangte, dass ein Thema die Feldfarbe aendern
+        // kann, und das ging nicht.
+        // eigener Wert seit 2026-08-21
+        // [original inline comments from ThemeQss.cpp:69-83; NereusSDR has
+        //  no inset row for #0a0a18, see the modification history above]
         { "#1e2e3e", "inset-border" },
         { "#304050", "status-sep" },
         { "#2a3040", "disabled-border" },
@@ -265,12 +286,42 @@ const QVector<WorkspacePalette::LegacyRow>& WorkspacePalette::legacyRows()
         { "#906000", "measured-border" },
         { "#ddbb00", "warn" },
         { "#cc2222", "danger-bg" },
+
+        // Abzeichen — eigene Abstufung, siehe StyleConstants.h.
+        // Der mittlere Wert ist hier derselbe wie der Zielwert: diese
+        // Rollen sind neu (2026-08-17) und haben keine Vorgeschichte im Quelltext,
+        // aus der etwas zu ersetzen waere.
+        // [original inline comment from ThemeQss.cpp:125-128; NereusSDR has
+        //  no identity rows, so the badge rows are left out here]
         { "#ff4444", "danger" },
 
         // DSP-Umschalter
         { "#1a6030", "dsp-on-bg" },
         { "#20a040", "dsp-on-border" },
         { "#80ff80", "dsp-on" },
+
+        // ── Absichtlich ohne Zeile ───────────────────────────────────
+        //
+        // kBlueText und kRedText waren beide #ffffff — Text auf einem
+        // gefüllten Knopf. Eine Zeile für Weiß kann nicht unterscheiden,
+        // ob ein "color: #ffffff" auf einem Knopf steht oder mitten in
+        // einem Absatz. Sie sind nur über den Namen erreichbar.
+        //
+        // kEqBand1/5/6 ebenso: die acht Entzerrertöne halten überlagerte
+        // Kurven auseinander und antworten der Lesbarkeit gegeneinander,
+        // nicht dem Chrome.
+        //
+        // Spektrum ebenso, und hier war es knapp. „trace" (#00e5ff)
+        // hätte auch die Ziffern im VFO getroffen — dieselbe Farbe,
+        // andere Aufgabe, und eine gedämpfte Frequenzanzeige will
+        // niemand. „grid" wäre #ffffff gewesen, also jeder weiße
+        // Knopftext im Programm. „grid-text" (#ffff00) hätte die
+        // Thetis-Meter mitgenommen.
+        //
+        // Alle drei sind über ihren Namen erreichbar — Style::role(
+        // "trace", …) im Malcode, "trace" in der Theme-Datei. Nur die
+        // Ersetzung nach Hexwert bleibt aus, weil ein Hexwert nicht
+        // sagt, wofür er dasteht.
     };
     return rows;
 }

@@ -150,6 +150,9 @@ mw0lge@grange-lane.co.uk
 //   2026-10-07 - TX: ALC scale from Thetis MeterManager.cs (range
 //                 -30..+12 dB, 0 dB at 66.5 %, red above 0 dB). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - English labels for the noise floor and RADE SNR readings;
+//                 the TX: ALC cite points at the average ALC bar.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/ReadingSource.h"
@@ -178,11 +181,13 @@ constexpr int RadeSnr    = 10;   // From Longpath src/gui/meters/MeterPoller.h:1
 
 double sigFractionFromDbm(double dbm) { return signalFraction(dbm); }
 
-// NereusSDR: the TX: ALC scale, Thetis's own ALC bar.
-// From Thetis MeterManager.cs:24670-24672 [v2.10.3.15]
-//   cb2.ScaleCalibration.Add(-30, new PointF(0, 0));
-//   cb2.ScaleCalibration.Add(0, new PointF(0.665f, 0));
-//   cb2.ScaleCalibration.Add(12, new PointF(0.99f, 0));
+// NereusSDR: the TX: ALC scale, Thetis's own ALC bar. TxAlc is the
+// average reading (TXA_ALC_AV), the bar Thetis binds to Reading.ALC.
+// From Thetis MeterManager.cs:24683, 24694-24696 [v2.10.3.15]
+//   cb.ReadingSource = Reading.ALC;
+//   cb.ScaleCalibration.Add(-30, new PointF(0, 0));
+//   cb.ScaleCalibration.Add(0, new PointF(0.665f, 0));
+//   cb.ScaleCalibration.Add(12, new PointF(0.99f, 0));
 constexpr double kAlcMinDb = -30.0;
 constexpr double kAlcCentreDb = 0.0;
 constexpr double kAlcMaxDb = 12.0;
@@ -307,7 +312,7 @@ QList<ReadingDescriptor> buildTable()
         ReadingDescriptor d;
         d.bindingId = LongpathBinding::NoiseFloor;
         d.available = false;   // NereusSDR: no producer, see LongpathBinding
-        d.label     = QStringLiteral("RX: Rauschflur");
+        d.label     = QStringLiteral("RX: Noise Floor");   // NereusSDR: English label (upstream "RX: Rauschflur")
         d.unit      = QStringLiteral("dBm");
         d.hasScale  = true;
         d.min       = -140.0;
@@ -361,7 +366,7 @@ QList<ReadingDescriptor> buildTable()
         ReadingDescriptor d;
         d.bindingId = LongpathBinding::RadeSnr;
         d.available = false;   // NereusSDR: no producer, see LongpathBinding
-        d.label     = QStringLiteral("RX: RADE-SNR");
+        d.label     = QStringLiteral("RX: RADE SNR");   // NereusSDR: English label (upstream "RX: RADE-SNR")
         d.unit      = QStringLiteral("dB");
         d.hasScale  = true;
         d.min       = -21.0;
@@ -450,7 +455,7 @@ QList<ReadingDescriptor> buildTable()
         d.hasScale  = true;
         d.min       = kAlcMinDb;
         d.max       = kAlcMaxDb;
-        // From Thetis MeterManager.cs:24676 [v2.10.3.15]: HighPoint is
+        // From Thetis MeterManager.cs:24700 [v2.10.3.15]: HighPoint is
         // the second calibration point, 0 dB; the scale's high (red)
         // colour starts there (generalScale, MeterManager.cs:33894-33898).
         d.threshold = kAlcCentreDb;

@@ -52,8 +52,9 @@
 //   https://github.com/oe5sos/Longpath, primary author Martin Fischer
 //   (OE5SOS). The upstream banners are copied above.
 //
-//   Upstream source has no top-of-file copyright or GPL header; the
-//   project-level LICENSE (GPLv3) applies.
+//   src/gui/StyleConstants.h carries the AetherSDR copyright and
+//   GPLv3 notice reproduced above; src/gui/styles/ThemeQss.cpp has
+//   no copyright or GPL header. Longpath's project LICENSE is GPLv3.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -61,6 +62,9 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 hexRole(kX) becomes role("name", kX) against the
 //                 built-in WorkspacePalette.
+//   2026-10-08 - Upstream rationale restored above shiftL(); the licence
+//                 note corrected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceStyle.h"
@@ -144,6 +148,58 @@ void paintGlassChip(QPainter& p, const QRect& box, int radius)
     p.restore();
 }
 
+// ── Flaechen mit Verlauf statt flacher Fuellung ──────────────────────
+//
+// Der Betreiber, 2026-08-21, mit einem Bildschirmfoto der Vorlage: „die
+// uebergaenge im hintergrund bei den widget wirken sehr gut" — und
+// nach dem Entwurfsblatt: „sehe keinen unterschied beim den pdf.
+// mache es wie bei [der Vorlage]."
+//
+// Der Unterschied ist benennbar: in der Vorlage ist keine Flaeche eine
+// Farbe, sondern ein Verlauf von oben nach unten, mit einer helleren
+// Oberkante. Das Auge liest das als Licht von oben und damit als
+// Flaeche mit DICKE — ein Stueck Blech statt eines Rechtecks. Bei uns
+// war alles flach.
+//
+// Zwei Regeln, mehr steckt nicht dahinter:
+//
+//   AUFGESETZT (Platte, Kopfleiste, Knopf): oben heller, unten dunkler,
+//   eine helle Linie an der Oberkante.
+//
+//   VERSENKT (Mulde, Eingabefeld, Rille): genau ANDERSHERUM — oben
+//   dunkel, unten heller. Dasselbe Mittel, umgedreht, und die Flaeche
+//   liegt drin statt drauf.
+//
+// Kein neuer Farbton: alle Stufen kommen aus der Familie, die die
+// Palette ohnehin fuehrt. Und alles an EINER Stelle — wer hier etwas
+// aendert, aendert das ganze Programm mit.
+//
+// Ein senkrechter Verlauf in Qt-Stylesheets:
+//   qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 …, stop:1 …)
+// Die Stufen werden aus der Grundfarbe GERECHNET, nicht getippt.
+// Grund: die Themenverwaltung tauscht Farben ueber ihren Hexwert aus
+// (ThemeQss). Ein von Hand gesetztes "#22222a" kennt sie nicht — im
+// hellen Thema „Kreide" waere der Knopf dunkel geblieben. Also: die
+// Grundfarbe durch hexRole() durchs Thema schicken und die helle und
+// dunkle Stufe daraus ableiten. Dann stimmt jedes Thema von selbst,
+// auch die, die es noch nicht gibt.
+// Die Stufen werden AUS der Grundfarbe gerechnet, nicht getippt.
+//
+// Zwei Gruende. Erstens die Themenverwaltung: sie tauscht Farben ueber
+// ihren Hexwert aus (ThemeQss). Ein von Hand gesetztes "#22222a" kennt
+// sie nicht — im hellen Thema „Kreide" waere der Knopf dunkel
+// geblieben. Also geht die Grundfarbe durch hexRole() und die Stufen
+// werden daraus abgeleitet; dann stimmt jedes Thema von selbst, auch
+// die, die es noch nicht gibt.
+//
+// Zweitens die Rechenart. Der erste Versuch nahm QColor::lighter(118),
+// und das ist eine MULTIPLIKATION der Helligkeit. Auf unserem fast
+// schwarzen Grund (#1a1a1e, Helligkeit 26) sind 18 Prozent davon
+// gerade fuenf Stufen — der Testknopf kam auf einen Abstand von 6,
+// und genau das war der Fehler, den der Betreiber am Entwurfsblatt
+// gesehen hat: „sehe keinen unterschied". Auf Dunkel muss ADDIERT
+// werden. shiftL() legt einen festen Betrag drauf, unabhaengig davon,
+// wie dunkel der Grund ist.
 // From Longpath src/gui/StyleConstants.h:697-703 [@551576e3]
 QString shiftL(const QColor& base, int deltaL)
 {

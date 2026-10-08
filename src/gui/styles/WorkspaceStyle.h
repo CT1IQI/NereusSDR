@@ -55,8 +55,9 @@
 //   https://github.com/oe5sos/Longpath, primary author Martin Fischer
 //   (OE5SOS). The upstream banners are copied above.
 //
-//   Upstream source has no top-of-file copyright or GPL header; the
-//   project-level LICENSE (GPLv3) applies.
+//   src/gui/StyleConstants.h carries the AetherSDR copyright and
+//   GPLv3 notice reproduced above; src/gui/styles/ThemeQss.cpp has
+//   no copyright or GPL header. Longpath's project LICENSE is GPLv3.
 //
 //   Longpath's LP_MONO_QSS #define is not ported; kMonoQssFamilies is
 //   the constexpr equivalent.
@@ -67,6 +68,9 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 role() looks up WorkspacePalette instead of
 //                 Longpath's runtime Theme.
+//   2026-10-08 - Upstream comments restored on the font ladder, caps
+//                 tracking and mono families; the licence note corrected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -81,6 +85,50 @@ class QRect;
 namespace NereusSDR::Workspace {
 
 // ── Font size ladder (pixels) ────────────────────────────────────────
+// ── Sechs Schriftstufen ─────────────────────────────────────────────
+//
+// OE5SOS, 2026-08-18: „sechs Stufen, QFont::setLetterSpacing, benannte
+// Konstanten, vorher zaehlen was es schon gibt."
+//
+// GEZAEHLT am 2026-08-18: 641 Vorkommen in 18 verschiedenen Groessen
+// (60 x setPixelSize, 581 x font-size im Stylesheet). Die haeufigsten
+// sind 11 (232), 10 (186), 9 (69), 12 (72) — vier Stufen, die kaum
+// auseinanderliegen und offensichtlich nicht entschieden, sondern
+// gewachsen sind.
+//
+// Die Leiter unten deckte am 2026-08-18 zunaechst nur die drei
+// Instrumente ab, absichtlich NICHT den ganzen Baum: 641 Stellen blind
+// zu ersetzen waere derselbe Fehler wie die Palettenumstellung ohne
+// Abbildungstabelle. Wer sie ausweitet, tut es Datei fuer Datei.
+//
+// UPDATE 2026-08-21: genau diese Datei-fuer-Datei-Ausweitung ist seither
+// passiert — der ganze Baum wurde auf die Leiter zurueckgeholt (zwoelf
+// abweichende Schriftgroessen auf null). scripts/verify-style-drift.py
+// haelt seitdem den GANZEN Baum auf 0 abweichende Groessen fest (Decke
+// in docs/design/style-drift-baseline.json), nicht nur die drei
+// Instrumente. Wachsen dort neue Abweichungen (z.B. 2026-09-02: 20 neue
+// Stellen in KiwiSDR-/Chrome-/Applet-Dateien, seither wieder auf die
+// Leiter geholt), sind das keine neuen "erlaubten" Stellen ausserhalb
+// der Leiter, sondern Drift, die dieselbe Datei-fuer-Datei-Pruefung
+// braucht wie die urspruengliche Migration — kein blindes Ersetzen.
+//
+// Die Zahlen sind ein Vorschlag mit einer Stelle, an der man ihn
+// aendert. Herkunft:
+//   Micro    7  — die kleinsten Panadapter-Beschriftungen (dBm-Skala,
+//                 Wasserfall-"LIVE"-Chip, Wasserfall-Zeitachse):
+//                 setPointSize(7) am 2026-09-24 auf setPixelSize(7)
+//                 umgestellt (Betreiber: die Schrift des Panadapters
+//                 soll pixelfest sein, nicht DPI-abhaengig), damit
+//                 sichtbar auf die Leiter genommen statt als
+//                 Ausnahme durchgerutscht
+//   Caption  9  — HAUSSTIL.md §Die acht Regeln, Regel 1: 8-9 px
+//   Small   11  — die haeufigste Groesse im Baum
+//   Body    13  — die VFO-Zeile des Frequenz-Widgets
+//   Sub     16  — bisher duenn belegt (8 Vorkommen), fuellt die Luecke
+//   Reading 22  — der abgelesene Wert in der Instrumenten-Fusszeile
+//   Display 38  — die Frequenz selbst
+//   Alarm   48  — die "HIGH SWR"-Warnung auf dem Panadapter: dieselbe
+//                 2026-09-24-Umstellung, derselbe Grund
 constexpr int kFontMicro   = 7;    // From Longpath src/gui/StyleConstants.h:164 [@551576e3]
 constexpr int kFontCaption = 9;    // From Longpath src/gui/StyleConstants.h:165 [@551576e3]
 constexpr int kFontSmall   = 11;   // From Longpath src/gui/StyleConstants.h:166 [@551576e3]
@@ -90,8 +138,44 @@ constexpr int kFontReading = 22;   // From Longpath src/gui/StyleConstants.h:169
 constexpr int kFontDisplay = 38;   // From Longpath src/gui/StyleConstants.h:170 [@551576e3]
 constexpr int kFontAlarm   = 48;   // From Longpath src/gui/StyleConstants.h:171 [@551576e3]
 
+/// Laufweite der Versalzeile, als Anteil der Schriftgroesse.
+/// HAUSSTIL.md §Die acht Regeln: „.18em".
+///
+/// Sie MUSS ueber QFont::setLetterSpacing gesetzt werden.
+/// Qt-Stylesheets kennen kein letter-spacing und verwerfen es
+/// kommentarlos — das steht so in der Uebergabe vom 2026-08-15 und hat
+/// dort schon einmal eine Stunde gekostet.
 constexpr double kCapsTracking = 0.18;   // From Longpath src/gui/StyleConstants.h:180 [@551576e3]
 
+/// Dieselbe Schriftwahl wie monoFont(), aber fuer Stilvorlagen (QSS).
+///
+/// Warum es das geben muss: am 2026-10-06 stand im Protokoll
+///
+///     Populating font family aliases took N ms. Replace uses of missing
+///     font family "SF Mono" with one that exists.
+///
+/// Nachgezaehlt gab es dann ACHT verschiedene Schreibweisen fuer
+/// dieselbe Absicht, und auf dem Mac des Betreibers kamen dabei VIER
+/// verschiedene Schriften heraus:
+///
+///     'SF Mono', Menlo, monospace        12x  -> Menlo
+///     monospace                          12x  -> Qt-Vorgabe
+///     'ui-monospace','Menlo','Consolas'   3x  -> Menlo
+///     Menlo                               2x  -> Menlo
+///     Menlo, monospace                    1x  -> Menlo
+///     Menlo, Consolas, monospace          1x  -> Menlo
+///     Consolas, 'Courier New', monospace  1x  -> COURIER NEW
+///     'Monaco','Menlo',monospace          1x  -> MONACO
+///     QFont("SF Mono") ohne Rueckfall     1x  -> gar nicht Monospace
+///     QFont("Consolas") ohne Rueckfall    1x  -> gar nicht Monospace
+///
+/// SF Mono ist auf dem Mac NICHT als Familie ansprechbar (geprueft:
+/// 0 Treffer in system_profiler, Menlo 26). Consolas ist Windows. Wer
+/// sie ohne Rueckfall nennt, bekommt die proportionale Vorgabeschrift --
+/// und genau das sah der Betreiber.
+///
+/// Als Makro, damit es sich an Zeichenkettenliterale anfuegen laesst:
+///     "QLabel { font-family: " LP_MONO_QSS "; }"
 // The monospace fallback chain for stylesheets, the same families as
 // monoFont(). From Longpath src/gui/StyleConstants.h:70 [@551576e3]
 constexpr auto kMonoQssFamilies = "Menlo, 'DejaVu Sans Mono', monospace";
@@ -139,6 +223,8 @@ void paintInsetTop(QPainter& p, const QRect& r);
 // From Longpath src/gui/StyleConstants.h:573-589 [@551576e3]
 void paintGlassChip(QPainter& p, const QRect& box, int radius);
 
+// [original comment block from StyleConstants.h:645-696 sits above
+//  shiftL() in WorkspaceStyle.cpp]
 // From Longpath src/gui/StyleConstants.h:697-703 [@551576e3]
 QString shiftL(const QColor& base, int deltaL);
 
