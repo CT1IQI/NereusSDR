@@ -954,6 +954,8 @@ endif()
 # Source files
 # --------------------------------------------------------------------------
 set(CORE_SOURCES
+    src/core/antenna/AmateurBands.cpp
+    src/core/antenna/AmateurBands.h
     src/core/AntennaLabels.cpp
     src/core/AppSettings.cpp
     src/core/settings/SettingsBackup.cpp
@@ -1660,6 +1662,26 @@ set(GUI_SOURCES
     src/gui/styles/WorkspacePreview.h
     src/gui/styles/WorkspaceStyle.cpp
     src/gui/styles/WorkspaceStyle.h
+    src/gui/instruments/BarInstrument.cpp
+    src/gui/instruments/BarInstrument.h
+    src/gui/instruments/FrequencyInstrument.cpp
+    src/gui/instruments/FrequencyInstrument.h
+    src/gui/instruments/InstrumentFooter.cpp
+    src/gui/instruments/InstrumentFooter.h
+    src/gui/instruments/InstrumentPainter.cpp
+    src/gui/instruments/InstrumentPainter.h
+    src/gui/instruments/InstrumentSpine.cpp
+    src/gui/instruments/InstrumentSpine.h
+    src/gui/instruments/InstrumentStyle.h
+    src/gui/instruments/LongpathContent.cpp
+    src/gui/instruments/LongpathContent.h
+    src/gui/instruments/NeedleInstrument.cpp
+    src/gui/instruments/NeedleInstrument.h
+    src/gui/instruments/PeakHold.h
+    src/gui/instruments/ReadingSource.cpp
+    src/gui/instruments/ReadingSource.h
+    src/gui/widgets/BandwidthFilterPane.cpp
+    src/gui/widgets/BandwidthFilterPane.h
     src/gui/RelayBar.cpp
     src/gui/SMeterWidget.cpp
     src/gui/VintageMeterFace.cpp

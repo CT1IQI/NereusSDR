@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-07 - Per-instance QWidget factories for the workspace preview
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Canonical independent control creation shortcuts by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
@@ -289,6 +291,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
             descriptor.available = false; descriptor.unavailableReason = QStringLiteral("This capability is not built");
         }
     }
+    for (const QString& typeId : m_widgetFactoryOrder) { result.append(m_widgetFactories.value(typeId).descriptor); }
     for (auto& d : result) {
         if (m_unavailable.contains(d.typeId)) { d.available = false; d.unavailableReason = m_unavailable.value(d.typeId); }
     }
@@ -386,8 +389,46 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     item->setParent(parent);
     return item.release();
 }
+void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory)
+{
+    if (typeId.isEmpty() || !factory) { return; }
+    ContentDescriptor stored = descriptor;
+    stored.typeId = typeId;
+    stored.singleton = false;
+    if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
+    m_widgetFactories.insert(typeId, {stored, std::move(factory)});
+    ++m_generation;
+    emit runtimeChanged();
+}
+void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
+{
+    if (!m_widgetFactories.remove(typeId)) { return; }
+    m_widgetFactoryOrder.removeAll(typeId);
+    ++m_generation;
+    emit runtimeChanged();
+}
+bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
+QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent) const
+{
+    const auto it = m_widgetFactories.constFind(entry.typeId);
+    if (it == m_widgetFactories.constEnd() || !isAvailable(entry.typeId)) { return nullptr; }
+    QWidget* widget = it->factory(entry, parent);
+    if (!widget) { return nullptr; }
+    if (widget->parentWidget() != parent) { widget->setParent(parent); }
+    widget->setProperty("containerFactoryType", entry.typeId);
+    widget->setProperty("containerEntryId", entry.id);
+    return widget;
+}
 QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent) const
 {
+    if (hasWidgetFactory(entry.typeId) && isAvailable(entry.typeId)) {
+        if (QWidget* view = createWidget(entry, parent)) {
+            view->setAttribute(Qt::WA_TransparentForMouseEvents);
+            view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
+            view->setProperty("freeCanvasHint", view->sizeHint());
+            return view;
+        }
+    }
     if (!entry.typeId.startsWith("applet:") && isAvailable(entry.typeId)) {
         auto meter=std::make_unique<MeterWidget>();
         if (auto* item=createMeterItem(entry,meter.get(),ContentRenderMode::Preview)) {

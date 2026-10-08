@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: per-instance widget content rows from
+//                 ContainerContentRegistry widget factories, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: entry headers (in a reserved 16 px
 //                 slot in Always, over the content in Arrange) replace the
 //                 20 px left gutter and its grips by J.J. Boyd (KG4VCF),
@@ -334,6 +337,19 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             row.presentationVisible = entry.visible;
             label->setVisible(entry.visible); m_rows.append(row); continue;
         }
+        if (m_registry.hasWidgetFactory(entry.typeId)) {
+            // Per-instance widget content (workspace preview): its own row,
+            // like an applet, but created for this entry alone.
+            ContentEntry effective = entry; effective.context = row.context;
+            if (QWidget* widget = m_registry.createWidget(effective, m_body)) {
+                finishRun();
+                widget->setProperty("containerSourceContext", row.context);
+                widget->setProperty(WorkspacePreview::kSkipProperty, true);
+                row.widget = widget; m_layout->addWidget(widget);
+                widget->setVisible(row.effectiveVisible);
+                m_rows.append(row); continue;
+            }
+        }
         if (run && document.layout == ContentLayout::VerticalStack && row.context != runContext) { finishRun(); }
         if (!run) {
             // A native sibling can promote children inside QWidget's base
@@ -422,9 +438,28 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 singleton->setProperty("freeCanvasMinimum",QSizeF(minimum));singleton->setMinimumSize(0,0);singleton->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                 row.widget=singleton;
             } else {
-                if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty()) {row.widget=old->widget;}
+                if(old && old->widget && old->widget->property("singletonTypeId").toString().isEmpty() && qobject_cast<QLabel*>(old->widget.data())) {row.widget=old->widget;}
                 else {row.widget=new QLabel(m_canvas);}
                 if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+(claim?tr("waiting for its live view"):tr("duplicate singleton placement; original data retained")));}
+            }
+        } else if(row.effectiveVisible && m_registry.hasWidgetFactory(entry.typeId)) {
+            // Per-instance widget content (workspace preview).
+            if(old && old->widget && !old->item && old->widget->property("containerFactoryType").toString()==entry.typeId) {
+                ContentEntry current=entry,previous;current.extensions.remove("freeCanvasRect");current.paintOrder=0;
+                for(const auto& candidate:prior.contents) {if(candidate.id==entry.id) {previous=candidate;previous.extensions.remove("freeCanvasRect");previous.paintOrder=0;break;}}
+                previous.visible=current.visible;previous.name=current.name;
+                if(previous==current && effectiveContext(prior,previous)==row.context) {row.widget=old->widget;}
+            }
+            if(!row.widget) {
+                ContentEntry effective=entry;effective.context=row.context;
+                if(QWidget* widget=m_registry.createWidget(effective,m_canvas)) {
+                    widget->setProperty("containerSourceContext",row.context);
+                    widget->setProperty(WorkspacePreview::kSkipProperty,true);
+                    widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
+                    widget->setProperty("freeCanvasHint",widget->sizeHint());
+                    widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
+                    row.widget=widget;
+                }
             }
         } else if(row.effectiveVisible) {
             ContentEntry current=entry;current.extensions.remove("freeCanvasRect");current.paintOrder=0;
@@ -453,7 +488,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
             if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {m_meters.append(meter);}
         }
         if(!row.widget) {
-            if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty()) {row.widget=old->widget;}
+            if(old && old->widget && !old->item && old->widget->property("singletonTypeId").toString().isEmpty() && qobject_cast<QLabel*>(old->widget.data())) {row.widget=old->widget;}
             else {row.widget=new QLabel(m_canvas);}
             if(auto* label=qobject_cast<QLabel*>(row.widget.data())) {label->setWordWrap(true);label->setText(entry.name+QStringLiteral(" — ")+m_registry.unavailableReason(entry.typeId));}
         }

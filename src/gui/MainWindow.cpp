@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-07 - Workspace preview only: the Longpath instruments are
+//                 registered as container content. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: the four-edge container area,
 //                 the right-strip panel toggle and Containers > Align to
 //                 8 px Grid. J.J. Boyd (KG4VCF), AI-assisted via
@@ -939,6 +942,7 @@ warren@wpratt.com
 #include "gui/styles/QssTranslator.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/instruments/LongpathContent.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/SkuUiProfile.h"
 // Remote Daemon R2 Task 12: source-selector wiring below (setSourceSelector).
@@ -10243,6 +10247,19 @@ void MainWindow::populateDefaultMeter()
         const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
         registry->setAvailable(type, m_appletVis->isAvailable(id));
         registry->attachSingleton(type, m_appletsById.value(id));
+    }
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview only: the ported Longpath instruments as
+        // per-instance container content.
+        LongpathContent::Sources sources;
+        sources.poller = m_meterPoller;
+        sources.radio = m_radioModel;
+        sources.sliceForContext = [this](const QJsonObject& context) {
+            return ContainerSourceAdapter::slice(m_radioModel, context,
+                windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId());
+        };
+        sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
+        LongpathContent::registerAll(*registry, sources);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {

@@ -1,0 +1,368 @@
+// src/gui/instruments/LongpathContent.cpp
+
+// --- From src/gui/applets/BandwidthFilterApplet.cpp ---
+// =================================================================
+// src/gui/applets/BandwidthFilterApplet.cpp  (Longpath)
+// =================================================================
+//
+// Longpath-original. Begruendung steht im Header.
+//
+// =================================================================
+// Modification history (Longpath):
+//   2026-08-20 — Original fuer NereusSDR von Martin Fischer,
+//                 KI-gestuetzt ueber Anthropic Claude (Cowork).
+// =================================================================
+
+// =================================================================
+// src/gui/instruments/LongpathContent.cpp  (NereusSDR)
+// =================================================================
+//
+// Ported from Longpath source (values only):
+//   src/gui/applets/BandwidthFilterApplet.cpp (passband trace refresh
+//   interval and sample density) at revision
+//   551576e30c42731c6d51ce005c5f23ec38be391c,
+//   https://github.com/oe5sos/Longpath, primary author Martin Fischer
+//   (OE5SOS). The upstream banner is copied above.
+//
+//   Upstream source has no top-of-file copyright or GPL header; the
+//   project-level LICENSE (GPLv3) applies.
+//
+//   Everything else is NereusSDR-original: the registry factories, the
+//   slice and MeterPoller bindings, and traceFromRendered(), which reads
+//   SpectrumWidget::renderedPixels() instead of Longpath's
+//   SpectrumWidget::dbmOverRange().
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-10-07 - Written for the workspace visual review by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+// =================================================================
+
+#include "gui/instruments/LongpathContent.h"
+
+#include "core/ControlRanges.h"
+#include "gui/SpectrumWidget.h"
+#include "gui/containers/ContainerContentRegistry.h"
+#include "gui/instruments/BarInstrument.h"
+#include "gui/instruments/FrequencyInstrument.h"
+#include "gui/instruments/NeedleInstrument.h"
+#include "gui/instruments/ReadingSource.h"
+#include "gui/meters/MeterItem.h"
+#include "gui/meters/MeterPoller.h"
+#include "gui/widgets/BandwidthFilterPane.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include <QPointer>
+#include <QTimer>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace NereusSDR::LongpathContent {
+
+namespace {
+
+// From Longpath src/gui/applets/BandwidthFilterApplet.cpp:783 [@551576e3]
+constexpr int kTraceIntervalMs = 50;
+// From Longpath src/gui/applets/BandwidthFilterApplet.cpp:835-837 [@551576e3]
+constexpr int kTraceMinPoints = 64;
+constexpr int kTraceMaxPoints = 400;
+constexpr double kTraceDevicePxPerPoint = 12.0;
+
+QString sliceLabel(const SliceModel* slice)
+{
+    if (!slice) { return QStringLiteral("RX"); }
+    return QStringLiteral("RX %1").arg(QChar(QLatin1Char('A').unicode() + slice->sliceIndex()));
+}
+
+// Rebinds an instrument when the slice its context names may have
+// changed (a slice opened or closed, the selected RX moved).
+class SliceFollower : public QObject {
+public:
+    SliceFollower(QWidget* owner, const Sources& sources, QJsonObject context)
+        : QObject(owner), m_sources(sources), m_context(std::move(context))
+    {
+    }
+
+    // Binds now and again whenever the slice behind the context changes.
+    void start(std::function<void(SliceModel*)> bind)
+    {
+        m_bind = std::move(bind);
+        if (RadioModel* radio = m_sources.radio) {
+            connect(radio, &RadioModel::sliceAdded, this, [this](int) { rebind(); });
+            connect(radio, &RadioModel::sliceRemoved, this, [this](int) { rebind(); });
+            connect(radio, &RadioModel::activeSliceChanged, this, [this](int) { rebind(); });
+        }
+        rebind();
+    }
+
+private:
+    void rebind()
+    {
+        SliceModel* slice = m_sources.sliceForContext ? m_sources.sliceForContext(m_context) : nullptr;
+        if (slice == m_slice && m_bound) { return; }
+        for (const auto& c : std::as_const(m_connections)) { disconnect(c); }
+        m_connections.clear();
+        m_slice = slice;
+        m_bound = true;
+        m_bind(slice);
+    }
+
+public:
+    void track(const QMetaObject::Connection& c) { m_connections.append(c); }
+
+private:
+    Sources m_sources;
+    QJsonObject m_context;
+    std::function<void(SliceModel*)> m_bind;
+    QPointer<SliceModel> m_slice;
+    QVector<QMetaObject::Connection> m_connections;
+    bool m_bound = false;
+};
+
+SliceModel* otherSlice(const Sources& sources, const SliceModel* slice)
+{
+    if (!sources.radio || !slice) { return nullptr; }
+    for (SliceModel* s : sources.radio->slices()) {
+        if (s && s != slice) { return s; }
+    }
+    return nullptr;
+}
+
+QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources& sources)
+{
+    auto* w = new FrequencyInstrument(parent);
+    const QString form = entry.config.value(QLatin1String(kFormKey)).toString();
+    if (form == QLatin1String("bandStrip")) { w->setForm(FrequencyInstrument::Form::BandStrip); }
+    else if (form == QLatin1String("flatArc")) { w->setForm(FrequencyInstrument::Form::FlatArc); }
+    QPointer<FrequencyInstrument> guard(w);
+    auto* follower = new SliceFollower(w, sources, entry.context);
+    auto bind = [guard, follower, sources](SliceModel* slice) {
+        if (!guard) { return; }
+        guard->setFrequency(slice ? slice->frequency() : 0.0);
+        SliceModel* other = otherSlice(sources, slice);
+        guard->setOtherFrequency(other ? other->frequency() : 0.0);
+        guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
+        if (!slice) { return; }
+        follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
+            if (guard) { guard->setFrequency(hz); }
+        }));
+        if (other) {
+            follower->track(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
+                if (guard) { guard->setOtherFrequency(hz); }
+            }));
+        }
+        // The operator's own edit: the slice's existing setter, the same
+        // path the VFO flag uses (MainWindow, VfoWidget::frequencyChanged).
+        QPointer<SliceModel> target(slice);
+        follower->track(QObject::connect(guard, &FrequencyInstrument::frequencyEdited, slice, [target](double hz) {
+            if (target) { target->setFrequency(hz); }
+        }));
+    };
+    follower->start(bind);
+    return w;
+}
+
+} // namespace
+
+int primaryBinding(const QString& typeId, const QJsonObject& config)
+{
+    const QJsonValue explicitBinding = config.value(QLatin1String(kBindingKey));
+    if (explicitBinding.isDouble()) { return explicitBinding.toInt(); }
+    if (typeId == QLatin1String(kBarType)) { return MeterBinding::TxSwr; }
+    if (config.value(QLatin1String(kDirectionKey)).toString() == QLatin1String("tx")) { return MeterBinding::TxPower; }
+    return MeterBinding::SignalPeak;
+}
+
+QVector<float> traceFromRendered(const QVector<float>& pixels, double centreHz,
+                                 double bandwidthHz, double lowHz, double highHz,
+                                 int points)
+{
+    if (pixels.size() < 2 || bandwidthHz <= 0.0 || points < 2 || highHz <= lowHz) { return {}; }
+    const double startHz = centreHz - bandwidthHz / 2.0;
+    const double stopHz = centreHz + bandwidthHz / 2.0;
+    if (lowHz < startHz || highHz > stopHz) { return {}; }
+    const double pxPerHz = pixels.size() / bandwidthHz;
+    const int last = int(pixels.size()) - 1;
+    QVector<float> out(points);
+    const double step = (highHz - lowHz) / points;
+    for (int i = 0; i < points; ++i) {
+        const double a = lowHz + step * i;
+        const double b = a + step;
+        const int p0 = std::clamp(int(std::floor((a - startHz) * pxPerHz)), 0, last);
+        const int p1 = std::clamp(int(std::ceil((b - startHz) * pxPerHz)) - 1, p0, last);
+        float peak = -std::numeric_limits<float>::infinity();
+        for (int p = p0; p <= p1; ++p) { peak = std::max(peak, pixels.at(p)); }
+        out[i] = peak;
+    }
+    return out;
+}
+
+void registerAll(ContainerContentRegistry& registry, const Sources& sources)
+{
+    registry.registerWidgetFactory(QLatin1String(kFrequencyType),
+        {QLatin1String(kFrequencyType), QStringLiteral("Frequency (Longpath)"), false, true, {}},
+        [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
+            return makeFrequency(entry, parent, sources);
+        });
+
+    const auto meterFactory = [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
+        const int primary = primaryBinding(entry.typeId, entry.config);
+        const QJsonValue secondaryValue = entry.config.value(QLatin1String(kSecondaryKey));
+        const int secondary = secondaryValue.isDouble() ? secondaryValue.toInt() : -1;
+        const ReadingDescriptor* descriptor = readingFor(primary);
+        const bool available = descriptor && descriptor->available;
+        QWidget* widget = nullptr;
+        std::function<void(int, double)> onReading;
+        if (entry.typeId == QLatin1String(kBarType)) {
+            auto* bar = new BarInstrument(parent);
+            bar->setCompact(true);
+            if (!bar->setPrimary(primary)) { delete bar; return nullptr; }
+            if (secondary >= 0) { bar->setSecondary(secondary); }
+            QPointer<BarInstrument> guard(bar);
+            onReading = [guard, primary](int binding, double value) {
+                if (!guard) { return; }
+                if (isNoMeterReading(value)) { if (binding == primary) { guard->clearValue(); } return; }
+                guard->onReading(binding, value);
+            };
+            widget = bar;
+        } else {
+            auto* needle = new NeedleInstrument(parent);
+            if (!needle->setPrimary(primary)) { delete needle; return nullptr; }
+            if (secondary >= 0) { needle->setSecondary(secondary); }
+            // No reading yet: offline until the first one arrives, and for
+            // good when NereusSDR has no producer for the reading.
+            needle->setOffline(true);
+            QPointer<NeedleInstrument> guard(needle);
+            onReading = [guard, primary, available](int binding, double value) {
+                if (!guard) { return; }
+                if (isNoMeterReading(value)) {
+                    if (binding == primary) { guard->clearValue(); guard->setOffline(true); }
+                    return;
+                }
+                guard->onReading(binding, value);
+                if (binding == primary && available) { guard->setOffline(false); }
+            };
+            widget = needle;
+        }
+        widget->setProperty("longpathPrimaryBinding", primary);
+        if (sources.poller && available) {
+            const QJsonObject context = entry.context;
+            QObject::connect(sources.poller, &MeterPoller::readingUpdated, widget,
+                [onReading, context, primary, secondary](const QJsonObject& from, int binding, double value) {
+                    if (from != context || (binding != primary && binding != secondary)) { return; }
+                    onReading(binding, value);
+                });
+        }
+        return widget;
+    };
+    registry.registerWidgetFactory(QLatin1String(kNeedleType),
+        {QLatin1String(kNeedleType), QStringLiteral("Needle meter (Longpath)"), false, true, {}}, meterFactory);
+    registry.registerWidgetFactory(QLatin1String(kBarType),
+        {QLatin1String(kBarType), QStringLiteral("Bar meter (Longpath)"), false, true, {}}, meterFactory);
+
+    registry.registerWidgetFactory(QLatin1String(kFilterType),
+        {QLatin1String(kFilterType), QStringLiteral("Filter passband (Longpath)"), false, true, {}},
+        [sources](const ContentEntry& entry, QWidget* parent) -> QWidget* {
+            auto* pane = new BandwidthFilterPane(parent);
+            QPointer<BandwidthFilterPane> guard(pane);
+            auto slicePtr = std::make_shared<QPointer<SliceModel>>();
+            auto* follower = new SliceFollower(pane, sources, entry.context);
+            auto bind = [guard, follower, slicePtr](SliceModel* slice) {
+                if (!guard) { return; }
+                *slicePtr = slice;
+                guard->setLabel(sliceLabel(slice));
+                guard->setHasFrequency(slice != nullptr);
+                guard->setTrace({});
+                if (!slice) { return; }
+                guard->setAccent(QColor::fromRgb(ControlRanges::sliceColour(slice->sliceIndex())));
+                guard->setVfoFrequency(slice->frequency());
+                guard->setFilter(slice->filterLow(), slice->filterHigh());
+                follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
+                    if (guard) { guard->setVfoFrequency(hz); }
+                }));
+                follower->track(QObject::connect(slice, &SliceModel::filterChanged, guard, [guard](int low, int high) {
+                    if (guard) { guard->setFilter(low, high); }
+                }));
+                // The operator's own drag: the slice's existing setter.
+                QPointer<SliceModel> target(slice);
+                follower->track(QObject::connect(guard, &BandwidthFilterPane::filterChanged, slice, [target](int low, int high) {
+                    if (target) { target->setFilter(low, high); }
+                }));
+                follower->track(QObject::connect(guard, &BandwidthFilterPane::filterCentreChanged, slice, [target](int centre) {
+                    if (!target) { return; }
+                    const int width = target->filterHigh() - target->filterLow();
+                    target->setFilter(centre - width / 2, centre - width / 2 + width);
+                }));
+            };
+            follower->start(bind);
+
+            // From Longpath src/gui/applets/BandwidthFilterApplet.cpp:779-837 [@551576e3]
+            // 20 Hz. Schneller waere Verschwendung: die Kurve dient dem
+            // Augenmass beim Kantenziehen, nicht der Signalsuche — dafuer
+            // ist der Panadapter da.
+            auto* timer = new QTimer(pane);
+            timer->setInterval(kTraceIntervalMs);
+            QObject::connect(timer, &QTimer::timeout, pane, [guard, slicePtr, sources]() {
+                if (!guard || !guard->isVisible()) { return; }
+                SliceModel* s = slicePtr->data();
+                SpectrumWidget* pan = (s && sources.spectrumForSlice) ? sources.spectrumForSlice(s) : nullptr;
+                const double f = s ? s->frequency() : 0.0;
+                if (!pan || f <= 0.0) { guard->setTrace({}); return; }
+                const double half = guard->spanHz() / 2.0;
+                // ── Eine Stuetzstelle je ZWOELF Bildpunkte ────────
+                //
+                // Hier stand "je zwei Bildpunkte" — und genau daraus
+                // kam die Unruhe, die der Betreiber mit "extrem
+                // unruhig" beschrieben hat.
+                //
+                // Auf seinen OpenHPSDR-Bildern vom 2026-08-23 zaehlt
+                // man im Rauschbereich Zacken von rund zwoelf
+                // Bildpunkten Abstand: die Vorlage tastet GROB ab und
+                // verbindet die Punkte gerade. Bei uns lagen die
+                // Punkte sechsmal dichter, also lag zwischen zwei
+                // Zacken kaum ein Pixel — aus der Kurve wurde ein
+                // flimmerndes Band.
+                //
+                // Die Spitzen gehen dabei nicht verloren: die Quelle
+                // nimmt je Eimer das MAXIMUM, ein Traeger bleibt also
+                // in voller Hoehe stehen, nur eben als eine Zacke
+                // statt als sechs.
+                //
+                // ── Zwoelf BILDSCHIRMpunkte, nicht zwoelf Qt-Punkte ──
+                //
+                // Der Betreiber am 2026-09-17: "der bandfilter könnte
+                // noch genauer und besser sein."
+                //
+                // Die zwoelf waren von seinen OpenHPSDR-Bildern
+                // abgezaehlt — Bildschirmpunkte. `pane->width()` zaehlt
+                // aber Qt-Punkte, und auf seinem Retina-Schirm ist
+                // jeder davon zwei Bildschirmpunkte. Unsere
+                // Stuetzstellen lagen also doppelt so weit auseinander
+                // wie die der Vorlage: 51 Stueck auf 620 Qt-Punkten,
+                // eine je 196 Hz bei 10 kHz Spanne — ein Sprechsignal
+                // von 2,8 kHz bestand aus vierzehn Punkten. Jetzt in
+                // Bildschirmpunkten gerechnet: derselbe Abstand wie in
+                // der Vorlage, auf Retina doppelt so viele Stellen,
+                // auf einem 1:1-Schirm unveraendert. Dieselbe
+                // Korrektur, die der Panadapter am 2026-08-26 fuer
+                // seine Abtastbreite bekommen hat (displayWidth in
+                // Geraetepunkten, SpectrumWidget::pushSpectrum).
+                //
+                // Untergrenze 64 statt 48, Obergrenze 400 statt 200 —
+                // die alten Deckel waren fuer die halbe Dichte gesetzt.
+                const qreal dpr = guard->devicePixelRatioF();
+                const int pts = qBound(
+                    kTraceMinPoints, static_cast<int>(std::lround(guard->width() * dpr / kTraceDevicePxPerPoint)),
+                    kTraceMaxPoints);
+                guard->setTrace(traceFromRendered(pan->renderedPixels(), pan->centerFrequency(),
+                                                  pan->bandwidth(), f - half, f + half, pts));
+            });
+            timer->start();
+            return pane;
+        });
+}
+
+} // namespace NereusSDR::LongpathContent

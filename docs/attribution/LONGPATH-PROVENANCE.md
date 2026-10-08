@@ -49,6 +49,28 @@ block carries an inline cite of the form
 | src/gui/containers/EdgeDockStrip.h | src/gui/applets/AppletGrid.cpp; src/gui/StyleConstants.h; src/gui/WindowPlacement.h | AppletGrid.cpp 24; StyleConstants.h 750; WindowPlacement.h 58 | Port (values) | 6 px strip padding and gap from kCellGap, 6 px handle from kSplitterHandlePx, 8 px alignment grid from kSnapGridPx. Longpath has no four-edge docking: the strips, the edge area and the drop preview are NereusSDR-original. Workspace preview only. |
 | src/gui/containers/EdgeDockStrip.cpp | src/gui/WindowPlacement.cpp | WindowPlacement.cpp 140-147 | Port (helper) | workspaceSnappedTopLeft() follows snappedTopLeft(). Differs from upstream: Alt bypasses the grid (Longpath uses Ctrl; NereusSDR already uses Ctrl to round to 10), and the grid is off by default. |
 
+| src/gui/instruments/FrequencyInstrument.h | src/gui/instruments/FrequencyInstrument.h | FrequencyInstrument.h 1-208 | Port | Namespace Longpath becomes NereusSDR. Frequency readout with per-digit wheel tuning and three forms. Workspace preview only. |
+| src/gui/instruments/FrequencyInstrument.cpp | src/gui/instruments/FrequencyInstrument.h; src/gui/instruments/FrequencyInstrument.cpp | FrequencyInstrument.h 1-208; FrequencyInstrument.cpp 1-763 | Port | Namespace Longpath becomes NereusSDR. LP_MONO_QSS becomes Workspace::kMonoQssFamilies through .arg(). Style:: resolves through InstrumentStyle.h. |
+| src/gui/instruments/NeedleInstrument.h | src/gui/instruments/NeedleInstrument.h | NeedleInstrument.h 1-181 | Port | Namespace Longpath becomes NereusSDR. Needle meter. |
+| src/gui/instruments/NeedleInstrument.cpp | src/gui/instruments/NeedleInstrument.h; src/gui/instruments/NeedleInstrument.cpp | NeedleInstrument.h 1-181; NeedleInstrument.cpp 1-450 | Port | Namespace Longpath becomes NereusSDR. Three constants unused upstream carry [[maybe_unused]]. |
+| src/gui/instruments/BarInstrument.h | src/gui/instruments/BarInstrument.h | BarInstrument.h 1-174 | Port | Namespace Longpath becomes NereusSDR. Bar meter. |
+| src/gui/instruments/BarInstrument.cpp | src/gui/instruments/BarInstrument.h; src/gui/instruments/BarInstrument.cpp | BarInstrument.h 1-174; BarInstrument.cpp 1-381 | Port | Namespace Longpath becomes NereusSDR. |
+| src/gui/instruments/InstrumentFooter.h | src/gui/instruments/InstrumentFooter.h | InstrumentFooter.h 1-65 | Port | Namespace Longpath becomes NereusSDR. Reading footer under the instruments. |
+| src/gui/instruments/InstrumentFooter.cpp | src/gui/instruments/InstrumentFooter.h; src/gui/instruments/InstrumentFooter.cpp | InstrumentFooter.h 1-65; InstrumentFooter.cpp 1-97 | Port | Namespace Longpath becomes NereusSDR. |
+| src/gui/instruments/InstrumentPainter.h | src/gui/instruments/InstrumentPainter.h | InstrumentPainter.h 1-172 | Port | Namespace Longpath becomes NereusSDR. Trough, fade, glow and needle painting shared by the instruments. |
+| src/gui/instruments/InstrumentPainter.cpp | src/gui/instruments/InstrumentPainter.h; src/gui/instruments/InstrumentPainter.cpp | InstrumentPainter.h 1-172; InstrumentPainter.cpp 1-473 | Port | Namespace Longpath becomes NereusSDR. Style::role resolves to Workspace::role. |
+| src/gui/instruments/InstrumentSpine.h | src/gui/instruments/InstrumentSpine.h | InstrumentSpine.h 1-239 | Port | Namespace Longpath becomes NereusSDR. Arc and linear geometry. |
+| src/gui/instruments/InstrumentSpine.cpp | src/gui/instruments/InstrumentSpine.h; src/gui/instruments/InstrumentSpine.cpp | InstrumentSpine.h 1-239; InstrumentSpine.cpp 1-249 | Port | Namespace Longpath becomes NereusSDR. |
+| src/gui/instruments/ReadingSource.h | src/gui/instruments/ReadingSource.h | ReadingSource.h 1-185 | Port | Namespace Longpath becomes NereusSDR. Reading descriptors and scales. Adds ReadingDescriptor::available (NereusSDR). |
+| src/gui/instruments/ReadingSource.cpp | src/gui/instruments/ReadingSource.h; src/gui/instruments/ReadingSource.cpp | ReadingSource.h 1-185; ReadingSource.cpp 1-388 | Port | Namespace Longpath becomes NereusSDR. NoiseFloor (9) and RadeSnr (10) are local ids, marked unavailable: no NereusSDR producer. MeterBinding is unchanged. |
+| src/gui/instruments/PeakHold.h | src/gui/instruments/PeakHold.h | PeakHold.h 1-103 | Port | Namespace Longpath becomes NereusSDR. Peak hold. |
+| src/gui/widgets/BandwidthFilterPane.h | src/gui/widgets/BandwidthFilterPane.h | BandwidthFilterPane.h 1-172 | Port | Namespace Longpath becomes NereusSDR. Filter passband pane. |
+| src/gui/widgets/BandwidthFilterPane.cpp | src/gui/widgets/BandwidthFilterPane.h; src/gui/widgets/BandwidthFilterPane.cpp | BandwidthFilterPane.h 1-172; BandwidthFilterPane.cpp 1-755 | Port | Namespace Longpath becomes NereusSDR. |
+| src/core/antenna/AmateurBands.h | src/core/antenna/AmateurBands.h | AmateurBands.h 1-89 | Port | Namespace Longpath becomes NereusSDR. IARU band plan table (Qt only). Namespace Longpath::AmateurBands becomes NereusSDR::AmateurBands. |
+| src/core/antenna/AmateurBands.cpp | src/core/antenna/AmateurBands.h; src/core/antenna/AmateurBands.cpp | AmateurBands.h 1-89; AmateurBands.cpp 1-163 | Port | Namespace Longpath becomes NereusSDR. |
+| src/gui/instruments/LongpathContent.cpp | src/gui/applets/BandwidthFilterApplet.cpp | BandwidthFilterApplet.cpp 779-837 | Port (values) | Passband trace refresh interval (50 ms) and density (one point per 12 device pixels, 64 to 400). The registry factories, the slice and MeterPoller bindings and the trace accessor over SpectrumWidget::renderedPixels() are NereusSDR-original. Workspace preview only. |
+
 NereusSDR-original files that use the palette but port nothing
-(QssTranslator, WorkspacePreview and the call-site branches) carry a
+(QssTranslator, WorkspacePreview, InstrumentStyle.h, LongpathContent.h
+and the call-site branches) carry a
 `no-port-check:` marker and are not listed.
