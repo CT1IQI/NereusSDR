@@ -210,6 +210,13 @@
 //                                    Start / Stop, "Hide my station",
 //                                    refusals); setStationFreedvAvailable.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Spot List crash fix: on Qt 6.11.0
+//                                    Cocoa the table's accessibility
+//                                    child cache is cleared before each
+//                                    row change, and
+//                                    setAccessibleTableCacheResetForcedForTest
+//                                    lets offscreen tests exercise it.
+//                                    AI tooling: Anthropic Claude Code.
 
 #pragma once
 
@@ -292,6 +299,12 @@ public:
                                        PskReporterClient* psk,
                                        const QString& call, const QString& grid,
                                        const QString& message);
+
+    // Test seam for the Spot List's Qt 6.11.0 Cocoa accessibility repair
+    // (see buildSpotListTab). True applies it on any platform, so an
+    // offscreen test that deletes cell interfaces the way that Cocoa image
+    // does exercises it. Process-wide; tests set it back to false.
+    static void setAccessibleTableCacheResetForcedForTest(bool forced);
 
     /// Parity Task 19 (R-IOS-25): the spot source host. In a remote window
     /// (it forwards the station's sources) the Cluster, RBN, POTA and PSK

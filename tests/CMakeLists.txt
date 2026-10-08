@@ -6215,6 +6215,15 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
+# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
+# deletes the real cell interfaces of expired native rows while
+# QAccessibleTable keeps their IDs; the next spot insert or trim then
+# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
+# performs that deletion through QAccessible::deleteAccessibleInterface and
+# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
+# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+nereus_add_test(tst_spot_list_accessibility)
+
 # ── Phase 3J-2 Task D3: FreeDVStationModel (live station map) ──────────────
 # Pins the contract that FreeDVStationModel is a QHash<QString sid,
 # FreeDVStation> sink keyed by Socket.IO session ID, with four public
