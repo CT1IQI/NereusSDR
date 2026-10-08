@@ -26,6 +26,10 @@
 //                 come back where they were, and the menu sits in the same
 //                 place in both looks, by J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-08 - Duplicate always gives a shown, floating copy beside the
+//                 original, from the manager and from Container Settings, in
+//                 both looks, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -54,6 +58,8 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScreen>
+#include <QSet>
 #include <QScrollArea>
 #include <QWindow>
 #include <qpa/qwindowsysteminterface.h>
@@ -66,6 +72,7 @@
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
@@ -1803,6 +1810,113 @@ private slots:
         QVERIFY(f.entry(f.mainId, f.rxEntryId).visible);
         QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
         QVERIFY(rxApplet->isChecked());
+    }
+
+    // A duplicate always appears: visible, floating, beside the original
+    // (its floating geometry, or where it sits on screen when docked) and
+    // offset so it does not cover it, and on screen. The original is
+    // unchanged. Both looks; the manager path and Container Settings.
+    void duplicateIsShownBesideTheOriginal_data()
+    {
+        QTest::addColumn<bool>("preview");
+        QTest::addColumn<bool>("fromDialog");
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<bool>("visible");
+        const int floating = int(DockMode::Floating);
+        const int overlay = int(DockMode::OverlayDocked);
+        for (const bool preview : {false, true}) {
+            const char* look = preview ? "preview on" : "preview off";
+            for (const bool dialog : {false, true}) {
+                const char* path = dialog ? "Container Settings" : "manager";
+                QTest::addRow("%s, %s: hidden floating", look, path) << preview << dialog << floating << false;
+                QTest::addRow("%s, %s: visible floating", look, path) << preview << dialog << floating << true;
+                QTest::addRow("%s, %s: hidden docked", look, path) << preview << dialog << overlay << false;
+            }
+        }
+    }
+    void duplicateIsShownBesideTheOriginal()
+    {
+        QFETCH(bool, preview);
+        QFETCH(bool, fromDialog);
+        QFETCH(int, mode);
+        QFETCH(bool, visible);
+        constexpr int kOffset = 24;   // ContainerManager::kDuplicateOffsetPx
+        PreviewSwitch look(preview);
+        LiveFixture f;
+        QVERIFY(f.build());
+        const QString id = QStringLiteral("solo");
+        const QRect placed = DockMode(mode) == DockMode::Floating ? QRect(100, 100, 300, 200) : QRect(40, 60, 320, 220);
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument solo;
+            solo.id = id;
+            solo.name = QStringLiteral("Solo");
+            solo.layout = ContentLayout::VerticalStack;
+            solo.dockMode = DockMode(mode);
+            solo.visible = visible;
+            solo.geometry = placed;
+            ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+            entry.context["sliceId"] = 0;
+            solo.contents.append(entry);
+            d.containers.append(solo);
+        }));
+        ContainerWidget* original = f.manager->container(id);
+        QVERIFY(original);
+        const QRect originalOnScreen = DockMode(mode) == DockMode::Floating
+            ? f.document(id)->geometry
+            : QRect(original->mapToGlobal(QPoint(0, 0)), original->size());
+        const ContainerDocument before = *f.document(id);
+        QSet<QString> ids;
+        for (const auto& d : f.store->snapshot().containers) {
+            ids.insert(d.id);
+        }
+
+        if (fromDialog) {
+            auto dialog = std::make_unique<ContainerSettingsDialog>(original, f.window.get(), f.manager);
+            QPushButton* duplicate = nullptr;
+            QPushButton* apply = nullptr;
+            for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
+                if (button->text() == QStringLiteral("Duplicate")) {
+                    duplicate = button;
+                } else if (button->text() == QStringLiteral("Apply")) {
+                    apply = button;
+                }
+            }
+            QVERIFY(duplicate && apply);
+            duplicate->click();
+            apply->click();
+            dialog.reset();
+        } else {
+            QVERIFY(f.manager->duplicateContainer(id));
+        }
+        settle();
+
+        QCOMPARE(*f.document(id), before);
+        QString copyId;
+        for (const auto& d : f.store->snapshot().containers) {
+            if (!ids.contains(d.id)) {
+                QVERIFY2(copyId.isEmpty(), "more than one new container");
+                copyId = d.id;
+            }
+        }
+        QVERIFY(!copyId.isEmpty());
+        const ContainerDocument* copy = f.document(copyId);
+        QVERIFY(copy->visible);
+        QVERIFY(copy->config.value("enabled").toBool(true));
+        QCOMPARE(copy->dockMode, DockMode::Floating);
+        ContainerWidget* widget = f.manager->container(copyId);
+        QVERIFY(widget && widget->isFloating());
+        QWidget* form = widget->window();
+        QVERIFY(form != f.window.get() && form->isVisible());
+        bool onScreen = false;
+        for (QScreen* screen : QGuiApplication::screens()) {
+            onScreen = onScreen || screen->availableGeometry().contains(form->geometry());
+        }
+        QVERIFY2(onScreen, qPrintable(describeRect(form->geometry())));
+        QVERIFY(form->geometry().topLeft() != originalOnScreen.topLeft());
+        if (DockMode(mode) == DockMode::Floating) {
+            QCOMPARE(copy->geometry, placed.translated(kOffset, kOffset));
+            QCOMPARE(form->geometry(), placed.translated(kOffset, kOffset));
+        }
     }
 
     // JJ on his Mac after 391a09306: the rail "closes when i try to move

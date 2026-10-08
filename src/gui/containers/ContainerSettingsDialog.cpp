@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Duplicate always gives a shown, floating copy next to the
+//                 original (ContainerManager::showDuplicate). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The container Slice combo writes through
 //                 ContainerSourceAdapter::writeContainerSource, shared with
 //                 the workspace header's source menu. J.J. Boyd (KG4VCF),
@@ -1165,6 +1168,9 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                 if(!result.ok) {m_transactionStatus->setText(result.error);return;}
                 auto copy=result.document.containers.first(); copy.name+=tr(" copy");
                 for(auto& entry:copy.contents) {entry.returnLocation.reset();}
+                // Always a shown, floating copy beside the original; Thetis
+                // keeps the original's state (see ContainerManager::showDuplicate).
+                m_manager->showDuplicate(copy, original);
                 draft.containers.append(copy); m_editSession->setDraft(draft); refreshDraftDropdown(); selectDraftContainer(copy.id); return;
             }
             return;
