@@ -63,6 +63,9 @@
 //                 the NR3 model, NNR limit and Diagnostics, APF Center Freq
 //                 and Visual Notch. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -111,6 +114,7 @@
 //============================================================================================//
 
 #include "DspSetupPages.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -2737,6 +2741,8 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent,
 
     // ── Notch table ──────────────────────────────────────────────────────────
     m_notchTable = new QTableWidget(0, 4, mnfGrp);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Resized whenever a notch is added or removed.
+    installQtCocoaAccessibleTableCacheRepair(m_notchTable);
     m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
     m_notchTable->setProperty("nereusSetupId", "dsp.tnf.list");
     // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive

@@ -33,6 +33,7 @@
 #include "core/PskReporterClient.h"
 #include "core/SpotCollectorClient.h"
 #include "core/WsjtxClient.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/SpotHubDialog.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
@@ -112,12 +113,12 @@ private slots:
         QAccessible::setActive(true);
         QVERIFY2(QAccessible::isActive(),
                  "accessibility must be active so item views send table model changes");
-        SpotHubDialog::setAccessibleTableCacheResetForcedForTest(true);
+        setQtCocoaAccessibleTableCacheRepairForcedForTest(true);
     }
 
     void cleanupTestCase()
     {
-        SpotHubDialog::setAccessibleTableCacheResetForcedForTest(false);
+        setQtCocoaAccessibleTableCacheRepairForcedForTest(false);
         QAccessible::setActive(false);
     }
 

@@ -18,12 +18,16 @@
 //                the profile choice, Save and Delete; Save's tooltip says
 //                "transmit settings". J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis-derived semantics are
 // cited inline in the header.
 
 #include "TxProfileSetupPage.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/MicProfileManager.h"
 #include "core/session/IStationLink.h"
@@ -102,6 +106,8 @@ void TxProfileSetupPage::buildUi()
     // Profile combo (editable so user could in principle type a new name —
     // but the canonical "Save" path is via the Save button).
     m_combo = new QComboBox(group);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
+    installQtCocoaAccessibleTableCacheRepair(m_combo->view());
     m_combo->setEditable(false);  // restrict edits to Save button path
     m_combo->setProperty("nereusSetupId", "audio.txProfile.activeProfile");
     m_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);

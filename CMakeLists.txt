@@ -1786,6 +1786,8 @@ set(GUI_SOURCES
     src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
+    src/gui/QtCocoaAccessibleTableCache.cpp
+    src/gui/QtCocoaAccessibleTableCache.h
     src/gui/FreeDVReporterDialog.cpp
     src/gui/FreeDVReporterDialog.h
     src/gui/LanScanDialog.cpp

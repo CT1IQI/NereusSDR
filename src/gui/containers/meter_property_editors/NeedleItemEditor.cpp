@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -53,6 +56,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "NeedleItemEditor.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "../../meters/MeterItem.h"
 
 #include <QLineEdit>
@@ -503,6 +507,8 @@ void NeedleItemEditor::buildTypeSpecific()
     QGroupBox* calGroup = makeGroup(QStringLiteral("Calibration"), calForm);
 
     m_calTable = new QTableWidget(0, 3, calGroup);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Rows added, removed and reloaded per needle.
+    installQtCocoaAccessibleTableCacheRepair(m_calTable);
     m_calTable->setStyleSheet(kTableStyle);
     m_calTable->setHorizontalHeaderLabels({
         QStringLiteral("Value"),

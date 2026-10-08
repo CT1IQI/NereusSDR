@@ -76,8 +76,12 @@
 //                                    gates Send QSY, Send and Clear with a
 //                                    reason. AI tooling: Anthropic Claude
 //                                    Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/FreeDVReporterClient.h"
@@ -922,6 +926,8 @@ void FreeDVReporterDialog::buildUi() {
 
     m_table = new QTableView(this);
     m_table->setModel(m_columnFilterProxy);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Stations join and leave from the reporter feed; the idle sweep and filters drop and restore rows.
+    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setItemDelegate(m_rowDelegate);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1227,6 +1233,8 @@ void FreeDVReporterDialog::buildBottomBar() {
     row2->addWidget(new QLabel(QStringLiteral("Msg"), m_bottomBarHost));
 
     m_msgDropdown = new QComboBox(m_bottomBarHost);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled after each sent message.
+    installQtCocoaAccessibleTableCacheRepair(m_msgDropdown->view());
     m_msgDropdown->setObjectName(QStringLiteral("msgDropdown"));
     m_msgDropdown->setMaximumWidth(28);
     // Down-arrow only - the user picks a stored MRU entry which copies
