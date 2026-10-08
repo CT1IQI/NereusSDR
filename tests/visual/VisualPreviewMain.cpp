@@ -27,6 +27,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFontInfo>
 #include <QGuiApplication>
 #include <QImage>
@@ -409,10 +410,24 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "nereus_visual_preview: the isolated profile is not active\n");
         return kExitUnsafeProfile;
     }
-    // Removes this process's settings file when main returns, after the
-    // window (declared later, so destroyed first) has saved into it.
+    // Removes this process's profile when main returns, after the window
+    // (declared later, so destroyed first) has saved into it: the settings
+    // file, then the profile's own folder (the DSP asset folders the app
+    // creates in it), but only a folder named for this process.
     struct ProfileCleanup {
-        ~ProfileCleanup() { (void)Test::RemoteWindowHarness::removeIsolatedProfile(); }
+        ~ProfileCleanup()
+        {
+            const QString settingsPath = AppSettings::instance().filePath();
+            if (!Test::RemoteWindowHarness::removeIsolatedProfile()) {
+                return;
+            }
+            QDir dir = QFileInfo(settingsPath).absoluteDir();
+            const QString ownName = QStringLiteral("visual-preview-%1")
+                                        .arg(QCoreApplication::applicationPid());
+            if (dir.dirName() == ownName && dir.absolutePath().contains(QLatin1String("/.qttest/"))) {
+                dir.removeRecursively();
+            }
+        }
     } profileCleanup;
     QString why;
     if (!profileIsSafe(why)) {
