@@ -58,6 +58,10 @@
 //   2026-10-08 - The edge values note the right strip's 0 px padding and
 //                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Every grab clears the item views' hover row first: Qt
+//                 takes it from the desktop pointer when a view scrolls,
+//                 even in a window that is never on screen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - controls-sheet: today, preview now and Longpath controls
 //                 side by side (ControlsSheet.cpp). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -75,6 +79,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QEnterEvent>
+#include <QHoverEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QCheckBox>
@@ -219,8 +224,28 @@ QString panIdAt(int index)
     return QStringLiteral("pan-%1").arg(index);
 }
 
+// Takes the desktop pointer out of a capture. When an item view scrolls
+// (QTreeWidget::setCurrentItem, say), Qt sets its hover row from
+// QCursor::pos(), the real pointer, even in a window that is never on
+// screen. Wherever the pointer happened to sit over the window's (unseen)
+// rect, that row came out highlighted, so the Setup tree differed from run
+// to run. A HoverLeave clears the row. No scene grabbed here hovers an
+// item view on purpose (the controls sheet does, through its own grab).
+void clearPointerHover(QWidget* root)
+{
+    QList<QAbstractItemView*> views = root->findChildren<QAbstractItemView*>();
+    if (auto* self = qobject_cast<QAbstractItemView*>(root)) {
+        views.append(self);
+    }
+    for (QAbstractItemView* view : views) {
+        QHoverEvent leave(QEvent::HoverLeave, QPointF(-1, -1), QPointF(-1, -1), QPointF(-1, -1));
+        QCoreApplication::sendEvent(view->viewport(), &leave);
+    }
+}
+
 QImage grabWidget(QWidget* widget)
 {
+    clearPointerHover(widget);
     return widget->grab().toImage();
 }
 
