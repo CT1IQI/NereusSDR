@@ -9,6 +9,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The popover lays the rail out before it opens, so a rail
+//                 rebuilt while hidden (a profile added) opens at its full
+//                 size, by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRailDock.h"
@@ -28,6 +32,7 @@
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLayout>
 #include <QPushButton>
 
 namespace NereusSDR {
@@ -293,6 +298,21 @@ void ProfileRailDock::placePopover()
 {
     if (!m_popover || !m_overlayParent) {
         return;
+    }
+    // A layout runs only while its widget is visible. When the rail is
+    // rebuilt with the popover hidden (a profile added, removed or
+    // renamed), its layout stays stale and the popover's layout keeps the
+    // rail's old size hint, so the popover would open at the old width
+    // with the badges crammed and overlapping, and grow under the pointer
+    // at the next title bar layout. Bring both up to date first.
+    if (QLayout* railLayout = m_rail->layout()) {
+        railLayout->invalidate();
+        railLayout->activate();
+    }
+    m_rail->updateGeometry();
+    if (QLayout* popoverLayout = m_popover->layout()) {
+        popoverLayout->invalidate();
+        popoverLayout->activate();
     }
     m_popover->adjustSize();
     const QSize s = m_popover->sizeHint();
