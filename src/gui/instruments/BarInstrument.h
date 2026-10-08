@@ -61,6 +61,10 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Footer fit (resizeEvent, fullHeight, fitFooter): the
+//                 footer no longer overlaps the scale numbers at the
+//                 preferred and minimum sizes. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -172,9 +176,15 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    // NereusSDR: hides the footer when it does not fit, see fitFooter().
+    void resizeEvent(QResizeEvent*) override;
 
 private:
     void refreshFooter();
+    // NereusSDR: the height the trough, scale numbers and footer need
+    // together, and the footer shown only when that height is there.
+    int fullHeight() const;
+    void fitFooter();
     void paintOne(class QPainter& p, const QRectF& area,
                   const ReadingDescriptor& d, double value,
                   bool withGlow, bool hasValue);

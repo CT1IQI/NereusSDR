@@ -22,6 +22,10 @@
 //                 free-container, floating-container, drag-preview-left,
 //                 drag-preview-between). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-07 - Longpath instrument scenes (instruments-sheet,
+//                 mixed-container, mixed-container-reveal) with region
+//                 provenance. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -32,6 +36,7 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QLabel>
 #include <QMetaObject>
 #include <QPointer>
 #include <QRegularExpression>
@@ -41,8 +46,10 @@
 #include <QTreeWidget>
 
 #include <cmath>
+#include <memory>
 
 #include "PreviewData.h"
+#include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
 #include "core/meters/SliceMeterPump.h"
 #include "gui/DiversityDialog.h"
@@ -69,6 +76,12 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceHeader.h"
+#include "gui/instruments/BarInstrument.h"
+#include "gui/instruments/FrequencyInstrument.h"
+#include "gui/instruments/InstrumentFooter.h"
+#include "gui/instruments/LongpathContent.h"
+#include "gui/instruments/NeedleInstrument.h"
+#include "gui/widgets/BandwidthFilterPane.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/ModeButtonItem.h"
@@ -521,6 +534,8 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+void appendCropImages(SceneContext& ctx, const CapturedImage& full, const QString& name);
+
 // Grabs the whole window and, at the crop profile, its detail crops.
 void captureWindow(SceneContext& ctx, const QString& name)
 {
@@ -567,6 +582,12 @@ void captureWindow(SceneContext& ctx, const QString& name)
         }
     }
     ctx.images.append(full);
+    appendCropImages(ctx, full, name);
+}
+
+// Each crop of `full` as its own image, plus a 3x nearest-neighbour copy.
+void appendCropImages(SceneContext& ctx, const CapturedImage& full, const QString& name)
+{
     for (const CropRect& crop : full.crops) {
         CapturedImage c;
         c.name = name + QStringLiteral("--") + crop.name;
@@ -759,6 +780,8 @@ struct EdgeEntry {
     QRectF rect;
     // A legacy record for the item's own settings (button columns).
     QString legacyRecord;
+    // Source context keys merged into the entry's context (rxSource).
+    QJsonObject context;
 };
 
 // One row of buttons: every button in its own column, at `heightRatio`,
@@ -795,6 +818,9 @@ QString addSceneContainer(SceneContext& ctx, const QString& name, DockEdge edge,
         entry.id = d.id + QStringLiteral("-") + slug(e.typeId);
         if (!e.legacyRecord.isEmpty()) {
             entry.config.insert(QStringLiteral("legacyRecord"), e.legacyRecord);
+        }
+        for (auto it = e.context.constBegin(); it != e.context.constEnd(); ++it) {
+            entry.context.insert(it.key(), it.value());
         }
         if (!e.rect.isNull()) {
             entry.extensions[QStringLiteral("freeCanvasRect")] =
@@ -958,6 +984,378 @@ void sceneProposedEdges(SceneContext& ctx, const QString& name,
     }
     noteStrips(ctx);
     captureWindow(ctx, name);
+}
+
+// ---- Longpath instruments (workspace preview) ------------------------------
+
+// The fixed instrument values the sheet shows.
+constexpr double kSheetFrequencyHz = 14225000.0;
+constexpr double kSheetOtherHz = 7185000.0;
+constexpr double kSheetSignalDbm = -73.0;
+constexpr double kSheetSignalPeakDbm = -68.0;
+constexpr double kSheetTxWatts = 85.0;
+constexpr double kSheetSwr = 1.25;
+constexpr int kSheetFilterLowHz = 150;
+constexpr int kSheetFilterHighHz = 2850;
+constexpr int kSheetTracePoints = 160;
+constexpr int kSheetMarginPx = 16;
+constexpr int kSheetGapPx = 16;
+constexpr int kSheetLabelPx = 18;
+constexpr int kSheetRowGapPx = 14;
+// The needle hub crop: this far either side of the pivot column, and
+// this far above and below the footer's top edge.
+constexpr int kHubHalfWidthPx = 60;
+constexpr int kHubAbovePx = 60;
+constexpr int kHubBelowPx = 12;
+
+QJsonArray rectJson(const QRect& r)
+{
+    return QJsonArray{r.x(), r.y(), r.width(), r.height()};
+}
+
+// A fixed passband trace over the pane's 10 kHz span, centred on the VFO:
+// a deterministic noise floor near -118 dBm, a USB voice hump from +200 to
+// +2700 Hz, and a carrier at +1200 Hz.
+QVector<float> sheetTrace(int spanHz)
+{
+    QVector<float> trace(kSheetTracePoints);
+    for (int i = 0; i < kSheetTracePoints; ++i) {
+        const double offsetHz = -spanHz / 2.0 + spanHz * i / (kSheetTracePoints - 1.0);
+        double dbm = -118.0 + 2.5 * std::sin(i * 1.7) + 1.5 * std::sin(i * 0.37);
+        if (offsetHz >= 200.0 && offsetHz <= 2700.0) {
+            dbm = std::max(dbm, -86.0 + 6.0 * std::sin(offsetHz / 350.0) + 2.0 * std::sin(i * 2.3));
+        }
+        if (std::abs(offsetHz - 1200.0) < spanHz / double(kSheetTracePoints)) {
+            dbm = -62.0;
+        }
+        trace[i] = static_cast<float>(dbm);
+    }
+    return trace;
+}
+
+QSize minimumOf(const QWidget* w)
+{
+    return w->minimumSizeHint().expandedTo(w->minimumSize());
+}
+
+struct SheetRow {
+    QString key;        // crop and region name stem
+    QString title;
+    std::function<QWidget*(QWidget* parent)> make;
+    int column{0};
+};
+
+// instruments-sheet: every ported widget at its preferred and minimum
+// size, on its own top-level window (not the MainWindow).
+void sceneInstrumentsSheet(SceneContext& ctx)
+{
+    ctx.provenance = QStringLiteral("longpath-port");
+    auto frequency = [](FrequencyInstrument::Form form) {
+        return [form](QWidget* parent) -> QWidget* {
+            auto* f = new FrequencyInstrument(parent);
+            f->setForm(form);
+            f->setFrequency(kSheetFrequencyHz);
+            f->setOtherFrequency(kSheetOtherHz);
+            f->setActiveIsThis(true);
+            return f;
+        };
+    };
+    const QVector<SheetRow> rows = {
+        {QStringLiteral("frequency"), QStringLiteral("FrequencyInstrument, NumberOnly, 14.225.000 (other 7.185.000)"),
+         frequency(FrequencyInstrument::Form::NumberOnly), 0},
+        {QStringLiteral("frequency-bandstrip"), QStringLiteral("FrequencyInstrument, BandStrip"),
+         frequency(FrequencyInstrument::Form::BandStrip), 0},
+        {QStringLiteral("frequency-flatarc"), QStringLiteral("FrequencyInstrument, FlatArc"),
+         frequency(FrequencyInstrument::Form::FlatArc), 0},
+        {QStringLiteral("filter"), QStringLiteral("BandwidthFilterPane, RX A USB 150..2850, fixed trace"),
+         [](QWidget* parent) -> QWidget* {
+             auto* p = new BandwidthFilterPane(parent);
+             p->setLabel(QStringLiteral("RX A"));
+             p->setAccent(QColor::fromRgb(ControlRanges::sliceColour(0)));
+             p->setHasFrequency(true);
+             p->setVfoFrequency(kSheetFrequencyHz);
+             p->setFilter(kSheetFilterLowHz, kSheetFilterHighHz);
+             p->setTrace(sheetTrace(p->spanHz()));
+             return p;
+         }, 0},
+        {QStringLiteral("bar-swr"), QStringLiteral("BarInstrument, TX: SWR 1.25"),
+         [](QWidget* parent) -> QWidget* {
+             auto* b = new BarInstrument(parent);
+             b->setPrimary(MeterBinding::TxSwr);
+             b->onReading(MeterBinding::TxSwr, kSheetSwr);
+             return b;
+         }, 0},
+        {QStringLiteral("bar-alc"), QStringLiteral("BarInstrument, TX: ALC (no scale in ReadingSource: unbound)"),
+         [](QWidget* parent) -> QWidget* {
+             auto* b = new BarInstrument(parent);
+             // ReadingSource gives TX: ALC no scale, so setPrimary refuses
+             // it and the bar keeps its unbound face.
+             b->setProperty("sheetBindRefused", !b->setPrimary(MeterBinding::TxAlc));
+             return b;
+         }, 0},
+        {QStringLiteral("needle-signal"), QStringLiteral("NeedleInstrument, RX: Signal Peak -73 dBm, peak -68"),
+         [](QWidget* parent) -> QWidget* {
+             auto* n = new NeedleInstrument(parent);
+             n->setPrimary(MeterBinding::SignalPeak);
+             n->onReading(MeterBinding::SignalPeak, kSheetSignalPeakDbm);
+             n->onReading(MeterBinding::SignalPeak, kSheetSignalDbm);
+             return n;
+         }, 1},
+        {QStringLiteral("needle-txpower"), QStringLiteral("NeedleInstrument, TX: Forward Power 85 W"),
+         [](QWidget* parent) -> QWidget* {
+             auto* n = new NeedleInstrument(parent);
+             n->setPrimary(MeterBinding::TxPower);
+             n->onReading(MeterBinding::TxPower, kSheetTxWatts);
+             return n;
+         }, 1},
+    };
+
+    auto sheet = std::make_unique<QWidget>();
+    sheet->setObjectName(QStringLiteral("instrumentsSheet"));
+    sheet->setWindowTitle(QStringLiteral("Longpath instruments"));
+    sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
+    sheet->setAutoFillBackground(true);
+    struct Placed {
+        const SheetRow* row;
+        QLabel* label;
+        QWidget* preferred;
+        QWidget* minimum;
+    };
+    QVector<Placed> placed;
+    for (const SheetRow& row : rows) {
+        auto* label = new QLabel(sheet.get());
+        label->setStyleSheet(QStringLiteral("color: #828288; font-size: 10px;"));
+        placed.append({&row, label, row.make(sheet.get()), row.make(sheet.get())});
+    }
+    sheet->resize(400, 400);
+    sheet->show();
+    pump(kFinalSettleMs);
+
+    // Sizes come from the shown widgets (FrequencyInstrument's minimum
+    // counts its A/B row only when it is shown).
+    int columnX[2] = {kSheetMarginPx, kSheetMarginPx};
+    int columnY[2] = {kSheetMarginPx, kSheetMarginPx};
+    int column0Width = 0;
+    for (const Placed& p : placed) {
+        const QSize pref = p.preferred->sizeHint();
+        const QSize min = minimumOf(p.minimum);
+        column0Width = p.row->column == 0 ? qMax(column0Width, pref.width() + kSheetGapPx + min.width())
+                                          : column0Width;
+    }
+    columnX[1] = kSheetMarginPx + column0Width + 2 * kSheetGapPx;
+    int right = 0;
+    int bottom = 0;
+    for (Placed& p : placed) {
+        const int c = p.row->column;
+        const QSize pref = p.preferred->sizeHint();
+        const QSize min = minimumOf(p.minimum);
+        p.label->setText(QStringLiteral("%1   preferred %2x%3 | minimum %4x%5")
+                             .arg(p.row->title).arg(pref.width()).arg(pref.height())
+                             .arg(min.width()).arg(min.height()));
+        p.label->adjustSize();
+        p.label->move(columnX[c], columnY[c]);
+        const int y = columnY[c] + kSheetLabelPx;
+        p.preferred->setGeometry(QRect(QPoint(columnX[c], y), pref));
+        p.minimum->setGeometry(QRect(QPoint(columnX[c] + pref.width() + kSheetGapPx, y), min));
+        columnY[c] = y + qMax(pref.height(), min.height()) + kSheetRowGapPx;
+        right = qMax(right, qMax(p.minimum->geometry().right(), p.label->geometry().right()));
+        bottom = qMax(bottom, columnY[c]);
+    }
+    sheet->resize(right + kSheetMarginPx, bottom + kSheetMarginPx - kSheetRowGapPx);
+    pump(kFinalSettleMs);
+    for (const QJsonValue& v : stopTimersUnder(sheet.get())) {
+        ctx.stoppedTimers.append(v);
+    }
+
+    CapturedImage img;
+    img.name = QStringLiteral("instruments-sheet");
+    img.kind = QStringLiteral("sheet");
+    img.image = grabWidget(sheet.get());
+    img.logicalSize = sheet->size();
+    img.dpr = img.image.devicePixelRatio();
+    QJsonArray regions;
+    for (const Placed& p : placed) {
+        for (const auto& [w, kind] : {std::pair<QWidget*, QString>{p.preferred, QStringLiteral("preferred")},
+                                      std::pair<QWidget*, QString>{p.minimum, QStringLiteral("minimum")}}) {
+            regions.append(QJsonObject{
+                {QStringLiteral("name"), p.row->key + QLatin1Char('-') + kind},
+                {QStringLiteral("provenance"), QStringLiteral("longpath-port")},
+                {QStringLiteral("class"), QString::fromLatin1(w->metaObject()->className())},
+                {QStringLiteral("size"), kind},
+                {QStringLiteral("rect"), rectJson(w->geometry())}});
+        }
+        regions.append(QJsonObject{
+            {QStringLiteral("name"), p.row->key + QStringLiteral("-label")},
+            {QStringLiteral("provenance"), QStringLiteral("proposed")},
+            {QStringLiteral("rect"), rectJson(p.label->geometry())}});
+        if (p.minimum->property("sheetBindRefused").toBool()) {
+            ctx.notes.append(QStringLiteral("%1: BarInstrument::setPrimary(TxAlc) refused it; "
+                                            "ReadingSource has no scale for TX: ALC").arg(p.row->key));
+        }
+    }
+    img.extra[QStringLiteral("regions")] = regions;
+    img.extra[QStringLiteral("window")] = QStringLiteral("its own top-level QWidget, not the MainWindow");
+    if (ctx.crops) {
+        const auto cropOf = [&](const QString& name, const QRect& logical) {
+            const QRect clipped = logical.intersected(QRect(QPoint(0, 0), sheet->size()));
+            if (!clipped.isEmpty()) {
+                img.crops.append({name, clipped, deviceRect(clipped, img.dpr)});
+            }
+        };
+        for (const Placed& p : placed) {
+            if (p.row->key == QLatin1String("frequency")) {
+                cropOf(QStringLiteral("frequency-digits"), p.preferred->geometry());
+                cropOf(QStringLiteral("frequency-digits-min"), p.minimum->geometry());
+            } else if (p.row->key == QLatin1String("needle-signal")) {
+                for (const auto& [w, suffix] : {std::pair<QWidget*, QString>{p.preferred, QString()},
+                                                std::pair<QWidget*, QString>{p.minimum, QStringLiteral("-min")}}) {
+                    auto* footer = w->findChild<InstrumentFooter*>();
+                    const int footerTop = footer != nullptr ? footer->y() : w->height();
+                    const QRect hub(w->x() + w->width() / 2 - kHubHalfWidthPx,
+                                    w->y() + footerTop - kHubAbovePx,
+                                    2 * kHubHalfWidthPx, kHubAbovePx + kHubBelowPx);
+                    cropOf(QStringLiteral("needle-hub") + suffix, hub);
+                }
+            }
+        }
+    }
+    ctx.images.append(img);
+    appendCropImages(ctx, img, img.name);
+    ctx.notes.append(QStringLiteral("sheet %1x%2; instruments built directly with fixed values, "
+                                    "no MeterPoller or slice binding")
+                         .arg(sheet->width()).arg(sheet->height()));
+}
+
+// "Station": Longpath instruments mixed with Thetis meter faces, slice A.
+QString addStationContainer(SceneContext& ctx, DockEdge edge)
+{
+    const QJsonObject sliceA{{QStringLiteral("rxSource"), 1}};
+    return addSceneContainer(ctx, QStringLiteral("Station"), edge, ContentLayout::VerticalStack,
+                             {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, sliceA},
+                              {QString::fromLatin1(LongpathContent::kFilterType), {}, {}, sliceA},
+                              {QStringLiteral("meter.sMeter"), {}, {}, sliceA},
+                              {QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, sliceA},
+                              {QStringLiteral("meter.crossNeedle"), {}, {}, sliceA},
+                              {QString::fromLatin1(LongpathContent::kBarType), {}, {}, sliceA}});
+}
+
+// After the data is fed (the poller and timers are stopped): one reading
+// through MeterPoller::readingUpdated for each Longpath needle, as the
+// poller would send for slice A, and one trace refresh for each filter
+// pane from the fed pan.
+void poseStation(SceneContext& ctx, const QString& id)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    ContainerContentHost* host = manager != nullptr ? manager->contentHost(id) : nullptr;
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (host == nullptr || poller == nullptr) {
+        ctx.failure = QStringLiteral("no Station host or MeterPoller");
+        return;
+    }
+    for (NeedleInstrument* needle : host->findChildren<NeedleInstrument*>()) {
+        const QJsonObject context = needle->property("containerSourceContext").toJsonObject();
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalPeakDbm);
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalDbm);
+        ctx.notes.append(QStringLiteral("Longpath needle: readingUpdated SignalPeak -68 then -73 dBm"));
+    }
+    for (BandwidthFilterPane* pane : host->findChildren<BandwidthFilterPane*>()) {
+        for (QTimer* timer : pane->findChildren<QTimer*>()) {
+            QMetaObject::invokeMethod(timer, "timeout");
+        }
+        ctx.notes.append(QStringLiteral("Longpath filter pane: one trace refresh from the fed pan"));
+    }
+    ctx.notes.append(QStringLiteral("Longpath bar (TX: SWR): no reading in receive, shows its dash"));
+}
+
+QString regionProvenance(const QString& typeId)
+{
+    return typeId.startsWith(QLatin1String("longpath.")) ? QStringLiteral("longpath-port")
+                                                        : QStringLiteral("retained");
+}
+
+// The sidecar regions of the Station container: each entry's widget rect,
+// the headers and the strips, in window coordinates.
+QJsonArray stationRegions(SceneContext& ctx, const QString& id)
+{
+    QJsonArray regions;
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    ContainerWidget* container = manager->container(id);
+    ContainerContentHost* host = manager->contentHost(id);
+    auto windowRect = [&ctx](QWidget* w, const QRect& local) {
+        return QRect(w->mapTo(ctx.window, local.topLeft()), local.size());
+    };
+    QRect viewport;
+    if (auto* area = container->contentHolder()->findChild<QScrollArea*>()) {
+        viewport = windowRect(area->viewport(), area->viewport()->rect());
+    } else {
+        viewport = windowRect(host, host->rect());
+    }
+    const ContainerDocument doc = host->captureDocument();
+    for (const ContentEntry& entry : doc.contents) {
+        const QRect rect = windowRect(host, host->entryBoundary(entry.id));
+        QJsonObject r{{QStringLiteral("name"), entry.id},
+                      {QStringLiteral("type"), entry.typeId},
+                      {QStringLiteral("provenance"), regionProvenance(entry.typeId)},
+                      {QStringLiteral("rect"), rectJson(rect)},
+                      {QStringLiteral("visible_rect"), rectJson(rect.intersected(viewport))}};
+        for (const auto& row : host->entryRows()) {
+            if (row.entryId == entry.id && row.widget != nullptr) {
+                r.insert(QStringLiteral("widget_class"),
+                         QString::fromLatin1(row.widget->metaObject()->className()));
+            }
+        }
+        regions.append(r);
+        if (WorkspaceEntryHeader* header = host->entryHeader(entry.id); header != nullptr && header->isVisible()) {
+            regions.append(QJsonObject{{QStringLiteral("name"), entry.id + QStringLiteral("-header")},
+                                       {QStringLiteral("provenance"), QStringLiteral("proposed")},
+                                       {QStringLiteral("rect"), rectJson(windowRect(header, header->rect()))}});
+        }
+    }
+    if (WorkspaceGroupHeader* header = container->workspaceHeader(); header != nullptr && header->isVisible()) {
+        regions.append(QJsonObject{{QStringLiteral("name"), id + QStringLiteral("-group-header")},
+                                   {QStringLiteral("provenance"), QStringLiteral("proposed")},
+                                   {QStringLiteral("rect"), rectJson(windowRect(header, header->rect()))}});
+    }
+    regions.append(QJsonObject{{QStringLiteral("name"), id + QStringLiteral("-viewport")},
+                               {QStringLiteral("provenance"), QStringLiteral("proposed")},
+                               {QStringLiteral("rect"), rectJson(viewport)}});
+    if (auto* area = ctx.window->findChild<EdgeDockArea*>()) {
+        const QPair<DockEdge, QString> edges[] = {{DockEdge::Left, QStringLiteral("strip-left")},
+                                                  {DockEdge::Right, QStringLiteral("strip-right")}};
+        for (const auto& [edge, name] : edges) {
+            if (EdgeDockStrip* strip = area->strip(edge); strip != nullptr && strip->isVisible()) {
+                regions.append(QJsonObject{{QStringLiteral("name"), name},
+                                           {QStringLiteral("provenance"), QStringLiteral("proposed")},
+                                           {QStringLiteral("rect"), rectJson(windowRect(strip, strip->rect()))}});
+            }
+        }
+    }
+    return regions;
+}
+
+void sceneMixedContainer(SceneContext& ctx, const QString& name, HeaderMode header)
+{
+    auto stationId = std::make_shared<QString>();
+    sceneProposedEdges(ctx, name, [stationId](SceneContext& c) {
+        // Controller resolution: the Station container in the left strip;
+        // the Main Panel stays right.
+        *stationId = addStationContainer(c, DockEdge::Left);
+    }, [stationId](SceneContext& c) {
+        poseStation(c, *stationId);
+        pump(kFinalSettleMs);
+    }, header);
+    if (!ctx.failure.isEmpty() || stationId->isEmpty()) {
+        return;
+    }
+    const QJsonArray regions = stationRegions(ctx, *stationId);
+    for (CapturedImage& img : ctx.images) {
+        if (img.name == name) {
+            img.extra[QStringLiteral("regions")] = regions;
+            img.extra[QStringLiteral("region_provenance")] = QStringLiteral(
+                "longpath-port: Longpath instruments; retained: Thetis meter faces; "
+                "proposed: headers, strips and the container viewport");
+        }
+    }
 }
 
 void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
@@ -1303,6 +1701,18 @@ QVector<Scene> fixedScenes()
             addLevelsContainer(c, DockEdge::Left);
             c.notes.append(QStringLiteral("every container: Header Reveal, pointer away"));
         }, {}, HeaderMode::Reveal);
+    }, true});
+    // ---- Longpath instruments as container content (switch on) ----
+    scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
+    scenes.append({QStringLiteral("mixed-container"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneMixedContainer(ctx, QStringLiteral("mixed-container"), HeaderMode::Always);
+    }, true});
+    scenes.append({QStringLiteral("mixed-container-reveal"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        // mixed-container with every header Reveal, pointer away.
+        sceneMixedContainer(ctx, QStringLiteral("mixed-container-reveal"), HeaderMode::Reveal);
     }, true});
     scenes.append({QStringLiteral("free-container"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {

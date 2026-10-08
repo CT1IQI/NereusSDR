@@ -72,6 +72,12 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Footer fit: sizeHint() asks for the trough, scale
+//                 numbers and footer together, and fitFooter() hides the
+//                 footer below that height. Upstream drew the footer over
+//                 the scale numbers at 74 px and showed it over the
+//                 trough at the 56 px minimum. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/BarInstrument.h"
@@ -162,7 +168,10 @@ QSize BarInstrument::sizeHint() const
     // Mulde + Skalenzahlen brauchen kTroughHeight+kScaleHeight (38);
     // ein wenig Luft (6) haelt die Zeile atembar.
     const int base = m_compact ? int(kTroughHeight + kScaleHeight) + 6 : 74;
-    return {320, base + extra};
+    // NereusSDR: not below what the trough, its scale numbers and the
+    // footer need together (fullHeight()). At upstream's 74 the footer
+    // sat over the scale numbers.
+    return {320, (m_compact ? base : qMax(base, fullHeight())) + extra};
 }
 
 // From Longpath src/gui/instruments/BarInstrument.cpp:88 [@551576e3]
@@ -257,9 +266,36 @@ void BarInstrument::setCompact(bool on)
     // schrumpfen zwar inzwischen mit, aber eine Zeile von zehn Punkten
     // waere auch mit Rand null noch unlesbar.
     setMinimumHeight(m_compact ? 30 : 0);
+    fitFooter();   // NereusSDR: see fitFooter()
 
     updateGeometry();
     update();
+}
+
+// NereusSDR: the full (non-compact) height: paintInto()'s largest
+// margins (8 above, 10 below), the trough, its scale numbers and the
+// footer's own height.
+int BarInstrument::fullHeight() const
+{
+    const int footerH = m_footer ? m_footer->sizeHint().height() : 0;
+    return 8 + int(kTroughHeight + kScaleHeight) + 10 + footerH;
+}
+
+// NereusSDR: the footer is a child widget, so paintInto()'s
+// tooShortForFooter only stopped the painting from making room for it;
+// the footer itself still showed, over the trough at the 56 px minimum.
+// Below fullHeight() it is hidden, and paintInto() then gives the whole
+// height to the trough (its naturalFooterH is 0 for a hidden footer).
+void BarInstrument::fitFooter()
+{
+    if (!m_footer || m_compact) { return; }
+    m_footer->setVisible(height() >= fullHeight());
+}
+
+void BarInstrument::resizeEvent(QResizeEvent* ev)
+{
+    QWidget::resizeEvent(ev);
+    fitFooter();
 }
 
 void BarInstrument::paintOne(QPainter& p, const QRectF& area,

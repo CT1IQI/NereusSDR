@@ -85,6 +85,10 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - minimumSizeHint() adds the strip or arc reservation:
+//                 upstream's 74 clipped the digits in BandStrip and
+//                 FlatArc at the minimum. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -310,6 +314,13 @@ QSize FrequencyInstrument::minimumSizeHint() const
     if (m_vfoRow && !m_vfoRow->isVisible()) {
         h = qMax(40, h - m_vfoRow->sizeHint().height() - 4);
     }
+    // NereusSDR: the strip or arc reservation (m_stripSpacer) is added
+    // to the minimum height. Upstream's 74 counts only the digit and A/B
+    // rows, so BandStrip and FlatArc at the minimum squeezed the digit
+    // row and clipped the tops of the digits (seen in the
+    // instruments-sheet preview scene). NumberOnly is unchanged (its
+    // reservation is 0).
+    h += stripReserveFor(m_form);
     return {qMax(240, w), h};
 }
 

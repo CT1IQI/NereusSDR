@@ -157,6 +157,29 @@ for the strips in use. Their sidecars have `provenance: proposed` and a
 `proposed_values` block, and the notes list each strip's size and
 containers.
 
+### Longpath instrument scenes
+
+`instruments-sheet` builds the ported Longpath instruments directly, with
+fixed values, on their own top-level window (not the main window): the
+frequency instrument in its three forms, the bandwidth filter pane with a
+fixed trace, the bar (TX: SWR and TX: ALC) and the needle (RX: Signal
+Peak and TX: Forward Power), each at its preferred and its minimum size.
+At the crop profile it adds `frequency-digits`, `frequency-digits-min`,
+`needle-hub` and `needle-hub-min` crops with @3x enlargements. Capture it
+at `mac-1512x869@2` and `laptop-1280x800@1`
+(`--profiles 'mac-1512x869@2,laptop-1280x800@1'`).
+
+`mixed-container` adds a "Station" container in the left strip that
+mixes Longpath instruments with Thetis meter faces, all on slice A:
+frequency, filter passband, `meter.sMeter`, Longpath needle,
+`meter.crossNeedle` and Longpath bar, headers Always.
+`mixed-container-reveal` is the same with every header Reveal. After the
+data is fed, each needle gets one reading through
+`MeterPoller::readingUpdated` and each filter pane one trace refresh from
+the fed pan. The sidecars carry a `regions` array (each entry's rect and
+visible rect, headers, viewport and strips in window coordinates) with a
+per-region provenance: `longpath-port`, `retained` or `proposed`.
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives
@@ -205,4 +228,5 @@ non-zero on any difference. What makes it repeatable:
 - The tool shows the current app, plus the proposed workspace look in the
   `look-*` scenes, the proposed headers in the `header-*` and
   `arrange-on` scenes and the four-edge workspace in the `edge-*`,
-  `free-container`, `floating-container` and `drag-preview-*` scenes. Other proposed designs are added as new scenes.
+  `free-container`, `floating-container` and `drag-preview-*` scenes and the
+  Longpath instruments in `instruments-sheet` and `mixed-container*`. Other proposed designs are added as new scenes.

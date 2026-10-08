@@ -16,6 +16,7 @@
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/instruments/BarInstrument.h"
 #include "gui/instruments/FrequencyInstrument.h"
+#include "gui/instruments/InstrumentFooter.h"
 #include "gui/instruments/LongpathContent.h"
 #include "gui/instruments/NeedleInstrument.h"
 #include "gui/instruments/ReadingSource.h"
@@ -63,6 +64,49 @@ private slots:
         w.setVfoRowVisible(false);
         QVERIFY(w.minimumSizeHint().height() < 74);
         QVERIFY(w.minimumSizeHint().height() >= 40);
+    }
+
+    void stripFormsReserveTheirStripAtMinimum()
+    {
+        // NereusSDR fix: the BandStrip / FlatArc reservation is part of the
+        // minimum height, so the digit row is not squeezed at the minimum.
+        FrequencyInstrument number;
+        FrequencyInstrument strip;
+        strip.setForm(FrequencyInstrument::Form::BandStrip);
+        FrequencyInstrument arc;
+        arc.setForm(FrequencyInstrument::Form::FlatArc);
+        for (FrequencyInstrument* w : {&number, &strip, &arc}) {
+            w->show();
+            QVERIFY(QTest::qWaitForWindowExposed(w));
+        }
+        settle();
+        QVERIFY(strip.minimumSizeHint().height() > number.minimumSizeHint().height());
+        QVERIFY(arc.minimumSizeHint().height() > strip.minimumSizeHint().height());
+        QVERIFY(strip.minimumSizeHint().height() <= strip.sizeHint().height());
+        QVERIFY(arc.minimumSizeHint().height() <= arc.sizeHint().height());
+    }
+
+    void barFooterOnlyWhenItFits()
+    {
+        // NereusSDR fix: the footer shows at the preferred size and is
+        // hidden at the minimum instead of covering the trough.
+        BarInstrument bar;
+        bar.setPrimary(MeterBinding::TxSwr);
+        bar.onReading(MeterBinding::TxSwr, 1.25);
+        bar.resize(bar.sizeHint());
+        bar.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&bar));
+        settle();
+        auto* footer = bar.findChild<InstrumentFooter*>();
+        QVERIFY(footer);
+        QVERIFY(footer->isVisible());
+        QVERIFY(bar.sizeHint().height() >= 74);
+        bar.resize(bar.minimumSizeHint());
+        settle();
+        QVERIFY(!footer->isVisible());
+        bar.resize(bar.sizeHint());
+        settle();
+        QVERIFY(footer->isVisible());
     }
 
     void frequencyGroupingAndParsing()
