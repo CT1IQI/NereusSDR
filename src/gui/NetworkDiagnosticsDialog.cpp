@@ -33,6 +33,10 @@
 //                Packet gap and UDP seen are measured for a local radio
 //                (RadioLinkStats) and shown. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The Connection status word reads
+//                WorkspacePreview::statusColourName() (the status colour
+//                choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "gui/NetworkDiagnosticsDialog.h"
@@ -348,9 +352,9 @@ void NetworkDiagnosticsDialog::refresh()
         m_statusLabel->setText(
             connected
                 ? QStringLiteral("<span style='color:%1;'>&#x25cf; Connected</span>")
-                      .arg(WorkspacePreview::roleColourName("#5fff8a", "ok"))
+                      .arg(WorkspacePreview::statusColourName("#5fff8a", "ok"))
                 : QStringLiteral("<span style='color:%1;'>&#x25cf; Disconnected</span>")
-                      .arg(WorkspacePreview::roleColourName("#ff6060", "danger")));
+                      .arg(WorkspacePreview::statusColourName("#ff6060", "danger")));
         m_statusLabel->setTextFormat(Qt::RichText);
     }
 

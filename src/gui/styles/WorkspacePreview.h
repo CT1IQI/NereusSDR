@@ -30,6 +30,10 @@
 //   2026-10-08 - roleColour() and roleColourName(): the one helper for
 //                 chrome colours that never pass through a stylesheet.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - StatusTones and DataColours: the status and data colour
+//                 choices, statusColour(), dataBackground() and
+//                 meterInk(), each through roleColour(). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -37,6 +41,8 @@
 #include <QColor>
 #include <QHash>
 #include <QString>
+
+#include <initializer_list>
 
 class QApplication;
 class QWidget;
@@ -98,6 +104,52 @@ QColor roleColour(const QColor& legacy, const char* role);
 // as "#rrggbb" ("#aarrggbb" when translucent). Call it where the HTML
 // is built, so a later setText() writes the role colour again.
 QString roleColourName(const char* legacy, const char* role);
+
+// Two colour choices JJ makes from the colour-choice sheets of the
+// visual preview tool. Each is real product code that acts only with the
+// switch on. Until a choice is made the product runs choice A (the
+// lane's state before the sheets); the ForTest setters let one build
+// render every choice. Neither is a setting.
+//
+// Status indicators (state dots, latency and rate numbers, status words):
+//   Muted  (A) - Longpath's semantic roles: ok, warn, danger.
+//   Bright (B) - Longpath's brighter tones for indicators only:
+//                ok -> live, warn -> measured, danger -> tx; any other
+//                role as in A.
+//   Legacy (C) - today's saturated colours, the legacy values unchanged.
+enum class StatusTones { Muted, Bright, Legacy };
+StatusTones statusTones();
+void setStatusTonesForTest(StatusTones tones);
+
+// Data surfaces (spectrum, waterfall, meters, graphs):
+//   Navy               (A) - the default backgrounds stay navy; all ink
+//                            unchanged.
+//   Neutral            (B) - the default backgrounds take the role of the
+//                            surrounding container; all ink unchanged.
+//   NeutralInstrument  (C) - B, plus the Thetis bar meter items' default
+//                            ink in Longpath's instrument tones.
+enum class DataColours { Navy, Neutral, NeutralInstrument };
+DataColours dataColours();
+void setDataColoursForTest(DataColours colours);
+
+// A status indicator's colour: roleColour(legacy, role) under Muted,
+// roleColour() of the brighter role under Bright, `legacy` under Legacy.
+// `legacy` with the switch off, whatever the choice.
+QColor statusColour(const QColor& legacy, const char* role);
+// statusColour() for rich text; byte for byte `legacy` with the switch
+// off and under Legacy.
+QString statusColourName(const char* legacy, const char* role);
+
+// The DEFAULT background of a data surface: `legacy` under Navy,
+// roleColour(legacy, role) under Neutral and NeutralInstrument. Never
+// call it with a colour the user set: user colours always win.
+QColor dataBackground(const QColor& legacy, const char* role);
+
+// A Thetis bar meter item's ink: roleColour(current, role) under
+// NeutralInstrument when `current` is one of the item's factory defaults
+// (`defaults`, alpha included); `current` otherwise, so a colour the user
+// set in the item's settings is never replaced.
+QColor meterInk(const QColor& current, std::initializer_list<QColor> defaults, const char* role);
 
 // Unknown colour literals met by themeSubtree() since the last reset,
 // lower case, with their counts.

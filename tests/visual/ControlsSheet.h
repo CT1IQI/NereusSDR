@@ -25,6 +25,10 @@
 //   2026-10-08 - measureAppletFit for every container holding applets.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - sceneStatusColourChoices and sceneDataColourChoices: the
+//                 status and data colour choices, rendered from real
+//                 widgets through WorkspacePreview's test seams. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -81,5 +85,20 @@ void sceneScrollBarChoices(SceneContext& ctx, const QJsonObject& liveBars);
 // at Longpath's sizes, and at today's with Longpath shading (today's and
 // height-scaled corners).
 void sceneControlSizes(SceneContext& ctx);
+
+// Colour choices for JJ: each runs with the workspace preview switch on
+// and renders every variant from one build through the ForTest seams
+// (WorkspacePreview::setStatusTonesForTest, setDataColoursForTest), then
+// sets both back to choice A.
+// colour-choice--status (+ --zoom, 4x): the title bar status area in four
+// states, the status badges, the TCI Server page's status and Network
+// Diagnostics' Connection rows, one row per status choice.
+void sceneStatusColourChoices(SceneContext& ctx);
+// colour-choice--data (+ --crops): the posed window (both pans, the top
+// and left meter strips, the Longpath needle, the Main Panel's dial and
+// filter passband), a time-series graph and the parametric EQ, one row
+// per data choice; the crops add the user-colour rows. Call after the
+// window is posed with the Meters, Levels and Needle containers.
+void sceneDataColourChoices(SceneContext& ctx);
 
 } // namespace NereusSDR::Preview

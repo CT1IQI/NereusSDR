@@ -145,6 +145,10 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-08 J.J. Boyd / KG4VCF - workspace preview data colours:
+//                 the spectrum, waterfall and DSS default backgrounds
+//                 read WorkspacePreview::dataBackground() (navy until a
+//                 choice is made). AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -268,6 +272,7 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "SpectrumWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteDisplayPresenter.h"
 
@@ -459,7 +464,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // CPU fallback: dark background
     setAutoFillBackground(true);
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(0x0f, 0x0f, 0x1a));
+    pal.setColor(QPalette::Window, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
     setPalette(pal);
 #endif
 
@@ -4845,7 +4850,7 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
                          m_waterfall.sizeInBytes());
         }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
-        m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        m_waterfall.fill(WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
         // Pin the new waterfall buffer.  Touched every push (write
         // one row's worth of pixels) and every paint (full incremental
         // texture upload to GPU); compression stalls here cause the
@@ -5166,7 +5171,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         const QImage& surf = buildDssImage(
             specRect.size().boundedTo(QSize(kDssFallbackMaxW, kDssFallbackMaxH)),
             0);
-        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+        p.fillRect(specRect, WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"));
         if (!surf.isNull()) {
             p.drawImage(specRect, surf);
         }
@@ -7697,7 +7702,8 @@ const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
     // bgFill: 0x0a0a14 matches both the pass clear colour and the mesh
     // UBO's bgFill field (writeDssMeshUbo()), for the same reason.
     return m_dss.image(px, scaleStripPx, floorDbm, rangeDb, 0.6f,
-                       palette, dssPaletteToken(), QColor(0x0a, 0x0a, 0x14),
+                       palette, dssPaletteToken(),
+                       WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"),
                        dssShape(), m_centerHz / 1.0e6,
                        m_bandwidthHz / 1.0e6);
 }
@@ -11994,7 +12000,7 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     ubo[i++] = 0.0f;                                  // std140 pad
     ubo[i++] = 0.0f;                                  // std140 pad
 
-    const QColor bg(0x0a, 0x0a, 0x14);
+    const QColor bg = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     ubo[i++] = bg.redF();
     ubo[i++] = bg.greenF();
     ubo[i++] = bg.blueF();
@@ -12844,7 +12850,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
-    const QColor clearColor(0x0a, 0x0a, 0x14);
+    const QColor clearColor = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     cb->beginPass(renderTarget(), clearColor, {1.0f, 0});
 
     const QSize outputSize = renderTarget()->pixelSize();

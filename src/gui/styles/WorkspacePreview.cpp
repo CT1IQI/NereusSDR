@@ -19,6 +19,9 @@
 //   2026-10-08 - roleColour() and roleColourName() for painted chrome
 //                 and rich text. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The status and data colour choices: statusColour(),
+//                 dataBackground() and meterInk(). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -360,6 +363,105 @@ QString roleColourName(const char* legacy, const char* role)
     }
     const QColor c = roleColour(QColor::fromString(QLatin1StringView(legacy)), role);
     return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
+}
+
+namespace {
+
+StatusTones& statusTonesState()
+{
+    static StatusTones tones = StatusTones::Muted;
+    return tones;
+}
+
+DataColours& dataColoursState()
+{
+    static DataColours colours = DataColours::Navy;
+    return colours;
+}
+
+// Bright: the indicator tones Longpath keeps for a live state, a reading
+// and transmit (WorkspacePalette.h kLiveGreen, kAmberText, kTxRed).
+const char* brightRole(const char* role)
+{
+    const QLatin1StringView r(role);
+    if (r == QLatin1StringView("ok")) {
+        return "live";
+    }
+    if (r == QLatin1StringView("warn")) {
+        return "measured";
+    }
+    if (r == QLatin1StringView("danger")) {
+        return "tx";
+    }
+    return role;
+}
+
+} // namespace
+
+StatusTones statusTones()
+{
+    return statusTonesState();
+}
+
+void setStatusTonesForTest(StatusTones tones)
+{
+    statusTonesState() = tones;
+}
+
+DataColours dataColours()
+{
+    return dataColoursState();
+}
+
+void setDataColoursForTest(DataColours colours)
+{
+    dataColoursState() = colours;
+}
+
+QColor statusColour(const QColor& legacy, const char* role)
+{
+    if (!enabled() || role == nullptr) {
+        return legacy;
+    }
+    switch (statusTones()) {
+        case StatusTones::Muted:
+            return roleColour(legacy, role);
+        case StatusTones::Bright:
+            return roleColour(legacy, brightRole(role));
+        case StatusTones::Legacy:
+            return legacy;
+    }
+    return legacy;
+}
+
+QString statusColourName(const char* legacy, const char* role)
+{
+    if (!enabled() || role == nullptr || statusTones() == StatusTones::Legacy) {
+        return QString::fromLatin1(legacy);
+    }
+    const QColor c = statusColour(QColor::fromString(QLatin1StringView(legacy)), role);
+    return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
+}
+
+QColor dataBackground(const QColor& legacy, const char* role)
+{
+    if (!enabled() || dataColours() == DataColours::Navy) {
+        return legacy;
+    }
+    return roleColour(legacy, role);
+}
+
+QColor meterInk(const QColor& current, std::initializer_list<QColor> defaults, const char* role)
+{
+    if (!enabled() || dataColours() != DataColours::NeutralInstrument) {
+        return current;
+    }
+    for (const QColor& d : defaults) {
+        if (current.rgba() == d.rgba()) {
+            return roleColour(current, role);
+        }
+    }
+    return current;
 }
 
 QHash<QString, int> unknownLiteralCounts()

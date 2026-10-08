@@ -84,6 +84,10 @@
 //   2026-10-07 - ConnectionSegment::setPulsePausedForTest(), a test seam for
 //                 the workspace visual preview tool (tests/visual/).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The connection segment's dot, latency, rates and audio pip
+//                 read WorkspacePreview::statusColour() (the status colour
+//                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
@@ -532,48 +536,49 @@ void ConnectionSegment::frameTick()
 }
 
 // Workspace preview: the status colours take the semantic roles; each
-// pulse keeps a brighter and a dimmer step. roleColour() returns the
-// legacy colour with the switch off.
+// pulse keeps a brighter and a dimmer step. statusColour() returns the
+// legacy colour with the switch off, and follows the status colour
+// choice with it on (WorkspacePreview::StatusTones).
 QColor ConnectionSegment::stateDotColor() const
 {
-    using WorkspacePreview::roleColour;
+    using WorkspacePreview::statusColour;
     switch (m_state) {
         case ConnectionState::Connected:
             // m_pulseOn alternates → slow green pulse encoding streaming activity
-            return m_pulseOn ? roleColour(QColor("#5fff8a"), "live")
-                             : roleColour(QColor("#3fcf6a"), "ok");
+            return m_pulseOn ? statusColour(QColor("#5fff8a"), "live")
+                             : statusColour(QColor("#3fcf6a"), "ok");
         case ConnectionState::Probing:
         case ConnectionState::Connecting:
-            return m_pulseOn ? roleColour(QColor("#5fa8ff"), "accent")
-                             : roleColour(QColor("#3f78cf"), "sel-hover");
+            return m_pulseOn ? statusColour(QColor("#5fa8ff"), "accent")
+                             : statusColour(QColor("#3f78cf"), "sel-hover");
         case ConnectionState::LinkLost:
-            return m_pulseOn ? roleColour(QColor("#ff8c00"), "measured")
-                             : roleColour(QColor("#cf6c00"), "warn");
+            return m_pulseOn ? statusColour(QColor("#ff8c00"), "measured")
+                             : statusColour(QColor("#cf6c00"), "warn");
         case ConnectionState::Disconnected:
-            return roleColour(QColor("#ff4040"), "danger");
+            return statusColour(QColor("#ff4040"), "danger");
     }
-    return roleColour(QColor("#607080"), "text-scale");
+    return statusColour(QColor("#607080"), "text-scale");
 }
 
 QColor ConnectionSegment::rttColor(int rttMs) const
 {
-    using WorkspacePreview::roleColour;
-    if (rttMs < 0)    { return roleColour(QColor("#607080"), "text-scale"); }
-    if (rttMs < 50)   { return roleColour(QColor("#5fff8a"), "ok"); }
-    if (rttMs < 150)  { return roleColour(QColor("#ffd700"), "warn"); }
-    return roleColour(QColor("#ff6060"), "danger");
+    using WorkspacePreview::statusColour;
+    if (rttMs < 0)    { return statusColour(QColor("#607080"), "text-scale"); }
+    if (rttMs < 50)   { return statusColour(QColor("#5fff8a"), "ok"); }
+    if (rttMs < 150)  { return statusColour(QColor("#ffd700"), "warn"); }
+    return statusColour(QColor("#ff6060"), "danger");
 }
 
 QColor ConnectionSegment::audioPipColor(AudioEngine::FlowState s) const
 {
-    using WorkspacePreview::roleColour;
+    using WorkspacePreview::statusColour;
     switch (s) {
-        case AudioEngine::FlowState::Healthy:  return roleColour(QColor("#5fa8ff"), "accent");
-        case AudioEngine::FlowState::Underrun: return roleColour(QColor("#ffd700"), "warn");
-        case AudioEngine::FlowState::Stalled:  return roleColour(QColor("#ff6060"), "danger");
-        case AudioEngine::FlowState::Dead:     return roleColour(QColor("#404858"), "text-inactive");
+        case AudioEngine::FlowState::Healthy:  return statusColour(QColor("#5fa8ff"), "accent");
+        case AudioEngine::FlowState::Underrun: return statusColour(QColor("#ffd700"), "warn");
+        case AudioEngine::FlowState::Stalled:  return statusColour(QColor("#ff6060"), "danger");
+        case AudioEngine::FlowState::Dead:     return statusColour(QColor("#404858"), "text-inactive");
     }
-    return roleColour(QColor("#404858"), "text-inactive");
+    return statusColour(QColor("#404858"), "text-inactive");
 }
 
 QRect ConnectionSegment::rttRect() const
@@ -636,7 +641,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     // to the audio pip. asprintf with a leading "\xe2\x96\xb2" prefix
     // gets misinterpreted as Latin-1 codepoints on the macOS compile
     // path, rendering as garbage rather than a triangle.
-    p.setPen(WorkspacePreview::roleColour(QColor("#a0d8a0"), "ok"));
+    p.setPen(WorkspacePreview::statusColour(QColor("#a0d8a0"), "ok"));
     const QString tx = QChar(0x25B2) + QString::asprintf(" %.1f Mbps", m_txMbps);
     p.drawText(x, textY, tx);
     x += p.fontMetrics().horizontalAdvance(tx) + 10;
@@ -664,7 +669,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     // = downloading I/Q from the radio.
     //
     // QChar(0x25BC) for the same reason as the up-triangle above.
-    p.setPen(WorkspacePreview::roleColour(QColor("#a0d8a0"), "ok"));
+    p.setPen(WorkspacePreview::statusColour(QColor("#a0d8a0"), "ok"));
     const QString rx = QChar(0x25BC) + QString::asprintf(" %.1f Mbps", m_rxMbps);
     p.drawText(x, textY, rx);
     x += p.fontMetrics().horizontalAdvance(rx) + 10;

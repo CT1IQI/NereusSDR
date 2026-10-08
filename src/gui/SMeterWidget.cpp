@@ -91,8 +91,15 @@
 //                 face drawing and the background colour are unchanged.
 //                 By J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via Anthropic Claude Code.  NereusSDR-native.
+//   2026-10-08  Workspace preview data colours by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 The classic face's background and the vintage faces'
+//                 surround read WorkspacePreview::dataBackground() (navy
+//                 until a choice is made); the face cache key carries it.
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #include "SMeterWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <cmath>
 
@@ -738,7 +745,7 @@ void SMeterWidget::paintClassic(QPainter& p)
     const int h = height();
 
     // Background
-    p.fillRect(rect(), QColor(0x0f, 0x0f, 0x1a));
+    p.fillRect(rect(), WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel"));
 
     // -- Arc geometry ---------------------------------------------------------
     // Large radius with center far below widget -> shallow ~70 deg arc segment
@@ -1084,9 +1091,12 @@ void SMeterWidget::paintVintage(QPainter& p)
         ? QString("tx%1:%2:%3").arg(static_cast<int>(m_txMode))
                                .arg(m_powerScaleMax).arg(m_powerRedStart)
         : QString("rx%1").arg(static_cast<int>(m_rxMode));
-    const QString key = QString("%1x%2@%3|%4|%5|%6")
+    // Workspace preview: the surround follows the data colour choice.
+    const QColor surround = WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel");
+    const QString key = QString("%1x%2@%3|%4|%5|%6|%7")
         .arg(width()).arg(height()).arg(dpr)
-        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width());
+        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width())
+        .arg(surround.rgba());
 
     if (key != m_faceCacheKey || m_faceCache.isNull()) {
         VintageScale scale;
@@ -1183,7 +1193,7 @@ void SMeterWidget::paintVintage(QPainter& p)
             m_faceCache.fill(Qt::transparent);
         }
         QPainter fp(&m_faceCache);
-        VintageMeterFace::paintStatic(fp, bounds, QColor(0x0f, 0x0f, 0x1a), theme,
+        VintageMeterFace::paintStatic(fp, bounds, surround, theme,
                                       scale, title, legend);
         m_faceCacheKey = key;
     }
