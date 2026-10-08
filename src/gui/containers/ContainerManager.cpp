@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - A container's minimum width follows what its content host
+//                 needs (the widest visible applet, the margins, the
+//                 vertical bar), and today's Main Panel splitter applies it
+//                 at once without capturing it as a geometry change. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - A duplicated container is always shown, floating, next
 //                 to its original, in both looks (showDuplicate). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -539,6 +544,26 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 emit meterReadyForPolling(meter);
             });
             connect(host, &ContainerContentHost::reconciled, this, &ContainerManager::workspaceReconciled);
+            // The container is never narrower than its content (JJ,
+            // 2026-10-08). Queued: a split set while the window is built
+            // (MainWindow's first-run setSizes({1024, 256}), a restored
+            // size) is set against the 260 px container floor as it always
+            // was, and only then raised, so the Main Panel keeps today's
+            // width wherever that already fits and takes its content's
+            // minimum where it does not. The raise is the content's need,
+            // not a user resize: the splitter applies it now, inside the
+            // reconcile guard, and no geometry is captured for it.
+            connect(host, &ContainerContentHost::contentMinimumWidthChanged, this,
+                    [this, view = QPointer<ContainerWidget>(c), content = QPointer<ContainerContentHost>(host)] {
+                if (!view || !content || view->content() != content.data()) {
+                    return;
+                }
+                QScopedValueRollback<bool> guard(m_reconciling, true);
+                view->setContentMinimumWidth(content->contentMinimumWidth());
+                if (m_splitter && view->parentWidget() == m_splitter) {
+                    m_splitter->refresh();
+                }
+            }, Qt::QueuedConnection);
             connect(host, &ContainerContentHost::preferredContentHeightChanged, this,
                     [this, id = d.id, content = QPointer<ContainerContentHost>(host),
                      view = QPointer<ContainerWidget>(c), shell = QPointer<FloatingContainer>(form)] {

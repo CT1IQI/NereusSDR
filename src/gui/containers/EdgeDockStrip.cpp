@@ -85,6 +85,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Today's split that the right strip follows is set against
+//                 the 260 px container floor, as today's splitter now is
+//                 before the Main Panel's minimum rises to its content; the
+//                 strip's own content minimum then floors it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The right strip has no padding and a 3 px handle on its
 //                 spectrum side, so it and its handle take exactly today's
 //                 Main Panel and splitter handle width (JJ's choice).
@@ -100,6 +105,7 @@
 // =================================================================
 
 #include "EdgeDockStrip.h"
+#include "ContainerWidget.h"
 
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -533,13 +539,12 @@ int EdgeDockArea::migratedRightThickness() const
     // handle is that splitter's 3 px, so the panel keeps that width and
     // the spectrum today's.
     const int space = qMax(1, total - kMigratedHandlePx);
-    // The minimum that splitter saw: the widget's own, not its content's.
-    int minimum = 0;
-    for (QWidget* w : strip(DockEdge::Right)->containers()) {
-        if (!w->isHidden()) {
-            minimum = qMax(minimum, qMax(w->minimumWidth(), w->minimumSizeHint().width()));
-        }
-    }
+    // The minimum that splitter saw when the split was set: the
+    // container's 260 px floor. The Main Panel's content minimum is
+    // applied after it (ContainerManager, queued), and here it is the
+    // strip's floor in thickness(), so each look keeps today's width
+    // where it fits and its own content minimum where it does not.
+    const int minimum = ContainerWidget::kMinContainerWidth;
     const int panel = qMax(kMigratedPanelShare, minimum);
     const int spectrum = kMigratedTotalShare - kMigratedPanelShare;
     return qMax(1, int(std::lround(space * double(panel) / (spectrum + panel))))

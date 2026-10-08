@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - The host is never narrower than its contents: its minimum
+//                 width counts the widest visible row, the body margins and
+//                 the vertical bar, follows rows shown and hidden, and is
+//                 announced to the container (today's look and the workspace
+//                 preview). Workspace preview only: the body's 8 px right
+//                 margin goes to the vertical bar while the bar shows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the header's hide button hides the
 //                 entry or container (Containers > Hidden brings it back).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -61,6 +68,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QStyle>
 #include <QJsonArray>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -86,6 +94,8 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
     scroll->viewport()->setAcceptDrops(true);
     scroll->viewport()->installEventFilter(this);
     m_body->installEventFilter(this);
+    // Workspace preview: the body's right margin follows the vertical bar.
+    if (WorkspacePreview::enabled()) { scroll->verticalScrollBar()->installEventFilter(this); }
     m_indicator=new QWidget(m_body);m_indicator->setObjectName(QStringLiteral("containerInsertionLine"));
     m_indicator->setStyleSheet(QStringLiteral("background:#00b4d8;"));m_indicator->setAttribute(Qt::WA_TransparentForMouseEvents);m_indicator->hide();
     m_layout->setSpacing(0);
@@ -269,6 +279,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             row.presentationVisible = view && claim ? row.effectiveVisible : entry.visible;
             if (row.widget) { row.widget->setVisible(row.presentationVisible); }
         }
+        // A row shown or hidden changes what the body needs across.
+        updateContentMinimumWidth();
         scheduleStackProjection();
         updateGrips();
         emit reconciled();
@@ -428,7 +440,10 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
     int minimumWidth=0; for (auto* meter : meterSurfaces()) { minimumWidth=qMax(minimumWidth,meter->minimumWidth()); }
     // Workspace preview: no left gutter, so Arrange adds no width.
     const int gutter = m_arrange && !WorkspacePreview::enabled() ? 28 : 8;
-    setMinimumWidth(minimumWidth ? minimumWidth + gutter : 0);
+    m_surfaceMinimumWidth = minimumWidth ? minimumWidth + gutter : 0;
+    setMinimumWidth(m_surfaceMinimumWidth);
+    // Applet and widget rows and the vertical bar count too.
+    updateContentMinimumWidth();
     scheduleStackProjection();
     updateGrips();
     emit reconciled();
@@ -439,7 +454,7 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
     const auto prior=m_document;const auto oldRows=m_rows;
     m_rows.clear();m_meters.clear();QSet<QWidget*> retained;
     QHash<QString,QPointer<QWidget>> views;
-    m_document=document;setMinimumWidth(0);
+    m_document=document;m_surfaceMinimumWidth=0;setMinimumWidth(0);
     if(m_layout->indexOf(m_canvas)<0) {m_layout->addWidget(m_canvas);}
     m_canvas->show();
     for(const auto& entry:document.contents) {
@@ -523,7 +538,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
         else {delete row.widget.data();}
     }
     auto sceneDocument=document;sceneDocument.locked=document.locked || !m_arrange;
-    m_canvas->project(sceneDocument,views);m_generation=m_registry.generation();m_materialized=true;emit reconciled();
+    m_canvas->project(sceneDocument,views);m_generation=m_registry.generation();m_materialized=true;
+    updateContentMinimumWidth();
+    emit reconciled();
 }
 QVector<MeterWidget*> ContainerContentHost::meterSurfaces() const
 {
@@ -652,6 +669,9 @@ void ContainerContentHost::setArrangeController(ContainerArrangeController *cont
     // Workspace preview: entry headers replace the 20 px grip gutter.
     const int gutter = controller && !WorkspacePreview::enabled() ? 20 : 0;
     m_layout->setContentsMargins(gutter, 0, 8, 0);
+    if (WorkspacePreview::enabled()) { applyPreviewRightMargin(); }
+    // The gutter is part of what the contents need across.
+    updateContentMinimumWidth();
     if (!controller) {
         for (const auto& grip : m_grips) {
             if (grip) { grip->hide(); }
@@ -660,6 +680,62 @@ void ContainerContentHost::setArrangeController(ContainerArrangeController *cont
     // Workspace preview: the entry pop-out buttons follow the controller.
     updateEntryHeaders();
     scheduleStackProjection();
+}
+int ContainerContentHost::verticalBarExtent() const
+{
+    // The width QAbstractScrollArea takes from the viewport for the bar
+    // (its size hint), none when the bar is off or the style overlays it.
+    QScrollBar *bar = m_scroll->verticalScrollBar();
+    if (m_scroll->verticalScrollBarPolicy() == Qt::ScrollBarAlwaysOff
+        || bar->style()->styleHint(QStyle::SH_ScrollBar_Transient, nullptr, bar)) {
+        return 0;
+    }
+    return bar->sizeHint().width();
+}
+void ContainerContentHost::applyPreviewRightMargin()
+{
+    // Workspace preview: the 8 px right margin mirrors the legacy applet
+    // panel's 8 px bar, which this scroll area does not use; while this
+    // scroll area's own bar shows, the bar takes that place instead.
+    if (!WorkspacePreview::enabled()) {
+        return;
+    }
+    const bool barShown = !m_scroll->verticalScrollBar()->isHidden() && verticalBarExtent() > 0;
+    QMargins margins = m_layout->contentsMargins();
+    const int right = barShown ? 0 : kBodyRightMarginPx;
+    if (margins.right() != right) {
+        margins.setRight(right);
+        m_layout->setContentsMargins(margins);
+    }
+}
+void ContainerContentHost::updateContentMinimumWidth()
+{
+    // JJ's choice (2026-10-08): a container is never narrower than its
+    // contents, in today's look and in the workspace preview. The body's
+    // minimum is the widest visible row and the body margins (today's
+    // 20 px grip gutter included); the vertical bar takes its extent from
+    // the viewport whenever the rows scroll, so it counts as well.
+    int minimum = 0;
+    if (m_document.layout != ContentLayout::FreeCanvas) {
+        minimum = m_surfaceMinimumWidth;
+        const QMargins margins = m_layout->contentsMargins();
+        const int body = m_body->minimumSizeHint().width();
+        if (body > margins.left() + margins.right()) {
+            const int bar = verticalBarExtent();
+            // Workspace preview: the right margin and the bar share one place.
+            const int need = WorkspacePreview::enabled()
+                ? body - margins.right() + qMax(int(kBodyRightMarginPx), bar)
+                : body + bar;
+            minimum = qMax(minimum, need);
+        }
+    }
+    if (minimumWidth() != minimum) {
+        setMinimumWidth(minimum);
+    }
+    if (m_contentMinimumWidth != minimum) {
+        m_contentMinimumWidth = minimum;
+        emit contentMinimumWidthChanged(minimum);
+    }
 }
 void ContainerContentHost::popOutEntry(const QString &entryId)
 {
@@ -1072,6 +1148,18 @@ void ContainerContentHost::addContentsMenu(QMenu &menu)
 }
 bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_scroll->verticalScrollBar()) {
+        // Workspace preview: the bar showing or hiding moves the body's
+        // right margin.
+        if (event->type() == QEvent::ShowToParent || event->type() == QEvent::HideToParent) {
+            applyPreviewRightMargin();
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+    if (watched == m_body && event->type() == QEvent::LayoutRequest) {
+        // A row's minimum, or the rows shown, changed.
+        updateContentMinimumWidth();
+    }
     if (event->type() == QEvent::Resize || event->type() == QEvent::LayoutRequest ||
         event->type() == QEvent::Show) {
         scheduleStackProjection();

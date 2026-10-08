@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - setContentMinimumWidth: the container is never narrower
+//                 than its content needs. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: the header source chip opens the
 //                 source menu (slices A to D, Active slice) and emits
 //                 sourceRequested. J.J. Boyd (KG4VCF), AI-assisted via
@@ -224,6 +227,11 @@ public:
     bool isFloating() const { return m_dockMode == DockMode::Floating; }
     bool isPanelDocked() const { return m_dockMode == DockMode::PanelDocked; }
     bool isOverlayDocked() const { return m_dockMode == DockMode::OverlayDocked; }
+    // The width the content needs (ContainerContentHost::contentMinimumWidth).
+    // The container's minimum width is the larger of this and
+    // kMinContainerWidth, in every dock mode.
+    void setContentMinimumWidth(int width);
+    int contentMinimumWidth() const { return m_contentMinimumWidth; }
 
     // --- Axis Lock ---
     AxisLock axisLock() const { return m_axisLock; }
@@ -469,6 +477,7 @@ private:
     // --- Identity ---
     QString m_id;
     int m_rxSource{1};
+    int m_contentMinimumWidth{0};
 
     // --- State ---
     DockMode m_dockMode{DockMode::OverlayDocked};
