@@ -21,6 +21,19 @@
 //                 sends it a lone Leave): the pointer moves the cursor, and
 //                 the rail stays open or closes by where the cursor is, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Containers > Hidden with the workspace preview off: Hide
+//                 container, a closed floating window and a hidden applet
+//                 come back where they were, and the menu sits in the same
+//                 place in both looks, by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-08 - Duplicate always gives a shown, floating copy beside the
+//                 original, from the manager and from Container Settings, in
+//                 both looks, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-08 - Menus are read by a wait that polls until the popup is
+//                 shown (PopupWait), not a fixed 50 ms shot that missed it
+//                 under load and left exec() waiting; generous waits, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -38,6 +51,7 @@
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QCursor>
 #include <QDialog>
 #include <QDrag>
@@ -48,6 +62,8 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPushButton>
+#include <QScreen>
+#include <QSet>
 #include <QScrollArea>
 #include <QWindow>
 #include <qpa/qwindowsysteminterface.h>
@@ -60,6 +76,7 @@
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
@@ -74,7 +91,12 @@ using namespace NereusSDR;
 
 namespace {
 
-constexpr int kMenuWaitMs = 2000;
+// Generous on purpose: the waits below return as soon as their condition
+// holds, so a long limit costs nothing on a quiet machine and keeps a
+// loaded one from failing a test that is right.
+constexpr int kMenuWaitMs = 30000;
+// How long a PopupWait keeps looking for its popup.
+constexpr int kPopupWaitMs = 60000;
 
 // Known lines this test filters, so the log shows only what is new:
 // - the offscreen platform has no GPU and does not move or stack native
@@ -406,23 +428,52 @@ QPoint centreOf(const QWidget* widget)
     return widget->mapToGlobal(widget->rect().center());
 }
 
+// Waits for a popup menu to be on screen, then acts on it once. Polls every
+// 10 ms from the event loop, so it runs inside the menu's exec() loop and
+// never acts before the popup is shown, however long the machine takes to
+// open it. A fixed single shot (the old 50 ms probe) fired before the popup
+// under load, found nothing, and left the menu's exec() waiting forever.
+// `accept` picks which popup (a submenu, say); empty takes any. Stops by
+// itself after `timeoutMs`, and when it is destroyed.
+struct PopupWait {
+    QTimer poll;
+    QElapsedTimer clock;
+
+    void start(std::function<bool(QMenu*)> accept, std::function<void(QMenu*)> act, int timeoutMs = kPopupWaitMs)
+    {
+        poll.disconnect();
+        poll.setInterval(10);
+        clock.start();
+        QObject::connect(&poll, &QTimer::timeout, [this, accept, act, timeoutMs] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (menu && menu->isVisible() && (!accept || accept(menu))) {
+                poll.stop();
+                act(menu);
+                return;
+            }
+            if (clock.elapsed() > timeoutMs) {
+                poll.stop();
+            }
+        });
+        poll.start();
+    }
+};
+
 // Reads the popup a click opened, from inside its exec() loop, and acts on
 // it with real clicks. Records what it saw; closes the menu when `act` does
-// not pick an item.
+// not pick an item. `sub` is for a test that goes on into a submenu.
 struct MenuProbe {
     bool opened{false};
     QStringList actions;
     QWindow* transientParent{nullptr};
     bool transientIsTopLevel{false};
     QHash<QString, bool> enabled;
+    PopupWait wait;
+    PopupWait sub;
 
     void arm(std::function<void(QMenu*)> act = {})
     {
-        QTimer::singleShot(50, qApp, [this, act] {
-            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-            if (!menu) {
-                return;
-            }
+        wait.start({}, [this, act](QMenu* menu) {
             opened = true;
             for (QAction* action : menu->actions()) {
                 if (!action->isSeparator()) {
@@ -440,6 +491,12 @@ struct MenuProbe {
                 menu->close();
             }
         });
+    }
+
+    // After `menu` opened a submenu: acts on the submenu once it is shown.
+    void onSubmenu(QMenu* menu, std::function<void(QMenu*)> act)
+    {
+        sub.start([menu](QMenu* open) { return open != menu; }, std::move(act));
     }
 };
 
@@ -532,6 +589,21 @@ QRect globalRect(const QWidget* widget)
 {
     return QRect(widget->mapToGlobal(QPoint()), widget->size());
 }
+
+// Sets the workspace preview switch for one test function and puts the
+// previous state back afterwards. Declare it before the fixture, so the
+// window is gone before the switch changes back.
+struct PreviewSwitch {
+    bool previous;
+    explicit PreviewSwitch(bool on)
+        : previous(WorkspacePreview::enabled())
+    {
+        WorkspacePreview::setEnabledForTest(on);
+    }
+    ~PreviewSwitch() { WorkspacePreview::setEnabledForTest(previous); }
+    PreviewSwitch(const PreviewSwitch&) = delete;
+    PreviewSwitch& operator=(const PreviewSwitch&) = delete;
+};
 
 // JJ's workspace (from his report, never from his settings): the main panel
 // alone in the right strip, header Hidden, a vertical stack of 15 entries,
@@ -704,11 +776,8 @@ struct LiveFixture {
             return {QStringLiteral("(no Hidden menu)")};
         }
         QStringList listed;
-        QTimer::singleShot(50, qApp, [&listed, item] {
-            auto* open = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-            if (!open) {
-                return;
-            }
+        PopupWait wait;
+        wait.start({}, [&listed, item](QMenu* open) {
             for (QAction* action : open->actions()) {
                 listed.append((action->isEnabled() ? QString() : QStringLiteral("!")) + action->text());
             }
@@ -721,6 +790,45 @@ struct LiveFixture {
         menu->exec(window->mapToGlobal(QPoint(200, 200)));
         settle();
         return listed;
+    }
+
+    // Where Containers > Hidden sits: the text of the item above it and
+    // whether a separator follows it, as "<above> | <below>".
+    QString hiddenMenuPlace() const
+    {
+        QMenu* hidden = hiddenMenu();
+        if (!hidden) {
+            return QStringLiteral("(no Hidden menu)");
+        }
+        for (QMenu* menu : window->findChildren<QMenu*>()) {
+            const QList<QAction*> actions = menu->actions();
+            const int at = actions.indexOf(hidden->menuAction());
+            if (at < 0) {
+                continue;
+            }
+            const QString above = at > 0 ? actions[at - 1]->text() : QStringLiteral("(first)");
+            const QString below = at + 1 < actions.size()
+                ? (actions[at + 1]->isSeparator() ? QStringLiteral("(separator)") : actions[at + 1]->text())
+                : QStringLiteral("(last)");
+            return above + QStringLiteral(" | ") + below;
+        }
+        return QStringLiteral("(not in a menu)");
+    }
+
+    // Right-clicks a container's chrome and picks `item` from its menu.
+    bool pickFromContainerMenu(ContainerWidget* container, const QString& item)
+    {
+        bool picked = false;
+        PopupWait wait;
+        wait.start({}, [&picked, item](QMenu* open) {
+            picked = actionNamed(open, item) != nullptr;
+            clickItem(open, item);
+        });
+        const QPoint local(container->width() / 2, 8);
+        QContextMenuEvent event(QContextMenuEvent::Mouse, local, container->mapToGlobal(local));
+        QApplication::sendEvent(container, &event);
+        settle();
+        return picked;
     }
 
     // The Containers > Applets item for an applet.
@@ -961,16 +1069,11 @@ private slots:
         MenuProbe probe;
         bool submenuOpened = false;
         probe.arm([&](QMenu* menu) {
-            clickItem(menu, QStringLiteral("Move to Edge"));
-            QTimer::singleShot(400, qApp, [&, menu] {
-                auto* sub = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-                if (!sub || sub == menu) {
-                    menu->close();
-                    return;
-                }
+            probe.onSubmenu(menu, [&](QMenu* sub) {
                 submenuOpened = true;
                 clickItem(sub, QStringLiteral("Left"));
             });
+            clickItem(menu, QStringLiteral("Move to Edge"));
         });
         mouse.click(centreOf(f.groupHeader()->optionsButton()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
@@ -1248,8 +1351,8 @@ private slots:
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
         settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!f.shellHolding(popId).isEmpty(), kMenuWaitMs);
         const QString shell = f.shellHolding(popId);
-        QVERIFY(!shell.isEmpty());
         ContainerWidget* shellWidget = f.manager->container(shell);
         QVERIFY(shellWidget);
         WorkspaceGroupHeader* shellHeader = shellWidget->workspaceHeader();
@@ -1259,16 +1362,11 @@ private slots:
         MenuProbe probe;
         bool submenuOpened = false;
         probe.arm([&](QMenu* menu) {
-            clickItem(menu, QStringLiteral("Move to Edge"));
-            QTimer::singleShot(400, qApp, [&, menu] {
-                auto* sub = qobject_cast<QMenu*>(QApplication::activePopupWidget());
-                if (!sub || sub == menu) {
-                    menu->close();
-                    return;
-                }
+            probe.onSubmenu(menu, [&](QMenu* sub) {
                 submenuOpened = true;
                 clickItem(sub, QStringLiteral("Bottom"));
             });
+            clickItem(menu, QStringLiteral("Move to Edge"));
         });
         shellMouse.click(centreOf(shellHeader->optionsButton()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
@@ -1609,6 +1707,244 @@ private slots:
                               QStringLiteral("Bar 2 (Canvas)")}));
         QVERIFY(f.entry(QStringLiteral("canvas"), leaves[1]).visible);
         QVERIFY(canvasWidget->isVisible());
+    }
+
+    // Containers > Hidden is in both looks, last in the containers group,
+    // just above the separator before the Applets section.
+    void hiddenMenuSitsInTheSamePlaceInBothLooks_data()
+    {
+        QTest::addColumn<bool>("preview");
+        QTest::addColumn<QString>("place");
+        QTest::newRow("preview off") << false << QStringLiteral("&Reset Default Layout | (separator)");
+        QTest::newRow("preview on") << true << QStringLiteral("Manage Workspace &Profiles… | (separator)");
+    }
+    void hiddenMenuSitsInTheSamePlaceInBothLooks()
+    {
+        QFETCH(bool, preview);
+        QFETCH(QString, place);
+        PreviewSwitch look(preview);
+        LiveFixture f;
+        QVERIFY(f.build());
+        QCOMPARE(f.hiddenMenuPlace(), place);
+        QCOMPARE(f.hiddenMenu()->title(), QStringLiteral("&Hidden"));
+    }
+
+    // Preview off: "Hide container (retain placement)" hides a container,
+    // Containers > Hidden lists it, and picking it shows it again where it
+    // was. Then the empty state.
+    void previewOffHiddenBringsBackAHiddenContainer()
+    {
+        PreviewSwitch look(false);
+        LiveFixture f;
+        QVERIFY(f.build());
+        const QRect placed(40, 60, 320, 220);
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument overlay;
+            overlay.id = QStringLiteral("overlay");
+            overlay.name = QStringLiteral("Overlay Meters");
+            overlay.layout = ContentLayout::VerticalStack;
+            overlay.dockMode = DockMode::OverlayDocked;
+            overlay.geometry = placed;
+            ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+            entry.context["sliceId"] = 0;
+            overlay.contents.append(entry);
+            d.containers.append(overlay);
+        }));
+        ContainerWidget* overlay = f.manager->container(QStringLiteral("overlay"));
+        QVERIFY(overlay && overlay->isVisible());
+        const QRect before = overlay->geometry();
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("Meter Bars")});
+
+        QVERIFY(f.pickFromContainerMenu(overlay, QStringLiteral("Hide container (retain placement)")));
+        QVERIFY(!f.document(QStringLiteral("overlay"))->visible);
+        QVERIFY(!overlay->isVisible());
+
+        const QString label = QStringLiteral("Overlay Meters");
+        QCOMPARE(f.openHidden(label), (QStringList{QStringLiteral("Meter Bars"), label}));
+        const ContainerDocument* shown = f.document(QStringLiteral("overlay"));
+        QVERIFY(shown->visible);
+        QCOMPARE(shown->dockMode, DockMode::OverlayDocked);
+        QCOMPARE(shown->geometry, placed);
+        overlay = f.manager->container(QStringLiteral("overlay"));
+        QVERIFY(overlay && overlay->isVisible());
+        QCOMPARE(overlay->geometry(), before);
+
+        // The main panel, the same way: back in its splitter at its width.
+        ContainerWidget* main = f.mainContainer();
+        QVERIFY(main && main->isVisible());
+        const int width = main->width();
+        QVERIFY(f.pickFromContainerMenu(main, QStringLiteral("Hide container (retain placement)")));
+        QVERIFY(!f.document(f.mainId)->visible);
+        QVERIFY(!main->isVisible());
+        QCOMPARE(f.openHidden(QStringLiteral("Main Panel")),
+                 (QStringList{QStringLiteral("Main Panel"), QStringLiteral("Meter Bars")}));
+        QVERIFY(f.document(f.mainId)->visible);
+        QCOMPARE(f.document(f.mainId)->dockMode, DockMode::PanelDocked);
+        QVERIFY(f.mainContainer()->isVisible());
+        QCOMPARE(f.mainContainer()->width(), width);
+
+        QCOMPARE(f.openHidden(QStringLiteral("Meter Bars")), QStringList{QStringLiteral("Meter Bars")});
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("!Nothing hidden")});
+    }
+
+    // Preview off: a floating container closed by its window comes back
+    // floating, at its geometry.
+    void previewOffHiddenBringsBackAClosedFloatingContainer()
+    {
+        PreviewSwitch look(false);
+        LiveFixture f;
+        QVERIFY(f.build());
+        const QString id = QStringLiteral("meter-bars");
+        QCOMPARE(f.openHidden(QStringLiteral("Meter Bars")), QStringList{QStringLiteral("Meter Bars")});
+        ContainerWidget* bars = f.manager->container(id);
+        QVERIFY(bars && bars->isFloating());
+        QWidget* form = bars->window();
+        QVERIFY(form != f.window.get() && form->isVisible());
+        const QRect frame = form->geometry();
+        const QRect saved = f.document(id)->geometry;
+
+        // The window's close button: the form asks the workspace to hide it.
+        form->close();
+        settle();
+        QVERIFY(!f.document(id)->visible);
+        QVERIFY(!f.manager->container(id)->window()->isVisible());
+
+        QCOMPARE(f.openHidden(QStringLiteral("Meter Bars")), QStringList{QStringLiteral("Meter Bars")});
+        const ContainerDocument* shown = f.document(id);
+        QVERIFY(shown->visible);
+        QCOMPARE(shown->dockMode, DockMode::Floating);
+        QCOMPARE(shown->geometry, saved);
+        bars = f.manager->container(id);
+        QVERIFY(bars && bars->isFloating());
+        QVERIFY(bars->window() != f.window.get() && bars->window()->isVisible());
+        QCOMPARE(bars->window()->geometry(), frame);
+        QCOMPARE(f.openHidden(), QStringList{QStringLiteral("!Nothing hidden")});
+    }
+
+    // Preview off: an applet hidden from Containers > Applets is listed too,
+    // as in the preview, and comes back in its place.
+    void previewOffHiddenListsAHiddenApplet()
+    {
+        PreviewSwitch look(false);
+        LiveFixture f;
+        QVERIFY(f.build());
+        QAction* rxApplet = f.appletAction(QStringLiteral("RX"));
+        QVERIFY(rxApplet && rxApplet->isChecked());
+        rxApplet->trigger();
+        settle();
+        QVERIFY(!f.entry(f.mainId, f.rxEntryId).visible);
+        const QString label = QStringLiteral("RX (Main Panel)");
+        QCOMPARE(f.openHidden(label), (QStringList{label, QStringLiteral("Meter Bars")}));
+        QVERIFY(f.entry(f.mainId, f.rxEntryId).visible);
+        QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
+        QVERIFY(rxApplet->isChecked());
+    }
+
+    // A duplicate always appears: visible, floating, beside the original
+    // (its floating geometry, or where it sits on screen when docked) and
+    // offset so it does not cover it, and on screen. The original is
+    // unchanged. Both looks; the manager path and Container Settings.
+    void duplicateIsShownBesideTheOriginal_data()
+    {
+        QTest::addColumn<bool>("preview");
+        QTest::addColumn<bool>("fromDialog");
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<bool>("visible");
+        const int floating = int(DockMode::Floating);
+        const int overlay = int(DockMode::OverlayDocked);
+        for (const bool preview : {false, true}) {
+            const char* look = preview ? "preview on" : "preview off";
+            for (const bool dialog : {false, true}) {
+                const char* path = dialog ? "Container Settings" : "manager";
+                QTest::addRow("%s, %s: hidden floating", look, path) << preview << dialog << floating << false;
+                QTest::addRow("%s, %s: visible floating", look, path) << preview << dialog << floating << true;
+                QTest::addRow("%s, %s: hidden docked", look, path) << preview << dialog << overlay << false;
+            }
+        }
+    }
+    void duplicateIsShownBesideTheOriginal()
+    {
+        QFETCH(bool, preview);
+        QFETCH(bool, fromDialog);
+        QFETCH(int, mode);
+        QFETCH(bool, visible);
+        constexpr int kOffset = 24;   // ContainerManager::kDuplicateOffsetPx
+        PreviewSwitch look(preview);
+        LiveFixture f;
+        QVERIFY(f.build());
+        const QString id = QStringLiteral("solo");
+        const QRect placed = DockMode(mode) == DockMode::Floating ? QRect(100, 100, 300, 200) : QRect(40, 60, 320, 220);
+        QVERIFY(f.edit([&](WorkspaceDocument& d) {
+            ContainerDocument solo;
+            solo.id = id;
+            solo.name = QStringLiteral("Solo");
+            solo.layout = ContentLayout::VerticalStack;
+            solo.dockMode = DockMode(mode);
+            solo.visible = visible;
+            solo.geometry = placed;
+            ContentEntry entry = f.registry->makeEntry(QStringLiteral("meter.customBar"));
+            entry.context["sliceId"] = 0;
+            solo.contents.append(entry);
+            d.containers.append(solo);
+        }));
+        ContainerWidget* original = f.manager->container(id);
+        QVERIFY(original);
+        const QRect originalOnScreen = DockMode(mode) == DockMode::Floating
+            ? f.document(id)->geometry
+            : QRect(original->mapToGlobal(QPoint(0, 0)), original->size());
+        const ContainerDocument before = *f.document(id);
+        QSet<QString> ids;
+        for (const auto& d : f.store->snapshot().containers) {
+            ids.insert(d.id);
+        }
+
+        if (fromDialog) {
+            auto dialog = std::make_unique<ContainerSettingsDialog>(original, f.window.get(), f.manager);
+            QPushButton* duplicate = nullptr;
+            QPushButton* apply = nullptr;
+            for (QPushButton* button : dialog->findChildren<QPushButton*>()) {
+                if (button->text() == QStringLiteral("Duplicate")) {
+                    duplicate = button;
+                } else if (button->text() == QStringLiteral("Apply")) {
+                    apply = button;
+                }
+            }
+            QVERIFY(duplicate && apply);
+            duplicate->click();
+            apply->click();
+            dialog.reset();
+        } else {
+            QVERIFY(f.manager->duplicateContainer(id));
+        }
+        settle();
+
+        QCOMPARE(*f.document(id), before);
+        QString copyId;
+        for (const auto& d : f.store->snapshot().containers) {
+            if (!ids.contains(d.id)) {
+                QVERIFY2(copyId.isEmpty(), "more than one new container");
+                copyId = d.id;
+            }
+        }
+        QVERIFY(!copyId.isEmpty());
+        const ContainerDocument* copy = f.document(copyId);
+        QVERIFY(copy->visible);
+        QVERIFY(copy->config.value("enabled").toBool(true));
+        QCOMPARE(copy->dockMode, DockMode::Floating);
+        ContainerWidget* widget = f.manager->container(copyId);
+        QVERIFY(widget && widget->isFloating());
+        QWidget* form = widget->window();
+        QVERIFY(form != f.window.get() && form->isVisible());
+        bool onScreen = false;
+        for (QScreen* screen : QGuiApplication::screens()) {
+            onScreen = onScreen || screen->availableGeometry().contains(form->geometry());
+        }
+        QVERIFY2(onScreen, qPrintable(describeRect(form->geometry())));
+        QVERIFY(form->geometry().topLeft() != originalOnScreen.topLeft());
+        if (DockMode(mode) == DockMode::Floating) {
+            QCOMPARE(copy->geometry, placed.translated(kOffset, kOffset));
+            QCOMPARE(form->geometry(), placed.translated(kOffset, kOffset));
+        }
     }
 
     // JJ on his Mac after 391a09306: the rail "closes when i try to move

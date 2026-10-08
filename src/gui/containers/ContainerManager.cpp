@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - A duplicated container is always shown, floating, next
+//                 to its original, in both looks (showDuplicate). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: hidden containers and entries are
 //                 listed for Containers > Hidden and shown again where they
 //                 were; a container whose entries are all hidden leaves the
@@ -1231,6 +1234,7 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
             } }
             auto copy=source; copy.id=QUuid::createUuid().toString(QUuid::WithoutBraces); copy.dockMode=DockMode::Floating;
             for (auto& entry : copy.contents) { entry.id=QUuid::createUuid().toString(QUuid::WithoutBraces); entry.returnLocation.reset(); }
+            showDuplicate(copy, source);
             document.containers.append(copy);
             if(commitWorkspace(document,document.revision).status!=CommitStatus::Saved) { return nullptr; }
             return container(copy.id);
@@ -1265,6 +1269,47 @@ ContainerWidget* ContainerManager::duplicateContainer(const QString& sourceId)
 
     qCDebug(lcContainer) << "Duplicated container:" << sourceId << "->" << dup->id();
     return dup;
+}
+
+void ContainerManager::showDuplicate(ContainerDocument& copy, const ContainerDocument& original) const
+{
+    // NereusSDR differs from Thetis on purpose here. Thetis's duplicate
+    // (setup.cs:35197-35225 through MeterManager.ContainerToString /
+    // ContainerFromString, MeterManager.cs:6147, 6217 [v2.10.3.15]) keeps
+    // the original's state, so a copy of a hidden or docked container
+    // arrives hidden or under the original, and the command looks like it
+    // did nothing. Ours always shows the copy, floating, beside the
+    // original.
+    copy.visible = true;
+    copy.config["enabled"] = true;
+    copy.config.remove(QStringLiteral("hiddenByMacro"));
+    if (!copy.contents.isEmpty()
+        && std::none_of(copy.contents.cbegin(), copy.contents.cend(),
+                        [](const ContentEntry& entry) { return entry.visible; })) {
+        // Workspace preview: a container whose widgets are all hidden
+        // leaves the screen (effectiveVisible), so the copy shows them.
+        for (auto& entry : copy.contents) {
+            entry.visible = true;
+        }
+    }
+    QRect anchor;
+    if (original.dockMode == DockMode::Floating) {
+        anchor = original.geometry;
+    } else if (ContainerWidget* c = container(original.id);
+               c && c->width() >= ContainerWidget::kMinContainerWidth
+               && c->height() >= ContainerWidget::kMinContainerHeight) {
+        // Docked: the document holds dock-local geometry, so the anchor is
+        // where the original is (or was last) on screen.
+        anchor = QRect(c->mapToGlobal(QPoint(0, 0)), c->size());
+    }
+    if (!anchor.isValid()) {
+        constexpr QSize kFallback(360, 300);
+        const QSize size = original.geometry.isValid() ? original.geometry.size() : kFallback;
+        const QRect window = m_dockParent ? m_dockParent->window()->geometry() : QRect(QPoint(100, 100), size);
+        anchor = QRect(window.center() - QPoint(size.width() / 2, size.height() / 2), size);
+    }
+    copy.dockMode = DockMode::Floating;
+    copy.geometry = anchor.translated(kDuplicateOffsetPx, kDuplicateOffsetPx);
 }
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)

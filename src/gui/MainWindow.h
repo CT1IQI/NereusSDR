@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Containers > Hidden in both looks. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: Containers > Hidden lists every
 //                 hidden container and widget and shows one again where it
 //                 was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -1719,7 +1721,7 @@ private:
     // or manage already-created containers from the menu bar.
     QMenu* m_editContainerMenu{nullptr};
     void rebuildEditContainerSubmenu();
-    // Workspace preview: Containers > Hidden, rebuilt on every workspace
+    // Containers > Hidden (both looks), rebuilt on every workspace
     // commit.
     QMenu* m_hiddenMenu{nullptr};
     void rebuildHiddenSubmenu();

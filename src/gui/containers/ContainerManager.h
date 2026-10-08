@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - A duplicated container is always shown, floating, next
+//                 to its original (showDuplicate), in both looks. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Containers > Hidden reads hiddenItems() in both looks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: hidden containers and entries are
 //                 listed for Containers > Hidden and shown again where they
 //                 were; a container whose entries are all hidden leaves the
@@ -192,6 +197,16 @@ public:
     // From Thetis MeterManager.cs duplicate-container path.
     ContainerWidget* duplicateContainer(const QString& id);
 
+    // How far a duplicate sits from its original, down and to the right,
+    // so it does not cover it exactly. NereusSDR-original value.
+    static constexpr int kDuplicateOffsetPx = 24;
+    // Makes `copy`, a duplicate of `original`, a shown floating container
+    // (visible, enabled, at least one widget showing) next to the
+    // original's floating geometry, or its on-screen rect when docked,
+    // offset by kDuplicateOffsetPx. Reconcile keeps it on screen. Used by
+    // duplicateContainer and by Container Settings > Duplicate.
+    void showDuplicate(ContainerDocument& copy, const ContainerDocument& original) const;
+
     // --- Dock mode transitions ---
     void floatContainer(const QString& id);
     void dockContainer(const QString& id);
@@ -230,7 +245,7 @@ public:
     // --- Visibility ---
     void setContainerVisible(const QString& id, bool visible);
 
-    // --- Workspace preview: Containers > Hidden ---
+    // --- Containers > Hidden (both looks) ---
     // One hidden thing: a container (entryId empty) or an entry. `label`
     // is the container's name, or "Entry (Container)".
     struct HiddenItem {

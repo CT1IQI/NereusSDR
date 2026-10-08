@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Containers > Hidden in both looks, so a container hidden
+//                 with the workspace preview off can come back. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: Containers > Hidden lists every
 //                 hidden container and widget and shows one again where it
 //                 was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -11441,8 +11444,11 @@ void MainWindow::buildMenuBar()
         QAction* profilesAction = containersMenu->addAction(QStringLiteral("Manage Workspace &Profiles\u2026"));
         profilesAction->setObjectName(QStringLiteral("containersManageProfiles"));
         connect(profilesAction, &QAction::triggered, this, &MainWindow::showWorkspaceProfilesDialog);
-        // Everything the header hide buttons (or Hide container, or a
-        // closed floating window) took off the screen, one click from
+    }
+    if (m_containerManager) {
+        // Both looks, last in this group: everything the header hide
+        // buttons (or Hide container, a closed floating window, or an
+        // applet unticked below) took off the screen, one click from
         // coming back where it was.
         m_hiddenMenu = containersMenu->addMenu(QStringLiteral("&Hidden"));
         m_hiddenMenu->setObjectName(QStringLiteral("containersHidden"));
