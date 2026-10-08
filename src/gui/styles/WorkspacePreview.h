@@ -23,6 +23,10 @@
 //   2026-10-08 - passInputThrough(): the preview's overlays let clicks
 //                 through when they are native views, by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - installLiveTheming(): one application-wide pass that
+//                 themes every widget when it is shown, so no window,
+//                 page, menu or popup needs a call site. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -56,6 +60,17 @@ void themeSubtree(QWidget* root);
 // Installs a filter that runs themeSubtree(dialog) each time the dialog
 // is shown. Does nothing when the switch is off.
 void themeOnShow(QWidget* dialog);
+
+// Installs the live pass on the application: every widget gets the
+// scoped pass of themeSubtree() (translation and component treatment,
+// the same skip list and kSkipProperty) when it is shown, and again,
+// once, when a shown widget sets a new stylesheet. A window (a dialog,
+// menu, popup, tooltip or toast) is its own surface: a skipped widget
+// keeps the pass out of its own window only, not out of a menu or popup
+// it opens. A widget whose stylesheet has not changed since its last
+// pass is not translated again. Installs once; does nothing when the
+// switch is off. applyWorkspacePalette() calls it.
+void installLiveTheming(QApplication& app);
 
 // The workspace look of one stylesheet: QssTranslator (with the
 // context rule for #203040) followed by the component treatment

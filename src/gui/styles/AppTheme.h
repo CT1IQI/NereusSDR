@@ -29,7 +29,9 @@
 #include <QStringLiteral>
 
 #include "../StyleConstants.h"
+#include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
+#include "WorkspacePreview.h"
 
 namespace NereusSDR {
 
@@ -148,7 +150,8 @@ inline void applyAppBaselineQss(QApplication& app)
 // roles and baseline rules as applyDarkPalette + applyAppBaselineQss,
 // filled from the built-in Glass and Depth palette. main.cpp and the
 // visual preview tool call it after the two functions above when the
-// switch is on; with the switch off nothing calls it.
+// switch is on; with the switch off nothing calls it. It also installs
+// the live scoped pass (WorkspacePreview::installLiveTheming).
 inline void applyWorkspacePalette(QApplication& app)
 {
     const auto& wp = Workspace::WorkspacePalette::glassAndDepth();
@@ -225,7 +228,12 @@ inline void applyWorkspacePalette(QApplication& app)
         "  image: url(:/icons/spin-down.svg); width: 14px; height: 14px;"
         "}"
     ).arg(r("text"), r("button"), r("border"), r("title-text"), r("text-inactive"),
-          r("selected-top"), r("selected-text")));
+          r("selected-top"), r("selected-text"))
+       // Grid lines and header sections (Longpath tableStyle colours).
+       + Workspace::Components::tableRules());
+
+    // Every window, page, menu and popup gets the scoped pass when shown.
+    WorkspacePreview::installLiveTheming(app);
 }
 
 } // namespace NereusSDR
