@@ -1939,7 +1939,7 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
         })) {
         return false;
     }
-    seeded.needleHosts[SceneProfile::Dx] = {QStringLiteral("preview-signal-a")};
+    seeded.needleHosts[SceneProfile::Dx] = {QStringLiteral("preview-signal-a"), QStringLiteral("preview-signal-b")};
     seeded.description[SceneProfile::Dx] = QStringLiteral(
         "Main Panel right; Frequency A and Frequency B (Longpath, source chips RX A / RX B) "
         "left; Signal A and Signal B (Longpath needles) top; every header Always");
@@ -1990,6 +1990,58 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
     return true;
 }
 
+// The peak a fed RX needle holds above the slice's level (slice A's -68
+// over -73 dBm, as the Station scenes pose it).
+constexpr double kFedPeakAboveDb = 5.0;
+
+// Feeds every Longpath needle and bar under `root` bound to RX: Signal Peak
+// the reading MeterPoller would send for its slice: the slice's posed
+// signal level, after a peak kFedPeakAboveDb above it. Display-only: the
+// readingUpdated signal the instruments listen to, no radio or Core.
+void feedSliceInstruments(SceneContext& ctx, QWidget* root)
+{
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (poller == nullptr || root == nullptr) {
+        return;
+    }
+    QList<QWidget*> instruments;
+    for (NeedleInstrument* n : root->findChildren<NeedleInstrument*>()) {
+        instruments.append(n);
+    }
+    for (BarInstrument* b : root->findChildren<BarInstrument*>()) {
+        instruments.append(b);
+    }
+    for (QWidget* w : instruments) {
+        if (!w->property("longpathPrimaryBinding").isValid()
+            || w->property("longpathPrimaryBinding").toInt() != MeterBinding::SignalPeak) {
+            continue;
+        }
+        const QJsonObject context = w->property("containerSourceContext").toJsonObject();
+        // The host resolves rxSource (1-based) to sliceId (0-based).
+        const int sliceId = context.contains(QStringLiteral("sliceId"))
+                                ? context.value(QStringLiteral("sliceId")).toInt()
+                                : context.value(QStringLiteral("rxSource")).toInt() - 1;
+        SliceModel* slice = sliceId >= 0 ? ctx.model->sliceById(sliceId) : nullptr;
+        if (slice == nullptr) {
+            continue;
+        }
+        const int rx = sliceId + 1;
+        const double level = slice->signalStrengthDbm();
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, level + kFedPeakAboveDb);
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, level);
+        const QString entry = w->property(kRegionNameProperty).toString().isEmpty()
+                                  ? w->property("containerEntryId").toString()
+                                  : w->property(kRegionNameProperty).toString();
+        ctx.fedReadings.append(QJsonObject{
+            {QStringLiteral("instrument"), QString::fromLatin1(w->metaObject()->className())},
+            {QStringLiteral("entry"), entry},
+            {QStringLiteral("slice"), QString(QChar('A' + rx - 1))},
+            {QStringLiteral("binding"), QStringLiteral("RX: Signal Peak")},
+            {QStringLiteral("values_dbm"), QJsonArray{level + kFedPeakAboveDb, level}},
+            {QStringLiteral("seam"), QStringLiteral("MeterPoller::readingUpdated (display-only)")}});
+    }
+}
+
 void poseProfile(SceneContext& ctx, const SeededProfiles& seeded, SceneProfile p)
 {
     auto* manager = ctx.window->findChild<ContainerManager*>();
@@ -1999,13 +2051,9 @@ void poseProfile(SceneContext& ctx, const SeededProfiles& seeded, SceneProfile p
         if (host == nullptr || poller == nullptr) {
             continue;
         }
-        for (NeedleInstrument* needle : host->findChildren<NeedleInstrument*>()) {
-            const QJsonObject context = needle->property("containerSourceContext").toJsonObject();
-            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalPeakDbm);
-            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kSheetSignalDbm);
-            ctx.notes.append(QStringLiteral("%1 Longpath needle (slice A): readingUpdated SignalPeak "
-                                            "-68 then -73 dBm, as MeterPoller sends for slice A").arg(id));
-        }
+        feedSliceInstruments(ctx, host);
+        ctx.notes.append(QStringLiteral("%1 Longpath needles: readingUpdated RX: Signal Peak for each "
+                                        "needle's slice, as MeterPoller sends (see fed_readings)").arg(id));
     }
     for (const QString& id : seeded.filterHosts.value(p)) {
         ContainerContentHost* host = manager->contentHost(id);
@@ -2018,11 +2066,6 @@ void poseProfile(SceneContext& ctx, const SeededProfiles& seeded, SceneProfile p
             }
             ctx.notes.append(QStringLiteral("%1 Longpath filter pane: one trace refresh from the fed pan").arg(id));
         }
-    }
-    if (p == SceneProfile::Dx) {
-        ctx.notes.append(QStringLiteral(
-            "Signal B needle: offline. MeterPoller polls RX only for contexts with a Thetis "
-            "MeterWidget, and slice B has none in this profile; no reading is faked"));
     }
     if (p == SceneProfile::Ssb) {
         ctx.notes.append(QStringLiteral("Station Longpath bar (TX: SWR): no reading in receive, shows its dash"));
@@ -2506,15 +2549,19 @@ void sceneCleanSpectrum(SceneContext& ctx)
         if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
             c.failure = QStringLiteral("could not move the Instruments container");
         }
+    }, [id](SceneContext& c) {
+        // MeterPoller polls Longpath instruments on their own; with no
+        // radio the needle gets slice A's reading through the poller's
+        // signal, as it would live.
+        auto* manager = c.window->findChild<ContainerManager*>();
+        feedSliceInstruments(c, manager->contentHost(id));
+        pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
     ctx.notes.append(QStringLiteral("Main Panel hidden (visible false); Instruments: Place Free, Header Reveal, "
                                     "pointer away"));
-    ctx.notes.append(QStringLiteral(
-        "Longpath needle (slice A): offline. MeterPoller polls RX only for contexts with a Thetis "
-        "MeterWidget and none is shown; no reading is faked"));
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("clean-spectrum"));
     annotateSlices(ctx);
@@ -2613,6 +2660,13 @@ void poseLongpathTx(SceneContext& ctx, const QStringList& hostIds)
             const int binding = w->property("longpathPrimaryBinding").toInt();
             const QJsonObject context = w->property("containerSourceContext").toJsonObject();
             emit poller->readingUpdated(context, binding, values.value(binding));
+            ctx.fedReadings.append(QJsonObject{
+                {QStringLiteral("instrument"), QString::fromLatin1(w->metaObject()->className())},
+                {QStringLiteral("entry"), id},
+                {QStringLiteral("context"), QStringLiteral("TX (every context)")},
+                {QStringLiteral("binding"), binding},
+                {QStringLiteral("values"), QJsonArray{values.value(binding)}},
+                {QStringLiteral("seam"), QStringLiteral("MeterPoller::readingUpdated (display-only)")}});
             ctx.notes.append(QStringLiteral("%1 %2: readingUpdated binding %3 = %4, as MeterPoller "
                                             "publishes a transmit reading to every context")
                                  .arg(id, QString::fromLatin1(w->metaObject()->className()))
@@ -2905,13 +2959,17 @@ void sceneFourRxLook(SceneContext& ctx)
                     {{bar, {}, {}, rxSource(rx), bindingConfig(MeterBinding::SignalPeak)}}), rx));
             }
         });
+    }, [](SceneContext& c) {
+        auto* area = c.window->findChild<EdgeDockArea*>();
+        feedSliceInstruments(c, area != nullptr ? area->strip(DockEdge::Bottom) : nullptr);
+        pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
     ctx.notes.append(QStringLiteral(
-        "S-Meter A to D (Longpath bars, RX: Signal Peak): no reading is sent. MeterPoller polls RX "
-        "only for contexts with a Thetis MeterWidget; the bars show what the code does today"));
+        "S-Meter A to D (Longpath bars, RX: Signal Peak): each fed its slice's posed level through "
+        "MeterPoller::readingUpdated, as the poller sends with a radio (see fed_readings)"));
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("four-rx-look"));
     annotateSlices(ctx);

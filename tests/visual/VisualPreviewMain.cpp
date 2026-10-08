@@ -533,6 +533,9 @@ bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneC
                                                : QStringLiteral("retained-current-app")},
             {QStringLiteral("environment"), env},
         };
+        if (!ctx.fedReadings.isEmpty()) {
+            side.insert(QStringLiteral("fed_readings"), ctx.fedReadings);
+        }
         if (!ctx.proposedValues.isEmpty()) {
             side.insert(QStringLiteral("proposed_values"), ctx.proposedValues);
         }

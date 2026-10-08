@@ -14,6 +14,8 @@
 //   2026-10-07 - Proposed header scenes: per-scene workspace preview
 //                 switch, extra crops, provenance and proposed values.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - fedReadings for the sidecar. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -69,6 +71,8 @@ struct SceneContext {
     QJsonArray stoppedTimers;
     QJsonArray checks;
     QJsonArray notes;
+    // Readings fed to Longpath instruments through the display-only seam.
+    QJsonArray fedReadings;
     QString failure;     // non-empty: the scene could not run; exit non-zero
     // Called with the window or dialog right before it is grabbed (the
     // workspace look re-runs its scoped stylesheet pass here). Empty for
