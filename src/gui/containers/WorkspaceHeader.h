@@ -46,6 +46,9 @@
 //   2026-10-08 - The source chip is a click target: it opens the source
 //                 menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - The entry header carries a pop-out button left of its
+//                 options button. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -144,8 +147,9 @@ private:
 };
 
 // The header above one entry of a multi-content container. The owner
-// sets its drag property on the header itself; the options button
-// accepts its own presses.
+// sets its drag property on the header itself; the pop-out and options
+// buttons accept their own presses. The owner enables the pop-out button
+// exactly when the entry menu's Pop Out is enabled; it is never hidden.
 class WorkspaceEntryHeader final : public QWidget {
     Q_OBJECT
 public:
@@ -158,9 +162,11 @@ public:
     QString title() const;
     // Over content (not in a layout): a translucent plate behind it.
     void setOverlay(bool overlay);
+    QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
 
 signals:
+    void popOutClicked();
     void optionsClicked();
 
 protected:
@@ -170,6 +176,7 @@ private:
     QString m_entryId;
     QLabel* m_grip{nullptr};
     QLabel* m_title{nullptr};
+    QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
     bool m_overlay{false};
 };

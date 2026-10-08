@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: popOutEntry for the entry header's
+//                 pop-out button. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - Workspace preview only: entry headers in place of the
 //                 left gutter grips, Arrange and the container's header
 //                 mode by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -74,6 +77,7 @@ private:
     void scheduleStackProjection();
     void projectStackRows();
     void addEntryActions(QMenu& menu, const QString& entryId);
+    void popOutEntry(const QString& entryId);
     void updateEntryHeaders();
     int entryHeaderReserve() const;
     QString entryTitle(const ContentEntry& entry) const;

@@ -20,6 +20,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - passInputThrough(): the preview's overlays let clicks
+//                 through when they are native views, by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -65,5 +68,16 @@ QString lookQss(const QString& original, const QWidget* owner = nullptr);
 // lower case, with their counts.
 QHash<QString, int> unknownLiteralCounts();
 void resetUnknownLiteralCounts();
+
+// Makes a drawn-over overlay (an outline, a shadow, drop bands) let every
+// click through to what is under it, also when it is a native view. A
+// Metal leaf (SpectrumWidget, MeterWidget) promotes its siblings to native
+// views and they promote their ancestors, so on macOS the preview's
+// overlays are native child views. AppKit hit-tests native views and
+// passes a click through one only when its window carries
+// Qt::WindowTransparentForInput; WA_TransparentForMouseEvents alone acts
+// only inside Qt's own routing. Sets both, on the widget (carried into any
+// native window created or re-created later) and on an existing window.
+void passInputThrough(QWidget* widget);
 
 } // namespace NereusSDR::WorkspacePreview

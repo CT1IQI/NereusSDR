@@ -1,5 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original native free-placement presentation.
+// Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: entryPopOutRequested for the leaf
+//                 header's pop-out button. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QWidget>
 #include <QPointer>
@@ -22,6 +26,8 @@ signals:
     void geometryRestored(const QString&,const QJsonValue&,bool present);
     void geometryCommitted(const QString&,const QRectF&,const QRectF& original);
     void entryContextMenuRequested(const QString&,const QPoint& globalPosition);
+    // Workspace preview: the entry header's pop-out button.
+    void entryPopOutRequested(const QString&);
 protected:
     bool eventFilter(QObject*,QEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;

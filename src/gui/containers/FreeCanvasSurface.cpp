@@ -10,6 +10,10 @@
 //                 whose reveal changed, in place of a full presentation
 //                 sync on every mouse move. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: the leaf header's pop-out button
+//                 asks for the entry menu's Pop Out; it is enabled when the
+//                 projected document is unlocked. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -82,6 +86,7 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
                     QPushButton* button=header->optionsButton();
                     emit entryContextMenuRequested(id,button->mapToGlobal(QPoint(0,button->height())));
                 });
+                connect(header,&WorkspaceEntryHeader::popOutClicked,this,[this,id]{emit entryPopOutRequested(id);});
                 leaf.grip=header;leaf.corner=new WorkspaceCornerGrip(this);leaf.corner->hide();
             } else {leaf.grip=new CanvasHandle(false,this);leaf.corner=new CanvasHandle(true,this);}
             for(QWidget* handle:{leaf.grip.data(),leaf.corner.data()}) {
@@ -91,7 +96,11 @@ void FreeCanvasSurface::project(const ContainerDocument& document,const QHash<QS
             leaf.corner->setProperty("canvasResize",true);m_leaves.insert(entry.id,leaf);
         }
         auto& leaf=m_leaves[entry.id];leaf.view=view;leaf.order=entry.paintOrder;view->setProperty("freeCanvasEntryId",entry.id);
-        if(auto* header=qobject_cast<WorkspaceEntryHeader*>(leaf.grip.data())) {header->setTitle(entry.name.isEmpty()?entry.id:entry.name);}
+        if(auto* header=qobject_cast<WorkspaceEntryHeader*>(leaf.grip.data())) {
+            header->setTitle(entry.name.isEmpty()?entry.id:entry.name);
+            // The host projects locked when there is no arrange controller, as the entry menu is then empty.
+            header->popOutButton()->setEnabled(!document.locked);
+        }
         if(view->parentWidget()!=this) {view->setParent(this);}
         view->installEventFilter(this);
         const QSize hint=(view->property("freeCanvasHint").isValid()?view->property("freeCanvasHint").toSize():view->sizeHint()).expandedTo(QSize(320,80));

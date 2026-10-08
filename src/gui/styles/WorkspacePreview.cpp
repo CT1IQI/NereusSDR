@@ -23,6 +23,7 @@
 #include <QSet>
 #include <QVariant>
 #include <QWidget>
+#include <QWindow>
 
 #include <optional>
 
@@ -221,6 +222,18 @@ QHash<QString, int> unknownLiteralCounts()
 void resetUnknownLiteralCounts()
 {
     unknownCounts().clear();
+}
+
+void passInputThrough(QWidget* widget)
+{
+    if (widget == nullptr) {
+        return;
+    }
+    widget->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    widget->setWindowFlag(Qt::WindowTransparentForInput, true);
+    if (QWindow* window = widget->windowHandle()) {
+        window->setFlag(Qt::WindowTransparentForInput, true);
+    }
 }
 
 } // namespace NereusSDR::WorkspacePreview

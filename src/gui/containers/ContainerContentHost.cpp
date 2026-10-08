@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: the entry header's pop-out button
+//                 runs the entry menu's Pop Out and is enabled when that
+//                 item is. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-08 - Workspace preview only: the insertion line lets a drop
+//                 through as a native view (macOS). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: a free-canvas factory widget is not
 //                 reused as an explanation label (gated on the switch).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -86,6 +93,7 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         if(!result.ok) {qCWarning(lcFreeCanvas)<<result.error;m_canvas->project(m_document,[this]{QHash<QString,QPointer<QWidget>> views;for(const auto& row:m_rows) {views[row.entryId]=row.widget;}return views;}());}
     });
     connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
+    connect(m_canvas,&FreeCanvasSurface::entryPopOutRequested,this,&ContainerContentHost::popOutEntry);
     if (WorkspacePreview::enabled()) {
         // Workspace preview, explicit roles: the insertion line, the
         // applets banner button and Longpath's narrow scroll bar. The
@@ -94,6 +102,9 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         // pass after every reconcile.
         m_indicator->setStyleSheet(QStringLiteral("background:%1;")
                                        .arg(Workspace::role("accent", "#00b4d8")));
+        // The insertion line is a native view on macOS while a drag runs;
+        // the drop goes to the stack under it.
+        WorkspacePreview::passInputThrough(m_indicator);
         // Longpath's scroll bar is 10 px thick; the preview keeps the
         // thickness the platform style gives the legacy bar, so the
         // content area does not change width.
@@ -642,7 +653,20 @@ void ContainerContentHost::setArrangeController(ContainerArrangeController *cont
             if (grip) { grip->hide(); }
         }
     }
+    // Workspace preview: the entry pop-out buttons follow the controller.
+    updateEntryHeaders();
     scheduleStackProjection();
+}
+void ContainerContentHost::popOutEntry(const QString &entryId)
+{
+    // The entry menu's Pop Out, from the entry header's pop-out button.
+    if (!m_arrange || m_document.locked) {
+        return;
+    }
+    const ArrangeResult result = m_arrange->popOut(entryId);
+    if (!result.ok) {
+        qWarning() << result.error;
+    }
 }
 void ContainerContentHost::scheduleStackProjection()
 {
@@ -886,6 +910,8 @@ void ContainerContentHost::updateEntryHeaders()
             header->setProperty("entryGripId", row.entryId);
             header->installEventFilter(this);
             const QString id = row.entryId;
+            connect(header, &WorkspaceEntryHeader::popOutClicked, this,
+                    [this, id] { popOutEntry(id); });
             connect(header, &WorkspaceEntryHeader::optionsClicked, this, [this, id] {
                 auto *source = entryHeader(id);
                 if (!source) {
@@ -908,6 +934,8 @@ void ContainerContentHost::updateEntryHeaders()
             header->setTitle(entryTitle(m_document.contents[i]));
         }
         header->setCursor(m_document.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+        // Enabled exactly when the entry menu's Pop Out is.
+        header->popOutButton()->setEnabled(m_arrange && !m_document.locked);
         const bool inLayout = visible && reserve && !row.item;
         const int position = m_layout->indexOf(header);
         if (inLayout) {

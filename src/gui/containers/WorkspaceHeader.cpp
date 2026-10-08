@@ -36,6 +36,9 @@
 //   2026-10-08 - The source chip is a click target: it opens the source
 //                 menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - The entry header carries a pop-out button left of its
+//                 options button. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -365,6 +368,13 @@ WorkspaceEntryHeader::WorkspaceEntryHeader(const QString& entryId, QWidget* pare
     m_title->setStyleSheet(QStringLiteral("QLabel { color: %1; background: transparent; }")
                                .arg(Workspace::role("text-scale", Workspace::kTextScale)));
     row->addWidget(m_title, 1);
+
+    // The same action as the entry menu's Pop Out, one click away.
+    m_popOut = makeButton(QStringLiteral("↗"), kEntryButtonWidth, kEntryButtonHeight,
+                          tr("Pop out"), this);
+    m_popOut->setObjectName(QStringLiteral("workspaceEntryPopOut"));
+    connect(m_popOut, &QPushButton::clicked, this, &WorkspaceEntryHeader::popOutClicked);
+    row->addWidget(m_popOut);
 
     m_options = makeButton(QStringLiteral("⋯"), kEntryButtonWidth, kEntryButtonHeight,
                            tr("Entry options"), this);

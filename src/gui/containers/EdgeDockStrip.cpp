@@ -89,6 +89,9 @@
 //                 spectrum side, so it and its handle take exactly today's
 //                 Main Panel and splitter handle width (JJ's choice).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The drop overlay lets clicks through as a native view
+//                 (macOS), so Arrange answers input. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Review fixes: clear an edge thickness and reset
 //                 strip extents to the default split. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -99,6 +102,7 @@
 #include "EdgeDockStrip.h"
 
 #include "gui/styles/WorkspacePalette.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QApplication>
 #include <QPainter>
@@ -416,7 +420,9 @@ public:
         , m_area(area)
     {
         setObjectName(QStringLiteral("edgeDropOverlay"));
-        setAttribute(Qt::WA_TransparentForMouseEvents);
+        // Shown over the whole area for all of Arrange: as a native view
+        // (macOS) it took every click and drag in the workspace.
+        WorkspacePreview::passInputThrough(this);
         setAttribute(Qt::WA_NoSystemBackground);
         hide();
     }
