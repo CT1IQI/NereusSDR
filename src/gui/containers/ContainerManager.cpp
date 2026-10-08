@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview review fixes: profile strips drop
+//                 carried thickness and extents, stale edge drags end,
+//                 hidden-strip extents prune deleted ids, Move/Resize honour
+//                 capture suppression. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: geometry capture suppression for
 //                 workspace profile switches by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -284,7 +289,7 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
             return false;
         }
     }
-    if (m_store && !m_reconciling && m_storageError.isEmpty()
+    if (m_store && !m_reconciling && !m_geometryCaptureSuppressed && m_storageError.isEmpty()
         && (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
         if (qobject_cast<ContainerWidget*>(watched) || qobject_cast<FloatingContainer*>(watched)) {
             ContainerWidget* changed = qobject_cast<ContainerWidget*>(watched);
@@ -322,6 +327,19 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
     }
     m_registry->setSingletonPlacements(placements);
+    if (!m_edgeDragId.isEmpty()) {
+        // An edge drag ends with its container: gone, or moved out of the
+        // mode it was dragged in, the drag and its target bands stop.
+        const auto dragged = std::find_if(document.containers.cbegin(), document.containers.cend(),
+            [this](const ContainerDocument& value) { return value.id == m_edgeDragId; });
+        if (dragged == document.containers.cend() || dragged->dockMode != m_edgeDragMode) {
+            m_edgeDragId.clear();
+            if (m_edgeArea) {
+                m_edgeArea->clearDropPreview();
+                m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+            }
+        }
+    }
     QSet<QString> changed;
     for (const auto& d : document.containers) {
         if (!contentHost(d.id) || contentHost(d.id)->needsReconcile(d) || (container(d.id) && container(d.id)->dockMode()!=d.dockMode)) { changed.insert(d.id); }
@@ -405,6 +423,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             connect(c, &ContainerWidget::edgeDragStarted, this, [this, id = d.id] {
                 if (edgeMode()) {
                     m_edgeDragId = id;
+                    if (auto* dragged = container(id)) {
+                        m_edgeDragMode = dragged->dockMode();
+                    }
                     m_edgeArea->setTargetBandsVisible(true);
                 }
             });
@@ -633,6 +654,11 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
         const int thickness = document.arrangement.strips.value(edge).thickness;
         if (thickness > 0) {
             m_edgeArea->setThickness(edge, thickness);
+        } else if (!m_geometryCommit.isActive()) {
+            // A document with no thickness is the default rule, so another
+            // profile's dragged thickness is not carried in. A drag still
+            // waiting for its geometry commit is kept.
+            m_edgeArea->clearThickness(edge);
         }
     }
     // Migration: the right strip takes the Main Panel's saved width, plus
@@ -688,6 +714,10 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
         }
         if (!extents.isEmpty()) {
             m_edgeArea->strip(edge)->setExtents(extents);
+        } else if (!m_geometryCommit.isActive()) {
+            // No saved extents for these containers: the default split,
+            // not the previous arrangement's.
+            m_edgeArea->strip(edge)->resetExtents();
         }
     }
 }
@@ -745,6 +775,13 @@ void ContainerManager::captureArrangement(WorkspaceDocument& document) const
                     layout.extents.insert(c->id(), sizes[i]);
                 }
             }
+        }
+        // A hidden strip keeps its saved extents; ids of containers that
+        // no longer exist are dropped from them.
+        for (auto it = layout.extents.begin(); it != layout.extents.end();) {
+            const bool exists = std::any_of(document.containers.cbegin(), document.containers.cend(),
+                [&it](const ContainerDocument& value) { return value.id == it.key(); });
+            it = exists ? std::next(it) : layout.extents.erase(it);
         }
         if (layout.thickness > 0 || !layout.extents.isEmpty() || !layout.extensions.isEmpty()) {
             arrangement.strips.insert(edge, layout);

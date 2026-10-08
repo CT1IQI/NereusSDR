@@ -30,6 +30,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Review fixes: settled suppression lift, checked
+//                 restores, Stale reload, validated import. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -152,6 +155,9 @@ private:
     Result fail(Status status, const QString& error);
     bool captureLive(WorkspaceDocument& workspace, QJsonObject& screens, QString* error) const;
     Result applyLive(const WorkspaceProfile& target);
+    // Puts a previous arrangement back after a failed commit; a failure
+    // to do so is logged.
+    void restoreLive(const WorkspaceProfile& previous);
     WorkspaceDocument emptyFrom(const WorkspaceDocument& current) const;
     QString newId() const;
     QDateTime now() const;
@@ -164,6 +170,9 @@ private:
     bool m_loadedPresent = false;
     QString m_loadError;
     std::function<QDateTime()> m_clock;
+    // Identifies the latest apply, whose queued lift of the geometry
+    // capture suppression is the one that runs.
+    quint64 m_applyGeneration = 0;
 };
 
 } // namespace NereusSDR

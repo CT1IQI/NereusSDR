@@ -7,9 +7,16 @@
 //   2026-10-08 - Fix round 1: the remove cross beside the letter, the
 //                 dialog's pill badges and elided summaries. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Review fixes: strip thickness and extents are not carried
+//                 across profiles, the preview keeps its own workspace key,
+//                 a failed switch restores, a stale key reloads, import
+//                 validates entries, an edge drag ends with its container,
+//                 hidden strips drop deleted ids. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QHBoxLayout>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
@@ -20,7 +27,9 @@
 #include <memory>
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceProfiles.h"
@@ -43,8 +52,9 @@ void settle()
 }
 
 // The arrangement of a workspace, independent of revision and geometry
-// noise: id, mode, edge, header and visibility per container, plus the
-// strip thicknesses that are set.
+// noise: id, mode, edge, header and visibility per container, plus every
+// edge's strip thickness (0 is the edge default, and is listed too, so a
+// thickness carried in from another profile shows).
 QStringList arrangement(const WorkspaceDocument& doc)
 {
     QStringList out;
@@ -58,11 +68,8 @@ QStringList arrangement(const WorkspaceDocument& doc)
                    .arg(c.locked);
     }
     out.sort();
-    for (auto it = doc.arrangement.strips.cbegin(); it != doc.arrangement.strips.cend(); ++it) {
-        if (it.value().thickness == 0) {
-            continue;   // a strip at its default thickness: nothing set
-        }
-        out << QStringLiteral("strip %1 thickness=%2").arg(int(it.key())).arg(it.value().thickness);
+    for (DockEdge edge : {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom}) {
+        out << QStringLiteral("strip %1 thickness=%2").arg(int(edge)).arg(doc.arrangement.strips.value(edge).thickness);
     }
     return out;
 }
@@ -202,6 +209,228 @@ private slots:
         QCOMPARE(filterSpy.count(), 0);
     }
 
+    void stripSizesStayWithTheirProfile()
+    {
+        // Two left containers; one profile drags the strip and its split,
+        // the other has neither saved.
+        ProfilesFixture f;
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always)}));
+        EdgeDockStrip* left = f.area->strip(DockEdge::Left);
+        const int defaultThickness = f.area->thickness(DockEdge::Left);
+        QVERIFY(!f.area->hasThickness(DockEdge::Left));
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString wide = profiles.activeId();
+        const auto plainCopy = profiles.duplicate(wide, QStringLiteral("Plain"));
+        QVERIFY(plainCopy.ok());
+        // "Plain" saves no strip sizes at all.
+        WorkspaceProfilesState state = profiles.state();
+        for (auto& p : state.profiles) {
+            if (p.id == plainCopy.id) {
+                p.workspace.arrangement.strips.clear();
+            }
+        }
+        QVERIFY(profiles.commit(state, profiles.revision()).ok());
+
+        // Drag the left strip and its split in the active profile.
+        f.area->setThickness(DockEdge::Left, 400);
+        const QList<int> before = left->extents();
+        QCOMPARE(before.size(), 2);
+        const int along = before[0] + before[1];
+        left->setExtents({along / 4, along - along / 4});
+        settle();
+        const QList<int> dragged = left->extents();
+        QVERIFY(dragged != before);
+
+        QVERIFY(profiles.switchTo(plainCopy.id).ok());
+        settle();
+        QVERIFY(!f.area->hasThickness(DockEdge::Left));
+        QCOMPARE(f.area->thickness(DockEdge::Left), defaultThickness);
+        QVERIFY(left->extents() != dragged);
+        QVERIFY(qAbs(left->extents()[0] - left->extents()[1]) <= 1);
+
+        QVERIFY(profiles.switchTo(wide).ok());
+        settle();
+        QCOMPARE(f.area->thickness(DockEdge::Left), 400);
+        QCOMPARE(left->extents(), dragged);
+
+        // "Plain" kept its default: nothing from "Wide" was saved into it.
+        const WorkspaceDocument& plain = profiles.profile(plainCopy.id)->workspace;
+        QCOMPARE(plain.arrangement.strips.value(DockEdge::Left).thickness, 0);
+        const auto savedExtents = plain.arrangement.strips.value(DockEdge::Left).extents;
+        QVERIFY(savedExtents.value(QStringLiteral("one")) != dragged[0]);
+    }
+
+    void previewNeverWritesTheShippedWorkspace()
+    {
+        ProfilesFixture f;
+        QCOMPARE(f.store.workspaceKey(), QStringLiteral("ContainerWorkspacePreview"));
+        // A shipped workspace on disk, as a normal launch saved it.
+        WorkspaceDocument shipped;
+        shipped.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                              f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Always)};
+        shipped.mainContainerId = QStringLiteral("main");
+        shipped.revision = 7;
+        f.settings.setValue(QStringLiteral("ContainerWorkspace"),
+                            QString::fromUtf8(ContainerDocumentCodec::encode(shipped)));
+        QVERIFY(f.settings.save());
+        const QVariant shippedBytes = f.settings.value(QStringLiteral("ContainerWorkspace"));
+        QVERIFY(!f.settings.contains(QStringLiteral("ContainerWorkspacePreview")));
+
+        // The preview is seeded from it.
+        QVERIFY(f.store.load().ok);
+        QCOMPARE(f.store.snapshot(), shipped);
+        f.manager->reconcileWorkspace(f.store.snapshot());
+        settle();
+
+        // Preview operations: an Empty profile, then a container to the left.
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString first = profiles.activeId();
+        QVERIFY(profiles.createEmpty(QStringLiteral("Empty")).ok());
+        QVERIFY(profiles.switchTo(first).ok());
+        settle();
+        f.manager->moveContainerToEdge(QStringLiteral("main"), DockEdge::Left);
+        settle();
+        f.manager->saveState();
+
+        QVERIFY(f.settings.contains(QStringLiteral("ContainerWorkspacePreview")));
+        QCOMPARE(f.settings.value(QStringLiteral("ContainerWorkspace")), shippedBytes);
+        QVERIFY(!f.settings.contains(QStringLiteral("ContainerWorkspaceBackup")));
+        AppSettings reread(f.path);
+        reread.load();
+        QCOMPARE(reread.value(QStringLiteral("ContainerWorkspace")), shippedBytes);
+
+        // With the switch off the store is on the shipped key.
+        WorkspacePreview::setEnabledForTest(false);
+        const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(true); });
+        ContainerWorkspaceStore shippedStore(reread);
+        QCOMPARE(shippedStore.workspaceKey(), QStringLiteral("ContainerWorkspace"));
+        QCOMPARE(shippedStore.snapshot(), shipped);
+    }
+
+    void failedSwitchRestoresAndSettlesBeforeCapture()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QString first = profiles.activeId();
+        const auto second = profiles.createFromCurrent(QStringLiteral("Second"));
+        QVERIFY(second.ok());
+        QVERIFY(f.commitB());
+        const QStringList b = arrangement(f.store.snapshot());
+
+        // A good switch keeps capture suppressed until its queued lift.
+        QVERIFY(profiles.switchTo(first).ok());
+        QVERIFY(f.manager->geometryCaptureSuppressed());
+        settle();
+        QVERIFY(!f.manager->geometryCaptureSuppressed());
+        QVERIFY(profiles.switchTo(second.id).ok());
+        settle();
+        QCOMPARE(arrangement(f.store.snapshot()), b);
+
+        // Another writer moves the key: the switch applies, its commit is
+        // refused, and the arrangement that was live is put back.
+        WorkspaceProfiles other(f.settings, f.manager.get());
+        QVERIFY(other.load().ok());
+        QVERIFY(other.rename(first, QStringLiteral("Elsewhere")).ok());
+        const auto refused = profiles.switchTo(first);
+        QCOMPARE(refused.status, WorkspaceProfiles::Status::Stale);
+        settle();
+        QCOMPARE(arrangement(f.store.snapshot()), b);
+        QCOMPARE(profiles.activeId(), second.id);
+        QCOMPARE(profiles.name(first), QStringLiteral("Elsewhere"));
+    }
+
+    void importValidatesEveryEntry()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        WorkspaceProfiles profiles(f.settings, f.manager.get());
+        QVERIFY(profiles.load().ok());
+        const QByteArray good = profiles.exportProfile(profiles.activeId());
+        QJsonObject root = QJsonDocument::fromJson(good).object();
+        QJsonObject profile = root.value(QStringLiteral("profile")).toObject();
+        WorkspaceDocument workspace = ContainerDocumentCodec::decode(
+            QJsonDocument(profile.value(QStringLiteral("workspace")).toObject()).toJson(QJsonDocument::Compact)).document;
+        ContentEntry broken = f.registry.makeEntry(QStringLiteral("meter.mic"));
+        broken.config[QStringLiteral("legacyRecord")] = QStringLiteral("retained future or damaged record");
+        QVERIFY(!f.registry.validateEntry(broken).isEmpty());
+        workspace.containers.first().contents.append(broken);
+        profile.insert(QStringLiteral("workspace"),
+                       QJsonDocument::fromJson(ContainerDocumentCodec::encode(workspace)).object());
+        root.insert(QStringLiteral("profile"), profile);
+        const QByteArray bad = QJsonDocument(root).toJson();
+
+        const quint64 revision = profiles.revision();
+        const auto r = profiles.importProfile(bad);
+        QCOMPARE(r.status, WorkspaceProfiles::Status::Invalid);
+        QCOMPARE(profiles.ids().size(), 1);
+        QCOMPARE(profiles.revision(), revision);
+        QVERIFY(profiles.importProfile(good).ok());
+    }
+
+    void edgeDragEndsWithItsContainer()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commitA());
+        // The meters container is dragged, then removed by another commit.
+        ContainerWidget* meters = f.manager->container(QStringLiteral("meters"));
+        QVERIFY(meters);
+        emit meters->edgeDragStarted();
+        QVERIFY(f.area->targetBandsVisible());
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal)}));
+        QVERIFY(!f.area->targetBandsVisible());
+
+        // Dragged, then floated: the drag ends too.
+        QVERIFY(f.commitA());
+        meters = f.manager->container(QStringLiteral("meters"));
+        emit meters->edgeDragStarted();
+        QVERIFY(f.area->targetBandsVisible());
+        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal);
+        floating.dockMode = DockMode::Floating;
+        floating.geometry = QRect(100, 100, 300, 200);
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal), floating}));
+        QVERIFY(!f.area->targetBandsVisible());
+        // A late release from the old drag does nothing.
+        emit meters->edgeDragFinished(f.area->mapToGlobal(QPoint(2, 100)));
+        QCOMPARE(f.store.snapshot().containers.at(1).dockMode, DockMode::Floating);
+    }
+
+    void hiddenStripDropsDeletedIds()
+    {
+        ProfilesFixture f;
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always)}));
+        f.manager->saveState();
+        QVERIFY(f.store.snapshot().arrangement.strips.value(DockEdge::Left).extents.contains(QStringLiteral("two")));
+
+        // Hide the left strip's containers, then delete one of them.
+        ContainerDocument one = f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always);
+        one.visible = false;
+        ContainerDocument two = f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always);
+        two.visible = false;
+        WorkspaceDocument document = f.store.snapshot();
+        document.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always), one, two};
+        QVERIFY(f.manager->commitWorkspace(document, document.revision).status == CommitStatus::Saved);
+        settle();
+        QVERIFY(!f.area->strip(DockEdge::Left)->isVisible());
+        document = f.store.snapshot();
+        document.containers.removeLast();
+        QVERIFY(f.manager->commitWorkspace(document, document.revision).status == CommitStatus::Saved);
+        settle();
+        QVERIFY(f.store.snapshot().arrangement.strips.value(DockEdge::Left).extents.contains(QStringLiteral("two")));
+
+        f.manager->saveState();
+        const auto extents = f.store.snapshot().arrangement.strips.value(DockEdge::Left).extents;
+        QVERIFY(!extents.contains(QStringLiteral("two")));
+        QVERIFY(extents.contains(QStringLiteral("one")));
+    }
+
     void lastProfileCannotBeRemoved()
     {
         ProfilesFixture f;
@@ -335,10 +564,15 @@ private slots:
         WorkspaceProfiles other(f.settings, f.manager.get());
         QVERIFY(other.load().ok());
         QVERIFY(other.rename(other.activeId(), QStringLiteral("Other")).ok());
+        QSignalSpy changed(&profiles, &WorkspaceProfiles::profilesChanged);
         const auto refused = profiles.rename(profiles.activeId(), QStringLiteral("Mine"));
         QCOMPARE(refused.status, WorkspaceProfiles::Status::Stale);
-        QVERIFY(profiles.load().ok());
+        // Refused, not retried: the key is read once more and the rail and
+        // dialog are told, so the next action works without a reload.
+        QCOMPARE(changed.count(), 1);
         QCOMPARE(profiles.name(profiles.activeId()), QStringLiteral("Other"));
+        QVERIFY(profiles.rename(profiles.activeId(), QStringLiteral("Mine")).ok());
+        QCOMPARE(profiles.name(profiles.activeId()), QStringLiteral("Mine"));
 
         // An invalid state is refused before anything is written.
         WorkspaceProfilesState broken = profiles.state();

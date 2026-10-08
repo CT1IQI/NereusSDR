@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: legacy container adoption checks
+//                 the store's own key (ContainerWorkspacePreview with the
+//                 switch on). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: named workspace profiles, the
 //                 collapsing profile rail left of the title, Ctrl+1..9 and
 //                 Containers > Manage Workspace Profiles. J.J. Boyd
@@ -7371,7 +7375,10 @@ void MainWindow::buildUI()
     });
     // Adopt legacy state exactly once. Existing document placements, including
     // hidden/moved applets, are authoritative on every subsequent startup.
-    if (workspaceStore->loadError().isEmpty() && !AppSettings::instance().contains("ContainerWorkspace")) {
+    // The workspace preview keeps its own key, seeded from the shipped
+    // document; legacy state is adopted only when neither exists.
+    if (workspaceStore->loadError().isEmpty() && !AppSettings::instance().contains(workspaceStore->workspaceKey())
+        && !AppSettings::instance().contains("ContainerWorkspace")) {
         WorkspaceDocument workspace = workspaceStore->snapshot();
         if (workspace.containers.isEmpty()) {
             ContainerDocument main; main.id = QUuid::createUuid().toString(QUuid::WithoutBraces);

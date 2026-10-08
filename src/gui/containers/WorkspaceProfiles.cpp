@@ -7,12 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Review fixes: settled suppression lift, checked
+//                 restores, Stale reload, validated import. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceProfiles.h"
 
+#include "ContainerContentRegistry.h"
 #include "ContainerDocumentCodec.h"
 #include "ContainerManager.h"
 #include "ContainerWidget.h"
@@ -375,13 +379,29 @@ WorkspaceProfiles::Result WorkspaceProfiles::applyLive(const WorkspaceProfile& t
     for (int pass = 0; pass < kApplySettlePasses; ++pass) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
     }
-    m_manager->setGeometryCaptureSuppressed(false);
+    // Moves and resizes the passes posted are delivered before capture
+    // resumes: the lift is queued behind them. A later apply supersedes
+    // an earlier apply's lift.
+    const quint64 generation = ++m_applyGeneration;
+    QMetaObject::invokeMethod(this, [this, generation, manager = m_manager] {
+        if (manager && generation == m_applyGeneration) {
+            manager->setGeometryCaptureSuppressed(false);
+        }
+    }, Qt::QueuedConnection);
     if (result.status != CommitStatus::Saved) {
         // The store is unchanged; put the widgets back on it.
         m_manager->reconcileWorkspace(store->snapshot());
         return fail(Status::Invalid, QStringLiteral("Could not apply profile %1: %2").arg(target.name, result.error));
     }
     return {};
+}
+
+void WorkspaceProfiles::restoreLive(const WorkspaceProfile& previous)
+{
+    if (const Result restored = applyLive(previous); !restored.ok()) {
+        qCWarning(lcContainer) << "Workspace profiles: could not restore" << previous.name << ":"
+                               << restored.error;
+    }
 }
 
 WorkspaceDocument WorkspaceProfiles::emptyFrom(const WorkspaceDocument& current) const
@@ -414,8 +434,17 @@ WorkspaceProfiles::Result WorkspaceProfiles::commit(WorkspaceProfilesState next,
     const bool present = m_settings.contains(key);
     const QByteArray raw = m_settings.value(key).toString().toUtf8();
     if (present != m_loadedPresent || (present && raw != m_loadedRaw)) {
-        // Another writer changed the key since it was loaded.
-        return fail(Status::Stale, QStringLiteral("Workspace profiles changed; reload before editing"));
+        // Another writer changed the key since it was loaded. Nothing is
+        // retried: the key is read once more and the rail and dialog show
+        // what it holds, so the operator's next action works on it.
+        // load() itself emits profilesChanged (and activeChanged when it
+        // has to recreate the key).
+        const Result stale = fail(Status::Stale, QStringLiteral("Workspace profiles changed; reload before editing"));
+        const QString before = m_state.activeId;
+        if (load().ok() && present && m_state.activeId != before) {
+            emit activeChanged(m_state.activeId);
+        }
+        return stale;
     }
     const QString invalid = validate(next);
     if (!invalid.isEmpty()) {
@@ -470,7 +499,7 @@ WorkspaceProfiles::Result WorkspaceProfiles::switchTo(const QString& id)
     if (!result.ok()) {
         // Restore the arrangement that was live before the switch.
         if (active >= 0) {
-            applyLive(next.profiles.at(active));
+            restoreLive(next.profiles.at(active));
         }
         return result;
     }
@@ -533,7 +562,7 @@ WorkspaceProfiles::Result WorkspaceProfiles::createEmpty(const QString& name)
     Result result = commit(next, m_state.revision);
     if (!result.ok()) {
         if (active >= 0) {
-            applyLive(next.profiles.at(active));
+            restoreLive(next.profiles.at(active));
         }
         return result;
     }
@@ -645,7 +674,7 @@ WorkspaceProfiles::Result WorkspaceProfiles::remove(const QString& id)
     Result result = commit(next, m_state.revision);
     if (!result.ok()) {
         if (wasActive) {
-            applyLive(removed);
+            restoreLive(removed);
         }
         return result;
     }
@@ -708,6 +737,18 @@ WorkspaceProfiles::Result WorkspaceProfiles::importProfile(const QByteArray& byt
     QString error;
     if (!profileFromJson(root.value(QStringLiteral("profile")).toObject(), imported, &error)) {
         return fail(Status::Invalid, error);
+    }
+    // Every entry passes the same validation as a portable or settings
+    // import before anything is written.
+    ContainerContentRegistry fallback;
+    const ContainerContentRegistry* registry =
+        m_manager && m_manager->contentRegistry() ? m_manager->contentRegistry() : &fallback;
+    for (const ContainerDocument& container : imported.workspace.containers) {
+        for (const ContentEntry& entry : container.contents) {
+            if (const QString invalid = registry->validateEntry(entry); !invalid.isEmpty()) {
+                return fail(Status::Invalid, invalid);
+            }
+        }
     }
     // Import always creates a profile with a new id.
     imported.id = newId();

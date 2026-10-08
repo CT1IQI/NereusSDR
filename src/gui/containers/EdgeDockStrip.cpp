@@ -85,6 +85,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Review fixes: clear an edge thickness and reset
+//                 strip extents to the default split. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -293,6 +296,19 @@ void EdgeDockStrip::setExtents(const QList<int>& extents)
 {
     if (extents.size() == m_splitter->count()) {
         m_splitter->setSizes(extents);
+    }
+}
+
+void EdgeDockStrip::resetExtents()
+{
+    const bool vertical = orientation() == Qt::Vertical;
+    QList<int> sizes;
+    for (QWidget* w : containers()) {
+        const QSize hint = w->sizeHint();
+        sizes.append(w->isHidden() ? 0 : qMax(1, vertical ? hint.height() : hint.width()));
+    }
+    if (!sizes.isEmpty()) {
+        m_splitter->setSizes(sizes);
     }
 }
 
@@ -540,6 +556,17 @@ void EdgeDockArea::setThickness(DockEdge edge, int thickness)
     }
     m_thickness[i] = thickness;
     m_explicit[i] = true;
+    applySizes();
+}
+
+void EdgeDockArea::clearThickness(DockEdge edge)
+{
+    const int i = indexOf(edge);
+    if (!m_explicit[i]) {
+        return;
+    }
+    m_explicit[i] = false;
+    m_thickness[i] = 0;
     applySizes();
 }
 

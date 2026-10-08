@@ -99,6 +99,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Review fixes: clear an edge thickness and reset
+//                 strip extents to the default split. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -174,6 +177,9 @@ public:
     // Extents along the strip, one per container (hidden ones are 0).
     QList<int> extents() const;
     void setExtents(const QList<int>& extents);
+    // Back to the default split: each container its size hint along the
+    // strip, as the splitter lays out containers it has no sizes for.
+    void resetExtents();
 
     QSplitter* splitter() const { return m_splitter; }
     QScrollArea* scrollArea() const { return m_scroll; }
@@ -240,6 +246,9 @@ public:
     int thickness(DockEdge edge) const;
     bool hasThickness(DockEdge edge) const;
     void setThickness(DockEdge edge, int thickness);
+    // Forgets a saved or dragged thickness: the strip is back on the
+    // default rule (and the right strip on the Main Panel migration).
+    void clearThickness(DockEdge edge);
     // What the strip's containers need across it, without the strip's
     // padding: `minimumCross` is the widest container minimum (a side
     // strip is never narrower, so no container is clipped) and

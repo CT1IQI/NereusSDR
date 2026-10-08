@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview review fixes: edge drag mode
+//                 tracking. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: geometry capture suppression for
 //                 workspace profile switches by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -246,6 +249,8 @@ private:
     QSize freePlacementSize(const QString& id, const ContainerDocument& d) const;
     QPointer<EdgeDockArea> m_edgeArea;
     QString m_edgeDragId;
+    // The dragged container's mode when its edge drag started.
+    DockMode m_edgeDragMode = DockMode::PanelDocked;
     void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
     bool m_arrangeMode = false;
     bool m_geometryCaptureSuppressed = false;
