@@ -162,8 +162,9 @@ containers.
 `instruments-sheet` builds the ported Longpath instruments directly, with
 fixed values, on their own top-level window (not the main window): the
 frequency instrument in its three forms, the bandwidth filter pane with a
-fixed trace, the bar (TX: SWR and TX: ALC) and the needle (RX: Signal
-Peak and TX: Forward Power), each at its preferred and its minimum size.
+fixed trace, the bar (TX: SWR, and TX: ALC at a fixed -3 dB on the
+Thetis ALC scale) and the needle (RX: Signal Peak and TX: Forward
+Power), each at its preferred and its minimum size.
 At the crop profile it adds `frequency-digits`, `frequency-digits-min`,
 `needle-hub` and `needle-hub-min` crops with @3x enlargements. Capture it
 at `mac-1512x869@2` and `laptop-1280x800@1`
@@ -172,7 +173,9 @@ at `mac-1512x869@2` and `laptop-1280x800@1`
 `mixed-container` adds a "Station" container in the left strip that
 mixes Longpath instruments with Thetis meter faces, all on slice A:
 frequency, filter passband, `meter.sMeter`, Longpath needle,
-`meter.crossNeedle` and Longpath bar, headers Always.
+`meter.crossNeedle` and Longpath bar, headers Always. The Main Panel's
+"SIGNAL STRENGTH" dial (`applet:s_meter`) is a singleton the Main Panel
+holds, so the Station container uses the `meter.sMeter` face instead.
 `mixed-container-reveal` is the same with every header Reveal. After the
 data is fed, each needle gets one reading through
 `MeterPoller::readingUpdated` and each filter pane one trace refresh from

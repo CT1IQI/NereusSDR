@@ -166,6 +166,32 @@ private slots:
         QVERIFY(needle->isOffline());
     }
 
+    void txAlcHasThetisScale()
+    {
+        // NereusSDR addition: Thetis's ALC bar calibration (MeterManager.cs
+        // AddALCBar): -30 dB at 0, 0 dB at 0.665, +12 dB at 0.99, red from 0.
+        const ReadingDescriptor* d = readingFor(MeterBinding::TxAlc);
+        QVERIFY(d);
+        QVERIFY(d->hasScale);
+        QVERIFY(d->available);
+        QCOMPARE(d->unit, QStringLiteral("dB"));
+        QCOMPARE(d->min, -30.0);
+        QCOMPARE(d->max, 12.0);
+        QVERIFY(d->threshold.has_value());
+        QCOMPARE(*d->threshold, 0.0);
+        QVERIFY(qAbs(d->fraction(-30.0)) < 1e-9);
+        QVERIFY(qAbs(d->fraction(0.0) - 0.665) < 1e-9);
+        QVERIFY(qAbs(d->fraction(12.0) - 0.99) < 1e-9);
+        QVERIFY(qAbs(d->fraction(-15.0) - 0.3325) < 1e-9);
+        QCOMPARE(d->ticks.size(), 6);
+        QCOMPARE(d->minorTicks.size(), 6);
+
+        BarInstrument bar;
+        QVERIFY(bar.setPrimary(MeterBinding::TxAlc));
+        bar.onReading(MeterBinding::TxAlc, -3.0);
+        QVERIFY(bar.hasValue());
+    }
+
     void registryRoundTripCreatesTwoNeedles()
     {
         ContainerContentRegistry registry;

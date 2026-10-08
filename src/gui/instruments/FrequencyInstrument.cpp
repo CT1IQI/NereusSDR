@@ -89,6 +89,10 @@
 //                 upstream's 74 clipped the digits in BandStrip and
 //                 FlatArc at the minimum. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-07 - NumberOnly glow centred on the digits rather than on
+//                 m_stack (which also spans the row's trailing stretch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -836,7 +840,21 @@ void FrequencyInstrument::paintEvent(QPaintEvent*)
         // Nur die Glut, und zwar unter der ZAHL — nicht in der leeren
         // Flaeche darunter, die es in dieser Form gar nicht gibt.
         if (m_stack) {
-            const QRectF r = m_stack->geometry();
+            QRectF r = m_stack->geometry();
+            // NereusSDR: centred on the digits, not on m_stack. The digit
+            // row ends in addStretch(1), so the digits sit at the left of
+            // a stack that fills the instrument's width; upstream's
+            // m_stack centre lay right of the number (under "MHz" at the
+            // 360 px preferred width). Longpath shares this. The span is
+            // first to last digit; height stays the stack's.
+            if (m_stack->currentWidget() == m_digitRow && !m_digits.isEmpty()) {
+                const QRect first(m_digits.first()->mapTo(this, QPoint(0, 0)),
+                                  m_digits.first()->size());
+                const QRect last(m_digits.last()->mapTo(this, QPoint(0, 0)),
+                                 m_digits.last()->size());
+                const QRect digits = first.united(last);
+                r = QRectF(digits.left(), r.top(), digits.width(), r.height());
+            }
             const QRectF glow(r.center().x() - r.width() * 0.39,
                               r.center().y() - r.height() * 0.75,
                               r.width() * 0.78, r.height() * 1.5);

@@ -74,6 +74,10 @@
 //   ReadingDescriptor gains `available` (NereusSDR): false for a
 //   reading NereusSDR has no producer for. See ReadingSource.cpp.
 //
+//   Independently implemented from Thetis interface: this header takes
+//   nothing from Thetis. The TX: ALC scale constants from Thetis
+//   MeterManager.cs live in ReadingSource.cpp.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd

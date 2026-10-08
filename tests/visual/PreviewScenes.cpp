@@ -995,6 +995,9 @@ constexpr double kSheetSignalDbm = -73.0;
 constexpr double kSheetSignalPeakDbm = -68.0;
 constexpr double kSheetTxWatts = 85.0;
 constexpr double kSheetSwr = 1.25;
+// A realistic ALC level just under Thetis's red zone (which starts at
+// 0 dB). Fixed: the sheet has no transmitter.
+constexpr double kSheetAlcDb = -3.0;
 constexpr int kSheetFilterLowHz = 150;
 constexpr int kSheetFilterHighHz = 2850;
 constexpr int kSheetTracePoints = 160;
@@ -1085,12 +1088,14 @@ void sceneInstrumentsSheet(SceneContext& ctx)
              b->onReading(MeterBinding::TxSwr, kSheetSwr);
              return b;
          }, 0},
-        {QStringLiteral("bar-alc"), QStringLiteral("BarInstrument, TX: ALC (no scale in ReadingSource: unbound)"),
+        {QStringLiteral("bar-alc"), QStringLiteral("BarInstrument, TX: ALC -3 dB (fixed sheet value)"),
          [](QWidget* parent) -> QWidget* {
              auto* b = new BarInstrument(parent);
-             // ReadingSource gives TX: ALC no scale, so setPrimary refuses
-             // it and the bar keeps its unbound face.
+             // TX: ALC carries Thetis's ALC scale (ReadingSource.cpp). A
+             // refusal would leave the unbound face, which must not stand
+             // in for ALC, so the sidecar records it.
              b->setProperty("sheetBindRefused", !b->setPrimary(MeterBinding::TxAlc));
+             b->onReading(MeterBinding::TxAlc, kSheetAlcDb);
              return b;
          }, 0},
         {QStringLiteral("needle-signal"), QStringLiteral("NeedleInstrument, RX: Signal Peak -73 dBm, peak -68"),
@@ -1190,7 +1195,7 @@ void sceneInstrumentsSheet(SceneContext& ctx)
             {QStringLiteral("rect"), rectJson(p.label->geometry())}});
         if (p.minimum->property("sheetBindRefused").toBool()) {
             ctx.notes.append(QStringLiteral("%1: BarInstrument::setPrimary(TxAlc) refused it; "
-                                            "ReadingSource has no scale for TX: ALC").arg(p.row->key));
+                                            "the bar shows its unbound face, not ALC").arg(p.row->key));
         }
     }
     img.extra[QStringLiteral("regions")] = regions;
@@ -1224,6 +1229,9 @@ void sceneInstrumentsSheet(SceneContext& ctx)
     ctx.notes.append(QStringLiteral("sheet %1x%2; instruments built directly with fixed values, "
                                     "no MeterPoller or slice binding")
                          .arg(sheet->width()).arg(sheet->height()));
+    ctx.notes.append(QStringLiteral("bar-alc: TX: ALC shows a fixed sheet value of %1 dB on Thetis's "
+                                    "ALC scale (-30..+12 dB, red from 0 dB); not a live reading")
+                         .arg(kSheetAlcDb));
 }
 
 // "Station": Longpath instruments mixed with Thetis meter faces, slice A.

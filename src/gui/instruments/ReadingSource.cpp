@@ -72,6 +72,47 @@
 // Siehe ReadingSource.h — eine Liste, nicht eine zweite.
 // =================================================================
 
+// --- From Project Files/Source/Console/MeterManager.cs (Thetis) ---
+/*  MeterManager.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 // =================================================================
 // src/gui/instruments/ReadingSource.cpp  (NereusSDR)
 // =================================================================
@@ -95,9 +136,19 @@
 //   available), so an instrument bound to them shows its offline
 //   state.
 //
+//   Ported from Thetis source:
+//   Project Files/Source/Console/MeterManager.cs [v2.10.3.15], original
+//   licence from Thetis source is included above. Only the TX: ALC
+//   scale comes from it (AddALCBar's calibration and generalScale's
+//   ticks), a NereusSDR addition: upstream lists TX: ALC without a
+//   scale, so no instrument could show it.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - TX: ALC scale from Thetis MeterManager.cs (range
+//                 -30..+12 dB, 0 dB at 66.5 %, red above 0 dB). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -126,6 +177,28 @@ constexpr int RadeSnr    = 10;   // From Longpath src/gui/meters/MeterPoller.h:1
 // ── Die Empfangsskala ────────────────────────────────────────────────
 
 double sigFractionFromDbm(double dbm) { return signalFraction(dbm); }
+
+// NereusSDR: the TX: ALC scale, Thetis's own ALC bar.
+// From Thetis MeterManager.cs:24670-24672 [v2.10.3.15]
+//   cb2.ScaleCalibration.Add(-30, new PointF(0, 0));
+//   cb2.ScaleCalibration.Add(0, new PointF(0.665f, 0));
+//   cb2.ScaleCalibration.Add(12, new PointF(0.99f, 0));
+constexpr double kAlcMinDb = -30.0;
+constexpr double kAlcCentreDb = 0.0;
+constexpr double kAlcMaxDb = 12.0;
+constexpr double kAlcCentreFraction = 0.665;
+constexpr double kAlcMaxFraction = 0.99;
+
+// Piecewise linear between the three calibration points, as Thetis's
+// bar item interpolates its ScaleCalibration.
+double alcFraction(double db)
+{
+    if (db <= kAlcCentreDb) {
+        return (db - kAlcMinDb) / (kAlcCentreDb - kAlcMinDb) * kAlcCentreFraction;
+    }
+    return kAlcCentreFraction
+        + (db - kAlcCentreDb) / (kAlcMaxDb - kAlcCentreDb) * (kAlcMaxFraction - kAlcCentreFraction);
+}
 
 // From Longpath src/gui/instruments/ReadingSource.cpp:32 [@551576e3]
 QString sigFormat(double dbm)
@@ -363,7 +436,36 @@ QList<ReadingDescriptor> buildTable()
 
     plain(MeterBinding::TxMic,          "TX: Mic");
     plain(MeterBinding::TxComp,         "TX: Compressor");
-    plain(MeterBinding::TxAlc,          "TX: ALC");
+    // NereusSDR: upstream's line was
+    //   plain(MeterBinding::TxAlc,          "TX: ALC");
+    // which gives TX: ALC no scale. NereusSDR's MeterPoller hands out a
+    // TxAlc reading (MeterPoller.cpp handOutTxReading), so it gets
+    // Thetis's own ALC scale rather than an invented one.
+    {
+        ReadingDescriptor d;
+        d.bindingId = MeterBinding::TxAlc;
+        d.label     = QStringLiteral("TX: ALC");
+        // From Thetis MeterManager.cs:2332 [v2.10.3.15]
+        d.unit      = QStringLiteral("dB");
+        d.hasScale  = true;
+        d.min       = kAlcMinDb;
+        d.max       = kAlcMaxDb;
+        // From Thetis MeterManager.cs:24676 [v2.10.3.15]: HighPoint is
+        // the second calibration point, 0 dB; the scale's high (red)
+        // colour starts there (generalScale, MeterManager.cs:33894-33898).
+        d.threshold = kAlcCentreDb;
+        d.decimals  = 1;
+        d.fractionOf = alcFraction;
+        // From Thetis MeterManager.cs:33479 [v2.10.3.15]
+        //   generalScale(x, y, w, h, scale, 4, 3, -30, 12, 10, 4, fLineBaseY, fontSizeEmScaled, 255, 0.665f);
+        // Long ticks -20, -10, 0 (low, from i = 1) and 4, 8, 12 (high);
+        // short ticks halfway between (MeterManager.cs:33902-33950).
+        d.ticks = {{-20.0, QStringLiteral("-20")}, {-10.0, QStringLiteral("-10")},
+                   {  0.0, QStringLiteral("0")},   {  4.0, QStringLiteral("4")},
+                   {  8.0, QStringLiteral("8")},   { 12.0, QStringLiteral("12")}};
+        d.minorTicks = {-25.0, -15.0, -5.0, 2.0, 6.0, 10.0};
+        t.append(d);
+    }
     plain(MeterBinding::TxEq,           "TX: EQ");
     plain(MeterBinding::TxLeveler,      "TX: Leveler");
     plain(MeterBinding::TxLevelerGain,  "TX: Leveler Gain");
