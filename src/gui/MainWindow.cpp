@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: added copies of the SIGNAL
+//                 STRENGTH dial are registered as container content.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
 //                 is built by one function the visual preview can call.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -982,6 +985,7 @@ warren@wpratt.com
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/instruments/LongpathContent.h"
+#include "gui/instruments/SMeterDialContent.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/SkuUiProfile.h"
 // Remote Daemon R2 Task 12: source-selector wiring below (setSourceSelector).
@@ -10332,6 +10336,7 @@ void MainWindow::populateDefaultMeter()
         };
         sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
         LongpathContent::registerAll(*registry, sources);
+        SMeterDialContent::registerDial(*registry, sources);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {

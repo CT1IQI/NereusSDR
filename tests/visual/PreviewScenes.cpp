@@ -88,6 +88,9 @@
 //   2026-10-08 - Scenes for every remaining dialog, the standard dialogs and
 //                 the remote set on a never-dialled remote window. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - dial-addable--* scenes: added copies of the SIGNAL
+//                 STRENGTH dial, each fed for its own receiver. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -219,6 +222,7 @@
 #include "gui/instruments/InstrumentFooter.h"
 #include "gui/instruments/LongpathContent.h"
 #include "gui/instruments/NeedleInstrument.h"
+#include "gui/instruments/SMeterDialContent.h"
 #include "gui/widgets/BandwidthFilterPane.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
@@ -562,6 +566,11 @@ void poseMeters(SceneContext& ctx, const QVector<PanPose>& poses, int activePanI
         }
     }
     for (SMeterWidget* meter : allMeters(ctx)) {
+        // An added dial copy reads its own receiver (feedDials), never the
+        // active pan's level.
+        if (meter->settingsStore() == SMeterWidget::SettingsStore::Instance) {
+            continue;
+        }
         meter->setLevel(static_cast<float>(poses.value(activePanIndex).sMeterDbm));
     }
 }
@@ -2096,7 +2105,10 @@ bool commitArrangement(SceneContext& ctx, const WorkspaceDocument& base, HeaderM
 // Seeds SSB, DX, Contest and FT8 through the same calls the rail and the
 // manage dialog make (rename, save, New > From Current Arrangement), then
 // switches to `show`.
-bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
+// `dxSignalType` replaces the DX top strip's two Longpath needles (empty:
+// the needles).
+bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded,
+                  const QString& dxSignalType = {})
 {
     WorkspaceProfiles* profiles = ctx.window->workspaceProfiles();
     auto* manager = ctx.window->findChild<ContainerManager*>();
@@ -2149,10 +2161,12 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
 
     // DX: Main Panel right; a Frequency (Longpath) per slice left, with
     // source chips; signal needles for A and B on top; Always.
-    if (!create(SceneProfile::Dx, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+    const QString dxSignal = dxSignalType.isEmpty() ? QString::fromLatin1(LongpathContent::kNeedleType)
+                                                    : dxSignalType;
+    if (!create(SceneProfile::Dx, HeaderMode::Always, [dxSignal](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             const QString freq = QString::fromLatin1(LongpathContent::kFrequencyType);
-            const QString needle = QString::fromLatin1(LongpathContent::kNeedleType);
+            const QString needle = dxSignal;
             d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Frequency A"), DockEdge::Left,
                                                    ContentLayout::VerticalStack, {{freq, {}, {}, rxSource(1)}}), 1));
             d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Frequency B"), DockEdge::Left,
@@ -2165,10 +2179,16 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded)
         })) {
         return false;
     }
-    seeded.needleHosts[SceneProfile::Dx] = {QStringLiteral("preview-signal-a"), QStringLiteral("preview-signal-b")};
-    seeded.description[SceneProfile::Dx] = QStringLiteral(
-        "Main Panel right; Frequency A and Frequency B (Longpath, source chips RX A / RX B) "
-        "left; Signal A and Signal B (Longpath needles) top; every header Always");
+    if (dxSignalType.isEmpty()) {
+        seeded.needleHosts[SceneProfile::Dx] = {QStringLiteral("preview-signal-a"), QStringLiteral("preview-signal-b")};
+        seeded.description[SceneProfile::Dx] = QStringLiteral(
+            "Main Panel right; Frequency A and Frequency B (Longpath, source chips RX A / RX B) "
+            "left; Signal A and Signal B (Longpath needles) top; every header Always");
+    } else {
+        seeded.description[SceneProfile::Dx] = QStringLiteral(
+            "Main Panel right; Frequency A and Frequency B (Longpath, source chips RX A / RX B) "
+            "left; Signal A and Signal B (%1) top; every header Always").arg(dxSignalType);
+    }
 
     // Contest: all four strips, dense, Always.
     if (!create(SceneProfile::Contest, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
@@ -2529,13 +2549,13 @@ void hideStaleRailBadges(ProfileRail* rail)
 void sceneProfile(SceneContext& ctx, const QString& name, SceneProfile shown,
                   const std::function<void(SceneContext&)>& pose = {},
                   const std::function<void(SceneContext&)>& afterCapture = {},
-                  bool topStripCrop = false)
+                  bool topStripCrop = false, const QString& dxSignalType = {})
 {
     ctx.provenance = QStringLiteral("proposed");
     ctx.extraCrops = addStripCrops;
     auto seeded = std::make_shared<SeededProfiles>();
-    runWindowScene(ctx, twoBandPoses(), 0, [seeded, shown](SceneContext& c) {
-        seedProfiles(c, shown, *seeded);
+    runWindowScene(ctx, twoBandPoses(), 0, [seeded, shown, dxSignalType](SceneContext& c) {
+        seedProfiles(c, shown, *seeded, dxSignalType);
     }, [seeded, shown, pose](SceneContext& c) {
         poseProfile(c, *seeded, shown);
         if (pose) {
@@ -3351,6 +3371,270 @@ void sceneEditProperties(SceneContext& ctx)
         c.notes.append(QStringLiteral("declared property controls: %1")
                            .arg(properties.isEmpty() ? QStringLiteral("none shown") : properties.join(QStringLiteral(", "))));
     });
+}
+
+// ---- added copies of the SIGNAL STRENGTH dial (workspace preview) ----------
+
+// The added dial copies in the window (never the Main Panel's dial).
+QList<SMeterWidget*> dialCopies(SceneContext& ctx)
+{
+    QList<SMeterWidget*> out;
+    for (SMeterWidget* meter : allMeters(ctx)) {
+        if (meter->settingsStore() == SMeterWidget::SettingsStore::Instance) {
+            out.append(meter);
+        }
+    }
+    return out;
+}
+
+// The id of the container holding `w`, less the "preview-" prefix.
+QString holderName(QWidget* w)
+{
+    for (QWidget* p = w; p != nullptr; p = p->parentWidget()) {
+        if (auto* c = qobject_cast<ContainerWidget*>(p)) {
+            QString id = c->id();
+            id.remove(QStringLiteral("preview-"));
+            return id;
+        }
+    }
+    return QStringLiteral("unhoused");
+}
+
+// Feeds every added dial the reading MeterPoller would send for its own
+// receiver: the slice's posed level after a peak kFedPeakAboveDb above it,
+// or no reading when the receiver its source names is closed. The poller
+// is stopped (freeze); readingUpdated reaches the dial's registered
+// reading consumer. Display-only: no radio or Core.
+void feedDials(SceneContext& ctx)
+{
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (poller == nullptr) {
+        ctx.failure = QStringLiteral("no MeterPoller");
+        return;
+    }
+    for (SMeterWidget* dial : dialCopies(ctx)) {
+        const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+        const int sliceId = context.contains(QStringLiteral("sliceId"))
+                                ? context.value(QStringLiteral("sliceId")).toInt()
+                                : context.value(QStringLiteral("rxSource")).toInt() - 1;
+        SliceModel* slice = sliceId >= 0 ? ctx.model->sliceById(sliceId) : nullptr;
+        QJsonObject fed{{QStringLiteral("instrument"), QStringLiteral("SMeterWidget (added copy)")},
+                        {QStringLiteral("entry"), dial->property("containerEntryId").toString()},
+                        {QStringLiteral("binding"), QStringLiteral("RX: Signal Peak (RX mode Signal)")},
+                        {QStringLiteral("seam"), consumerSeam(poller)}};
+        if (slice == nullptr) {
+            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kNoMeterReadingDbm);
+            fed.insert(QStringLiteral("slice"), QStringLiteral("closed (source %1)")
+                                                    .arg(QString::fromUtf8(QJsonDocument(context).toJson(QJsonDocument::Compact))));
+            fed.insert(QStringLiteral("values_dbm"), QJsonArray{kNoMeterReadingDbm});
+            ctx.fedReadings.append(fed);
+            continue;
+        }
+        const double level = slice->signalStrengthDbm();
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, level + kFedPeakAboveDb);
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, level);
+        fed.insert(QStringLiteral("slice"), QString(QChar('A' + sliceId)));
+        fed.insert(QStringLiteral("values_dbm"), QJsonArray{level + kFedPeakAboveDb, level});
+        ctx.fedReadings.append(fed);
+    }
+}
+
+// The transmit readings for every added dial through its reading consumer
+// (85 W, SWR 1.25, mic -12 dB, as poseTxAfterFeed poses the Main Panel's
+// dial directly). Display-only.
+void feedDialsTx(SceneContext& ctx)
+{
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (poller == nullptr) {
+        ctx.failure = QStringLiteral("no MeterPoller");
+        return;
+    }
+    for (SMeterWidget* dial : dialCopies(ctx)) {
+        const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+        emit poller->readingUpdated(context, MeterBinding::TxPower, kTxForwardWatts);
+        emit poller->readingUpdated(context, MeterBinding::TxSwr, kTxSwr);
+        emit poller->readingUpdated(context, MeterBinding::TxMic, kTxMicDb);
+        ctx.fedReadings.append(QJsonObject{
+            {QStringLiteral("instrument"), QStringLiteral("SMeterWidget (added copy)")},
+            {QStringLiteral("entry"), dial->property("containerEntryId").toString()},
+            {QStringLiteral("binding"), QStringLiteral("TX: Power, SWR, Mic")},
+            {QStringLiteral("values"), QJsonArray{kTxForwardWatts, kTxSwr, kTxMicDb}},
+            {QStringLiteral("seam"), consumerSeam(poller)}});
+    }
+}
+
+// A crop of each added dial, named for its container.
+void addDialCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    QStringList used;
+    for (SMeterWidget* dial : dialCopies(ctx)) {
+        QString name = QStringLiteral("dial-") + holderName(dial);
+        for (int n = 2; used.contains(name); ++n) {
+            name = QStringLiteral("dial-%1-%2").arg(holderName(dial)).arg(n);
+        }
+        used.append(name);
+        addCrop(crops, name, ctx.window, dial, dpr);
+    }
+}
+
+void addStripAndDialCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    addStripCrops(ctx, crops, dpr);
+    addDialCrops(ctx, crops, dpr);
+}
+
+void noteDials(SceneContext& ctx)
+{
+    for (SMeterWidget* dial : dialCopies(ctx)) {
+        ctx.notes.append(QStringLiteral("dial copy %1 in %2: %3x%4, RX reads %5")
+                             .arg(dial->property("containerEntryId").toString(), holderName(dial))
+                             .arg(dial->width()).arg(dial->height())
+                             .arg(dial->sUnitsText()));
+    }
+    ctx.notes.append(QStringLiteral("added dial copies follow RadioModel::transmittingChanged; a scene "
+                                    "cannot key, so a transmitting pose sets it display-only"));
+}
+
+// One dial scene: the two-band data, `edit` committed (every header
+// `header`), the dials fed, then `pose`.
+void sceneDialWindow(SceneContext& ctx, const QString& name, HeaderMode header,
+                     const std::function<void(WorkspaceDocument&, ContainerManager*)>& edit,
+                     const std::function<void(SceneContext&)>& beforeFreeze = {},
+                     const std::function<void(SceneContext&)>& pose = {})
+{
+    ctx.provenance = provProposed();
+    ctx.proposedValues = proposedEdgeValues();
+    ctx.extraCrops = addStripAndDialCrops;
+    runWindowScene(ctx, twoBandPoses(), 0, [header, edit, beforeFreeze](SceneContext& c) {
+        if (!commitScene(c, header, edit)) {
+            return;
+        }
+        if (beforeFreeze) {
+            beforeFreeze(c);
+        }
+    }, [pose](SceneContext& c) {
+        feedDials(c);
+        if (pose) {
+            pose(c);
+        }
+        pump(kFinalSettleMs);
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    noteStrips(ctx);
+    noteDials(ctx);
+    captureWindow(ctx, name);
+    annotateSlices(ctx);
+}
+
+void sceneDialTwoBand(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("dial-addable--two-band");
+    sceneProfile(ctx, name, SceneProfile::Dx, [](SceneContext& c) {
+        feedDials(c);
+        c.extraCrops = addStripAndDialCrops;
+        noteDials(c);
+    }, {}, false, QString::fromLatin1(SMeterDialContent::kDialType));
+}
+
+// Station (as mixed-container) with a dial after the Thetis S-meter bar.
+void sceneDialMixed(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--mixed"), HeaderMode::Always,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Right);
+        QVector<EdgeEntry> entries = stationEntries();
+        entries.insert(3, {QString::fromLatin1(SMeterDialContent::kDialType), {}, {}, rxSource(1)});
+        d.containers.append(makeSceneContainer(m, QStringLiteral("Station"), DockEdge::Left,
+                                               ContentLayout::VerticalStack, entries));
+    }, {}, [](SceneContext& c) { poseStation(c, QStringLiteral("preview-station")); });
+}
+
+// A dial for RX B in a narrow right strip with B's frequency, as the FT8
+// profile's strip; the Main Panel left; headers Hidden.
+void sceneDialNarrow(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--narrow"), HeaderMode::Hidden,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Left);
+        d.containers.append(onSlice(makeSceneContainer(
+            m, QStringLiteral("Dial B"), DockEdge::Right, ContentLayout::VerticalStack,
+            {{QString::fromLatin1(LongpathContent::kFrequencyType), {}, {}, rxSource(2)},
+             {QString::fromLatin1(SMeterDialContent::kDialType), {}, {}, rxSource(2)}}), 2));
+        d.arrangement.strips[DockEdge::Right].thickness = EdgeDockStrip::kSideThicknessPx;
+    });
+}
+
+// Dials for RX A and RX B on top while slice A transmits (display-only).
+void sceneDialTx(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--tx"), HeaderMode::Always,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Right);
+        const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal A"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(1)}}), 1));
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal B"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(2)}}), 2));
+        d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+    }, poseTxBeforeFreeze, [](SceneContext& c) {
+        poseTxAfterFeed(c);
+        feedDialsTx(c);
+    });
+}
+
+// A dial for RX A beside one whose source is RX C, which the two-band
+// station has not opened.
+void sceneDialClosed(SceneContext& ctx)
+{
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--closed"), HeaderMode::Always,
+                    [](WorkspaceDocument& d, ContainerManager* m) {
+        placeMain(d, DockEdge::Right);
+        const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal A"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(1)}}), 1));
+        d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Signal C"), DockEdge::Top,
+                                                       ContentLayout::VerticalStack, {{dial, {}, {}, rxSource(3)}}), 3));
+        d.arrangement.strips[DockEdge::Top].thickness = kDxTopStripPx;
+    });
+}
+
+// Container Settings' Available list with the dial's row selected, and a
+// crop of the list from the dialog image.
+void sceneDialAddContent(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("dial-addable--add-content");
+    auto listRect = std::make_shared<QRect>();
+    sceneEditDialog(ctx, name, [listRect](SceneContext& c, ContainerSettingsDialog* d) {
+        auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
+        QListWidgetItem* dial = rowContaining(available, QStringLiteral("S-Meter dial (additional)"));
+        if (dial == nullptr) {
+            c.failure = QStringLiteral("no S-Meter dial row in the Available list");
+            return;
+        }
+        available->setCurrentItem(dial);
+        available->scrollToItem(dial, QAbstractItemView::PositionAtCenter);
+        *listRect = QRect(available->mapTo(d, QPoint(0, 0)), available->size());
+        c.notes.append(QStringLiteral("Available list (containerAvailableContents), \"%1\" selected and centred: %2")
+                           .arg(dial->text(),
+                                QString::fromUtf8(QJsonDocument(listTexts(available)).toJson(QJsonDocument::Compact))));
+    });
+    if (!ctx.failure.isEmpty() || !ctx.crops || listRect->isEmpty()) {
+        return;
+    }
+    const QString dialogName = name + QStringLiteral("--dialog");
+    for (const CapturedImage& img : ctx.images) {
+        if (img.name != dialogName) {
+            continue;
+        }
+        CapturedImage full = img;
+        full.crops.clear();
+        const QRect clipped = listRect->intersected(QRect(QPoint(0, 0), img.logicalSize));
+        full.crops.append({QStringLiteral("available-list"), clipped, deviceRect(clipped, img.dpr)});
+        appendCropImages(ctx, full, dialogName);
+        return;
+    }
 }
 
 // four-rx-look: four compact frequencies left, four Longpath S-meter bars
@@ -4857,6 +5141,19 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneEditProperties(ctx); }, true});
     scenes.append({QStringLiteral("four-rx-look"), QStringLiteral("2x2"), false,
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
+    // ---- added SIGNAL STRENGTH dial copies (switch on) ----
+    scenes.append({QStringLiteral("dial-addable--two-band"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialTwoBand(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--mixed"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialMixed(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--narrow"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialNarrow(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--tx"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialTx(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--closed"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialClosed(ctx); }, true});
+    scenes.append({QStringLiteral("dial-addable--add-content"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) { sceneDialAddContent(ctx); }, true});
 
     // ---- controls: today, preview now and Longpath side by side ----
     // Starts in today's look (switch off): the sheet switches the looks

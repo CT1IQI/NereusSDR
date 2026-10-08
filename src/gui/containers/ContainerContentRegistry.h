@@ -1,6 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: ContentConfigNotifier, through
+//                 which a per-instance widget's own controls change its
+//                 entry's config. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: a widget type declares its
 //                 editable properties (ContentProperty) for the Container
 //                 Settings property editor. J.J. Boyd (KG4VCF), AI-assisted
@@ -47,6 +51,21 @@ struct ContentProperty {
     // rest of the config (a default that depends on another key).
     std::function<QJsonValue(const QJsonObject& config)> effectiveDefault;
     QString placeholder;        // Text: shown while the text is empty.
+};
+// Workspace preview: a per-instance widget whose own controls change its
+// entry's config (the SIGNAL STRENGTH dial's right-click menu) gives itself
+// a direct child of this class and emits configEdited with the entry's
+// whole new config. ContainerContentHost commits it to the workspace
+// document (ContainerArrangeController::setEntryConfig). The factory also
+// sets the widget's kAppliedConfigProperty to that config: the widget
+// already shows it, so the host keeps the widget instead of rebuilding it.
+class ContentConfigNotifier : public QObject {
+    Q_OBJECT
+public:
+    using QObject::QObject;
+    static constexpr const char* kAppliedConfigProperty = "containerAppliedConfig";
+signals:
+    void configEdited(const QJsonObject& config);
 };
 struct ContentDescriptor {
     QString typeId, title;

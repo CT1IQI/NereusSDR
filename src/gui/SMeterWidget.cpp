@@ -74,6 +74,14 @@
 //                 does not send shows "--" with the reason, never 0.  The TX
 //                 readout text of both faces moved unchanged into txReadout().
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-08  Per-copy settings (SettingsStore::Instance) for a dial
+//                 added to a container (workspace preview) by J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.  The constructor takes the store; an
+//                 Instance dial starts at today's defaults, and its setters
+//                 emit instanceSettingsChanged() in place of the AppSettings
+//                 writes.  The Global (Main Panel) path is unchanged.
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #include "SMeterWidget.h"
 
@@ -98,7 +106,13 @@ namespace NereusSDR {
 // From AetherSDR src/gui/SMeterWidget.cpp:13-47 [@0cd4559]
 
 SMeterWidget::SMeterWidget(QWidget* parent)
+    : SMeterWidget(SettingsStore::Global, parent)
+{
+}
+
+SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
     : QWidget(parent)
+    , m_settingsStore(store)
 {
     setMinimumSize(minimumSizeHint());
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
@@ -138,6 +152,18 @@ SMeterWidget::SMeterWidget(QWidget* parent)
         updateNeedleTarget();
         update();
     });
+
+    // An Instance dial (NereusSDR-native) starts at the defaults the
+    // Global path below uses when no key is saved, and reads no key; its
+    // owner applies the copy's own settings after construction.
+    if (m_settingsStore == SettingsStore::Instance) {
+        setTxMode(QStringLiteral("Power"));
+        setRxMode(QStringLiteral("Signal"));
+        setPeakHoldEnabled(true);
+        setPeakDecayRate(QStringLiteral("Medium"));
+        m_faceStyle = FaceStyle::AgedCream;
+        return;
+    }
 
     // Load persisted mode and peak-hold settings from AppSettings.
     // Defaults match the member initialisers: TxSelect=0 (Power),
@@ -319,8 +345,12 @@ void SMeterWidget::setTxMode(const QString& mode)
     // Persist TX mode selection.
     // Key SMeter_TxSelect (int 0..3): Power=0, SWR=1, Level=2, Compression=3.
     // NereusSDR-native key per design doc ss5.4.2.
-    AppSettings::instance().setValue("SMeter_TxSelect",
-                                     static_cast<int>(m_txMode));
+    if (m_settingsStore == SettingsStore::Global) {
+        AppSettings::instance().setValue("SMeter_TxSelect",
+                                         static_cast<int>(m_txMode));
+    } else {
+        emit instanceSettingsChanged();
+    }
     refreshTxToolTip();
     updateNeedleTarget();
     update();
@@ -356,8 +386,12 @@ void SMeterWidget::setRxMode(const QString& mode)
     // Persist RX mode selection.
     // Key SMeter_RxSelect (int 0..3): Signal=0, SignalAverage=1, SignalPeak=2, MaxBin=3.
     // Range widened from AetherSDR's 0..1 per design doc ss5.4.2.
-    AppSettings::instance().setValue("SMeter_RxSelect",
-                                     static_cast<int>(m_rxMode));
+    if (m_settingsStore == SettingsStore::Global) {
+        AppSettings::instance().setValue("SMeter_RxSelect",
+                                         static_cast<int>(m_rxMode));
+    } else {
+        emit instanceSettingsChanged();
+    }
     updateNeedleTarget();
     update();
 }
@@ -1185,7 +1219,11 @@ void SMeterWidget::setFaceStyle(FaceStyle style)
     m_faceStyle = style;
     m_faceCache = QPixmap();
     m_faceCacheKey.clear();
-    AppSettings::instance().setValue("SMeter_FaceStyle", faceStyleKey(style));
+    if (m_settingsStore == SettingsStore::Global) {
+        AppSettings::instance().setValue("SMeter_FaceStyle", faceStyleKey(style));
+    } else {
+        emit instanceSettingsChanged();
+    }
     update();
     emit settingsChanged();
 }
@@ -1259,8 +1297,12 @@ void SMeterWidget::setPeakHoldEnabled(bool enabled)
 
     // Persist peak hold enabled state.
     // Key PeakHoldEnabled ("True"/"False") per design doc ss5.4.2.
-    AppSettings::instance().setValue("PeakHoldEnabled",
-                                     enabled ? QString("True") : QString("False"));
+    if (m_settingsStore == SettingsStore::Global) {
+        AppSettings::instance().setValue("PeakHoldEnabled",
+                                         enabled ? QString("True") : QString("False"));
+    } else {
+        emit instanceSettingsChanged();
+    }
     updateNeedleTarget();
     update();
     emit settingsChanged();
@@ -1292,8 +1334,20 @@ void SMeterWidget::setPeakDecayRate(const QString& rate)
     const QString canonical = (rate == "Fast")  ? QString("Fast")
                             : (rate == "Slow")  ? QString("Slow")
                                                 : QString("Medium");
-    AppSettings::instance().setValue("PeakDecayRate", canonical);
+    if (m_settingsStore == SettingsStore::Global) {
+        AppSettings::instance().setValue("PeakDecayRate", canonical);
+    } else {
+        emit instanceSettingsChanged();
+    }
     emit settingsChanged();
+}
+
+// The decay rate the menu shows checked.  NereusSDR-native.
+SMeterWidget::DecayRate SMeterWidget::peakDecayRate() const
+{
+    if (qFuzzyCompare(m_peakDecayDbPerSec, 20.0f)) { return DecayRate::Fast; }
+    if (qFuzzyCompare(m_peakDecayDbPerSec, 5.0f)) { return DecayRate::Slow; }
+    return DecayRate::Medium;
 }
 
 void SMeterWidget::resetPeak()

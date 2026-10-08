@@ -1704,6 +1704,8 @@ set(GUI_SOURCES
     src/gui/instruments/InstrumentStyle.h
     src/gui/instruments/LongpathContent.cpp
     src/gui/instruments/LongpathContent.h
+    src/gui/instruments/SMeterDialContent.cpp
+    src/gui/instruments/SMeterDialContent.h
     src/gui/instruments/NeedleInstrument.cpp
     src/gui/instruments/NeedleInstrument.h
     src/gui/instruments/PeakHold.h
