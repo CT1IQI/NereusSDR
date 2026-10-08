@@ -841,19 +841,59 @@ QRect sliderBand(QWidget* top, QWidget* applet, const QList<QSlider*>& sliders)
 }
 
 void cropShot(SceneContext& ctx, Rows& rows, int look, const QString& key, const QString& title,
-              QWidget* top, const QRect& band, const QString& sourceName, const QString& missing)
+              QWidget* top, const QRect& band, const QString& sourceName, const QString& missing,
+              const QString& caption = QStringLiteral("cropped"), QJsonObject source = {})
 {
     if (band.isEmpty()) {
         ctx.notes.append(QStringLiteral("%1 %2: %3").arg(lookKey(look), key, missing));
         return;
     }
     const QImage img = grabImage(top, band);
-    const QJsonObject source{
-        {QStringLiteral("source"), sourceName},
-        {QStringLiteral("logical_rect"), rectArray(band)},
-        {QStringLiteral("device_rect"), rectArray(toDevice(band, img.devicePixelRatio()))},
-    };
-    addImageShot(rows, look, key, title, QStringLiteral("cropped"), img, source);
+    source[QStringLiteral("source")] = sourceName;
+    source[QStringLiteral("logical_rect")] = rectArray(band);
+    source[QStringLiteral("device_rect")] = rectArray(toDevice(band, img.devicePixelRatio()));
+    addImageShot(rows, look, key, title, caption, img, source);
+}
+
+// The band of `sliders` across `applet`'s full width, in the applet's own
+// coordinates. Grabbed from the applet itself, so the Main Panel's scroll
+// viewport cannot clip it and no scrolling is needed.
+QRect appletBand(QWidget* applet, const QList<QSlider*>& sliders)
+{
+    QRect u;
+    for (QSlider* s : sliders) {
+        if (s != nullptr && s->isVisibleTo(applet)) {
+            u |= QRect(s->mapTo(applet, QPoint(0, 0)), s->size());
+        }
+    }
+    if (u.isEmpty()) {
+        return {};
+    }
+    return QRect(0, u.top() - kBandPadPx, applet->width(), u.height() + 2 * kBandPadPx)
+        .intersected(applet->rect());
+}
+
+// One applet row: the band grabbed from the applet at its full width. The
+// sidecar also gives the band in window coordinates and the part of it the
+// Main Panel viewport shows, so today's column can be checked against the
+// baseline window where the viewport shows it.
+void appletShot(SceneContext& ctx, Rows& rows, int look, const QString& key, const QString& title,
+                QWidget* applet, const QList<QSlider*>& sliders, const QString& missing)
+{
+    const QRect band = appletBand(applet, sliders);
+    QJsonObject source;
+    if (!band.isEmpty()) {
+        const QRect inWindow = band.translated(applet->mapTo(ctx.window, QPoint(0, 0)));
+        source[QStringLiteral("window_logical_rect")] = rectArray(inWindow);
+        if (QScrollArea* area = scrollAreaOf(applet)) {
+            const QRect shown = inWindow & rectIn(ctx.window, area->viewport());
+            source[QStringLiteral("viewport_shown_window_rect")] = rectArray(shown);
+            source[QStringLiteral("viewport_hidden_px")] = inWindow.width() - shown.width();
+        }
+    }
+    cropShot(ctx, rows, look, key, title, applet, band,
+             QString::fromLatin1(applet->metaObject()->className()) + QStringLiteral(" at full width"),
+             missing, QStringLiteral("applet at full width"), source);
 }
 
 QList<QSlider*> slidersNamed(QWidget* root, const QStringList& accessibleOrObjectNames)
@@ -871,29 +911,13 @@ QList<QSlider*> slidersNamed(QWidget* root, const QStringList& accessibleOrObjec
     return out;
 }
 
-void showInScroll(const QList<QSlider*>& sliders)
-{
-    for (QSlider* s : sliders) {
-        if (QScrollArea* area = scrollAreaOf(s)) {
-            area->ensureWidgetVisible(s, 0, kBandPadPx * 4);
-        }
-    }
-    pump(kShortSettleMs);
-}
-
-void resetScroll(QWidget* w)
-{
-    if (QScrollArea* area = scrollAreaOf(w)) {
-        area->verticalScrollBar()->setValue(0);
-    }
-}
-
 void capturePanels(SceneContext& ctx, int look, Panels& panels, Rows& rows)
 {
     QWidget* window = ctx.window;
     pump(kSettleMs);
 
-    // RX applet: its visible slider rows, before anything scrolls.
+    // RX applet: its visible slider rows at full width, and the same rows
+    // as the main window shows them through the Main Panel viewport.
     if (!panels.rx.isNull()) {
         QList<QSlider*> rxSliders;
         for (QSlider* s : panels.rx->findChildren<QSlider*>()) {
@@ -901,37 +925,33 @@ void capturePanels(SceneContext& ctx, int look, Panels& panels, Rows& rows)
                 rxSliders.append(s);
             }
         }
-        cropShot(ctx, rows, look, QStringLiteral("panel-rx"),
-                 QStringLiteral("RX applet slider rows (main window)"), window,
-                 sliderBand(window, panels.rx, rxSliders), QStringLiteral("main window"),
-                 QStringLiteral("no visible RX applet slider"));
+        appletShot(ctx, rows, look, QStringLiteral("panel-rx"),
+                   QStringLiteral("RX applet slider rows (the applet at full width)"), panels.rx, rxSliders,
+                   QStringLiteral("no visible RX applet slider"));
+        cropShot(ctx, rows, look, QStringLiteral("panel-rx-viewport"),
+                 QStringLiteral("RX applet through the Main Panel viewport (real clipping, today's window layout)"),
+                 window, sliderBand(window, panels.rx, rxSliders), QStringLiteral("main window"),
+                 QStringLiteral("no visible RX applet slider"), QStringLiteral("viewport crop"));
     } else {
         ctx.notes.append(QStringLiteral("%1: no RxApplet").arg(lookKey(look)));
     }
 
     // TX applet: RF power and tune power.
     if (!panels.tx.isNull()) {
-        const QList<QSlider*> txSliders = slidersNamed(
-            panels.tx, {QStringLiteral("TxRfPowerSlider"), QStringLiteral("Tune power")});
-        showInScroll(txSliders);
-        cropShot(ctx, rows, look, QStringLiteral("panel-tx"),
-                 QStringLiteral("TX applet RF power and tune power (main window, scrolled to them)"), window,
-                 sliderBand(window, panels.tx, txSliders), QStringLiteral("main window"),
-                 QStringLiteral("RF power and tune power sliders not visible"));
-        resetScroll(panels.tx);
+        appletShot(ctx, rows, look, QStringLiteral("panel-tx"),
+                   QStringLiteral("TX applet RF power and tune power (the applet at full width)"), panels.tx,
+                   slidersNamed(panels.tx, {QStringLiteral("TxRfPowerSlider"), QStringLiteral("Tune power")}),
+                   QStringLiteral("RF power and tune power sliders not found"));
     }
 
     // Phone/CW applet, Phone page: microphone gain.
     if (!panels.phone.isNull()) {
         panels.phone->showPage(0);
         pump(kShortSettleMs);
-        const QList<QSlider*> mic = slidersNamed(panels.phone, {QStringLiteral("Microphone gain")});
-        showInScroll(mic);
-        cropShot(ctx, rows, look, QStringLiteral("panel-mic"),
-                 QStringLiteral("Phone/CW applet microphone gain (main window, scrolled to it)"), window,
-                 sliderBand(window, panels.phone, mic), QStringLiteral("main window"),
-                 QStringLiteral("microphone gain slider not visible"));
-        resetScroll(panels.phone);
+        appletShot(ctx, rows, look, QStringLiteral("panel-mic"),
+                   QStringLiteral("Phone/CW applet microphone gain (the applet at full width)"), panels.phone,
+                   slidersNamed(panels.phone, {QStringLiteral("Microphone gain")}),
+                   QStringLiteral("microphone gain slider not found"));
     }
     pump(kShortSettleMs);
 
@@ -1249,6 +1269,17 @@ void sceneControlsSheet(SceneContext& ctx)
         }
     }
     rows.rows = ordered;
+    for (Row& r : rows.rows) {
+        if (r.key == QLatin1String("panel-rx-viewport")) {
+            r.note = QStringLiteral("What the window shows: the RX applet is wider than the Main Panel "
+                                    "viewport, so its right edge is cut. This window keeps today's layout in "
+                                    "every column; strip-fit-preview measures the preview's own right strip.");
+        } else if (r.key == QLatin1String("panel-rx") || r.key == QLatin1String("panel-tx")
+                   || r.key == QLatin1String("panel-mic")) {
+            r.note = QStringLiteral("Grabbed from the applet itself at its full width, so every column shows "
+                                    "the whole applet.");
+        }
+    }
     QString why;
     if (!rowsAgree(rows, why)) {
         ctx.failure = QStringLiteral("controls-sheet: the looks captured different shots: %1").arg(why);
@@ -1301,6 +1332,130 @@ void sceneControlsSheet(SceneContext& ctx)
     zoom.extra[QStringLiteral("enlargement")] = QStringLiteral("5x nearest-neighbour");
     zoom.extra[QStringLiteral("placements")] = zoomPlacements;
     ctx.images.append(zoom);
+}
+
+// ---- strip fit ---------------------------------------------------------------
+
+namespace {
+
+bool isApplet(const QWidget* w)
+{
+    return QString::fromLatin1(w->metaObject()->className()).endsWith(QLatin1String("Applet"));
+}
+
+// Applets under `body` that are not inside another applet.
+QList<QWidget*> outerApplets(QWidget* body)
+{
+    QList<QWidget*> out;
+    for (QWidget* w : body->findChildren<QWidget*>()) {
+        if (!isApplet(w) || !w->isVisibleTo(body)) {
+            continue;
+        }
+        bool nested = false;
+        for (QWidget* p = w->parentWidget(); p != nullptr && p != body; p = p->parentWidget()) {
+            if (isApplet(p)) {
+                nested = true;
+                break;
+            }
+        }
+        if (!nested) {
+            out.append(w);
+        }
+    }
+    return out;
+}
+
+int minWidthOf(const QWidget* w)
+{
+    return qMax(w->minimumWidth(), w->minimumSizeHint().width());
+}
+
+} // namespace
+
+QJsonObject measurePanelFit(SceneContext& ctx, const QString& look)
+{
+    QJsonObject out{{QStringLiteral("look"), look}};
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    QWidget* panel = manager != nullptr ? manager->panelContainer() : nullptr;
+    if (panel == nullptr) {
+        out[QStringLiteral("error")] = QStringLiteral("no Main Panel container");
+        return out;
+    }
+    out[QStringLiteral("panel_rect")] = rectArray(rectIn(ctx.window, panel));
+    QJsonArray areas;
+    for (QScrollArea* area : panel->findChildren<QScrollArea*>()) {
+        QWidget* body = area->widget();
+        if (body == nullptr || !area->isVisible()) {
+            continue;
+        }
+        QWidget* vp = area->viewport();
+        QScrollBar* v = area->verticalScrollBar();
+        QScrollBar* h = area->horizontalScrollBar();
+        QStringList chain;
+        for (QWidget* p = area->parentWidget(); p != nullptr && p != panel->parentWidget(); p = p->parentWidget()) {
+            chain.append(QString::fromLatin1(p->metaObject()->className()));
+        }
+        QJsonArray applets;
+        for (QWidget* a : outerApplets(body)) {
+            const QPoint at = a->mapTo(vp, QPoint(0, 0));
+            const int minW = minWidthOf(a);
+            applets.append(QJsonObject{
+                {QStringLiteral("class"), QString::fromLatin1(a->metaObject()->className())},
+                {QStringLiteral("x_in_viewport"), at.x()},
+                {QStringLiteral("width"), a->width()},
+                {QStringLiteral("minimum_width"), minW},
+                {QStringLiteral("size_hint_width"), a->sizeHint().width()},
+                {QStringLiteral("clipped_left_px"), qMax(0, -at.x())},
+                {QStringLiteral("clipped_right_px"), qMax(0, at.x() + a->width() - vp->width())},
+                {QStringLiteral("minimum_over_viewport_px"), qMax(0, minW - vp->width())},
+            });
+        }
+        areas.append(QJsonObject{
+            {QStringLiteral("parents"), chain.join(QStringLiteral(" < "))},
+            {QStringLiteral("area_width"), area->width()},
+            {QStringLiteral("viewport_width"), vp->width()},
+            {QStringLiteral("vertical_bar_visible"), v->isVisible()},
+            {QStringLiteral("vertical_bar_width"), v->isVisible() ? v->width() : 0},
+            {QStringLiteral("horizontal_policy"),
+             area->horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff ? QStringLiteral("always off")
+                                                                          : QStringLiteral("as needed")},
+            {QStringLiteral("horizontal_value"), h->value()},
+            {QStringLiteral("horizontal_maximum"), h->maximum()},
+            {QStringLiteral("body_width"), body->width()},
+            {QStringLiteral("body_minimum_width"), minWidthOf(body)},
+            {QStringLiteral("body_over_viewport_px"), qMax(0, body->width() - vp->width())},
+            {QStringLiteral("applets"), applets},
+        });
+    }
+    out[QStringLiteral("scroll_areas")] = areas;
+    return out;
+}
+
+void appendPanelFitCrop(SceneContext& ctx, const QString& scene, const QJsonObject& fit)
+{
+    for (CapturedImage& img : ctx.images) {
+        if (img.kind == QLatin1String("window")) {
+            img.extra[QStringLiteral("panel_fit")] = fit;
+        }
+    }
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    QWidget* panel = manager != nullptr ? manager->panelContainer() : nullptr;
+    if (panel == nullptr || !panel->isVisible()) {
+        ctx.notes.append(QStringLiteral("strip fit: no visible Main Panel container to crop"));
+        return;
+    }
+    const QRect r = rectIn(ctx.window, panel);
+    CapturedImage c;
+    c.name = scene + QStringLiteral("--panel");
+    c.kind = QStringLiteral("crop");
+    c.image = grabImage(ctx.window, r);
+    c.dpr = c.image.devicePixelRatio();
+    c.logicalSize = r.size();
+    c.extra[QStringLiteral("source")] = scene;
+    c.extra[QStringLiteral("logical_rect")] = rectArray(r);
+    c.extra[QStringLiteral("device_rect")] = rectArray(toDevice(r, c.dpr));
+    c.extra[QStringLiteral("panel_fit")] = fit;
+    ctx.images.append(c);
 }
 
 } // namespace NereusSDR::Preview

@@ -14,9 +14,16 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - measurePanelFit and appendPanelFitCrop for the strip-fit
+//                 scenes (applet minimum width against the Main Panel
+//                 viewport). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
+
+#include <QJsonObject>
+#include <QString>
 
 namespace NereusSDR::Preview {
 
@@ -25,5 +32,15 @@ struct SceneContext;
 // Runs after the two-band window pose (runWindowScene). Leaves the app in
 // today's look with the workspace preview switch off.
 void sceneControlsSheet(SceneContext& ctx);
+
+// Every scroll area under the Main Panel container, and every applet in
+// it: width, minimum width and how much of it falls outside the scroll
+// viewport, in logical px. `look` names the look in the result.
+QJsonObject measurePanelFit(SceneContext& ctx, const QString& look);
+
+// Appends `<scene>--panel`: the Main Panel container cut from the last
+// window image, with `fit` (from measurePanelFit) in its sidecar, and
+// stores `fit` on the window image too.
+void appendPanelFitCrop(SceneContext& ctx, const QString& scene, const QJsonObject& fit);
 
 } // namespace NereusSDR::Preview
