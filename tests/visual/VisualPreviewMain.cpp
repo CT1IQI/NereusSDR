@@ -47,6 +47,10 @@
 //                 the top 30; the coverage notes name the colour forms the
 //                 translator reads. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - NEREUS_PREVIEW_DIAL_PLATE=b turns SMeterWidget's test-only
+//                 plate limit on for any scene (the identity run proving
+//                 variant B leaves the Main Panel's dial unchanged).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -85,6 +89,7 @@
 #include "gui/GuiApplication.h"
 #include "gui/MainWindow.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/SMeterWidget.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -591,6 +596,11 @@ int main(int argc, char** argv)
     }
     if (args.workspacePreview || isLookScene(sceneName) || sceneWantsPreview) {
         WorkspacePreview::setEnabledForTest(true);
+    }
+    // The wide-container look's variant B for every dial, before any is
+    // built (test-only; unset, the product's variant A).
+    if (qEnvironmentVariable("NEREUS_PREVIEW_DIAL_PLATE") == QLatin1String("b")) {
+        SMeterWidget::setPlateLimitForTest(true);
     }
 
     applyAppTheme(app);
