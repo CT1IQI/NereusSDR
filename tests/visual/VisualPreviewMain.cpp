@@ -43,6 +43,10 @@
 //                 the live pass themes every window, so the images show
 //                 what the app shows. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - unknown_literals: the whole unknown-literal count beside
+//                 the top 30; the coverage notes name the colour forms the
+//                 translator reads. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -68,6 +72,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <memory>
 
 #include "NereusBuildTag.h"
@@ -288,8 +293,10 @@ QJsonObject lookCoverageJson()
              "(dBm range arrows, clarity badge): not migrated",
              "connection segment state dot, RTT and audio pip colours (state meaning): kept",
              "native dialogs (file, colour) and the macOS native menu bar: outside Qt's widgets",
-             "painted colours, rgb(), named and 3/4/8-digit colours and 6-digit hex not in the "
-             "translator table: kept",
+             "painted colours: not stylesheets",
+             "stylesheet colours on the kept list (lit states, indicators, data colours, "
+             "two jobs, no role for the shade): kept; every other hex, rgb(), rgba() and "
+             "named colour resolves to a role",
              "#203040 in the scoped pass: by context (groove, hover background, else border-subtle)"})},
     };
 }
@@ -538,6 +545,8 @@ bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneC
         if (WorkspacePreview::enabled()) {
             side.insert(QStringLiteral("look_coverage"), lookCoverageJson());
             side.insert(QStringLiteral("unknown_literals_top30"), unknownLiteralsJson(30));
+            side.insert(QStringLiteral("unknown_literals"),
+                        unknownLiteralsJson(std::numeric_limits<int>::max()));
         }
         for (auto it = img.extra.constBegin(); it != img.extra.constEnd(); ++it) {
             side.insert(it.key(), it.value());

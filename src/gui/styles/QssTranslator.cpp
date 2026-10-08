@@ -10,17 +10,29 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - A slider's filled page resolves #203040 to the accent.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Reads 3/4/6/8-digit hex, rgb(), rgba() and colour names
+//                 through one lookup; rows by property kind; kept list.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "QssTranslator.h"
 
+#include "StylesheetColourTable.h"
 #include "WorkspacePalette.h"
 
+#include <QColor>
+#include <QSet>
+
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
 namespace NereusSDR::QssTranslator {
 
 namespace {
+
+constexpr int kMaxComponent = 255;
+constexpr double kPercent = 100.0;
 
 bool isTokenChar(QChar c)
 {
@@ -46,12 +58,31 @@ bool allHex(QStringView s)
     return true;
 }
 
+bool allLetters(QStringView s)
+{
+    if (s.isEmpty()) {
+        return false;
+    }
+    for (QChar c : s) {
+        const char16_t u = c.unicode();
+        if (!((u >= u'a' && u <= u'z') || (u >= u'A' && u <= u'Z'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString indexKey(const QString& hex, const QString& kind)
+{
+    return hex.toLower() + QLatin1Char('|') + kind;
+}
+
 // First row wins for a duplicated key.
 QHash<QString, QString> buildIndex(const Table& table)
 {
     QHash<QString, QString> index;
     for (const Rule& r : table) {
-        const QString key = r.legacyHex.toLower();
+        const QString key = indexKey(r.legacyHex, r.kind);
         if (!index.contains(key)) {
             index.insert(key, r.role);
         }
@@ -63,6 +94,21 @@ const QHash<QString, QString>& defaultIndex()
 {
     static const QHash<QString, QString> index = buildIndex(defaultTable());
     return index;
+}
+
+QSet<QString> buildKept(const KeptList& list)
+{
+    QSet<QString> set;
+    for (const Keep& k : list) {
+        set.insert(indexKey(k.literal, k.kind));
+    }
+    return set;
+}
+
+const QSet<QString>& defaultKeptSet()
+{
+    static const QSet<QString> set = buildKept(defaultKept());
+    return set;
 }
 
 QString contextRoleForAmbiguous(const QString& selector, const QString& property)
@@ -104,6 +150,120 @@ bool startsWithUrl(const QString& s, qsizetype i)
     return QStringView(s).mid(i, 4).compare(QLatin1String("url("), Qt::CaseInsensitive) == 0;
 }
 
+// How a colour literal was written, so the rewrite keeps its form.
+enum class Form { Opaque, HexAlpha, FunctionAlpha };
+
+struct Colour {
+    QString literal;  // as reported
+    QString key;      // "#rrggbb"
+    Form form = Form::Opaque;
+    QString alpha;    // two hex digits for HexAlpha, the argument for FunctionAlpha
+};
+
+QString hexKey(int r, int g, int b)
+{
+    return QColor(r, g, b).name(QColor::HexRgb).toLower();
+}
+
+// '#' plus 3, 4, 6 or 8 hex digits. Qt reads 8 digits as #AARRGGBB;
+// 4 digits are read the same way, one digit per channel.
+std::optional<Colour> readHex(const QString& token)
+{
+    const QString digits = token.mid(1).toLower();
+    if (!allHex(digits)) {
+        return std::nullopt;
+    }
+    Colour c;
+    c.literal = token.toLower();
+    switch (digits.size()) {
+    case 3:
+        c.key = QStringLiteral("#%1%1%2%2%3%3").arg(digits.at(0), digits.at(1), digits.at(2));
+        return c;
+    case 4:
+        c.key = QStringLiteral("#%1%1%2%2%3%3").arg(digits.at(1), digits.at(2), digits.at(3));
+        c.form = Form::HexAlpha;
+        c.alpha = QString(2, digits.at(0));
+        return c;
+    case 6:
+        c.key = QLatin1Char('#') + digits;
+        return c;
+    case 8:
+        c.key = QLatin1Char('#') + digits.mid(2);
+        c.form = Form::HexAlpha;
+        c.alpha = digits.left(2);
+        return c;
+    default:
+        return std::nullopt;
+    }
+}
+
+// One rgb component: an integer 0-255 or a percentage.
+std::optional<int> readComponent(QString arg)
+{
+    arg = arg.trimmed();
+    bool ok = false;
+    double v = 0.0;
+    if (arg.endsWith(QLatin1Char('%'))) {
+        v = arg.chopped(1).trimmed().toDouble(&ok) * kMaxComponent / kPercent;
+    } else {
+        v = arg.toDouble(&ok);
+    }
+    if (!ok || v < 0.0 || v > kMaxComponent) {
+        return std::nullopt;
+    }
+    return static_cast<int>(std::lround(v));
+}
+
+// rgb(r, g, b) or rgba(r, g, b, a). `literal` is the whole function.
+Colour readFunction(const QString& args, const QString& literal)
+{
+    Colour c;
+    c.literal = literal.toLower();
+    c.literal.remove(QLatin1Char(' '));
+    c.literal.remove(QLatin1Char('\t'));
+    c.literal.remove(QLatin1Char('\n'));
+    const QStringList parts = args.split(QLatin1Char(','));
+    if (parts.size() != 3 && parts.size() != 4) {
+        return c;  // no key: unreadable, left and reported
+    }
+    const auto r = readComponent(parts.at(0));
+    const auto g = readComponent(parts.at(1));
+    const auto b = readComponent(parts.at(2));
+    if (!r || !g || !b) {
+        return c;
+    }
+    c.key = hexKey(*r, *g, *b);
+    if (parts.size() == 4) {
+        c.form = Form::FunctionAlpha;
+        c.alpha = parts.at(3).trimmed();
+    }
+    return c;
+}
+
+QString rewrittenValue(const Colour& c, const QString& roleValue)
+{
+    const QColor role = QColor::fromString(roleValue);
+    switch (c.form) {
+    case Form::Opaque:
+        return roleValue;
+    case Form::HexAlpha:
+        if (!role.isValid()) {
+            return {};
+        }
+        return QLatin1Char('#') + c.alpha + role.name(QColor::HexRgb).mid(1).toLower();
+    case Form::FunctionAlpha:
+        if (!role.isValid()) {
+            return {};
+        }
+        return QStringLiteral("rgba(%1, %2, %3, %4)")
+            .arg(role.red())
+            .arg(role.green())
+            .arg(role.blue())
+            .arg(c.alpha);
+    }
+    return {};
+}
+
 } // namespace
 
 const Table& defaultTable()
@@ -111,11 +271,46 @@ const Table& defaultTable()
     static const Table table = [] {
         Table t;
         for (const auto& row : Workspace::WorkspacePalette::legacyRows()) {
-            t.push_back({QString::fromLatin1(row.legacyHex), QString::fromLatin1(row.role)});
+            t.push_back({QString::fromLatin1(row.legacyHex), QString::fromLatin1(row.role), {}});
+        }
+        for (const auto& row : Workspace::StylesheetColours::rows()) {
+            t.push_back({QString::fromLatin1(row.hex), QString::fromLatin1(row.role),
+                         row.kind != nullptr ? QString::fromLatin1(row.kind) : QString()});
         }
         return t;
     }();
     return table;
+}
+
+const KeptList& defaultKept()
+{
+    static const KeptList list = [] {
+        KeptList l;
+        for (const auto& k : Workspace::StylesheetColours::kept()) {
+            l.push_back({QString::fromLatin1(k.literal),
+                         k.kind != nullptr ? QString::fromLatin1(k.kind) : QString()});
+        }
+        return l;
+    }();
+    return list;
+}
+
+QString propertyKind(const QString& property)
+{
+    const QString p = property.trimmed().toLower();
+    if (p.startsWith(QLatin1String("background")) || p == QLatin1String("alternate-background-color")
+        || p == QLatin1String("selection-background-color")) {
+        return QStringLiteral("background");
+    }
+    if (p.startsWith(QLatin1String("border")) || p.startsWith(QLatin1String("outline"))
+        || p == QLatin1String("gridline-color")) {
+        return QStringLiteral("border");
+    }
+    if (p == QLatin1String("color") || p == QLatin1String("selection-color")
+        || p == QLatin1String("placeholder-text-color")) {
+        return QStringLiteral("text");
+    }
+    return {};
 }
 
 Result translate(const QString& original, const Options& options)
@@ -126,6 +321,9 @@ Result translate(const QString& original, const Options& options)
         options.table != nullptr ? buildIndex(*options.table) : QHash<QString, QString>{};
     const QHash<QString, QString>& index =
         options.table != nullptr ? customIndex : defaultIndex();
+    const QSet<QString> customKept =
+        options.kept != nullptr ? buildKept(*options.kept) : QSet<QString>{};
+    const QSet<QString>& keptSet = options.kept != nullptr ? customKept : defaultKeptSet();
     const QString ambiguous = QString::fromLatin1(kAmbiguousHex);
 
     const bool hasBraces = original.contains(QLatin1Char('{'));
@@ -137,6 +335,39 @@ Result translate(const QString& original, const Options& options)
     QString& out = result.qss;
     out.reserve(original.size());
     const qsizetype n = original.size();
+
+    // One lookup for every form: explicit role, kept list, the #203040
+    // context rule, a row for the property's kind, a row for any
+    // property. Appends the rewrite or the source text.
+    auto rewrite = [&](const Colour& c, QStringView source) {
+        QString role;
+        if (!c.key.isEmpty()) {
+            const QString kind = propertyKind(property);
+            role = options.explicitRoles.value(c.key);
+            const bool keep = role.isEmpty()
+                && (keptSet.contains(indexKey(c.literal, QString()))
+                    || (!kind.isEmpty() && keptSet.contains(indexKey(c.literal, kind))));
+            if (!keep) {
+                if (role.isEmpty() && c.key == ambiguous && options.resolveAmbiguousByContext) {
+                    role = contextRoleForAmbiguous(selector, property);
+                }
+                if (role.isEmpty() && !kind.isEmpty()) {
+                    role = index.value(indexKey(c.key, kind));
+                }
+                if (role.isEmpty()) {
+                    role = index.value(indexKey(c.key, QString()));
+                }
+            }
+        }
+        const QString value = role.isEmpty() ? QString() : rewrittenValue(c, palette.qss(role));
+        if (value.isEmpty()) {
+            result.unknownLiterals.push_back(c.literal);
+            out += source;
+        } else {
+            out += value;
+            ++result.rewritten;
+        }
+    };
 
     for (qsizetype i = 0; i < n;) {
         const QChar c = original.at(i);
@@ -218,34 +449,52 @@ Result translate(const QString& original, const Options& options)
                 i = j;
                 continue;
             }
-            const QStringView digits = QStringView(token).mid(1);
-            const bool colourLike = allHex(digits)
-                && (digits.size() == 3 || digits.size() == 4 || digits.size() == 6
-                    || digits.size() == 8);
-            if (!colourLike) {
+            const std::optional<Colour> colour = readHex(token);
+            if (!colour) {
                 out += token;
+            } else {
+                rewrite(*colour, token);
+            }
+            i = j;
+            continue;
+        }
+
+        // rgb(), rgba() and colour names, in a declaration's value.
+        if (inBlock && inValue && c.isLetter() && (i == 0 || !isTokenChar(original.at(i - 1)))) {
+            qsizetype j = i + 1;
+            while (j < n && isTokenChar(original.at(j))) {
+                ++j;
+            }
+            const QString ident = original.mid(i, j - i);
+            const QString lower = ident.toLower();
+            if (j < n && original.at(j) == QLatin1Char('(')) {
+                if (lower == QLatin1String("rgb") || lower == QLatin1String("rgba")) {
+                    qsizetype close = original.indexOf(QLatin1Char(')'), j + 1);
+                    close = close < 0 ? n : close + 1;
+                    const QString literal = original.mid(i, close - i);
+                    const QString args = original.mid(j + 1, std::max<qsizetype>(0, close - j - 2));
+                    rewrite(readFunction(args, literal), literal);
+                    i = close;
+                    continue;
+                }
+                // Another function: its name is copied, its arguments
+                // are read like any other value text.
+                out += ident;
                 i = j;
                 continue;
             }
-            const QString key = token.toLower();
-            QString role;
-            if (digits.size() == 6) {
-                role = options.explicitRoles.value(key);
-                if (role.isEmpty() && key == ambiguous && options.resolveAmbiguousByContext) {
-                    role = contextRoleForAmbiguous(selector, property);
-                }
-                if (role.isEmpty()) {
-                    role = index.value(key);
-                }
+            if (!propertyKind(property).isEmpty() && allLetters(ident)
+                && lower != QLatin1String("transparent") && lower != QLatin1String("none")
+                && QColor::isValidColorName(lower)) {
+                const QColor named = QColor::fromString(lower);
+                Colour colour;
+                colour.literal = lower;
+                colour.key = named.name(QColor::HexRgb).toLower();
+                rewrite(colour, ident);
+                i = j;
+                continue;
             }
-            const QString value = role.isEmpty() ? QString() : palette.qss(role);
-            if (value.isEmpty()) {
-                result.unknownLiterals.push_back(key);
-                out += token;
-            } else {
-                out += value;
-                ++result.rewritten;
-            }
+            out += ident;
             i = j;
             continue;
         }

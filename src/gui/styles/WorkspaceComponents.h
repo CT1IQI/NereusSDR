@@ -58,11 +58,14 @@
 //   2026-10-08 - tableRules(): the grid and header colours of Longpath's
 //                 tableStyle(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - generatedColours(): the colours componentize() writes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 class QColor;
 class QWidget;
@@ -99,5 +102,12 @@ QString tableRules();
 // widget the sheet is set on (may be null); it resolves selector-less
 // and id-only blocks. Applying it to its own output changes nothing.
 QString componentize(const QString& qss, const QWidget* owner);
+
+// Every colour componentize() writes that is not a palette value (the
+// shifted gradient stops, the raised hover pair, the glass edges), as
+// QssTranslator reports a literal. A sheet the program copies from an
+// already themed widget brings them back to the translator; the preview
+// leaves them out of its unknown-literal count.
+QStringList generatedColours();
 
 } // namespace NereusSDR::Workspace::Components
