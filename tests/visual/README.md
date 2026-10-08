@@ -4,7 +4,10 @@
 fills it with fixed illustrative data, and writes full-resolution PNGs. It
 captures the app as it is today: it changes nothing about how the app looks.
 `capture.py` runs it across scenes and screen profiles, and `build_gallery.py`
-turns a run into a page you can browse.
+turns a run into a page you can browse. For a design review, `sourcemap.py`
+colours each capture by where its parts come from, `compare_retained.py`
+proves retained parts are pixel-identical to today's app, and
+`build_gallery.py` on a run root builds the one review page from both.
 
 ## Build
 
@@ -24,6 +27,7 @@ python3 tests/visual/capture.py --list                     # the planned runs
 python3 tests/visual/capture.py --verify --scenes baseline-two-band --profiles 'mac-1512x869@2'
 python3 tests/visual/capture.py --verify --against <stored-run-dir> --scenes baseline-two-band
 python3 tests/visual/build_gallery.py <run-dir>            # writes <run-dir>/index.html
+python3 tests/visual/build_gallery.py <run-root>           # review page, see Design review
 ```
 
 `--scenes` and `--profiles` take comma-separated names or shell globs.
@@ -54,6 +58,85 @@ nereus_visual_preview --scene <name> --size WxH --dpr d --out <dir> [--profile <
 It exits non-zero when the window's DPR differs from `--dpr` by more than
 0.001 or its client size differs from `--size`, so a profile the screen
 cannot produce fails instead of producing a wrong image.
+
+## Design review
+
+A run root holds two capture runs side by side:
+
+```
+<run-root>/baseline/   capture.py --out of the baseline-* scenes (today's app)
+<run-root>/proposed/   capture.py --out of the proposed scenes
+<run-root>/verify.txt  optional: the output of capture.py --verify
+```
+
+```
+python3 tests/visual/sourcemap.py <run-root-or-run-dir> [--out <dir>] [--force] [--quiet]
+python3 tests/visual/compare_retained.py <run-root> [--out <dir>]
+python3 tests/visual/build_gallery.py <run-root> [--out <dir>] [--verify-log <file>] [--no-tools]
+```
+
+With no `--out` each tool writes into the run root. `--out` mirrors the
+run root's layout under another directory and never writes into the run
+root, which the tools then only read.
+
+`build_gallery.py <run-root>` runs the other two first (`--no-tools` skips
+them) and writes one self-contained `index.html`: a header with revision,
+Qt, platform, style, fonts, profiles and the verify status; one section per
+handoff item with its scenes; per-profile tabs; a Capture / Source map
+toggle; proposed alone or side by side with its baseline counterpart; fit
+or true scale; the crops with links to the @3x crops; the status of every
+proposed element, including behaviour that stills cannot show; the retained
+proof; and the known limits. Every image carries its sha256 and size.
+Planned scenes with no capture yet show a "not captured yet" tile. The
+build exits non-zero if any captured scene is missing from the page.
+Nothing under a `reference/` folder is ever read or linked.
+
+The verify status comes from `--verify-log`, else from `verify*.txt` or
+`verify*.log` in the run root or `--out`; with none the header says so in
+red. Deep links: `index.html?section=<id>&profile=<name>&view=map,pair,true`
+shows one section with the source map, the baseline pair and true scale on.
+
+### Region contract
+
+`sourcemap.py` reads `regions` from each sidecar. A region has `rect` and
+optionally `visible_rect` as `[x, y, w, h]` in logical px of the captured
+top-level window, a `provenance` (`retained`, `longpath-port`, `proposed`,
+`exists-not-wired`, `not-implemented`), and optionally `z`, `depth`, a
+`label` and a widget `class`. A sidecar-level `"units": "device"` (or a
+per-region one) switches to device px. A crop sidecar carries its parent's
+regions in window coordinates; the tool offsets them by the crop's own rect
+from `crops` and scaled by the image width over the crop's logical width. A `visible_rect` of
+`[0, 0, 0, 0]`, or any region clipped to nothing, is skipped. The top-most
+region wins: by `z` or `depth` when given (higher on top), else the
+smaller of two overlapping regions.
+
+Each `<image>.sourcemap.png` dims the capture to 45%, fills each region in
+its colour at 35% and outlines it 2 device px: retained #3fa7a0, Longpath
+port #d8a55f, proposed #4a7ba8, exists not wired #9a7fd1, not implemented
+#7e7e85 hatched. A legend with counts sits under the image. Maps are
+rewritten only when older than the capture or sidecar, or with `--force`.
+
+### Retained proof
+
+`compare_retained.py` pairs each proposed scene with a baseline scene at
+the same profile from the sidecars, never from a fixed list: an explicit
+`baseline_counterpart` key first, then `look-dialog-X` to `dialog-X` and
+`setup-look-<page>` to `dialog-setup-<page>`, then the same
+`spectrum_checks` data (pan centre, sample rate, span, reference level,
+seeded signals) and transmit keying, preferring `baseline-two-band`,
+`baseline-four-rx` and `baseline-tx`. It compares the slice flag crop and
+the spectrum plot area (SpectrumWidget regions if the sidecar has them,
+else the area between the strip, bar and panel crops, with the flag and
+pan 1 toolbar crops excluded) and writes
+`retained/retained-comparison.json` with the differing pixel count, the
+largest channel delta and the bounding box, plus a diff PNG per pair
+(baseline dimmed, differing pixels magenta, bounding box amber, excluded
+areas grey). Each entry in `comparisons` has `status` `compared` (with
+`identical` true or false) or `not-comparable` (sizes differ, with the
+reason); `not_possible` lists each scene and target with no counterpart,
+crop or area, and why.
+The flag has a translucent background, so a flag over a different spectrum
+differs where the spectrum shows through.
 
 ## Safety
 
