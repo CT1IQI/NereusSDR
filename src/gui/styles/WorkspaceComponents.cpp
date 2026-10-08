@@ -56,10 +56,13 @@
 //   2026-10-08 - tableRules(): the grid and header colours of Longpath's
 //                 tableStyle(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - generatedColours(): the colours componentize() writes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
 
+#include "QssTranslator.h"
 #include "WorkspacePalette.h"
 #include "WorkspaceStyle.h"
 
@@ -1150,6 +1153,36 @@ QString componentize(const QString& qss, const QWidget* owner)
                    .arg(fills.join(QStringLiteral(", ")), hex(kAccent))
                    .arg(kSliderFillRadius);
     }
+    return out;
+}
+
+QStringList generatedColours()
+{
+    const QStringList values = {
+        raisedFill(),
+        raisedHoverFill(),
+        pressedFill(),
+        glassFill(),
+        fieldFill(),
+        accentPillFill(),
+        accentPillHoverFill(),
+        shiftL(QColor(hex(kGlassSelBorder)), kGlassBorderTopLift),
+        shiftL(QColor(hex(kAccent)), kHandleBorderTopLift),
+        hex(kGlassShade),
+        hex(kGlassLight),
+    };
+    QString decls;
+    for (const QString& v : values) {
+        decls += QStringLiteral("background: %1;").arg(v);
+    }
+    // No table and no kept list: every colour comes back as reported.
+    const QssTranslator::Table noRows;
+    const QssTranslator::KeptList noKept;
+    QssTranslator::Options options;
+    options.table = &noRows;
+    options.kept = &noKept;
+    QStringList out = QssTranslator::translate(decls, options).unknownLiterals;
+    out.removeDuplicates();
     return out;
 }
 

@@ -1681,6 +1681,8 @@ set(GUI_SOURCES
     src/gui/TitleBar.cpp
     src/gui/styles/QssTranslator.cpp
     src/gui/styles/QssTranslator.h
+    src/gui/styles/StylesheetColourTable.cpp
+    src/gui/styles/StylesheetColourTable.h
     src/gui/styles/WorkspaceComponents.cpp
     src/gui/styles/WorkspaceComponents.h
     src/gui/styles/WorkspacePalette.cpp

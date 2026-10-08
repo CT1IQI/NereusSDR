@@ -112,9 +112,11 @@ private slots:
             " font-family: \"#c8d8e8\";"
             " /* was #205070 */"
             " color: #c8d8e8; }");
+        // rgba() is read as a colour: its rgb part resolves, its alpha is
+        // kept as written.
         const QString expected = QStringLiteral(
             "QPushButton {"
-            " background: rgba(32, 80, 112, 128);"
+            " background: rgba(44, 44, 49, 128);"
             " image: url(:/icons/#205070.svg);"
             " font-family: \"#c8d8e8\";"
             " /* was #205070 */"

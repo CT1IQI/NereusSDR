@@ -13,6 +13,9 @@
 //   2026-10-08 - installLiveTheming(): the application-wide live pass.
 //                 themeOne() records the themed sheet before it sets it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The unknown-literal count leaves out the colours the
+//                 workspace look itself writes, not only palette values.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -20,6 +23,7 @@
 #include "QssTranslator.h"
 #include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
+#include "WorkspaceStyle.h"
 
 #include <QApplication>
 #include <QEvent>
@@ -48,12 +52,30 @@ QHash<QString, int>& unknownCounts()
     return counts;
 }
 
-const QSet<QString>& paletteValues()
+// Colours the workspace look writes itself: palette values, the
+// colours componentize() derives from them, and the workspace sheets'
+// own literals. A sheet the program copies from an already themed
+// widget brings them back to the translator; they are not legacy
+// literals.
+const QSet<QString>& workspaceValues()
 {
     static const QSet<QString> values = [] {
         QSet<QString> s;
         for (const auto& e : Workspace::WorkspacePalette::glassAndDepth().entries()) {
             s.insert(QString::fromLatin1(e.hex).toLower());
+        }
+        for (const QString& v : Workspace::Components::generatedColours()) {
+            s.insert(v);
+        }
+        const QssTranslator::Table noRows;
+        const QssTranslator::KeptList noKept;
+        QssTranslator::Options options;
+        options.table = &noRows;
+        options.kept = &noKept;
+        const QString sheets = QString::fromLatin1(Workspace::kScrollBarStyle)
+            + Workspace::titleBarStyle();
+        for (const QString& v : QssTranslator::translate(sheets, options).unknownLiterals) {
+            s.insert(v);
         }
         return s;
     }();
@@ -156,9 +178,9 @@ void themeOne(QWidget* w)
         // A sheet set by a call-site role (applied when the switch is
         // on) already holds palette values; those are not legacy
         // literals and are left out of the report.
-        const QSet<QString>& paletteHex = paletteValues();
+        const QSet<QString>& ours = workspaceValues();
         for (const QString& lit : r.unknownLiterals) {
-            if (!paletteHex.contains(lit)) {
+            if (!ours.contains(lit)) {
                 ++unknownCounts()[lit];
             }
         }
