@@ -81,6 +81,10 @@
 //   2026-10-08 - Window images carry applet_fit for every container
 //                 holding applets. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Folded receiver flag scenes (flag-fold--short-pans,
+//                 flag-fold--two-band, flag-fold--two-band-look,
+//                 flag-fold--states). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -3453,6 +3457,69 @@ void pump(int ms)
     }
 }
 
+// ---- folded receiver flags (workspace visual review Task 26) ----------------
+
+VfoWidget* flagOnPan(SceneContext& ctx, int panIndex)
+{
+    return flagForSlice(ctx.window, sliceOnPan(ctx.window, panIdAt(panIndex)));
+}
+
+// Folds the flag of the slice on pan `panIndex` the way a click on its
+// letter does (setCollapsed), with `pose` applied to it first.
+void foldFlagOnPan(SceneContext& ctx, int panIndex,
+                   const std::function<void(VfoWidget*)>& pose = {})
+{
+    VfoWidget* flag = flagOnPan(ctx, panIndex);
+    if (flag == nullptr) {
+        ctx.failure = QStringLiteral("no flag on %1").arg(panIdAt(panIndex));
+        return;
+    }
+    if (pose) {
+        pose(flag);
+    }
+    flag->setCollapsed(true);
+    ctx.notes.append(QStringLiteral("%1: flag folded").arg(panIdAt(panIndex)));
+}
+
+// A crop around a folded flag: the flag, its frequency label and the
+// marker under it.
+constexpr int kFoldCropPadPx = 24;
+
+void addFoldCrop(SceneContext& ctx, QVector<CropRect>& crops, double dpr, const QString& name,
+                 VfoWidget* flag)
+{
+    if (flag == nullptr || flag->parentWidget() == nullptr) {
+        return;
+    }
+    const QRect area = flag->occupiedRegion().boundingRect()
+                           .adjusted(-kFoldCropPadPx, -kFoldCropPadPx / 6,
+                                     kFoldCropPadPx, kFoldCropPadPx);
+    const QRect logical(flag->parentWidget()->mapTo(ctx.window, area.topLeft()), area.size());
+    const QRect clipped = logical.intersected(QRect(QPoint(0, 0), ctx.window->size()));
+    if (!clipped.isEmpty()) {
+        crops.append({name, clipped, deviceRect(clipped, dpr)});
+    }
+}
+
+void addFoldStateCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-right-of-marker"), flagOnPan(ctx, 0));
+    addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-left-of-marker"), flagOnPan(ctx, 1));
+    addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-tx-lit"), flagOnPan(ctx, 2));
+    addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-locked"), flagOnPan(ctx, 3));
+}
+
+void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
+{
+    runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
+        foldFlagOnPan(c, 0);
+        pump(kSettleMs);
+    });
+    if (ctx.failure.isEmpty()) {
+        captureWindow(ctx, name);
+    }
+}
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -3618,6 +3685,53 @@ QVector<Scene> fixedScenes()
             c.notes.append(QStringLiteral("every container: Header Reveal, pointer away"));
         }, {}, HeaderMode::Reveal);
     }, true});
+    // ---- folded receiver flags (Task 26) ----
+    // edge-all-four's short pans with both flags folded; the zoom row sits
+    // clear of the button column.
+    scenes.append({QStringLiteral("flag-fold--short-pans"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("flag-fold--short-pans"), [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            addBandContainer(c, DockEdge::Bottom);
+            addLevelsContainer(c, DockEdge::Left);
+        }, [](SceneContext& c) {
+            foldFlagOnPan(c, 0);
+            foldFlagOnPan(c, 1);
+            pump(kSettleMs);
+        });
+    }, true});
+    // The two-band layout with flag A folded and flag B open, in today's
+    // look and with the workspace preview switch on (the flag is the same).
+    scenes.append({QStringLiteral("flag-fold--two-band"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneFlagFoldTwoBand(ctx, QStringLiteral("flag-fold--two-band"));
+    }});
+    scenes.append({QStringLiteral("flag-fold--two-band-look"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneFlagFoldTwoBand(ctx, QStringLiteral("flag-fold--two-band-look"));
+    }, true});
+    // Four folded flags: A right of its marker (LSB), B left of its marker
+    // (DIGU), C as the TX slice (the flag's display setter only), D locked
+    // (the flag's display setter only). Crops of each at the crop profile.
+    scenes.append({QStringLiteral("flag-fold--states"), QStringLiteral("2x2"), false,
+                   [](SceneContext& ctx) {
+        ctx.extraCrops = addFoldStateCrops;
+        ctx.notShown.append(QJsonObject{
+            {QStringLiteral("item"), QStringLiteral("open flag with the pointer over its letter")},
+            {QStringLiteral("reason"), QStringLiteral(
+                "an offscreen grab draws no pointer, and the letter badge has no hover style: "
+                "the pointer turns to a pointing hand and nothing else changes")}});
+        runWindowScene(ctx, fourRxPoses(), 2, {}, [](SceneContext& c) {
+            foldFlagOnPan(c, 0);
+            foldFlagOnPan(c, 1);
+            foldFlagOnPan(c, 2, [](VfoWidget* f) { f->setTxSlice(true); });
+            foldFlagOnPan(c, 3, [](VfoWidget* f) { f->setLocked(true); });
+            pump(kSettleMs);
+        });
+        if (ctx.failure.isEmpty()) {
+            captureWindow(ctx, QStringLiteral("flag-fold--states"));
+        }
+    }});
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
