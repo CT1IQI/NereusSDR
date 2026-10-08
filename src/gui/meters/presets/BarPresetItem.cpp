@@ -1,5 +1,10 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview data colours: the default backdrop reads
+//                 WorkspacePreview::dataBackground() and the factory ink
+//                 WorkspacePreview::meterInk() (instrument tones under data
+//                 choice C only; a colour the user set is kept). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
@@ -50,6 +55,7 @@ mw0lge@grange-lane.co.uk
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <QPainter>
 #include <QJsonDocument>
 #include <algorithm>
@@ -154,24 +160,39 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     const auto pos=[&](double value) { return g.left+g.width*calibratedPosition(value); };
     p.save(); p.setClipRect(g.face); p.setRenderHint(QPainter::Antialiasing,false);
     QFont font=p.font(); font.setPixelSize(qMax(1,qRound(13*g.scale))); p.setFont(font);
+    // Workspace preview: under data choices B and C the default backdrop
+    // takes the panel role; under C the factory ink takes the instrument
+    // tones. A colour the user set (backdropColor, barColor, titleColor,
+    // historyColor) is drawn as it is.
+    using WorkspacePreview::meterInk;
+    const QColor backdrop=m_background==QColor(32,32,32) ? WorkspacePreview::dataBackground(m_background,"panel") : m_background;
+    const QColor titleInk=meterInk(m_title,{QColor(169,169,169)},"text-secondary");
+    const QColor markerInk=meterInk(m_marker,{QColor(Qt::yellow),QColor(255,165,0)},"measured");
+    const QColor lowFillInk=meterInk(m_lowFill,{QColor(Qt::white),QColor(95,158,160),QColor(0,139,139)},"measured");
+    const QColor historyInk=meterInk(m_historyColor,{QColor(255,0,0,128),QColor(255,250,205,128),QColor(255,218,185,128),QColor(100,149,237,128),QColor(128,0,128,128),QColor(175,238,238,128),QColor(238,130,238,128)},"measured-dim");
+    const QColor averageInk=meterInk(QColor(169,169,169),{QColor(169,169,169)},"text-secondary");
+    const QColor overInk=meterInk(QColor(Qt::red),{QColor(Qt::red)},"danger");
+    const QColor peakInk=meterInk(QColor(Qt::red),{QColor(Qt::red)},"text");
+    const QColor peakTextInk=meterInk(QColor(Qt::red),{QColor(Qt::red)},"text-secondary");
+    const QColor scaleInk=meterInk(QColor(Qt::white),{QColor(Qt::white)},"text-scale");
     if(layer==Layer::Background) {
-        p.fillRect(g.face,m_background); p.setPen(m_title);
+        p.fillRect(g.face,backdrop); p.setPen(titleInk);
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
         drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale);
     } else if(layer==Layer::OverlayDynamic) {
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
-        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),m_historyColor); }
+        if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),historyInk); }
         const auto marker=[&](double value,QColor color,int thickness) { p.setPen(QPen(color,thickness)); p.drawLine(QPointF(pos(value),g.top),QPointF(pos(value),g.bottom)); };
-        if(m_average.hasReading()) { marker(m_average.value(),QColor(169,169,169),3); }
+        if(m_average.hasReading()) { marker(m_average.value(),averageInk,3); }
         if(m_primary.hasReading() && m_style!="Line") {
             // From Thetis MeterManager.cs:37458-37591 [v2.10.3.15]
             const double end=pos(m_primary.value());
             const double transition=pos(m_redThreshold);
-            const QColor low=m_flavor=="Custom" ? m_marker : m_lowFill;
+            const QColor low=m_flavor=="Custom" ? markerInk : lowFillInk;
             const auto fill=[&](double start,double stop) {
                 if(start<transition) { p.fillRect(QRectF(start,g.top,qMax(0.0,qMin(stop,transition)-start),g.baseline-g.top),low); }
-                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),Qt::red); }
+                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),overInk); }
             };
             if(m_style=="Solid") { fill(g.left,end); }
             else {
@@ -186,18 +207,18 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         // The static scale is cached separately from moving bars on both backends.
         const qreal dpr=p.device()->devicePixelRatioF();
         const QSize scaleSize(qRound(g.face.width()*dpr),qRound(g.face.height()*dpr));
-        if(m_scaleCache.size()!=scaleSize || m_scaleCache.devicePixelRatio()!=dpr || m_scaleRect!=pixelRect(width,height) || m_scaleFont!=font) {
+        if(m_scaleCache.size()!=scaleSize || m_scaleCache.devicePixelRatio()!=dpr || m_scaleRect!=pixelRect(width,height) || m_scaleFont!=font || m_scaleInk!=scaleInk || m_scaleOverInk!=overInk) {
             m_scaleCache=QImage(scaleSize,QImage::Format_ARGB32_Premultiplied); m_scaleCache.setDevicePixelRatio(dpr); m_scaleCache.fill(Qt::transparent);
-            m_scaleRect=pixelRect(width,height); m_scaleFont=font; QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
+            m_scaleRect=pixelRect(width,height); m_scaleFont=font; m_scaleInk=scaleInk; m_scaleOverInk=overInk; QPainter scale(&m_scaleCache); scale.setFont(font); scale.translate(-g.face.topLeft());
             // From Thetis MeterManager.cs:33393-33871,33872-33958 [v2.10.3.15]
             const double high=m_redThreshold;
-            scale.setPen(QPen(Qt::white,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
-            scale.setPen(QPen(Qt::red,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
+            scale.setPen(QPen(scaleInk,2)); scale.drawLine(QPointF(g.left,g.baseline),QPointF(pos(high),g.baseline));
+            scale.setPen(QPen(overInk,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? overInk : scaleInk,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
             for(double value:major) {
-                scale.setPen(QPen(value>high ? Qt::red : Qt::white,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                scale.setPen(QPen(value>high ? overInk : scaleInk,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
                 const double x=pos(value);
                 const int index=major.indexOf(value);
                 const double before=index==0?g.left:pos(major[index-1]);
@@ -210,13 +231,13 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             }
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
-        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),Qt::red,3); }
-        if(m_primary.hasReading()) { marker(m_primary.value(),m_marker,3); }
+        if(m_peakHold && m_primary.hasReading()) { marker(m_primary.maxHistory(),peakInk,3); }
+        if(m_primary.hasReading()) { marker(m_primary.value(),markerInk,3); }
         p.setFont(font);
         const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():QStringLiteral(" ")+m_units); };
-        p.setPen(m_marker);
+        p.setPen(markerInk);
         if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
-        p.setPen(Qt::red);
+        p.setPen(peakTextInk);
         if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
     }
     p.restore();
