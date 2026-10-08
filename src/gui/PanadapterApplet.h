@@ -58,6 +58,10 @@
 //                R-IOS-30): an empty pan offers Take a receiver after another
 //                device took this window's receiver; the TX pill offers Take
 //                transmit. AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Workspace visual review Task 26 (JJ's
+//                ruling): the receiver flags stay on top of the corner
+//                badges; the badges' strip is masked out of the flags' area.
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -270,6 +274,17 @@ protected:
     bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private:
+    /// Workspace visual review Task 26 (JJ, 2026-10-08): the receiver flags
+    /// stay on top of the corner badges (CH, TX, WIDE) wherever they meet.
+    /// The badges' strip is a sibling over the whole SpectrumWidget, so no
+    /// raise() inside the pan can put a flag above it; instead the strip is
+    /// masked out of the area the flags show in
+    /// (SpectrumWidget::receiverFlagRegion). This is the one place the rule
+    /// lives. A mask does not depend on stacking order, so a later raise() of
+    /// the strip cannot undo it, and popups and flyouts keep their own order.
+    /// Re-run when the flags change and when the strip or the spectrum moves
+    /// or resizes (eventFilter).
+    void applyStatusOverlayMask();
     /// Build the right-click context menu: add-slice / float (Task B5, both
     /// carrying this applet's own panId()) then a separator then the
     /// pre-existing Extended-view toggle. Returns a heap-allocated QMenu*

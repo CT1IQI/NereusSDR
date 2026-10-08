@@ -104,6 +104,9 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
             [this]() { emit wideBadgeClicked(m_panId); });
     connect(m_statusOverlay, &SpectrumStatusOverlay::chainTagClicked, this,
             [this](int chainIdx) { emit chainTagClicked(m_panId, chainIdx); });
+    // Task 26: the receiver flags stay on top of the corner badges.
+    connect(m_spectrum, &SpectrumWidget::receiverFlagRegionChanged, this,
+            &PanadapterApplet::applyStatusOverlayMask);
 
     // Phase 3F Sub-Epic F Task 13: restore persisted extended-view
     // toggle (default true) and apply it to the embedded spectrum immediately.
@@ -230,6 +233,12 @@ bool PanadapterApplet::eventFilter(QObject* obj, QEvent* ev)
 {
     if (ev->type() == QEvent::MouseButtonPress) {
         emit activated(m_panId);
+    }
+    // Task 26: the badge strip or the spectrum moved or resized, so the
+    // flags' area falls elsewhere on the strip.
+    if ((obj == m_statusOverlay || obj == m_spectrum)
+        && (ev->type() == QEvent::Move || ev->type() == QEvent::Resize)) {
+        applyStatusOverlayMask();
     }
     return QWidget::eventFilter(obj, ev);
 }
@@ -374,6 +383,27 @@ void PanadapterApplet::repositionStatusOverlay()
     m_statusOverlay->setGeometry(width() - overlayWidth - 8 - reserved,
                                  stripH + 8,
                                  overlayWidth, hint.height());
+}
+
+void PanadapterApplet::applyStatusOverlayMask()
+{
+    if (!m_statusOverlay || !m_spectrum) { return; }
+    const QPoint offset = m_spectrum->mapTo(this, QPoint(0, 0)) - m_statusOverlay->pos();
+    const QRegion flags = m_spectrum->receiverFlagRegion().translated(offset);
+    const QRegion strip(m_statusOverlay->rect());
+    if (!flags.intersects(strip)) {
+        if (!m_statusOverlay->mask().isEmpty()) {
+            m_statusOverlay->clearMask();
+        }
+        return;
+    }
+    QRegion shown = strip.subtracted(flags);
+    if (shown.isEmpty()) {
+        // An empty mask means no mask at all, so a strip wholly under the
+        // flags keeps one corner pixel.
+        shown = QRegion(0, 0, 1, 1);
+    }
+    m_statusOverlay->setMask(shown);
 }
 
 void PanadapterApplet::setWideBpf(bool wide, const QString& reason)

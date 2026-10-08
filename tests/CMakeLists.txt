@@ -7240,6 +7240,14 @@ nereus_add_test(tst_radio_model_slice_lifecycle)
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 9.
 nereus_add_test(tst_vfo_widget_tx_badge_click)
 
+# Workspace visual review Task 26: the receiver flag folds to its letter and
+# TX badges (AetherSDR's collapsed flag, ported), and the pan's zoom row
+# moves clear of the button column on a short pan.
+# Source: AetherSDR src/gui/VfoWidget.cpp [@3a1f59ea] (fold); NereusSDR-original
+# (zoom row placement).
+nereus_add_test(tst_vfo_flag_fold)
+nereus_add_test(tst_spectrum_zoom_row_placement)
+
 # Phase 3F Sub-Epic F Task 1: P2 composeCmdGeneral writes packetbuf[23]
 # wideband per-ADC enable mask per Thetis network.c:879 [v2.10.3.15].
 # 3 tests: bit0 set when ADC0 enabled, default 0 when none, per-ADC

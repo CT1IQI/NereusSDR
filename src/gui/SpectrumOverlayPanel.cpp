@@ -73,6 +73,11 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace visual review Task 26: on a short pan the zoom
+//                 row (S, B, -, +) moves to just right of the open button
+//                 column instead of covering its lower buttons; it stays at
+//                 the bottom left otherwise. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -428,6 +433,12 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     if (obj == parentWidget() && event->type() == QEvent::Resize) {
         repositionZoomButtons();
     }
+    // Task 26: the row's place depends on where the column is, so follow
+    // the column when it moves (MainWindow places it after construction).
+    // This filter is installed on the application, so it sees our own moves.
+    if (obj == this && event->type() == QEvent::Move) {
+        repositionZoomButtons();
+    }
 
     return QWidget::eventFilter(obj, event);
 }
@@ -485,6 +496,8 @@ void SpectrumOverlayPanel::updateLayout()
         ? (kPad + kBtnH + kGap + shownCount * (kBtnH + kGap))
         : (kPad + kBtnH + kPad);
     setFixedSize(kPad + kBtnW + kPad, totalH);
+    // Task 26: the column grew or shrank; keep the zoom row clear of it.
+    repositionZoomButtons();
 }
 
 // ── toggle ────────────────────────────────────────────────────────────────────
@@ -1491,6 +1504,25 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     int x = kMargin;
     int y = spectrum->height() - kFreqScaleH - m_zoomStrip->height() - kMargin;
     y = std::max(kMargin, y);
+    // Task 26: on a short pan the open button column reaches down to the
+    // row and the row covered its lower buttons (ATT). Then the row moves to
+    // just right of the column at the same height; on a tall pan, or with
+    // the column folded, nothing changes. AetherSDR keeps its zoom grid at
+    // the bottom left with no such check (SpectrumWidget.cpp:11542
+    // positionZoomButtons [@3a1f59ea]).
+    if (!isHidden()) {
+        const QRect row(QPoint(x, y), m_zoomStrip->size());
+        bool covers = false;
+        for (QPushButton* btn : findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (!btn->isHidden() && btn->geometry().translated(pos()).intersects(row)) {
+                covers = true;
+                break;
+            }
+        }
+        if (covers) {
+            x = geometry().right() + 1 + kMargin;
+        }
+    }
     m_zoomStrip->move(x, y);
     m_zoomStrip->raise();
 }

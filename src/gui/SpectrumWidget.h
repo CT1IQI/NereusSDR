@@ -270,6 +270,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QRegion>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -1603,6 +1604,11 @@ public:
     void removeVfoWidget(int sliceIndex);
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
+    /// Where this pan's receiver flags show, in this widget's coordinates:
+    /// each flag, open or folded, with its side buttons and folded
+    /// frequency label (VfoWidget::occupiedRegion). PanadapterApplet keeps
+    /// its corner badges out of it so the flags stay on top of them.
+    QRegion receiverFlagRegion() const { return m_receiverFlagRegion; }
     /// A slice this pan shows only as its flag and, off the span, as its own
     /// edge marker, never through the pan's VFO: a listened slice a layout
     /// change placed on this pan. Cleared when its flag is removed.
@@ -2175,6 +2181,9 @@ public:
     int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
+    /// receiverFlagRegion() changed: a flag moved, folded, opened, showed or
+    /// hid.
+    void receiverFlagRegionChanged();
     /// Task 78: a click on another device's slice label, with what it says.
     void foreignMarkerClicked(int sliceId, const QString& explanation);
     // 3M-5b: emitted when any TX waterfall colormap property changes.
@@ -3908,6 +3917,9 @@ private:
 #else
     bool dssMeshReady() const { return false; }
 #endif
+
+    QRegion m_receiverFlagRegion;
+    void refreshReceiverFlagRegion();
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,
     // dBm scale, waterfall filter/zero-line/timestamp overlays, and

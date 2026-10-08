@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08  J.J. Boyd / KG4VCF. Receiver flags that fold are placed
+//                 again when they fold or open, and the pan reports where
+//                 its flags show (receiverFlagRegion) so its corner badges
+//                 stay under them. AI-assisted via Anthropic Claude Code.
 //   2026-10-05  J.J. Boyd / KG4VCF. Refresh slice flags and floating
 //                 controls when the RF view changes, including accepted
 //                 remote crops on GPU. AI-assisted via OpenAI Codex.
@@ -13264,6 +13268,12 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::activeSliceChanged, this, [this](bool) {
         markOverlayDirty();
     });
+    // Flag fold (workspace visual review Task 26): a folded or opened flag
+    // is placed again at its new width, and its marker redrawn.
+    connect(w, &VfoWidget::collapsedChanged, this, [this](bool) {
+        updateVfoPositions();
+        markOverlayDirty();
+    });
     w->show();
     w->raise();
     return w;
@@ -13281,6 +13291,7 @@ void SpectrumWidget::removeVfoWidget(int sliceIndex)
         // are alive keeps the destruction order ours (issue #113).
         w->destroyFloatingButtons();
         delete w;
+        refreshReceiverFlagRegion();
         update();
     }
 }
@@ -13403,6 +13414,19 @@ void SpectrumWidget::updateVfoPositions()
     // A's frequency readout." Re-asserting the pin here, after the loop, is
     // what makes it survive this pass instead of only the one it was set on.
     raiseFrontVfoWidget();
+    refreshReceiverFlagRegion();
+}
+
+void SpectrumWidget::refreshReceiverFlagRegion()
+{
+    QRegion region;
+    for (VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+        region += vfo->occupiedRegion();
+    }
+    if (region != m_receiverFlagRegion) {
+        m_receiverFlagRegion = region;
+        emit receiverFlagRegionChanged();
+    }
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------
