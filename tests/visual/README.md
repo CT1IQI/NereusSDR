@@ -297,6 +297,65 @@ Every profile scene's sidecar carries a `rail_measure` object: the
 collapsed and open rail widths, the title and network readout edges, the
 free space between them and how far the open popover covers the readout.
 
+### Controls sheet scene
+
+`controls-sheet` puts the same real Qt controls, at the same fixed sizes,
+in three columns:
+
+- Today: the shipped look, workspace preview switch off.
+- Preview now: the workspace preview as built (QssTranslator and
+  Workspace::componentize over today's stylesheets, plus the workspace
+  palette and app stylesheet).
+- Longpath: Longpath's own control stylesheets, palette and app baseline
+  stylesheet, ported verbatim in `LongpathControlStyles.h` (preview tool
+  only).
+
+Rows: horizontal slider (resting, hover, pressed, disabled), vertical
+slider, checkbox and radio (off, on, disabled), combo (closed, and open
+with its popup), line edit and spin box (resting, focused), tab bar with
+its pane, scroll bar, group box, a menu with checked and disabled items, a
+tooltip, push buttons (resting, hovered, checked, disabled) and
+MeterSlider, which paints itself and takes no stylesheets. The last rows
+are real panels in each look: the RX applet slider rows, TX power and tune
+power, and microphone gain (PhoneCwApplet), each grabbed from the applet
+itself at its full width so every column shows the whole applet; the RX
+rows again as the main window shows them through the Main Panel viewport
+(labelled as the real clipping, in today's window layout); and the TX EQ
+dialog sliders. Today's RX rows match `baseline-two-band` where the
+viewport shows them, and the EQ row matches `dialog-tx-eq`. The TX and mic
+bands are below the fold in the baseline window, so they have no stored
+counterpart.
+
+`controls-sheet--zoom` cuts a 32x24 logical patch around each slider
+handle and indicator and scales it 5x nearest-neighbour, the three looks
+side by side.
+
+The sidecar lists every placement (sheet rect and crop source), each
+control's sizeHint and minimumSizeHint per look, and which look each
+column used. Offscreen, Qt paints the open combo popup's selected row
+without the stylesheet's selection colour; the sheet notes this, so check
+that row against a live popup before judging it.
+
+```
+python3 tests/visual/capture.py --out <dir> --scenes controls-sheet \
+    --profiles 'mac-1512x869@2,laptop-1280x800@1'
+```
+
+### Strip fit scenes
+
+`strip-fit-today` (the baseline two-band window) and `strip-fit-preview`
+(the preview switch on, the Main Panel in the right strip as the preview
+places it) measure every scroll area under the Main Panel container and
+every applet in it: viewport width, vertical bar width, body width and
+minimum, and each applet's width, minimum width and the logical px the
+viewport hides. The result is `panel_fit` in the window sidecar and in
+`<scene>--panel`, a crop of the Main Panel container.
+
+```
+python3 tests/visual/capture.py --out <dir> --scenes 'strip-fit-*' \
+    --profiles 'mac-1512x869@2,laptop-1280x800@1'
+```
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives

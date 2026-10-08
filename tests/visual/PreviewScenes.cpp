@@ -58,6 +58,12 @@
 //   2026-10-08 - The edge values note the right strip's 0 px padding and
 //                 3 px handle. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - controls-sheet: today, preview now and Longpath controls
+//                 side by side (ControlsSheet.cpp). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - strip-fit-today and strip-fit-preview: applet minimum
+//                 widths against the Main Panel viewport. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -98,6 +104,7 @@
 #include <cmath>
 #include <memory>
 
+#include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/ControlRanges.h"
 #include "core/WdspTypes.h"
@@ -3715,6 +3722,36 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneEditProperties(ctx); }, true});
     scenes.append({QStringLiteral("four-rx-look"), QStringLiteral("2x2"), false,
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
+
+    // ---- controls: today, preview now and Longpath side by side ----
+    // Starts in today's look (switch off): the sheet switches the looks
+    // itself and returns to today's.
+    // Applet minimum widths against the Main Panel viewport: today's
+    // window, and the preview's right strip as JJ runs it.
+    scenes.append({QStringLiteral("strip-fit-today"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (!ctx.failure.isEmpty()) { return; }
+        const QJsonObject fit = measurePanelFit(ctx, QStringLiteral("today"));
+        captureWindow(ctx, QStringLiteral("strip-fit-today"));
+        appendPanelFitCrop(ctx, QStringLiteral("strip-fit-today"), fit);
+    }});
+    scenes.append({QStringLiteral("strip-fit-preview"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        auto fit = std::make_shared<QJsonObject>();
+        sceneProposedEdges(ctx, QStringLiteral("strip-fit-preview"), {}, [fit](SceneContext& c) {
+            *fit = measurePanelFit(c, QStringLiteral("preview now"));
+        });
+        if (ctx.failure.isEmpty()) {
+            appendPanelFitCrop(ctx, QStringLiteral("strip-fit-preview"), *fit);
+        }
+    }, true});
+
+    scenes.append({QStringLiteral("controls-sheet"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
+    }});
 
     // ---- fixed dialogs ----
     scenes.append({QStringLiteral("dialog-tx-eq"), QStringLiteral("2v"), true,
