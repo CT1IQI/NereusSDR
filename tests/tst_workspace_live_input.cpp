@@ -8,6 +8,10 @@
 //                 canvas, and JJ's bottom strip (Tuner and Amplifier side by
 //                 side), by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - The profile rail after a profile is added: hover, the move
+//                 to another profile's button and the click, with enter,
+//                 leave and moves routed as Qt's cocoa plugin routes them, by
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -25,7 +29,9 @@
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
+#include <QDialog>
 #include <QDrag>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QMenu>
@@ -33,6 +39,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QWindow>
+#include <qpa/qwindowsysteminterface.h>
 #include <functional>
 #include <memory>
 #include "core/AppSettings.h"
@@ -48,6 +55,9 @@
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/containers/WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/containers/WorkspaceProfiles.h"
+#include "gui/widgets/ProfileRail.h"
+#include "gui/widgets/ProfileRailDock.h"
 
 using namespace NereusSDR;
 
@@ -140,6 +150,63 @@ QWidget* nativeTarget(QWidget* native, const QPoint& global)
     }
     return native;
 }
+
+
+// Qt's cocoa plugin (qnsview_mouse.mm, mouseMovedImpl, Qt 6.11): the content
+// view picks the window under the mouse with QCocoaWindow::childWindowAt, which
+// walks each QWindow's children in list order (raise() moves a window last) and
+// takes the last exposed one whose geometry holds the point. When that window
+// changes it posts one enter/leave pair; the move itself goes only to that
+// window.
+QWindow* cocoaChildWindowAt(QWindow* window, const QPoint& local)
+{
+    QWindow* target = window;
+    for (QObject* object : window->children()) {
+        auto* child = qobject_cast<QWindow*>(object);
+        if (child && child->handle() && child->isExposed() && child->geometry().contains(local)) {
+            target = cocoaChildWindowAt(child, local - child->position());
+        }
+    }
+    return target;
+}
+
+class CocoaPointer {
+public:
+    explicit CocoaPointer(QWidget* topLevel) : m_topLevel(topLevel) {}
+
+    QWindow* under() const { return m_under; }
+
+    void move(const QPoint& global)
+    {
+        QWindow* content = m_topLevel->windowHandle();
+        const QPoint windowPoint = content->mapFromGlobal(global);
+        QWindow* target = cocoaChildWindowAt(content, windowPoint);
+        if (target != m_under) {
+            if (m_under) {
+                QWindowSystemInterface::handleEnterLeaveEvent(target, m_under, QPointF(windowPoint), QPointF(global));
+            } else {
+                QWindowSystemInterface::handleEnterEvent(target, QPointF(windowPoint), QPointF(global));
+            }
+            QWindowSystemInterface::flushWindowSystemEvents();
+            m_under = target;
+        }
+        QTest::mouseMove(target, target->mapFromGlobal(global));
+    }
+
+    // A hand moving from `from` to `to` in `steps` moves over `ms` of event
+    // loop time.
+    void glide(const QPoint& from, const QPoint& to, int steps, int ms)
+    {
+        for (int i = 1; i <= steps; ++i) {
+            move(from + (to - from) * i / steps);
+            QTest::qWait(ms / steps);
+        }
+    }
+
+private:
+    QWidget* m_topLevel;
+    QWindow* m_under{nullptr};
+};
 
 // A mouse gesture as AppKit delivers it: the press goes to the view the
 // hit-test picks and the moves and the release follow the pressed view.
@@ -285,6 +352,75 @@ void clickItem(QMenu* menu, const QString& text)
         return;
     }
     QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(action).center());
+}
+
+
+// Closes any modal dialog that opens while armed and remembers it, so a click
+// that lands on a badge's remove cross fails the test instead of hanging it.
+struct ModalWatch {
+    QTimer timer;
+    QStringList seen;
+    bool acceptNamePrompt{false};
+
+    ModalWatch()
+    {
+        timer.setInterval(20);
+        QObject::connect(&timer, &QTimer::timeout, [this] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) {
+                return;
+            }
+            if (acceptNamePrompt && qobject_cast<QInputDialog*>(dialog)) {
+                dialog->accept();
+                return;
+            }
+            seen.append(QString::fromLatin1(dialog->metaObject()->className()) + QStringLiteral(" \"")
+                        + dialog->windowTitle() + QStringLiteral("\""));
+            dialog->reject();
+        });
+        timer.start();
+    }
+};
+
+// What is wrong with the fanned-out rail as drawn, or an empty string: the
+// popover must hold the rail at its full size, and the badges and the + must
+// sit side by side inside it, none overlapping another.
+QString railLayoutProblem(ProfileRailDock* dock)
+{
+    QWidget* popover = dock->popover();
+    ProfileRail* rail = dock->rail();
+    if (popover->width() < popover->sizeHint().width() || rail->width() < rail->sizeHint().width()) {
+        return QStringLiteral("the rail opened %1 px wide in a %2 px popover for %3 px of badges")
+            .arg(rail->width()).arg(popover->width()).arg(rail->sizeHint().width());
+    }
+    QList<QWidget*> buttons;
+    for (const QString& id : rail->badges()) {
+        buttons.append(rail->badgeButton(id));
+    }
+    buttons.append(rail->plusButton());
+    for (int i = 0; i < buttons.size(); ++i) {
+        const QRect r = buttons[i]->geometry();
+        if (!rail->rect().contains(r)) {
+            return QStringLiteral("button %1 (%2) at x %3..%4 is cut off by the %5 px rail")
+                .arg(i).arg(static_cast<QPushButton*>(buttons[i])->text()).arg(r.left()).arg(r.right()).arg(rail->width());
+        }
+        if (i > 0 && buttons[i - 1]->geometry().right() >= r.left()) {
+            return QStringLiteral("button %1 (%2) at x %3 overlaps button %4 ending at x %5")
+                .arg(i).arg(static_cast<QPushButton*>(buttons[i])->text()).arg(r.left()).arg(i - 1)
+                .arg(buttons[i - 1]->geometry().right());
+        }
+    }
+    return {};
+}
+
+QString describeRect(const QRect& r)
+{
+    return QStringLiteral("%1,%2 %3x%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+}
+
+QRect globalRect(const QWidget* widget)
+{
+    return QRect(widget->mapToGlobal(QPoint()), widget->size());
 }
 
 // JJ's workspace (from his report, never from his settings): the main panel
@@ -438,6 +574,36 @@ struct LiveFixture {
         return saved;
     }
 
+
+    // Back to one profile, active, before a profile test (the settings
+    // profile is shared by the test functions of this process).
+    bool resetProfiles(WorkspaceProfiles* profiles)
+    {
+        const QStringList ids = profiles->ids();
+        if (ids.isEmpty()) {
+            return false;
+        }
+        if (profiles->activeId() != ids.first() && !profiles->switchTo(ids.first()).ok()) {
+            return false;
+        }
+        for (int i = 1; i < ids.size(); ++i) {
+            if (!profiles->remove(ids.at(i)).ok()) {
+                return false;
+            }
+        }
+        settle();
+        return profiles->ids().size() == 1;
+    }
+
+    // Glides from `from` onto the collapsed badge and waits for the rail to
+    // fan out (the Reveal delay).
+    bool hoverOpen(CocoaPointer& pointer, ProfileRailDock* dock, const QPoint& from)
+    {
+        const QPoint onBadge = centreOf(dock->collapsedBadge());
+        pointer.glide(from, onBadge, 4, 40);
+        return QTest::qWaitFor([dock] { return dock->isOpen(); }, ContainerWidget::kRevealDelayMs + 500);
+    }
+
     QString describe(QWidget* widget) const
     {
         return QString::fromLatin1(widget->metaObject()->className()) + QLatin1Char('#') + widget->objectName();
@@ -470,6 +636,7 @@ private slots:
     // The proxy for macOS: every visible native view that draws over others
     // and claims to be transparent for the mouse must say so to the window
     // system, or AppKit gives it every click under it.
+
     void nativeOverlaysLetClicksThrough()
     {
         LiveFixture f;
@@ -950,6 +1117,138 @@ private slots:
                                 .arg(leftRect.x()).arg(leftRect.y()).arg(leftRect.width()).arg(leftRect.height())
                                 .arg(rightRect.x()).arg(rightRect.y()).arg(rightRect.width()).arg(rightRect.height())));
         QCOMPARE(leftRect.top(), rightRect.top());
+    }
+
+    // JJ, on his Mac: after adding a workspace profile, hovering the badge
+    // fans the rail out, and moving to another profile's button and clicking
+    // it never switches; the rail collapses back to one button first. The
+    // rail is rebuilt while the popover is hidden, and a hidden rail's layout
+    // never runs, so the popover kept the rail's old size: on the next hover
+    // it opened at the pre-add width with the new badges crammed into it and
+    // overlapping, then grew under the pointer once the title bar laid out
+    // again. The click landed on the active badge (which closes the rail and
+    // switches nothing) or on a badge's remove cross.
+    void profileRailSwitchesAfterAddingAProfile_data()
+    {
+        QTest::addColumn<QStringList>("newItems");
+        QTest::addColumn<int>("targetIndex");
+        // Two profiles: the one JJ started with and the one he added; he
+        // goes back to the first.
+        QTest::newRow("added empty") << QStringList{QStringLiteral("Empty")} << 0;
+        QTest::newRow("added from current") << QStringList{QStringLiteral("From Current Arrangement")} << 0;
+        // Three profiles: the second one.
+        QTest::newRow("three profiles")
+            << QStringList{QStringLiteral("Empty"), QStringLiteral("From Current Arrangement")} << 1;
+    }
+
+    void profileRailSwitchesAfterAddingAProfile()
+    {
+        QFETCH(QStringList, newItems);
+        QFETCH(int, targetIndex);
+        LiveFixture f;
+        QVERIFY(f.build());
+        ProfileRailDock* dock = f.window->profileRailDock();
+        auto* profiles = f.window->findChild<WorkspaceProfiles*>();
+        QVERIFY(dock && profiles);
+        QVERIFY(f.resetProfiles(profiles));
+
+        CocoaPointer pointer(f.window.get());
+        NativeMouse mouse(f.window.get());
+        ModalWatch modals;
+        QPushButton* badge = dock->collapsedBadge();
+        const QPoint rest = centreOf(badge) + QPoint(80, 0);
+        pointer.move(rest);
+
+        // Add the profiles the way JJ did: hover, the dashed +, an item, the
+        // name prompt.
+        for (const QString& item : newItems) {
+            const int before = profiles->ids().size();
+            QVERIFY(f.hoverOpen(pointer, dock, rest));
+            const QPoint plus = centreOf(dock->rail()->plusButton());
+            pointer.glide(centreOf(badge), plus, 4, 80);
+            modals.acceptNamePrompt = true;
+            MenuProbe probe;
+            probe.arm([item](QMenu* menu) { clickItem(menu, item); });
+            mouse.click(plus);
+            QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
+            QTRY_COMPARE_WITH_TIMEOUT(profiles->ids().size(), before + 1, kMenuWaitMs);
+            modals.acceptNamePrompt = false;
+            settle();
+            // Picking the new profile made it active and closed the rail.
+            QVERIFY(!dock->isOpen());
+            pointer.glide(plus, rest, 3, 60);
+            QTest::qWait(ContainerWidget::kRevealHideMs + 100);
+            QVERIFY(!dock->isOpen());
+        }
+        const QStringList ids = profiles->ids();
+        QCOMPARE(ids.size(), newItems.size() + 1);
+        const QString target = ids.at(targetIndex);
+        QVERIFY(profiles->activeId() != target);
+
+        // Hover the badge until the rail fans out.
+        QVERIFY(f.hoverOpen(pointer, dock, rest));
+        settle();
+        const QString drawn = railLayoutProblem(dock);
+        QVERIFY2(drawn.isEmpty(), qPrintable(drawn));
+
+        // Move to the target's button as it is drawn now, in 12 steps over
+        // about 240 ms, along the straight line, and click it.
+        QPushButton* targetButton = dock->rail()->badgeButton(target);
+        QVERIFY(targetButton);
+        const QRect seen = globalRect(targetButton);
+        const QPoint from = centreOf(badge);
+        const QPoint to = seen.center();
+        pointer.glide(from, to, 12, 240);
+        QVERIFY2(dock->isOpen(), "the rail closed before the pointer reached the button");
+        QVERIFY2(globalRect(targetButton) == seen,
+                 qPrintable(QStringLiteral("the button moved under the pointer from %1 to %2")
+                                .arg(describeRect(seen), describeRect(globalRect(targetButton)))));
+        QWidget* hit = mouse.targetAt(to);
+        QVERIFY2(hit == dock->popover(), qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        mouse.click(to);
+        settle();
+        QVERIFY2(modals.seen.isEmpty(), qPrintable(QStringLiteral("the click opened ") + modals.seen.join(", ")));
+        QCOMPARE(profiles->activeId(), target);
+        QVERIFY(!dock->isOpen());
+        QCOMPARE(badge->text(), ProfileRail::initialFor(profiles->name(target)));
+    }
+
+    // What the fix must keep: the rail closes when the pointer really leaves
+    // both the badge and the rail, Escape closes it, and Tab opens it.
+    void profileRailClosesOnLeaveAndEscapeAndOpensOnTab()
+    {
+        LiveFixture f;
+        QVERIFY(f.build());
+        ProfileRailDock* dock = f.window->profileRailDock();
+        auto* profiles = f.window->findChild<WorkspaceProfiles*>();
+        QVERIFY(dock && profiles);
+        QVERIFY(f.resetProfiles(profiles));
+        QVERIFY(profiles->createEmpty(QStringLiteral("DX")).ok());
+        settle();
+
+        CocoaPointer pointer(f.window.get());
+        QPushButton* badge = dock->collapsedBadge();
+        const QPoint rest = centreOf(badge) + QPoint(80, 0);
+        pointer.move(rest);
+        QVERIFY(f.hoverOpen(pointer, dock, rest));
+        // Out through the popover's left edge and down into the workspace.
+        const QRect popover = globalRect(dock->popover());
+        const QPoint outside(popover.left() - 40, popover.bottom() + 60);
+        pointer.glide(centreOf(badge), outside, 6, 120);
+        QVERIFY(dock->isOpen());
+        QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ContainerWidget::kRevealHideMs + 400);
+
+        QVERIFY(f.hoverOpen(pointer, dock, outside));
+        QTest::keyClick(f.window.get(), Qt::Key_Escape);
+        settle();
+        QVERIFY(!dock->isOpen());
+
+        pointer.glide(centreOf(badge), outside, 4, 40);
+        QTest::qWait(ContainerWidget::kRevealHideMs + 100);
+        f.window->activateWindow();
+        badge->setFocus(Qt::TabFocusReason);
+        settle();
+        QVERIFY(dock->isOpen());
     }
 };
 
