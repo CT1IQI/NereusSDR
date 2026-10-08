@@ -78,6 +78,10 @@
 //                 the scale numbers at 74 px and showed it over the
 //                 trough at the 56 px minimum. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - fullHeight() counts the second trough and setSecondary()
+//                 refits the footer (shared Longpath defect); adds
+//                 clearSecondValue().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/BarInstrument.h"
@@ -138,6 +142,7 @@ bool BarInstrument::setSecondary(int bindingId)
         m_secondary = -1;
         m_hasSecond = false;
         updateGeometry();   // die zweite Mulde braucht Hoehe, siehe sizeHint()
+        fitFooter();        // NereusSDR: see fitFooter()
         update();
         return true;
     }
@@ -146,6 +151,7 @@ bool BarInstrument::setSecondary(int bindingId)
     m_secondary = bindingId;
     m_hasSecond = false;
     updateGeometry();
+    fitFooter();   // NereusSDR: see fitFooter()
     update();
     return true;
 }
@@ -171,7 +177,8 @@ QSize BarInstrument::sizeHint() const
     // NereusSDR: not below what the trough, its scale numbers and the
     // footer need together (fullHeight()). At upstream's 74 the footer
     // sat over the scale numbers.
-    return {320, (m_compact ? base : qMax(base, fullHeight())) + extra};
+    // fullHeight() already counts the second trough.
+    return {320, m_compact ? base + extra : qMax(base + extra, fullHeight())};
 }
 
 // From Longpath src/gui/instruments/BarInstrument.cpp:88 [@551576e3]
@@ -189,6 +196,13 @@ void BarInstrument::clearValue()
     m_hasSecond = false;
     m_peak.forget();
     refreshFooter();
+    update();
+}
+
+// NereusSDR: see the header.
+void BarInstrument::clearSecondValue()
+{
+    m_hasSecond = false;
     update();
 }
 
@@ -273,12 +287,15 @@ void BarInstrument::setCompact(bool on)
 }
 
 // NereusSDR: the full (non-compact) height: paintInto()'s largest
-// margins (8 above, 10 below), the trough, its scale numbers and the
-// footer's own height.
+// margins (8 above, 10 below), the trough, its scale numbers, the
+// second trough when a secondary reading is set (the same extra as
+// sizeHint()) and the footer's own height. Longpath has the same gap:
+// its footer covers the second trough at the minimum height.
 int BarInstrument::fullHeight() const
 {
     const int footerH = m_footer ? m_footer->sizeHint().height() : 0;
-    return 8 + int(kTroughHeight + kScaleHeight) + 10 + footerH;
+    const int extra = (m_secondary >= 0) ? int(kTroughHeight + kScaleHeight + kGap) : 0;
+    return 8 + int(kTroughHeight + kScaleHeight) + 10 + extra + footerH;
 }
 
 // NereusSDR: the footer is a child widget, so paintInto()'s

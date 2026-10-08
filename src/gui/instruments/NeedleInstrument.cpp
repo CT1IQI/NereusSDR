@@ -76,6 +76,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Adds clearSecondValue().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/NeedleInstrument.h"
@@ -211,6 +213,13 @@ void NeedleInstrument::setFrequencyHz(double hz)
     // dieselbe Regel: jeder gesetzte Wert wird gezeigt, auch 0.
     m_frequencyHz = hz;
     if (m_showFrequency) { update(); }
+}
+
+// NereusSDR: see the header.
+void NeedleInstrument::clearSecondValue()
+{
+    m_hasSecond = false;
+    update();
 }
 
 // From Longpath src/gui/instruments/NeedleInstrument.cpp:128 [@551576e3]

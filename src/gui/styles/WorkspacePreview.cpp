@@ -8,6 +8,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - themeOnShow() installs its filter once per dialog.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -143,6 +145,8 @@ void themeRecursive(QWidget* w)
     }
 }
 
+constexpr auto kShowFilterName = "workspacePreviewShowFilter";
+
 class ShowFilter : public QObject
 {
 public:
@@ -187,8 +191,14 @@ void themeOnShow(QWidget* dialog)
     if (dialog == nullptr || !enabled()) {
         return;
     }
-    // The filter is a child of the dialog, so it goes with it.
+    // The filter is a child of the dialog, so it goes with it. One per
+    // dialog: a second call (a dialog rebuilt or shown again) finds it.
+    if (dialog->findChild<QObject*>(QString::fromLatin1(kShowFilterName),
+                                    Qt::FindDirectChildrenOnly) != nullptr) {
+        return;
+    }
     auto* filter = new ShowFilter(dialog);
+    filter->setObjectName(QString::fromLatin1(kShowFilterName));
     dialog->installEventFilter(filter);
 }
 

@@ -45,6 +45,11 @@
 //                 and drop the old slice's value and peak when the slice
 //                 behind the context changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The frequency instrument refreshes the other slice and the
+//                 active marker on every slice change; a no-meter reading on
+//                 the secondary binding clears it; the upstream comment on
+//                 the trace interval is copied to its constant.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/LongpathContent.h"
@@ -74,6 +79,10 @@ namespace NereusSDR::LongpathContent {
 
 namespace {
 
+// 20 Hz. Schneller waere Verschwendung: die Kurve dient dem
+// Augenmass beim Kantenziehen, nicht der Signalsuche — dafuer
+// ist der Panadapter da.
+// [original inline comment from BandwidthFilterApplet.cpp:779-781]
 // From Longpath src/gui/applets/BandwidthFilterApplet.cpp:783 [@551576e3]
 constexpr int kTraceIntervalMs = 50;
 // From Longpath src/gui/applets/BandwidthFilterApplet.cpp:835-837 [@551576e3]
@@ -89,6 +98,11 @@ QString sliceLabel(const SliceModel* slice)
 
 // Rebinds an instrument when the slice its context names may have
 // changed (a slice opened or closed, the selected RX moved).
+//
+// Two parts: `bind` wires the instrument to its own slice and runs only
+// when that slice changes; `refresh` covers what depends on the other
+// slices and on which slice is active, and runs on every slice added,
+// removed or made active, even when the own slice is unchanged.
 class SliceFollower : public QObject {
 public:
     SliceFollower(QWidget* owner, const Sources& sources, QJsonObject context)
@@ -96,10 +110,11 @@ public:
     {
     }
 
-    // Binds now and again whenever the slice behind the context changes.
-    void start(std::function<void(SliceModel*)> bind)
+    void start(std::function<void(SliceModel*)> bind,
+               std::function<void(SliceModel*)> refresh = {})
     {
         m_bind = std::move(bind);
+        m_refresh = std::move(refresh);
         if (RadioModel* radio = m_sources.radio) {
             connect(radio, &RadioModel::sliceAdded, this, [this](int) { rebind(); });
             connect(radio, &RadioModel::sliceRemoved, this, [this](int) { rebind(); });
@@ -109,26 +124,39 @@ public:
     }
 
 private:
+    static void dropAll(QVector<QMetaObject::Connection>& connections)
+    {
+        for (const auto& c : std::as_const(connections)) { disconnect(c); }
+        connections.clear();
+    }
+
     void rebind()
     {
         SliceModel* slice = m_sources.sliceForContext ? m_sources.sliceForContext(m_context) : nullptr;
-        if (slice == m_slice && m_bound) { return; }
-        for (const auto& c : std::as_const(m_connections)) { disconnect(c); }
-        m_connections.clear();
-        m_slice = slice;
-        m_bound = true;
-        m_bind(slice);
+        if (slice != m_slice || !m_bound) {
+            dropAll(m_connections);
+            m_slice = slice;
+            m_bound = true;
+            m_bind(slice);
+        }
+        dropAll(m_refreshConnections);
+        if (m_refresh) { m_refresh(slice); }
     }
 
 public:
+    // A connection that belongs to the own-slice binding.
     void track(const QMetaObject::Connection& c) { m_connections.append(c); }
+    // A connection that belongs to the refresh (other slice, active state).
+    void trackRefresh(const QMetaObject::Connection& c) { m_refreshConnections.append(c); }
 
 private:
     Sources m_sources;
     QJsonObject m_context;
     std::function<void(SliceModel*)> m_bind;
+    std::function<void(SliceModel*)> m_refresh;
     QPointer<SliceModel> m_slice;
     QVector<QMetaObject::Connection> m_connections;
+    QVector<QMetaObject::Connection> m_refreshConnections;
     bool m_bound = false;
 };
 
@@ -149,9 +177,22 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
     else if (form == QLatin1String("flatArc")) { w->setForm(FrequencyInstrument::Form::FlatArc); }
     QPointer<FrequencyInstrument> guard(w);
     auto* follower = new SliceFollower(w, sources, entry.context);
-    auto bind = [guard, follower, sources](SliceModel* slice) {
+    auto bind = [guard, follower](SliceModel* slice) {
         if (!guard) { return; }
         guard->setFrequency(slice ? slice->frequency() : 0.0);
+        if (!slice) { return; }
+        follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
+            if (guard) { guard->setFrequency(hz); }
+        }));
+        // The operator's own edit: the slice's existing setter, the same
+        // path the VFO flag uses (MainWindow, VfoWidget::frequencyChanged).
+        QPointer<SliceModel> target(slice);
+        follower->track(QObject::connect(guard, &FrequencyInstrument::frequencyEdited, slice, [target](double hz) {
+            if (target) { target->setFrequency(hz); }
+        }));
+    };
+    auto refresh = [guard, follower, sources](SliceModel* slice) {
+        if (!guard) { return; }
         SliceModel* other = otherSlice(sources, slice);
         guard->setOtherFrequency(other ? other->frequency() : 0.0);
         // The bound slice's own letter first, then the other slice's.
@@ -162,23 +203,13 @@ QWidget* makeFrequency(const ContentEntry& entry, QWidget* parent, const Sources
         const QChar fallbackOther = own == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
         guard->setSliceLetters(own, other ? other->sliceLetter() : fallbackOther);
         guard->setActiveIsThis(!slice || slice->isActiveSlice() || !other || !other->isActiveSlice());
-        if (!slice) { return; }
-        follower->track(QObject::connect(slice, &SliceModel::frequencyChanged, guard, [guard](double hz) {
-            if (guard) { guard->setFrequency(hz); }
-        }));
-        if (other) {
-            follower->track(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
+        if (slice && other) {
+            follower->trackRefresh(QObject::connect(other, &SliceModel::frequencyChanged, guard, [guard](double hz) {
                 if (guard) { guard->setOtherFrequency(hz); }
             }));
         }
-        // The operator's own edit: the slice's existing setter, the same
-        // path the VFO flag uses (MainWindow, VfoWidget::frequencyChanged).
-        QPointer<SliceModel> target(slice);
-        follower->track(QObject::connect(guard, &FrequencyInstrument::frequencyEdited, slice, [target](double hz) {
-            if (target) { target->setFrequency(hz); }
-        }));
     };
-    follower->start(bind);
+    follower->start(bind, refresh);
     return w;
 }
 
@@ -250,23 +281,26 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
         // MeterWidget shows the binding disabled.
         auto unavailable = std::make_shared<bool>(false);
         if (entry.typeId == QLatin1String(kBarType)) {
-            auto* bar = new BarInstrument(parent);
-            bar->setCompact(true);
-            if (!bar->setPrimary(primary)) { delete bar; return nullptr; }
+            auto owned = std::make_unique<BarInstrument>(parent);
+            owned->setCompact(true);
+            if (!owned->setPrimary(primary)) { return nullptr; }
+            BarInstrument* bar = owned.release();
             if (secondary >= 0) { bar->setSecondary(secondary); }
             QPointer<BarInstrument> guard(bar);
             onReading = [guard, primary, unavailable](int binding, double value) {
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); }
+                    else { guard->clearSecondValue(); }
                     return;
                 }
                 guard->onReading(binding, value);
             };
             widget = bar;
         } else {
-            auto* needle = new NeedleInstrument(parent);
-            if (!needle->setPrimary(primary)) { delete needle; return nullptr; }
+            auto owned = std::make_unique<NeedleInstrument>(parent);
+            if (!owned->setPrimary(primary)) { return nullptr; }
+            NeedleInstrument* needle = owned.release();
             if (secondary >= 0) { needle->setSecondary(secondary); }
             // No reading yet: offline until the first one arrives, and for
             // good when NereusSDR has no producer for the reading.
@@ -276,6 +310,7 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                 if (!guard) { return; }
                 if (isNoMeterReading(value) || (binding == primary && *unavailable)) {
                     if (binding == primary) { guard->clearValue(); guard->setOffline(true); }
+                    else { guard->clearSecondValue(); }
                     return;
                 }
                 guard->onReading(binding, value);

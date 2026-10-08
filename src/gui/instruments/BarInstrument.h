@@ -65,6 +65,8 @@
 //                 footer no longer overlaps the scale numbers at the
 //                 preferred and minimum sizes. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Adds hasSecondValue() and clearSecondValue().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -102,6 +104,10 @@ public:
     void clearValue();
 
     bool hasValue() const { return m_hasValue; }
+    // NereusSDR: whether the secondary reading has a value, and dropping
+    // only that value (a no-meter reading on the secondary binding).
+    bool hasSecondValue() const { return m_hasSecond; }
+    void clearSecondValue();
 
     /// Die Spitzenhaltung — dieselbe Klasse wie beim Zeigerinstrument,
     /// damit eine Einstellung aus dem Rechtsklickmenue beide Ansichten

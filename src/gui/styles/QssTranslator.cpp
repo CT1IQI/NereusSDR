@@ -8,6 +8,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace preview by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - A slider's filled page resolves #203040 to the accent.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "QssTranslator.h"
@@ -67,8 +69,18 @@ QString contextRoleForAmbiguous(const QString& selector, const QString& property
 {
     const QString sel = selector.toLower();
     const QString prop = property.trimmed().toLower();
-    if (sel.contains(QLatin1String("::groove")) || sel.contains(QLatin1String("::add-page"))
-        || sel.contains(QLatin1String("::sub-page"))) {
+    // A slider's filled part is the accent, not the groove: the sub-page
+    // on a horizontal slider, the add-page on a vertical one (Qt draws
+    // a vertical slider's sub-page above the handle). The same split as
+    // WorkspaceComponents. Scroll bar pages are track, so they stay groove.
+    const bool scrollBar = sel.contains(QLatin1String("qscrollbar"));
+    const bool vertical = sel.contains(QLatin1String(":vertical"));
+    const bool subPage = sel.contains(QLatin1String("::sub-page"));
+    const bool addPage = sel.contains(QLatin1String("::add-page"));
+    if (!scrollBar && ((subPage && !vertical) || (addPage && vertical))) {
+        return QStringLiteral("accent");
+    }
+    if (sel.contains(QLatin1String("::groove")) || addPage || subPage) {
         return QStringLiteral("groove");
     }
     if (prop.startsWith(QLatin1String("border")) || prop.startsWith(QLatin1String("outline"))) {

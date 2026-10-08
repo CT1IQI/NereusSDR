@@ -63,6 +63,8 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Adds hasSecondValue() and clearSecondValue().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -106,6 +108,10 @@ public:
     /// Liegt eine Messung vor? Ohne sie zeichnet das Instrument sein
     /// Zifferblatt und sonst nichts.
     bool hasValue() const { return m_hasValue; }
+    // NereusSDR: whether the secondary reading has a value, and dropping
+    // only that value (a no-meter reading on the secondary binding).
+    bool hasSecondValue() const { return m_hasSecond; }
+    void clearSecondValue();
 
     /// Kein Radio verbunden.
     ///

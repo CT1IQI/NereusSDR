@@ -8,7 +8,12 @@
 //   2026-10-08 - Needles read their own context through the poller's
 //                 reading consumers. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - frequencyFollowsASliceAddedLater,
+//                 barFooterMakesRoomForTheSecondTrough and
+//                 noMeterReadingClearsTheSecondary. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
+#include <cstring>
 #include <QApplication>
 #include <QLabel>
 #include <QLayout>
@@ -125,6 +130,35 @@ private slots:
         settle();
         QVERIFY(!footer->isVisible());
         bar.resize(bar.sizeHint());
+        settle();
+        QVERIFY(footer->isVisible());
+    }
+
+    void barFooterMakesRoomForTheSecondTrough()
+    {
+        // NereusSDR fix: with a secondary reading the second trough takes
+        // part of the height, so the footer needs more to fit. Setting the
+        // secondary at a fixed size hides the footer at once.
+        BarInstrument bar;
+        bar.setPrimary(MeterBinding::TxSwr);
+        bar.onReading(MeterBinding::TxSwr, 1.25);
+        bar.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&bar));
+        auto* footer = bar.findChild<InstrumentFooter*>();
+        QVERIFY(footer);
+        bar.resize(bar.sizeHint());
+        settle();
+        QVERIFY(footer->isVisible());
+        QVERIFY(bar.setSecondary(MeterBinding::TxPower));
+        settle();
+        QVERIFY(!footer->isVisible());
+        bar.resize(bar.minimumSizeHint());
+        settle();
+        QVERIFY(!footer->isVisible());
+        bar.resize(bar.sizeHint());
+        settle();
+        QVERIFY(footer->isVisible());
+        QVERIFY(bar.setSecondary(-1));
         settle();
         QVERIFY(footer->isVisible());
     }
@@ -331,6 +365,54 @@ private slots:
         QVERIFY(rowA.indexOf(QStringLiteral(">A ")) < rowA.indexOf(QStringLiteral(">B ")));
     }
 
+    void frequencyFollowsASliceAddedLater()
+    {
+        // Built on slice A before slice B exists: adding B wires the other
+        // row, and switching the active slice moves the active marker,
+        // although the instrument's own slice never changes.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        const auto restoreRules = qScopeGuard([] { QLoggingCategory::setFilterRules(QString()); });
+        RadioModel model;
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 1);
+        SliceModel* sliceA = model.slices().at(0);
+        sliceA->setFrequency(7185000.0);
+
+        LongpathContent::Sources sources;
+        sources.radio = &model;
+        sources.sliceForContext = [sliceA](const QJsonObject&) { return sliceA; };
+        ContainerContentRegistry registry;
+        LongpathContent::registerAll(registry, sources);
+        const ContentEntry entry = registry.makeEntry(QString::fromLatin1(LongpathContent::kFrequencyType));
+        QWidget parent;
+        std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+        auto* freq = qobject_cast<FrequencyInstrument*>(widget.get());
+        QVERIFY(freq);
+        QCOMPARE(freq->otherFrequency(), 0.0);
+        QVERIFY(freq->activeIsThis());
+
+        model.addSlice();
+        QCOMPARE(model.slices().size(), 2);
+        SliceModel* sliceB = model.slices().at(1);
+        QCOMPARE(sliceB->sliceLetter(), QLatin1Char('B'));
+        sliceB->setFrequency(14225000.0);
+        QCOMPARE(freq->otherFrequency(), 14225000.0);
+        QCOMPARE(freq->ownLetter(), QLatin1Char('A'));
+        QCOMPARE(freq->otherLetter(), QLatin1Char('B'));
+        QCOMPARE(freq->frequency(), 7185000.0);
+
+        model.setActiveSlice(1);
+        QVERIFY(sliceB->isActiveSlice());
+        QVERIFY(!freq->activeIsThis());
+        model.setActiveSlice(0);
+        QVERIFY(sliceA->isActiveSlice());
+        QVERIFY(freq->activeIsThis());
+
+        // The own slice's binding survives the refreshes.
+        sliceA->setFrequency(7190000.0);
+        QCOMPARE(freq->frequency(), 7190000.0);
+    }
+
     void barDefaultsAndReadings()
     {
         ContainerContentRegistry registry;
@@ -354,6 +436,40 @@ private slots:
         QVERIFY(bar->hasValue());
         emit poller.readingUpdated(entry.context, MeterBinding::TxSwr, kNoMeterReadingDbm);
         QVERIFY(!bar->hasValue());
+    }
+
+    void noMeterReadingClearsTheSecondary()
+    {
+        // A no-meter reading on the secondary binding drops the secondary
+        // value, as one on the primary drops the primary.
+        MeterPoller poller;
+        ContainerContentRegistry registry;
+        LongpathContent::Sources sources;
+        sources.poller = &poller;
+        LongpathContent::registerAll(registry, sources);
+        for (const char* type : {LongpathContent::kNeedleType, LongpathContent::kBarType}) {
+            ContentEntry entry = registry.makeEntry(QString::fromLatin1(type));
+            const int primary = std::strcmp(type, LongpathContent::kBarType) == 0
+                                    ? int(MeterBinding::TxSwr) : int(MeterBinding::SignalPeak);
+            const int secondary = std::strcmp(type, LongpathContent::kBarType) == 0
+                                      ? int(MeterBinding::TxPower) : int(MeterBinding::SignalAvg);
+            entry.config.insert(QString::fromLatin1(LongpathContent::kSecondaryKey), secondary);
+            entry.context = QJsonObject{{QStringLiteral("rxSource"), 1}};
+            QWidget parent;
+            std::unique_ptr<QWidget> widget(registry.createWidget(entry, &parent));
+            auto* needle = qobject_cast<NeedleInstrument*>(widget.get());
+            auto* bar = qobject_cast<BarInstrument*>(widget.get());
+            QVERIFY(needle || bar);
+            const auto hasSecond = [&] { return needle ? needle->hasSecondValue() : bar->hasSecondValue(); };
+            const auto hasPrimary = [&] { return needle ? needle->hasValue() : bar->hasValue(); };
+            emit poller.readingUpdated(entry.context, primary, primary == MeterBinding::TxSwr ? 1.5 : -80.0);
+            emit poller.readingUpdated(entry.context, secondary, secondary == MeterBinding::TxPower ? 50.0 : -85.0);
+            QVERIFY(hasPrimary());
+            QVERIFY(hasSecond());
+            emit poller.readingUpdated(entry.context, secondary, kNoMeterReadingDbm);
+            QVERIFY(!hasSecond());
+            QVERIFY(hasPrimary());
+        }
     }
 
     void needleReadsItsSliceWithoutAMeterWidget()

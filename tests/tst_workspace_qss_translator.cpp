@@ -171,6 +171,23 @@ private slots:
         QCOMPARE(QT::translate(QStringLiteral(
                      "QFrame { border: 1px solid #203040; }"), opts).qss,
                  QStringLiteral("QFrame { border: 1px solid #1f1f23; }"));
+        // A slider's filled page is the accent; the empty page and scroll
+        // bar pages are groove. Vertical sliders fill on the add-page.
+        QCOMPARE(QT::translate(QStringLiteral(
+                     "QSlider::sub-page:horizontal { background: #203040; }"), opts).qss,
+                 QStringLiteral("QSlider::sub-page:horizontal { background: #4a7ba8; }"));
+        QCOMPARE(QT::translate(QStringLiteral(
+                     "QSlider::add-page:horizontal { background: #203040; }"), opts).qss,
+                 QStringLiteral("QSlider::add-page:horizontal { background: #1f1f23; }"));
+        QCOMPARE(QT::translate(QStringLiteral(
+                     "QSlider::add-page:vertical { background: #203040; }"), opts).qss,
+                 QStringLiteral("QSlider::add-page:vertical { background: #4a7ba8; }"));
+        QCOMPARE(QT::translate(QStringLiteral(
+                     "QSlider::sub-page:vertical { background: #203040; }"), opts).qss,
+                 QStringLiteral("QSlider::sub-page:vertical { background: #1f1f23; }"));
+        QCOMPARE(QT::translate(QStringLiteral(
+                     "QScrollBar::sub-page:horizontal { background: #203040; }"), opts).qss,
+                 QStringLiteral("QScrollBar::sub-page:horizontal { background: #1f1f23; }"));
         // An explicit role at the call site wins over the context rule.
         opts.explicitRoles.insert(QStringLiteral("#203040"), QStringLiteral("button-alt-hover"));
         QCOMPARE(QT::translate(QStringLiteral(
@@ -255,6 +272,20 @@ private slots:
         QCOMPARE(dialog.styleSheet(), QStringLiteral("background: #0f0f1a;"));
         dialog.show();
         QCOMPARE(dialog.styleSheet(), QStringLiteral("background: #08080a;"));
+    }
+
+    void showFilterInstallsOnce()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        QWidget dialog;
+        WorkspacePreview::themeOnShow(&dialog);
+        WorkspacePreview::themeOnShow(&dialog);
+        WorkspacePreview::themeOnShow(&dialog);
+        int filters = 0;
+        for (QObject* child : dialog.children()) {
+            if (child->objectName() == QLatin1String("workspacePreviewShowFilter")) { ++filters; }
+        }
+        QCOMPARE(filters, 1);
     }
 
     void componentRaisedButton()

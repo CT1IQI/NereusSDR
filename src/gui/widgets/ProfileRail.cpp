@@ -96,6 +96,10 @@
 //                 on the badge letter (shared Longpath defect, fixed in
 //                 our copy; see kCloserReservePx). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Upstream's unmatched ProfileRail selectors restored, so
+//                 the rail paints no fill or border of its own, as in
+//                 Longpath.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRail.h"
@@ -215,8 +219,14 @@ ProfileRail::ProfileRail(WorkspaceProfiles* profiles,
     if (m_richtung == Qt::Vertical) {
         setFixedWidth(kWidth);
         // Die Trennlinie steht rechts, zum Fensterinhalt hin.
+        // NereusSDR: upstream's selector is kept as written. A type
+        // selector matches the class name with its namespace
+        // ("NereusSDR--ProfileRail", Longpath--ProfileRail upstream), so
+        // bare "ProfileRail" matches nothing and this rule paints nothing,
+        // as in Longpath. Matching it would add a panel fill and a right
+        // border that Longpath never shows.
         setStyleSheet(QStringLiteral(
-            "NereusSDR--ProfileRail { background: %1; border-right: 1px solid %2; }")
+            "ProfileRail { background: %1; border-right: 1px solid %2; }")
             .arg(QString::fromLatin1(Style::kPanelBg),
                  QString::fromLatin1(Style::kBorderSubtle)));
         m_column = new QVBoxLayout(this);
@@ -226,7 +236,9 @@ ProfileRail::ProfileRail(WorkspaceProfiles* profiles,
         // Abzeichen sollen wie die Pillen daneben auf dem Leistengrund
         // sitzen, sonst liegt ein Kasten im Kasten.
         setFixedHeight(kLeistenSeite);
-        setStyleSheet(QStringLiteral("NereusSDR--ProfileRail { background: transparent; }"));
+        // NereusSDR: upstream's unmatched selector, kept as written (see
+        // above).
+        setStyleSheet(QStringLiteral("ProfileRail { background: transparent; }"));
         m_column = new QHBoxLayout(this);
         m_column->setContentsMargins(0, 0, 0, 0);
     }

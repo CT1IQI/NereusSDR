@@ -79,6 +79,8 @@
 //                 bound slices' letters; upstream hard-codes A and B.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-08 - Adds otherFrequency() and activeIsThis() for tests.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -116,6 +118,9 @@ public:
     /// ohne ein zweites Feld sichtbar ist.
     void setOtherFrequency(double hz);
     void setActiveIsThis(bool active);
+    // NereusSDR: read back for tests.
+    double otherFrequency() const { return m_otherHz; }
+    bool activeIsThis() const { return m_activeIsThis; }
 
     // NereusSDR: the letters on the VFO row, this instrument's slice
     // first, then the other one. Upstream hard-codes "A" and "B", which
