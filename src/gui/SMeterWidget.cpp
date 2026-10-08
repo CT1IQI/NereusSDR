@@ -82,12 +82,22 @@
 //                 emit instanceSettingsChanged() in place of the AppSettings
 //                 writes.  The Global (Main Panel) path is unchanged.
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-08  An added dial's face follows Setup's Meter Styles face
+//                 (SMeter_FaceStyle, via SMeterSetupFace) until the copy
+//                 picks its own; the Main Panel's dial announces the key's
+//                 changes.  Test-only plate limit for wide containers:
+//                 paintVintage() draws in plateRect(), which is rect()
+//                 unless setPlateLimitForTest() is on.  Geometry only; the
+//                 face drawing and the background colour are unchanged.
+//                 By J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via Anthropic Claude Code.  NereusSDR-native.
 // =================================================================
 #include "SMeterWidget.h"
 
 #include <cmath>
 
 #include <QActionGroup>
+#include <QApplication>
 #include <QContextMenuEvent>
 #include <QMenu>
 #include <QPainter>
@@ -101,6 +111,25 @@
 #include "models/RadioModel.h"
 
 namespace NereusSDR {
+
+namespace {
+// setPlateLimitForTest(): off in the product.  Main thread only.
+bool g_plateLimitForTest = false;
+} // namespace
+
+SMeterSetupFace& SMeterSetupFace::instance()
+{
+    static SMeterSetupFace notice;
+    return notice;
+}
+
+int SMeterSetupFace::current()
+{
+    return static_cast<int>(SMeterWidget::faceStyleFromKey(
+        AppSettings::instance()
+            .value("SMeter_FaceStyle", SMeterWidget::faceStyleKey(SMeterWidget::FaceStyle::AgedCream))
+            .toString()));
+}
 
 // --- Construction ------------------------------------------------------------
 // From AetherSDR src/gui/SMeterWidget.cpp:13-47 [@0cd4559]
@@ -123,6 +152,11 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
     // one IOSurface memmove per paint.  SMeterWidget paints at 30 Hz
     // (needle animation) + on peak decay (20 Hz), so this fires frequently.
     setAttribute(Qt::WA_OpaquePaintEvent);
+    // NereusSDR-native: with the test-only plate limit on, the sides of a
+    // limited plate show what is behind the widget.
+    if (g_plateLimitForTest) {
+        setAttribute(Qt::WA_OpaquePaintEvent, false);
+    }
 
     m_needleFraction = dbmToFraction(m_levelDbm);
     m_targetNeedleFraction = m_needleFraction;
@@ -162,6 +196,16 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
         setPeakHoldEnabled(true);
         setPeakDecayRate(QStringLiteral("Medium"));
         m_faceStyle = FaceStyle::AgedCream;
+        // Setup's face changed: a copy that follows it shows the new face.
+        connect(&SMeterSetupFace::instance(), &SMeterSetupFace::changed, this, [this](int face) {
+            if (!m_followsSetupFace) {
+                return;
+            }
+            m_faceStyle = static_cast<FaceStyle>(face);
+            m_faceCache = QPixmap();
+            m_faceCacheKey.clear();
+            update();
+        });
         return;
     }
 
@@ -1031,7 +1075,8 @@ void SMeterWidget::paintClassic(QPainter& p)
 void SMeterWidget::paintVintage(QPainter& p)
 {
     const VintageFaceTheme& theme = VintageMeterFace::theme(static_cast<int>(m_faceStyle));
-    const QRectF bounds = rect();
+    // NereusSDR-native: rect() unless the test-only plate limit is on.
+    const QRectF bounds = plateRect();
 
     // -- Static artwork, cached -----------------------------------------------
     const qreal dpr = devicePixelRatioF();
@@ -1039,9 +1084,9 @@ void SMeterWidget::paintVintage(QPainter& p)
         ? QString("tx%1:%2:%3").arg(static_cast<int>(m_txMode))
                                .arg(m_powerScaleMax).arg(m_powerRedStart)
         : QString("rx%1").arg(static_cast<int>(m_rxMode));
-    const QString key = QString("%1x%2@%3|%4|%5")
+    const QString key = QString("%1x%2@%3|%4|%5|%6")
         .arg(width()).arg(height()).arg(dpr)
-        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey);
+        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width());
 
     if (key != m_faceCacheKey || m_faceCache.isNull()) {
         VintageScale scale;
@@ -1133,6 +1178,10 @@ void SMeterWidget::paintVintage(QPainter& p)
 
         m_faceCache = QPixmap((QSizeF(size()) * dpr).toSize());
         m_faceCache.setDevicePixelRatio(dpr);
+        // A limited plate leaves the sides clear (NereusSDR-native).
+        if (bounds != QRectF(rect())) {
+            m_faceCache.fill(Qt::transparent);
+        }
         QPainter fp(&m_faceCache);
         VintageMeterFace::paintStatic(fp, bounds, QColor(0x0f, 0x0f, 0x1a), theme,
                                       scale, title, legend);
@@ -1221,11 +1270,60 @@ void SMeterWidget::setFaceStyle(FaceStyle style)
     m_faceCacheKey.clear();
     if (m_settingsStore == SettingsStore::Global) {
         AppSettings::instance().setValue("SMeter_FaceStyle", faceStyleKey(style));
+        // Added dials that follow Setup's face show it too.
+        SMeterSetupFace::instance().notify(static_cast<int>(style));
     } else {
+        // A face picked for this copy: it no longer follows Setup's.
+        m_followsSetupFace = false;
         emit instanceSettingsChanged();
     }
     update();
     emit settingsChanged();
+}
+
+void SMeterWidget::setFollowsSetupFace(bool follow)
+{
+    if (m_settingsStore != SettingsStore::Instance) {
+        return;
+    }
+    m_followsSetupFace = follow;
+    if (follow) {
+        m_faceStyle = static_cast<FaceStyle>(SMeterSetupFace::current());
+        m_faceCache = QPixmap();
+        m_faceCacheKey.clear();
+        update();
+    }
+}
+
+void SMeterWidget::setPlateLimitForTest(bool on)
+{
+    g_plateLimitForTest = on;
+    for (QWidget* w : QApplication::allWidgets()) {
+        if (auto* meter = qobject_cast<SMeterWidget*>(w)) {
+            meter->setAttribute(Qt::WA_OpaquePaintEvent, !on);
+            meter->m_faceCache = QPixmap();
+            meter->m_faceCacheKey.clear();
+            meter->update();
+        }
+    }
+}
+
+bool SMeterWidget::plateLimitForTest()
+{
+    return g_plateLimitForTest;
+}
+
+QRectF SMeterWidget::plateRect() const
+{
+    const QRectF full = rect();
+    if (!g_plateLimitForTest) {
+        return full;
+    }
+    const double maxWidth = std::round(full.height() * kPlateMaxAspect);
+    if (full.width() <= maxWidth) {
+        return full;
+    }
+    return QRectF(std::round((full.width() - maxWidth) / 2.0), full.top(), maxWidth, full.height());
 }
 
 QString SMeterWidget::faceStyleKey(FaceStyle style)

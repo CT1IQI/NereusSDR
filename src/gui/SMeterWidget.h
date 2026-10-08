@@ -85,6 +85,16 @@
 //                 peakDecayRate() accessors.  The Main Panel's dial
 //                 (SettingsStore::Global) is unchanged.
 //                 NereusSDR-native; no upstream equivalent.
+//   2026-10-08  An added dial's face follows Setup until the copy picks
+//                 its own, and a test-only plate limit for wide containers
+//                 (workspace preview), by J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//                 setFollowsSetupFace() / followsSetupFace() and
+//                 SMeterSetupFace (the SMeter_FaceStyle change notice);
+//                 setPlateLimitForTest() and plateRect().  The paint code
+//                 changes only in the rectangle the vintage plate is drawn
+//                 in; with the limit off (the product) it is rect().
+//                 NereusSDR-native; no upstream equivalent.
 // =================================================================
 #pragma once
 
@@ -104,6 +114,25 @@ class QPainter;
 namespace NereusSDR {
 
 class RadioModel;
+
+// The face chosen on Setup > Appearance > Meter Styles (the SMeter_FaceStyle
+// key) changed.  Emitted by the page and by the Main Panel's dial, the two
+// writers of that key; an added dial that has no face of its own follows
+// it.  Main thread only.  NereusSDR-native.
+class SMeterSetupFace : public QObject {
+    Q_OBJECT
+
+public:
+    static SMeterSetupFace& instance();
+    // The face SMeter_FaceStyle holds now (Aged Cream when absent), as an
+    // SMeterWidget::FaceStyle value.
+    static int current();
+    // Tells every follower that SMeter_FaceStyle now holds `face`.
+    void notify(int face) { emit changed(face); }
+
+signals:
+    void changed(int face);
+};
 
 // Analog S-Meter gauge widget matching the SmartSDR look.
 //
@@ -165,6 +194,34 @@ public:
     // NereusSDR-native; no upstream equivalent.
     enum class FaceStyle { AgedCream, VuAmber, CollinsWhite, Blackface, Carbon, Ice, Classic };
     FaceStyle faceStyle() const { return m_faceStyle; }
+
+    // SettingsStore::Instance only: draw the face chosen on Setup's Meter
+    // Styles page (SMeter_FaceStyle, read, never written) and follow it
+    // through SMeterSetupFace, until setFaceStyle() gives the copy a face
+    // of its own.  A face shown this way does not emit
+    // instanceSettingsChanged().  NereusSDR-native.
+    void setFollowsSetupFace(bool follow);
+    bool followsSetupFace() const { return m_followsSetupFace; }
+
+    // Test-only (workspace preview look choice, NereusSDR-native): with the
+    // limit on, the plate of a vintage face stops growing wider than
+    // kPlateMaxAspect times its height and is centred, with whatever is
+    // behind the widget showing on both sides.  It applies to every
+    // SMeterWidget alive or made later (the Main Panel's dial and added
+    // copies alike).  Off, the product's behaviour, the plate fills the
+    // widget.  The Classic face has no plate and ignores it.
+    static void setPlateLimitForTest(bool on);
+    static bool plateLimitForTest();
+    // The rectangle the vintage face (bezel, card, scale, pointer) is drawn
+    // in: rect(), or with the limit on and a widget wider than the limit,
+    // a centred rectangle kPlateMaxAspect times its height wide.
+    QRectF plateRect() const;
+    // The Main Panel's dial at its normal width in the mixed-container and
+    // profile-dx captures at mac-1512x869@2: the widget's rect, which the
+    // plate is drawn in, is 298 x 140 logical px (596 x 280 device px; the
+    // bezel's outer edge, 1 px inside, is 296 x 138).  Used only with
+    // setPlateLimitForTest() on.
+    static constexpr double kPlateMaxAspect = 298.0 / 140.0;
 
     // Current RX/TX mode accessors.
     // Used by MeterPoller::pollSMeter() (Task 41) to branch on the active
@@ -380,6 +437,9 @@ private:
     // Global (the AppSettings keys) or Instance (no AppSettings).
     // NereusSDR-native.
     SettingsStore m_settingsStore{SettingsStore::Global};
+    // Instance only: the face shown is Setup's (SMeter_FaceStyle), not the
+    // copy's own.  NereusSDR-native.
+    bool m_followsSetupFace{false};
 
     // Mode state
     // From AetherSDR src/gui/SMeterWidget.h:92-94 [@0cd4559]

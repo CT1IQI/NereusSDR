@@ -331,6 +331,8 @@ void MeterStylesPage::buildUI()
         const int face = m_faceCombo->itemData(index).toInt();
         AppSettings::instance().setValue(QStringLiteral("SMeter_FaceStyle"),
                                          SMeterWidget::faceStyleKey(static_cast<Face>(face)));
+        // Added dials with no face of their own follow this face.
+        SMeterSetupFace::instance().notify(face);
         emit sMeterFaceChanged(face);
     });
     connect(m_peakHoldToggle, &QCheckBox::toggled, this, [this](bool on) {
