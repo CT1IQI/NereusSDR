@@ -6294,6 +6294,14 @@ nereus_add_test(tst_spot_list_accessibility)
 # the gate leaving the cache alone on every other platform.
 nereus_add_test(tst_qt_cocoa_accessible_table_cache)
 
+# Workspace visual review (2026-10-08): the visual preview's dialog seams.
+# ConnectionPanel and LanScanDialog start no discovery with their test seam
+# set, MainWindow::buildWisdomProgressDialog builds the FFTW wisdom dialog
+# without wisdom, and a never-dialled remote window opens its diagnostics,
+# connection panel and This Core page without starting its connection.
+nereus_add_test(tst_preview_dialog_seams)
+target_compile_definitions(tst_preview_dialog_seams PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3J-2 Task D3: FreeDVStationModel (live station map) ──────────────
 # Pins the contract that FreeDVStationModel is a QHash<QString sid,
 # FreeDVStation> sink keyed by Socket.IO session ID, with four public

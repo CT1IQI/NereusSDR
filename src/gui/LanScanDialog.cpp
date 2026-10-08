@@ -16,6 +16,10 @@
 // 2026-09-25: R-R3-49 (parity Task 9): the Core's Power Genius scan
 // (scanPgxlLan) through the same dialog. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
+//
+// 2026-10-08: test seam that skips the scan (setDiscoveryStartSkippedForTest),
+// for offscreen tests and the visual preview. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 #include "gui/LanScanDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -40,10 +44,24 @@
 
 namespace NereusSDR {
 
+namespace {
+// setDiscoveryStartSkippedForTest(): the local-scan constructor builds no
+// LanDiscovery. False in the app.
+bool g_discoveryStartSkippedForTest = false;
+} // namespace
+
+void LanScanDialog::setDiscoveryStartSkippedForTest(bool skipped)
+{
+    g_discoveryStartSkippedForTest = skipped;
+}
+
 LanScanDialog::LanScanDialog(QWidget* parent)
     : QDialog(parent)
 {
     buildUi(tr("Scanning LAN for 4O3A devices (3 seconds)..."));
+    if (g_discoveryStartSkippedForTest) {
+        return;
+    }
 
     // Wire up the discovery engine and start the 3-second scan.
     m_discovery = new LanDiscovery(this);

@@ -14,6 +14,10 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-10-08  J.J. Boyd (KG4VCF): test seam that skips starting
+//               discovery (setDiscoveryStartSkippedForTest), for offscreen
+//               tests and the visual preview. AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -111,6 +115,11 @@ public:
 
     // Update the connection status display.
     void setStatusText(const QString& text);
+
+    // Test seam: true makes the constructor skip starting discovery, so an
+    // offscreen test or the visual preview can build and show the panel
+    // without a network scan. Process-wide; tests set it back to false.
+    static void setDiscoveryStartSkippedForTest(bool skipped);
 
     // -------------------------------------------------------------------------
     // State pill — represents the recency / connectivity of a discovered radio.

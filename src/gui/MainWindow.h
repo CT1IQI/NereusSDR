@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
+//                 is built by one function the visual preview can call.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Containers > Hidden in both looks. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: Containers > Hidden lists every
@@ -427,6 +430,10 @@ public:
     /// indirectly through applyPanLayout, which needs a constructed
     /// MainWindow the test harness cannot build.
     static QStringList panIdsForLayout(const QString& layoutId);
+    /// The FFTW wisdom progress dialog, styled and set up but not shown
+    /// (the wisdomProgress handler shows it). Public so the visual
+    /// preview can build the real dialog without generating wisdom.
+    static QProgressDialog* buildWisdomProgressDialog(QWidget* parent);
     /// Parity Task 18: how many pans Pan Layout and +PAN offer. The slice
     /// limit is RadioModel::maxSlices(), which is the Core's advertised
     /// limit in a remote window and the board's own locally, capped by the

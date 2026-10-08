@@ -16,6 +16,10 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): test seam that skips starting
+//               discovery (setDiscoveryStartSkippedForTest), for offscreen
+//               tests and the visual preview. AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -138,6 +142,12 @@ namespace NereusSDR {
 //   QT_LOGGING_RULES="nereus.connpanel.timing.debug=true"
 //   QT_LOGGING_RULES="*.timing.debug=true"   (covers nereus.setup.timing too)
 Q_LOGGING_CATEGORY(lcConnPanelTiming, "nereus.connpanel.timing")
+
+namespace {
+// setDiscoveryStartSkippedForTest(): the constructor does not start
+// discovery. False in the app.
+bool g_discoveryStartSkippedForTest = false;
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Color constants — from ucRadioList.cs ~:1115 (adapted to dark theme)
@@ -277,7 +287,9 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
     }
 
     // Start discovery automatically when panel opens
-    disc->startDiscovery();
+    if (!g_discoveryStartSkippedForTest) {
+        disc->startDiscovery();
+    }
 
     if (m_radioTable->rowCount() == 0) {
         setStatusText(QStringLiteral("Searching for radios..."));
@@ -293,6 +305,11 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
         << "ConnectionPanel ctor total elapsed (ms):" << ctorTimer.elapsed()
         << "of which buildUI():" << buildUiMs
         << "rows:" << m_radioTable->rowCount();
+}
+
+void ConnectionPanel::setDiscoveryStartSkippedForTest(bool skipped)
+{
+    g_discoveryStartSkippedForTest = skipped;
 }
 
 ConnectionPanel::~ConnectionPanel()
