@@ -15,6 +15,10 @@
 // collapsed badge's right edge, so it never covers the title, and it
 // never reflows the bar. The popover closes kRevealHideMs after the
 // pointer leaves, on Escape, or right after a profile is picked.
+// "The pointer leaves" is read from the cursor position against the
+// badge and the popover, not from Enter/Leave: on macOS each badge is its
+// own native view, and moving between them can deliver a Leave with no
+// matching Enter.
 // Right-clicking any badge, collapsed or fanned out, gives the rail's
 // context menu.
 //
@@ -28,6 +32,10 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Keep-open decided from the cursor position while open
+//                 (kPointerSampleMs), with the nereus.gui.profilerail
+//                 debug category, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QPointer>
@@ -51,6 +59,9 @@ public:
     static constexpr int kPopoverRadius = 8;
     static constexpr int kPopoverPadH = 6;
     static constexpr int kPopoverPadV = 4;
+    // While open, how often the cursor position is sampled against the
+    // badge and the popover, ms.
+    static constexpr int kPointerSampleMs = 50;
 
     // `anchor` is the centre title label (a child of `parent`, the title
     // bar). `overlayParent` is the main window: the popover is its child
@@ -66,6 +77,9 @@ public:
     void open(bool focusRail = false);
     void close();
     void reposition();
+    // True when the global point is on the collapsed badge or, while
+    // open, on the popover.
+    bool pointerInside(const QPoint& global) const;
 
     QPushButton* collapsedBadge() const { return m_badge; }
     ProfileRail* rail() const { return m_rail; }
@@ -82,6 +96,10 @@ private:
     void hookRailBadges();
     void placePopover();
     void hideSoon();
+    void closeBecause(const char* reason);
+    void samplePointer();
+    void startHideTimer(const char* reason);
+    void stopHideTimer(const char* reason);
 
     QPointer<WorkspaceProfiles> m_profiles;
     QPointer<QWidget> m_anchor;
@@ -91,6 +109,9 @@ private:
     ProfileRail* m_rail = nullptr;
     QTimer m_showTimer;
     QTimer m_hideTimer;
+    QTimer m_pointerTimer;
+    bool m_pointerWasInside = false;
+    const QEvent* m_lastLoggedEvent = nullptr;
     bool m_appFilter = false;
 };
 
