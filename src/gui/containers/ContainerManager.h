@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - geometryCommitPendingForTest, so tests wait on the
+//                 geometry capture itself rather than a fixed time. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - A duplicated container is always shown, floating, next
 //                 to its original (showDuplicate), in both looks. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -175,6 +178,8 @@ public:
     // at `edge`, `index`, as during a header drag.
     void showDropPreviewForTest(DockEdge edge, int index);
     void clearDropPreviewForTest();
+    // Test seam: a geometry capture is scheduled and has not run yet.
+    bool geometryCommitPendingForTest() const { return m_geometryCommit.isActive(); }
 
     // --- Workspace preview: the header source menu ---
     // Whether a slice id exists, for the menu's enabled slices. MainWindow

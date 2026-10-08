@@ -6,6 +6,10 @@
 //                 narrow size, and the minimum following the widest
 //                 visible applet. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The geometry-capture cases wait on the capture itself
+//                 (geometryCommitPendingForTest, the split it writes), not
+//                 a fixed time. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QJsonArray>
 #include <QLoggingCategory>
@@ -35,6 +39,9 @@ using namespace NereusSDR;
 using NereusSDR::Test::RemoteWindowHarness;
 
 namespace {
+
+// Generous: the geometry capture's own debounce is 200 ms.
+constexpr int kCaptureTimeoutMs = 10000;
 
 void settle()
 {
@@ -107,6 +114,19 @@ struct PanelWindow {
 int minimumWidthOf(const QWidget* w)
 {
     return qMax(w->minimumWidth(), w->minimumSizeHint().width());
+}
+
+// The workspace entry whose singleton view is `view`.
+QString typeIdOf(const PanelWindow& w, const QWidget* view)
+{
+    for (const auto& c : w.manager->workspaceStore()->snapshot().containers) {
+        for (const auto& e : c.contents) {
+            if (w.manager->contentRegistry()->singletonView(e.typeId) == view) {
+                return e.typeId;
+            }
+        }
+    }
+    return {};
 }
 
 // The outermost visible applets in the Main Panel's scrolled body.
@@ -261,24 +281,23 @@ private slots:
         QSplitter* splitter = w.splitter();
         QVERIFY(splitter != nullptr);
         ContainerWorkspaceStore* store = w.manager->workspaceStore();
-        // Startup's own geometry capture runs first (200 ms debounce).
-        QTest::qWait(600);
+        // Startup's own geometry capture runs first.
         settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!w.manager->geometryCommitPendingForTest(), kCaptureTimeoutMs);
         WorkspaceDocument document = store->snapshot();
         const QJsonArray narrow{1300, 120};
         document.extensions[QStringLiteral("splitterSizes")] = narrow;
         QCOMPARE(w.manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
         settle();
-        QTest::qWait(600);
-        settle();
+        QTRY_VERIFY_WITH_TIMEOUT(!w.manager->geometryCommitPendingForTest(), kCaptureTimeoutMs);
         QCOMPARE(store->snapshot().extensions.value(QStringLiteral("splitterSizes")).toArray(), narrow);
         const quint64 revision = store->snapshot().revision;
         const QString legacy = AppSettings::instance().value(QStringLiteral("MainSplitterSizes")).toString();
 
         w.manager->restoreSplitterState();
         settle();
-        QTest::qWait(600);  // past the geometry commit's debounce
-        settle();
+        // Any capture the restore scheduled has run (and would show below).
+        QTRY_VERIFY_WITH_TIMEOUT(!w.manager->geometryCommitPendingForTest(), kCaptureTimeoutMs);
         QVERIFY2(w.panel()->width() >= contentWidth(w),
                  qPrintable(QStringLiteral("%1 < %2").arg(w.panel()->width()).arg(contentWidth(w))));
         const QString clipped = clippedApplets(w);
@@ -307,8 +326,11 @@ private slots:
         }
         PanelWindow w(false, QSize(1512, 869));
         QVERIFY(w.panel() != nullptr && w.scroll() != nullptr);
-        QTest::qWait(600);  // past the geometry commit's debounce
-        settle();
+        // Startup's own geometry capture writes the split the panel has.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            w.manager->workspaceStore()->snapshot().extensions.value(QStringLiteral("splitterSizes")).toArray() != narrow,
+            kCaptureTimeoutMs);
+        QTRY_VERIFY_WITH_TIMEOUT(!w.manager->geometryCommitPendingForTest(), kCaptureTimeoutMs);
         QVERIFY2(w.panel()->width() >= contentWidth(w),
                  qPrintable(QStringLiteral("%1 < %2").arg(w.panel()->width()).arg(contentWidth(w))));
         const QString clipped = clippedApplets(w);
@@ -343,14 +365,7 @@ private slots:
         QVERIFY(widest != nullptr);
         const int before = w.panel()->minimumWidth();
         QVERIFY2(before >= contentWidth(w), qPrintable(QStringLiteral("%1 < %2").arg(before).arg(contentWidth(w))));
-        QString typeId;
-        for (const auto& c : w.manager->workspaceStore()->snapshot().containers) {
-            for (const auto& e : c.contents) {
-                if (w.manager->contentRegistry()->singletonView(e.typeId) == widest) {
-                    typeId = e.typeId;
-                }
-            }
-        }
+        const QString typeId = typeIdOf(w, widest);
         QVERIFY2(!typeId.isEmpty(), widest->metaObject()->className());
 
         QVERIFY(w.setEntryVisible(typeId, false));
