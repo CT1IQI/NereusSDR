@@ -46,6 +46,11 @@
 //                 full-content strip details, EdgeDropOverlay proposed, TX
 //                 profiles seeded for tx-processing. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - edit-source-select shows the source chip's menu open
+//                 (its own --menu image) in place of its plate;
+//                 edit-properties notes the declared property controls;
+//                 preview factories take the render mode. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -59,6 +64,8 @@
 #include <QEnterEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QCheckBox>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
 #include <QTimeZone>
@@ -3054,9 +3061,11 @@ void noteEditor(SceneContext& ctx, ContainerSettingsDialog* dialog)
 // window; `select` poses the dialog. With `composite` off the window
 // image leaves the dialog out (it would cover what the scene shows) and
 // the dialog has its own image only.
+// `menu`, when the pose sets it, is a popup open over the window: it is
+// composited into the window image and has its own image (`name--menu`).
 void sceneEditDialog(SceneContext& ctx, const QString& name,
                      const std::function<void(SceneContext&, ContainerSettingsDialog*)>& select,
-                     bool composite = true)
+                     bool composite = true, const std::shared_ptr<QPointer<QMenu>>& menu = {})
 {
     ctx.provenance = provProposed();
     ctx.proposedValues = proposedEdgeValues();
@@ -3104,11 +3113,19 @@ void sceneEditDialog(SceneContext& ctx, const QString& name,
     }
     noteStrips(ctx);
     captureWindow(ctx, name);
+    const bool menuOpen = menu && *menu;
     if (composite) {
         compositeAndRecrop(ctx, name, {dialog->data()});
     } else {
         ctx.notes.append(QStringLiteral("the dialog is not composited into the window image; see %1--dialog")
                              .arg(name));
+        if (menuOpen) {
+            compositeAndRecrop(ctx, name, {menu->data()});
+        }
+    }
+    if (menuOpen) {
+        captureDialog(ctx, menu->data(), name + QStringLiteral("--menu"));
+        (*menu)->close();
     }
     captureDialog(ctx, dialog->data(), name + QStringLiteral("--dialog"));
     annotateSlices(ctx);
@@ -3137,7 +3154,10 @@ void sceneEditAddContent(SceneContext& ctx)
 
 void sceneEditSourceSelect(SceneContext& ctx)
 {
-    sceneEditDialog(ctx, QStringLiteral("edit-source-select"), [](SceneContext& c, ContainerSettingsDialog* d) {
+    // The Station header's source chip clicked: its menu open over the
+    // window, as ContainerWidget shows it. The dialog has its own image.
+    auto menu = std::make_shared<QPointer<QMenu>>();
+    sceneEditDialog(ctx, QStringLiteral("edit-source-select"), [menu](SceneContext& c, ContainerSettingsDialog* d) {
         auto* contents = d->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
         QListWidgetItem* frequency = rowContaining(contents, QStringLiteral("Frequency"));
         if (frequency == nullptr) {
@@ -3150,18 +3170,36 @@ void sceneEditSourceSelect(SceneContext& ctx)
         auto* manager = c.window->findChild<ContainerManager*>();
         ContainerWidget* station = manager->container(QStringLiteral("preview-station"));
         WorkspaceGroupHeader* header = station != nullptr ? station->workspaceHeader() : nullptr;
-        auto* chip = header != nullptr ? header->findChild<WorkspaceSourceChip*>() : nullptr;
+        WorkspaceSourceChip* chip = header != nullptr ? header->sourceChip() : nullptr;
         if (chip == nullptr || !chip->isVisible()) {
             c.failure = QStringLiteral("no visible source chip on the Station header");
             return;
         }
-        addNotImplementedPlate(c, chip, QStringLiteral("source chip menu"),
-                               QStringLiteral("Source menu (RX A to D, Active slice): not built yet in NereusSDR"),
-                               QStringLiteral("WorkspaceSourceChip only paints; it has no menu"));
-        c.notes.append(QStringLiteral("source chip \"%1\": paint-only, no menu; a not-implemented plate "
-                                      "sits under it. The dialog shows the existing Source path for the "
-                                      "Frequency entry").arg(chip->text()));
-    }, false);
+        // The menu the chip's click opens (ContainerWidget::showSourceMenu),
+        // shown with popup() so the grab needs no nested loop.
+        *menu = new QMenu(station);
+        station->populateSourceMenu(**menu);
+        tagProvenance(menu->data(), provProposed());
+        (*menu)->popup(chip->mapToGlobal(QPoint(0, chip->height())));
+        pump(kFinalSettleMs);
+        if (!(*menu)->isVisible()) {
+            c.failure = QStringLiteral("the source menu did not show");
+            return;
+        }
+        QStringList items;
+        for (QAction* a : (*menu)->actions()) {
+            if (a->isSeparator()) {
+                items.append(QStringLiteral("-"));
+                continue;
+            }
+            items.append(QStringLiteral("%1%2%3").arg(a->text(),
+                a->isChecked() ? QStringLiteral(" (checked)") : QString(),
+                a->isEnabled() ? QString() : QStringLiteral(" (disabled)")));
+        }
+        c.notes.append(QStringLiteral("source chip \"%1\" clicked: its menu open below it, items [%2]. "
+                                      "A choice commits the container source as Container Settings' "
+                                      "Slice combo does").arg(chip->text(), items.join(QStringLiteral(", "))));
+    }, false, menu);
 }
 
 void sceneEditProperties(SceneContext& ctx)
@@ -3179,6 +3217,22 @@ void sceneEditProperties(SceneContext& ctx)
                            .arg(QString::fromUtf8(QJsonDocument(listTexts(contents)).toJson(QJsonDocument::Compact)),
                                 needle->text()));
         noteEditor(c, d);
+        QStringList properties;
+        for (QWidget* w : d->findChildren<QWidget*>()) {
+            if (w->objectName().startsWith(QStringLiteral("property_")) && w->isVisible()) {
+                QString value;
+                if (auto* combo = qobject_cast<QComboBox*>(w)) {
+                    value = combo->currentText();
+                } else if (auto* check = qobject_cast<QCheckBox*>(w)) {
+                    value = check->isChecked() ? QStringLiteral("on") : QStringLiteral("off");
+                } else if (auto* edit = qobject_cast<QLineEdit*>(w)) {
+                    value = edit->text();
+                }
+                properties.append(QStringLiteral("%1 \"%2\"").arg(w->objectName(), value));
+            }
+        }
+        c.notes.append(QStringLiteral("declared property controls: %1")
+                           .arg(properties.isEmpty() ? QStringLiteral("none shown") : properties.join(QStringLiteral(", "))));
     });
 }
 
