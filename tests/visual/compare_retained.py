@@ -42,8 +42,9 @@
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #   2026-10-08 - Source maps never catalogued as captures; same-dialog
 #                pairs listed as not possible; both spectrum-area paths
-#                described. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-#                Claude Code.
+#                described; both sides of a spectrum pair use one method;
+#                a dialog or menu composited over a target is masked.
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import datetime
@@ -259,11 +260,18 @@ def crop_logical(meta, name):
     return None
 
 
-def spectrum_area(meta):
-    """(rect [x,y,w,h] logical, method, exclusions [(name, rect)]) or (None, reason, [])."""
-    regions = meta.get("regions") or []
-    spec = [r for r in regions if "SpectrumWidget" in str(r.get("widget_class", "")) or
+def spectrum_regions(meta):
+    return [r for r in meta.get("regions") or [] if "SpectrumWidget" in str(r.get("widget_class", "")) or
             str(r.get("type", "")).lower() == "spectrum"]
+
+
+def spectrum_area(meta, use_regions=True):
+    """(rect [x,y,w,h] logical, method, exclusions [(name, rect)]) or (None, reason, []).
+
+    use_regions False takes the crops path even when the sidecar has
+    SpectrumWidget regions, so both sides of a pair use one method."""
+    regions = meta.get("regions") or []
+    spec = spectrum_regions(meta) if use_regions else []
     if spec:
         xs = [r.get("visible_rect") or r.get("rect") for r in spec]
         x0 = min(r[0] for r in xs)
@@ -303,6 +311,25 @@ def spectrum_area(meta):
     rect = [x0, y0, x1 - x0, y1 - y0]
     excl = [(n, crop_logical(meta, n)) for n in ("flag", "pan1-toolbar") if crop_logical(meta, n)]
     return rect, "crops (central area between strips and bars; edges approximate)", excl
+
+
+def covering(meta, rect):
+    """[(name, logical rect)]: the parts of `rect` covered by a top-level
+    composited over the window (a dialog or menu: a root region after the
+    first), which never show the retained component."""
+    out = []
+    regions = meta.get("regions") or []
+    for i, r in enumerate(regions):
+        if i == 0 or r.get("parent", 0) != -1:
+            continue
+        v = r.get("visible_rect") or r.get("rect")
+        if not v:
+            continue
+        x0, y0 = max(v[0], rect[0]), max(v[1], rect[1])
+        x1, y1 = min(v[0] + v[2], rect[0] + rect[2]), min(v[1] + v[3], rect[1] + rect[3])
+        if x1 > x0 and y1 > y0:
+            out.append((r.get("name", "top-level"), [x0, y0, x1 - x0, y1 - y0]))
+    return out
 
 
 def inside(r, outer):
@@ -345,10 +372,26 @@ def compare_flag(root, out, profile, scene, bscene, pentry, bentry):
     if pa.size != ba.size:
         res.update(status="not-comparable", reason="flag crop sizes differ: %s vs %s" % (pa.size, ba.size))
         return res, None
-    stats, d = compare_images(pa, ba, [])
-    target = out / RESULT_DIR / profile / ("%s--flag.diff.png" % scene)
     dpr = float(p["meta"].get("dpr") or 1.0)
-    diff_png(ba, d, [], stats["bbox"], target, dpr)
+    # A dialog or menu composited over the flag hides it: mask what it
+    # covers, and do not compare a flag it hides.
+    masks = []
+    w = window_image(pentry)
+    rect = crop_logical(w["meta"], "flag") if w else None
+    if rect:
+        for name, r in covering(w["meta"], rect):
+            box = clip(to_px(r, rect[:2], dpr), pa.size)
+            if box:
+                masks.append(box)
+                res["excluded"].append({"name": name, "px": list(box)})
+    covered = sum((m[2] - m[0]) * (m[3] - m[1]) for m in masks)
+    if covered >= 0.9 * pa.size[0] * pa.size[1]:
+        res.update(status="not-comparable", reason="the flag is covered by %s" % ", ".join(
+            e["name"] for e in res["excluded"]))
+        return res, None
+    stats, d = compare_images(pa, ba, masks)
+    target = out / RESULT_DIR / profile / ("%s--flag.diff.png" % scene)
+    diff_png(ba, d, masks, stats["bbox"], target, dpr)
     res.update(stats)
     res.update(status="compared", identical=stats["differing_pixels"] == 0, diff_png=rel(target, out))
     return res, None
@@ -359,8 +402,12 @@ def compare_spectrum(root, out, profile, scene, bscene, pentry, bentry):
     b = window_image(bentry)
     if not p or not b:
         return None, "no main window image"
-    prect, pmethod, pex = spectrum_area(p["meta"])
-    brect, bmethod, bex = spectrum_area(b["meta"])
+    # One method for both sides: SpectrumWidget regions only when both
+    # sidecars have them (stored baselines from before the regions contract
+    # have none), else the crops path for both.
+    both = bool(spectrum_regions(p["meta"])) and bool(spectrum_regions(b["meta"]))
+    prect, pmethod, pex = spectrum_area(p["meta"], both)
+    brect, bmethod, bex = spectrum_area(b["meta"], both)
     if prect is None or brect is None:
         return None, "spectrum area unknown: %s" % (pmethod if prect is None else bmethod)
     res = {"target": "spectrum-area", "proposed_png": rel(p["png"], root), "baseline_png": rel(b["png"], root),
@@ -379,6 +426,7 @@ def compare_spectrum(root, out, profile, scene, bscene, pentry, bentry):
         res.update(status="not-comparable", reason="pixel sizes differ: %s vs %s" % (pa.size, ba.size), excluded=[])
         return res, None
     masks, excluded = [], []
+    pex = list(pex) + covering(p["meta"], prect)
     for (name, r), origin in [(e, prect[:2]) for e in pex] + [(e, brect[:2]) for e in bex]:
         box = clip(to_px(r, origin, dpr), pa.size)
         if box and box not in masks:
@@ -426,11 +474,12 @@ def run(root, out):
         "method": {
             "counterparts": "same spectrum_checks data (pan centre, sample rate, span, reference level, "
                             "seeded signals) and transmit keying; plain data-set baseline preferred",
-            "flag": "the flag crop, pixel by pixel, whole crop",
+            "flag": "the flag crop, pixel by pixel; any part covered by a dialog or menu composited "
+                    "over the window is masked, and a flag covered almost whole is not compared",
             "spectrum": "the spectrum plot area, grid included. Regions path (sidecar has SpectrumWidget "
                         "regions): the union of the pan plots, excluding every smaller region inside them "
-                        "(flags, toolbars, buttons, badges), listed per row. Crops path (no such regions): "
-                        "the area between the strip, bar and panel crops, with the flag and pan 1 toolbar "
+                        "(flags, toolbars, buttons, badges), listed per row. Crops path (either sidecar "
+                        "lacks them; then both sides use it): the area between the strip, bar and panel crops, with the flag and pan 1 toolbar "
                         "crops excluded",
             "large_delta": kLargeDelta,
         },

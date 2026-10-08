@@ -37,6 +37,11 @@
 #   2026-10-08 - Integration: setup-look-* dropped (the Setup section uses
 #                look-dialog-setup-*), clean-spectrum-reveal placed.
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - Tall extra images held to 1000 px in Fit; "no longer
+#                produced" counts as a verify failure; dialog-only scenes
+#                say which profiles dialogs are captured at; status table
+#                lists the source menu, property editor and CW page.
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import datetime
@@ -391,8 +396,10 @@ STATUS_ROWS = [
      "The grip sits in the header and the dot corner inside the bounds; the external 20 px gutter is gone.",
      "header-always, arrange-on", True),
     ("Left edge strip", STATUS_BUILT, "Containers docked on the left edge of the workspace.", "edge-left", True),
-    ("Right edge strip", STATUS_BUILT, "Today's right panel position as a strip; same 306 px Main Panel.",
-     "edge-right", True),
+    ("Right edge strip", STATUS_BUILT,
+     "Today's right panel position as a strip. The Main Panel keeps its 306 px, inside a 318 px strip and a "
+     "6 px handle, so the spectrum area is narrower than today (1200 against 1206 logical at mac@2).",
+     "edge-right, look-two-band", True),
     ("Top edge strip", STATUS_BUILT, "Containers docked along the top; sized to the tallest container.",
      "edge-top-bottom", True),
     ("Bottom edge strip", STATUS_BUILT, "Containers docked along the bottom.", "edge-top-bottom", True),
@@ -414,6 +421,13 @@ STATUS_ROWS = [
      "instruments-sheet, mixed-container", True),
     ("ProfileRail and pill style (Longpath port)", STATUS_BUILT, "The profile badges.",
      "profile-rail-open", True),
+    ("Header source menu", STATUS_BUILT,
+     "The group header's source chip opens RX A to RX D and Active slice; slices that are not open are "
+     "disabled. It writes the container source as the Container Settings Slice combo does.",
+     "edit-source-select", True),
+    ("Longpath property editor", STATUS_BUILT,
+     "Container Settings shows each Longpath entry's declared properties (reading, form, compact, label) "
+     "in place of \"Unsupported configuration\".", "edit-properties", True),
     ("Factory entries", STATUS_BUILT,
      "Frequency, Needle meter, Bar meter and Filter passband (Longpath) as per-instance container content, "
      "registered only with the preview switch on.", "mixed-container, edit-add-content", True),
@@ -432,6 +446,8 @@ STATUS_ROWS = [
      "look-dialog-*, container content", True),
     ("Cwx, Dvk, Digital and Eq applets", STATUS_NOT_WIRED,
      "Present in the source, never constructed by the current app.", "cw-digital, tx-processing", True),
+    ("Phone/CW applet CW page", STATUS_NONE,
+     "The CW page is not built in NereusSDR; the scene shows a plate in its place.", "cw-digital", True),
     ("Second SIGNAL STRENGTH dial in another container", STATUS_NONE,
      "The dial is a singleton owned by the Main Panel; other containers use the S-Meter bar face.",
      "mixed-container", True),
@@ -724,7 +740,13 @@ def scene_panel(page, side, scene, profile):
         head.append("Slices: %s." % esc(sl))
     if head:
         parts.append("<p class='panel-note'>%s</p>" % " ".join(head))
-    single = "".join(figure(page, m) for m in mains) or "<p class='dim'>No main image at this profile.</p>"
+    def main_cls(m):
+        # A tall extra image (a full-content strip, a dialog) is held to a
+        # readable height in Fit; True scale shows it whole.
+        dev = m["meta"].get("device_size") or [0, 0]
+        return "tall" if m["part"] and dev[1] > dev[0] else ""
+    single = "".join(figure(page, m, cls=main_cls(m)) for m in mains) or \
+        "<p class='dim'>No main image at this profile.</p>"
     parts.append("<div class='single'>%s</div>" % single)
     if bentry:
         bmain = bentry["main"][0] if bentry["main"] else None
@@ -775,7 +797,12 @@ def scene_article(page, side, scene, collapsed=False):
     prov = first_meta.get("provenance", "")
     if prov == "proposed" and side == "proposed":
         prov = ""
-    miss = ("<span class='dim'>Not captured at %s.</span>" % esc(", ".join(missing))) if missing else ""
+    dialog_only = bool(profiles) and all(
+        i["kind"] == "dialog" for p in profiles for i in page.cat[side][p][scene]["main"])
+    if missing and dialog_only:
+        miss = "<span class='dim'>Dialogs are captured at %s only.</span>" % esc(", ".join(profiles))
+    else:
+        miss = ("<span class='dim'>Not captured at %s.</span>" % esc(", ".join(missing))) if missing else ""
     body = "<div class='ptabs'>%s %s</div>%s%s" % (tabs, miss, tools, panels)
     title = "<h3>%s %s<span class='tag side-%s'>%s</span></h3>" % (
         esc(scene), ("<span class='tag'>%s</span> " % esc(prov)) if prov else "", side, "current app" if side == "baseline" else "proposed")
@@ -924,7 +951,8 @@ def verify_html(page, verify_log):
         seen.add(f)
         text = f.read_text(errors="replace").splitlines()
         ident = sum(1 for l in text if "IDENTICAL" in l)
-        differs = [l for l in text if "DIFFERS" in l or "RUN FAILED" in l or "missing" in l or "no stored image" in l]
+        differs = [l for l in text if "DIFFERS" in l or "RUN FAILED" in l or "missing" in l
+                   or "no stored image" in l or "no longer produced" in l]
         summary = [l for l in text if l.startswith("verify")]
         state = "<span class='ok'>all identical</span>" if not differs and ident else (
             "<span class='bad'>%d difference(s) or failure(s)</span>" % len(differs) if differs else "no results")
@@ -1043,6 +1071,8 @@ figure.shot { margin:0 0 10px; background:var(--panel2); border:1px solid var(--
 .frame { overflow:auto; background:#000; max-height:none; }
 .frame img { display:block; max-width:100%; height:auto; }
 .scene.truemode .frame img { max-width:none; }
+figure.shot.tall .frame img { max-height:1000px; width:auto; }
+.scene.truemode figure.shot.tall .frame img { max-height:none; }
 .scene.truemode .pair { grid-template-columns:1fr; }
 figcaption { padding:6px 8px; font-size:12px; }
 .cap-title { font-weight:600; margin-bottom:2px; word-break:break-all; }
