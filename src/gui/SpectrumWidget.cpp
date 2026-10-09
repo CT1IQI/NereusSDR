@@ -149,6 +149,10 @@
 //                 the spectrum, waterfall and DSS default backgrounds
 //                 read WorkspacePreview::dataBackground() (navy until a
 //                 choice is made). AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Spot list and spot display changes mark the GPU path's
+//                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
+//                 the spot labels follow them. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -8879,6 +8883,10 @@ void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4303-4307 [@0cd4559]
 // Repaint guard added per AetherSDR [@a173272d] PR #2474.
+// From AetherSDR src/gui/SpectrumWidget.cpp:15378-15383 [@1e0718ad]: a
+// visual change marks the overlay dirty. The GPU path draws the spot labels
+// into its cached static overlay; update() alone left them stale until
+// something else invalidated it.
 void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
 {
     const bool visualChange = !spotMarkersVisuallyEqual(m_spotMarkers, markers);
@@ -8886,7 +8894,7 @@ void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
     if (!visualChange) {
         return;
     }
-    update();
+    markOverlayDirty();
 }
 
 // Phase 3J-2 + 3R M2: refresh every Spot Display knob from AppSettings.
@@ -8946,7 +8954,8 @@ void SpectrumWidget::loadSpotDisplaySettings()
             == QStringLiteral("True");
         setSpotSourceVisible(source, visible);
     }
-    update();
+    // The spot labels are in the GPU path's static overlay.
+    markOverlayDirty();
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4497-4633 [@0cd4559]

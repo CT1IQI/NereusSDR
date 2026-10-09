@@ -17,6 +17,14 @@
 //                 asks for the entry menu's Pop Out; it is enabled when the
 //                 projected document is unlocked. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The minimum follows where the views are now: each
+//                 presentation sync starts from the extent placeViews laid
+//                 out, not from the last sync's, and grows by each view's
+//                 widget geometry, not its native window's, which can lag
+//                 the geometry set here. A view's earlier larger boundary
+//                 no longer keeps the canvas larger, and the minimum no
+//                 longer depends on when the native window settled.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -118,7 +126,8 @@ void FreeCanvasSurface::placeViews() {
     QRectF bounds(0,0,m_document.freeCanvasExtent().width(),m_document.freeCanvasExtent().height());
     for(const auto& leaf:std::as_const(m_leaves)) {bounds=bounds.united(leaf.rect);}
     if(m_active.isEmpty()) {m_origin=QPointF(kMargin-qMin(0.,bounds.left()),kMargin-qMin(0.,bounds.top()));}
-    m_extent=QSizeF(qMax(40.,bounds.right()+m_origin.x()+kMargin),qMax(40.,bounds.bottom()+m_origin.y()+kMargin));
+    m_logicalExtent=QSizeF(qMax(40.,bounds.right()+m_origin.x()+kMargin),qMax(40.,bounds.bottom()+m_origin.y()+kMargin));
+    m_extent=m_logicalExtent;
     setMinimumSize(pixels(m_extent.width()),pixels(m_extent.height()));
     auto ids=m_leaves.keys();
     std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){
@@ -146,13 +155,20 @@ void FreeCanvasSurface::queuePresentationSync() {
     QTimer::singleShot(0,this,[this]{m_presentationSyncQueued=false;syncPresentation();});
 }
 void FreeCanvasSurface::syncPresentation() {
-    QSize extent(pixels(m_extent.width()),pixels(m_extent.height()));
+    // From the laid-out extent, not the last sync's: a boundary that was
+    // larger earlier (a native window before its geometry settles) must not
+    // keep the canvas larger once the view is back where it belongs.
+    QSize extent(pixels(m_logicalExtent.width()),pixels(m_logicalExtent.height()));
     auto ids=m_leaves.keys();
     std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a<b:m_leaves[a].order<m_leaves[b].order;});
     for(const QString& id:ids) {
         auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
         const QRect rect=projectedBoundary(leaf.view);leaf.view->raise();
-        extent=extent.expandedTo(QSize(rect.x()+rect.width()+kMargin,rect.y()+rect.height()+kMargin));
+        // The extent grows by the widget's own geometry, which is set
+        // synchronously here: the native window's can still be settling, so
+        // reading it made the minimum depend on timing.
+        const QRect placed=leaf.view->geometry();
+        extent=extent.expandedTo(QSize(placed.x()+placed.width()+kMargin,placed.y()+placed.height()+kMargin));
         const bool visible=leaf.view->isVisibleTo(this) && leaf.rect.width()>0 && leaf.rect.height()>0;
         if(WorkspacePreview::enabled()) {
             // Workspace preview: header and corner inside the bounds, shown

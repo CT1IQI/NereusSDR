@@ -114,6 +114,13 @@
 //                 product's own path and grabbed while open; tooltips placed
 //                 for the default 16x16 pointer (profile-rail-open too).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The sample spots no longer re-set the notch markers to
+//                 refresh the GPU overlay: setSpotMarkers marks it dirty
+//                 itself now. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-09 - menu-pan-flyout-ant and menu-pan-flyout-att: the toolbar's
+//                 ANT and ATT flyouts, opened as the BAND one is. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -5499,6 +5506,52 @@ SpectrumWidget* panOne(SceneContext& ctx)
     return spectrumFor(ctx.window, panIdAt(0));
 }
 
+// Opens the flyout of pan 1's toolbar button `label` (a child panel, not a
+// popup), grabs it and closes it. The flyout is the largest widget the
+// click showed. The ANT button shows only on a board with antenna choices:
+// the toolbar takes the posed board's capabilities, as MainWindow passes
+// them on currentRadioChanged.
+void shootPanFlyout(SceneContext& c, const QString& name, const QString& label)
+{
+    SpectrumWidget* s = panOne(c);
+    auto* panel = s != nullptr ? s->findChild<SpectrumOverlayPanel*>() : nullptr;
+    QPushButton* button = buttonWithText(panel, label);
+    if (button != nullptr && !button->isVisible() && panel != nullptr) {
+        panel->setBoardCapabilities(c.model->boardCapabilities());
+        c.notes.append(QStringLiteral("SpectrumOverlayPanel::setBoardCapabilities(posed board), "
+                                      "as MainWindow does on currentRadioChanged"));
+        pump(kSettleMs);
+    }
+    if (button == nullptr || !button->isVisible()) {
+        c.failure = QStringLiteral("no %1 button on pan 1").arg(label);
+        return;
+    }
+    QSet<QWidget*> shown;
+    for (QWidget* w : s->findChildren<QWidget*>()) {
+        if (w->isVisible()) {
+            shown.insert(w);
+        }
+    }
+    button->click();
+    pump(kFinalSettleMs);
+    QWidget* flyout = nullptr;
+    for (QWidget* w : s->findChildren<QWidget*>()) {
+        if (!w->isVisible() || shown.contains(w)) {
+            continue;
+        }
+        if (flyout == nullptr || w->width() * w->height() > flyout->width() * flyout->height()) {
+            flyout = w;
+        }
+    }
+    if (flyout == nullptr) {
+        c.failure = QStringLiteral("the %1 flyout did not show").arg(label);
+        return;
+    }
+    appendPopupImages(c, name, c.window, {}, flyout);
+    button->click();
+    pump(kFinalSettleMs);
+}
+
 // x of `hz` across the widget, from the displayed centre and bandwidth (the
 // plot spans the widget less its dBm strip; close enough to aim at).
 int approxX(SpectrumWidget* s, double hz)
@@ -5551,11 +5604,6 @@ void placeSampleSpots(SceneContext& ctx, SpectrumWidget* s)
             QStringLiteral("W1NNN"), QString(), 20 + i);
     }
     s->setSpotMarkers(spots);
-    // setSpotMarkers repaints with update() only; the labels are drawn into
-    // the GPU path's static overlay, rebuilt when it is marked dirty. The
-    // notch push (markOverlayDirty) with the notches already there marks
-    // it, as the next overlay change would live.
-    s->setNotchMarkers(s->notchMarkersForTest());
     pump(kFinalSettleMs);
     grabWidget(s);
     pump(kFinalSettleMs);
@@ -6090,37 +6138,19 @@ void appendMenuScenes(QVector<Scene>& scenes)
     add(QStringLiteral("menu-pan-flyout-band"), [](SceneContext& ctx) {
         // C27: the BAND flyout of pan 1's toolbar (a child panel, not a popup).
         runPopupScene(ctx, [](SceneContext& c) {
-            SpectrumWidget* s = panOne(c);
-            auto* panel = s != nullptr ? s->findChild<SpectrumOverlayPanel*>() : nullptr;
-            QPushButton* band = buttonWithText(panel, QStringLiteral("BAND"));
-            if (band == nullptr) {
-                c.failure = QStringLiteral("no BAND button on pan 1");
-                return;
-            }
-            QSet<QWidget*> shown;
-            for (QWidget* w : s->findChildren<QWidget*>()) {
-                if (w->isVisible()) {
-                    shown.insert(w);
-                }
-            }
-            band->click();
-            pump(kFinalSettleMs);
-            QWidget* flyout = nullptr;
-            for (QWidget* w : s->findChildren<QWidget*>()) {
-                if (!w->isVisible() || shown.contains(w)) {
-                    continue;
-                }
-                if (flyout == nullptr || w->width() * w->height() > flyout->width() * flyout->height()) {
-                    flyout = w;
-                }
-            }
-            if (flyout == nullptr) {
-                c.failure = QStringLiteral("the BAND flyout did not show");
-                return;
-            }
-            appendPopupImages(c, QStringLiteral("menu-pan-flyout-band"), c.window, {}, flyout);
-            band->click();
-            pump(kFinalSettleMs);
+            shootPanFlyout(c, QStringLiteral("menu-pan-flyout-band"), QStringLiteral("BAND"));
+        });
+    });
+    add(QStringLiteral("menu-pan-flyout-ant"), [](SceneContext& ctx) {
+        // The ANT flyout of pan 1's toolbar: RX and TX antenna rows.
+        runPopupScene(ctx, [](SceneContext& c) {
+            shootPanFlyout(c, QStringLiteral("menu-pan-flyout-ant"), QStringLiteral("ANT"));
+        });
+    });
+    add(QStringLiteral("menu-pan-flyout-att"), [](SceneContext& ctx) {
+        // The ATT flyout of pan 1's toolbar: the step attenuator check box and level.
+        runPopupScene(ctx, [](SceneContext& c) {
+            shootPanFlyout(c, QStringLiteral("menu-pan-flyout-att"), QStringLiteral("ATT"));
         });
     });
     add(QStringLiteral("menu-panadapter"), [](SceneContext& ctx) {

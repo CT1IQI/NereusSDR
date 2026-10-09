@@ -164,6 +164,10 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - PA Values' first temperature text spells the degree sign
+//                 as U+00B0: its UTF-8 bytes in a UTF-16 literal read as
+//                 two characters. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2472,7 +2476,7 @@ PaValuesPage::PaValuesPage(RadioModel* model, QWidget* parent)
                                          QStringLiteral("0.00 A"), paGroup);
     m_paCurrentLabel->setProperty("nereusSetupId", "pa.values.paCurrent");
     m_paTempLabel      = new MetricLabel(QStringLiteral("PA T"),
-                                         QStringLiteral("0.0 \xC2\xB0""C"), paGroup);
+                                         QStringLiteral("0.0 \u00B0C"), paGroup);
     // R-IOS-18: the Setup description's id for the temperature readout.
     m_paTempLabel->setProperty("nereusSetupId", "pa.values.paTemperature");
     m_supplyVoltsLabel = new MetricLabel(QStringLiteral("V"),

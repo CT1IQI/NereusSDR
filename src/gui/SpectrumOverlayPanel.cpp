@@ -78,6 +78,12 @@
 //                 column instead of covering its lower buttons; it stays at
 //                 the bottom left otherwise. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09 - The ANT flyout's RX and TX rows and the ATT check box no
+//                 longer draw the flyout's frame again: kPanelStyle stays
+//                 AetherSDR's text, the rows take a scoped rule with no
+//                 background or border and the check box one with no
+//                 border, so its indicator keeps its square. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -254,6 +260,26 @@ QString labelStyle()
         "QLabel { background: transparent; border: none; "
         "color: %1; font-size: 10px; font-weight: bold; }")
         .arg(Workspace::role("title-text", "#c4c4ca"));
+}
+
+// kPanelStyle (AetherSDR's text, kept byte-exact) is an unnamed QWidget
+// rule, so it reaches every widget inside a flyout. AetherSDR builds its
+// RX ANT row as a bare layout and gives its one row widget (m_loopRow)
+// "QWidget { background: transparent; border: none; }". Ours wraps each
+// antenna row in a QWidget (so setBoardCapabilities hides it as a unit) and
+// the step attenuator has a check box, so each drew the flyout's frame
+// around itself again. They take this rule instead, scoped to the row's
+// own object name so its label and combo keep theirs. The check box drops
+// only the border: its background is what Fusion fills the indicator from,
+// so clearing it would also clear the indicator's square.
+QString clearRowStyle(const QString& objectName)
+{
+    return QStringLiteral("QWidget#%1 { background: transparent; border: none; }").arg(objectName);
+}
+
+QString checkBoxStyle()
+{
+    return labelStyle() + QStringLiteral(" QCheckBox { border: none; }");
 }
 
 // The flyout's own controls go through the scoped pass when shown.
@@ -601,6 +627,8 @@ void SpectrumOverlayPanel::buildAntFlyout()
     // can hide them as a unit on HL2/Atlas.
     {
         m_rxAntRow = new QWidget;
+        m_rxAntRow->setObjectName(QStringLiteral("rxAntRow"));
+        m_rxAntRow->setStyleSheet(clearRowStyle(m_rxAntRow->objectName()));
         auto* row = new QHBoxLayout(m_rxAntRow);
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
@@ -638,6 +666,8 @@ void SpectrumOverlayPanel::buildAntFlyout()
 
     {
         m_txAntRow = new QWidget;
+        m_txAntRow->setObjectName(QStringLiteral("txAntRow"));
+        m_txAntRow->setStyleSheet(clearRowStyle(m_txAntRow->objectName()));
         auto* row = new QHBoxLayout(m_txAntRow);
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
@@ -1315,7 +1345,7 @@ void SpectrumOverlayPanel::buildAttFlyout()
 
     m_attEnableChk = new QCheckBox(QStringLiteral("Step attenuator"));
     m_attEnableChk->setObjectName(QStringLiteral("attEnableCheck"));
-    m_attEnableChk->setStyleSheet(labelStyle());
+    m_attEnableChk->setStyleSheet(checkBoxStyle());
     m_attEnableChk->setToolTip(QStringLiteral("Use the radio's step attenuator"));
     vb->addWidget(m_attEnableChk);
 
