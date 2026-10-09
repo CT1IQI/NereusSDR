@@ -18,6 +18,9 @@
 //   2026-10-09 - Written for the speaker volume fill, the zoom track and
 //                 the plot backgrounds. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - The RADIO fill and the Audio Setup reason lines take the
+//                 workspace amber (JJ's choice A).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -26,6 +29,7 @@
 #include <QFile>
 #include <QHash>
 #include <QImage>
+#include <QLabel>
 #include <QLayout>
 #include <QSlider>
 #include <QStyle>
@@ -56,6 +60,10 @@ const char* const kZoomBarSheet =
     "QSlider { background: #0a0a14; }"
     "QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
     "QSlider::handle:horizontal { background: #00b4d8; width: 14px; margin: -4px 0; border-radius: 7px; }";
+
+// The Audio Setup reason lines (AudioOutputsPage kReason), as the page
+// sets them.
+const char* const kReasonSheet = "QLabel { color: #e0a030; font-size: 11px; }";
 
 // The decided groove (#050507) on the controls sheet's panel (#141418),
 // measured in controls-sheet at laptop-1280x800@1: the contrast the zoom
@@ -199,8 +207,8 @@ private slots:
     }
 
     // D24: the RADIO speaker volume keeps its filled side when enabled
-    // (today's #e0a030, kept by the translation as the slider's identity
-    // amber) and, as today, shows no fill when disabled.
+    // (today's #e0a030 through the translation: the workspace amber,
+    // JJ's choice A) and, as today, shows no fill when disabled.
     void radioSpeakerSliderIsFilled()
     {
         WorkspaceApp look;
@@ -208,10 +216,25 @@ private slots:
         ProbeSlider* s = speakerSlider(host, HeaderVolumeStyle::kRadioSlider, true);
         WorkspacePreview::themeSubtree(&host);
         const QColor fill = leftOfHandle(s);
-        QVERIFY2(fill == QColor(QStringLiteral("#e0a030")), qPrintable(fill.name()));
+        QVERIFY2(fill == role("measured"), qPrintable(fill.name()));
+        QCOMPARE(role("measured"), QColor(QStringLiteral("#d8a55f")));
         s->setEnabled(false);
         const QColor off = leftOfHandle(s);
         QVERIFY2(off == role("inset"), qPrintable(off.name()));
+    }
+
+    // The Audio Setup "No radio connected" lines take the same workspace
+    // amber as the RADIO fill.
+    void radioSpeakerReasonTakesTheAmber()
+    {
+        WorkspaceApp look;
+        QWidget host;
+        auto* reason = new QLabel(QStringLiteral("No radio connected"), &host);
+        reason->setStyleSheet(QLatin1String(kReasonSheet));
+        WorkspacePreview::themeSubtree(&host);
+        reason->ensurePolished();
+        const QColor c = reason->palette().color(QPalette::WindowText);
+        QVERIFY2(c == role("measured"), qPrintable(c.name()));
     }
 
     // D5: a slider with the same sheet that is not a speaker volume, and

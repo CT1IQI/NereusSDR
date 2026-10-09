@@ -14,6 +14,10 @@
 //   2026-10-09 - The VfoStyles kept row names its site as Name:line, as
 //                 every other row does, not as a file name.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The RADIO speaker slider's amber background takes the
+//                 measured role (#d8a55f) instead of staying kept, as its
+//                 reason text already did (JJ's choice A).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -211,6 +215,8 @@ const QVector<ColourRow>& rows()
         { "#d09060", kText, "measured" },        // PaSetupPages:295 warning banner
         { "#d9a441", kText, "measured" },        // AmpApplet:235, Rf2ksApplet:263, TunerApplet:176 stale
         { "#e0a030", kText, "measured" },        // AudioOutputsPage:71,77 reason
+        { "#e0a030", kBg, "measured" },          // MasterOutputWidget kRadioSlider handle and
+                                                 // fill: the RADIO speaker amber (JJ's choice A)
         { "#ffc800", kText, "measured" },        // DspOptionsPage:173 warning sign
         { "#ffc800", kBg, "measured" },          // RxApplet:2314 overload rgba(255,200,0,0.20)
         { "#ffc800", kBorder, "measured" },      // RxApplet:2316 overload rgba(255,200,0,0.40)
@@ -396,8 +402,6 @@ const QVector<KeptLiteral>& kept()
         { "#d2b48c", kAny, "spot colour default (SpotHubDialog:860)" },
         { "#00e5ff", kAny, "spectrum fill colour default in its swatch (SpectrumOverlayPanel:817); "
                            "frequency digits on the flag (VfoWidget:903)" },
-        { "#e0a030", kBg, "the RADIO speaker slider's identity amber beside the PC slider "
-                          "(MasterOutputWidget kRadioSlider)" },
         { "#003060", kAny, "ClientChain category badge (ClientChainApplet:398)" },
         { "#004060", kAny, "ClientChain category badge (ClientChainApplet:370)" },
         { "#60b8e0", kAny, "ClientChain category badge (ClientChainApplet:398)" },
