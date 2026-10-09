@@ -49,6 +49,9 @@
 //                 enabled state, not its parent's, so a control in a greyed
 //                 section is not left disabled when the gate lifts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - makePageTitle(): the page title, shared with RF-Kit's
+//                 tabbed page. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
@@ -100,11 +103,7 @@ void SetupPage::init(const QString& title)
     rootLayout->setSpacing(6);
 
     // Page title
-    auto* titleLabel = new QLabel(title);
-    titleLabel->setStyleSheet(
-        "QLabel { color: #c8d8e8; font-size: 16px; font-weight: bold; "
-        "border-bottom: 1px solid #304050; padding-bottom: 4px; }");
-    rootLayout->addWidget(titleLabel);
+    rootLayout->addWidget(makePageTitle(title));
 
     // Scrollable content area
     auto* scroll = new QScrollArea;
@@ -122,6 +121,15 @@ void SetupPage::init(const QString& title)
 
     scroll->setWidget(contentWidget);
     rootLayout->addWidget(scroll, 1);
+}
+
+QLabel* SetupPage::makePageTitle(const QString& title, QWidget* parent)
+{
+    auto* titleLabel = new QLabel(title, parent);
+    titleLabel->setStyleSheet(
+        "QLabel { color: #c8d8e8; font-size: 16px; font-weight: bold; "
+        "border-bottom: 1px solid #304050; padding-bottom: 4px; }");
+    return titleLabel;
 }
 
 // ── Virtual ───────────────────────────────────────────────────────────────────

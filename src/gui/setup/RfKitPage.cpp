@@ -48,9 +48,13 @@
 //                 WorkspacePreview::statusColourName() (the status colour
 //                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-09 -- The page carries its title above the tabs, as every
+//                 Setup page does. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "RfKitPage.h"
+#include "gui/SetupPage.h"
 #include "gui/styles/WorkspacePreview.h"
 
 #include "models/AccessoryDataModel.h"
@@ -93,6 +97,9 @@ RfKitPage::RfKitPage(RadioModel* model, QWidget* parent)
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(8, 8, 8, 8);
+
+    // The page title, as every Setup page draws it (SetupPage::init).
+    root->addWidget(SetupPage::makePageTitle(tr("RF-Kit"), this));
 
     m_tabs = new QTabWidget(this);
     root->addWidget(m_tabs);
