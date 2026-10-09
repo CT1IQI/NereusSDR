@@ -104,6 +104,8 @@
 //                 Namespace Longpath::Style becomes
 //                 NereusSDR::Preview::LongpathLook; shiftL() and
 //                 kScrollBarStyle are the Workspace:: ports.
+//   2026-10-09 - themed() keeps Longpath's own spin arrow images.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -137,9 +139,17 @@ inline int formInt(const char* /*name*/, int fallback)
 }
 
 // Longpath's themed(): the legacy-hex table, ported as QssTranslator.
+// NereusSDR: QssTranslator also points url(:/icons/spin-*.svg) at the
+// workspace variants (spin-*-workspace.svg, the text role). Longpath's
+// table leaves url() alone and draws its own #c8d8e8 arrows (Longpath
+// resources/icons/spin-up.svg and spin-down.svg [@551576e3], the same
+// files as NereusSDR's), so the reference keeps them.
 inline QString themed(const QString& qss)
 {
-    return QssTranslator::translate(qss).qss;
+    QString out = QssTranslator::translate(qss).qss;
+    out.replace(QStringLiteral(":/icons/spin-up-workspace.svg"), QStringLiteral(":/icons/spin-up.svg"));
+    out.replace(QStringLiteral(":/icons/spin-down-workspace.svg"), QStringLiteral(":/icons/spin-down.svg"));
+    return out;
 }
 
 /// AUFGESETZT: oben heller, unten dunkler — Licht von oben, die

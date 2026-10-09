@@ -86,12 +86,18 @@
 //                 green and the raised button; sliderRulesFor() and
 //                 groupBoxIndicatorRules() for the live pass.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - JJ's D24: the speaker volume sliders keep their filled
+//                 side and the zoom bar's groove keeps today's colour, each
+//                 through the translation, on the decided groove and handle
+//                 (kFilledSliderProperty, kVisibleTrackProperty).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
 
 #include "QssTranslator.h"
 #include "WorkspacePalette.h"
+#include "WorkspacePreview.h"
 #include "WorkspaceStyle.h"
 
 #include <QColor>
@@ -700,6 +706,10 @@ struct Target {
     bool baseIsChecked = false;
     // No widget answers for the selector (a type rule on a container).
     bool unresolved = false;
+    // The slider's filled side carries meaning (the speaker volume, D24).
+    bool filled = false;
+    // The slider's track must read on its own (the zoom bar, D24).
+    bool visibleTrack = false;
 
     bool operator==(const Target& o) const
     {
@@ -852,6 +862,10 @@ void resolveTarget(Target& t, const QString& type, const QWidget* owner, const Q
         const int o = resolved->property("orientation").toInt();
         t.horizontal = o == Qt::Horizontal;
         t.vertical = o == Qt::Vertical;
+    }
+    if (resolved != nullptr && resolved->inherits("QAbstractSlider")) {
+        t.filled = resolved->property(WorkspacePreview::kFilledSliderProperty).toBool();
+        t.visibleTrack = resolved->property(WorkspacePreview::kVisibleTrackProperty).toBool();
     }
 }
 
@@ -1036,6 +1050,15 @@ QString sliderBody(Decls& d, int bg, const FillInfo& f, const Target& t)
 {
     switch (t.kind) {
     case Kind::SliderFill:
+        // NereusSDR, JJ's D24 (2026-10-09): the speaker volume keeps its
+        // filled side, today's colour through the translation, inside the
+        // decided groove. Disabled, today's sheet fills it in the groove's
+        // colour (no fill shows), so the decided groove shows.
+        if (t.filled && t.state == State::Normal && bg >= 0 && f.fill != Fill::Clear) {
+            d.set("border-radius", hex(kGrooveRadius));
+            break;
+        }
+        [[fallthrough]];
     case Kind::SliderRecess:
         // NereusSDR, JJ's choice (2026-10-08): no filled side, in every state.
         if (bg >= 0) {
@@ -1044,7 +1067,14 @@ QString sliderBody(Decls& d, int bg, const FillInfo& f, const Target& t)
         break;
     case Kind::Groove:
         if (t.state == State::Normal && bg >= 0 && f.fill != Fill::Clear) {
+            // NereusSDR, JJ's D24 (2026-10-09): the zoom bar's groove keeps
+            // today's colour through the translation, so the track reads
+            // against the bar; the rest of the decided groove stays.
+            const QString today = d.value(bg);
             sliderGroove(d, bg, t);
+            if (t.visibleTrack) {
+                setBackground(d, bg, today);
+            }
         }
         break;
     case Kind::Handle:

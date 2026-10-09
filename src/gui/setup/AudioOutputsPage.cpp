@@ -10,6 +10,11 @@
 // implementation via Anthropic Claude Code. The Speakers and Headphones
 // cards and their engine wiring moved here from the Devices page, keys
 // unchanged.
+//
+// 2026-10-09: The PC and RADIO volume sliders take
+// HeaderVolumeStyle::keepFill(), so they keep their filled side in the
+// workspace preview (JJ's D24), by J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // =================================================================
 
 #include "AudioOutputsPage.h"
@@ -187,6 +192,7 @@ void AudioOutputsPage::buildThisComputer()
     m_pcSlider->setObjectName(QStringLiteral("pcVolume"));
     m_pcSlider->setRange(0, 100);
     m_pcSlider->setFixedWidth(kSliderWidth);
+    HeaderVolumeStyle::keepFill(m_pcSlider);
     m_pcSlider->setStyleSheet(QLatin1String(HeaderVolumeStyle::kPcSlider));
     m_pcSlider->setAccessibleName(tr("This computer volume"));
     rowLayout->addWidget(m_pcSlider);
@@ -287,6 +293,7 @@ void AudioOutputsPage::buildRadioSpeaker()
     m_radioSlider->setProperty("nereusSetupId", "audio.outputs.radioSpeakerVolume");
     m_radioSlider->setRange(0, 100);
     m_radioSlider->setFixedWidth(kSliderWidth);
+    HeaderVolumeStyle::keepFill(m_radioSlider);
     m_radioSlider->setStyleSheet(QLatin1String(HeaderVolumeStyle::kRadioSlider));
     m_radioSlider->setAccessibleName(tr("Radio speaker volume"));
     row->addWidget(m_radioSlider);

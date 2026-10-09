@@ -2742,6 +2742,10 @@ nereus_add_test(tst_workspace_decided_controls)
 # switch: one selection colour, the decided slider and group box
 # indicator, the spin arrows, meaning colours, action buttons.
 nereus_add_test(tst_workspace_dialog_colours)
+# The workspace preview: the PC and RADIO speaker volume fill, the visible
+# zoom track, plot backgrounds that follow their container (D22), the
+# Longpath reference arrows and the overlay ATT box's checked indicator.
+nereus_add_test(tst_workspace_sliders_plots)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)

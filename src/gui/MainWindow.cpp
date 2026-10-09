@@ -656,6 +656,10 @@
 //                teardown no longer reaches this window's meter source
 //                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the zoom bar carries
+//                kVisibleTrackProperty, so its track reads against the bar
+//                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -7368,6 +7372,9 @@ void MainWindow::buildUI()
     zoomBar->setValue(768);
     zoomBar->setFixedHeight(20);
     zoomBar->setToolTip(QStringLiteral("Zoom: drag to adjust spectrum bandwidth"));
+    // Workspace preview (JJ's D24): the track keeps today's groove colour so
+    // it reads against the bar. No effect with the preview off.
+    zoomBar->setProperty(WorkspacePreview::kVisibleTrackProperty, true);
     zoomBar->setStyleSheet(QStringLiteral(
         "QSlider { background: #0a0a14; }"
         "QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"

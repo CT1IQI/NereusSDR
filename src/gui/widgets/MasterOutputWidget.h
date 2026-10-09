@@ -46,6 +46,8 @@
 //                HeaderVolumeStyle::applyForm() sizes either group for
 //                either form. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-10-09 - HeaderVolumeStyle::keepFill() (JJ's D24). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioDeviceConfig.h"
@@ -93,6 +95,10 @@ inline constexpr int kStackedIconPx = 12;
 // style. Returns the icon size to draw.
 int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readout,
               bool stacked, int stackedLabelWidth, const char* readoutStyle);
+// Marks a PC or RADIO volume slider: with the workspace preview on its
+// filled side stays (JJ's D24) where every other slider has none. Call it
+// before setting the slider's style. No effect with the preview off.
+void keepFill(QSlider* slider);
 } // namespace HeaderVolumeStyle
 
 // MasterOutputWidget — menu-bar master-output composite.
