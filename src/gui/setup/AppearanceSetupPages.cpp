@@ -71,7 +71,7 @@ void ColorsThemePage::buildUI()
     m_traceFillColorBtn->setToolTip(QStringLiteral(
         "Click to choose the spectrum trace line and fill color. "
         "The color picker lets you adjust alpha for the fill opacity."));  // a QColorDialog
-    specForm->addRow(QStringLiteral("Trace & Fill Color:"), m_traceFillColorBtn);
+    specForm->addRow(QStringLiteral("Trace && Fill Color:"), m_traceFillColorBtn);
 
     // Grid Color — moved from Display → Grid & Scales "Colors" group (G9).
     m_gridColorBtn = makeBtn(specGroup,

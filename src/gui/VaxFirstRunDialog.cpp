@@ -17,6 +17,9 @@
 //   2026-10-09 - A detected-cable row names its own style rule, so its
 //                bottom line no longer repeats under every label in it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - "Apply to VAX N && M" doubles its ampersand so Qt draws it
+//                instead of taking it as a mnemonic. J.J. Boyd (KG4VCF), AI-
+//                assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "VaxFirstRunDialog.h"
@@ -1059,7 +1062,7 @@ QWidget* VaxFirstRunDialog::buildFooter()
                     nums << QString::number(b.first);
                 }
                 applyLabel = QStringLiteral("Apply to VAX %1")
-                    .arg(nums.join(QStringLiteral(" & ")));
+                    .arg(nums.join(QStringLiteral(" && ")));
             } else {
                 applyLabel = QStringLiteral("Apply suggested");
             }

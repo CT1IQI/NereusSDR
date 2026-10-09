@@ -3461,6 +3461,12 @@ target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD
 nereus_add_test(tst_setup_dialog_qt_warnings)
 target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TESTS)
 
+# Word ampersands in mnemonic-parsed texts (group titles, buttons, tabs, form
+# labels) are written "&&" so Qt shows them instead of underlining the next
+# character. Sweeps every built Setup page and the VAX first-run button.
+nereus_add_test(tst_setup_ampersand_text)
+target_compile_definitions(tst_setup_ampersand_text PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Issues #272 + #301: lazy SetupDialog page construction ──────────────────
 # buildTree() used to construct all 55 setup pages from the SetupDialog ctor,
 # blocking the Qt main thread on every Tools -> Setup open. That stall starved
