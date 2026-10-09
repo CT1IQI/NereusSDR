@@ -174,6 +174,20 @@ strip, status bar, pan 1 toolbar), each with a 3x nearest-neighbour copy.
 list comes from the running Setup dialog). Scenes live in a table in
 `PreviewScenes.cpp`; add a scene by appending a row.
 
+A Setup page scene shows the page on its first tab, at the top. Each later
+tab has its own scene, `dialog-setup-<page>--<tab>` (a tab inside a tab is
+`--<outer>--<inner>`), from `setupTabSpecs()`. The HL2 tabs pose the model
+as a Hermes Lite 2 (`RadioModel::setBoardForTest`), and Hardware Config is
+told the posed radio through `HardwarePage::onCurrentRadioChanged`, so its
+tab strip is that board's; nothing connects. Each page or tab whose content
+runs past the dialog (`setupScrollSpecs()`) has a
+`dialog-setup-<page>[--<tab>]--scrolled` scene. It writes one image per
+step, `<scene>-1` to `<scene>-N`, set through the page's own scroll area
+one viewport at a time less a 40 px overlap until the bottom (and the right
+end, row by row, when the page scrolls both ways). A band under each image
+names the page and the step; the sidecar's `scroll_step` has the offsets.
+All of them have `look-` pairs.
+
 ### Workspace look scenes
 
 `look-two-band`, `look-four-rx`, `look-tx` and `look-dialog-*` (one per
