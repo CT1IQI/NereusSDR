@@ -604,6 +604,8 @@ nereus_add_test(tst_container_exchange)
 nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
 nereus_add_test(tst_container_preview NATIVE_WINDOW)
 nereus_add_test(tst_free_canvas NATIVE_WINDOW)
+# The free canvas minimum follows its views where they are now (offscreen).
+nereus_add_test(tst_free_canvas_extent)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)

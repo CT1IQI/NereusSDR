@@ -7,6 +7,11 @@
 //   2026-10-08 - Workspace preview only: entryPopOutRequested for the leaf
 //                 header's pop-out button. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-09 - The minimum follows where the views are now: each
+//                 presentation sync starts from the extent placeViews laid
+//                 out, not from the last sync's, and grows by each view's
+//                 widget geometry, not its native window's.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QWidget>
 #include <QPointer>
@@ -53,6 +58,7 @@ private:
     QJsonValue m_originalGeometry;
     bool m_originalGeometryPresent=false;
     QSizeF m_extent;
+    QSizeF m_logicalExtent; // placeViews' extent; each presentation sync starts here
     QString m_selected, m_active;
     QPointer<QWidget> m_capture;
     bool m_resizing=false, m_presentationSyncQueued=false;
