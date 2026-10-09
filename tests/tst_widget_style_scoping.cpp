@@ -6,6 +6,10 @@
 //                bar and the VAX first-run rows draw their bottom line
 //                once, not under every label. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The info, warning and error status toasts draw the
+//                severity bar their author wrote, one bar on the left edge
+//                in the accentFor() colour. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 
 #include <QColor>
@@ -19,6 +23,7 @@
 #include "gui/StyleConstants.h"
 #include "gui/VaxFirstRunDialog.h"
 #include "gui/widgets/AntennaSwitchToast.h"
+#include "gui/widgets/StatusToast.h"
 
 using namespace NereusSDR;
 
@@ -150,6 +155,46 @@ private slots:
                 const QString edge = borderEdgeIn(label, colour);
                 QVERIFY2(edge.isEmpty(), qPrintable(QStringLiteral("label \"%1\" draws a %2 border on its %3 edge")
                                                         .arg(label->text(), QColor(colour).name(), edge)));
+            }
+        }
+    }
+
+    void statusToastDrawsItsSeverityBar_data()
+    {
+        QTest::addColumn<int>("severity");
+        QTest::addColumn<QString>("accent");
+        // StatusToast.cpp accentFor(): the bottom bar's badge palette.
+        QTest::newRow("info") << int(ToastSeverity::Info) << QString::fromLatin1(Style::kAccent);
+        QTest::newRow("warning") << int(ToastSeverity::Warning) << QString::fromLatin1(Style::kAmberText);
+        QTest::newRow("error") << int(ToastSeverity::Error) << QString::fromLatin1(Style::kRedBorder);
+    }
+
+    void statusToastDrawsItsSeverityBar()
+    {
+        QFETCH(int, severity);
+        QFETCH(QString, accent);
+        StatusToast toast(QStringLiteral("TX moved to slice B."), ToastSeverity(severity), 60000);
+        toast.layout()->activate();
+        const QImage img = imageOf(&toast);
+        QCOMPARE(img.width(), 380);
+        const QRgb colour = QColor(accent).rgba();
+        // The 3 px severity bar is the toast's left edge.
+        for (int x = 0; x < 3; ++x) {
+            const double share = edgeShare(img, Edge::Left, colour, x);
+            QVERIFY2(share >= kEdgeShare,
+                     qPrintable(QStringLiteral("column %1 of the toast is %2% %3").arg(x).arg(share * 100.0).arg(accent)));
+        }
+        for (int x = 3; x < img.width(); ++x) {
+            const double share = edgeShare(img, Edge::Left, colour, x);
+            QVERIFY2(share < kEdgeShare,
+                     qPrintable(QStringLiteral("column %1 of the toast is %2% %3").arg(x).arg(share * 100.0).arg(accent)));
+        }
+        // The message label is not boxed.
+        for (QLabel* label : toast.findChildren<QLabel*>()) {
+            for (const QRgb edgeColour : {colour, rgbOf(Style::kBorder)}) {
+                const QString edge = borderEdgeIn(label, edgeColour);
+                QVERIFY2(edge.isEmpty(), qPrintable(QStringLiteral("label \"%1\" draws a %2 border on its %3 edge")
+                                                        .arg(label->text(), QColor(edgeColour).name(), edge)));
             }
         }
     }
