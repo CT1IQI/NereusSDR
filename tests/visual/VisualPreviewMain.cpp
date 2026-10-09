@@ -57,6 +57,10 @@
 //   2026-10-08 - <name>.geometry.tsv beside every image that carries a
 //                 widget geometry dump. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Look pairs for the menus, popups, toasts and tooltips
+//                 scenes (look-menu-*, look-tooltip-*, ...), preview-only
+//                 ones excepted. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -236,14 +240,27 @@ bool isLookScene(const QString& name)
     return name.startsWith(QLatin1String(kLookPrefix));
 }
 
-// look-two-band -> baseline-two-band; look-dialog-tx-eq -> dialog-tx-eq.
+// The menus, popups, toasts and tooltips scenes (Task 24): each one that
+// is not preview-only has a look pair named look-<name>.
+bool isMenuSceneName(const QString& name)
+{
+    for (const char* prefix : {"menu-", "menubar-", "popup-", "toast-", "tooltip-"}) {
+        if (name.startsWith(QLatin1String(prefix))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// look-two-band -> baseline-two-band; look-dialog-tx-eq -> dialog-tx-eq;
+// look-menu-speaker -> menu-speaker.
 QString baseSceneFor(const QString& name)
 {
     if (!isLookScene(name)) {
         return name;
     }
     const QString rest = name.mid(int(qstrlen(kLookPrefix)));
-    if (rest.startsWith(QLatin1String("dialog-"))) {
+    if (rest.startsWith(QLatin1String("dialog-")) || isMenuSceneName(rest)) {
         return rest;
     }
     return QStringLiteral("baseline-") + rest;
@@ -257,6 +274,9 @@ QString lookSceneFor(const Scene& s)
     // already).
     if (s.dialog) {
         return s.name.startsWith(QLatin1String("dialog-")) ? QLatin1String(kLookPrefix) + s.name : QString();
+    }
+    if (isMenuSceneName(s.name)) {
+        return s.workspacePreview ? QString() : QLatin1String(kLookPrefix) + s.name;
     }
     for (const char* base : {"baseline-two-band", "baseline-four-rx", "baseline-tx"}) {
         if (s.name == QLatin1String(base)) {

@@ -109,6 +109,11 @@
 //   2026-10-08 - decided--controls: JJ's decided control look through the
 //                 product path. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - menu-*, menubar-*, popup-*, toast-* and tooltip-* scenes:
+//                 every menu, popup, toast and tooltip opened through the
+//                 product's own path and grabbed while open; tooltips placed
+//                 for the default 16x16 pointer (profile-rail-open too).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -154,10 +159,21 @@
 #include <QJsonDocument>
 #include <QListWidget>
 #include <QSet>
+#include <QContextMenuEvent>
+#include <QGuiApplication>
+#include <QHelpEvent>
+#include <QMenuBar>
+#include <QMetaProperty>
+#include <QMouseEvent>
+#include <QScreen>
+#include <QStackedWidget>
+#include <QTableView>
+#include <QWidgetAction>
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 
 #include "ControlsSheet.h"
 #include "PreviewData.h"
@@ -254,6 +270,17 @@
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "core/FreeDVStation.h"
+#include "core/TxInterlockPolicy.h"
+#include "core/dsp/DspAssetService.h"
+#include "core/session/IStationLink.h"
+#include "gui/applets/RxApplet.h"
+#include "gui/widgets/AntennaSwitchToast.h"
+#include "gui/widgets/RxDashboard.h"
+#include "gui/widgets/StationBlock.h"
+#include "gui/widgets/StatusToast.h"
+#include "gui/widgets/SystemTile.h"
+#include "models/FreeDVStationModel.h"
 
 namespace NereusSDR::Preview {
 
@@ -2529,13 +2556,24 @@ QJsonArray railRegions(SceneContext& ctx)
 
 // Paints a separate top-level (menu, tooltip, dialog) into a window image
 // where it sits on screen.
-void compositeOver(CapturedImage& img, QWidget* window, QWidget* top)
+// Where `top` sits in `window`. A top-level moved after it was shown with
+// WA_DontShowOnScreen keeps a stale mapToGlobal, so `byGeometry` reads the
+// window geometry instead (profile-rail-open's placed tooltip).
+QPoint topOffset(QWidget* window, QWidget* top, bool byGeometry)
+{
+    if (byGeometry) {
+        return top->geometry().topLeft() - window->geometry().topLeft();
+    }
+    return top->mapToGlobal(QPoint(0, 0)) - window->mapToGlobal(QPoint(0, 0));
+}
+
+void compositeOver(CapturedImage& img, QWidget* window, QWidget* top, bool byGeometry = false)
 {
     if (top == nullptr || !top->isVisible()) {
         return;
     }
     const QImage over = grabWidget(top);
-    const QPoint at = top->mapToGlobal(QPoint(0, 0)) - window->mapToGlobal(QPoint(0, 0));
+    const QPoint at = topOffset(window, top, byGeometry);
     QPainter painter(&img.image);
     painter.drawImage(QRect(at, top->size()), over);
 }
@@ -2599,7 +2637,8 @@ void annotateProfileImages(SceneContext& ctx, const QString& name, const SeededP
 // active, the rail at rest unless `pose` changes it.
 // Paints `tops` into the window image `name` and cuts its crops again
 // from the composited image.
-void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWidget*>& tops)
+void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWidget*>& tops,
+                        bool byGeometry = false)
 {
     for (int i = ctx.images.size() - 1; i >= 0; --i) {
         if (ctx.images[i].extra.value(QStringLiteral("source")).toString() == name) {
@@ -2612,10 +2651,9 @@ void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWid
         }
         QJsonArray regions = img.extra.value(QStringLiteral("regions")).toArray();
         for (QWidget* top : tops) {
-            compositeOver(img, ctx.window, top);
+            compositeOver(img, ctx.window, top, byGeometry);
             if (top != nullptr && top->isVisible()) {
-                appendRegions(regions, top, top->mapToGlobal(QPoint(0, 0)) - ctx.window->mapToGlobal(QPoint(0, 0)),
-                              img.logicalSize);
+                appendRegions(regions, top, topOffset(ctx.window, top, byGeometry), img.logicalSize);
             }
         }
         img.extra[QStringLiteral("regions")] = regions;
@@ -4803,6 +4841,1767 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
     }});
 }
 
+
+// ---- menus, popups, toasts and tooltips (workspace visual review Task 24) ----
+//
+// Every surface opens through the product's own path on the two-band
+// window: a context-menu or help event, a click, a mouse event, or the
+// signal the product connects to the menu. A deferred timer grabs it while
+// it is open (QMenu::exec blocks in its own loop) and then closes it, so no
+// action is ever triggered and nothing changes. Images:
+//   <name>              the base (window or dialog) with the popup painted in
+//   <name>--popup       the popup alone
+//   <name>--sub-<item>  the same with that submenu open (one level deep)
+
+constexpr int kPopupWaitMs = 5000;
+constexpr int kPopupGraceMs = 5000;
+// How long profile-rail-open keeps its tooltip up (QTipLabel's own timer
+// is about 10 s).
+constexpr int kRailTipHoldMs = 600000;
+
+struct PopupShot {
+    // The popup, when it is not QApplication::activePopupWidget().
+    std::function<QWidget*()> find;
+    // Where the product asks for the popup (global): the click point, the
+    // trigger's corner, or QCursor::pos() for which the gallery gives the
+    // trigger. Unset: where Qt put it.
+    std::optional<QPoint> anchor;
+    // The base image: the window unless set (a dialog).
+    QWidget* base{nullptr};
+    // Painted under the popup (a dialog over the window).
+    QList<QWidget*> under;
+    bool submenus{true};
+    // Not opening is recorded as not_shown with this reason instead of
+    // failing the scene.
+    QString optionalReason;
+    QString provenance;
+};
+
+QJsonArray menuItemsJson(QMenu* menu)
+{
+    QJsonArray items;
+    for (QAction* a : menu->actions()) {
+        if (!a->isVisible()) {
+            continue;
+        }
+        if (a->isSeparator()) {
+            items.append(a->text().isEmpty() ? QStringLiteral("-") : QStringLiteral("-- %1 --").arg(a->text()));
+            continue;
+        }
+        QString t = a->text();
+        if (a->menu() != nullptr) {
+            t += QStringLiteral(" >");
+        }
+        if (a->isCheckable()) {
+            t += a->isChecked() ? QStringLiteral(" (checked)") : QStringLiteral(" (unchecked)");
+        }
+        if (!a->isEnabled()) {
+            t += QStringLiteral(" (disabled)");
+        }
+        items.append(t);
+    }
+    return items;
+}
+
+// Where `w` is on the desktop, from window geometry: a popup window that
+// never reaches the screen (WA_DontShowOnScreen) keeps a stale platform
+// position, so mapToGlobal would put every menu at 0,0.
+QPoint globalOf(QWidget* w)
+{
+    QWidget* win = w->window();
+    return win->geometry().topLeft() + (w == win ? QPoint(0, 0) : w->mapTo(win, QPoint(0, 0)));
+}
+
+QPoint offsetIn(QWidget* base, QWidget* w)
+{
+    return globalOf(w) - globalOf(base);
+}
+
+// compositeOver with window-geometry positions.
+void paintOver(CapturedImage& img, QWidget* base, QWidget* top)
+{
+    if (top == nullptr || !top->isVisible()) {
+        return;
+    }
+    const QImage over = grabWidget(top);
+    QPainter painter(&img.image);
+    painter.drawImage(QRect(offsetIn(base, top), top->size()), over);
+}
+
+// Paints `tops` into a grab of `base` where they sit on screen, then adds
+// `surface` alone.
+void appendPopupImages(SceneContext& ctx, const QString& name, QWidget* base, const QList<QWidget*>& tops,
+                       QWidget* surface)
+{
+    CapturedImage img;
+    img.name = name;
+    img.kind = base == ctx.window ? QStringLiteral("window") : QStringLiteral("dialog");
+    img.image = grabWidget(base);
+    img.logicalSize = base->size();
+    img.dpr = img.image.devicePixelRatio();
+    attachRegions(img, base);
+    QJsonArray regions = img.extra.value(QStringLiteral("regions")).toArray();
+    for (QWidget* top : tops) {
+        if (top == nullptr || !top->isVisible() || top == base) {
+            continue;
+        }
+        paintOver(img, base, top);
+        appendRegions(regions, top, offsetIn(base, top), img.logicalSize);
+    }
+    img.extra[QStringLiteral("regions")] = regions;
+    QJsonObject facts;
+    if (surface != nullptr) {
+        facts[QStringLiteral("surface_class")] = QString::fromLatin1(surface->metaObject()->className());
+        facts[QStringLiteral("surface_object")] = surface->objectName();
+        facts[QStringLiteral("surface_rect")] = regionRectJson(QRect(offsetIn(base, surface), surface->size()));
+        if (auto* menu = qobject_cast<QMenu*>(surface)) {
+            facts[QStringLiteral("menu_items")] = menuItemsJson(menu);
+        }
+        if (auto* label = qobject_cast<QLabel*>(surface)) {
+            facts[QStringLiteral("text")] = label->text();
+        }
+    }
+    for (auto it = facts.constBegin(); it != facts.constEnd(); ++it) {
+        img.extra[it.key()] = it.value();
+    }
+    ctx.images.append(img);
+    if (surface == nullptr) {
+        return;
+    }
+    CapturedImage alone;
+    alone.name = name + QStringLiteral("--popup");
+    alone.kind = QStringLiteral("popup");
+    alone.image = grabWidget(surface);
+    alone.logicalSize = surface->size();
+    alone.dpr = alone.image.devicePixelRatio();
+    attachRegions(alone, surface);
+    for (auto it = facts.constBegin(); it != facts.constEnd(); ++it) {
+        alone.extra[it.key()] = it.value();
+    }
+    alone.extra[QStringLiteral("source")] = name;
+    ctx.images.append(alone);
+}
+
+// The first item a pointer would land on, highlighted as under the pointer.
+void highlightFirst(QMenu* menu)
+{
+    for (QAction* a : menu->actions()) {
+        if (a->isSeparator() || !a->isVisible() || !a->isEnabled() || a->menu() != nullptr
+            || qobject_cast<QWidgetAction*>(a) != nullptr) {
+            continue;
+        }
+        menu->setActiveAction(a);
+        return;
+    }
+}
+
+// Every visible popup window but tooltips.
+QSet<QWidget*> visiblePopups()
+{
+    QSet<QWidget*> out;
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (w->isVisible() && w->windowType() == Qt::Popup && !w->inherits("QTipLabel")) {
+            out.insert(w);
+        }
+    }
+    return out;
+}
+
+// The popup that opened since `before`: the active popup when there is
+// one, else a new visible popup window.
+QWidget* newPopup(const QSet<QWidget*>& before)
+{
+    QWidget* active = QApplication::activePopupWidget();
+    if (active != nullptr && !before.contains(active)) {
+        return active;
+    }
+    QWidget* found = nullptr;
+    for (QWidget* w : visiblePopups()) {
+        if (!before.contains(w) && (found == nullptr || qobject_cast<QMenu*>(found) == nullptr)) {
+            found = w;
+        }
+    }
+    return found;
+}
+
+void closePopups()
+{
+    for (int i = 0; i < 16; ++i) {
+        QWidget* p = QApplication::activePopupWidget();
+        if (p == nullptr) {
+            const QSet<QWidget*> open = visiblePopups();
+            if (open.isEmpty()) {
+                return;
+            }
+            p = *open.cbegin();
+        }
+        p->close();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+}
+
+// The top-left that puts `top` at `anchor` inside `base`: pushed left (or,
+// for a submenu, flipped to the left of its menu at `flipX`) and up where it
+// would run past the base's edge, as Qt keeps a popup on its screen.
+QPoint placeInBase(QWidget* top, const QPoint& anchor, QWidget* base, bool submenu, int flipX = 0)
+{
+    const QRect r(globalOf(base), base->size());
+    QPoint p = anchor;
+    if (p.x() + top->width() > r.x() + r.width()) {
+        p.setX(submenu ? flipX - top->width() : r.x() + r.width() - top->width());
+    }
+    if (p.y() + top->height() > r.y() + r.height()) {
+        p.setY(r.y() + r.height() - top->height());
+    }
+    p.setX(std::max(p.x(), r.x()));
+    p.setY(std::max(p.y(), r.y()));
+    return p;
+}
+
+QPoint below(QWidget* w)
+{
+    return globalOf(w) + QPoint(0, w->height());
+}
+
+QPoint globalAt(QWidget* w, const QPoint& local)
+{
+    return globalOf(w) + local;
+}
+
+void shootOpenPopup(SceneContext& ctx, const QString& name, QWidget* top, const PopupShot& shot)
+{
+    QWidget* base = shot.base != nullptr ? shot.base : ctx.window;
+    for (const QJsonValue& v : stopTimersUnder(top)) {
+        ctx.stoppedTimers.append(v);
+    }
+    {
+        const QPoint qtAt = top->pos() - globalOf(base);
+        const QPoint at = placeInBase(top, shot.anchor.value_or(top->pos()), base, false);
+        top->move(at);
+        const QPoint shown = at - globalOf(base);
+        if (shown != qtAt) {
+            ctx.notes.append(QStringLiteral("%1: placed at %2,%3 of the base, where the product asks for it "
+                                            "and kept inside the base (Qt had kept it on the desktop screen, "
+                                            "at %4,%5)")
+                                 .arg(name).arg(shown.x()).arg(shown.y()).arg(qtAt.x()).arg(qtAt.y()));
+        }
+    }
+    tagProvenance(top, shot.provenance.isEmpty() ? provRetained() : shot.provenance, false);
+    auto* menu = qobject_cast<QMenu*>(top);
+    if (menu != nullptr) {
+        highlightFirst(menu);
+    }
+    pump(kFinalSettleMs);
+    QList<QWidget*> tops = shot.under;
+    tops.append(top);
+    appendPopupImages(ctx, name, base, tops, top);
+    if (menu == nullptr || !shot.submenus) {
+        return;
+    }
+    QSet<QString> used;
+    for (QAction* a : menu->actions()) {
+        QMenu* sub = a->menu();
+        if (sub == nullptr || !a->isVisible()) {
+            continue;
+        }
+        QString s = slug(a->text());
+        for (int n = 2; used.contains(s); ++n) {
+            s = slug(a->text()) + QStringLiteral("-%1").arg(n);
+        }
+        used.insert(s);
+        if (!a->isEnabled()) {
+            ctx.notes.append(QStringLiteral("%1: submenu \"%2\" is disabled; not opened").arg(name, a->text()));
+            continue;
+        }
+        menu->setActiveAction(a);
+        pump(kFinalSettleMs);
+        if (!sub->isVisible()) {
+            ctx.notes.append(QStringLiteral("%1: submenu \"%2\" did not open (it has no items)").arg(name, a->text()));
+            continue;
+        }
+        // Beside its item, as Qt places it on a screen, inside the base.
+        sub->move(placeInBase(sub, globalOf(menu) + menu->actionGeometry(a).topRight(), base, true,
+                              globalOf(menu).x()));
+        pump(kFinalSettleMs);
+        for (const QJsonValue& v : stopTimersUnder(sub)) {
+            ctx.stoppedTimers.append(v);
+        }
+        tagProvenance(sub, shot.provenance.isEmpty() ? provRetained() : shot.provenance, false);
+        highlightFirst(sub);
+        pump(kFinalSettleMs);
+        QList<QWidget*> subTops = tops;
+        subTops.append(sub);
+        appendPopupImages(ctx, name + QStringLiteral("--sub-") + s, base, subTops, sub);
+        sub->hide();
+        pump(kFinalSettleMs);
+    }
+}
+
+// Opens a popup through `open` (which may block in QMenu::exec) and grabs
+// it from a deferred timer. False when it did not open.
+bool shootPopup(SceneContext& ctx, const QString& name, const std::function<void()>& open,
+                const PopupShot& shot = {})
+{
+    if (!ctx.failure.isEmpty()) {
+        return false;
+    }
+    enum class State { Waiting, Shot, None };
+    auto state = std::make_shared<State>(State::Waiting);
+    const QSet<QWidget*> before = visiblePopups();
+    QTimer::singleShot(0, ctx.window, [&ctx, name, shot, state, before] {
+        QElapsedTimer t;
+        t.start();
+        QWidget* top = nullptr;
+        while (top == nullptr && t.elapsed() < kPopupWaitMs) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            top = shot.find ? shot.find() : newPopup(before);
+            if (top != nullptr && !top->isVisible()) {
+                top = nullptr;
+            }
+        }
+        if (top == nullptr) {
+            *state = State::None;
+            // Whatever opened late is closed so a blocking exec returns.
+            for (QWidget* w : visiblePopups()) {
+                if (!before.contains(w)) {
+                    w->close();
+                }
+            }
+            return;
+        }
+        shootOpenPopup(ctx, name, top, shot);
+        if (shot.find && top->isVisible() && !top->isWindow()) {
+            top->hide();
+        }
+        closePopups();
+        *state = State::Shot;
+    });
+    open();
+    QElapsedTimer t;
+    t.start();
+    while (*state == State::Waiting && t.elapsed() < kPopupWaitMs + kPopupGraceMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    closePopups();
+    pump(kFinalSettleMs);
+    if (*state == State::Shot) {
+        return true;
+    }
+    if (!shot.optionalReason.isEmpty()) {
+        noteNotShown(ctx, name, shot.optionalReason);
+        return false;
+    }
+    if (ctx.failure.isEmpty()) {
+        ctx.failure = QStringLiteral("%1: the popup did not open").arg(name);
+    }
+    return false;
+}
+
+void sendContextMenu(QWidget* w, const QPoint& local)
+{
+    QContextMenuEvent event(QContextMenuEvent::Mouse, local, w->mapToGlobal(local));
+    QCoreApplication::sendEvent(w, &event);
+}
+
+void sendMouse(QWidget* w, QEvent::Type type, const QPoint& local, Qt::MouseButton button,
+               Qt::MouseButtons buttons, Qt::KeyboardModifiers modifiers = Qt::NoModifier)
+{
+    QMouseEvent event(type, QPointF(local), QPointF(w->mapTo(w->window(), local)), QPointF(w->mapToGlobal(local)),
+                      button, buttons, modifiers);
+    QCoreApplication::sendEvent(w, &event);
+}
+
+QPoint middleOf(QWidget* w)
+{
+    return QPoint(w->width() / 2, w->height() / 2);
+}
+
+// Where Qt puts a tooltip for its default 16x16 pointer at `pointer`
+// (QTipLabel::placeTip's offset and screen-edge rules). QTipLabel offsets by
+// the platform pointer's size; on macOS that is NSCursor.currentSystemCursor,
+// the desktop's pointer shape at that moment, so the tip moved from launch
+// to launch. The gallery places it for the default pointer instead.
+QPoint arrowTipPosition(QWidget* tip, const QPoint& pointer)
+{
+    const QScreen* screen = QGuiApplication::screenAt(pointer);
+    if (screen == nullptr) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    const QSize cursor(16, 16);
+    QPoint offset(2, cursor.height());
+    if (cursor.height() > 2 * tip->height()) {
+        offset = QPoint(cursor.width() / 2, 0);
+    }
+    QPoint p = pointer + offset;
+    const QRect s = screen->geometry();
+    if (p.x() + tip->width() > s.x() + s.width()) {
+        p.rx() -= 4 + tip->width();
+    }
+    if (p.y() + tip->height() > s.y() + s.height()) {
+        p.ry() -= 24 + tip->height();
+    }
+    if (p.y() < s.y()) {
+        p.setY(s.y());
+    }
+    if (p.x() + tip->width() > s.x() + s.width()) {
+        p.setX(s.x() + s.width() - tip->width());
+    }
+    if (p.x() < s.x()) {
+        p.setX(s.x());
+    }
+    if (p.y() + tip->height() > s.y() + s.height()) {
+        p.setY(s.y() + s.height() - tip->height());
+    }
+    return p;
+}
+
+QString placeTipForArrow(QWidget* tip, const QPoint& pointer)
+{
+    const QPoint qtAt = tip->pos();
+    const QPoint at = arrowTipPosition(tip, pointer);
+    tip->move(at);
+    return QStringLiteral("tooltip offset from the pointer: Qt %1,%2 (desktop pointer size), shown %3,%4 "
+                          "(default 16x16 pointer)")
+        .arg(qtAt.x() - pointer.x()).arg(qtAt.y() - pointer.y())
+        .arg(at.x() - pointer.x()).arg(at.y() - pointer.y());
+}
+
+// A tooltip shown by `show` (a help event or the product's mouse path) with
+// the pointer at `pointer` (global), grabbed over the window.
+bool shootToolTip(SceneContext& ctx, const QString& name, const QPoint& pointer, const std::function<void()>& show,
+                  const QString& expectText = {})
+{
+    if (!ctx.failure.isEmpty()) {
+        return false;
+    }
+    QToolTip::hideText();
+    pump(kFinalSettleMs);
+    show();
+    pump(kFinalSettleMs);
+    QWidget* tip = visibleToolTip();
+    auto* label = qobject_cast<QLabel*>(tip);
+    if (tip == nullptr || (!expectText.isEmpty() && (label == nullptr || !label->text().contains(expectText)))) {
+        ctx.failure = QStringLiteral("%1: the tooltip did not show (showing: %2)")
+                          .arg(name, label != nullptr ? label->text() : QStringLiteral("nothing"));
+        return false;
+    }
+    ctx.notes.append(QStringLiteral("%1: %2").arg(name, placeTipForArrow(tip, pointer)));
+    pump(kFinalSettleMs);
+    appendPopupImages(ctx, name, ctx.window, {tip}, tip);
+    QToolTip::hideText();
+    pump(kFinalSettleMs);
+    return true;
+}
+
+// Refuses a toast's close until the grab is done: its dismiss timer is a
+// member QTimer (no parent), so stopTimersUnder cannot reach it.
+class HoldOpen final : public QObject
+{
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() == QEvent::Close) {
+            event->ignore();
+            return true;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+template <typename T>
+T* newestVisible(const QSet<QWidget*>& before)
+{
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (!before.contains(w) && w->isVisible()) {
+            if (auto* t = qobject_cast<T*>(w)) {
+                return t;
+            }
+        }
+    }
+    return nullptr;
+}
+
+QSet<QWidget*> topLevelSet()
+{
+    const QWidgetList list = QApplication::topLevelWidgets();
+    return QSet<QWidget*>(list.cbegin(), list.cend());
+}
+
+template <typename T>
+bool shootToast(SceneContext& ctx, const QString& name, const QString& how, const std::function<void()>& raise)
+{
+    if (!ctx.failure.isEmpty()) {
+        return false;
+    }
+    const QSet<QWidget*> before = topLevelSet();
+    raise();
+    T* toast = newestVisible<T>(before);
+    if (toast == nullptr) {
+        ctx.failure = QStringLiteral("%1: the toast did not show").arg(name);
+        return false;
+    }
+    HoldOpen hold;
+    toast->installEventFilter(&hold);
+    ctx.stoppedTimers.append(QJsonObject{
+        {QStringLiteral("parent"), QString::fromLatin1(toast->metaObject()->className())},
+        {QStringLiteral("name"), QStringLiteral("dismiss timer (member QTimer)")},
+        {QStringLiteral("held"), QStringLiteral("its close is refused until after the grab")}});
+    tagProvenance(toast, provRetained(), false);
+    pump(kFinalSettleMs);
+    ctx.notes.append(QStringLiteral("%1: %2").arg(name, how));
+    appendPopupImages(ctx, name, ctx.window, {toast}, toast);
+    toast->removeEventFilter(&hold);
+    toast->close();
+    pump(kFinalSettleMs);
+    return true;
+}
+
+// The two-band window, posed and frozen, then `shoot`.
+void runPopupScene(SceneContext& ctx, const std::function<void(SceneContext&)>& shoot,
+                   const std::function<void(SceneContext&)>& beforeFreeze = {})
+{
+    runWindowScene(ctx, twoBandPoses(), 0, beforeFreeze);
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    shoot(ctx);
+}
+
+VfoWidget* flagA(SceneContext& ctx)
+{
+    return flagForSlice(ctx.window, sliceOnPan(ctx.window, panIdAt(0)));
+}
+
+template <typename T>
+T* namedChild(QWidget* root, const QString& name)
+{
+    return root != nullptr ? root->findChild<T*>(name) : nullptr;
+}
+
+QPushButton* buttonWithText(QWidget* root, const QString& text)
+{
+    if (root == nullptr) {
+        return nullptr;
+    }
+    for (QPushButton* b : root->findChildren<QPushButton*>()) {
+        if (b->text() == text) {
+            return b;
+        }
+    }
+    return nullptr;
+}
+
+// Opens the flag tab holding `inner` (a click on its tab, as a user opens it).
+bool openFlagTabFor(SceneContext& ctx, VfoWidget* flag, QWidget* inner)
+{
+    QWidget* page = inner;
+    QStackedWidget* stack = nullptr;
+    while (page != nullptr && page->parentWidget() != nullptr && page->parentWidget() != flag) {
+        if (auto* s = qobject_cast<QStackedWidget*>(page->parentWidget())) {
+            stack = s;
+            break;
+        }
+        page = page->parentWidget();
+    }
+    if (stack == nullptr) {
+        return true;
+    }
+    const int index = stack->indexOf(page);
+    QList<QPushButton*> tabs;
+    for (QPushButton* b : flag->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (b->isCheckable() && b->toolTip().startsWith(QLatin1String("Show/hide"))) {
+            tabs.append(b);
+        }
+    }
+    if (index < 0 || index >= tabs.size()) {
+        ctx.failure = QStringLiteral("no flag tab button for page %1").arg(index);
+        return false;
+    }
+    if (!stack->isVisible() || stack->currentIndex() != index) {
+        tabs.at(index)->click();
+    }
+    pump(kFinalSettleMs);
+    ctx.notes.append(QStringLiteral("flag tab \"%1\" opened by a click on its tab")
+                         .arg(tabs.at(index)->text().isEmpty() ? tabs.at(index)->objectName() : tabs.at(index)->text()));
+    return inner->isVisible();
+}
+
+// Every readable property of `o`, so a scene can show it changed nothing.
+QJsonObject propertySnapshot(QObject* o)
+{
+    QJsonObject out;
+    const QMetaObject* mo = o->metaObject();
+    for (int i = 0; i < mo->propertyCount(); ++i) {
+        const QMetaProperty p = mo->property(i);
+        if (!p.isReadable()) {
+            continue;
+        }
+        out.insert(QString::fromLatin1(p.name()), QJsonValue::fromVariant(p.read(o)));
+    }
+    return out;
+}
+
+// One DSP popup (C34 to C40): the flag's DSP tab, a right-click on the
+// button, as live; every slice property is the same afterwards.
+void scenePopupDsp(SceneContext& ctx, const QString& name, const QString& button)
+{
+    runPopupScene(ctx, [name, button](SceneContext& c) {
+        VfoWidget* flag = flagA(c);
+        QPushButton* btn = buttonWithText(flag, button);
+        if (btn == nullptr) {
+            c.failure = QStringLiteral("no %1 button on the flag").arg(button);
+            return;
+        }
+        if (!openFlagTabFor(c, flag, btn)) {
+            if (c.failure.isEmpty()) {
+                c.failure = QStringLiteral("the %1 button is not shown").arg(button);
+            }
+            return;
+        }
+        SliceModel* slice = flag->sliceForTest();
+        const QJsonObject before = propertySnapshot(slice);
+        if (!btn->isEnabled()) {
+            // VfoWidget offers no quick controls for a filter that cannot
+            // run here; the window with the disabled button carries the
+            // record.
+            noteNotShown(c, name, QStringLiteral("%1 is disabled because it cannot run on this computer (\"%2\"), "
+                                                 "and VfoWidget offers no quick controls for it")
+                                      .arg(button, btn->toolTip()));
+            appendPopupImages(c, name, c.window, {}, nullptr);
+            return;
+        }
+        // Where DspParamPopup::showAt puts it (Qt's position, kept inside
+        // the window).
+        shootPopup(c, name, [btn] { emit btn->customContextMenuRequested(middleOf(btn)); });
+        const QJsonObject after = propertySnapshot(slice);
+        if (before != after) {
+            QStringList changed;
+            for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
+                if (after.value(it.key()) != it.value()) {
+                    changed.append(it.key());
+                }
+            }
+            c.failure = QStringLiteral("%1 changed slice properties: %2").arg(name, changed.join(QStringLiteral(", ")));
+            return;
+        }
+        c.notes.append(QStringLiteral("%1: right-click on %2 (customContextMenuRequested, as live); all %3 slice "
+                                      "properties the same before and after")
+                           .arg(name, button).arg(before.size()));
+    });
+}
+
+// The spectrum of pan 1 (slice A, 40 m).
+SpectrumWidget* panOne(SceneContext& ctx)
+{
+    return spectrumFor(ctx.window, panIdAt(0));
+}
+
+// x of `hz` across the widget, from the displayed centre and bandwidth (the
+// plot spans the widget less its dBm strip; close enough to aim at).
+int approxX(SpectrumWidget* s, double hz)
+{
+    const double left = s->centerFrequency() - s->bandwidth() / 2.0;
+    return int(std::lround((hz - left) / s->bandwidth() * s->width()));
+}
+
+qint64 sampleSpotTime(int minute)
+{
+    return QDateTime(QDate(2026, 10, 8), QTime(14, minute), QTimeZone::utc()).toMSecsSinceEpoch();
+}
+
+// Sample spots as a spot source would push them (no spot client exists):
+// three single labels and seven at one frequency, so four overflow the
+// three label rows into a cluster badge.
+void placeSampleSpots(SceneContext& ctx, SpectrumWidget* s)
+{
+    const double c = s->centerFrequency();
+    const double bw = s->bandwidth();
+    QVector<SpectrumWidget::SpotMarker> spots;
+    auto add = [&spots](int index, const QString& call, double hz, const QString& mode, const QString& source,
+                        const QString& spotter, const QString& comment, int minute) {
+        SpectrumWidget::SpotMarker m;
+        m.index = index;
+        m.callsign = call;
+        m.freqMhz = hz / 1.0e6;
+        m.mode = mode;
+        m.source = source;
+        m.spotterCallsign = spotter;
+        m.comment = comment;
+        m.timestampMs = sampleSpotTime(minute);
+        spots.append(m);
+    };
+    const double single1 = std::round((c - bw * 0.34) / 100.0) * 100.0;
+    const double single2 = std::round((c - bw * 0.22) / 100.0) * 100.0;
+    const double single3 = std::round((c + bw * 0.14) / 100.0) * 100.0;
+    const double cluster = std::round((c + bw * 0.30) / 100.0) * 100.0;
+    add(1, QStringLiteral("K1AAA"), single1, QStringLiteral("SSB"), QStringLiteral("Cluster"),
+        QStringLiteral("W2BBB"), QStringLiteral("59 in NH"), 12);
+    add(2, QStringLiteral("VE3CCC"), single2, QStringLiteral("SSB"), QStringLiteral("RBN"),
+        QStringLiteral("N4DDD"), QString(), 18);
+    add(3, QStringLiteral("G4EEE"), single3, QStringLiteral("SSB"), QStringLiteral("POTA"),
+        QStringLiteral("KG4FFF"), QStringLiteral("K-1234"), 25);
+    const QStringList calls = {QStringLiteral("DL1GGG"), QStringLiteral("F5HHH"), QStringLiteral("EA3III"),
+                               QStringLiteral("I2JJJ"), QStringLiteral("OH1KKK"), QStringLiteral("SP5LLL"),
+                               QStringLiteral("JA1MMM")};
+    for (int i = 0; i < calls.size(); ++i) {
+        add(10 + i, calls.at(i), cluster + i * 50.0, QStringLiteral("SSB"), QStringLiteral("Cluster"),
+            QStringLiteral("W1NNN"), QString(), 20 + i);
+    }
+    s->setSpotMarkers(spots);
+    // setSpotMarkers repaints with update() only; the labels are drawn into
+    // the GPU path's static overlay, rebuilt when it is marked dirty. The
+    // notch push (markOverlayDirty) with the notches already there marks
+    // it, as the next overlay change would live.
+    s->setNotchMarkers(s->notchMarkersForTest());
+    pump(kFinalSettleMs);
+    grabWidget(s);
+    pump(kFinalSettleMs);
+    ctx.notes.append(QStringLiteral("sample spots set on pan 1 through SpectrumWidget::setSpotMarkers (no spot "
+                                    "client constructed or started): %1 labels, %2 cluster badge(s)")
+                         .arg(s->spotClickRectsForTest().size()).arg(s->spotClustersForTest().size()));
+    for (const auto& cl : s->spotClustersForTest()) {
+        ctx.notes.append(QStringLiteral("cluster badge at %1,%2 %3x%4 of pan 1's spectrum (widget %5x%6)")
+                             .arg(cl.rect.x()).arg(cl.rect.y()).arg(cl.rect.width()).arg(cl.rect.height())
+                             .arg(s->width()).arg(s->height()));
+    }
+}
+
+// One notch on pan 1 through setNotchMarkers (display only; the notch model
+// and the DSP are not touched).
+int placeSampleNotch(SceneContext& ctx, SpectrumWidget* s)
+{
+    SpectrumWidget::NotchMarker n;
+    n.id = 1;
+    const double hz = std::round((s->centerFrequency() + s->bandwidth() * 0.06) / 10.0) * 10.0;
+    n.freqMhz = hz / 1.0e6;
+    n.widthHz = 200.0;
+    n.active = true;
+    s->setNotchMarkers({n});
+    pump(kFinalSettleMs);
+    ctx.notes.append(QStringLiteral("sample notch at %1 MHz, 200 Hz, through SpectrumWidget::setNotchMarkers "
+                                    "(display only; no notch model or DSP change)")
+                         .arg(n.freqMhz, 0, 'f', 6));
+    return approxX(s, hz);
+}
+
+// Moves the pointer along the plot row `y` around `x0` until the notch's
+// tooltip shows; the pointer's spot, or (-1, -1).
+QPoint findNotchPointer(SpectrumWidget* s, int x0, int y)
+{
+    for (int dx = 0; dx <= 60; ++dx) {
+        for (int sign : {1, -1}) {
+            const QPoint at(x0 + sign * dx, y);
+            sendMouse(s, QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+            auto* tip = qobject_cast<QLabel*>(visibleToolTip());
+            if (tip != nullptr && tip->text().contains(QLatin1String("Width:"))) {
+                return at;
+            }
+        }
+    }
+    return QPoint(-1, -1);
+}
+
+QPoint rectMiddle(const QRect& r)
+{
+    return r.center();
+}
+
+// The dialog over the window, sized and centred as sceneEditDialog does.
+ContainerSettingsDialog* openContainerSettings(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    ContainerWidget* panel = mainPanel(ctx);
+    if (manager == nullptr || panel == nullptr) {
+        ctx.failure = QStringLiteral("no main panel container");
+        return nullptr;
+    }
+    auto* dialog = new ContainerSettingsDialog(panel, ctx.window, manager);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->selectDraftContainer(panel->id());
+    dialog->show();
+    pump(kDialogSettleMs);
+    const QSize fit = dialog->size().boundedTo(ctx.window->size() - QSize(kDialogInsetPx, kDialogInsetPx))
+                          .expandedTo(dialog->minimumSizeHint());
+    dialog->resize(fit);
+    pump(kFinalSettleMs);
+    dialog->move(ctx.window->mapToGlobal(ctx.window->rect().center()) - dialog->rect().center());
+    pump(kFinalSettleMs);
+    for (const QJsonValue& v : stopTimersUnder(dialog)) {
+        ctx.stoppedTimers.append(v);
+    }
+    ctx.notes.append(QStringLiteral("Container Settings for the main panel, shown (not exec'd) at %1x%2 over the "
+                                    "window, as the Containers > Edit Container path opens it")
+                         .arg(dialog->width()).arg(dialog->height()));
+    return dialog;
+}
+
+// One menu bar menu open, the menu bar in the window (the Windows and Linux
+// arrangement).
+// The window's menu bar: TitleBar::setMenuBar took it into the title bar,
+// so QMainWindow::menuBar() would make a new, empty one.
+QMenuBar* titleMenuBar(MainWindow* window)
+{
+    for (QMenuBar* bar : window->findChildren<QMenuBar*>()) {
+        if (!bar->actions().isEmpty()) {
+            return bar;
+        }
+    }
+    return nullptr;
+}
+
+void sceneMenuBar(SceneContext& ctx, const QString& name, const QString& title)
+{
+    runPopupScene(ctx, [name, title](SceneContext& c) {
+        QMenuBar* bar = titleMenuBar(c.window);
+        if (bar == nullptr) {
+            c.failure = QStringLiteral("no menu bar with menus");
+            return;
+        }
+        QAction* menuAction = nullptr;
+        for (QAction* a : bar->actions()) {
+            if (QString(a->text()).remove(QLatin1Char('&')) == title) {
+                menuAction = a;
+            }
+        }
+        if (menuAction == nullptr || bar->isNativeMenuBar()) {
+            c.failure = QStringLiteral("no in-window menu \"%1\" (actions %2, native %3)")
+                            .arg(title).arg(bar->actions().size()).arg(bar->isNativeMenuBar());
+            return;
+        }
+        if (!bar->isVisible()) {
+            // Native, Qt hid the widget; in the window it is shown, as on
+            // Windows and Linux.
+            bar->show();
+            pump(kFinalSettleMs);
+        }
+        if (!bar->isVisible()) {
+            c.failure = QStringLiteral("the in-window menu bar is not visible (parent %1 visible %2)")
+                            .arg(bar->parentWidget() ? QString::fromLatin1(bar->parentWidget()->metaObject()->className())
+                                                     : QStringLiteral("none"))
+                            .arg(bar->parentWidget() && bar->parentWidget()->isVisible());
+            return;
+        }
+        c.notes.append(QStringLiteral(
+            "menu bar in the window: QMenuBar::setNativeMenuBar(false) on the gallery window, so it sits in "
+            "the title bar where MainWindow puts it (TitleBar::setMenuBar(menuBar()), MainWindow.cpp:1452, "
+            "already done at construction). This is the Windows and Linux look; macOS draws its own menu "
+            "bar, which Qt does not paint"));
+        shootPopup(c, name, [bar, menuAction] { bar->setActiveAction(menuAction); },
+                   {.anchor = globalAt(bar, bar->actionGeometry(menuAction).bottomLeft() + QPoint(0, 1))});
+    }, [](SceneContext& c) {
+        if (QMenuBar* bar = titleMenuBar(c.window)) {
+            bar->setNativeMenuBar(false);
+        }
+    });
+}
+
+// Closes any toast a refused trigger raised, so the next image is clean.
+void closeNewToasts(SceneContext& ctx)
+{
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (w->isVisible() && qobject_cast<StatusToast*>(w) != nullptr) {
+            ctx.notes.append(QStringLiteral("a toast was raised and closed: \"%1\"")
+                                 .arg(w->findChild<QLabel*>() ? w->findChild<QLabel*>()->text() : QString()));
+            w->close();
+        }
+    }
+    pump(kFinalSettleMs);
+}
+
+// The connection tooltip's uptime, pinned (tooltip-connection).
+constexpr auto kPinnedUptime = "connected 0m 05s";
+
+// While it lives, every QTimer whose timeout reaches one of `targets` is cut
+// as it fires and stopped, as cutTimersInto does for a fixed wait.
+class TimerHold : public QObject
+{
+public:
+    TimerHold(QList<QObject*> targets, QJsonArray* stopped)
+        : m_targets(std::move(targets)), m_stopped(stopped)
+    {
+        qApp->installEventFilter(this);
+    }
+    ~TimerHold() override { qApp->removeEventFilter(this); }
+    TimerHold(const TimerHold&) = delete;
+    TimerHold& operator=(const TimerHold&) = delete;
+
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() != QEvent::Timer) {
+            return false;
+        }
+        auto* timer = qobject_cast<QTimer*>(watched);
+        if (timer == nullptr || !timer->isActive()) {
+            return false;
+        }
+        for (QObject* target : m_targets) {
+            if (QObject::disconnect(timer, &QTimer::timeout, target, nullptr)) {
+                m_stopped->append(QJsonObject{
+                    {QStringLiteral("parent"),
+                     QStringLiteral("member timer feeding %1")
+                         .arg(QString::fromLatin1(target->metaObject()->className()))},
+                    {QStringLiteral("name"), timer->objectName()},
+                    {QStringLiteral("interval_ms"), timer->interval()}});
+                timer->stop();
+            }
+        }
+        return false;
+    }
+
+private:
+    QList<QObject*> m_targets;
+    QJsonArray* m_stopped;
+};
+
+void recordMenuNotShown(SceneContext& ctx)
+{
+    for (const auto& [item, reason] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"menu: TunerApplet (C45)", "the applet needs a device setting that starts discovery or a device connection"},
+             {"menu: AmpApplet (C46)", "the applet needs a device setting that starts discovery or a device connection"},
+             {"menu: Rf2ksApplet (C47)", "the applet needs a device setting that starts discovery or a device connection"}}) {
+        noteNotShown(ctx, QString::fromLatin1(item), QString::fromLatin1(reason));
+    }
+}
+
+void appendMenuScenes(QVector<Scene>& scenes)
+{
+    auto add = [&scenes](const QString& name, const std::function<void(SceneContext&)>& run, bool previewOnly = false) {
+        scenes.append({name, QStringLiteral("2v"), false, run, previewOnly});
+    };
+
+    // ---- title bar and status bar ----
+    add(QStringLiteral("popup-connection-route"), [](SceneContext& ctx) {
+        // C1: ConnectionSegment::showRoutePopup, the segment's own opener.
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* segment = c.window->findChild<ConnectionSegment*>();
+            if (segment == nullptr) {
+                c.failure = QStringLiteral("no connection segment");
+                return;
+            }
+            shootPopup(c, QStringLiteral("popup-connection-route"), [segment] { segment->showRoutePopup(); },
+                       {.anchor = below(segment),
+                        .optionalReason = QStringLiteral("the route popup opens only while the segment is Connected")});
+        });
+    });
+    add(QStringLiteral("menu-speaker"), [](SceneContext& ctx) {
+        // C2: the speaker button's right-click (MasterOutputWidget::onSpeakerContextMenu).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* speaker = namedChild<QPushButton>(c.window, QStringLiteral("speakerBtn"));
+            if (speaker == nullptr) {
+                c.failure = QStringLiteral("no speaker button");
+                return;
+            }
+            c.notes.append(QStringLiteral("menu-speaker lists this computer's audio outputs, so its items "
+                                          "differ from machine to machine"));
+            shootPopup(c, QStringLiteral("menu-speaker"),
+                       [speaker] { emit speaker->customContextMenuRequested(middleOf(speaker)); },
+                       {.anchor = globalAt(speaker, middleOf(speaker))});
+        });
+    });
+    add(QStringLiteral("menu-cpu-tile"), [](SceneContext& ctx) {
+        // C3: the CPU tile's right-click (MainWindow::onCpuMenuRequested).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* tile = c.window->findChild<SystemTile*>();
+            if (tile == nullptr) {
+                c.failure = QStringLiteral("no CPU tile");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-cpu-tile"),
+                       [tile] { emit tile->customContextMenuRequested(middleOf(tile)); },
+                       {.anchor = globalAt(tile, middleOf(tile))});
+        });
+    });
+    add(QStringLiteral("menu-connection-segment"), [](SceneContext& ctx) {
+        // C4: ConnectionSegment::contextMenuRequested (MainWindow::showSegmentContextMenu).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* segment = c.window->findChild<ConnectionSegment*>();
+            if (segment == nullptr) {
+                c.failure = QStringLiteral("no connection segment");
+                return;
+            }
+            const QPoint at = globalAt(segment, QPoint(12, segment->height()));
+            shootPopup(c, QStringLiteral("menu-connection-segment"),
+                       [segment, at] { emit segment->contextMenuRequested(at); }, {.anchor = at});
+        });
+    });
+    add(QStringLiteral("menu-station"), [](SceneContext& ctx) {
+        // C5: StationBlock::contextMenuRequested (MainWindow::showStationContextMenu).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* station = c.window->findChild<StationBlock*>();
+            if (station == nullptr) {
+                c.failure = QStringLiteral("no station block");
+                return;
+            }
+            const QPoint at = globalAt(station, QPoint(8, station->height()));
+            shootPopup(c, QStringLiteral("menu-station"), [station, at] { emit station->contextMenuRequested(at); },
+                       {.anchor = at,
+                        .optionalReason = QStringLiteral("the station menu opens only while connected")});
+        });
+    });
+    add(QStringLiteral("popup-slice-chooser"), [](SceneContext& ctx) {
+        // C6: the picker's chooserRequested (MainWindow::openSliceChooser).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* dashboard = c.window->findChild<RxDashboard*>();
+            if (dashboard == nullptr) {
+                c.failure = QStringLiteral("no receiver dashboard");
+                return;
+            }
+            shootPopup(c, QStringLiteral("popup-slice-chooser"), [dashboard] { emit dashboard->chooserRequested(); });
+            noteNotShown(c, QStringLiteral("menu-reveal-slice (C7)"),
+                         QStringLiteral("MainWindow::revealSliceInWindow shows its menu only for a slice this "
+                                        "window does not show while every pan is taken and no larger layout fits "
+                                        "the radio's pan limit; the two-band window always has a layout that fits"));
+        });
+    });
+
+    // ---- workspace and containers ----
+    add(QStringLiteral("menu-banner-applets"), [](SceneContext& ctx) {
+        // C8 on the applets banner button: C17 (AppletPanelWidget) with the
+        // switch off, C14 (ContainerContentHost) with it on.
+        runPopupScene(ctx, [](SceneContext& c) {
+            QPushButton* button = nullptr;
+            for (const QString& id : {QStringLiteral("containerAppletsMenu"), QStringLiteral("appletPanelBannerButton")}) {
+                for (QPushButton* b : c.window->findChildren<QPushButton*>(id)) {
+                    if (button == nullptr && b->isVisible() && b->menu() != nullptr) {
+                        button = b;
+                    }
+                }
+            }
+            if (button == nullptr) {
+                c.failure = QStringLiteral("no visible applets banner button");
+                return;
+            }
+            c.notes.append(QStringLiteral("menu-banner-applets: the menu of %1 (QPushButton::showMenu, as a click)")
+                               .arg(button->objectName()));
+            shootPopup(c, QStringLiteral("menu-banner-applets"), [button] { button->showMenu(); },
+                       {.anchor = below(button)});
+        });
+    });
+    add(QStringLiteral("menu-container-filter"), [](SceneContext& ctx) {
+        // C9: the main panel's VFO filter right-click
+        // (ContainerWidget::vfoFilterContextRequested -> onContainerFilterContext).
+        runPopupScene(ctx, [](SceneContext& c) {
+            ContainerWidget* panel = mainPanel(c);
+            if (panel == nullptr) {
+                c.failure = QStringLiteral("no main panel container");
+                return;
+            }
+            // The VFO display's filter right-click names the slice's own
+            // preset; when the posed filter is not a preset the product shows
+            // a reason instead, so the first filter button's right-click
+            // (the same menu for preset 0) is used.
+            const bool viaVfo = shootPopup(c, QStringLiteral("menu-container-filter"),
+                       [panel] { emit panel->vfoFilterContextRequested(); },
+                       {.anchor = globalAt(panel, QPoint(40, 80)), .optionalReason = QStringLiteral("-")});
+            if (viaVfo) {
+                c.notes.append(QStringLiteral("menu-container-filter: vfoFilterContextRequested (the VFO display's "
+                                              "filter right-click)"));
+                return;
+            }
+            c.notShown.removeLast();
+            closeNewToasts(c);
+            c.notes.append(QStringLiteral("menu-container-filter: the posed filter is not one of this mode's "
+                                          "presets, so the VFO display's right-click shows a reason; shown "
+                                          "through filterContextRequested(0), the first filter button's "
+                                          "right-click"));
+            shootPopup(c, QStringLiteral("menu-container-filter"),
+                       [panel] { emit panel->filterContextRequested(0); },
+                       {.anchor = globalAt(panel, QPoint(40, 80))});
+        });
+    });
+    add(QStringLiteral("menu-container-context"), [](SceneContext& ctx) {
+        // C12: a right-click on the main panel container.
+        runPopupScene(ctx, [](SceneContext& c) {
+            ContainerWidget* panel = mainPanel(c);
+            if (panel == nullptr) {
+                c.failure = QStringLiteral("no main panel container");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-container-context"),
+                       [panel] { sendContextMenu(panel, QPoint(40, 60)); },
+                       {.anchor = globalAt(panel, QPoint(40, 60))});
+        });
+    });
+    add(QStringLiteral("menu-container-settings"), [](SceneContext& ctx) {
+        // C18 to C20 in Container Settings: Add (with its submenus), Presets
+        // and Move to container.
+        runPopupScene(ctx, [](SceneContext& c) {
+            QPointer<ContainerSettingsDialog> dialog = openContainerSettings(c);
+            if (!dialog) {
+                return;
+            }
+            PopupShot over;
+            over.base = dialog.data();
+            auto overAt = [&over](QWidget* w) {
+                PopupShot o = over;
+                o.anchor = below(w);
+                return o;
+            };
+            QPushButton* addButton = buttonWithText(dialog, QStringLiteral("+"));
+            QPushButton* presets = buttonWithText(dialog, QStringLiteral("Presets…"));
+            if (addButton == nullptr || presets == nullptr) {
+                c.failure = QStringLiteral("no Add or Presets button in Container Settings");
+            } else {
+                shootPopup(c, QStringLiteral("menu-container-settings--add"), [addButton] { addButton->click(); }, overAt(addButton));
+                shootPopup(c, QStringLiteral("menu-container-settings--presets"), [presets] { presets->click(); }, overAt(presets));
+            }
+            auto* move = namedChild<QPushButton>(dialog, QStringLiteral("moveContent"));
+            if (move != nullptr && move->isVisible() && move->isEnabled()) {
+                PopupShot moveAt = overAt(move);
+                moveAt.optionalReason = QStringLiteral(
+                    "Move to container lists the draft's other containers; with none to move to its menu "
+                    "is empty and QMenu::popup shows nothing");
+                shootPopup(c, QStringLiteral("menu-container-settings--move"), [move] { move->click(); }, moveAt);
+            } else {
+                noteNotShown(c, QStringLiteral("menu-container-settings--move (C18)"),
+                             QStringLiteral("Move to container is shown only for a selected content row in a "
+                                            "workspace with another container"));
+            }
+            if (dialog) {
+                dialog->reject();
+            }
+        });
+    });
+    add(QStringLiteral("menu-container-options"), [](SceneContext& ctx) {
+        // C10: the workspace header's options button (switch on only).
+        runPopupScene(ctx, [](SceneContext& c) {
+            ContainerWidget* panel = mainPanel(c);
+            WorkspaceGroupHeader* header = panel != nullptr ? panel->workspaceHeader() : nullptr;
+            if (header == nullptr) {
+                c.failure = QStringLiteral("no workspace header on the main panel");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-container-options"), [header] { emit header->optionsClicked(); },
+                       {.anchor = globalAt(header, QPoint(header->width(), header->height())),
+                        .provenance = provProposed()});
+        });
+    }, true);
+    add(QStringLiteral("menu-content-host"), [](SceneContext& ctx) {
+        // C15/C16: an entry header's options button in the main panel
+        // (switch on only), and the same items on the entry's right-click.
+        runPopupScene(ctx, [](SceneContext& c) {
+            ContainerWidget* panel = mainPanel(c);
+            WorkspaceEntryHeader* entry = nullptr;
+            if (panel != nullptr) {
+                for (WorkspaceEntryHeader* h : panel->findChildren<WorkspaceEntryHeader*>()) {
+                    if (entry == nullptr && h->isVisible()) {
+                        entry = h;
+                    }
+                }
+            }
+            if (entry == nullptr) {
+                c.failure = QStringLiteral("no visible entry header in the main panel");
+                return;
+            }
+            c.notes.append(QStringLiteral("entry \"%1\"").arg(entry->title()));
+            shootPopup(c, QStringLiteral("menu-content-host"), [entry] { emit entry->optionsClicked(); },
+                       {.anchor = globalAt(entry, QPoint(entry->width(), entry->height())),
+                        .provenance = provProposed()});
+            shootPopup(c, QStringLiteral("menu-content-host--context"),
+                       [entry] { sendContextMenu(entry, QPoint(entry->width() / 3, entry->height() / 2)); },
+                       {.anchor = globalAt(entry, QPoint(entry->width() / 3, entry->height() / 2)),
+                        .provenance = provProposed()});
+            noteNotShown(c, QStringLiteral("menu: canvas entry (C13)"),
+                         QStringLiteral("needs a container in the free canvas layout; it offers the same "
+                                        "addEntryActions items as the entry menus shown here"));
+        });
+    }, true);
+    add(QStringLiteral("menu-profile-rail"), [](SceneContext& ctx) {
+        // C22: a right-click on a badge of the fanned-out rail (switch on only).
+        sceneProfile(ctx, QStringLiteral("menu-profile-rail--window"), SceneProfile::Ssb, [](SceneContext& c) {
+            ProfileRailDock* dock = c.window->profileRailDock();
+            dock->open();
+            hideStaleRailBadges(dock->rail());
+            pump(kFinalSettleMs);
+        }, [](SceneContext& c) {
+            ProfileRailDock* dock = c.window->profileRailDock();
+            WorkspaceProfiles* profiles = c.window->workspaceProfiles();
+            QPushButton* badge = profiles->ids().size() > 1 ? dock->rail()->badgeButton(profiles->ids().at(1)) : nullptr;
+            if (badge == nullptr) {
+                c.failure = QStringLiteral("no second badge in the rail");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-profile-rail"),
+                       [badge] { emit badge->customContextMenuRequested(middleOf(badge)); },
+                       {.anchor = globalAt(badge, middleOf(badge)),
+                        .provenance = provProposed()});
+        });
+    }, true);
+
+    // ---- spectrum ----
+    add(QStringLiteral("menu-spectrum-context"), [](SceneContext& ctx) {
+        // C24 (a right-click on a spot label) and C23 (on a notch).
+        runPopupScene(ctx, [](SceneContext& c) {
+            SpectrumWidget* s = panOne(c);
+            placeSampleSpots(c, s);
+            QPoint spot(-1, -1);
+            for (const auto& hit : s->spotClickRectsForTest()) {
+                if (spot.x() < 0 && hit.markerIndex == 0) {
+                    spot = rectMiddle(hit.rect);
+                }
+            }
+            if (spot.x() < 0) {
+                c.failure = QStringLiteral("the K1AAA spot label was not placed");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-spectrum-context--spot"), [s, spot] {
+                sendMouse(s, QEvent::MouseButtonPress, spot, Qt::RightButton, Qt::RightButton);
+            }, {.anchor = globalAt(s, spot)});
+            const int x = placeSampleNotch(c, s);
+            const QPoint notch = findNotchPointer(s, x, s->height() / 5);
+            QToolTip::hideText();
+            if (notch.x() < 0) {
+                c.failure = QStringLiteral("the notch was not found under the pointer");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-spectrum-context--notch"), [s, notch] {
+                sendMouse(s, QEvent::MouseButtonPress, notch, Qt::RightButton, Qt::RightButton);
+            }, {.anchor = globalAt(s, notch)});
+        });
+    });
+    add(QStringLiteral("menu-spot-cluster"), [](SceneContext& ctx) {
+        // C25: a click on the cluster badge (SpectrumWidget::showSpotClusterPopup).
+        runPopupScene(ctx, [](SceneContext& c) {
+            SpectrumWidget* s = panOne(c);
+            placeSampleSpots(c, s);
+            if (s->spotClustersForTest().isEmpty()) {
+                c.failure = QStringLiteral("no cluster badge");
+                return;
+            }
+            const QPoint at = rectMiddle(s->spotClustersForTest().constFirst().rect);
+            shootPopup(c, QStringLiteral("menu-spot-cluster"), [s, at] {
+                sendMouse(s, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+            }, {.anchor = globalAt(s, at)});
+        });
+    });
+    add(QStringLiteral("popup-spectrum-overlay"), [](SceneContext& ctx) {
+        // C26: a right-click on the plot away from spots and notches.
+        runPopupScene(ctx, [](SceneContext& c) {
+            SpectrumWidget* s = panOne(c);
+            const QPoint at(s->width() * 2 / 3, s->height() / 5);
+            shootPopup(c, QStringLiteral("popup-spectrum-overlay"), [s, at] {
+                sendMouse(s, QEvent::MouseButtonPress, at, Qt::RightButton, Qt::RightButton);
+            }, {.anchor = globalAt(s, at)});
+        });
+    });
+    add(QStringLiteral("menu-pan-flyout-band"), [](SceneContext& ctx) {
+        // C27: the BAND flyout of pan 1's toolbar (a child panel, not a popup).
+        runPopupScene(ctx, [](SceneContext& c) {
+            SpectrumWidget* s = panOne(c);
+            auto* panel = s != nullptr ? s->findChild<SpectrumOverlayPanel*>() : nullptr;
+            QPushButton* band = buttonWithText(panel, QStringLiteral("BAND"));
+            if (band == nullptr) {
+                c.failure = QStringLiteral("no BAND button on pan 1");
+                return;
+            }
+            QSet<QWidget*> shown;
+            for (QWidget* w : s->findChildren<QWidget*>()) {
+                if (w->isVisible()) {
+                    shown.insert(w);
+                }
+            }
+            band->click();
+            pump(kFinalSettleMs);
+            QWidget* flyout = nullptr;
+            for (QWidget* w : s->findChildren<QWidget*>()) {
+                if (!w->isVisible() || shown.contains(w)) {
+                    continue;
+                }
+                if (flyout == nullptr || w->width() * w->height() > flyout->width() * flyout->height()) {
+                    flyout = w;
+                }
+            }
+            if (flyout == nullptr) {
+                c.failure = QStringLiteral("the BAND flyout did not show");
+                return;
+            }
+            appendPopupImages(c, QStringLiteral("menu-pan-flyout-band"), c.window, {}, flyout);
+            band->click();
+            pump(kFinalSettleMs);
+        });
+    });
+    add(QStringLiteral("menu-panadapter"), [](SceneContext& ctx) {
+        // C28: a right-click on pan 1's applet (PanadapterApplet::contextMenuEvent).
+        runPopupScene(ctx, [](SceneContext& c) {
+            PanadapterApplet* applet = appletFor(c.window, panIdAt(0));
+            if (applet == nullptr) {
+                c.failure = QStringLiteral("no applet for pan 1");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-panadapter"),
+                       [applet] { sendContextMenu(applet, QPoint(applet->width() / 2, applet->height() / 3)); },
+                       {.anchor = globalAt(applet, QPoint(applet->width() / 2, applet->height() / 3))});
+        });
+    });
+    add(QStringLiteral("menu-smeter"), [](SceneContext& ctx) {
+        // C29: a right-click on the Main Panel's SIGNAL STRENGTH dial.
+        runPopupScene(ctx, [](SceneContext& c) {
+            SMeterWidget* meter = nullptr;
+            for (SMeterWidget* m : allMeters(c)) {
+                if (meter == nullptr && m->isVisible() && m->settingsStore() != SMeterWidget::SettingsStore::Instance) {
+                    meter = m;
+                }
+            }
+            if (meter == nullptr) {
+                c.failure = QStringLiteral("no visible Main Panel dial");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-smeter"), [meter] { sendContextMenu(meter, middleOf(meter)); },
+                       {.anchor = globalAt(meter, middleOf(meter))});
+        });
+    });
+    add(QStringLiteral("menu-dial"), [](SceneContext& ctx) {
+        // sMeter.dial: an added SIGNAL STRENGTH dial's right-click (switch on only).
+        sceneProfile(ctx, QStringLiteral("menu-dial--window"), SceneProfile::Dx, [](SceneContext& c) {
+            feedDials(c);
+        }, [](SceneContext& c) {
+            const QList<SMeterWidget*> copies = dialCopies(c);
+            SMeterWidget* dial = nullptr;
+            for (SMeterWidget* d : copies) {
+                if (dial == nullptr && d->isVisible()) {
+                    dial = d;
+                }
+            }
+            if (dial == nullptr) {
+                c.failure = QStringLiteral("no visible added dial");
+                return;
+            }
+            c.notes.append(QStringLiteral("added dial in %1").arg(holderName(dial)));
+            // The dials' member timers (peak reset every 10 s from
+            // construction, peak decay, needle animation) are cut as they
+            // fire while the menu and its submenus are taken, so a reset
+            // landing between two images cannot move the peak.
+            QList<QObject*> held;
+            for (SMeterWidget* d : copies) {
+                held.append(d);
+            }
+            TimerHold hold(held, &c.stoppedTimers);
+            shootPopup(c, QStringLiteral("menu-dial"), [dial] { sendContextMenu(dial, middleOf(dial)); },
+                       {.anchor = globalAt(dial, middleOf(dial)),
+                        .provenance = provProposed()});
+        }, false, QString::fromLatin1(SMeterDialContent::kDialType));
+    }, true);
+
+    // ---- receiver flag ----
+    add(QStringLiteral("menu-vfo-rx-antenna"), [](SceneContext& ctx) {
+        // C30: a click on the flag's RX antenna button.
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* btn = namedChild<QPushButton>(flagA(c), QStringLiteral("m_rxAntBtn"));
+            if (btn == nullptr || !btn->isVisible()) {
+                c.failure = QStringLiteral("no RX antenna button on the flag");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-vfo-rx-antenna"), [btn] { btn->click(); }, {.anchor = below(btn)});
+        });
+    });
+    add(QStringLiteral("menu-vfo-tx-antenna"), [](SceneContext& ctx) {
+        // C31: a click on the flag's TX antenna button.
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* btn = namedChild<QPushButton>(flagA(c), QStringLiteral("m_txAntBtn"));
+            if (btn == nullptr || !btn->isVisible()) {
+                c.failure = QStringLiteral("no TX antenna button on the flag");
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-vfo-tx-antenna"), [btn] { btn->click(); }, {.anchor = below(btn)});
+        });
+    });
+    add(QStringLiteral("menu-vfo-filter-preset"), [](SceneContext& ctx) {
+        // C32: a right-click on the flag's selected filter preset.
+        runPopupScene(ctx, [](SceneContext& c) {
+            VfoWidget* flag = flagA(c);
+            QPushButton* preset = nullptr;
+            for (QPushButton* b : flag->findChildren<QPushButton*>()) {
+                if (b->property("filterLow").isValid() && (preset == nullptr || b->isChecked())) {
+                    if (preset == nullptr || !preset->isChecked()) {
+                        preset = b;
+                    }
+                }
+            }
+            if (preset == nullptr || !openFlagTabFor(c, flag, preset)) {
+                if (c.failure.isEmpty()) {
+                    c.failure = QStringLiteral("no filter preset button shown on the flag");
+                }
+                return;
+            }
+            shootPopup(c, QStringLiteral("menu-vfo-filter-preset"),
+                       [preset] { emit preset->customContextMenuRequested(middleOf(preset)); },
+                       {.anchor = globalAt(preset, middleOf(preset))});
+        });
+    });
+    add(QStringLiteral("menu-vfo-context"), [](SceneContext& ctx) {
+        // C33: a right-click on the flag.
+        runPopupScene(ctx, [](SceneContext& c) {
+            VfoWidget* flag = flagA(c);
+            shootPopup(c, QStringLiteral("menu-vfo-context"),
+                       [flag] { sendContextMenu(flag, QPoint(flag->width() / 2, 12)); },
+                       {.anchor = globalAt(flag, QPoint(flag->width() / 2, 12))});
+        });
+    });
+    for (const auto& [scene, button] : std::initializer_list<std::pair<const char*, const char*>>{
+             {"popup-dsp-nr1", "NR1"}, {"popup-dsp-nr2", "NR2"}, {"popup-dsp-nr3", "NR3"},
+             {"popup-dsp-nr4", "NR4"}, {"popup-dsp-dfnr", "DFNR"}, {"popup-dsp-mnr", "MNR"},
+             {"popup-dsp-nnr", "NNR"}}) {
+        const QString name = QString::fromLatin1(scene);
+        const QString label = QString::fromLatin1(button);
+        add(name, [name, label](SceneContext& ctx) { scenePopupDsp(ctx, name, label); });
+    }
+
+    // ---- applets ----
+    auto rxApplet = [](SceneContext& c) -> RxApplet* {
+        RxApplet* applet = c.window->findChild<RxApplet*>();
+        if (applet == nullptr || !applet->isVisible()) {
+            c.failure = QStringLiteral("the RX applet is not shown");
+            return nullptr;
+        }
+        return applet;
+    };
+    add(QStringLiteral("menu-rx-filter-preset"), [rxApplet](SceneContext& ctx) {
+        // C43: a right-click on the RX applet's selected filter preset.
+        runPopupScene(ctx, [rxApplet](SceneContext& c) {
+            RxApplet* applet = rxApplet(c);
+            QPushButton* preset = nullptr;
+            if (applet != nullptr) {
+                for (QPushButton* b : applet->findChildren<QPushButton*>()) {
+                    if (b->isVisible() && b->isCheckable() && b->contextMenuPolicy() == Qt::CustomContextMenu
+                        && b->objectName().isEmpty() && (preset == nullptr || (b->isChecked() && !preset->isChecked()))) {
+                        preset = b;
+                    }
+                }
+            }
+            if (preset == nullptr) {
+                if (c.failure.isEmpty()) {
+                    c.failure = QStringLiteral("no filter preset button on the RX applet");
+                }
+                return;
+            }
+            c.notes.append(QStringLiteral("preset \"%1\"").arg(preset->text()));
+            for (const char* item : {"menu: RX applet RX antenna (C41)", "menu: RX applet TX antenna (C42)"}) {
+                noteNotShown(c, QString::fromLatin1(item),
+                             QStringLiteral("the RX applet hides its antenna buttons for this window's board "
+                                            "capabilities (RxApplet::setBoardCapabilities: no Alex or fewer than "
+                                            "three antenna inputs with no radio connected); the same antenna "
+                                            "menus are shown from the flag (menu-vfo-rx-antenna, "
+                                            "menu-vfo-tx-antenna)"));
+            }
+            shootPopup(c, QStringLiteral("menu-rx-filter-preset"),
+                       [preset] { emit preset->customContextMenuRequested(middleOf(preset)); },
+                       {.anchor = globalAt(preset, middleOf(preset))});
+        });
+    });
+    add(QStringLiteral("menu-rx-slice"), [rxApplet](SceneContext& ctx) {
+        // C44: the RX applet's slice badge right-click (RxApplet::showSliceMenu).
+        runPopupScene(ctx, [rxApplet](SceneContext& c) {
+            RxApplet* applet = rxApplet(c);
+            if (applet == nullptr) {
+                return;
+            }
+            QLabel* badge = nullptr;
+            for (QLabel* l : applet->findChildren<QLabel*>()) {
+                if (badge == nullptr && l->contextMenuPolicy() == Qt::CustomContextMenu && l->isVisible()) {
+                    badge = l;
+                }
+            }
+            recordMenuNotShown(c);
+            if (badge == nullptr) {
+                noteNotShown(c, QStringLiteral("menu-rx-slice (C44)"), QStringLiteral("no slice badge is shown"));
+                appendPopupImages(c, QStringLiteral("menu-rx-slice"), c.window, {}, nullptr);
+                return;
+            }
+            const bool shown = shootPopup(c, QStringLiteral("menu-rx-slice"),
+                       [badge] { emit badge->customContextMenuRequested(middleOf(badge)); },
+                       {.anchor = globalAt(badge, middleOf(badge)),
+                        .optionalReason = QStringLiteral(
+                            "RxApplet::showSliceMenu shows nothing when the slice has no access actions "
+                            "(an unshared slice on a window that is not hosting)")});
+            if (!shown) {
+                // The window carries the not-shown records (C44 to C47).
+                appendPopupImages(c, QStringLiteral("menu-rx-slice"), c.window, {}, nullptr);
+            }
+        });
+    });
+
+    // ---- dialogs ----
+    add(QStringLiteral("menu-freedv-reporter"), [](SceneContext& ctx) {
+        // C50 (the dialog's menu bar, in the window as on Windows and Linux)
+        // and C51 (a row's right-click), with one sample station in the
+        // station list (no reporter client).
+        runPopupScene(ctx, [](SceneContext& c) {
+            FreeDVStationModel* stations = c.model->freeDvStationModel();
+            FreeDVStation st;
+            st.sid = QStringLiteral("preview-1");
+            st.callsign = QStringLiteral("K1AAA");
+            st.gridSquare = QStringLiteral("FN42");
+            st.version = QStringLiteral("2.0.0");
+            st.frequencyHz = 14236000;
+            st.txMode = QStringLiteral("RADEV1");
+            st.status = QStringLiteral("Active");
+            const QDateTime at(QDate(2026, 10, 8), QTime(14, 30), QTimeZone::utc());
+            st.lastUpdate = at;
+            st.connectTime = at;
+            stations->onStationAdded(st.sid, st);
+            auto* dialog = new FreeDVReporterDialog(stations, nullptr, c.window);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            QMenuBar* bar = dialog->findChild<QMenuBar*>();
+            if (bar != nullptr) {
+                bar->setNativeMenuBar(false);
+            }
+            dialog->show();
+            pump(kDialogSettleMs);
+            cutTimersInto(c, dialog, kMemberTimerCutWaitMs);
+            c.notes.append(QStringLiteral("one sample station added through FreeDVStationModel::onStationAdded "
+                                          "(no reporter client); the dialog's menu bar shown in the window "
+                                          "(setNativeMenuBar(false)), as on Windows and Linux"));
+            PopupShot over;
+            over.base = dialog;
+            if (bar == nullptr || !bar->isVisible()) {
+                c.failure = QStringLiteral("no in-window FreeDV Reporter menu bar");
+            } else {
+                for (QAction* a : bar->actions()) {
+                    const QString name = QStringLiteral("menu-freedv-reporter--bar-") + slug(a->text());
+                    PopupShot at = over;
+                    at.anchor = globalAt(bar, bar->actionGeometry(a).bottomLeft() + QPoint(0, 1));
+                    shootPopup(c, name, [bar, a] { bar->setActiveAction(a); }, at);
+                }
+            }
+            auto* table = dialog->findChild<QTableView*>();
+            if (table != nullptr && table->model() != nullptr && table->model()->rowCount() > 0) {
+                const QRect row = table->visualRect(table->model()->index(0, 1));
+                const QPoint at = row.center();
+                PopupShot rowAt = over;
+                rowAt.anchor = globalAt(table->viewport(), at);
+                shootPopup(c, QStringLiteral("menu-freedv-reporter--row"),
+                           [table, at] { emit table->customContextMenuRequested(at); }, rowAt);
+            } else if (c.failure.isEmpty()) {
+                c.failure = QStringLiteral("the sample station has no row");
+            }
+            noteNotShown(c, QStringLiteral("menu: Setup > VAX Auto-detect (C49)"),
+                         QStringLiteral("the Auto-detect button is a hidden legacy widget on Setup > VAX "
+                                        "(AudioVaxPage.cpp, setVisible(false)), so its menu cannot open"));
+            noteNotShown(c, QStringLiteral("menu: ConnectionPanel context (C48)"),
+                         QStringLiteral("ConnectionPanel starts discovery when it is built (ConnectionPanel.cpp, "
+                                        "disc->startDiscovery())"));
+            dialog->close();
+            stations->onStationRemoved(st.sid);
+        });
+    });
+
+    // ---- menu bar (in the window, the Windows and Linux arrangement) ----
+    for (const char* title : {"File", "Radio", "View", "DSP", "Band", "Mode", "Containers", "Tools", "Help"}) {
+        const QString t = QString::fromLatin1(title);
+        const QString name = QStringLiteral("menubar-") + slug(t);
+        add(name, [name, t](SceneContext& ctx) { sceneMenuBar(ctx, name, t); });
+    }
+
+    // ---- toasts ----
+    add(QStringLiteral("toast-info"), [](SceneContext& ctx) {
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* applet = c.window->findChild<RxApplet*>();
+            if (applet == nullptr) {
+                c.failure = QStringLiteral("no RX applet");
+                return;
+            }
+            shootToast<StatusToast>(c, QStringLiteral("toast-info"),
+                QStringLiteral("Info through MainWindow::showToast: RxApplet::transmitSettingRefused with "
+                               "IStationLink::transmitSettingsUnavailableReason() (MainWindow.cpp, Info, 3000 ms)"),
+                [applet] { emit applet->transmitSettingRefused(IStationLink::transmitSettingsUnavailableReason()); });
+        });
+    });
+    add(QStringLiteral("toast-warning"), [](SceneContext& ctx) {
+        runPopupScene(ctx, [](SceneContext& c) {
+            TxInterlockPolicy* policy = c.model->txInterlockPolicy();
+            if (policy == nullptr) {
+                c.failure = QStringLiteral("no TX interlock policy");
+                return;
+            }
+            shootToast<StatusToast>(c, QStringLiteral("toast-warning"),
+                QStringLiteral("Warning through MainWindow::showToast: TxInterlockPolicy::warned with its "
+                               "amplifier reason (TxInterlockPolicy.cpp) -> onTxInterlockWarning"),
+                [policy] { emit policy->warned(QStringLiteral("Amplifier present but not in OPERATE")); });
+        });
+    });
+    add(QStringLiteral("toast-error"), [](SceneContext& ctx) {
+        runPopupScene(ctx, [](SceneContext& c) {
+            TxInterlockPolicy* policy = c.model->txInterlockPolicy();
+            if (policy == nullptr) {
+                c.failure = QStringLiteral("no TX interlock policy");
+                return;
+            }
+            shootToast<StatusToast>(c, QStringLiteral("toast-error"),
+                QStringLiteral("Error through MainWindow::showToast: TxInterlockPolicy::denied with its "
+                               "amplifier reason (TxInterlockPolicy.cpp) -> onTxInterlockDenial"),
+                [policy] { emit policy->denied(QStringLiteral("Amplifier present but not in OPERATE")); });
+        });
+    });
+    add(QStringLiteral("toast-antenna-switch"), [](SceneContext& ctx) {
+        // T2: Tools > Test antenna switch toast when the build has it, else
+        // the same RadioModel::emitAntennaAutoSwitched it calls.
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* action = c.window->findChild<QAction*>(QStringLiteral("toolsTestAntennaSwitchToast"));
+            const bool viaAction = action != nullptr && action->isVisible() && action->isEnabled();
+            shootToast<AntennaSwitchToast>(c, QStringLiteral("toast-antenna-switch"),
+                viaAction ? QStringLiteral("Tools > Test antenna switch toast (its action triggered)")
+                          : QStringLiteral("RadioModel::emitAntennaAutoSwitched(0, ANT1, ANT2), as the Tools test item calls it"),
+                [model = c.model, action, viaAction] {
+                    if (viaAction) {
+                        action->trigger();
+                    } else {
+                        model->emitAntennaAutoSwitched(0, QStringLiteral("ANT1"), QStringLiteral("ANT2"));
+                    }
+                });
+        });
+    });
+
+    // ---- tooltips ----
+    add(QStringLiteral("tooltip-generic"), [](SceneContext& ctx) {
+        // TT1: a widget's own tooltip through a help event (QWidget::event
+        // shows it as a hover does), on the flag's RX antenna button.
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* btn = namedChild<QPushButton>(flagA(c), QStringLiteral("m_rxAntBtn"));
+            if (btn == nullptr) {
+                c.failure = QStringLiteral("no RX antenna button on the flag");
+                return;
+            }
+            const QPoint local = middleOf(btn);
+            const QPoint global = globalAt(btn, local);
+            shootToolTip(c, QStringLiteral("tooltip-generic"), global, [btn, local, global] {
+                QHelpEvent help(QEvent::ToolTip, local, global);
+                QCoreApplication::sendEvent(btn, &help);
+            }, btn->toolTip().left(12));
+        });
+    });
+    add(QStringLiteral("tooltip-spectrum"), [](SceneContext& ctx) {
+        // TT2 to TT4: the pointer over a spot label, the cluster badge and a
+        // notch (SpectrumWidget::mouseMoveEvent).
+        runPopupScene(ctx, [](SceneContext& c) {
+            SpectrumWidget* s = panOne(c);
+            placeSampleSpots(c, s);
+            QPoint spot(-1, -1);
+            for (const auto& hit : s->spotClickRectsForTest()) {
+                if (spot.x() < 0 && hit.markerIndex == 0) {
+                    spot = rectMiddle(hit.rect);
+                }
+            }
+            if (spot.x() < 0 || s->spotClustersForTest().isEmpty()) {
+                c.failure = QStringLiteral("the sample spots were not placed");
+                return;
+            }
+            shootToolTip(c, QStringLiteral("tooltip-spectrum--spot"), globalAt(s, spot), [s, spot] {
+                sendMouse(s, QEvent::MouseMove, spot, Qt::NoButton, Qt::NoButton);
+            }, QStringLiteral("K1AAA"));
+            // Any point of the badge the hover path answers.
+            QPoint clusterAt(-1, -1);
+            const QRect badge = s->spotClustersForTest().constFirst().rect;
+            for (int y = badge.top(); y <= badge.bottom() && clusterAt.x() < 0; ++y) {
+                for (int x = badge.left(); x <= badge.right() && clusterAt.x() < 0; x += 2) {
+                    QToolTip::hideText();
+                    sendMouse(s, QEvent::MouseMove, QPoint(x, y), Qt::NoButton, Qt::NoButton);
+                    auto* tip = qobject_cast<QLabel*>(visibleToolTip());
+                    if (tip != nullptr && tip->text().contains(QLatin1String("at this freq"))) {
+                        clusterAt = QPoint(x, y);
+                    }
+                }
+            }
+            QToolTip::hideText();
+            if (clusterAt.x() >= 0) {
+                shootToolTip(c, QStringLiteral("tooltip-spectrum--cluster"), globalAt(s, clusterAt), [s, clusterAt] {
+                    sendMouse(s, QEvent::MouseMove, clusterAt, Qt::NoButton, Qt::NoButton);
+                }, QStringLiteral("at this freq"));
+            } else {
+                noteNotShown(c, QStringLiteral("tooltip: spot cluster badge (TT3)"),
+                             QStringLiteral("no point of the cluster badge (%1,%2 %3x%4) answers the hover path: "
+                                            "SpectrumWidget::mouseMoveEvent looks for spots only above the "
+                                            "spectrum's height (my < layout.spectrum.height())")
+                                 .arg(badge.x()).arg(badge.y()).arg(badge.width()).arg(badge.height()));
+            }
+            const int x = placeSampleNotch(c, s);
+            const QPoint notch = findNotchPointer(s, x, s->height() / 5);
+            if (notch.x() < 0) {
+                c.failure = QStringLiteral("the notch was not found under the pointer");
+                return;
+            }
+            shootToolTip(c, QStringLiteral("tooltip-spectrum--notch"), globalAt(s, notch), [s, notch] {
+                sendMouse(s, QEvent::MouseMove, notch, Qt::NoButton, Qt::NoButton);
+            }, QStringLiteral("Width:"));
+        });
+    });
+    add(QStringLiteral("tooltip-connection"), [](SceneContext& ctx) {
+        // TT5: a help event on the connection segment (MainWindow's event
+        // filter shows RadioModel::buildConnectionTooltip).
+        runPopupScene(ctx, [](SceneContext& c) {
+            auto* segment = c.window->findChild<ConnectionSegment*>();
+            if (segment == nullptr) {
+                c.failure = QStringLiteral("no connection segment");
+                return;
+            }
+            noteNotShown(c, QStringLiteral("tooltip: unavailable meter reading (TT6)"),
+                         QStringLiteral("MeterWidget::event shows it on a meter item of a meter container whose "
+                                        "reading another radio session owns; the two-band window has no meter "
+                                        "container (its panels hold widgets, not meter items) in either look, "
+                                        "and adding one would change the workspace"));
+            const QPoint local(segment->width() / 3, segment->height() / 2);
+            const QPoint global = globalAt(segment, local);
+            shootToolTip(c, QStringLiteral("tooltip-connection"), global, [&c, segment, local, global] {
+                QHelpEvent help(QEvent::ToolTip, local, global);
+                QCoreApplication::sendEvent(segment, &help);
+                // The uptime counts from the posed connection
+                // (RadioModel::connectionUptimeText), so it changes with the
+                // run's timing; it is pinned, as pinValueBeside pins Uptime
+                // fields in dialogs.
+                auto* tip = qobject_cast<QLabel*>(visibleToolTip());
+                if (tip == nullptr) {
+                    return;
+                }
+                static const QRegularExpression uptime(QStringLiteral("connected (\\d+h )?(\\d+m )?\\d+s"));
+                QString text = tip->text();
+                const QRegularExpressionMatch m = uptime.match(text);
+                if (m.hasMatch()) {
+                    c.notes.append(QStringLiteral("tooltip-connection: uptime \"%1\" pinned to \"%2\"")
+                                       .arg(m.captured(0), QString::fromLatin1(kPinnedUptime)));
+                    text.replace(m.capturedStart(0), m.capturedLength(0), QString::fromLatin1(kPinnedUptime));
+                    QToolTip::showText(global, text, segment);
+                }
+            });
+        });
+    });
+    add(QStringLiteral("tooltip-vfo"), [](SceneContext& ctx) {
+        // TT7 is the tooltip a refused NR click shows at the button
+        // (VfoWidget::onNrSelectionRefused, only with a click in flight).
+        // Offline no click is refused: NR3 has a usable model (a click
+        // turns it on) and DFNR, which cannot run here, is disabled. The
+        // same plain reason shows as the disabled DFNR button's tooltip,
+        // which is shown instead.
+        runPopupScene(ctx, [](SceneContext& c) {
+            VfoWidget* flag = flagA(c);
+            QPushButton* dfnr = buttonWithText(flag, QStringLiteral("DFNR"));
+            if (dfnr == nullptr) {
+                c.failure = QStringLiteral("no DFNR button on the flag");
+                return;
+            }
+            if (!openFlagTabFor(c, flag, dfnr)) {
+                if (c.failure.isEmpty()) {
+                    c.failure = QStringLiteral("the DFNR button is not shown");
+                }
+                return;
+            }
+            noteNotShown(c, QStringLiteral("tooltip: refused NR selection (TT7)"),
+                         QStringLiteral("shown only when a click on NR3 or DFNR is refused; offline NR3 has a usable "
+                                        "model, so a click would turn it on, and DFNR is disabled while it cannot "
+                                        "run. The disabled DFNR button's tooltip, with the same reason, is shown"));
+            const QPoint local = middleOf(dfnr);
+            const QPoint global = globalAt(dfnr, local);
+            shootToolTip(c, QStringLiteral("tooltip-vfo"), global, [dfnr, local, global] {
+                QHelpEvent help(QEvent::ToolTip, local, global);
+                QCoreApplication::sendEvent(dfnr, &help);
+            }, dfnr->toolTip().left(12));
+            c.notes.append(QStringLiteral("tooltip-vfo: the DFNR button (%1) hovered through a help event")
+                               .arg(dfnr->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled")));
+        });
+    });
+}
+
 } // namespace
 
 void pump(int ms)
@@ -5142,16 +6941,27 @@ QVector<Scene> fixedScenes()
             QCoreApplication::sendEvent(d, &enter);
             d->update();
             // The pointer's spot; Qt offsets the tooltip from it as it does live.
-            QToolTip::showText(d->mapToGlobal(local.toPoint()), d->toolTip(), d);
+            // QTipLabel hides itself after about 10 s, which a loaded run
+            // can pass before the composite; it is held for the scene.
+            // In window-geometry coordinates, as the composite reads them.
+            const QPoint pointer = globalOf(d) + local.toPoint();
+            QToolTip::showText(pointer, d->toolTip(), d, QRect(), kRailTipHoldMs);
             pump(kFinalSettleMs);
             *tip = visibleToolTip();
+            // Qt offsets the tip by the desktop's current pointer size, which
+            // changed from launch to launch; placed for the default pointer.
+            if (*tip) {
+                c.notes.append(QStringLiteral("profile-rail-open: %1")
+                                   .arg(placeTipForArrow(tip->data(), pointer)));
+                pump(kFinalSettleMs);
+            }
             c.notes.append(*tip ? QStringLiteral("pointer over the D badge: hover state set, Enter sent, "
                                                  "tooltip \"%1\" composited where it shows").arg(d->toolTip())
                                 : QStringLiteral("pointer over the D badge: hover state set; the tooltip did "
                                                  "not show (background-only process), not composited"));
         }, [tip](SceneContext& c) {
             if (*tip) {
-                compositeAndRecrop(c, QStringLiteral("profile-rail-open"), {tip->data()});
+                compositeAndRecrop(c, QStringLiteral("profile-rail-open"), {tip->data()}, true);
             }
         }, true);
     }, true});
@@ -5538,6 +7348,7 @@ QVector<Scene> fixedScenes()
         captureDialog(ctx, visibleTopLevel<DiversityDialog>(), QStringLiteral("dialog-diversity"));
     }});
     appendInventoryDialogScenes(scenes);
+    appendMenuScenes(scenes);
     return scenes;
 }
 

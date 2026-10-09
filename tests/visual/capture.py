@@ -33,6 +33,10 @@
 #   2026-10-08 - A scene's <name>.geometry.tsv dumps are cleared with its
 #                images. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 #                Claude Code.
+#   2026-10-08 - The menus, popups, toasts and tooltips scenes are the
+#                current app (retained-current-app) but for the four that
+#                exist only in the workspace look. J.J. Boyd (KG4VCF),
+#                AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -82,7 +86,19 @@ def scene_provenance(name):
         return "proposed-look"
     if name.startswith("baseline-") or name.startswith("dialog-"):
         return "retained-current-app"
+    # The menus, popups, toasts and tooltips of the current app; the few
+    # that exist only in the workspace look are proposed.
+    if name in WORKSPACE_ONLY_MENU_SCENES:
+        return "proposed"
+    if name.startswith(MENU_SCENE_PREFIXES):
+        return "retained-current-app"
     return "proposed"
+
+
+MENU_SCENE_PREFIXES = ("menu-", "menubar-", "popup-", "toast-", "tooltip-")
+WORKSPACE_ONLY_MENU_SCENES = {
+    "menu-container-options", "menu-content-host", "menu-profile-rail", "menu-dial",
+}
 
 
 def child_env(scale_factor=None):
