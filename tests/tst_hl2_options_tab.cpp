@@ -7,9 +7,11 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QLabel>
 #include <QSpinBox>
 #include <QSignalSpy>
 
+#include "GridHeaderAlignment.h"
 #include "core/AppSettings.h"
 #include "core/Hl2OptionsModel.h"
 #include "core/IoBoardHl2.h"
@@ -231,6 +233,54 @@ private slots:
         RadioModel model;
         Hl2OptionsTab tab(&model);
         QVERIFY(!tab.isVisible());
+    }
+
+    // The four I2C read boxes show their "--" in both looks: today a white
+    // field with black text, the workspace look its dark value chip with
+    // light text (the look drew the chip with the black text, so the boxes
+    // read as black squares).
+    void i2c_read_boxes_show_their_text_in_both_looks_data()
+    {
+        QTest::addColumn<bool>("workspace");
+        QTest::newRow("today") << false;
+        QTest::newRow("look") << true;
+    }
+    void i2c_read_boxes_show_their_text_in_both_looks()
+    {
+        QFETCH(bool, workspace);
+        GridHeaderAlignment::AppLook look(workspace);
+        RadioModel model;
+        Hl2OptionsTab tab(&model);
+        look.apply(&tab);
+        tab.resize(1200, 800);
+        tab.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&tab));
+        int boxes = 0;
+        for (QLabel* label : tab.findChildren<QLabel*>()) {
+            if (!label->toolTip().startsWith(QStringLiteral("Data at Reg/Ctrl"))) {
+                continue;
+            }
+            ++boxes;
+            QCOMPARE(label->text(), QStringLiteral("--"));
+            const QImage image = label->grab().toImage();
+            // The field: a pixel inside the border, clear of the centred
+            // "--". The text: the pixel that differs most from it.
+            const int field = image.pixelColor(3, 3).lightness();
+            int contrast = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 2; x < image.width() - 2; ++x) {
+                    contrast = std::max(contrast, std::abs(image.pixelColor(x, y).lightness() - field));
+                }
+            }
+            QVERIFY2(contrast > 120,
+                     qPrintable(QStringLiteral("%1: field lightness %2, text contrast %3, sheet \"%4\"")
+                                    .arg(label->toolTip()).arg(field).arg(contrast)
+                                    .arg(label->styleSheet())));
+            if (!workspace) {
+                QVERIFY2(field > 200, qPrintable(label->toolTip() + QStringLiteral(": today's field is white")));
+            }
+        }
+        QCOMPARE(boxes, 4);
     }
 
     // Model → UI sync: changing the model after construction updates the
