@@ -125,6 +125,9 @@
 //                 ones on a posed Hermes Lite 2) and --scrolled step scenes
 //                 for every page and tab that scrolls. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - dialog-setup-hardware-config poses its board (a Saturn)
+//                 as the tab scenes do. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -7869,7 +7872,12 @@ QVector<Scene> setupPageScenes(MainWindow* window)
         const QString category = leaf.category;
         scenes.append({name, QStringLiteral("2v"), true,
                        [name, index, hidden, label, category](SceneContext& ctx) {
-            SetupDialog* d = openSetupPageScene(ctx, index);
+            // Hardware Config's tab set is the board's: pose the board
+            // (a Saturn, as the tab scenes do) rather than take whatever
+            // tab set the page was last built with.
+            SetupDialog* d = label == QLatin1String("Hardware Config")
+                ? openSetupTabScene(ctx, index, label, {}, HPSDRHW::Saturn)
+                : openSetupPageScene(ctx, index);
             if (d == nullptr) {
                 return;
             }

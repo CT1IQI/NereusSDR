@@ -34,6 +34,8 @@
 //                 Dig Out follows the transmit settings gate; the TX pins,
 //                 pin actions and resets follow their own gates.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - setN2adrHintVisible forwards to the HF tab. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -243,6 +245,13 @@ void OcOutputsTab::setPinActionsPermitted(bool permitted, const QString& reason)
 {
     if (m_hfTab) {
         m_hfTab->setPinActionsPermitted(permitted, reason);
+    }
+}
+
+void OcOutputsTab::setN2adrHintVisible(bool visible)
+{
+    if (m_hfTab) {
+        m_hfTab->setN2adrHintVisible(visible);
     }
 }
 

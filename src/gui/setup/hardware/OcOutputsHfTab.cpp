@@ -35,6 +35,10 @@
 //                 Claude Code.
 //   2026-09-28 - 2 m as its own band (R-IOS-26, R-R3-49). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The pin matrices are one grid with the P1-P7 headers, each
+//                box as wide as its indicator, so every header sits over its
+//                column; the N2ADR caption shows on an HL2 only. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -76,6 +80,7 @@
 //============================================================================================//
 
 #include "OcOutputsHfTab.h"
+#include "IndicatorColumn.h"
 #include "HardwareTransmitGate.h"
 #include "gui/UnbuiltFeatures.h"
 
@@ -89,6 +94,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -161,6 +167,14 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         auto* n2adrHint = new QLabel(
             tr("N2ADR Filter (HL2): Hardware → HL2 I/O Board"),
             this);
+        // The pointer names an HL2 tab, so it shows on an HL2 only
+        // (setN2adrHintVisible, from HardwarePage). mi0bot shows its N2ADR
+        // Filter control on this tab for the HL2 alone (setup.cs:20191-20238
+        // [v2.10.3.13-beta2]); Thetis keeps it hidden (setup.designer.cs:16828
+        // [v2.10.3.15]).
+        n2adrHint->setObjectName(QStringLiteral("ocN2adrHint"));
+        n2adrHint->hide();
+        m_n2adrHint = n2adrHint;
         n2adrHint->setStyleSheet(QStringLiteral(
             "QLabel { color: #888; font-style: italic; font-size: 10px; }"));
         n2adrHint->setToolTip(tr(
@@ -468,6 +482,13 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
     onLiveStateChanged();
 }
 
+void OcOutputsHfTab::setN2adrHintVisible(bool visible)
+{
+    if (m_n2adrHint != nullptr) {
+        m_n2adrHint->setVisible(visible);
+    }
+}
+
 // ── buildMatrixGrid ───────────────────────────────────────────────────────────
 
 void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
@@ -477,45 +498,49 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
     scroll->setFrameShape(QFrame::NoFrame);
 
     auto* inner = new QWidget();
-    auto* grid = new QVBoxLayout(inner);
-    grid->setSpacing(1);
+    // One grid for the header and the band rows, so each P1-P7 header sits
+    // centred over its column of check boxes (the header used to be its own
+    // row of fixed-width labels spread by the layout while the boxes packed
+    // at the left).
+    auto* grid = new QGridLayout(inner);
+    grid->setHorizontalSpacing(0);
+    grid->setVerticalSpacing(1);
     grid->setContentsMargins(2, 2, 2, 2);
+    grid->setColumnMinimumWidth(0, 52);
+    for (int pin = 0; pin < kPinCount; ++pin) {
+        grid->setColumnMinimumWidth(pin + 1, 28);
+    }
+    grid->setColumnStretch(kPinCount + 1, 1);
 
     // Column header row: "Band" + "P1" … "P7"
     {
-        auto* hdrRow = new QHBoxLayout();
         auto* bandHdr = new QLabel(tr("Band"), inner);
         bandHdr->setFixedWidth(52);
-        hdrRow->addWidget(bandHdr);
+        grid->addWidget(bandHdr, 0, 0);
         for (int pin = 0; pin < kPinCount; ++pin) {
             auto* lbl = new QLabel(tr("P%1").arg(pin + 1), inner);
             lbl->setAlignment(Qt::AlignCenter);
-            lbl->setFixedWidth(28);
-            hdrRow->addWidget(lbl);
+            grid->addWidget(lbl, 0, pin + 1, Qt::AlignHCenter);
         }
-        grid->addLayout(hdrRow);
     }
 
     // One row per band
     auto& dest = tx ? m_txPins : m_rxPins;
 
+    int gridRow = 1;
     for (const Band band : kRowOrder) {
         const int bi = perBandStateSlot(band);
         bool grey = bandIsGrey(band);
-
-        auto* bandRow = new QHBoxLayout();
-        bandRow->setSpacing(0);
 
         auto* bandLbl = new QLabel(bandLabel(band), inner);
         bandLbl->setFixedWidth(52);
         if (grey) {
             bandLbl->setEnabled(false);
         }
-        bandRow->addWidget(bandLbl);
+        grid->addWidget(bandLbl, gridRow, 0);
 
         for (int pin = 0; pin < kPinCount; ++pin) {
             auto* cb = new QCheckBox(inner);
-            cb->setFixedWidth(28);
             cb->setEnabled(!grey);
             cb->setToolTip(tr("%1 OC pin %2, band %3")
                                .arg(tx ? tr("TX") : tr("RX"))
@@ -532,14 +557,13 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
                         }
                     });
 
-            bandRow->addWidget(cb);
+            IndicatorColumn::fitToIndicator(cb);
+            grid->addWidget(cb, gridRow, pin + 1, Qt::AlignHCenter);
         }
-
-        bandRow->addStretch();
-        grid->addLayout(bandRow);
+        ++gridRow;
     }
 
-    grid->addStretch();
+    grid->setRowStretch(gridRow, 1);
     scroll->setWidget(inner);
 
     auto* groupLayout = new QVBoxLayout(group);
