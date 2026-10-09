@@ -586,6 +586,11 @@ nereus_add_test(tst_container_chrome NATIVE_WINDOW)
 nereus_add_test(tst_workspace_header_modes)
 nereus_add_test(tst_workspace_edge_strips)
 nereus_add_test(tst_workspace_live_input)
+# Each case builds a MainWindow; 43 cases ran past the 120 s limit under
+# load. Four entries of the same binary (the limit is not raised; groups in
+# the test's main()).
+nereus_split_test(tst_workspace_live_input
+    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
 nereus_add_test(tst_workspace_profiles)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
 nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)

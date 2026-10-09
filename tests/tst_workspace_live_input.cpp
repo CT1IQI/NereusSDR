@@ -34,6 +34,9 @@
 //                 shown (PopupWait), not a fixed 50 ms shot that missed it
 //                 under load and left exec() waiting; generous waits, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Four ctest entries of the one binary (TestFunctionGroups),
+//                 so no entry runs near the 120 s limit under load, by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -69,6 +72,8 @@
 #include <qpa/qwindowsysteminterface.h>
 #include <functional>
 #include <memory>
+#include <optional>
+#include "TestFunctionGroups.h"
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"
 #include "gui/MainWindow.h"
@@ -2123,5 +2128,38 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstWorkspaceLiveInput)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstWorkspaceLiveInput test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // Each case builds a MainWindow (about 3 s of a 4 s case on a loaded
+    // machine), and 43 cases ran near and past ctest's 120 s limit under
+    // load (the limit is not raised). The Hidden, Duplicate and profile
+    // rail cases run as their own ctest entries,
+    // tst_workspace_live_input_hidden, _duplicate and _profiles
+    // (tests/CMakeLists.txt); the headers, drags, pop-outs and bottom strip
+    // as tst_workspace_live_input.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_WORKSPACE_LIVE_INPUT_GROUP",
+        {{QStringLiteral("hidden"),
+          {QStringLiteral("entryHideButtonHidesAndHiddenBringsItBack"),
+           QStringLiteral("hiddenContainersComeBackWhereTheyWere"),
+           QStringLiteral("groupHideButtonHidesTheContainer"),
+           QStringLiteral("hidingTheLastWidgetHidesItsContainer"),
+           QStringLiteral("hiddenMenuSitsInTheSamePlaceInBothLooks"),
+           QStringLiteral("previewOffHiddenBringsBackAHiddenContainer"),
+           QStringLiteral("previewOffHiddenBringsBackAClosedFloatingContainer"),
+           QStringLiteral("previewOffHiddenListsAHiddenApplet")}},
+         {QStringLiteral("duplicate"),
+          {QStringLiteral("duplicateIsShownBesideTheOriginal")}},
+         {QStringLiteral("profiles"),
+          {QStringLiteral("profileRailSwitchesAfterAddingAProfile"),
+           QStringLiteral("profileRailStaysOpenWhenTheEnterNeverArrives"),
+           QStringLiteral("profileRailClosesWhenTheCursorLeavesWithoutALeave"),
+           QStringLiteral("profileRailRemoveCrossIsFourteenSquare"),
+           QStringLiteral("profileRailClosesOnLeaveAndEscapeAndOpensOnTab")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_workspace_live_input.moc"
