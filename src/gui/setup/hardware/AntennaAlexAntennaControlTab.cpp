@@ -38,6 +38,11 @@
 //                included, and each radio is as wide as its indicator, so
 //                every column label sits over its column. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the tab drops its own scroll area (the Antenna / ALEX
+//                tab now scrolls it), the antenna grids stack when narrow
+//                (SetupFit::FitRow), the safety note wraps only when the
+//                row is narrow, and leftover height goes to the bottom.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -109,6 +114,7 @@
 #include "IndicatorColumn.h"
 #include "HardwareTransmitGate.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/accessories/AlexController.h"
 #include "core/accessories/AlexAntennaFacade.h"
@@ -164,20 +170,20 @@ AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QW
 
     // Row 2: TX + RX grids side-by-side, inside a scroll area so they don't
     // overflow when the window is short.
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-
-    auto* scrollContents = new QWidget(scrollArea);
-    auto* gridRow = new QHBoxLayout(scrollContents);
+    // D25: the whole tab scrolls down now (SetupFit::scrollingTab in
+    // AntennaAlexTab), so the grids sit in the tab itself.
+    auto* scrollContents = new QWidget(this);
+    // D25: the TX grid stacks above the RX grid when the two do not fit
+    // side by side.
+    auto* gridRow = new SetupFit::FitRow(scrollContents);
+    gridRow->setObjectName(QStringLiteral("antennaGridRow"));
     gridRow->setContentsMargins(0, 0, 0, 0);
     gridRow->setSpacing(12);
 
     buildTxGrid(gridRow);   // pass QHBoxLayout* — overloaded via QBoxLayout*
     buildRxGrid(gridRow);
 
-    scrollArea->setWidget(scrollContents);
-    outerLayout->addWidget(scrollArea, 1);
+    outerLayout->addWidget(scrollContents);
 
     // Row 3: TX-bypass checkboxes (Phase 3P-I-b T7).
     // Source: Thetis setup.cs:6174-6300 [v2.10.3.13 @501e3f5].
@@ -188,6 +194,8 @@ AntennaAlexAntennaControlTab::AntennaAlexAntennaControlTab(RadioModel* model, QW
     // antenna conflicts are resolved. Consumer wire-up (RadioModel) lands
     // when the antenna-auto-switch pipeline is built.
     buildConflictPolicyGroup(outerLayout);
+    // D25: the groups keep their own height; what is left goes below them.
+    outerLayout->addStretch(1);
 
     // Initial SKU sync — applies to current model state.
     applySkuProfile();
@@ -257,8 +265,10 @@ void AntennaAlexAntennaControlTab::buildBlockTxStrip(QVBoxLayout* outerLayout)
     row->addWidget(m_blockTxAnt3);
 
     auto* note = new QLabel(tr("<i>Safety: prevent transmit into RX-only / receive-loop antennas.</i>"), frame);
-    note->setWordWrap(false);
-    row->addWidget(note);
+    // D25: a long note wraps rather than widening the tab, and takes the
+    // row's spare width so it wraps only when the row is narrow.
+    note->setWordWrap(true);
+    row->addWidget(note, 1);
     row->addStretch();
 
     outerLayout->addWidget(frame);

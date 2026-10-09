@@ -66,6 +66,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the two slider-row labels keep their 80 px column but
+//               widen when their text needs more (SetupFit::widthAtLeast).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -114,6 +117,7 @@
 //============================================================================================//
 
 #include "DspSetupPages.h"
+#include "gui/setup/SetupFit.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
@@ -783,7 +787,8 @@ void NrAnfSetupPage::rebuildForActiveSlice()
 
         auto* label = new QLabel(labelText);
         label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 12px; }");
-        label->setFixedWidth(80);
+        // D25: a label longer than the column widens its row, not cut short.
+        SetupFit::widthAtLeast(label, 80);
         row->addWidget(label);
 
         auto* slider = new QSlider(Qt::Horizontal);
@@ -825,7 +830,8 @@ void NrAnfSetupPage::rebuildForActiveSlice()
 
         auto* label = new QLabel(labelText);
         label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 12px; }");
-        label->setFixedWidth(80);
+        // D25: a label longer than the column widens its row, not cut short.
+        SetupFit::widthAtLeast(label, 80);
         row->addWidget(label);
 
         auto* slider = new QSlider(Qt::Horizontal);

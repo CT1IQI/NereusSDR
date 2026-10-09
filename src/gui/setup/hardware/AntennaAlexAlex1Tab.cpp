@@ -50,6 +50,11 @@
 //                and 6m/ByPass on RX select the low-pass as Thetis's
 //                setAlexLPF does (radioHardwareVersion 10). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the filter columns stack when narrow
+//                (SetupFit::FitRow) and keep their own height, the rest of
+//                the tab going below them; the BPF1 form drops its own
+//                margins so the group fits. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -109,6 +114,7 @@
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
 #include "core/codec/AlexFilterMap.h"
+#include "gui/setup/SetupFit.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -327,9 +333,16 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
     outerVBox->setContentsMargins(0, 0, 0, 0);
     outerVBox->addWidget(scroll);
 
-    auto* colLayout = new QHBoxLayout(content);
+    // D25: the three columns stack in reading order when they do not fit,
+    // and keep their own height: what is left of the tab goes below them.
+    auto* contentVBox = new QVBoxLayout(content);
+    contentVBox->setContentsMargins(0, 0, 0, 0);
+    auto* colLayout = new SetupFit::FitRow;
+    colLayout->setObjectName(QStringLiteral("alex1ColumnRow"));
     colLayout->setContentsMargins(8, 8, 8, 8);
     colLayout->setSpacing(12);
+    contentVBox->addLayout(colLayout);
+    contentVBox->addStretch(1);
 
     // ── Column 1: Alex HPF Bands ──────────────────────────────────────────────
     // Source: Thetis panelAlex1HPFControl (setup.designer.cs:23635-24420) [@501e3f5]
@@ -603,6 +616,9 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
 
     auto* bpf1FormWidget = new QWidget(m_bpf1Group);
     auto* bpf1FormLayout = new QFormLayout(bpf1FormWidget);
+    // D25: no margins of its own, as the HPF rows have none, so the group
+    // fits the Settings window at its narrowest.
+    bpf1FormLayout->setContentsMargins(0, 0, 0, 0);
     bpf1FormLayout->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
     bpf1FormLayout->setHorizontalSpacing(6);
     bpf1FormLayout->setVerticalSpacing(4);

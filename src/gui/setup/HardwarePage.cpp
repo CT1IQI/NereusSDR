@@ -53,6 +53,10 @@
 //                into applyBoardTabs, which also shows the N2ADR caption on
 //                an HL2 only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - D25: the tab pane fills the page and each tab scrolls down
+//                on its own (SetupFit::scrollingTab), so the tab strip stays
+//                at the top and one wide tab no longer widens the others.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -101,6 +105,7 @@
 //============================================================================================//
 
 #include "HardwarePage.h"
+#include "SetupFit.h"
 #include "gui/UnbuiltFeatures.h"
 
 #include "hardware/RadioInfoTab.h"
@@ -125,6 +130,8 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
+#include <memory>
+
 namespace NereusSDR {
 
 // ── Construction ──────────────────────────────────────────────────────────────
@@ -148,6 +155,16 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     m_remoteNotice->hide();
     addContent(m_remoteNotice);
     addContent(m_tabs);
+    // D25: the tab pane takes the page's height in place of the trailing
+    // stretch, and each tab scrolls down inside it (below), so the tab
+    // strip never scrolls away and the page never scrolls sideways.
+    {
+        const int last = contentLayout()->count() - 1;
+        if (QLayoutItem* s = contentLayout()->itemAt(last); s != nullptr && s->spacerItem() != nullptr) {
+            std::unique_ptr<QLayoutItem> stretch(contentLayout()->takeAt(last));
+        }
+        contentLayout()->setStretchFactor(m_tabs, 1);
+    }
 
     // ── Create stub tab widgets ───────────────────────────────────────────────
     m_radioInfoTab    = new RadioInfoTab(model, this);
@@ -163,14 +180,18 @@ HardwarePage::HardwarePage(RadioModel* model, QWidget* parent)
     // Note: Setup → Hardware → PureSignal tab retired in Phase 3M-4 Task 14
     // (no Thetis equivalent; PsForm at Tools > PureSignal is the entire PS
     // control surface — design §4.2).
-    m_radioInfoIdx   = m_tabs->addTab(m_radioInfoTab,   tr("Radio Info"));
+    // D25: Antenna / ALEX and OC Outputs hold sub-tabs that scroll on their
+    // own and Calibration has its own scroll area; every other tab scrolls
+    // inside one of its own.
+    using SetupFit::scrollingTab;
+    m_radioInfoIdx   = m_tabs->addTab(scrollingTab(m_radioInfoTab),   tr("Radio Info"));
     m_antennaAlexIdx = m_tabs->addTab(m_antennaAlexTab, tr("Antenna / ALEX"));
     m_ocOutputsIdx   = m_tabs->addTab(m_ocOutputsTab,   tr("OC Outputs"));
-    m_xvtrIdx        = m_tabs->addTab(m_xvtrTab,        tr("XVTR"));
+    m_xvtrIdx        = m_tabs->addTab(scrollingTab(m_xvtrTab),        tr("XVTR"));
     m_paCalIdx       = m_tabs->addTab(m_paCalTab,       tr("Calibration"));
-    m_hl2OptionsIdx  = m_tabs->addTab(m_hl2OptionsTab,  tr("HL2 Options"));
-    m_hl2IoIdx       = m_tabs->addTab(m_hl2IoTab,       tr("HL2 I/O"));
-    m_bwMonitorIdx   = m_tabs->addTab(m_bwMonitorTab,   tr("Bandwidth Monitor"));
+    m_hl2OptionsIdx  = m_tabs->addTab(scrollingTab(m_hl2OptionsTab),  tr("HL2 Options"));
+    m_hl2IoIdx       = m_tabs->addTab(scrollingTab(m_hl2IoTab),       tr("HL2 I/O"));
+    m_bwMonitorIdx   = m_tabs->addTab(scrollingTab(m_bwMonitorTab),   tr("Bandwidth Monitor"));
     // R-R3-49: tabs whose feature is not built yet stay hidden, before and
     // after a radio is known (onCurrentRadioChanged ANDs the same check).
     m_tabs->setTabVisible(m_xvtrIdx, UnbuiltFeatures::isBuilt(UnbuiltFeature::Transverters));

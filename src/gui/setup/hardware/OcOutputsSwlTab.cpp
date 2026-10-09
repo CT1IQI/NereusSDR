@@ -26,6 +26,10 @@
 //                box as wide as its indicator, so every header sits over its
 //                column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                Code.
+//   2026-10-09 - D25: the matrix row stacks when narrow (SetupFit::FitRow);
+//                the matrices keep their own height, the rest of the tab
+//                going below the reset button.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -69,6 +73,7 @@
 #include "OcOutputsSwlTab.h"
 #include "IndicatorColumn.h"
 #include "HardwareTransmitGate.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/OcMatrix.h"
 #include "models/RadioModel.h"
@@ -100,7 +105,9 @@ OcOutputsSwlTab::OcOutputsSwlTab(RadioModel* model, OcMatrix* ocMatrix,
     // From mi0bot grpExtCtrlSWL contents — split conceptually into RX
     // (chkOCrcv*) + TX (chkOCxmit*) for clarity vs the upstream single
     // group with both prefixes interleaved (setup.designer.cs:20968+).
-    auto* matrixRow = new QHBoxLayout();
+    // D25: the matrices stack, RX first, when they do not fit side by side.
+    auto* matrixRow = new SetupFit::FitRow();
+    matrixRow->setObjectName(QStringLiteral("swlMatrixRow"));
     matrixRow->setSpacing(10);
 
     auto* rxGroup = new QGroupBox(tr("SWL — RX OC matrix"), this);
@@ -112,7 +119,9 @@ OcOutputsSwlTab::OcOutputsSwlTab(RadioModel* model, OcMatrix* ocMatrix,
     matrixRow->addWidget(txGroup, /*stretch=*/1);
     m_txGroup = txGroup;
 
-    outer->addLayout(matrixRow, /*stretch=*/1);
+    // D25: the matrices keep their own height; what is left of the tab
+    // goes below the reset button (stretch added after it).
+    outer->addLayout(matrixRow);
 
     // Bottom row: SWL-only reset button.
     // From mi0bot setup.designer.cs:btnCtrlSWLReset [v2.10.3.13-beta2]
@@ -126,6 +135,7 @@ OcOutputsSwlTab::OcOutputsSwlTab(RadioModel* model, OcMatrix* ocMatrix,
             this, &OcOutputsSwlTab::onResetClicked);
     btnRow->addWidget(m_resetButton);
     outer->addLayout(btnRow);
+    outer->addStretch(1);
 
     // Wire OcMatrix change notifications.  OcMatrix::changed() fires
     // whenever any band/pin entry mutates (HF or SWL or pin-action),

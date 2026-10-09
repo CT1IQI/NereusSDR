@@ -3490,6 +3490,16 @@ target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TEST
 nereus_add_test(tst_setup_pages_start_at_top)
 target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
 
+# D25: every Setup page fits the Settings window. Walks every leaf and tab
+# (Hardware Config posed as a Saturn and as a Hermes Lite 2) at 900 x 650
+# and 820 x 600, in today's look and the workspace look: no page or tab
+# scrolls sideways, no tab strip scrolls away with its page, and no label,
+# check box, radio button, push button or group title is cut short or
+# clipped by a parent. At 1440 x 900 the rows that stacked at 900 x 650 are
+# side by side again.
+nereus_add_test(tst_setup_pages_fit_window)
+target_compile_definitions(tst_setup_pages_fit_window PRIVATE NEREUS_BUILD_TESTS)
+
 # R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
 # Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old
 # backend strip; each control once; saved keys unchanged; the PC control is

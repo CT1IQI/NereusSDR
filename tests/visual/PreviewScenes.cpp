@@ -128,6 +128,12 @@
 //   2026-10-09 - dialog-setup-hardware-config poses its board (a Saturn)
 //                 as the tab scenes do. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - D25: Setup size scenes, dialog-setup-<page>[--<tab>]--min at
+//                 the dialog's minimum 820 x 600 for the pages that rearrange
+//                 to fit, and --wide at 1440 x 900 for Antenna / ALEX and OC
+//                 Outputs; a --scrolled scene steps a table frame that scrolls
+//                 sideways inside a page that scrolls down. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -7535,18 +7541,71 @@ QVector<SetupScrollSpec> setupScrollSpecs()
         {QStringLiteral("4o3a"), {QStringLiteral("PowerGenius XL")}},
         {QStringLiteral("4o3a"), {QStringLiteral("Tuner Genius XL")}},
         {QStringLiteral("remote-access"), {}},
-        {hardware, {}},
-        {hardware, {alex}},
         {hardware, {alex, QStringLiteral("Alex-1 Filters")}},
         {hardware, {alex, QStringLiteral("Alex-2 Filters")}},
         {hardware, {oc}},
-        {hardware, {oc, swl}},
         {hardware, {QStringLiteral("Calibration")}},
         {hardware, {hl2Oc}, hl2},
-        {hardware, {hl2Oc, swl}, hl2},
-        {hardware, {QStringLiteral("HL2 Options")}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
         {QStringLiteral("nr-anf"), {QStringLiteral("NNR")}},
+    };
+}
+
+// The pages and tabs that rearrange to fit the Settings window (JJ's
+// decision D25), shown at another dialog size: `--min` at the dialog's
+// minimum (SetupDialog.cpp:344-345, 820 x 600), where their groups stack,
+// and `--wide` at 1440 x 900, where Antenna / ALEX's and OC Outputs' groups
+// go back side by side.
+struct SetupSizeSpec {
+    QString page;   // the page scene's stem
+    QStringList path;
+    HPSDRHW board{HPSDRHW::Saturn};
+    QString suffix; // "--min" or "--wide"
+    QSize size;
+};
+
+constexpr QSize kSetupMinimumSize{820, 600};
+constexpr QSize kSetupWideSize{1440, 900};
+
+QVector<SetupSizeSpec> setupSizeSpecs()
+{
+    const QString hardware = QStringLiteral("hardware-config");
+    const QString alex = QStringLiteral("Antenna / ALEX");
+    const QString alex1 = QStringLiteral("Alex-1 Filters");
+    const QString alex2 = QStringLiteral("Alex-2 Filters");
+    const QString oc = QStringLiteral("OC Outputs");
+    const QString hl2Oc = QStringLiteral("Hermes Lite Control");
+    const QString swl = QStringLiteral("SWL");
+    const HPSDRHW saturn = HPSDRHW::Saturn;
+    const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    const QString min = QStringLiteral("--min");
+    const QString wide = QStringLiteral("--wide");
+    return {
+        {hardware, {}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex, alex1}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex, alex2}, saturn, min, kSetupMinimumSize},
+        {hardware, {oc}, saturn, min, kSetupMinimumSize},
+        {hardware, {oc, swl}, saturn, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("Calibration")}, saturn, min, kSetupMinimumSize},
+        {hardware, {hl2Oc}, hl2, min, kSetupMinimumSize},
+        {hardware, {hl2Oc, swl}, hl2, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("HL2 Options")}, hl2, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("HL2 I/O")}, hl2, min, kSetupMinimumSize},
+        {QStringLiteral("pa-gain"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("dexp-vox"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("export-import"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("startup-preferences"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("radio-status"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("nr-anf"), {QStringLiteral("DFNR")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("nr-anf"), {QStringLiteral("MNR")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("4o3a"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex}, saturn, wide, kSetupWideSize},
+        {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
+        {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
+        {hardware, {oc}, saturn, wide, kSetupWideSize},
+        {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
     };
 }
 
@@ -7778,14 +7837,55 @@ SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page
 // named <name>-1 ... <name>-N, each with a band naming its step.
 void captureSetupScrollSteps(SceneContext& ctx, SetupDialog* d, const QString& name, const QString& where)
 {
-    const QVector<QScrollArea*> areas = overflowingAreas(d);
+    // A table frame that scrolls sideways (SetupFit::SidewaysFrame) is
+    // stepped across with the page, not counted as the page's own area.
+    const auto isSidewaysFrame = [](const QScrollArea* a) {
+        return a->property("nereusSetupScrollsSideways").toBool();
+    };
+    QVector<QScrollArea*> areas = overflowingAreas(d);
+    QScrollArea* sidewaysFrame = nullptr;
+    if (areas.size() > 1) {
+        QVector<QScrollArea*> pages;
+        for (QScrollArea* a : areas) {
+            if (isSidewaysFrame(a)) {
+                sidewaysFrame = a;
+            } else {
+                pages.append(a);
+            }
+        }
+        areas = pages;
+    }
     if (areas.size() != 1) {
-        ctx.failure = QStringLiteral("%1: %2 overflowing scroll areas, expected 1").arg(where).arg(areas.size());
+        QStringList names;
+        for (const QScrollArea* a : areas) {
+            names << QStringLiteral("%1 \"%2\" in %3")
+                         .arg(QString::fromLatin1(a->metaObject()->className()), a->objectName(),
+                              QString::fromLatin1(a->parentWidget() != nullptr
+                                                      ? a->parentWidget()->metaObject()->className()
+                                                      : "none"));
+        }
+        ctx.failure = QStringLiteral("%1: %2 overflowing scroll areas, expected 1 (%3)")
+                          .arg(where).arg(areas.size()).arg(names.join(QStringLiteral(", ")));
         return;
     }
     QScrollArea* area = areas.first();
     QScrollBar* vertical = area->verticalScrollBar();
     QScrollBar* horizontal = area->horizontalScrollBar();
+    // A table too wide for the window scrolls sideways inside its own frame
+    // (SetupFit::SidewaysFrame), inside the page or beside its scroll
+    // area, while the page scrolls down: step the frame across as the
+    // page would be.
+    if (!barOverflows(horizontal)) {
+        for (QScrollArea* frame : d->findChildren<QScrollArea*>()) {
+            if (frame != area && frame->isVisible() && area->isAncestorOf(frame) && isSidewaysFrame(frame)
+                && barOverflows(frame->horizontalScrollBar())) {
+                sidewaysFrame = frame;
+            }
+        }
+        if (sidewaysFrame != nullptr) {
+            horizontal = sidewaysFrame->horizontalScrollBar();
+        }
+    }
     // Every position the page can show, row by row: the top row across,
     // then each step down across. A page that scrolls one way only steps
     // that way; (0, 0) is the page scene itself.
@@ -7931,6 +8031,32 @@ QVector<Scene> setupPageScenes(MainWindow* window)
             }
             ctx.notes.append(QStringLiteral("%1 (registry index %2)").arg(title).arg(leaf.index));
             captureSetupScrollSteps(ctx, d, name, title);
+        }});
+    }
+    for (const SetupSizeSpec& spec : setupSizeSpecs()) {
+        if (!leafByStem.contains(spec.page)) {
+            continue;
+        }
+        const SetupLeaf leaf = leafByStem.value(spec.page);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path) + spec.suffix;
+        const QString title = where(leaf, spec.path);
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            if (d == nullptr) {
+                return;
+            }
+            d->resize(spec.size);
+            pump(kFinalSettleMs);
+            clearScrollBarHover(d);
+            if (d->size() != spec.size) {
+                ctx.failure = QStringLiteral("%1: the dialog is %2 x %3, not %4 x %5")
+                                  .arg(title).arg(d->width()).arg(d->height())
+                                  .arg(spec.size.width()).arg(spec.size.height());
+                return;
+            }
+            ctx.notes.append(QStringLiteral("%1 (registry index %2) at %3 x %4")
+                                 .arg(title).arg(leaf.index).arg(spec.size.width()).arg(spec.size.height()));
+            captureDialog(ctx, d, name);
         }});
     }
     dialog->close();

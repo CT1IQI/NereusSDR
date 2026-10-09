@@ -27,6 +27,10 @@
 //   2026-10-09 - The status bar's frame rule names the bar, so its labels
 //                are not boxed. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-09 - D25: the filter columns stack when narrow
+//                (SetupFit::FitRow) and keep their own height, the rest of
+//                the tab going below them. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -85,6 +89,7 @@
 #include "models/SliceModel.h"
 #include "models/RadioModel.h"
 #include "HardwareTransmitGate.h"
+#include "gui/setup/SetupFit.h"
 
 #include <initializer_list>
 
@@ -234,7 +239,9 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     contentLayout->addWidget(statusFrame);
 
     // ── Two-column body ───────────────────────────────────────────────────────
-    auto* colLayout = new QHBoxLayout();
+    // D25: the two columns stack, HPF first, when they do not fit.
+    auto* colLayout = new SetupFit::FitRow();
+    colLayout->setObjectName(QStringLiteral("alex2ColumnRow"));
     colLayout->setContentsMargins(0, 0, 0, 0);
     colLayout->setSpacing(12);
 
@@ -435,7 +442,9 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     colLayout->addWidget(lpfGroup, 1);
 
     contentLayout->addLayout(colLayout);
-    contentLayout->addStretch();
+    // D25: the groups keep their own height; what is left of the tab goes
+    // below them (a stretch factor of 0 shared it with the groups).
+    contentLayout->addStretch(1);
 
     // ── Live LED driver (Phase 3P-H Task 5a) ─────────────────────────────────
     // Thetis's setAlex2HPF / setAlex2LPF dispatch on the active RX VFO

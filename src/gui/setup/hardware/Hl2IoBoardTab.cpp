@@ -53,6 +53,13 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the status, configuration and I2C rows stack when
+//               narrow (SetupFit::FitRow), and the twelve-step state-machine
+//               strip, too wide for the window, scrolls sideways inside its
+//               own frame (SetupFit::SidewaysFrame); the register table is
+//               as wide as its columns, so its decoded values are never cut
+//               short. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -197,6 +204,7 @@ mw0lge@grange-lane.co.uk
 
 #include "Hl2IoBoardTab.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/HermesLiteBandwidthMonitor.h"
@@ -219,11 +227,13 @@ mw0lge@grange-lane.co.uk
 #include <QListWidget>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace NereusSDR {
@@ -242,6 +252,23 @@ const Hl2IoBoardTab::RegRow Hl2IoBoardTab::kRegRows[Hl2IoBoardTab::kRegRowCount]
     { IoBoardHl2::Register::REG_ANTENNA_TUNER, "REG_ANTENNA_TUNER",0x1D },
     { IoBoardHl2::Register::REG_FAULT,         "REG_FAULT",        0x1D },
 };
+
+// D25: the register table is never narrower than its columns' contents, so
+// the row it sits in stacks instead of cutting the decoded values short.
+// The decoded text changes with the values, so this runs on every refresh.
+static void keepColumnsWhole(QTableWidget* table)
+{
+    const int grid = table->showGrid() ? 1 : 0;
+    int width = 2 * table->frameWidth() + table->verticalScrollBar()->sizeHint().width();
+    for (int c = 0; c < table->columnCount(); ++c) {
+        int column = table->horizontalHeader()->sectionSizeHint(c);
+        for (int r = 0; r < table->rowCount(); ++r) {
+            column = std::max(column, table->sizeHintForIndex(table->model()->index(r, c)).width() + grid);
+        }
+        width += column;
+    }
+    table->setMinimumWidth(width);
+}
 
 // ── LED helper ────────────────────────────────────────────────────────────────
 static QFrame* makeLed(QWidget* parent)
@@ -372,9 +399,15 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
     m_statusFrame->setStyleSheet(QStringLiteral(
         "QFrame { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; }"));
 
-    auto* row = new QHBoxLayout(m_statusFrame);
-    row->setContentsMargins(8, 4, 8, 4);
+    // D25: the bar holds three parts (the board, the live OC byte, the
+    // probe) that stack in that order when the tab is too narrow for them.
+    auto* bar = new SetupFit::FitRow(m_statusFrame);
+    bar->setObjectName(QStringLiteral("hl2IoStatusRow"));
+    bar->setContentsMargins(8, 4, 8, 4);
+    bar->setSpacing(8);
+    auto* row = new QHBoxLayout;
     row->setSpacing(8);
+    bar->addLayout(row);
 
     m_statusLed = makeLed(m_statusFrame);
     row->addWidget(m_statusLed);
@@ -393,7 +426,10 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
     row->addWidget(m_statusLabel);
 
     // Live OC byte indicator — band, hex, MOX, and 7 pin LEDs.
-    row->addSpacing(16);
+    row = new QHBoxLayout;
+    row->setSpacing(8);
+    row->setContentsMargins(16, 0, 0, 0);
+    bar->addLayout(row, 1);
     row->addWidget(new QLabel(tr("OC bank 0:"), m_statusFrame));
     m_ocBandLabel = new QLabel(QStringLiteral("—"), m_statusFrame);
     m_ocBandLabel->setStyleSheet(QStringLiteral("color: #aaa; font-size: 10px;"));
@@ -419,6 +455,10 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
 
     row->addStretch();
 
+    row = new QHBoxLayout;
+    row->setSpacing(8);
+    bar->addLayout(row);
+
     // I2C address (static — 0x1D per mi0bot IoBoardHl2.cs:139 [@c26a8a4])
     m_i2cAddrLabel = new QLabel(
         QStringLiteral("I2C addr: 0x%1")
@@ -438,7 +478,10 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
 
 void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
 {
-    auto* row = new QHBoxLayout;
+    // D25: Configuration stacks above the register table when they do not
+    // fit side by side.
+    auto* row = new SetupFit::FitRow;
+    row->setObjectName(QStringLiteral("hl2IoConfigRow"));
     row->setSpacing(8);
 
     // ── Left: Configuration ───────────────────────────────────────────────────
@@ -554,12 +597,19 @@ void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
 {
     // 12-step UpdateIOBoard state machine per mi0bot console.cs:25844-25928 [@c26a8a4]
     auto* smGroup = new QGroupBox(tr("State machine  (UpdateIOBoard, 12 steps)"), this);
-    auto* smLayout = new QHBoxLayout(smGroup);
+    // D25: the twelve steps stay in one line, so where the window is too
+    // narrow for them the strip scrolls sideways inside its own frame.
+    auto* smGroupLayout = new QVBoxLayout(smGroup);
+    auto* smFrame = new SetupFit::SidewaysFrame(smGroup);
+    smFrame->setObjectName(QStringLiteral("hl2IoStateMachineFrame"));
+    auto* smCells = new QWidget(smFrame);
+    auto* smLayout = new QHBoxLayout(smCells);
+    smLayout->setContentsMargins(0, 0, 0, 0);
     smLayout->setSpacing(4);
 
     for (int i = 0; i < kSteps; ++i) {
         // Each cell: vertical layout — numbered circle + descriptor
-        auto* cell = new QFrame(smGroup);
+        auto* cell = new QFrame(smCells);
         cell->setFrameShape(QFrame::StyledPanel);
         cell->setStyleSheet(QStringLiteral(
             "QFrame { border: 1px solid #444; border-radius: 4px; "
@@ -592,6 +642,9 @@ void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
         smLayout->addWidget(cell, 1);
     }
 
+    smFrame->setWidget(smCells);
+    smCells->setAutoFillBackground(false);
+    smGroupLayout->addWidget(smFrame);
     outer->addWidget(smGroup);
 }
 
@@ -599,7 +652,10 @@ void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
 
 void Hl2IoBoardTab::buildI2cAndBandwidthRow(QVBoxLayout* outer)
 {
-    auto* row = new QHBoxLayout;
+    // D25: the I2C log stacks above the bandwidth monitor when they do not
+    // fit side by side.
+    auto* row = new SetupFit::FitRow;
+    row->setObjectName(QStringLiteral("hl2IoI2cRow"));
     row->setSpacing(8);
 
     // ── Left: I2C transaction log ─────────────────────────────────────────────
@@ -804,6 +860,7 @@ void Hl2IoBoardTab::refreshAllRegisters()
             item->setText(decodeRegister(kRegRows[i].reg, val));
         }
     }
+    keepColumnsWhole(m_registerTable);
 
     // Refresh quick-view labels
     m_opModeValue->setText(

@@ -39,6 +39,13 @@
 //                box as wide as its indicator, so every header sits over its
 //                column; the N2ADR caption shows on an HL2 only. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the matrix and bottom rows stack when narrow
+//                (SetupFit::FitRow), each matrix shows whole inside the
+//                scrolling tab, the pin-action headers may break after a plus
+//                sign, the N2ADR caption wraps only when the row is narrow,
+//                and leftover height goes to the bottom of the tab instead of
+//                a blank band above the TX Pin Action header row. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -83,6 +90,7 @@
 #include "IndicatorColumn.h"
 #include "HardwareTransmitGate.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/AppSettings.h"
 #include "core/OcMatrix.h"
@@ -173,6 +181,10 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         // [v2.10.3.13-beta2]); Thetis keeps it hidden (setup.designer.cs:16828
         // [v2.10.3.15]).
         n2adrHint->setObjectName(QStringLiteral("ocN2adrHint"));
+        // D25: the pointer wraps rather than widening the tab, and takes
+        // the row's spare width (below) so it wraps only when the row is
+        // narrow.
+        n2adrHint->setWordWrap(true);
         n2adrHint->hide();
         m_n2adrHint = n2adrHint;
         n2adrHint->setStyleSheet(QStringLiteral(
@@ -180,7 +192,7 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         n2adrHint->setToolTip(tr(
             "On Hermes Lite 2, N2ADR filter board control is configured "
             "on the HL2 I/O Board tab."));
-        row->addWidget(n2adrHint);
+        row->addWidget(n2adrHint, 1);
 
         m_allowHotSwitching = new QCheckBox(tr("Allow hot switching"), this);
         m_allowHotSwitching->setToolTip(tr("Allow OC output lines to switch while transmitting"));
@@ -207,7 +219,10 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
     // ── Row 2: RX/TX matrix side by side ────────────────────────────────────
     // Source: Thetis setup.designer.cs chkPenOCrcv* + chkPenOCxmit* [@501e3f5]
     {
-        auto* matrixRow = new QHBoxLayout();
+        // D25: the two matrices stack, RX first, when the tab is narrower
+        // than the two side by side.
+        auto* matrixRow = new SetupFit::FitRow();
+        matrixRow->setObjectName(QStringLiteral("ocMatrixRow"));
 
         auto* rxGroup = new QGroupBox(tr("RX OC Pins per Band"), this);
         rxGroup->setStyleSheet(QStringLiteral(
@@ -229,7 +244,9 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
 
     // ── Row 3: Pin actions + USB BCD + Ext PA + Live OC state ───────────────
     {
-        auto* bottomRow = new QHBoxLayout();
+        // D25: the groups stack in reading order when they do not fit.
+        auto* bottomRow = new SetupFit::FitRow();
+        bottomRow->setObjectName(QStringLiteral("ocBottomRow"));
 
         // ── TX Pin Action mapping ────────────────────────────────────────────
         // Source: Thetis setup.designer.cs grpTransmitPinActionHF [@501e3f5]
@@ -246,7 +263,12 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
                 auto* hdrRow = new QHBoxLayout();
                 hdrRow->addWidget(new QLabel(tr("Pin"), actionGroup), 1);
                 for (int a = 0; a < kActionCount; ++a) {
-                    auto* lbl = new QLabel(QString::fromUtf8(kActionLabels[a]), actionGroup);
+                    // D25: the header may break after a "+" (a zero-width
+                    // space), so the group fits a narrow window.
+                    auto* lbl = new QLabel(QString::fromUtf8(kActionLabels[a])
+                                               .replace(QLatin1Char('+'),
+                                                        QStringLiteral("+\u200B")),
+                                           actionGroup);
                     lbl->setAlignment(Qt::AlignCenter);
                     lbl->setWordWrap(true);
                     hdrRow->addWidget(lbl, 2);
@@ -426,6 +448,10 @@ OcOutputsHfTab::OcOutputsHfTab(RadioModel* model, OcMatrix* ocMatrix,
         outerLayout->addLayout(bottomRow);
     }
 
+    // D25: the groups keep their own height; what is left of the tab goes
+    // below them (it was spread into the TX Pin Action header row).
+    outerLayout->addStretch(1);
+
     // ── Wire master toggles → AppSettings ────────────────────────────────────
     // Issue #174: removed n2adrFilter writer — see Row 1 cleanup notes.
     // R-R3-21: the checkbox mirrors PennyLaneController, which saves under
@@ -565,6 +591,8 @@ void OcOutputsHfTab::buildMatrixGrid(QGroupBox* group, bool tx)
 
     grid->setRowStretch(gridRow, 1);
     scroll->setWidget(inner);
+    // D25: the tab scrolls, so the matrix shows whole inside its group.
+    SetupFit::showWhole(scroll);
 
     auto* groupLayout = new QVBoxLayout(group);
     groupLayout->addWidget(scroll);

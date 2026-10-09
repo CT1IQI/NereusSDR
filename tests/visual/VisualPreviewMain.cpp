@@ -61,6 +61,10 @@
 //                 scenes (look-menu-*, look-tooltip-*, ...), preview-only
 //                 ones excepted. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - D25: the Export / Import size variant (--min), where the
+//                 settings path wraps onto a line of its own, runs on the
+//                 fixed-name profile too. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -224,8 +228,8 @@ void applyAppTheme(QApplication& app)
 
 // ---- settings profile ------------------------------------------------------
 
-// The scene that shows the settings file path, and the fixed profile it runs
-// on (see main()).
+// The scenes that show the settings file path (the page scene and its size
+// variants, named from it), and the fixed profile they run on (see main()).
 constexpr auto kFixedProfileScene = "dialog-setup-export-import";
 constexpr auto kFixedProfileName = "visual-preview-fixed";
 // Longer than one capture run of the scene; capture.py stops a run at 180 s.
@@ -641,7 +645,7 @@ int main(int argc, char** argv)
     // not change with the process id. One process at a time holds that name:
     // the lock is taken before the profile is emptied and released after it
     // is removed (declared before profileCleanup, so destroyed after it).
-    const bool fixedProfile = args.scene == QLatin1String(kFixedProfileScene);
+    const bool fixedProfile = args.scene.startsWith(QLatin1String(kFixedProfileScene));
     const QString profileName = fixedProfile
         ? QString::fromLatin1(kFixedProfileName)
         : QStringLiteral("visual-preview-%1").arg(QCoreApplication::applicationPid());

@@ -194,6 +194,12 @@ step, `<scene>-1` to `<scene>-N`, set through the page's own scroll area
 one viewport at a time less a 40 px overlap until the bottom (and the right
 end, row by row, when the page scrolls both ways). A band under each image
 names the page and the step; the sidecar's `scroll_step` has the offsets.
+A table too wide for the window that scrolls sideways inside its own frame
+(`SetupFit::SidewaysFrame`) is stepped across through that frame.
+The pages that rearrange to fit the Settings window also have
+`dialog-setup-<page>[--<tab>]--min` scenes at the dialog's minimum
+(820 x 600), and Antenna / ALEX and OC Outputs have `--wide` scenes at
+1440 x 900, from `setupSizeSpecs()`.
 All of them have `look-` pairs.
 
 ### Workspace look scenes

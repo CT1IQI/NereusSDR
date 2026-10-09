@@ -208,8 +208,13 @@
 //                Processor's AM-SQ / DEXP row shows DEXP's state (it read
 //                "off" whatever DEXP was). J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-09 - D25: the DEXP/VOX groups stack in reading order when the
+//                window is too narrow for the two columns
+//                (SetupFit::FitGrid). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 #include "TransmitSetupPages.h"
+#include "gui/setup/SetupFit.h"
 #include "gui/StyleConstants.h"
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
@@ -1720,7 +1725,11 @@ DexpVoxPage::DexpVoxPage(RadioModel* model, QWidget* parent)
     // Top-justified by inserting the QGridLayout BEFORE the auto-trailing
     // stretch added in SetupPage::init() (SetupPage.cpp:90).  See the
     // insertLayout block at the bottom of the buildUI for the mechanism.
-    auto* row = new QGridLayout;
+    //
+    // D25: and stacked, big box first, when the window is too narrow for the
+    // two columns (SetupFit::FitGrid).
+    auto* row = new SetupFit::FitGrid;
+    row->setObjectName(QStringLiteral("dexpVoxGrid"));
     row->setSpacing(12);
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1888,7 +1897,7 @@ DexpVoxPage::DexpVoxPage(RadioModel* model, QWidget* parent)
     dexpVoxLay->addStretch();
 
     // VOX/DEXP big box — column 0, spans both rows (row=0, col=0, rowSpan=2, colSpan=1).
-    row->addWidget(dexpVoxGrp, 0, 0, 2, 1);
+    row->addFitWidget(dexpVoxGrp, 0, 0, 2, 1, 0);
 
     // ══════════════════════════════════════════════════════════════════════════
     // ── Group 2: Audio LookAhead ─────────────────────────────────────────────
@@ -1932,7 +1941,7 @@ DexpVoxPage::DexpVoxPage(RadioModel* model, QWidget* parent)
 
     // Audio LookAhead small box — column 1, row 0 (top-right cell).
     // AlignTop keeps the box from stretching vertically inside its grid cell.
-    row->addWidget(lookAheadGrp, 0, 1, Qt::AlignTop);
+    row->addFitWidget(lookAheadGrp, 0, 1, 1, 1, 1, Qt::AlignTop);
 
     // ══════════════════════════════════════════════════════════════════════════
     // ── Group 3: Side-Channel Trigger Filter ─────────────────────────────────
@@ -1990,7 +1999,7 @@ DexpVoxPage::DexpVoxPage(RadioModel* model, QWidget* parent)
 
     // Side-Channel Trigger Filter small box — column 1, row 1 (bottom-right cell).
     // AlignTop keeps the box from stretching vertically inside its grid cell.
-    row->addWidget(scfGrp, 1, 1, Qt::AlignTop);
+    row->addFitWidget(scfGrp, 1, 1, 1, 1, 2, Qt::AlignTop);
 
     // Top-justify the grid: insert the QGridLayout BEFORE the auto-trailing
     // stretch added by SetupPage::init() (SetupPage.cpp:90 [m_contentLayout
