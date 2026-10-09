@@ -24,6 +24,9 @@
 //   2026-09-30: Fix wave GUI-M4: plain wording for the filters tooltip.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-09 - The status bar's frame rule names the bar, so its labels
+//                are not boxed. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -187,8 +190,11 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     // TODO: add hasAlex2 to BoardCapabilities; for now gate on board model.
     auto* statusFrame = new QFrame(content);
     statusFrame->setFrameShape(QFrame::StyledPanel);
+    // The rule names the bar: a bare "QFrame" selector also matched the
+    // labels inside it (a QLabel is a QFrame) and boxed each one.
+    statusFrame->setObjectName(QStringLiteral("alex2StatusFrame"));
     statusFrame->setStyleSheet(
-        QStringLiteral("QFrame { background: palette(window); border: 1px solid palette(mid); "
+        QStringLiteral("QFrame#alex2StatusFrame { background: palette(window); border: 1px solid palette(mid); "
                        "border-radius: 3px; }"));
 
     auto* statusLayout = new QHBoxLayout(statusFrame);

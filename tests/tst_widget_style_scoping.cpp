@@ -13,6 +13,9 @@
 //   2026-10-09 - The pan toolbar's ANT flyout rows and ATT check box are
 //                not boxed by the flyout's own frame rule. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The Alex-2 Filters status bar's labels are not boxed by
+//                the bar's own frame rule. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 #include <QtTest/QtTest>
 
 #include <QCheckBox>
@@ -31,6 +34,8 @@
 #include "gui/VaxFirstRunDialog.h"
 #include "gui/widgets/AntennaSwitchToast.h"
 #include "gui/widgets/StatusToast.h"
+#include "gui/setup/hardware/AntennaAlexAlex2Tab.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -164,6 +169,31 @@ private slots:
                                                         .arg(label->text(), QColor(colour).name(), edge)));
             }
         }
+    }
+
+    // Alex-2 Filters' status bar: "QFrame { border: ... }" on the bar also
+    // matched its labels (a QLabel is a QFrame), so "Alex-2 board: Not
+    // detected" and the "Currently selected" summary each drew a box.
+    void alex2StatusLabelsAreNotBoxed()
+    {
+        RadioModel model;
+        AntennaAlexAlex2Tab tab(&model);
+        tab.resize(1200, 700);
+        tab.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&tab));
+        int checked = 0;
+        for (QLabel* label : tab.findChildren<QLabel*>()) {
+            if (!label->text().startsWith(QStringLiteral("Currently selected"))
+                && !label->text().startsWith(QStringLiteral("Alex-2 board"))) {
+                continue;
+            }
+            ++checked;
+            const QRgb mid = label->palette().color(QPalette::Mid).rgba();
+            const QString edge = borderEdgeIn(label, mid);
+            QVERIFY2(edge.isEmpty(), qPrintable(QStringLiteral("label \"%1\" draws a %2 border on its %3 edge")
+                                                    .arg(label->text(), QColor(mid).name(), edge)));
+        }
+        QCOMPARE(checked, 2);
     }
 
     void statusToastDrawsItsSeverityBar_data()
