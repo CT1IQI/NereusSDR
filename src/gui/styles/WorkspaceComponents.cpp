@@ -139,15 +139,6 @@ constexpr auto kRadioRadius = "7px";
 constexpr auto kIndicatorCheckedTopEdge = "#4b88c1";
 // NereusSDR: the rim width a sheet's indicator gets when it has none.
 constexpr int kIndicatorRimPx = 1;
-// NereusSDR: an indicator rule makes Qt's stylesheet style size a check
-// box or radio as indicator, spacing and text only, without the platform
-// style's label margins (QCommonStyle CT_CheckBox: 4 px wide, 4 px high,
-// less the 2 px the stylesheet style's text rect keeps). The app sheet's
-// indicator rule puts them back as padding, so a box with no sheet of its
-// own keeps today's size. A sheet that styled the indicator itself already
-// sized its boxes without them, so its boxes get the padding back at zero.
-constexpr auto kPlatformLabelMargins = "1px 4px 1px 0px";
-constexpr auto kTodaysRowMarker = "/* workspace: today's indicator row */";
 
 // Longpath's raisedFill: the base lifted at the top, the base at 55 %,
 // dropped by three quarters of the lift at the bottom.
@@ -1399,21 +1390,21 @@ int radiusFor(int heightPx)
         std::lround(static_cast<double>(heightPx) * kLongpathRadiusPx / kLongpathFieldHeightPx));
 }
 
-QString indicatorRules()
+QString indicatorRulesFor(bool radio)
 {
     // [original comment from StyleConstants.h:1097-1100 is at indicatorBody() above]
     // From Longpath src/gui/StyleConstants.h:1138-1145, :1151-1158 [@551576e3]
-    QString out;
-    for (const auto& [cls, radius] : { std::pair{ "QCheckBox", kBoxRadius },
-                                       std::pair{ "QRadioButton", kRadioRadius } }) {
-        const QString s = QStringLiteral("%1::indicator").arg(QLatin1String(cls));
-        out += QStringLiteral("%1 { background: %2; border: 1px solid %3; border-radius: %4; }")
-                   .arg(s, indicatorOffFill(), hex(kTextInactive), hex(radius));
-        out += indicatorStateRules(s);
-        out += QLatin1Char('\n');
-    }
-    out += QStringLiteral("QCheckBox, QRadioButton { padding: %1; }\n").arg(QLatin1String(kPlatformLabelMargins));
+    const QString s = radio ? QStringLiteral("QRadioButton::indicator") : QStringLiteral("QCheckBox::indicator");
+    QString out = QStringLiteral("%1 { background: %2; border: 1px solid %3; border-radius: %4; }")
+                      .arg(s, indicatorOffFill(), hex(kTextInactive), hex(radio ? kRadioRadius : kBoxRadius));
+    out += indicatorStateRules(s);
+    out += QLatin1Char('\n');
     return out;
+}
+
+QString indicatorRules()
+{
+    return indicatorRulesFor(false) + indicatorRulesFor(true);
 }
 
 QString componentize(const QString& qss, const QWidget* owner)
@@ -1438,7 +1429,6 @@ QString componentize(const QString& qss, const QWidget* owner)
     bool handleHover = false;
     bool handlePressed = false;
     QStringList indicatorSelectors;
-    QStringList indicatorClasses;
     QStringList ownerButtonSelectors;
     const qsizetype n = qss.size();
     qsizetype i = 0;
@@ -1497,14 +1487,6 @@ QString componentize(const QString& qss, const QWidget* owner)
                     handlePressed = true;
                 }
             }
-            if (st.kind == Kind::Indicator) {
-                const QString type = parseCompound(lastCompound(s)).type;
-                if (type == QLatin1String("QCheckBox") || type == QLatin1String("QRadioButton")) {
-                    indicatorClasses << type;
-                } else {
-                    indicatorClasses << QStringLiteral("QCheckBox") << QStringLiteral("QRadioButton");
-                }
-            }
             if (st.kind == Kind::Indicator && st.state == State::Normal
                 && !lastCompound(s).contains(QLatin1Char(':') + QLatin1String("unchecked"))) {
                 indicatorSelectors << s;
@@ -1524,17 +1506,6 @@ QString componentize(const QString& qss, const QWidget* owner)
         selStart = i;
     }
     out += qss.mid(std::min(selStart, n));
-
-    // Today's row for the boxes this sheet styles: no label margins, ahead
-    // of the sheet's own rules so a padding of its own still wins. The
-    // sheet is rewritten with the row in it, so a second pass is a no-op.
-    indicatorClasses.removeDuplicates();
-    if (!indicatorClasses.isEmpty() && !qss.contains(QLatin1String(kTodaysRowMarker))) {
-        return componentize(QStringLiteral("%1 %2 { padding: 0px; }\n")
-                                .arg(QLatin1String(kTodaysRowMarker), indicatorClasses.join(QStringLiteral(", ")))
-                                + qss,
-                            owner);
-    }
 
     const QString lower = qss.toLower();
 

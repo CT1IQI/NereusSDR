@@ -16,6 +16,7 @@
 
 #include <QtTest/QtTest>
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -399,31 +400,48 @@ private slots:
         QCOMPARE(WorkspacePreview::lookQss(radio), radio);
     }
 
-    // The app-level preview sheet: an unstyled check box gets the decided
-    // off state, and scroll bars stay 14 px with Longpath's rounded handle.
-    // Runs last: it sets the application's palette and stylesheet.
-    // A box or radio with no sheet of its own keeps the platform style's
-    // size under the app sheet's indicator rules (label margins kept).
-    void zAppSheetKeepsUnstyledBoxSizes()
+    // The live pass gives a box no sheet styles the indicator of JJ's
+    // indicator rules, and the box keeps today's size: with text, without
+    // text, and with a sheet of its own that leaves the indicator alone.
+    // A second pass changes nothing. Sets the application's palette and
+    // stylesheet, so it runs late.
+    void zLivePassKeepsUnstyledBoxSizes()
     {
         auto* app = qobject_cast<QApplication*>(QCoreApplication::instance());
         QVERIFY(app != nullptr);
         const QPalette savedPalette = app->palette();
         WorkspacePreview::setEnabledForTest(false);
-        QCheckBox box(QStringLiteral("Include logs"));
-        QRadioButton radio(QStringLiteral("Track band"));
-        const QSize boxToday = box.sizeHint();
-        const QSize radioToday = radio.sizeHint();
+        // Text, no text, and a sheet of its own that leaves the indicator.
+        const auto build = [](QWidget& host) {
+            auto* box = new QCheckBox(QStringLiteral("Include logs"), &host);
+            auto* radio = new QRadioButton(QStringLiteral("Track band"), &host);
+            auto* bare = new QCheckBox(&host);
+            auto* coloured = new QCheckBox(QStringLiteral("Show on RX"), &host);
+            coloured->setStyleSheet(QStringLiteral("QCheckBox { color: #c8d8e8; }"));
+            return QList<QAbstractButton*>{ box, radio, bare, coloured };
+        };
+        QWidget todayHost;
+        QList<QSize> today;
+        for (QAbstractButton* b : build(todayHost)) {
+            today << b->sizeHint();
+        }
         WorkspacePreview::setEnabledForTest(true);
         applyWorkspacePalette(*app);
-        QCheckBox box2(QStringLiteral("Include logs"));
-        QRadioButton radio2(QStringLiteral("Track band"));
-        const QSize boxAfter = box2.sizeHint();
-        const QSize radioAfter = radio2.sizeHint();
+        QWidget host;
+        const QList<QAbstractButton*> after = build(host);
+        WorkspacePreview::themeSubtree(&host);
+        QList<QSize> themed;
+        for (QAbstractButton* b : after) {
+            themed << b->sizeHint();
+        }
+        const QString sheet = after.first()->styleSheet();
+        WorkspacePreview::themeSubtree(&host);
+        const QString again = after.first()->styleSheet();
         app->setStyleSheet(QString());
         app->setPalette(savedPalette);
-        QCOMPARE(boxAfter, boxToday);
-        QCOMPARE(radioAfter, radioToday);
+        QVERIFY2(sheet.contains(QStringLiteral("QCheckBox::indicator")), qPrintable(sheet));
+        QCOMPARE(again, sheet);
+        QCOMPARE(themed, today);
     }
 
     // A widget sheet's indicator with a size and no border gets the rim
@@ -445,6 +463,10 @@ private slots:
         QCOMPARE(WorkspacePreview::lookQss(look, &after), look);
     }
 
+    // The preview: an unstyled check box gets the decided off state from
+    // the live pass, and scroll bars stay 14 px with Longpath's rounded
+    // handle from the app sheet. Runs last: it sets the application's
+    // palette and stylesheet.
     void zAppSheetIndicatorsAndScrollBars()
     {
         WorkspacePreview::setEnabledForTest(true);
@@ -457,6 +479,7 @@ private slots:
         auto* box = new ProbeCheckBox(QStringLiteral("Check box"), &host);
         box->setGeometry(0, 0, kIndicatorWidth, kIndicatorHeight);
         host.resize(kIndicatorWidth, kIndicatorHeight);
+        WorkspacePreview::themeSubtree(&host);
         const QRect ind = box->indicatorRect();
         const IndicatorPixels off = indicatorPixels(*box, ind);
         QVERIFY2(off.rim == QColor(QStringLiteral("#58585e")), qPrintable(off.rim.name()));

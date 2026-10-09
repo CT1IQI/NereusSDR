@@ -233,8 +233,9 @@ inline void applyWorkspacePalette(QApplication& app)
           r("selected-top"), r("selected-text"))
        // Grid lines and header sections (Longpath tableStyle colours).
        + Workspace::Components::tableRules()
-       // Check box and radio indicators, JJ's decided states.
-       + Workspace::Components::indicatorRules()
+       // Check box and radio indicators come per box from the live pass
+       // (WorkspacePreview), which keeps each box's size: an app-wide
+       // indicator rule would resize every box the platform style draws.
        // Longpath's scroll bar at the platform style's thickness (14 px
        // in Fusion), so no scroll area changes width.
        + Workspace::scrollBarStyle(app.style()->pixelMetric(QStyle::PM_ScrollBarExtent)));

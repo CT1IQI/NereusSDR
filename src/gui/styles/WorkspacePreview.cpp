@@ -26,6 +26,10 @@
 //                 tones and the container's background, the user's when
 //                 set. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-09 - JJ's indicator rules per check box and radio no sheet
+//                 styles the indicator of, with the padding that keeps
+//                 its size. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -40,10 +44,12 @@
 #include <QMetaObject>
 #include <QObject>
 #include <QSet>
+#include <QStyle>
 #include <QVariant>
 #include <QWidget>
 #include <QWindow>
 
+#include <algorithm>
 #include <optional>
 
 namespace NereusSDR::WorkspacePreview {
@@ -158,6 +164,74 @@ bool skippedInWindow(const QWidget* w)
     return false;
 }
 
+// The indicator block a check box or radio gets when no sheet above it
+// styles its indicator.
+constexpr auto kIndicatorBlockProperty = "_nereusWorkspaceIndicatorBlock";
+
+bool isToggle(const QWidget* w)
+{
+    return w->inherits("QCheckBox") || w->inherits("QRadioButton");
+}
+
+// True when the box's own sheet, an ancestor's or the application's
+// styles an indicator: that sheet sized the box already.
+bool indicatorStyled(const QWidget* w, const QString& own)
+{
+    const QLatin1String sub("::indicator");
+    if (own.contains(sub, Qt::CaseInsensitive)) {
+        return true;
+    }
+    for (const QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (p->styleSheet().contains(sub, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return qApp != nullptr && qApp->styleSheet().contains(sub, Qt::CaseInsensitive);
+}
+
+// JJ's indicator rules for a box no sheet styles the indicator of, with
+// what keeps its size: an indicator rule makes Qt's stylesheet style size
+// the box as text, spacing and indicator only, without the label margins
+// the platform style adds (and with the spacing even when there is no
+// text). The box is measured as it is (its sheet without the rules: today's
+// size) and with the rules, and the difference goes back as padding, or
+// as less spacing where the rules made it wider. `look` is the box's own
+// themed sheet; `current` is the sheet it has now.
+QString indicatorBlock(QWidget* w, const QString& look, const QString& current)
+{
+    const bool radio = w->inherits("QRadioButton");
+    const QString cls = radio ? QStringLiteral("QRadioButton") : QStringLiteral("QCheckBox");
+    const QString rules = Workspace::Components::indicatorRulesFor(radio);
+    const QSize today = w->sizeHint();
+    // Recorded first, so the live pass leaves the measuring sheet alone.
+    const auto measure = [w](const QString& sheet) {
+        w->setProperty(kThemedQssProperty, sheet);
+        w->setStyleSheet(sheet);
+        return w->sizeHint();
+    };
+    const QSize bare = measure(look + rules);
+    int dw = today.width() - bare.width();
+    const int dh = std::max(0, today.height() - bare.height());
+    QString decls;
+    if (dw < 0) {
+        const int spacing = w->style()->pixelMetric(
+            radio ? QStyle::PM_RadioButtonLabelSpacing : QStyle::PM_CheckBoxLabelSpacing, nullptr, w);
+        const int less = std::min(spacing, -dw);
+        decls += QStringLiteral(" spacing: %1px;").arg(spacing - less);
+        dw += less;
+    }
+    if (dw > 0 || dh > 0) {
+        decls += QStringLiteral(" padding: %1px %2px %3px 0px;").arg(dh / 2).arg(std::max(0, dw)).arg(dh - dh / 2);
+    }
+    // Put back what the box had; the caller sets the themed sheet.
+    w->setProperty(kThemedQssProperty, current);
+    w->setStyleSheet(current);
+    if (decls.isEmpty()) {
+        return rules;
+    }
+    return rules + QStringLiteral("%1 {%2 }\n").arg(cls, decls);
+}
+
 void themeOne(QWidget* w)
 {
     const QString current = w->styleSheet();
@@ -176,7 +250,15 @@ void themeOne(QWidget* w)
         original = stored.toString();
     }
 
-    if (original.isEmpty()) {
+    // A box no sheet styles the indicator of gets JJ's indicator rules
+    // with what keeps its size, measured once per original sheet.
+    const bool needsBlock = isToggle(w) && !indicatorStyled(w, original);
+    QString block;
+    if (needsBlock && !fresh) {
+        block = w->property(kIndicatorBlockProperty).toString();
+    }
+
+    if (original.isEmpty() && !needsBlock) {
         w->setProperty(kThemedQssProperty, original);
         return;
     }
@@ -195,7 +277,19 @@ void themeOne(QWidget* w)
             }
         }
     }
-    const QString look = Workspace::Components::componentize(r.qss, w);
+    QString look = Workspace::Components::componentize(r.qss, w);
+    if (needsBlock) {
+        // A brace-less sheet is a "*" rule; written as one, so rules can
+        // follow it.
+        if (!look.trimmed().isEmpty() && !look.contains(QLatin1Char('{'))) {
+            look = QStringLiteral("* {%1}\n").arg(look);
+        }
+        if (block.isEmpty()) {
+            block = indicatorBlock(w, look, current);
+            w->setProperty(kIndicatorBlockProperty, block);
+        }
+        look += block;
+    }
     // Recorded first: setStyleSheet() sends StyleChange, and the live
     // pass must see this sheet as already themed.
     w->setProperty(kThemedQssProperty, look);

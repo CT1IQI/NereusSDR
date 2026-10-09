@@ -103,10 +103,13 @@ QString fieldFill();
 // pixels: Longpath's 7 px on its 26 px field, scaled, round(h x 7 / 26).
 int radiusFor(int heightPx);
 
-// Application-wide rules for check box and radio indicators in the
-// workspace look: the off state, hover, checked, disabled off and
-// disabled on. Colours and the radius only, so an indicator keeps the
-// platform style's size.
+// Rules for check box and radio indicators in the workspace look: the
+// off state, hover, checked, disabled off and disabled on. Colours and
+// the radius only, so an indicator keeps the platform style's size. The
+// live pass gives them to each box no sheet styles the indicator of
+// (WorkspacePreview::themeSubtree), with padding that keeps its size.
+QString indicatorRulesFor(bool radio);
+// Both classes' rules.
 QString indicatorRules();
 
 // Application-wide rules for tables and header sections in the
