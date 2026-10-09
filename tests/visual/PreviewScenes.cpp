@@ -2464,13 +2464,24 @@ QJsonArray railRegions(SceneContext& ctx)
 
 // Paints a separate top-level (menu, tooltip, dialog) into a window image
 // where it sits on screen.
-void compositeOver(CapturedImage& img, QWidget* window, QWidget* top)
+// Where `top` sits in `window`. A top-level moved after it was shown with
+// WA_DontShowOnScreen keeps a stale mapToGlobal, so `byGeometry` reads the
+// window geometry instead (profile-rail-open's placed tooltip).
+QPoint topOffset(QWidget* window, QWidget* top, bool byGeometry)
+{
+    if (byGeometry) {
+        return top->geometry().topLeft() - window->geometry().topLeft();
+    }
+    return top->mapToGlobal(QPoint(0, 0)) - window->mapToGlobal(QPoint(0, 0));
+}
+
+void compositeOver(CapturedImage& img, QWidget* window, QWidget* top, bool byGeometry = false)
 {
     if (top == nullptr || !top->isVisible()) {
         return;
     }
     const QImage over = grabWidget(top);
-    const QPoint at = top->mapToGlobal(QPoint(0, 0)) - window->mapToGlobal(QPoint(0, 0));
+    const QPoint at = topOffset(window, top, byGeometry);
     QPainter painter(&img.image);
     painter.drawImage(QRect(at, top->size()), over);
 }
@@ -2534,7 +2545,8 @@ void annotateProfileImages(SceneContext& ctx, const QString& name, const SeededP
 // active, the rail at rest unless `pose` changes it.
 // Paints `tops` into the window image `name` and cuts its crops again
 // from the composited image.
-void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWidget*>& tops)
+void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWidget*>& tops,
+                        bool byGeometry = false)
 {
     for (int i = ctx.images.size() - 1; i >= 0; --i) {
         if (ctx.images[i].extra.value(QStringLiteral("source")).toString() == name) {
@@ -2547,10 +2559,9 @@ void compositeAndRecrop(SceneContext& ctx, const QString& name, const QList<QWid
         }
         QJsonArray regions = img.extra.value(QStringLiteral("regions")).toArray();
         for (QWidget* top : tops) {
-            compositeOver(img, ctx.window, top);
+            compositeOver(img, ctx.window, top, byGeometry);
             if (top != nullptr && top->isVisible()) {
-                appendRegions(regions, top, top->mapToGlobal(QPoint(0, 0)) - ctx.window->mapToGlobal(QPoint(0, 0)),
-                              img.logicalSize);
+                appendRegions(regions, top, topOffset(ctx.window, top, byGeometry), img.logicalSize);
             }
         }
         img.extra[QStringLiteral("regions")] = regions;
@@ -6855,15 +6866,16 @@ QVector<Scene> fixedScenes()
             // The pointer's spot; Qt offsets the tooltip from it as it does live.
             // QTipLabel hides itself after about 10 s, which a loaded run
             // can pass before the composite; it is held for the scene.
-            QToolTip::showText(d->mapToGlobal(local.toPoint()), d->toolTip(), d, QRect(),
-                               kRailTipHoldMs);
+            // In window-geometry coordinates, as the composite reads them.
+            const QPoint pointer = globalOf(d) + local.toPoint();
+            QToolTip::showText(pointer, d->toolTip(), d, QRect(), kRailTipHoldMs);
             pump(kFinalSettleMs);
             *tip = visibleToolTip();
             // Qt offsets the tip by the desktop's current pointer size, which
             // changed from launch to launch; placed for the default pointer.
             if (*tip) {
                 c.notes.append(QStringLiteral("profile-rail-open: %1")
-                                   .arg(placeTipForArrow(tip->data(), d->mapToGlobal(local.toPoint()))));
+                                   .arg(placeTipForArrow(tip->data(), pointer)));
                 pump(kFinalSettleMs);
             }
             c.notes.append(*tip ? QStringLiteral("pointer over the D badge: hover state set, Enter sent, "
@@ -6872,7 +6884,7 @@ QVector<Scene> fixedScenes()
                                                  "not show (background-only process), not composited"));
         }, [tip](SceneContext& c) {
             if (*tip) {
-                compositeAndRecrop(c, QStringLiteral("profile-rail-open"), {tip->data()});
+                compositeAndRecrop(c, QStringLiteral("profile-rail-open"), {tip->data()}, true);
             }
         }, true);
     }, true});
