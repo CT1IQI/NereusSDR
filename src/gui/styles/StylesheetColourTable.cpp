@@ -11,6 +11,9 @@
 //   2026-10-09 - The Spot Hub on/off toggle pair takes rows: on in the
 //                 green family, off the raised button.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The VfoStyles kept row names its site as Name:line, as
+//                 every other row does, not as a file name.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -438,7 +441,7 @@ const QVector<KeptLiteral>& kept()
         // ── The slice flag (VfoWidget, VfoStyles) ────────────────
         // Skipped by design (design-facts B11); listed so the decision is
         // explicit when a flag sheet reaches a popup the flag opens.
-        { "#6888a0", kAny, "slice flag (VfoStyles.h:50, VfoWidget)" },
+        { "#6888a0", kAny, "slice flag (VfoStyles:50, VfoWidget)" },
         { "#ffc040", kAny, "slice flag (VfoWidget:2691)" },
         { "#d09020", kAny, "slice flag (VfoWidget:2690)" },
         { "rgba(20,30,50,230)", kAny, "slice flag (VfoWidget:3202,3211)" },
