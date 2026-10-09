@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: the entry header's options menu
+//                 lives on the heap under the host too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - The entry menus live on the heap under the host
 //                 (OwnedMenu.h): an entry action that removes the container
 //                 while its menu is open no longer frees a menu on the
@@ -1062,7 +1065,8 @@ void ContainerContentHost::updateEntryHeaders()
                 if (!source) {
                     return;
                 }
-                QMenu menu(this);
+                OwnedMenu owned(this);
+                QMenu &menu = owned.menu();
                 addEntryActions(menu, id);
                 if (!menu.isEmpty()) {
                     QPushButton *button = source->optionsButton();

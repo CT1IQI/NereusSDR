@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - A pop-out shell whose objects are all hidden leaves the
+//                 screen with them in both looks (effectiveVisible). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Container Settings opens after the menu that asked for it
 //                 has returned and belongs to the main window, not to the
 //                 container's shell, which Remove deletes while the dialog
@@ -290,7 +293,9 @@ bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
     // entry header's hide button, Containers > Applets) leaves the screen
     // with them and comes back when any of them is shown. An empty
     // container stays, as before.
-    if (WorkspacePreview::enabled() && !document.contents.isEmpty()
+    // A pop-out shell does the same in both looks: a shell whose objects
+    // are all hidden is never left open and blank (JJ 2026-10-09).
+    if ((WorkspacePreview::enabled() || document.popOutShell) && !document.contents.isEmpty()
         && std::none_of(document.contents.cbegin(), document.contents.cend(),
                         [](const ContentEntry &entry) { return entry.visible; })) {
         return false;
