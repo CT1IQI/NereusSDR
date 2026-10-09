@@ -21,6 +21,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QLayout>
+#include <QStyleOptionButton>
 #include <QVector>
 
 #include "core/audio/VirtualCableDetector.h"
@@ -221,6 +222,25 @@ private slots:
         const QString edge = borderEdgeIn(check, frame);
         QVERIFY2(edge.isEmpty(), qPrintable(QStringLiteral("the step attenuator check box draws the flyout frame "
                                                            "on its %1 edge").arg(edge)));
+        // Its indicator still draws its square over the flyout: the
+        // unchecked box must show. The square is faint (Fusion's outline
+        // from the inherited fill), so the comparison is exact.
+        check->setChecked(false);
+        QStyleOptionButton option;
+        option.initFrom(check);
+        const QRect indicator = check->style()->subElementRect(QStyle::SE_CheckBoxIndicator, &option, check);
+        QVERIFY(!indicator.isEmpty());
+        QWidget* attFlyout = check->parentWidget();
+        const QImage flyoutImage = imageOf(attFlyout);
+        const QPoint origin = check->mapTo(attFlyout, indicator.topLeft());
+        const QRgb flyoutFill = flyoutImage.pixel(origin.x() + indicator.width() + 2, check->y() - 1);
+        int drawn = 0;
+        for (int y = 0; y < indicator.height(); ++y) {
+            for (int x = 0; x < indicator.width(); ++x) {
+                drawn += flyoutImage.pixel(origin.x() + x, origin.y() + y) != flyoutFill ? 1 : 0;
+            }
+        }
+        QVERIFY2(drawn > 0, "the unchecked step attenuator indicator draws nothing over the flyout");
         int rows = 0;
         for (const char* name : {"m_rxAntCmb", "m_txAntCmb"}) {
             auto* combo = host.findChild<QComboBox*>(QString::fromLatin1(name));

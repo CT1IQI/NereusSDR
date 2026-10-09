@@ -80,9 +80,10 @@
 //                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-09 - The ANT flyout's RX and TX rows and the ATT check box no
 //                 longer draw the flyout's frame again: kPanelStyle stays
-//                 AetherSDR's text, and each of them takes a scoped rule
-//                 with no background or border. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//                 AetherSDR's text, the rows take a scoped rule with no
+//                 background or border and the check box one with no
+//                 border, so its indicator keeps its square. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -268,8 +269,9 @@ QString labelStyle()
 // antenna row in a QWidget (so setBoardCapabilities hides it as a unit) and
 // the step attenuator has a check box, so each drew the flyout's frame
 // around itself again. They take this rule instead, scoped to the row's
-// own object name so its label and combo keep theirs; the check box takes
-// the same for QCheckBox after its label style.
+// own object name so its label and combo keep theirs. The check box drops
+// only the border: its background is what Fusion fills the indicator from,
+// so clearing it would also clear the indicator's square.
 QString clearRowStyle(const QString& objectName)
 {
     return QStringLiteral("QWidget#%1 { background: transparent; border: none; }").arg(objectName);
@@ -277,7 +279,7 @@ QString clearRowStyle(const QString& objectName)
 
 QString checkBoxStyle()
 {
-    return labelStyle() + QStringLiteral(" QCheckBox { background: transparent; border: none; }");
+    return labelStyle() + QStringLiteral(" QCheckBox { border: none; }");
 }
 
 // The flyout's own controls go through the scoped pass when shown.
