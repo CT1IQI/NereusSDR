@@ -37,6 +37,9 @@
 //                WorkspacePreview::statusColourName() (the status colour
 //                choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - The section headers read WorkspacePreview::roleColourName()
+//                (title-text) with the preview on. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/NetworkDiagnosticsDialog.h"
@@ -112,7 +115,10 @@ QLabel* NetworkDiagnosticsDialog::makeFieldLabel(const QString& text)
 static void addSectionHeader(QGridLayout* grid, int row, const QString& title)
 {
     QLabel* hdr = new QLabel(title);
-    hdr->setStyleSheet(QString::fromUtf8(kSectionHeaderStyle));
+    // The header blue is decoration: the header text with the preview on.
+    hdr->setStyleSheet(QString::fromUtf8(kSectionHeaderStyle)
+                           .replace(QStringLiteral("#5fa8ff"),
+                                    WorkspacePreview::roleColourName("#5fa8ff", "title-text")));
     grid->addWidget(hdr, row, 0, 1, 4);
 }
 

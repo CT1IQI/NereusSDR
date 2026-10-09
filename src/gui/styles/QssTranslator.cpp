@@ -13,6 +13,8 @@
 //   2026-10-08 - Reads 3/4/6/8-digit hex, rgb(), rgba() and colour names
 //                 through one lookup; rows by property kind; kept list.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The spin arrow urls take the workspace variants.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "QssTranslator.h"
@@ -313,6 +315,21 @@ QString propertyKind(const QString& property)
     return {};
 }
 
+// The spin arrows drawn in #c8d8e8 (resources/icons/spin-up.svg and
+// spin-down.svg) have workspace variants in the text colour.
+QString workspaceUrl(QStringView url)
+{
+    static const QString up = QStringLiteral(":/icons/spin-up.svg");
+    static const QString down = QStringLiteral(":/icons/spin-down.svg");
+    QString u = url.toString();
+    if (u.contains(up)) {
+        u.replace(up, QStringLiteral(":/icons/spin-up-workspace.svg"));
+    } else if (u.contains(down)) {
+        u.replace(down, QStringLiteral(":/icons/spin-down-workspace.svg"));
+    }
+    return u;
+}
+
 Result translate(const QString& original, const Options& options)
 {
     Result result;
@@ -396,11 +413,12 @@ Result translate(const QString& original, const Options& options)
             continue;
         }
 
-        // url(...) is copied untouched.
+        // url(...) is copied untouched, except the spin arrows, which have
+        // a workspace variant in the text colour.
         if (inBlock && startsWithUrl(original, i)) {
             qsizetype end = original.indexOf(QLatin1Char(')'), i + 4);
             end = end < 0 ? n : end + 1;
-            out += QStringView(original).mid(i, end - i);
+            out += workspaceUrl(QStringView(original).mid(i, end - i));
             i = end;
             continue;
         }

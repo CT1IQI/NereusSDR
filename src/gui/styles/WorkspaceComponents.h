@@ -73,6 +73,10 @@
 //   2026-10-08 - JJ's decided controls: raisedFillOf(), indicatorRules(),
 //                 the radius round(h x 7 / 26).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - groupBoxIndicatorRules() and sliderRulesFor() for the
+//                 live pass; componentize() takes the remaining dialog and
+//                 menu colours. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -111,6 +115,15 @@ int radiusFor(int heightPx);
 QString indicatorRulesFor(bool radio);
 // Both classes' rules.
 QString indicatorRules();
+
+// The same rules for a checkable group box's indicator, whose outer size
+// is the platform style's `widthPx` x `heightPx`: the rim comes off it.
+QString groupBoxIndicatorRules(int widthPx, int heightPx);
+
+// Longpath's slider (the decided D5 groove and handle, hover and
+// pressed, no filled side) for a slider no sheet styles. The live pass
+// gives them to each such slider with what keeps its size.
+QString sliderRulesFor(bool vertical);
 
 // Application-wide rules for tables and header sections in the
 // workspace look: grid lines, the line under the titles and the edges

@@ -224,10 +224,10 @@ inline void applyWorkspacePalette(QApplication& app)
         "  width: 20px; border: none;"
         "}"
         "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {"
-        "  image: url(:/icons/spin-up.svg); width: 14px; height: 14px;"
+        "  image: url(:/icons/spin-up-workspace.svg); width: 14px; height: 14px;"
         "}"
         "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {"
-        "  image: url(:/icons/spin-down.svg); width: 14px; height: 14px;"
+        "  image: url(:/icons/spin-down-workspace.svg); width: 14px; height: 14px;"
         "}"
     ).arg(r("text"), r("button"), r("border"), r("title-text"), r("text-inactive"),
           r("selected-top"), r("selected-text"))

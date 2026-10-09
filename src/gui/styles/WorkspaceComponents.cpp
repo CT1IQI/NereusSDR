@@ -77,6 +77,15 @@
 //                 margins an indicator rule drops come back as padding,
 //                 and a rim added to a sized indicator comes off its size.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The remaining dialog and menu colours: one selection
+//                 colour for menu, list, table and tree items and text
+//                 selection; header sections in the header text; blue
+//                 action buttons become the raised button, the default
+//                 one rimmed in the selection border; a toggle lit by
+//                 its base rule and dimmed by :!checked takes the lit
+//                 green and the raised button; sliderRulesFor() and
+//                 groupBoxIndicatorRules() for the live pass.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -171,6 +180,8 @@ constexpr int kDefaultControlHeight = 22;
 // Marks the indicator state rules componentize() appends, so a second
 // pass does not append them again.
 constexpr auto kIndicatorStatesMarker = "/* workspace: indicator states */";
+// Marks the default button rule componentize() appends.
+constexpr auto kDefaultMarker = "/* workspace: default button */";
 
 QString hex(const char* h)
 {
@@ -508,9 +519,10 @@ BorderInfo borderInfo(const Decls& d)
 
 // ---- Selectors ------------------------------------------------------
 
-enum class Base { None, Button, Combo, Field, Label, Slider, TabBar, TabWidget, Toggle };
+enum class Base { None, Button, Combo, Field, Label, Slider, TabBar, TabWidget, Toggle, Items, MenuBar, Header };
 enum class Kind {
-    None, Button, Combo, Tab, Field, Label, SpinButton, Groove, SliderFill, SliderRecess, Handle, Indicator, Pane
+    None, Button, Combo, Tab, Field, Label, SpinButton, Groove, SliderFill, SliderRecess, Handle, Indicator, Pane,
+    Item, Section
 };
 enum class State { Normal, Hover, Pressed, Checked, Disabled, Other };
 
@@ -530,6 +542,16 @@ Base baseOfTypeName(const QString& t)
         { QStringLiteral("QTabWidget"), Base::TabWidget },
         { QStringLiteral("QCheckBox"), Base::Toggle },
         { QStringLiteral("QRadioButton"), Base::Toggle },
+        { QStringLiteral("QMenu"), Base::Items },
+        { QStringLiteral("QListView"), Base::Items },
+        { QStringLiteral("QListWidget"), Base::Items },
+        { QStringLiteral("QTreeView"), Base::Items },
+        { QStringLiteral("QTreeWidget"), Base::Items },
+        { QStringLiteral("QTableView"), Base::Items },
+        { QStringLiteral("QTableWidget"), Base::Items },
+        { QStringLiteral("QAbstractItemView"), Base::Items },
+        { QStringLiteral("QMenuBar"), Base::MenuBar },
+        { QStringLiteral("QHeaderView"), Base::Header },
     };
     return m.value(t, Base::None);
 }
@@ -562,6 +584,15 @@ Base baseOfWidget(const QWidget* w)
     }
     if (w->inherits("QCheckBox") || w->inherits("QRadioButton")) {
         return Base::Toggle;
+    }
+    if (w->inherits("QHeaderView")) {
+        return Base::Header;
+    }
+    if (w->inherits("QMenu") || w->inherits("QAbstractItemView")) {
+        return Base::Items;
+    }
+    if (w->inherits("QMenuBar")) {
+        return Base::MenuBar;
     }
     return Base::None;
 }
@@ -657,6 +688,18 @@ struct Target {
     bool radio = false;
     // The block's control is the widget the sheet is set on.
     bool isOwner = false;
+    // A push button that cannot be checked: a blue fill on it is an
+    // action colour, not a selection.
+    bool action = false;
+    // A QPushButton (the :default state applies).
+    bool pushButton = false;
+    // The selector says :!checked.
+    bool notChecked = false;
+    // The sheet lights the button in its plain rule and dims it in a
+    // :!checked rule, so the plain rule is the checked state.
+    bool baseIsChecked = false;
+    // No widget answers for the selector (a type rule on a container).
+    bool unresolved = false;
 
     bool operator==(const Target& o) const
     {
@@ -688,6 +731,9 @@ Target classify(const Compound& c, Base base, const QWidget* resolved)
     bool hov = false;
     bool other = false;
     for (const QString& st : c.states) {
+        if (st == QLatin1String("!checked") || st == QLatin1String("!on")) {
+            t.notChecked = true;
+        }
         if (st.startsWith(QLatin1Char('!'))) {
             continue;
         }
@@ -701,7 +747,8 @@ Target classify(const Compound& c, Base base, const QWidget* resolved)
             chk = true;
         } else if (st == QLatin1String("hover")) {
             hov = true;
-        } else if (st == QLatin1String("focus") || st == QLatin1String("indeterminate")) {
+        } else if (st == QLatin1String("focus") || st == QLatin1String("indeterminate")
+                   || st == QLatin1String("default")) {
             other = true;
         } else if (st == QLatin1String("vertical")) {
             t.vertical = true;
@@ -755,6 +802,18 @@ Target classify(const Compound& c, Base base, const QWidget* resolved)
         break;
     case Base::Toggle:
         t.kind = sub == QLatin1String("indicator") ? Kind::Indicator : Kind::None;
+        break;
+    case Base::Items:
+    case Base::MenuBar:
+        t.kind = sub == QLatin1String("item") ? Kind::Item : Kind::None;
+        // A menu bar's open title is :selected or :pressed; both are the
+        // selection.
+        if (base == Base::MenuBar && t.state == State::Pressed) {
+            t.state = State::Checked;
+        }
+        break;
+    case Base::Header:
+        t.kind = sub == QLatin1String("section") ? Kind::Section : Kind::None;
         break;
     case Base::None:
         break;
@@ -822,6 +881,19 @@ Target classifySelector(const QString& selector, const QWidget* owner)
     Target t = classify(c, base, resolved);
     t.isOwner = resolved != nullptr && resolved == owner;
     resolveTarget(t, c.type, owner, resolved);
+    if (t.kind == Kind::Button) {
+        if (resolved != nullptr) {
+            t.pushButton = resolved->inherits("QPushButton");
+            t.action = t.pushButton && !resolved->property("checkable").toBool();
+        } else {
+            // A type rule on a container: a QPushButton is an action
+            // button unless the sheet itself is about checking
+            // (componentize() looks at the whole sheet).
+            t.pushButton = c.type == QLatin1String("QPushButton");
+            t.action = t.pushButton;
+            t.unresolved = true;
+        }
+    }
     return t;
 }
 
@@ -830,6 +902,10 @@ Target classifySelectorless(const QWidget* owner)
     Target t = classify(Compound{}, baseOfWidget(owner), owner);
     t.isOwner = owner != nullptr;
     resolveTarget(t, QString(), owner, owner);
+    if (t.kind == Kind::Button && owner != nullptr) {
+        t.pushButton = owner->inherits("QPushButton");
+        t.action = t.pushButton && !owner->property("checkable").toBool();
+    }
     return t;
 }
 
@@ -1112,8 +1188,120 @@ void litTreatment(Decls& d, int bg, Lit lit)
     }
 }
 
-QString processBody(const QString& body, const Target& t, bool* restyledOut = nullptr)
+// ---- Selection ----
+
+// The one selection colour (the application's: QPalette::Highlight and
+// the menu's selected item) for a text or item selection a sheet
+// colours itself. A meaning colour (green, red) stays.
+void selectionDecls(Decls& d)
 {
+    const int sbg = d.findLast({ "selection-background-color" });
+    bool ours = sbg < 0;
+    if (sbg >= 0) {
+        const Fill f = classifyFill(d.value(sbg)).fill;
+        if (f == Fill::Neutral || f == Fill::Selection || f == Fill::Ours) {
+            d.replaceValue(sbg, hex(kGlassSelTop));
+            ours = true;
+        }
+    }
+    const int sc = d.findLast({ "selection-color" });
+    if (sc >= 0 && ours && d.value(sc) != hex(kGlassSelText)) {
+        d.replaceValue(sc, hex(kGlassSelText));
+    }
+}
+
+// A menu, list, table or tree item in its selected state: the
+// application's menu selection, flat (AppTheme applyWorkspacePalette).
+void itemSelection(Decls& d, int bg)
+{
+    setBackground(d, bg, hex(kGlassSelTop));
+    d.set("color", hex(kGlassSelText));
+}
+
+// ---- Action buttons ----
+
+// A rim of 1 px on a button that has none, out of its padding so the
+// button keeps its size. False when the padding is not plain pixels of
+// at least 1 on every side.
+bool rimFromPadding(Decls& d)
+{
+    const int i = d.findLast({ "padding" });
+    if (i < 0 || d.findLast({ "padding-top", "padding-right", "padding-bottom", "padding-left" }) > i) {
+        return false;
+    }
+    const QStringList parts =
+        stripComments(d.value(i)).simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (parts.isEmpty() || parts.size() > 4) {
+        return false;
+    }
+    static const QRegularExpression px(QStringLiteral("^(\\d+)(px)?$"));
+    QStringList less;
+    for (const QString& p : parts) {
+        const QRegularExpressionMatch m = px.match(p);
+        if (!m.hasMatch() || m.captured(1).toInt() < 1) {
+            return false;
+        }
+        less << QStringLiteral("%1px").arg(m.captured(1).toInt() - 1);
+    }
+    d.replaceValue(i, less.join(QLatin1Char(' ')));
+    d.set("border", QStringLiteral("1px solid %1").arg(hex(kBorder)));
+    return true;
+}
+
+// A blue action button (Save & Propagate, Connect, Start, OK): the
+// workspace's raised button with today's ink in the text colour.
+// The default button is marked by defaultRules().
+void actionTreatment(Decls& d, int bg, const BorderInfo& b)
+{
+    // [original comment from StyleConstants.h:778 is at raisedEdges() above]
+    setBackground(d, bg, raisedFill());
+    d.set("color", hex(kTextPrimary));
+    if (b.has || rimFromPadding(d)) {
+        d.set("border-color", hex(kBorder));
+        raisedEdges(d);
+    }
+}
+
+// The off state of a toggle its sheet dims with :!checked: the raised
+// button.
+void raisedOff(Decls& d, int bg)
+{
+    setBackground(d, bg, raisedFill());
+    d.set("color", hex(kTextPrimary));
+    d.set("border-color", hex(kBorder));
+    raisedEdges(d);
+}
+
+// Marks the default button among the action buttons: the rim in the
+// selection's border, the light top edge of the glass. Longpath marks
+// its primary action in the selection blue (VaxFirstRunDialog
+// primaryButtonStyle, Longpath src/gui/VaxFirstRunDialog.cpp:96-105
+// [@551576e3]); NereusSDR keeps the fill raised and puts the blue on the
+// rim, so the default button does not read as checked.
+QString defaultRules(const QStringList& selectors)
+{
+    // [original comment from StyleConstants.h:808-816 is at glassTreatment() above]
+    QStringList sels;
+    for (const QString& s : selectors) {
+        sels << s + QStringLiteral(":default");
+    }
+    return QStringLiteral("\n%1\n%2 { border-color: %3; border-top-color: %4; }")
+        .arg(QLatin1String(kDefaultMarker), sels.join(QStringLiteral(", ")), hex(kGlassSelBorder),
+             shiftL(QColor(hex(kGlassSelBorder)), kGlassBorderTopLift));
+}
+
+QString processBody(const QString& rawBody, const Target& t, bool* restyledOut = nullptr,
+                    bool* actionOut = nullptr)
+{
+    if (actionOut != nullptr) {
+        *actionOut = false;
+    }
+    QString body = rawBody;
+    if (body.contains(QLatin1String("selection-"), Qt::CaseInsensitive)) {
+        Decls sd(body);
+        selectionDecls(sd);
+        body = sd.render();
+    }
     if (restyledOut != nullptr) {
         *restyledOut = false;
     }
@@ -1136,8 +1324,39 @@ QString processBody(const QString& body, const Target& t, bool* restyledOut = nu
             d.set("border-radius", QStringLiteral("%1px").arg(radiusFor(t.height)));
         }
         return d.render();
+    case Kind::Item:
+        if (t.state == State::Checked && bg >= 0
+            && (f.fill == Fill::Neutral || f.fill == Fill::Selection || f.fill == Fill::Ours
+                || f.fill == Fill::OtherGradient)) {
+            itemSelection(d, bg);
+        }
+        return d.render();
+    case Kind::Section:
+        // Header sections that are blue for decoration take the header
+        // text of the application's sections (tableRules()).
+        if (t.state == State::Normal) {
+            const int ci = d.findLast({ "color" });
+            if (ci >= 0 && classifyFill(d.value(ci)).fill == Fill::Selection) {
+                d.replaceValue(ci, hex(kTextPrimary));
+            }
+        }
+        return d.render();
     default:
         break;
+    }
+    if (t.kind == Kind::Button && t.state == State::Normal && t.notChecked) {
+        if (restyledOut != nullptr) {
+            *restyledOut = true;
+        }
+        raisedOff(d, bg);
+        return d.render();
+    }
+    if (t.kind == Kind::Button && t.baseIsChecked && t.state == State::Normal && f.fill == Fill::Semantic) {
+        const Lit lit = litOf(d.value(bg));
+        if (lit != Lit::None) {
+            litTreatment(d, bg, lit);
+            return d.render();
+        }
     }
     if (t.kind == Kind::Button && t.state == State::Checked && f.fill == Fill::Semantic) {
         const Lit lit = litOf(d.value(bg));
@@ -1146,6 +1365,27 @@ QString processBody(const QString& body, const Target& t, bool* restyledOut = nu
             return d.render();
         }
         return body;
+    }
+    // The hover and pressed states of a blue action button follow it to
+    // the raised button.
+    if (t.kind == Kind::Button && t.action && f.fill == Fill::Semantic
+        && (t.state == State::Hover || t.state == State::Pressed)) {
+        const QColor c = parseColour(stripComments(d.value(bg)));
+        if (c.isValid() && c.hsvHue() >= 180 && c.hsvHue() <= 260) {
+            if (restyledOut != nullptr) {
+                *restyledOut = true;
+            }
+            if (t.state == State::Hover) {
+                setBackground(d, bg, raisedHoverFill());
+            } else {
+                setBackground(d, bg, pressedFill());
+                pressedEdges(d);
+            }
+            if (d.has("color")) {
+                d.set("color", hex(kTextPrimary));
+            }
+            return d.render();
+        }
     }
     const bool restyle = f.fill == Fill::Neutral || f.fill == Fill::Selection || f.fill == Fill::Ours;
     if (!restyle) {
@@ -1165,7 +1405,12 @@ QString processBody(const QString& body, const Target& t, bool* restyledOut = nu
     case Kind::Tab:
         switch (t.state) {
         case State::Normal:
-            if (selected) {
+            if (selected && t.kind == Kind::Button && t.action) {
+                actionTreatment(d, bg, b);
+                if (actionOut != nullptr) {
+                    *actionOut = true;
+                }
+            } else if (selected) {
                 glassTreatment(d);
             } else {
                 setBackground(d, bg, raisedFill());
@@ -1407,12 +1652,55 @@ QString indicatorRules()
     return indicatorRulesFor(false) + indicatorRulesFor(true);
 }
 
+QString groupBoxIndicatorRules(int widthPx, int heightPx)
+{
+    // [original comment from StyleConstants.h:1097-1100 is at indicatorBody() above]
+    // From Longpath src/gui/StyleConstants.h:1138-1145 [@551576e3]
+    // NereusSDR: the rim comes off the platform style's indicator size, so
+    // the indicator keeps its outer size.
+    const QString s = QStringLiteral("QGroupBox::indicator");
+    QString out = QStringLiteral("%1 { width: %2px; height: %3px; background: %4; border: %5px solid %6;"
+                                 " border-radius: %7; }")
+                      .arg(s)
+                      .arg(std::max(0, widthPx - 2 * kIndicatorRimPx))
+                      .arg(std::max(0, heightPx - 2 * kIndicatorRimPx))
+                      .arg(indicatorOffFill())
+                      .arg(kIndicatorRimPx)
+                      .arg(hex(kTextInactive), hex(kBoxRadius));
+    out += indicatorStateRules(s);
+    out += QLatin1Char('\n');
+    return out;
+}
+
+QString sliderRulesFor(bool vertical)
+{
+    // [original comment from StyleConstants.h:899-902 is at sliderGroove() above]
+    // From Longpath src/gui/StyleConstants.h:899-939 [@551576e3]
+    Target t;
+    t.horizontal = !vertical;
+    t.vertical = vertical;
+    const QString orient = vertical ? QStringLiteral("vertical") : QStringLiteral("horizontal");
+    Decls groove(QString{});
+    sliderGroove(groove, -1, t);
+    Decls handle(QString{});
+    sliderHandle(handle, -1, t);
+    // From Longpath src/gui/StyleConstants.h:916, :1239 [@551576e3]
+    return QStringLiteral("QSlider::groove:%1 {%2}\n"
+                          "QSlider::handle:%1 {%3}\n"
+                          "QSlider::handle:%1:hover, QSlider::handle:%1:pressed { background: %4; }\n")
+        .arg(orient, groove.render(), handle.render(), hex(kGlassBtnTop));
+}
+
 QString componentize(const QString& qss, const QWidget* owner)
 {
     if (!qss.contains(QLatin1Char('{'))) {
         const Target t = classifySelectorless(owner);
         bool restyled = false;
-        const QString body = processBody(qss, t, &restyled);
+        bool action = false;
+        const QString body = processBody(qss, t, &restyled, &action);
+        if (action && t.pushButton) {
+            return QStringLiteral("* {%1}").arg(body) + defaultRules({ QStringLiteral("*") });
+        }
         if (restyled && t.kind == Kind::Button && t.state == State::Normal
             && isCheckableButton(owner)) {
             // A brace-less sheet is a "*" rule (specificity 0), so the
@@ -1430,6 +1718,10 @@ QString componentize(const QString& qss, const QWidget* owner)
     bool handlePressed = false;
     QStringList indicatorSelectors;
     QStringList ownerButtonSelectors;
+    QStringList defaultSelectors;
+    const QString lowerSheet = qss.toLower();
+    const bool sheetChecks = lowerSheet.contains(QLatin1String(":checked")) || lowerSheet.contains(QLatin1String(":on"));
+    const bool sheetDims = lowerSheet.contains(QLatin1String(":!checked"));
     const qsizetype n = qss.size();
     qsizetype i = 0;
     qsizetype selStart = 0;
@@ -1471,7 +1763,14 @@ QString componentize(const QString& qss, const QWidget* owner)
         bool first = true;
         bool agree = !sels.isEmpty();
         for (const QString& s : sels) {
-            const Target st = classifySelector(s, owner);
+            Target st = classifySelector(s, owner);
+            if (st.kind == Kind::Button && st.unresolved && sheetChecks) {
+                st.action = false;
+            }
+            if (st.kind == Kind::Button && st.state == State::Normal && !st.notChecked && sheetDims
+                && isCheckableButton(st.isOwner ? owner : nullptr)) {
+                st.baseIsChecked = true;
+            }
             if (first) {
                 t = st;
                 first = false;
@@ -1495,9 +1794,13 @@ QString componentize(const QString& qss, const QWidget* owner)
         out += selectorText;
         out += QLatin1Char('{');
         bool restyled = false;
-        out += agree ? processBody(body, t, &restyled) : body;
+        bool action = false;
+        out += agree ? processBody(body, t, &restyled, &action) : body;
         if (agree && restyled && t.kind == Kind::Button && t.state == State::Normal && t.isOwner) {
             ownerButtonSelectors << sels;
+        }
+        if (agree && action && t.pushButton) {
+            defaultSelectors << sels;
         }
         if (j < n) {
             out += QLatin1Char('}');
@@ -1539,6 +1842,12 @@ QString componentize(const QString& qss, const QWidget* owner)
     }
     if (!handleSelectors.isEmpty() && !handlePressed) {
         appendHandleState("pressed");
+    }
+
+    // The default button's rim, once.
+    defaultSelectors.removeDuplicates();
+    if (!defaultSelectors.isEmpty() && !qss.contains(QLatin1String(kDefaultMarker))) {
+        out += defaultRules(defaultSelectors);
     }
 
     // The indicator's states after the sheet's own rules, once.
