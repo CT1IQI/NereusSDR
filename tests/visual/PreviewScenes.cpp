@@ -5620,6 +5620,51 @@ void closeNewToasts(SceneContext& ctx)
     pump(kFinalSettleMs);
 }
 
+// The connection tooltip's uptime, pinned (tooltip-connection).
+constexpr auto kPinnedUptime = "connected 0m 05s";
+
+// While it lives, every QTimer whose timeout reaches one of `targets` is cut
+// as it fires and stopped, as cutTimersInto does for a fixed wait.
+class TimerHold : public QObject
+{
+public:
+    TimerHold(QList<QObject*> targets, QJsonArray* stopped)
+        : m_targets(std::move(targets)), m_stopped(stopped)
+    {
+        qApp->installEventFilter(this);
+    }
+    ~TimerHold() override { qApp->removeEventFilter(this); }
+    TimerHold(const TimerHold&) = delete;
+    TimerHold& operator=(const TimerHold&) = delete;
+
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (event->type() != QEvent::Timer) {
+            return false;
+        }
+        auto* timer = qobject_cast<QTimer*>(watched);
+        if (timer == nullptr || !timer->isActive()) {
+            return false;
+        }
+        for (QObject* target : m_targets) {
+            if (QObject::disconnect(timer, &QTimer::timeout, target, nullptr)) {
+                m_stopped->append(QJsonObject{
+                    {QStringLiteral("parent"),
+                     QStringLiteral("member timer feeding %1")
+                         .arg(QString::fromLatin1(target->metaObject()->className()))},
+                    {QStringLiteral("name"), timer->objectName()},
+                    {QStringLiteral("interval_ms"), timer->interval()}});
+                timer->stop();
+            }
+        }
+        return false;
+    }
+
+private:
+    QList<QObject*> m_targets;
+    QJsonArray* m_stopped;
+};
+
 void recordMenuNotShown(SceneContext& ctx)
 {
     for (const auto& [item, reason] : std::initializer_list<std::pair<const char*, const char*>>{
@@ -6034,6 +6079,15 @@ void appendMenuScenes(QVector<Scene>& scenes)
                 return;
             }
             c.notes.append(QStringLiteral("added dial in %1").arg(holderName(dial)));
+            // The dials' member timers (peak reset every 10 s from
+            // construction, peak decay, needle animation) are cut as they
+            // fire while the menu and its submenus are taken, so a reset
+            // landing between two images cannot move the peak.
+            QList<QObject*> held;
+            for (SMeterWidget* d : copies) {
+                held.append(d);
+            }
+            TimerHold hold(held, &c.stoppedTimers);
             shootPopup(c, QStringLiteral("menu-dial"), [dial] { sendContextMenu(dial, middleOf(dial)); },
                        {.anchor = globalAt(dial, middleOf(dial)),
                         .provenance = provProposed()});
@@ -6398,9 +6452,26 @@ void appendMenuScenes(QVector<Scene>& scenes)
                                         "and adding one would change the workspace"));
             const QPoint local(segment->width() / 3, segment->height() / 2);
             const QPoint global = globalAt(segment, local);
-            shootToolTip(c, QStringLiteral("tooltip-connection"), global, [segment, local, global] {
+            shootToolTip(c, QStringLiteral("tooltip-connection"), global, [&c, segment, local, global] {
                 QHelpEvent help(QEvent::ToolTip, local, global);
                 QCoreApplication::sendEvent(segment, &help);
+                // The uptime counts from the posed connection
+                // (RadioModel::connectionUptimeText), so it changes with the
+                // run's timing; it is pinned, as pinValueBeside pins Uptime
+                // fields in dialogs.
+                auto* tip = qobject_cast<QLabel*>(visibleToolTip());
+                if (tip == nullptr) {
+                    return;
+                }
+                static const QRegularExpression uptime(QStringLiteral("connected (\\d+h )?(\\d+m )?\\d+s"));
+                QString text = tip->text();
+                const QRegularExpressionMatch m = uptime.match(text);
+                if (m.hasMatch()) {
+                    c.notes.append(QStringLiteral("tooltip-connection: uptime \"%1\" pinned to \"%2\"")
+                                       .arg(m.captured(0), QString::fromLatin1(kPinnedUptime)));
+                    text.replace(m.capturedStart(0), m.capturedLength(0), QString::fromLatin1(kPinnedUptime));
+                    QToolTip::showText(global, text, segment);
+                }
             });
         });
     });
