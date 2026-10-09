@@ -29,6 +29,12 @@
 //                 status and data colour choices, rendered from real
 //                 widgets through WorkspacePreview's test seams. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The decided colours: sceneStatusColoursDecided
+//                 (decided--status, with the pulse's two steps) and
+//                 sceneDataColoursDecided (decided--data, with a user
+//                 container background and user item colours) replace the
+//                 choice sheets. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -86,19 +92,18 @@ void sceneScrollBarChoices(SceneContext& ctx, const QJsonObject& liveBars);
 // height-scaled corners).
 void sceneControlSizes(SceneContext& ctx);
 
-// Colour choices for JJ: each runs with the workspace preview switch on
-// and renders every variant from one build through the ForTest seams
-// (WorkspacePreview::setStatusTonesForTest, setDataColoursForTest), then
-// sets both back to choice A.
-// colour-choice--status (+ --zoom, 4x): the title bar status area in four
-// states, the status badges, the TCI Server page's status and Network
-// Diagnostics' Connection rows, one row per status choice.
-void sceneStatusColourChoices(SceneContext& ctx);
-// colour-choice--data (+ --crops): the posed window (both pans, the top
-// and left meter strips, the Longpath needle, the Main Panel's dial and
-// filter passband), a time-series graph and the parametric EQ, one row
-// per data choice; the crops add the user-colour rows. Call after the
-// window is posed with the Meters, Levels and Needle containers.
-void sceneDataColourChoices(SceneContext& ctx);
+// The status and data colours JJ decided, with the workspace preview on.
+// decided--status (+ --zoom, 4x): the title bar status area in four
+// states, the dot's two pulse steps for Connected and Link lost, the status
+// badges, the TCI Server page's status and Network Diagnostics' Connection
+// rows.
+void sceneStatusColoursDecided(SceneContext& ctx);
+// decided--data (+ --crops): the posed window (both pans, the top and left
+// meter strips, the Longpath needle, the Main Panel's dial and filter
+// passband), a time-series graph and the parametric EQ; then a user
+// background on the Levels container, and user item colours on SIGNALAVG
+// inside a Meters container with a user background. Call after the window
+// is posed with the Meters, Levels and Needle containers.
+void sceneDataColoursDecided(SceneContext& ctx);
 
 } // namespace NereusSDR::Preview

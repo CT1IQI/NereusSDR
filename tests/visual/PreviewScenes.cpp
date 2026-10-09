@@ -98,6 +98,11 @@
 //   2026-10-08 - colour-choice--status and colour-choice--data: the status
 //                 and data colour choices (ControlsSheet.cpp). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decisions are the product: decided--status and
+//                 decided--data replace the colour-choice scenes, and the
+//                 --plate-b dial variants are gone (the plate limit is
+//                 unconditional). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -3538,20 +3543,8 @@ void sceneDialWindow(SceneContext& ctx, const QString& name, HeaderMode header,
     annotateSlices(ctx);
 }
 
-// Variant B of the wide-container look: SMeterWidget's test-only plate
-// limit, for every dial in the scene (the Main Panel's and the copies).
-void limitDialPlates(SceneContext& ctx)
+void sceneDialTwoBand(SceneContext& ctx, const QString& name)
 {
-    SMeterWidget::setPlateLimitForTest(true);
-    ctx.notes.append(QStringLiteral("SMeterWidget::setPlateLimitForTest(true): plate at most %1 x its height, centred")
-                         .arg(SMeterWidget::kPlateMaxAspect));
-}
-
-void sceneDialTwoBand(SceneContext& ctx, const QString& name, bool plateB)
-{
-    if (plateB) {
-        limitDialPlates(ctx);
-    }
     sceneProfile(ctx, name, SceneProfile::Dx, [](SceneContext& c) {
         feedDials(c);
         c.extraCrops = addStripAndDialCrops;
@@ -3588,11 +3581,8 @@ void sceneDialNarrow(SceneContext& ctx)
 }
 
 // Dials for RX A and RX B on top while slice A transmits (display-only).
-void sceneDialTx(SceneContext& ctx, const QString& name, bool plateB)
+void sceneDialTx(SceneContext& ctx, const QString& name)
 {
-    if (plateB) {
-        limitDialPlates(ctx);
-    }
     sceneDialWindow(ctx, name, HeaderMode::Always,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
@@ -5263,21 +5253,14 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
     // ---- added SIGNAL STRENGTH dial copies (switch on) ----
     scenes.append({QStringLiteral("dial-addable--two-band"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band"), false); },
+                   [](SceneContext& ctx) { sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band")); },
                    true});
-    scenes.append({QStringLiteral("dial-addable--two-band--plate-b"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-                       sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band--plate-b"), true);
-                   }, true});
     scenes.append({QStringLiteral("dial-addable--mixed"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialMixed(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--narrow"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialNarrow(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--tx"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx"), false); }, true});
-    scenes.append({QStringLiteral("dial-addable--tx--plate-b"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx--plate-b"), true); },
-                   true});
+                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx")); }, true});
     scenes.append({QStringLiteral("dial-addable--amp"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialAmp(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--face"), QStringLiteral("2v"), false,
@@ -5316,18 +5299,18 @@ QVector<Scene> fixedScenes()
         runWindowScene(ctx, twoBandPoses(), 0);
         if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
     }});
-    // ---- colour choices (Task 28) ----
-    // Every status choice on the real title bar, badges, the TCI Server
-    // page and Network Diagnostics, from one build (the ForTest seam).
-    scenes.append({QStringLiteral("colour-choice--status"), QStringLiteral("2v"), false,
+    // ---- decided status and data colours ----
+    // The decided status tones on the real title bar (with the pulse's two
+    // steps), badges, the TCI Server page and Network Diagnostics.
+    scenes.append({QStringLiteral("decided--status"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0);
-        if (ctx.failure.isEmpty()) { sceneStatusColourChoices(ctx); }
+        if (ctx.failure.isEmpty()) { sceneStatusColoursDecided(ctx); }
     }, true});
-    // Every data choice on the two-band window with the Thetis bar strips
+    // The decided data colours on the two-band window with the Thetis bar strips
     // (top: S-Meter preset's SIGNALAVG and Power/SWR; left: SIGNALMAXBIN
     // and COMP), a Longpath needle on slice A and the Main Panel.
-    scenes.append({QStringLiteral("colour-choice--data"), QStringLiteral("2v"), false,
+    scenes.append({QStringLiteral("decided--data"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
             addMetersContainer(c, DockEdge::Top);
@@ -5368,7 +5351,7 @@ QVector<Scene> fixedScenes()
                 {QStringLiteral("seam"), QStringLiteral("MeterWidget::updateMeterValue (display only)")}});
             pump(kSettleMs);
         });
-        if (ctx.failure.isEmpty()) { sceneDataColourChoices(ctx); }
+        if (ctx.failure.isEmpty()) { sceneDataColoursDecided(ctx); }
     }, true});
     scenes.append({QStringLiteral("controls-sheet--indicators"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {

@@ -26,6 +26,12 @@
 //                 colour-choice--data (+ --crops), every variant from one
 //                 build through WorkspacePreview's test seams. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The decided colours: sceneStatusColoursDecided
+//                 (decided--status, with the pulse's two steps) and
+//                 sceneDataColoursDecided (decided--data, with a user
+//                 container background and user item colours) replace the
+//                 choice sheets. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -2805,12 +2811,9 @@ void sceneControlSizes(SceneContext& ctx)
                    QJsonObject{{QStringLiteral("radii"), radii}, {QStringLiteral("today_sizes"), todaySizes}});
 }
 
-// ---- colour choices (status and data) ----------------------------------------
+// ---- decided status and data colours ------------------------------------------
 
 namespace {
-
-using WorkspacePreview::DataColours;
-using WorkspacePreview::StatusTones;
 
 // The status sheet's zoom enlarges each cell 4x, nearest-neighbour.
 constexpr int kStatusZoomFactor = 4;
@@ -2823,7 +2826,7 @@ constexpr quint16 kTciPreviewPort = 50001;
 constexpr int kStatusCropPadPx = 4;
 // Network Diagnostics' Connection rows: the field names and their values.
 constexpr int kDiagnosticsCropWidthPx = 260;
-// The SIGNALAVG reading the colour-choice--data scene feeds (PreviewScenes.cpp),
+// The SIGNALAVG reading the decided--data scene feeds (PreviewScenes.cpp),
 // settled again after the user-colour row reconfigures the strip.
 constexpr double kStripAvgDbm = -73.0;
 constexpr int kStripSettleSteps = 40;
@@ -2839,65 +2842,19 @@ constexpr int kEqWidth = 520;
 constexpr int kEqHeight = 300;
 constexpr int kDataCellPadPx = 8;
 // A user's own colours for the user-colour rows: a warm dark container
-// background and a blue bar.
+// background (the colour sheet's brown example), a blue bar and a blue-grey
+// strip backdrop.
 constexpr QRgb kUserContainerBg = 0xff2a1e14;
 constexpr QRgb kUserBarColour = 0xff3c9cff;
+constexpr QRgb kUserBackdrop = 0xff14283c;
 
-struct StatusVariant {
-    StatusTones tones;
-    QString key;
-    QString title;
-    QString note;
-};
-
-QVector<StatusVariant> statusVariants()
-{
-    return {
-        {StatusTones::Muted, QStringLiteral("a-muted"),
-         QStringLiteral("A. Muted (Longpath's semantic roles, the lane today)"),
-         QStringLiteral("ok kGreenText #6fa384, warn kAmberWarn #a8853f, danger kRedBorder #a86b6d; "
-                        "accent, sel-hover, text-scale, text-inactive unchanged")},
-        {StatusTones::Bright, QStringLiteral("b-bright"),
-         QStringLiteral("B. Bright (Longpath's brighter tones, indicators only)"),
-         QStringLiteral("ok -> live kLiveGreen #4caf6a, warn -> measured kAmberText #d8a55f, "
-                        "danger -> tx kTxRed #c25a5c; every other role as in A")},
-        {StatusTones::Legacy, QStringLiteral("c-legacy"),
-         QStringLiteral("C. Legacy (today's saturated colours, as written)"),
-         QStringLiteral("dot #3fcf6a / #cf6c00 / #ff4040, latency #5fff8a / #ffd700 / #ff6060, "
-                        "badges #5fff8a / #ffd700 / #ff6060, TCI #3DD068 / #D04040, "
-                        "diagnostics #5fff8a / #ff6060")},
-    };
-}
-
-struct DataVariant {
-    DataColours colours;
-    QString key;
-    QString title;
-    QString note;
-};
-
-QVector<DataVariant> dataVariants()
-{
-    return {
-        {DataColours::Navy, QStringLiteral("a-navy"), QStringLiteral("A. Navy (today's data backgrounds)"),
-         QStringLiteral("spectrum #0a0a14, meters and dial #0f0f1a, filter passband #0a0a18, "
-                        "graph #050b13, EQ client #0f0f1a and plot #0a0a18, Thetis bar strip backdrop "
-                        "#202020; all ink unchanged")},
-        {DataColours::Neutral, QStringLiteral("b-neutral"),
-         QStringLiteral("B. Neutral (backgrounds take the surrounding container's role)"),
-         QStringLiteral("spectrum and waterfall app-bg #08080a (the pans sit on app-bg); meters, "
-                        "dial surround and filter passband panel #0c0c0e; graph app-bg #08080a; "
-                        "EQ client app-bg #08080a and plot panel #0c0c0e; Thetis bar strip backdrop "
-                        "panel #0c0c0e; all ink unchanged")},
-        {DataColours::NeutralInstrument, QStringLiteral("c-instrument"),
-         QStringLiteral("C. Neutral + instrument ink (B, bar meter items in Longpath's tones)"),
-         QStringLiteral("B, plus the bar strips' factory ink: bar measured #d8a55f, over-range danger #a86b6d, "
-                        "marker measured, peak-hold text #dcdce1, value measured, peak value "
-                        "text-secondary #a6a6ac, history measured-dim #6b5630 (alpha kept), ticks "
-                        "and labels text-scale #7e7e85, title and average marker text-secondary; "
-                        "Power/SWR and the dial unchanged")},
-    };
-}
+constexpr auto kStatusTones = "ok -> live kLiveGreen #4caf6a, warn -> measured kAmberText #d8a55f, "
+                              "danger -> tx kTxRed #c25a5c; accent, sel-hover, text-scale, "
+                              "text-inactive unchanged";
+constexpr auto kDataColours = "spectrum and waterfall app-bg #08080a; meters, dial, filter passband and "
+                              "the Thetis bar strip backdrop take the container's background (panel "
+                              "#0c0c0e, or the user's colour); graph app-bg; EQ client app-bg and plot "
+                              "panel; all ink unchanged";
 
 QWidget* firstVisibleTopLevel(const char* className)
 {
@@ -2977,6 +2934,37 @@ QVector<Shot> titleBarShots(ConnectionSegment* seg)
                             .intersected(bar->rect());
         shots.append(plainShot(st.caption, grabImage(bar, r)));
     }
+    return shots;
+}
+
+// The title bar dot's two pulse steps, held, for the states that pulse
+// with a dimmer step made from the bright tone: Connected and Link lost.
+QVector<Shot> pulseShots(ConnectionSegment* seg)
+{
+    QVector<Shot> shots;
+    auto* bar = seg->parentWidget();
+    const struct { QString caption; ConnectionState state; } states[] = {
+        {QStringLiteral("connected"), ConnectionState::Connected},
+        {QStringLiteral("link lost"), ConnectionState::LinkLost},
+    };
+    seg->setRttMs(-1);
+    seg->setRttMs(static_cast<int>(kGoodRttMs));
+    seg->setAudioFlowState(AudioEngine::FlowState::Healthy);
+    for (const auto& st : states) {
+        seg->setState(st.state);
+        for (bool bright : {true, false}) {
+            seg->setPulsePausedForTest(true, bright);
+            seg->update();
+            pump(kShortSettleMs);
+            const QRect r = seg->geometry()
+                                .adjusted(-kStatusCropPadPx, -kStatusCropPadPx, kStatusCropPadPx, kStatusCropPadPx)
+                                .intersected(bar->rect());
+            shots.append(plainShot(st.caption + (bright ? QStringLiteral(": bright step")
+                                                        : QStringLiteral(": dimmer step")),
+                                   grabImage(bar, r)));
+        }
+    }
+    seg->setPulsePausedForTest(true);
     return shots;
 }
 
@@ -3220,9 +3208,9 @@ BarPresetItem* boundBar(QWidget* window, int binding)
 
 } // namespace
 
-void sceneStatusColourChoices(SceneContext& ctx)
+void sceneStatusColoursDecided(SceneContext& ctx)
 {
-    const QString scene = QStringLiteral("colour-choice--status");
+    const QString scene = QStringLiteral("decided--status");
     ctx.provenance = QStringLiteral("proposed");
     if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
         ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
@@ -3255,64 +3243,58 @@ void sceneStatusColourChoices(SceneContext& ctx)
     diagnostics.show();
     pump(kSettleMs);
 
-    QVector<GridRow> rows;
-    QJsonArray variants;
     const QColor statusBarBg = WorkspacePreview::roleColour(QColor(0x0a, 0x0a, 0x14), "statusbar-bg");
-    for (const StatusVariant& v : statusVariants()) {
-        WorkspacePreview::setStatusTonesForTest(v.tones);
-        GridRow row{v.key, v.title, v.note, {}};
-        row.groups.append(titleBarShots(seg));
-        row.groups.append(badgeShots(statusBarBg));
+    GridRow row{QStringLiteral("decided"), QStringLiteral("Decided: Longpath's brighter tones (B)"),
+                QString::fromLatin1(kStatusTones), {}};
+    row.groups.append(titleBarShots(seg));
+    row.groups.append(pulseShots(seg));
+    row.groups.append(badgeShots(statusBarBg));
 
-        QVector<Shot> tciShots;
-        tciPage->setTciServer(&tci);
-        pump(kShortSettleMs);
-        tciShots.append(plainShot(QStringLiteral("stopped"), tciStatusCrop(tciStatus)));
-        emit tci.serverStarted(kTciPreviewPort);
-        pump(kShortSettleMs);
-        tciShots.append(plainShot(QStringLiteral("running"), tciStatusCrop(tciStatus)));
-        row.groups.append(tciShots);
+    QVector<Shot> tciShots;
+    tciPage->setTciServer(&tci);
+    pump(kShortSettleMs);
+    tciShots.append(plainShot(QStringLiteral("stopped"), tciStatusCrop(tciStatus)));
+    emit tci.serverStarted(kTciPreviewPort);
+    pump(kShortSettleMs);
+    tciShots.append(plainShot(QStringLiteral("running"), tciStatusCrop(tciStatus)));
+    row.groups.append(tciShots);
 
-        // The 250 ms refresh writes the status HTML again in this choice.
-        pump(kSettleMs);
-        row.groups.append(QVector<Shot>{
-            plainShot(QStringLiteral("no radio: Disconnected"), diagnosticsConnectionCrop(&diagnostics))});
-        rows.append(row);
-        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
-                                    {QStringLiteral("title"), v.title},
-                                    {QStringLiteral("colours"), v.note}});
-    }
-    WorkspacePreview::setStatusTonesForTest(StatusTones::Muted);
+    // The 250 ms refresh writes the status HTML again.
+    pump(kSettleMs);
+    row.groups.append(QVector<Shot>{
+        plainShot(QStringLiteral("no radio: Disconnected"), diagnosticsConnectionCrop(&diagnostics))});
+    const QVector<GridRow> rows{row};
     tciPage->setTciServer(nullptr);
     diagnostics.close();
     setup->close();
 
     const QStringList groups{QStringLiteral("Title bar status area (real window)"),
+                             QStringLiteral("Title bar dot: the pulse's two steps"),
                              QStringLiteral("Status badges"),
                              QStringLiteral("Setup > TCI Server: Status"),
                              QStringLiteral("Network Diagnostics: Connection")};
-    QJsonObject extra{{QStringLiteral("variants"), variants},
-                      {QStringLiteral("seam"), QStringLiteral("WorkspacePreview::setStatusTonesForTest")},
+    QJsonObject extra{{QStringLiteral("colours"), QString::fromLatin1(kStatusTones)},
+                      {QStringLiteral("pulse_dimmer_step"),
+                       QStringLiteral("the bright tone mixed 25 % with titlebar-mid kTitleGradMid #1c1c20")},
                       {QStringLiteral("not_shown"), QJsonArray{
-                           QStringLiteral("Network Diagnostics Connected: needs a radio connection"),
-                           QStringLiteral("the pulse step of the title bar dot: the pulse is paused")}}};
+                           QStringLiteral("Network Diagnostics Connected: needs a radio connection")}}};
     // The sheet is chrome around the grabs: keep the look's pass off it.
     WorkspacePreview::setEnabledForTest(false);
     QJsonArray placements;
     const QImage sheet = assembleGrid(
-        rows, groups, QStringLiteral("Status colours: three choices"),
-        QStringLiteral("Real widgets with the workspace preview on; only the status choice differs per row. "
-                       "Title bar: the window's own connection segment, pulse paused at its resting step."),
+        rows, groups, QStringLiteral("Status colours: decided"),
+        QStringLiteral("Real widgets with the workspace preview on. Title bar: the window's own connection "
+                       "segment, pulse held at its resting step; the pulse group holds each step."),
         placements);
     setSheetImages(ctx, scene, sheet, placements, extra);
 
     QVector<GridRow> zoom;
-    for (const GridRow& row : rows) {
-        GridRow z{row.key, row.title, QString(), {}};
-        for (const QVector<Shot>& group : row.groups) {
+    for (const GridRow& r : rows) {
+        GridRow z{r.key, r.title, QString(), {}};
+        for (const QVector<Shot>& group : r.groups) {
             QVector<Shot> zs;
-            for (const Shot& s : group) {
-                zs.append(zoomShotBy(s, kStatusZoomFactor));
+            for (const Shot& shot : group) {
+                zs.append(zoomShotBy(shot, kStatusZoomFactor));
             }
             z.groups.append(zs);
         }
@@ -3321,16 +3303,16 @@ void sceneStatusColourChoices(SceneContext& ctx)
     QJsonArray zoomPlacements;
     const QImage zoomImage = assembleGrid(
         zoom, groups, QStringLiteral("Status colours, 4x nearest-neighbour"),
-        QStringLiteral("Each cell of colour-choice--status enlarged 4x."), zoomPlacements);
+        QStringLiteral("Each cell of decided--status enlarged 4x."), zoomPlacements);
     setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
                    QJsonObject{{QStringLiteral("source"), scene},
                                {QStringLiteral("enlargement"), QStringLiteral("4x nearest-neighbour")}});
     WorkspacePreview::setEnabledForTest(true);
 }
 
-void sceneDataColourChoices(SceneContext& ctx)
+void sceneDataColoursDecided(SceneContext& ctx)
 {
-    const QString scene = QStringLiteral("colour-choice--data");
+    const QString scene = QStringLiteral("decided--data");
     ctx.provenance = QStringLiteral("proposed");
     if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
         ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
@@ -3349,7 +3331,7 @@ void sceneDataColourChoices(SceneContext& ctx)
 
     QVector<GridRow> rows;
     QVector<GridRow> cropRows;
-    QJsonArray variants;
+    QJsonArray rowNotes;
     auto captureRow = [&](const QString& key, const QString& title, const QString& note) {
         rerenderData(window);
         const QImage full = grabImage(window);
@@ -3360,43 +3342,47 @@ void sceneDataColourChoices(SceneContext& ctx)
         cropRow.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
                                             plainShot(QStringLiteral("parametric EQ"), eqImage)});
         cropRows.append(cropRow);
-        return std::make_tuple(full, graphImage, eqImage);
-    };
-
-    for (const DataVariant& v : dataVariants()) {
-        WorkspacePreview::setDataColoursForTest(v.colours);
-        const auto [full, graphImage, eqImage] = captureRow(v.key, v.title, v.note);
-        GridRow row{v.key, v.title, v.note, {}};
+        GridRow row{key, title, note, {}};
         row.groups.append(QVector<Shot>{plainShot(QStringLiteral("window"), full)});
         row.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
                                         plainShot(QStringLiteral("parametric EQ"), eqImage)});
         rows.append(row);
-        variants.append(QJsonObject{{QStringLiteral("key"), v.key},
-                                    {QStringLiteral("title"), v.title},
-                                    {QStringLiteral("colours"), v.note}});
-    }
+        rowNotes.append(QJsonObject{{QStringLiteral("key"), key}, {QStringLiteral("title"), title},
+                                    {QStringLiteral("colours"), note}});
+    };
 
-    // User colours win: a container background set by the user (B) and a
-    // bar colour set by the user on SIGNALAVG (C) stay the user's.
+    captureRow(QStringLiteral("decided"), QStringLiteral("Decided: neutral backgrounds, ink unchanged (B)"),
+               QString::fromLatin1(kDataColours));
+
+    // A container background the user set shows through the meters inside
+    // it (Levels: SIGNALMAXBIN and COMP).
     auto* manager = window->findChild<ContainerManager*>();
     ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));
+    ContainerWidget* meters = manager->container(QStringLiteral("preview-meters"));
     const QColor levelsBefore = levels->backgroundColor();
-    levels->setBackgroundColor(QColor::fromRgba(kUserContainerBg));
-    WorkspacePreview::setDataColoursForTest(DataColours::Neutral);
-    captureRow(QStringLiteral("b-user-container"),
-               QStringLiteral("B with a user container background (Levels)"),
-               QStringLiteral("Levels container background set to %1 by the user: it stays; the meter's "
-                              "default background takes panel #0c0c0e")
-                   .arg(QColor::fromRgba(kUserContainerBg).name()));
+    const QColor metersBefore = meters->backgroundColor();
+    const QColor userBg = QColor::fromRgba(kUserContainerBg);
+    levels->setBackgroundColor(userBg);
+    captureRow(QStringLiteral("user-container"), QStringLiteral("A user container background (Levels)"),
+               QStringLiteral("Levels container background set to %1 by the user: the meters inside show it "
+                              "in place of the panel role")
+                   .arg(userBg.name()));
     levels->setBackgroundColor(levelsBefore);
 
+    // A colour the user set on a meter item wins over both: the SIGNALAVG
+    // strip's own backdrop and bar inside a Meters container with the
+    // user's background.
     BarPresetItem* bar = boundBar(window, MeterBinding::SignalAvg);
     if (bar == nullptr) {
         ctx.failure = scene + QStringLiteral(": no SIGNALAVG bar item");
         return;
     }
-    const QJsonValue barBefore = bar->configuration().value(QStringLiteral("barColor"));
-    bar->applyConfiguration({{QStringLiteral("barColor"), QColor::fromRgba(kUserBarColour).name()}});
+    const QJsonObject barBefore{{QStringLiteral("barColor"), bar->configuration().value(QStringLiteral("barColor"))},
+                                {QStringLiteral("backdropColor"),
+                                 bar->configuration().value(QStringLiteral("backdropColor"))}};
+    meters->setBackgroundColor(userBg);
+    bar->applyConfiguration({{QStringLiteral("barColor"), QColor::fromRgba(kUserBarColour).name()},
+                             {QStringLiteral("backdropColor"), QColor::fromRgba(kUserBackdrop).name()}});
     // Applying a configuration resets the strip's smoothing: settle the
     // scene's SIGNALAVG reading again on a hand-stepped clock past the
     // scene's own, so no real frame moves it.
@@ -3404,13 +3390,13 @@ void sceneDataColourChoices(SceneContext& ctx)
         bar->pushBindingValue(MeterBinding::SignalAvg, kStripAvgDbm);
         bar->advanceMeter(kStripClockMs + i * kStripStepMs);
     }
-    WorkspacePreview::setDataColoursForTest(DataColours::NeutralInstrument);
-    captureRow(QStringLiteral("c-user-bar"), QStringLiteral("C with a user bar colour (SIGNALAVG)"),
-               QStringLiteral("SIGNALAVG bar colour set to %1 by the user: it stays; every other factory "
-                              "colour takes the instrument tones")
-                   .arg(QColor::fromRgba(kUserBarColour).name()));
-    bar->applyConfiguration({{QStringLiteral("barColor"), barBefore}});
-    WorkspacePreview::setDataColoursForTest(DataColours::Navy);
+    captureRow(QStringLiteral("user-item"), QStringLiteral("User item colours inside a user container (Meters)"),
+               QStringLiteral("Meters container background %1; SIGNALAVG backdrop %2 and bar %3 set by the user: "
+                              "the strip keeps its own colours, Power/SWR shows the container's")
+                   .arg(userBg.name(), QColor::fromRgba(kUserBackdrop).name(),
+                        QColor::fromRgba(kUserBarColour).name()));
+    bar->applyConfiguration(barBefore);
+    meters->setBackgroundColor(metersBefore);
     rerenderData(window);
 
     QJsonObject cropsJson{{QStringLiteral("pans"), rectArray(crops.pans)},
@@ -3420,24 +3406,21 @@ void sceneDataColourChoices(SceneContext& ctx)
                           {QStringLiteral("dial"), rectArray(crops.dial)},
                           {QStringLiteral("passband"), rectArray(crops.passband)}};
     QJsonObject extra{
-        {QStringLiteral("variants"), variants},
-        {QStringLiteral("seam"), QStringLiteral("WorkspacePreview::setDataColoursForTest")},
+        {QStringLiteral("rows"), rowNotes},
         {QStringLiteral("window_crops_logical"), cropsJson},
         {QStringLiteral("not_shown"), QJsonArray{
              QStringLiteral("a user spectrum background: NereusSDR has no such setting (Setup > Colors & "
                             "Theme sets trace, grid, text, band edge, zero line, filter and waterfall low "
-                            "colours only); the user rows show a container background and a bar colour"),
-             QStringLiteral("the waterfall's empty fill before data arrives: the pans are fed before the "
-                            "choice changes, so every row shows fed rows")}}};
+                            "colours only)")}}};
 
     WorkspacePreview::setEnabledForTest(false);
     QJsonArray placements;
     const QImage sheet = assembleGrid(
         rows, {QStringLiteral("Window: pans, meter strips, Longpath needle, Main Panel"),
                QStringLiteral("Remote diagnostics graph, TX EQ editor")},
-        QStringLiteral("Data colours: three choices"),
-        QStringLiteral("Real widgets with the workspace preview on; only the data choice differs per row. "
-                       "Graph and EQ are the real widgets on their dialogs' surface, with fixed data."),
+        QStringLiteral("Data colours: decided"),
+        QStringLiteral("Real widgets with the workspace preview on. Graph and EQ are the real widgets on their "
+                       "dialogs' surface, with fixed data."),
         placements);
     setSheetImages(ctx, scene, sheet, placements, extra);
 
@@ -3445,11 +3428,11 @@ void sceneDataColourChoices(SceneContext& ctx)
     const QImage cropSheet = assembleGrid(
         cropRows, {QStringLiteral("Window crops"), QStringLiteral("Graph and EQ")},
         QStringLiteral("Data colours: surface crops, with user colours"),
-        QStringLiteral("The same grabs cut per surface; the last two rows show that colours the user set "
-                       "stay the user's."),
+        QStringLiteral("The same grabs cut per surface; the last two rows show a user container background "
+                       "and user item colours."),
         cropPlacements);
     setSheetImages(ctx, scene + QStringLiteral("--crops"), cropSheet, cropPlacements,
-                   QJsonObject{{QStringLiteral("source"), scene}, {QStringLiteral("variants"), variants}});
+                   QJsonObject{{QStringLiteral("source"), scene}, {QStringLiteral("rows"), rowNotes}});
     WorkspacePreview::setEnabledForTest(true);
 }
 
