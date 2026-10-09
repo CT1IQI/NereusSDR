@@ -2746,6 +2746,10 @@ nereus_add_test(tst_workspace_dialog_colours)
 # zoom track, plot backgrounds that follow their container (D22), the
 # Longpath reference arrows and the overlay ATT box's checked indicator.
 nereus_add_test(tst_workspace_sliders_plots)
+# The workspace preview: no slider handle is cut off on a Setup page or
+# tab, an applet, the pan overlay or the title bar.
+nereus_add_test(tst_workspace_slider_handles)
+target_compile_definitions(tst_workspace_slider_handles PRIVATE NEREUS_BUILD_TESTS)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)

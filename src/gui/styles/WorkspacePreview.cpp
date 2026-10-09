@@ -34,6 +34,11 @@
 //                 decided slider) and checkable group boxes (the decided
 //                 indicator). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - sliderBlock() keeps a slider at least as thick as the
+//                 decided handle, and so does sliderFit() for a slider
+//                 the style or the program left thinner; a thicker
+//                 slider keeps its size. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -303,12 +308,14 @@ QString sliderBlock(QWidget* w, const QString& look, const QString& current)
     };
     const QSize bare = measure(look + rules);
     QString decls;
+    // Never thinner than the decided handle, or the handle is cut off.
+    const int span = Workspace::Components::kSliderHandleSpanPx;
     if (vertical) {
         if (bare.width() != today.width() && w->minimumWidth() != w->maximumWidth()) {
-            decls += QStringLiteral(" min-width: %1px; max-width: %1px;").arg(today.width());
+            decls += QStringLiteral(" min-width: %1px; max-width: %1px;").arg(qMax(today.width(), span));
         }
     } else if (bare.height() != today.height() && w->minimumHeight() != w->maximumHeight()) {
-        decls += QStringLiteral(" min-height: %1px; max-height: %1px;").arg(today.height());
+        decls += QStringLiteral(" min-height: %1px; max-height: %1px;").arg(qMax(today.height(), span));
     }
     w->setProperty(kThemedQssProperty, current);
     w->setStyleSheet(current);
@@ -342,6 +349,48 @@ QString groupBoxBlock(QWidget* w)
     return Workspace::Components::groupBoxIndicatorRules(r.width(), r.height());
 }
 
+// A slider thinner than the decided handle: the style's own thickness
+// (15 px with Fusion on macOS) or a size the program fixed below it. The
+// rule makes it as thick as the handle, and only such a slider gets it:
+// a min-height in a sheet also becomes the slider's size hint, so a
+// slider already thicker keeps its size. Once given, the rule stays (it
+// raises what a later pass would read); until then each pass looks
+// again, since the program may fix the size after the slider was first
+// seen.
+constexpr auto kSliderFitProperty = "_nereusWorkspaceSliderFit";
+
+QString sliderFit(QWidget* w)
+{
+    if (!w->inherits("QSlider")) {
+        return {};
+    }
+    const QString known = w->property(kSliderFitProperty).toString();
+    if (!known.isEmpty()) {
+        return known;
+    }
+    const int span = Workspace::Components::kSliderHandleSpanPx;
+    const bool vertical = w->property("orientation").toInt() == Qt::Vertical;
+    const QSize hint = w->sizeHint();
+    QString fit;
+    // The thickness a layout gives the slider: its hint, never below its
+    // minimum (a size the program fixed is both).
+    if (vertical) {
+        if (w->maximumWidth() < span) {
+            fit = QStringLiteral("QSlider { min-width: %1px; max-width: %1px; }\n").arg(span);
+        } else if (qMax(hint.width(), w->minimumWidth()) < span) {
+            fit = QStringLiteral("QSlider { min-width: %1px; }\n").arg(span);
+        }
+    } else if (w->maximumHeight() < span) {
+        fit = QStringLiteral("QSlider { min-height: %1px; max-height: %1px; }\n").arg(span);
+    } else if (qMax(hint.height(), w->minimumHeight()) < span) {
+        fit = QStringLiteral("QSlider { min-height: %1px; }\n").arg(span);
+    }
+    if (!fit.isEmpty()) {
+        w->setProperty(kSliderFitProperty, fit);
+    }
+    return fit;
+}
+
 void themeOne(QWidget* w)
 {
     const QString current = w->styleSheet();
@@ -373,7 +422,9 @@ void themeOne(QWidget* w)
         block = w->property(kIndicatorBlockProperty).toString();
     }
 
-    if (original.isEmpty() && !needsBlock) {
+    const QString fit = sliderFit(w);
+
+    if (original.isEmpty() && !needsBlock && fit.isEmpty()) {
         w->setProperty(kThemedQssProperty, original);
         return;
     }
@@ -406,6 +457,12 @@ void themeOne(QWidget* w)
             w->setProperty(kIndicatorBlockProperty, block);
         }
         look += block;
+    }
+    if (!fit.isEmpty()) {
+        if (!look.trimmed().isEmpty() && !look.contains(QLatin1Char('{'))) {
+            look = QStringLiteral("* {%1}\n").arg(look);
+        }
+        look += fit;
     }
     // Recorded first: setStyleSheet() sends StyleChange, and the live
     // pass must see this sheet as already themed.

@@ -77,6 +77,9 @@
 //                 live pass; componentize() takes the remaining dialog and
 //                 menu colours. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - kSliderHandleSpanPx: no slider thinner than the decided
+//                 handle. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -124,6 +127,12 @@ QString groupBoxIndicatorRules(int widthPx, int heightPx);
 // pressed, no filled side) for a slider no sheet styles. The live pass
 // gives them to each such slider with what keeps its size.
 QString sliderRulesFor(bool vertical);
+
+// The decided handle's span across the slider (14 px plus a 1 px rim on
+// each side). A slider thinner than this cuts the handle off, so the look
+// never lets a slider be thinner (the live pass gives such a slider a
+// min-height or min-width; WorkspacePreview.cpp sliderFit()).
+inline constexpr int kSliderHandleSpanPx = 16;
 
 // Application-wide rules for tables and header sections in the
 // workspace look: grid lines, the line under the titles and the edges
