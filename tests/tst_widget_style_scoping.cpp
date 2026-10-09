@@ -10,9 +10,14 @@
 //                severity bar their author wrote, one bar on the left edge
 //                in the accentFor() colour. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The pan toolbar's ANT flyout rows and ATT check box are
+//                not boxed by the flyout's own frame rule. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest/QtTest>
 
+#include <QCheckBox>
 #include <QColor>
+#include <QComboBox>
 #include <QImage>
 #include <QLabel>
 #include <QLayout>
@@ -20,6 +25,7 @@
 
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/SpectrumOverlayPanel.h"
 #include "gui/StyleConstants.h"
 #include "gui/VaxFirstRunDialog.h"
 #include "gui/widgets/AntennaSwitchToast.h"
@@ -197,6 +203,49 @@ private slots:
                                                         .arg(label->text(), QColor(edgeColour).name(), edge)));
             }
         }
+    }
+
+    // The flyout frame (SpectrumOverlayPanel kPanelStyle, #304050) belongs to
+    // the flyout: the RX and TX antenna rows and the step attenuator check
+    // box do not draw it again.
+    void overlayFlyoutRowsAndCheckBoxAreNotBoxed()
+    {
+        QWidget host;
+        host.resize(600, 400);
+        auto* panel = new SpectrumOverlayPanel(&host);
+        Q_UNUSED(panel);
+        const QRgb frame = rgbOf("#304050");
+        auto* check = host.findChild<QCheckBox*>(QStringLiteral("attEnableCheck"));
+        QVERIFY(check != nullptr);
+        check->parentWidget()->layout()->activate();
+        const QString edge = borderEdgeIn(check, frame);
+        QVERIFY2(edge.isEmpty(), qPrintable(QStringLiteral("the step attenuator check box draws the flyout frame "
+                                                           "on its %1 edge").arg(edge)));
+        int rows = 0;
+        for (const char* name : {"m_rxAntCmb", "m_txAntCmb"}) {
+            auto* combo = host.findChild<QComboBox*>(QString::fromLatin1(name));
+            QVERIFY2(combo != nullptr, name);
+            QWidget* row = combo->parentWidget();
+            QWidget* flyout = row->parentWidget();
+            flyout->layout()->activate();
+            row->ensurePolished();
+            // Above the row's label (the combo draws its own frame): no
+            // frame line along the row's top edge.
+            QLabel* label = row->findChild<QLabel*>();
+            QVERIFY(label != nullptr);
+            const QImage rowImage = imageOf(row);
+            int hits = 0;
+            int span = 0;
+            for (int x = label->x() + 3; x < label->x() + label->width() - 3; ++x, ++span) {
+                hits += sameColour(rowImage.pixel(x, 0), frame) ? 1 : 0;
+            }
+            QVERIFY(span > 0);
+            const double share = double(hits) / double(span);
+            QVERIFY2(share < kEdgeShare, qPrintable(QStringLiteral("the %1 row draws the flyout frame above its "
+                                                                   "label (%2%)").arg(QString::fromLatin1(name)).arg(share * 100.0)));
+            ++rows;
+        }
+        QCOMPARE(rows, 2);
     }
 
     void floatingPanTitleLabelsHaveNoBottomLine()
