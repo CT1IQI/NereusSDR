@@ -651,6 +651,11 @@
 //   2026-10-06 - Radio speaker plan Task 11 (R-SPK-21): Tools > VAX Audio
 //                opens Setup > Audio > Digital modes, which holds VAX now.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Closing the window detaches the meter poller from the
+//                RadioModel's PA readings and status first, so the model's
+//                teardown no longer reaches this window's meter source
+//                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1867,7 +1872,16 @@ MainWindow::~MainWindow()
     // Retire native hosts while their windows and original construction owners
     // still exist. QObject's later child teardown is too late to reparent a
     // parked native applet safely back into this window.
-    if (m_meterPoller) { m_meterPoller->stop(); }
+    if (m_meterPoller) {
+        m_meterPoller->stop();
+        // The poller lets go of the model's PA readings and status now. QObject
+        // destroys the RadioModel child before the poller, and the poller's
+        // destroyed hooks republished binding support from inside that
+        // teardown, into this window's source lambdas, which read the model's
+        // already deleted slices.
+        m_meterPoller->setPaReadingsModel(nullptr);
+        m_meterPoller->setRadioStatus(nullptr);
+    }
     if (m_radioModel && m_radioModel->meterPoller()==m_meterPoller) { m_radioModel->setMeterPoller(nullptr); }
     if (m_containerManager) {
         auto* registry=m_containerManager->contentRegistry();
