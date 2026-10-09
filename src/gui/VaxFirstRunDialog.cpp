@@ -14,6 +14,9 @@
 //   2026-10-06 - R-SPK-21: Customize and "Why do I need this?" open Setup >
 //                Audio > Digital modes, which holds VAX now. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - A detected-cable row names its own style rule, so its
+//                bottom line no longer repeats under every label in it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "VaxFirstRunDialog.h"
@@ -204,8 +207,11 @@ QWidget* makeDetRow(int vaxSlot,
     }
     layout->addWidget(rightSide, 0, Qt::AlignTop);
 
+    // Named so the bottom line stays on the row: an unnamed QWidget rule
+    // reached every label in it and drew the line under each.
+    row->setObjectName(QStringLiteral("vaxDetectedRow"));
     row->setStyleSheet(QStringLiteral(
-        "QWidget { background: transparent; border-bottom: 1px solid %1; }")
+        "QWidget#vaxDetectedRow { background: transparent; border-bottom: 1px solid %1; }")
         .arg(Style::kInsetBorder));
 
     return row;

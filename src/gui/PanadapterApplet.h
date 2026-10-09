@@ -62,6 +62,10 @@
 //                ruling): the receiver flags stay on top of the corner
 //                badges; the badges' strip is masked out of the flags' area.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  The floated pan's title bar names its
+//                own style rule, so its bottom line no longer repeats under
+//                the grip and title labels. AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 #pragma once
 

@@ -589,6 +589,9 @@ nereus_add_test(tst_workspace_live_input)
 nereus_add_test(tst_workspace_profiles)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
 nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
+# A container's stylesheet border stays on the container (antenna switch toast,
+# floating pan title bar, VAX first-run rows), offscreen.
+nereus_add_test(tst_widget_style_scoping)
 nereus_add_test(tst_longpath_instruments)
 # Workspace preview: added copies of the SIGNAL STRENGTH dial (per-copy settings, own source).
 nereus_add_test(tst_smeter_dial_content)

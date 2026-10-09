@@ -436,8 +436,11 @@ void PanadapterApplet::buildFloatTitleBar()
     m_floatTitleBar = new QWidget(this);
     m_floatTitleBar->setFixedHeight(18);
     m_floatTitleBar->setVisible(false);
+    // Named so the bottom line stays on the bar: an unnamed QWidget rule
+    // reached the grip and title labels and drew the line under each.
+    m_floatTitleBar->setObjectName(QStringLiteral("panFloatTitleBar"));
     m_floatTitleBar->setStyleSheet(QStringLiteral(
-        "QWidget { background: #16202c; border-bottom: 1px solid #203040; }"));
+        "QWidget#panFloatTitleBar { background: #16202c; border-bottom: 1px solid #203040; }"));
 
     auto* bar = new QHBoxLayout(m_floatTitleBar);
     bar->setContentsMargins(6, 0, 4, 0);
