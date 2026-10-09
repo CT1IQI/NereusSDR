@@ -44,6 +44,10 @@
 //                 via Anthropic Claude Code.
 //   2026-09-29 -- R-R3-49 / R-IOS-18: Setup description version 15 ids.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 -- The live status word reads
+//                 WorkspacePreview::statusColourName() (the status colour
+//                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "RfKitPage.h"
@@ -917,9 +921,9 @@ void RfKitPage::refreshLiveStatus()
     if (!conn) { return; }
     const QString status = conn->isConnected()
         ? QStringLiteral("<span style='color:%1;'>CONNECTED</span>")
-              .arg(WorkspacePreview::roleColourName("#34c759", "ok"))
+              .arg(WorkspacePreview::statusColourName("#34c759", "ok"))
         : QStringLiteral("<span style='color:%1;'>DISCONNECTED</span>")
-              .arg(WorkspacePreview::roleColourName("#e64949", "danger"));
+              .arg(WorkspacePreview::statusColourName("#e64949", "danger"));
     m_liveStatusLabel->setText(
         QStringLiteral("RF2K-S: %1 &nbsp; %2:%3 &nbsp; %4")
             .arg(status, conn->peerAddress())

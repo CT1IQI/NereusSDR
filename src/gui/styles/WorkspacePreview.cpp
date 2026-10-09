@@ -19,6 +19,21 @@
 //   2026-10-08 - roleColour() and roleColourName() for painted chrome
 //                 and rich text. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - The status and data colour choices: statusColour(),
+//                 dataBackground() and meterInk(). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decisions are the product: the brighter indicator
+//                 tones and the container's background, the user's when
+//                 set. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-09 - JJ's indicator rules per check box and radio no sheet
+//                 styles the indicator of, with the padding that keeps
+//                 its size. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-09 - The same measured pass for sliders no sheet styles (the
+//                 decided slider) and checkable group boxes (the decided
+//                 indicator). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -30,13 +45,17 @@
 
 #include <QApplication>
 #include <QEvent>
+#include <QGroupBox>
 #include <QMetaObject>
 #include <QObject>
 #include <QSet>
+#include <QStyle>
+#include <QStyleOptionGroupBox>
 #include <QVariant>
 #include <QWidget>
 #include <QWindow>
 
+#include <algorithm>
 #include <optional>
 
 namespace NereusSDR::WorkspacePreview {
@@ -151,6 +170,178 @@ bool skippedInWindow(const QWidget* w)
     return false;
 }
 
+// The indicator block a check box or radio gets when no sheet above it
+// styles its indicator.
+constexpr auto kIndicatorBlockProperty = "_nereusWorkspaceIndicatorBlock";
+
+bool isToggle(const QWidget* w)
+{
+    return w->inherits("QCheckBox") || w->inherits("QRadioButton");
+}
+
+// True when the box's own sheet, an ancestor's or the application's
+// styles an indicator: that sheet sized the box already.
+bool indicatorStyled(const QWidget* w, const QString& own)
+{
+    const QLatin1String sub("::indicator");
+    if (own.contains(sub, Qt::CaseInsensitive)) {
+        return true;
+    }
+    for (const QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (p->styleSheet().contains(sub, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return qApp != nullptr && qApp->styleSheet().contains(sub, Qt::CaseInsensitive);
+}
+
+// JJ's indicator rules for a box no sheet styles the indicator of, with
+// what keeps its size: an indicator rule makes Qt's stylesheet style size
+// the box as text, spacing and indicator only, without the label margins
+// the platform style adds (and with the spacing even when there is no
+// text). The box is measured as it is (its sheet without the rules: today's
+// size) and with the rules, and the difference goes back as padding, or
+// as less spacing where the rules made it wider. `look` is the box's own
+// themed sheet; `current` is the sheet it has now.
+QString indicatorBlock(QWidget* w, const QString& look, const QString& current)
+{
+    const bool radio = w->inherits("QRadioButton");
+    const QString cls = radio ? QStringLiteral("QRadioButton") : QStringLiteral("QCheckBox");
+    const QString rules = Workspace::Components::indicatorRulesFor(radio);
+    const QSize today = w->sizeHint();
+    // Recorded first, so the live pass leaves the measuring sheet alone.
+    const auto measure = [w](const QString& sheet) {
+        w->setProperty(kThemedQssProperty, sheet);
+        w->setStyleSheet(sheet);
+        return w->sizeHint();
+    };
+    const QSize bare = measure(look + rules);
+    int dw = today.width() - bare.width();
+    const int dh = std::max(0, today.height() - bare.height());
+    QString decls;
+    if (dw < 0) {
+        const int spacing = w->style()->pixelMetric(
+            radio ? QStyle::PM_RadioButtonLabelSpacing : QStyle::PM_CheckBoxLabelSpacing, nullptr, w);
+        const int less = std::min(spacing, -dw);
+        decls += QStringLiteral(" spacing: %1px;").arg(spacing - less);
+        dw += less;
+    }
+    if (dw > 0 || dh > 0) {
+        decls += QStringLiteral(" padding: %1px %2px %3px 0px;").arg(dh / 2).arg(std::max(0, dw)).arg(dh - dh / 2);
+    }
+    // Put back what the box had; the caller sets the themed sheet.
+    w->setProperty(kThemedQssProperty, current);
+    w->setStyleSheet(current);
+    if (decls.isEmpty()) {
+        return rules;
+    }
+    return rules + QStringLiteral("%1 {%2 }\n").arg(cls, decls);
+}
+
+// True when a sheet on the slider, an ancestor or the application styles
+// a slider: that sheet drew it already.
+bool sliderStyled(const QWidget* w, const QString& own)
+{
+    // An ancestor's or the application's "::handle" is a scroll bar's
+    // (the workspace scroll bar); only the slider's own sheet counts it.
+    const auto styles = [](const QString& sheet) {
+        return sheet.contains(QLatin1String("QSlider"), Qt::CaseInsensitive);
+    };
+    if (styles(own) || own.contains(QLatin1String("::groove"), Qt::CaseInsensitive)
+        || own.contains(QLatin1String("::handle"), Qt::CaseInsensitive)) {
+        return true;
+    }
+    for (const QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (styles(p->styleSheet())) {
+            return true;
+        }
+    }
+    return qApp != nullptr && styles(qApp->styleSheet());
+}
+
+bool isUnstyledSlider(const QWidget* w, const QString& own)
+{
+    return w->inherits("QSlider") && !sliderStyled(w, own);
+}
+
+// True when a sheet on the group box, an ancestor or the application
+// styles a group box's indicator.
+bool groupIndicatorStyled(const QWidget* w, const QString& own)
+{
+    if (own.contains(QLatin1String("::indicator"), Qt::CaseInsensitive)) {
+        return true;
+    }
+    const QLatin1String sub("QGroupBox::indicator");
+    for (const QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (p->styleSheet().contains(sub, Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return qApp != nullptr && qApp->styleSheet().contains(sub, Qt::CaseInsensitive);
+}
+
+bool isUnstyledCheckableGroup(const QWidget* w, const QString& own)
+{
+    const auto* g = qobject_cast<const QGroupBox*>(w);
+    return g != nullptr && g->isCheckable() && !groupIndicatorStyled(w, own);
+}
+
+// The decided slider for a slider no sheet styles, with what keeps its
+// size: Longpath's groove and handle change the slider's size hint
+// across its length, so the slider is measured as it is and with the
+// rules, and today's thickness goes back as a minimum and maximum.
+// A thickness the program fixed stays as it is.
+QString sliderBlock(QWidget* w, const QString& look, const QString& current)
+{
+    const bool vertical = w->property("orientation").toInt() == Qt::Vertical;
+    const QString rules = Workspace::Components::sliderRulesFor(vertical);
+    const QSize today = w->sizeHint();
+    const auto measure = [w](const QString& sheet) {
+        w->setProperty(kThemedQssProperty, sheet);
+        w->setStyleSheet(sheet);
+        return w->sizeHint();
+    };
+    const QSize bare = measure(look + rules);
+    QString decls;
+    if (vertical) {
+        if (bare.width() != today.width() && w->minimumWidth() != w->maximumWidth()) {
+            decls += QStringLiteral(" min-width: %1px; max-width: %1px;").arg(today.width());
+        }
+    } else if (bare.height() != today.height() && w->minimumHeight() != w->maximumHeight()) {
+        decls += QStringLiteral(" min-height: %1px; max-height: %1px;").arg(today.height());
+    }
+    w->setProperty(kThemedQssProperty, current);
+    w->setStyleSheet(current);
+    if (decls.isEmpty()) {
+        return rules;
+    }
+    return rules + QStringLiteral("QSlider {%1 }\n").arg(decls);
+}
+
+// The decided indicator for a checkable group box, at the size the
+// group box draws its indicator now. The option is filled as
+// QGroupBox::initStyleOption() fills it (protected).
+QString groupBoxBlock(QWidget* w)
+{
+    const auto* g = static_cast<const QGroupBox*>(w);
+    QStyleOptionGroupBox o;
+    o.initFrom(g);
+    o.text = g->title();
+    o.lineWidth = 1;
+    o.midLineWidth = 0;
+    o.textAlignment = g->alignment();
+    o.subControls = QStyle::SC_GroupBoxFrame | QStyle::SC_GroupBoxCheckBox;
+    if (!g->title().isEmpty()) {
+        o.subControls |= QStyle::SC_GroupBoxLabel;
+    }
+    if (g->isFlat()) {
+        o.features |= QStyleOptionFrame::Flat;
+    }
+    o.state |= g->isChecked() ? QStyle::State_On : QStyle::State_Off;
+    const QRect r = w->style()->subControlRect(QStyle::CC_GroupBox, &o, QStyle::SC_GroupBoxCheckBox, w);
+    return Workspace::Components::groupBoxIndicatorRules(r.width(), r.height());
+}
+
 void themeOne(QWidget* w)
 {
     const QString current = w->styleSheet();
@@ -169,7 +360,20 @@ void themeOne(QWidget* w)
         original = stored.toString();
     }
 
-    if (original.isEmpty()) {
+    // A box no sheet styles the indicator of gets JJ's indicator rules
+    // with what keeps its size, measured once per original sheet; so do a
+    // slider no sheet styles (the decided slider) and a checkable group
+    // box (the decided indicator).
+    const bool toggleBlock = isToggle(w) && !indicatorStyled(w, original);
+    const bool sliderNeedsBlock = !toggleBlock && isUnstyledSlider(w, original);
+    const bool groupNeedsBlock = !toggleBlock && !sliderNeedsBlock && isUnstyledCheckableGroup(w, original);
+    const bool needsBlock = toggleBlock || sliderNeedsBlock || groupNeedsBlock;
+    QString block;
+    if (needsBlock && !fresh) {
+        block = w->property(kIndicatorBlockProperty).toString();
+    }
+
+    if (original.isEmpty() && !needsBlock) {
         w->setProperty(kThemedQssProperty, original);
         return;
     }
@@ -188,7 +392,21 @@ void themeOne(QWidget* w)
             }
         }
     }
-    const QString look = Workspace::Components::componentize(r.qss, w);
+    QString look = Workspace::Components::componentize(r.qss, w);
+    if (needsBlock) {
+        // A brace-less sheet is a "*" rule; written as one, so rules can
+        // follow it.
+        if (!look.trimmed().isEmpty() && !look.contains(QLatin1Char('{'))) {
+            look = QStringLiteral("* {%1}\n").arg(look);
+        }
+        if (block.isEmpty()) {
+            block = toggleBlock       ? indicatorBlock(w, look, current)
+                  : sliderNeedsBlock  ? sliderBlock(w, look, current)
+                                      : groupBoxBlock(w);
+            w->setProperty(kIndicatorBlockProperty, block);
+        }
+        look += block;
+    }
     // Recorded first: setStyleSheet() sends StyleChange, and the live
     // pass must see this sheet as already themed.
     w->setProperty(kThemedQssProperty, look);
@@ -360,6 +578,73 @@ QString roleColourName(const char* legacy, const char* role)
     }
     const QColor c = roleColour(QColor::fromString(QLatin1StringView(legacy)), role);
     return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
+}
+
+namespace {
+
+// The indicator tones Longpath keeps for a live state, a reading and
+// transmit (WorkspacePalette.h kLiveGreen, kAmberText, kTxRed).
+const char* indicatorRole(const char* role)
+{
+    const QLatin1StringView r(role);
+    if (r == QLatin1StringView("ok")) {
+        return "live";
+    }
+    if (r == QLatin1StringView("warn")) {
+        return "measured";
+    }
+    if (r == QLatin1StringView("danger")) {
+        return "tx";
+    }
+    return role;
+}
+
+} // namespace
+
+QColor statusColour(const QColor& legacy, const char* role)
+{
+    if (!enabled() || role == nullptr) {
+        return legacy;
+    }
+    return roleColour(legacy, indicatorRole(role));
+}
+
+QString statusColourName(const char* legacy, const char* role)
+{
+    if (!enabled() || role == nullptr) {
+        return QString::fromLatin1(legacy);
+    }
+    const QColor c = statusColour(QColor::fromString(QLatin1StringView(legacy)), role);
+    return c.name(c.alpha() < 255 ? QColor::HexArgb : QColor::HexRgb);
+}
+
+QColor dataBackground(const QColor& legacy, const char* role, const QObject* surface)
+{
+    if (!enabled()) {
+        return legacy;
+    }
+    // A meter item: start from the widget that owns it.
+    const QObject* o = surface;
+    while (o != nullptr && !o->isWidgetType()) {
+        o = o->parent();
+    }
+    // The nearest container around the surface decides: its user colour
+    // when it has one, otherwise its role.
+    for (auto* w = static_cast<const QWidget*>(o); w != nullptr; w = w->parentWidget()) {
+        const QVariant v = w->property(kUserBackgroundProperty);
+        if (!v.isValid()) {
+            continue;
+        }
+        QColor user = v.value<QColor>();
+        if (!user.isValid() || !legacy.isValid()) {
+            break;
+        }
+        if (legacy.alpha() < 255) {
+            user.setAlpha(legacy.alpha());
+        }
+        return user;
+    }
+    return roleColour(legacy, role);
 }
 
 QHash<QString, int> unknownLiteralCounts()

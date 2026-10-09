@@ -72,6 +72,8 @@
 //                 tracking and mono families; the licence note corrected;
 //                 the shiftL() block cite covers its section title.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - scrollBarStyle(): kScrollBarStyle at a given thickness.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -238,5 +240,10 @@ QString glassPanelFill();
 
 // From Longpath src/gui/StyleConstants.h:1052-1066 [@551576e3]
 QString titleBarStyle();
+
+// kScrollBarStyle at `thicknessPx` instead of Longpath's 10 px: the
+// workspace look keeps the platform style's bar thickness (JJ's choice,
+// 2026-10-08), so no scroll area changes width.
+QString scrollBarStyle(int thicknessPx);
 
 } // namespace NereusSDR::Workspace

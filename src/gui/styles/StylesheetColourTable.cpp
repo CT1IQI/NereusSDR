@@ -8,6 +8,9 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - The Spot Hub on/off toggle pair takes rows: on in the
+//                 green family, off the raised button.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -261,6 +264,14 @@ const QVector<ColourRow>& rows()
 
         // ── Badges ───────────────────────────────────────────────
         { "#555555", kBg, "badge-off-bg" },      // Tgxl/PgxlAdvancedPage "#555" neutral chip
+
+        // ── On/off toggles ───────────────────────────────────────
+        // A checkable toggle lit green by its plain rule and dimmed by
+        // :!checked: on is the green family, off the raised button
+        // (componentize() gives both their raised forms).
+        { "#206030", kBg, "ok-bg" },             // SpotHubDialog:221,2724 toggle on
+        { "#305040", kBorder, "ok-border" },     // SpotHubDialog:222,2725 toggle edge
+        { "#603020", kBg, "button" },            // SpotHubDialog:223,2726 toggle off
     };
     return table;
 }
@@ -291,9 +302,6 @@ const QVector<KeptLiteral>& kept()
         { "#556", kText, "on/off pair: the off half of the RxApplet badge (RxApplet:1163,2377)" },
         { "#1a1a1a", kBg, "two jobs: the off badge fill of an on/off pair (RxApplet:1162,2376) "
                           "and the CAT/TCI log view fill (CatLogWindow:47, TciLogWindow:127)" },
-        { "#206030", kBg, "lit: SpotHub toggle on (SpotHubDialog:221,2724)" },
-        { "#603020", kBg, "on/off pair: SpotHub toggle off (SpotHubDialog:223,2726)" },
-        { "#305040", kBorder, "on/off pair: SpotHub toggle edge (SpotHubDialog:222,2725)" },
         { "#20c060", kBg, "lit: PureSignal on badge (PureSignalApplet:107)" },
         { "#4488ff", kAny, "lit: :checked text (RxApplet:691), the same value unchecked at :712, "
                            "and a spot colour default (SpotHubDialog:1107)" },

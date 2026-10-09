@@ -155,6 +155,10 @@
 //                                    dereferences a deleted cell
 //                                    interface. AI tooling: Anthropic
 //                                    Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  The console and section titles read
+//                                    WorkspacePreview::roleColourName()
+//                                    (title-text) with the preview on.
+//                                    AI tooling: Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -296,6 +300,15 @@ QString swatchStyle(const QColor& c) {
     return QString(
         "QPushButton { background: %1; border: 2px solid #405060; border-radius: 3px; }"
         "QPushButton:hover { border-color: #c8d8e8; }").arg(c.name());
+}
+
+// A console or section title, blue only for decoration: the header text
+// (title-text, the application sheet's group box titles) with the workspace
+// preview on, today's accent with it off.
+QString sectionTitleStyle(const char* extra = "")
+{
+    return QStringLiteral("QLabel { color: %1; font-weight: bold; %2}")
+        .arg(WorkspacePreview::roleColourName("#00b4d8", "title-text"), QLatin1String(extra));
 }
 
 } // namespace
@@ -850,7 +863,7 @@ void SpotHubDialog::buildClusterTab(QTabWidget* tabs)
     // Console + spot-color row
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("Cluster Console");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -1097,7 +1110,7 @@ void SpotHubDialog::buildRbnTab(QTabWidget* tabs)
     // Console + spot-color row
     auto* rbnConsoleRow = new QHBoxLayout;
     auto* rbnConsoleLabel = new QLabel("RBN Console");
-    rbnConsoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    rbnConsoleLabel->setStyleSheet(sectionTitleStyle());
     rbnConsoleRow->addWidget(rbnConsoleLabel);
     rbnConsoleRow->addStretch();
 
@@ -1431,7 +1444,7 @@ void SpotHubDialog::buildWsjtxTab(QTabWidget* tabs)
     // Decodes label + spot-life slider
     auto* decodeRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("WSJT-X Decodes");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     decodeRow->addWidget(consoleLabel);
     decodeRow->addStretch();
 
@@ -1585,7 +1598,7 @@ void SpotHubDialog::buildSpotCollectorTab(QTabWidget* tabs)
     layout->addWidget(connGroup);
 
     auto* consoleLabel = new QLabel("SpotCollector Spots");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     layout->addWidget(consoleLabel);
 
     m_scConsole = new QPlainTextEdit;
@@ -1724,7 +1737,7 @@ void SpotHubDialog::buildPotaTab(QTabWidget* tabs)
 
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("POTA Activations");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -2099,7 +2112,7 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
 
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("FreeDV Spots");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -2278,7 +2291,7 @@ void SpotHubDialog::buildPskTab(QTabWidget* tabs)
     layout->addWidget(connGroup);
 
     auto* consoleLabel = new QLabel("PSK Reporter Activity");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     layout->addWidget(consoleLabel);
 
     m_pskConsole = new QPlainTextEdit;
@@ -2605,7 +2618,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     leftCol->setSpacing(4);
 
     auto* statsTitle = new QLabel("Statistics");
-    statsTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    statsTitle->setStyleSheet(sectionTitleStyle());
     leftCol->addWidget(statsTitle);
 
     auto makeStatRow = [leftCol](const QString& label, const QString& objName) -> QLabel* {
@@ -2705,7 +2718,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     rightCol->setSpacing(4);
 
     auto* knobsTitle = new QLabel("Spot Settings");
-    knobsTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    knobsTitle->setStyleSheet(sectionTitleStyle());
     rightCol->addWidget(knobsTitle);
 
     auto* grid = new QGridLayout;
@@ -2993,8 +3006,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     // tab's source pills remain a secondary filter for fine-grained
     // control without opening this tab.
     auto* visTitle = new QLabel("Show spots from source");
-    visTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; "
-                            "margin-top: 8px; }");
+    visTitle->setStyleSheet(sectionTitleStyle("margin-top: 8px; "));
     rightCol->addWidget(visTitle);
 
     static const QVector<QPair<QString, QString>> kSourceChecks = {

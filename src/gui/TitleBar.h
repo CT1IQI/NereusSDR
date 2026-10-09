@@ -81,6 +81,8 @@
 //                 state dot still so the workspace visual preview tool
 //                 (tests/visual/) captures the same pixels on every run.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - setPulsePausedForTest() can hold the brighter step.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -153,7 +155,8 @@ public:
     // Test seam: stop the state-dot pulse and hold it in its resting colour
     // (paused), or resume it as setState() would (unpaused). The visual
     // preview tool uses it so two captures of one scene match pixel for pixel.
-    void setPulsePausedForTest(bool paused);
+    // `brightStep` holds the pulse's brighter step instead of its resting one.
+    void setPulsePausedForTest(bool paused, bool brightStep = false);
 
     // Hit-test rect accessors — populated after the first paintEvent.
     // Exposed publicly so callers can verify click regions (e.g. in tests).

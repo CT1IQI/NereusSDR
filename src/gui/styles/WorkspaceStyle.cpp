@@ -65,6 +65,8 @@
 //   2026-10-08 - Upstream rationale and its section title restored above
 //                 shiftL(); the licence note corrected.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - scrollBarStyle(): kScrollBarStyle at a given thickness.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceStyle.h"
@@ -234,6 +236,18 @@ QString titleBarStyle()
     ).arg(QLatin1String(kTitleGradTop), QLatin1String(kTitleGradMid),
           QLatin1String(kTitleGradBot), QLatin1String(kTitleBorder),
           QLatin1String(kGlassLight));
+}
+
+QString scrollBarStyle(int thicknessPx)
+{
+    // [original comment from StyleConstants.h:1271-1272 is at kScrollBarStyle in WorkspaceStyle.h]
+    // From Longpath src/gui/StyleConstants.h:1273-1283 [@551576e3]
+    QString bars = QString::fromLatin1(kScrollBarStyle);
+    bars.replace(QLatin1String("width: 10px; margin: 0;"),
+                 QStringLiteral("width: %1px; margin: 0;").arg(thicknessPx));
+    bars.replace(QLatin1String("height: 10px; margin: 0;"),
+                 QStringLiteral("height: %1px; margin: 0;").arg(thicknessPx));
+    return bars;
 }
 
 } // namespace NereusSDR::Workspace

@@ -95,6 +95,20 @@
 //                 --two-band and --tx (SMeterWidget's test-only plate
 //                 limit). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - colour-choice--status and colour-choice--data: the status
+//                 and data colour choices (ControlsSheet.cpp). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decisions are the product: decided--status and
+//                 decided--data replace the colour-choice scenes, and the
+//                 --plate-b dial variants are gone (the plate limit is
+//                 unconditional). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-08 - Window and dialog grabs dump every visible widget's
+//                 rectangle (<name>.geometry.tsv). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - decided--controls: JJ's decided control look through the
+//                 product path. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - menu-*, menubar-*, popup-*, toast-* and tooltip-* scenes:
 //                 every menu, popup, toast and tooltip opened through the
 //                 product's own path and grabbed while open; tooltips placed
@@ -261,6 +275,7 @@
 #include "gui/widgets/BandwidthFilterPane.h"
 #include "gui/meters/BandButtonItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
 #include "core/MicProfileManager.h"
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/widgets/ProfileRail.h"
@@ -750,6 +765,81 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+// The control kind a widget is, for masking a diff against the controls
+// a look restyles; "other" for everything else.
+QString controlKind(const QWidget* w)
+{
+    if (w->inherits("QScrollBar")) {
+        return QStringLiteral("scrollbar");
+    }
+    if (w->inherits("QAbstractSlider")) {
+        return QStringLiteral("slider");
+    }
+    if (w->inherits("QCheckBox")) {
+        return QStringLiteral("checkbox");
+    }
+    if (w->inherits("QRadioButton")) {
+        return QStringLiteral("radio");
+    }
+    if (w->inherits("QAbstractButton")) {
+        return QStringLiteral("button");
+    }
+    if (w->inherits("QComboBox")) {
+        return QStringLiteral("combo");
+    }
+    if (w->inherits("QLineEdit") || w->inherits("QAbstractSpinBox")) {
+        return QStringLiteral("field");
+    }
+    if (w->inherits("QTabBar")) {
+        return QStringLiteral("tabbar");
+    }
+    if (w->inherits("QTabWidget")) {
+        return QStringLiteral("tabwidget");
+    }
+    if (w->inherits("QGroupBox")) {
+        return QStringLiteral("groupbox");
+    }
+    return QStringLiteral("other");
+}
+
+// Every visible widget under `root`, root included, as tab-separated
+// lines: path, class, object name, control kind, x, y, width, height (the
+// rectangle in root's logical coordinates). Two runs of a scene compare
+// line for line for moved or resized widgets.
+QStringList widgetGeometry(QWidget* root)
+{
+    QStringList lines;
+    if (root == nullptr) {
+        return lines;
+    }
+    std::function<void(QWidget*, const QString&)> walk = [&](QWidget* w, const QString& path) {
+        if (!w->isVisible()) {
+            return;
+        }
+        const QRect r(w->mapTo(root, QPoint(0, 0)), w->size());
+        lines << QStringLiteral("%1\t%2\t%3\t%4\t%5\t%6\t%7\t%8")
+                     .arg(path, QString::fromLatin1(w->metaObject()->className()), w->objectName(),
+                          controlKind(w))
+                     .arg(r.x())
+                     .arg(r.y())
+                     .arg(r.width())
+                     .arg(r.height());
+        int index = 0;
+        for (QObject* o : w->children()) {
+            if (!o->isWidgetType()) {
+                continue;
+            }
+            auto* child = static_cast<QWidget*>(o);
+            if (!child->isWindow()) {
+                walk(child, path + QLatin1Char('/') + QString::number(index));
+            }
+            ++index;
+        }
+    };
+    walk(root, QStringLiteral("0"));
+    return lines;
+}
+
 // ---- provenance regions ----------------------------------------------------
 
 // The dynamic property a widget's provenance is tagged with; untagged
@@ -1091,6 +1181,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
             ctx.notes.append(QStringLiteral("could not write the geometry dump"));
         }
     }
+    full.geometry = widgetGeometry(ctx.window);
     full.dpr = full.image.devicePixelRatio();
     if (ctx.crops) {
         SliceModel* sliceA = ctx.model->sliceById(0);
@@ -1968,6 +2059,7 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
     img.dpr = img.image.devicePixelRatio();
     img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(dialog->metaObject()->className());
     img.extra[QStringLiteral("window_title")] = dialog->windowTitle();
+    img.geometry = widgetGeometry(dialog);
     attachRegions(img, dialog);
     ctx.images.append(img);
 }
@@ -3585,20 +3677,8 @@ void sceneDialWindow(SceneContext& ctx, const QString& name, HeaderMode header,
     annotateSlices(ctx);
 }
 
-// Variant B of the wide-container look: SMeterWidget's test-only plate
-// limit, for every dial in the scene (the Main Panel's and the copies).
-void limitDialPlates(SceneContext& ctx)
+void sceneDialTwoBand(SceneContext& ctx, const QString& name)
 {
-    SMeterWidget::setPlateLimitForTest(true);
-    ctx.notes.append(QStringLiteral("SMeterWidget::setPlateLimitForTest(true): plate at most %1 x its height, centred")
-                         .arg(SMeterWidget::kPlateMaxAspect));
-}
-
-void sceneDialTwoBand(SceneContext& ctx, const QString& name, bool plateB)
-{
-    if (plateB) {
-        limitDialPlates(ctx);
-    }
     sceneProfile(ctx, name, SceneProfile::Dx, [](SceneContext& c) {
         feedDials(c);
         c.extraCrops = addStripAndDialCrops;
@@ -3635,11 +3715,8 @@ void sceneDialNarrow(SceneContext& ctx)
 }
 
 // Dials for RX A and RX B on top while slice A transmits (display-only).
-void sceneDialTx(SceneContext& ctx, const QString& name, bool plateB)
+void sceneDialTx(SceneContext& ctx, const QString& name)
 {
-    if (plateB) {
-        limitDialPlates(ctx);
-    }
     sceneDialWindow(ctx, name, HeaderMode::Always,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
@@ -7105,21 +7182,14 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneFourRxLook(ctx); }, true});
     // ---- added SIGNAL STRENGTH dial copies (switch on) ----
     scenes.append({QStringLiteral("dial-addable--two-band"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band"), false); },
+                   [](SceneContext& ctx) { sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band")); },
                    true});
-    scenes.append({QStringLiteral("dial-addable--two-band--plate-b"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-                       sceneDialTwoBand(ctx, QStringLiteral("dial-addable--two-band--plate-b"), true);
-                   }, true});
     scenes.append({QStringLiteral("dial-addable--mixed"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialMixed(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--narrow"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialNarrow(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--tx"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx"), false); }, true});
-    scenes.append({QStringLiteral("dial-addable--tx--plate-b"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx--plate-b"), true); },
-                   true});
+                   [](SceneContext& ctx) { sceneDialTx(ctx, QStringLiteral("dial-addable--tx")); }, true});
     scenes.append({QStringLiteral("dial-addable--amp"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneDialAmp(ctx); }, true});
     scenes.append({QStringLiteral("dial-addable--face"), QStringLiteral("2v"), false,
@@ -7158,6 +7228,67 @@ QVector<Scene> fixedScenes()
         runWindowScene(ctx, twoBandPoses(), 0);
         if (ctx.failure.isEmpty()) { sceneControlsSheet(ctx); }
     }});
+    // ---- decided status and data colours ----
+    // The decided status tones on the real title bar (with the pulse's two
+    // steps), badges, the TCI Server page and Network Diagnostics.
+    scenes.append({QStringLiteral("decided--status"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneStatusColoursDecided(ctx); }
+    }, true});
+    // The decided data colours on the two-band window with the Thetis bar strips
+    // (top: S-Meter preset's SIGNALAVG and Power/SWR; left: SIGNALMAXBIN
+    // and COMP), a Longpath needle on slice A and the Main Panel.
+    scenes.append({QStringLiteral("decided--data"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
+            addMetersContainer(c, DockEdge::Top);
+            if (c.failure.isEmpty()) { addLevelsContainer(c, DockEdge::Left); }
+            if (c.failure.isEmpty()) {
+                addSceneContainer(c, QStringLiteral("Needle"), DockEdge::Left, ContentLayout::VerticalStack,
+                                  {{QString::fromLatin1(LongpathContent::kNeedleType), {}, {}, rxSource(1)}});
+            }
+        }, [](SceneContext& c) {
+            feedSliceInstruments(c, c.window);
+            // Display-only readings for the bar rows, repeated so the
+            // bars' attack smoothing settles on them.
+            constexpr double kAvgDbm = -73.0;
+            constexpr double kMaxBinDbm = -68.0;
+            constexpr double kCompDb = -8.0;
+            constexpr double kCompPeakDb = -4.0;
+            constexpr int kSettleUpdates = 40;
+            constexpr qint64 kFrozenClockMs = 1'000'000'000'000;
+            constexpr qint64 kStepMs = 100;
+            for (MeterWidget* m : c.window->findChildren<MeterWidget*>()) {
+                for (int i = 0; i < kSettleUpdates; ++i) {
+                    m->updateMeterValue(MeterBinding::SignalAvg, kAvgDbm);
+                    m->updateMeterValue(MeterBinding::SignalMaxBin, kMaxBinDbm);
+                    m->updateMeterValue(MeterBinding::TxComp, kCompDb);
+                    m->updateMeterValue(MeterBinding::TxCompPeak, kCompPeakDb);
+                    // The Thetis bar strips smooth on the frame clock: step
+                    // it by hand on a time base far past the real one, so a
+                    // later real frame never moves the settled marker.
+                    m->advanceMeters(kFrozenClockMs + i * kStepMs);
+                }
+            }
+            c.fedReadings.append(QJsonObject{
+                {QStringLiteral("instrument"), QStringLiteral("MeterWidget bar rows")},
+                {QStringLiteral("values"), QJsonObject{{QStringLiteral("SignalAvg_dbm"), kAvgDbm},
+                                                       {QStringLiteral("SignalMaxBin_dbm"), kMaxBinDbm},
+                                                       {QStringLiteral("TxComp_db"), kCompDb},
+                                                       {QStringLiteral("TxCompPeak_db"), kCompPeakDb}}},
+                {QStringLiteral("seam"), QStringLiteral("MeterWidget::updateMeterValue (display only)")}});
+            pump(kSettleMs);
+        });
+        if (ctx.failure.isEmpty()) { sceneDataColoursDecided(ctx); }
+    }, true});
+    // JJ's decided sliders, indicators, lit buttons, radii and scroll bars
+    // through the product path (ControlsSheet.cpp).
+    scenes.append({QStringLiteral("decided--controls"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneControlsDecided(ctx); }
+    }, true});
     scenes.append({QStringLiteral("controls-sheet--indicators"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         runWindowScene(ctx, twoBandPoses(), 0);

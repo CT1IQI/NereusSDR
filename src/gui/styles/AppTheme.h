@@ -25,6 +25,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QPalette>
+#include <QStyle>
 #include <QString>
 #include <QStringLiteral>
 
@@ -32,6 +33,7 @@
 #include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
 #include "WorkspacePreview.h"
+#include "WorkspaceStyle.h"
 
 namespace NereusSDR {
 
@@ -222,15 +224,21 @@ inline void applyWorkspacePalette(QApplication& app)
         "  width: 20px; border: none;"
         "}"
         "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {"
-        "  image: url(:/icons/spin-up.svg); width: 14px; height: 14px;"
+        "  image: url(:/icons/spin-up-workspace.svg); width: 14px; height: 14px;"
         "}"
         "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {"
-        "  image: url(:/icons/spin-down.svg); width: 14px; height: 14px;"
+        "  image: url(:/icons/spin-down-workspace.svg); width: 14px; height: 14px;"
         "}"
     ).arg(r("text"), r("button"), r("border"), r("title-text"), r("text-inactive"),
           r("selected-top"), r("selected-text"))
        // Grid lines and header sections (Longpath tableStyle colours).
-       + Workspace::Components::tableRules());
+       + Workspace::Components::tableRules()
+       // Check box and radio indicators come per box from the live pass
+       // (WorkspacePreview), which keeps each box's size: an app-wide
+       // indicator rule would resize every box the platform style draws.
+       // Longpath's scroll bar at the platform style's thickness (14 px
+       // in Fusion), so no scroll area changes width.
+       + Workspace::scrollBarStyle(app.style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
 
     // Every window, page, menu and popup gets the scoped pass when shown.
     WorkspacePreview::installLiveTheming(app);

@@ -1140,11 +1140,11 @@ void CatTciServerPage::refreshTciStatusDisplay()
                 tr("<span style='color:%3'>●</span> Running (%1 %2)")
                     .arg(m_tciClientCount)
                     .arg(m_tciClientCount == 1 ? tr("client") : tr("clients"))
-                    .arg(WorkspacePreview::roleColourName("#3DD068", "ok")));
+                    .arg(WorkspacePreview::statusColourName("#3DD068", "ok")));
         } else {
             m_statusLabel->setText(
                 tr("<span style='color:%1'>●</span> Stopped")
-                    .arg(WorkspacePreview::roleColourName("#D04040", "danger")));
+                    .arg(WorkspacePreview::statusColourName("#D04040", "danger")));
         }
         m_statusLabel->setTextFormat(Qt::RichText);
     }

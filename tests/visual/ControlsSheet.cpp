@@ -22,6 +22,23 @@
 //   2026-10-08 - measureAppletFit: every visible container holding
 //                 applets, checked like the strip-fit scenes. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Colour choices: colour-choice--status (+ --zoom) and
+//                 colour-choice--data (+ --crops), every variant from one
+//                 build through WorkspacePreview's test seams. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The decided colours: sceneStatusColoursDecided
+//                 (decided--status, with the pulse's two steps) and
+//                 sceneDataColoursDecided (decided--data, with a user
+//                 container background and user item colours) replace the
+//                 choice sheets. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-08 - sceneControlsDecided (decided--controls + --zoom): JJ's
+//                 decided sliders, indicators, lit buttons, radii and
+//                 scroll bars through the product path. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - decided--controls--zoom: the field row zooms each whole
+//                 control instead of showing an empty row. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -63,25 +80,40 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <tuple>
 #include <vector>
 
 #include "LongpathControlStyles.h"
 #include "PreviewData.h"
 #include "PreviewScenes.h"
+#include "core/TciServer.h"
 #include "gui/MainWindow.h"
+#include "gui/NetworkDiagnosticsDialog.h"
+#include "gui/SMeterWidget.h"
+#include "gui/SpectrumWidget.h"
 #include "gui/StyleConstants.h"
+#include "gui/TimeSeriesGraphWidget.h"
+#include "gui/TitleBar.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxEqDialog.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/meters/MeterItem.h"
+#include "gui/meters/MeterPoller.h"
+#include "gui/meters/MeterWidget.h"
+#include "gui/meters/presets/BarPresetItem.h"
+#include "gui/setup/CatNetworkSetupPages.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/QssTranslator.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/styles/WorkspaceStyle.h"
+#include "gui/widgets/FilterPassbandWidget.h"
 #include "gui/widgets/MeterSlider.h"
+#include "gui/widgets/ParametricEqWidget.h"
+#include "gui/widgets/StatusBadge.h"
 
 namespace NereusSDR::Preview {
 
@@ -2784,6 +2816,940 @@ void sceneControlSizes(SceneContext& ctx)
         placements);
     setSheetImages(ctx, scene, sheet, placements,
                    QJsonObject{{QStringLiteral("radii"), radii}, {QStringLiteral("today_sizes"), todaySizes}});
+}
+
+// ---- decided status and data colours ------------------------------------------
+
+namespace {
+
+// The status sheet's zoom enlarges each cell 4x, nearest-neighbour.
+constexpr int kStatusZoomFactor = 4;
+constexpr double kGoodRttMs = 12;
+constexpr double kMiddlingRttMs = 80;
+constexpr double kPoorRttMs = 250;
+constexpr double kRxMbps = 18.4;
+constexpr double kTxMbps = 0.6;
+constexpr quint16 kTciPreviewPort = 50001;
+constexpr int kStatusCropPadPx = 4;
+// Network Diagnostics' Connection rows: the field names and their values.
+constexpr int kDiagnosticsCropWidthPx = 260;
+// The SIGNALAVG reading the decided--data scene feeds (PreviewScenes.cpp),
+// settled again after the user-colour row reconfigures the strip.
+constexpr double kStripAvgDbm = -73.0;
+constexpr int kStripSettleSteps = 40;
+constexpr qint64 kStripClockMs = 2'000'000'000'000;
+constexpr qint64 kStripStepMs = 100;
+constexpr int kBadgeCellPadPx = 8;
+constexpr int kBadgeGapPx = 6;
+constexpr int kGraphWidth = 380;
+constexpr int kGraphHeight = 220;
+constexpr int kGraphRangeSeconds = 60;
+constexpr int kGraphPoints = 61;
+constexpr int kEqWidth = 520;
+constexpr int kEqHeight = 300;
+constexpr int kDataCellPadPx = 8;
+// A user's own colours for the user-colour rows: a warm dark container
+// background (the colour sheet's brown example), a blue bar and a blue-grey
+// strip backdrop.
+constexpr QRgb kUserContainerBg = 0xff2a1e14;
+constexpr QRgb kUserBarColour = 0xff3c9cff;
+constexpr QRgb kUserBackdrop = 0xff14283c;
+
+constexpr auto kStatusTones = "ok -> live kLiveGreen #4caf6a, warn -> measured kAmberText #d8a55f, "
+                              "danger -> tx kTxRed #c25a5c; accent, sel-hover, text-scale, "
+                              "text-inactive unchanged";
+constexpr auto kDataColours = "spectrum and waterfall app-bg #08080a; meters, dial, filter passband and "
+                              "the Thetis bar strip backdrop take the container's background (panel "
+                              "#0c0c0e, or the user's colour); graph app-bg; EQ client app-bg and plot "
+                              "panel; all ink unchanged";
+
+QWidget* firstVisibleTopLevel(const char* className)
+{
+    for (QWidget* w : QApplication::topLevelWidgets()) {
+        if (w->isVisible() && w->inherits(className)) {
+            return w;
+        }
+    }
+    return nullptr;
+}
+
+Shot plainShot(const QString& caption, const QImage& image)
+{
+    Shot s;
+    s.caption = caption;
+    s.image = image;
+    s.focus = QRect(QPoint(0, 0), logicalSizeOf(image));
+    return s;
+}
+
+Shot zoomShotBy(const Shot& s, int factor)
+{
+    const double dpr = s.image.devicePixelRatio();
+    const QRect device = toDevice(s.focus, dpr).intersected(s.image.rect());
+    const QImage cut = s.image.copy(device);
+    QImage big = cut.scaled(cut.width() * factor, cut.height() * factor, Qt::IgnoreAspectRatio,
+                            Qt::FastTransformation);
+    big.setDevicePixelRatio(dpr);
+    Shot z;
+    z.caption = s.caption;
+    z.image = big;
+    z.source = QJsonObject{{QStringLiteral("cell_device_rect"), rectArray(device)}};
+    return z;
+}
+
+// ---- status cells ----
+
+struct TitleBarState {
+    QString caption;
+    ConnectionState state;
+    int rttMs;
+    AudioEngine::FlowState audio;
+};
+
+QVector<TitleBarState> titleBarStates()
+{
+    return {
+        {QStringLiteral("good: 12 ms, audio healthy"), ConnectionState::Connected,
+         static_cast<int>(kGoodRttMs), AudioEngine::FlowState::Healthy},
+        {QStringLiteral("middling: 80 ms, audio underrun"), ConnectionState::Connected,
+         static_cast<int>(kMiddlingRttMs), AudioEngine::FlowState::Underrun},
+        {QStringLiteral("poor: 250 ms, audio stalled"), ConnectionState::Connected,
+         static_cast<int>(kPoorRttMs), AudioEngine::FlowState::Stalled},
+        {QStringLiteral("disconnected"), ConnectionState::Disconnected, -1, AudioEngine::FlowState::Dead},
+    };
+}
+
+QVector<Shot> titleBarShots(ConnectionSegment* seg)
+{
+    QVector<Shot> shots;
+    auto* bar = seg->parentWidget();
+    for (const TitleBarState& st : titleBarStates()) {
+        seg->setState(st.state);
+        seg->setRates(kRxMbps, kTxMbps);
+        // A negative sample clears the smoothing window, so the painted
+        // value is this state's reading alone.
+        seg->setRttMs(-1);
+        if (st.rttMs >= 0) {
+            seg->setRttMs(st.rttMs);
+        }
+        seg->setAudioFlowState(st.audio);
+        seg->setPulsePausedForTest(true);
+        seg->update();
+        pump(kShortSettleMs);
+        const QRect r = seg->geometry()
+                            .adjusted(-kStatusCropPadPx, -kStatusCropPadPx, kStatusCropPadPx, kStatusCropPadPx)
+                            .intersected(bar->rect());
+        shots.append(plainShot(st.caption, grabImage(bar, r)));
+    }
+    return shots;
+}
+
+// The title bar dot's two pulse steps, held, for the states that pulse
+// with a dimmer step made from the bright tone: Connected and Link lost.
+QVector<Shot> pulseShots(ConnectionSegment* seg)
+{
+    QVector<Shot> shots;
+    auto* bar = seg->parentWidget();
+    const struct { QString caption; ConnectionState state; } states[] = {
+        {QStringLiteral("connected"), ConnectionState::Connected},
+        {QStringLiteral("link lost"), ConnectionState::LinkLost},
+    };
+    seg->setRttMs(-1);
+    seg->setRttMs(static_cast<int>(kGoodRttMs));
+    seg->setAudioFlowState(AudioEngine::FlowState::Healthy);
+    for (const auto& st : states) {
+        seg->setState(st.state);
+        for (bool bright : {true, false}) {
+            seg->setPulsePausedForTest(true, bright);
+            seg->update();
+            pump(kShortSettleMs);
+            const QRect r = seg->geometry()
+                                .adjusted(-kStatusCropPadPx, -kStatusCropPadPx, kStatusCropPadPx, kStatusCropPadPx)
+                                .intersected(bar->rect());
+            shots.append(plainShot(st.caption + (bright ? QStringLiteral(": bright step")
+                                                        : QStringLiteral(": dimmer step")),
+                                   grabImage(bar, r)));
+        }
+    }
+    seg->setPulsePausedForTest(true);
+    return shots;
+}
+
+struct BadgeSpec {
+    StatusBadge::Variant variant;
+    const char* label;
+};
+
+QVector<Shot> badgeShots(const QColor& statusBarBg)
+{
+    const BadgeSpec specs[] = {
+        {StatusBadge::Variant::Info, "LSB"},
+        {StatusBadge::Variant::On, "2.7k"},
+        {StatusBadge::Variant::Off, "OFF"},
+        {StatusBadge::Variant::Warn, "WARN"},
+        {StatusBadge::Variant::Tx, "TX"},
+    };
+    auto cell = std::make_unique<QWidget>();
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    pal.setColor(QPalette::Window, statusBarBg);
+    cell->setPalette(pal);
+    int x = kBadgeCellPadPx;
+    int h = 0;
+    for (const BadgeSpec& b : specs) {
+        auto* badge = new StatusBadge(cell.get());
+        badge->setVariant(b.variant);
+        badge->setSvgIcon(QStringLiteral(":/icons/badge-mode.svg"));
+        badge->setLabel(QString::fromLatin1(b.label));
+        badge->adjustSize();
+        badge->move(x, kBadgeCellPadPx);
+        x += badge->width() + kBadgeGapPx;
+        h = qMax(h, badge->height());
+    }
+    cell->resize(x - kBadgeGapPx + kBadgeCellPadPx, h + 2 * kBadgeCellPadPx);
+    cell->show();
+    pump(kSettleMs);
+    return {plainShot(QStringLiteral("Info, On, Off, Warn, Tx on statusbar-bg %1").arg(statusBarBg.name()),
+                      grabImage(cell.get()))};
+}
+
+QImage tciStatusCrop(QLabel* status)
+{
+    QWidget* group = status->parentWidget();
+    // The "Status:" caption and the status word, not the page's empty width.
+    const int width = qMin(group->width(), status->x() + status->sizeHint().width() + kStatusCropPadPx);
+    const QRect r(0, status->y() - kStatusCropPadPx, width, status->height() + 2 * kStatusCropPadPx);
+    return grabImage(group, r.intersected(group->rect()));
+}
+
+QLabel* labelWithText(QWidget* root, const QString& text)
+{
+    for (QLabel* l : root->findChildren<QLabel*>()) {
+        if (l->text() == text && l->isVisible()) {
+            return l;
+        }
+    }
+    return nullptr;
+}
+
+QImage diagnosticsConnectionCrop(QWidget* dialog)
+{
+    QLabel* head = labelWithText(dialog, QObject::tr("Connection"));
+    QLabel* last = labelWithText(dialog, QObject::tr("MAC"));
+    if (head == nullptr || last == nullptr) {
+        return {};
+    }
+    const QRect top(head->mapTo(dialog, QPoint(0, 0)), head->size());
+    const QRect bottom(last->mapTo(dialog, QPoint(0, 0)), last->size());
+    const QRect r(top.left() - kStatusCropPadPx, top.top() - kStatusCropPadPx,
+                  qMin(kDiagnosticsCropWidthPx, dialog->width() - 2 * (top.left() - kStatusCropPadPx)),
+                  bottom.bottom() - top.top() + 2 * kStatusCropPadPx);
+    return grabImage(dialog, r.intersected(dialog->rect()));
+}
+
+// ---- data cells ----
+
+void rerenderData(QWidget* window)
+{
+    for (MeterWidget* m : window->findChildren<MeterWidget*>()) {
+        m->invalidateGeometry();
+        for (MeterItem* item : m->items()) {
+            m->invalidatePresentation(item);
+        }
+        m->update();
+    }
+    for (SpectrumWidget* s : window->findChildren<SpectrumWidget*>()) {
+        s->update();
+    }
+    for (QWidget* w : window->findChildren<QWidget*>()) {
+        if (qobject_cast<SMeterWidget*>(w) != nullptr || qobject_cast<FilterPassbandWidget*>(w) != nullptr) {
+            w->update();
+        }
+    }
+    pump(kSettleMs);
+}
+
+QRect windowRectOf(QWidget* window, QWidget* w)
+{
+    return w == nullptr ? QRect() : QRect(w->mapTo(window, QPoint(0, 0)), w->size());
+}
+
+QRect pansRect(QWidget* window)
+{
+    QRect r;
+    for (SpectrumWidget* s : window->findChildren<SpectrumWidget*>()) {
+        if (s->isVisible()) {
+            r = r.united(windowRectOf(window, s));
+        }
+    }
+    return r;
+}
+
+QImage cropOf(const QImage& full, const QRect& logical)
+{
+    const double dpr = full.devicePixelRatio();
+    QImage c = full.copy(toDevice(logical, dpr));
+    c.setDevicePixelRatio(dpr);
+    return c;
+}
+
+QWidget* graphCell(QVector<TimeSeriesGraphWidget::Series>& out)
+{
+    auto* cell = new QWidget;
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    // RemoteDiagnosticsDialog's surface (Style::kAppBg) in the look.
+    pal.setColor(QPalette::Window, WorkspacePreview::roleColour(QColor(QLatin1String(Style::kAppBg)), "app-bg"));
+    cell->setPalette(pal);
+    auto* graph = new TimeSeriesGraphWidget(QStringLiteral("Total traffic"), QStringLiteral(" kbps"), cell);
+    graph->setGeometry(kDataCellPadPx, kDataCellPadPx, kGraphWidth, kGraphHeight);
+    struct Spec { const char* label; const char* colour; double base; double swing; };
+    // RemoteDiagnosticsDialog's total traffic graph: its labels and colours.
+    const Spec specs[] = {
+        {"Core → app received", "#00b4d8", 410.0, 60.0},
+        {"App → Core outgoing", "#5fff8a", 48.0, 12.0},
+        {"Total", "#ffd700", 458.0, 66.0},
+    };
+    for (const Spec& sp : specs) {
+        TimeSeriesGraphWidget::Series s;
+        s.label = QString::fromUtf8(sp.label);
+        s.color = QColor(QLatin1String(sp.colour));
+        s.unitSuffix = QStringLiteral(" kbps");
+        for (int i = 0; i < kGraphPoints; ++i) {
+            const double t = static_cast<double>(i);
+            s.points.append(QPointF(t, sp.base + sp.swing * std::sin(t / 6.0) * std::cos(t / 17.0)));
+        }
+        out.append(s);
+    }
+    graph->setSeries(out, kGraphRangeSeconds);
+    cell->resize(kGraphWidth + 2 * kDataCellPadPx, kGraphHeight + 2 * kDataCellPadPx);
+    return cell;
+}
+
+QWidget* eqCell()
+{
+    auto* cell = new QWidget;
+    cell->setAttribute(Qt::WA_DontShowOnScreen, true);
+    cell->setAutoFillBackground(true);
+    QPalette pal = cell->palette();
+    // TxEqDialog's surface (Style::kAppBg) in the look.
+    pal.setColor(QPalette::Window, WorkspacePreview::roleColour(QColor(QLatin1String(Style::kAppBg)), "app-bg"));
+    cell->setPalette(pal);
+    auto* eq = new ParametricEqWidget(cell);
+    eq->setEditorPresentationEnabled(true);
+    eq->setGeometry(kDataCellPadPx, kDataCellPadPx, kEqWidth, kEqHeight);
+    cell->resize(kEqWidth + 2 * kDataCellPadPx, kEqHeight + 2 * kDataCellPadPx);
+    return cell;
+}
+
+QImage grabCell(QWidget* cell)
+{
+    cell->show();
+    for (QWidget* w : cell->findChildren<QWidget*>()) {
+        w->update();
+    }
+    pump(kSettleMs);
+    return grabImage(cell);
+}
+
+struct DataCrops {
+    QRect pans;
+    QRect topStrip;
+    QRect levels;
+    QRect needle;
+    QRect dial;
+    QRect passband;
+};
+
+DataCrops dataCrops(QWidget* window)
+{
+    DataCrops c;
+    c.pans = pansRect(window);
+    auto* manager = window->findChild<ContainerManager*>();
+    if (manager != nullptr) {
+        c.topStrip = windowRectOf(window, manager->container(QStringLiteral("preview-meters")));
+        c.levels = windowRectOf(window, manager->container(QStringLiteral("preview-levels")));
+        c.needle = windowRectOf(window, manager->container(QStringLiteral("preview-needle")));
+    }
+    c.dial = windowRectOf(window, window->findChild<SMeterWidget*>());
+    c.passband = windowRectOf(window, window->findChild<FilterPassbandWidget*>());
+    return c;
+}
+
+QVector<Shot> surfaceShots(const QImage& full, const DataCrops& c)
+{
+    return {
+        plainShot(QStringLiteral("both pans"), cropOf(full, c.pans)),
+        plainShot(QStringLiteral("top strip: SIGNALAVG, Power/SWR"), cropOf(full, c.topStrip)),
+        plainShot(QStringLiteral("left: SIGNALMAXBIN, COMP"), cropOf(full, c.levels)),
+        plainShot(QStringLiteral("Longpath needle"), cropOf(full, c.needle)),
+        plainShot(QStringLiteral("SIGNAL STRENGTH dial"), cropOf(full, c.dial)),
+        plainShot(QStringLiteral("filter passband"), cropOf(full, c.passband)),
+    };
+}
+
+// The first Thetis bar strip (BarPresetItem) bound to `binding` anywhere in the window (docked,
+// edge strip or floating container), or null.
+BarPresetItem* boundBar(QWidget* window, int binding)
+{
+    QList<MeterWidget*> meters = window->findChildren<MeterWidget*>();
+    if (auto* manager = window->findChild<ContainerManager*>()) {
+        for (const QString& id : {QStringLiteral("preview-meters"), QStringLiteral("preview-levels")}) {
+            if (ContainerWidget* c = manager->container(id)) {
+                meters += c->findChildren<MeterWidget*>();
+            }
+        }
+    }
+    for (MeterWidget* m : meters) {
+        for (MeterItem* item : m->items()) {
+            auto* bar = qobject_cast<BarPresetItem*>(item);
+            if (bar != nullptr && bar->bindingId() == binding) {
+                return bar;
+            }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void sceneStatusColoursDecided(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("decided--status");
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
+        return;
+    }
+    auto* titleBar = ctx.window->findChild<TitleBar*>();
+    ConnectionSegment* seg = titleBar != nullptr ? titleBar->findChild<ConnectionSegment*>() : nullptr;
+    if (seg == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no title bar connection segment");
+        return;
+    }
+
+    // Setup at the TCI Server page; a TciServer that never starts says
+    // "running" through its own signal (no socket is opened).
+    QMetaObject::invokeMethod(ctx.window, "openSetupAtPage", Qt::DirectConnection,
+                              Q_ARG(QString, QStringLiteral("TCI Server")));
+    pump(kSettleMs);
+    QWidget* setup = firstVisibleTopLevel("NereusSDR::SetupDialog");
+    auto* tciPage = setup != nullptr ? setup->findChild<CatTciServerPage*>() : nullptr;
+    QLabel* tciStatus = tciPage != nullptr ? tciPage->findChild<QLabel*>(QStringLiteral("tciStatusLabel")) : nullptr;
+    if (tciStatus == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no TCI Server status label");
+        return;
+    }
+    TciServer tci(nullptr);
+
+    // Network Diagnostics with no radio: Status reads Disconnected.
+    NetworkDiagnosticsDialog diagnostics(nullptr, nullptr);
+    diagnostics.setAttribute(Qt::WA_DontShowOnScreen, true);
+    diagnostics.show();
+    pump(kSettleMs);
+
+    const QColor statusBarBg = WorkspacePreview::roleColour(QColor(0x0a, 0x0a, 0x14), "statusbar-bg");
+    GridRow row{QStringLiteral("decided"), QStringLiteral("Decided: Longpath's brighter tones (B)"),
+                QString::fromLatin1(kStatusTones), {}};
+    row.groups.append(titleBarShots(seg));
+    row.groups.append(pulseShots(seg));
+    row.groups.append(badgeShots(statusBarBg));
+
+    QVector<Shot> tciShots;
+    tciPage->setTciServer(&tci);
+    pump(kShortSettleMs);
+    tciShots.append(plainShot(QStringLiteral("stopped"), tciStatusCrop(tciStatus)));
+    emit tci.serverStarted(kTciPreviewPort);
+    pump(kShortSettleMs);
+    tciShots.append(plainShot(QStringLiteral("running"), tciStatusCrop(tciStatus)));
+    row.groups.append(tciShots);
+
+    // The 250 ms refresh writes the status HTML again.
+    pump(kSettleMs);
+    row.groups.append(QVector<Shot>{
+        plainShot(QStringLiteral("no radio: Disconnected"), diagnosticsConnectionCrop(&diagnostics))});
+    const QVector<GridRow> rows{row};
+    tciPage->setTciServer(nullptr);
+    diagnostics.close();
+    setup->close();
+
+    const QStringList groups{QStringLiteral("Title bar status area (real window)"),
+                             QStringLiteral("Title bar dot: the pulse's two steps"),
+                             QStringLiteral("Status badges"),
+                             QStringLiteral("Setup > TCI Server: Status"),
+                             QStringLiteral("Network Diagnostics: Connection")};
+    QJsonObject extra{{QStringLiteral("colours"), QString::fromLatin1(kStatusTones)},
+                      {QStringLiteral("pulse_dimmer_step"),
+                       QStringLiteral("the bright tone mixed 25 % with titlebar-mid kTitleGradMid #1c1c20")},
+                      {QStringLiteral("not_shown"), QJsonArray{
+                           QStringLiteral("Network Diagnostics Connected: needs a radio connection")}}};
+    // The sheet is chrome around the grabs: keep the look's pass off it.
+    WorkspacePreview::setEnabledForTest(false);
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, groups, QStringLiteral("Status colours: decided"),
+        QStringLiteral("Real widgets with the workspace preview on. Title bar: the window's own connection "
+                       "segment, pulse held at its resting step; the pulse group holds each step."),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QVector<GridRow> zoom;
+    for (const GridRow& r : rows) {
+        GridRow z{r.key, r.title, QString(), {}};
+        for (const QVector<Shot>& group : r.groups) {
+            QVector<Shot> zs;
+            for (const Shot& shot : group) {
+                zs.append(zoomShotBy(shot, kStatusZoomFactor));
+            }
+            z.groups.append(zs);
+        }
+        zoom.append(z);
+    }
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(
+        zoom, groups, QStringLiteral("Status colours, 4x nearest-neighbour"),
+        QStringLiteral("Each cell of decided--status enlarged 4x."), zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("4x nearest-neighbour")}});
+    WorkspacePreview::setEnabledForTest(true);
+}
+
+void sceneDataColoursDecided(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("decided--data");
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
+        return;
+    }
+    QWidget* window = ctx.window;
+    const DataCrops crops = dataCrops(window);
+    if (crops.pans.isEmpty() || crops.topStrip.isEmpty() || crops.levels.isEmpty() || crops.needle.isEmpty()
+        || crops.dial.isEmpty() || crops.passband.isEmpty()) {
+        ctx.failure = scene + QStringLiteral(": a data surface is missing from the window");
+        return;
+    }
+    QVector<TimeSeriesGraphWidget::Series> series;
+    std::unique_ptr<QWidget> graph(graphCell(series));
+    std::unique_ptr<QWidget> eq(eqCell());
+
+    QVector<GridRow> rows;
+    QVector<GridRow> cropRows;
+    QJsonArray rowNotes;
+    auto captureRow = [&](const QString& key, const QString& title, const QString& note) {
+        rerenderData(window);
+        const QImage full = grabImage(window);
+        const QImage graphImage = grabCell(graph.get());
+        const QImage eqImage = grabCell(eq.get());
+        GridRow cropRow{key, title, note, {}};
+        cropRow.groups.append(surfaceShots(full, crops));
+        cropRow.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
+                                            plainShot(QStringLiteral("parametric EQ"), eqImage)});
+        cropRows.append(cropRow);
+        GridRow row{key, title, note, {}};
+        row.groups.append(QVector<Shot>{plainShot(QStringLiteral("window"), full)});
+        row.groups.append(QVector<Shot>{plainShot(QStringLiteral("time-series graph"), graphImage),
+                                        plainShot(QStringLiteral("parametric EQ"), eqImage)});
+        rows.append(row);
+        rowNotes.append(QJsonObject{{QStringLiteral("key"), key}, {QStringLiteral("title"), title},
+                                    {QStringLiteral("colours"), note}});
+    };
+
+    captureRow(QStringLiteral("decided"), QStringLiteral("Decided: neutral backgrounds, ink unchanged (B)"),
+               QString::fromLatin1(kDataColours));
+
+    // A container background the user set shows through the meters inside
+    // it (Levels: SIGNALMAXBIN and COMP).
+    auto* manager = window->findChild<ContainerManager*>();
+    ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));
+    ContainerWidget* meters = manager->container(QStringLiteral("preview-meters"));
+    const QColor levelsBefore = levels->backgroundColor();
+    const QColor metersBefore = meters->backgroundColor();
+    const QColor userBg = QColor::fromRgba(kUserContainerBg);
+    levels->setBackgroundColor(userBg);
+    captureRow(QStringLiteral("user-container"), QStringLiteral("A user container background (Levels)"),
+               QStringLiteral("Levels container background set to %1 by the user: the meters inside show it "
+                              "in place of the panel role")
+                   .arg(userBg.name()));
+    levels->setBackgroundColor(levelsBefore);
+
+    // A colour the user set on a meter item wins over both: the SIGNALAVG
+    // strip's own backdrop and bar inside a Meters container with the
+    // user's background.
+    BarPresetItem* bar = boundBar(window, MeterBinding::SignalAvg);
+    if (bar == nullptr) {
+        ctx.failure = scene + QStringLiteral(": no SIGNALAVG bar item");
+        return;
+    }
+    const QJsonObject barBefore{{QStringLiteral("barColor"), bar->configuration().value(QStringLiteral("barColor"))},
+                                {QStringLiteral("backdropColor"),
+                                 bar->configuration().value(QStringLiteral("backdropColor"))}};
+    meters->setBackgroundColor(userBg);
+    bar->applyConfiguration({{QStringLiteral("barColor"), QColor::fromRgba(kUserBarColour).name()},
+                             {QStringLiteral("backdropColor"), QColor::fromRgba(kUserBackdrop).name()}});
+    // Applying a configuration resets the strip's smoothing: settle the
+    // scene's SIGNALAVG reading again on a hand-stepped clock past the
+    // scene's own, so no real frame moves it.
+    for (int i = 0; i < kStripSettleSteps; ++i) {
+        bar->pushBindingValue(MeterBinding::SignalAvg, kStripAvgDbm);
+        bar->advanceMeter(kStripClockMs + i * kStripStepMs);
+    }
+    captureRow(QStringLiteral("user-item"), QStringLiteral("User item colours inside a user container (Meters)"),
+               QStringLiteral("Meters container background %1; SIGNALAVG backdrop %2 and bar %3 set by the user: "
+                              "the strip keeps its own colours, Power/SWR shows the container's")
+                   .arg(userBg.name(), QColor::fromRgba(kUserBackdrop).name(),
+                        QColor::fromRgba(kUserBarColour).name()));
+    bar->applyConfiguration(barBefore);
+    meters->setBackgroundColor(metersBefore);
+    rerenderData(window);
+
+    QJsonObject cropsJson{{QStringLiteral("pans"), rectArray(crops.pans)},
+                          {QStringLiteral("top_strip"), rectArray(crops.topStrip)},
+                          {QStringLiteral("levels"), rectArray(crops.levels)},
+                          {QStringLiteral("needle"), rectArray(crops.needle)},
+                          {QStringLiteral("dial"), rectArray(crops.dial)},
+                          {QStringLiteral("passband"), rectArray(crops.passband)}};
+    QJsonObject extra{
+        {QStringLiteral("rows"), rowNotes},
+        {QStringLiteral("window_crops_logical"), cropsJson},
+        {QStringLiteral("not_shown"), QJsonArray{
+             QStringLiteral("a user spectrum background: NereusSDR has no such setting (Setup > Colors & "
+                            "Theme sets trace, grid, text, band edge, zero line, filter and waterfall low "
+                            "colours only)")}}};
+
+    WorkspacePreview::setEnabledForTest(false);
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, {QStringLiteral("Window: pans, meter strips, Longpath needle, Main Panel"),
+               QStringLiteral("Remote diagnostics graph, TX EQ editor")},
+        QStringLiteral("Data colours: decided"),
+        QStringLiteral("Real widgets with the workspace preview on. Graph and EQ are the real widgets on their "
+                       "dialogs' surface, with fixed data."),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QJsonArray cropPlacements;
+    const QImage cropSheet = assembleGrid(
+        cropRows, {QStringLiteral("Window crops"), QStringLiteral("Graph and EQ")},
+        QStringLiteral("Data colours: surface crops, with user colours"),
+        QStringLiteral("The same grabs cut per surface; the last two rows show a user container background "
+                       "and user item colours."),
+        cropPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--crops"), cropSheet, cropPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene}, {QStringLiteral("rows"), rowNotes}});
+    WorkspacePreview::setEnabledForTest(true);
+}
+
+// ---- decided controls ----------------------------------------------------------
+
+namespace {
+
+// One row of the decided controls sheet: its cells, built with today's
+// widget stylesheets (the product's Style:: strings with the switch on),
+// then the scoped pass over the column, as a shown dialog gets it.
+struct DecidedCell {
+    QWidget* cell;
+    QWidget* control;
+    QString caption;
+    QRect focus;   // in cell coordinates; empty: not zoomed
+};
+
+void pressHandle(ProbeSlider* s)
+{
+    const QPointF p(s->handleRect().center());
+    QMouseEvent press(QEvent::MouseButtonPress, p, s->mapToGlobal(p), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(s, &press);
+}
+
+QVector<Shot> decidedShots(const QVector<DecidedCell>& cells)
+{
+    QVector<Shot> shots;
+    for (const DecidedCell& c : cells) {
+        shots.append(cellShot(c.cell, c.control, c.caption, c.focus));
+    }
+    return shots;
+}
+
+} // namespace
+
+void sceneControlsDecided(SceneContext& ctx)
+{
+    const QString scene = QStringLiteral("decided--controls");
+    ctx.provenance = QStringLiteral("proposed");
+    if (app() == nullptr || ctx.window == nullptr || !WorkspacePreview::enabled()) {
+        ctx.failure = scene + QStringLiteral(": needs the window with the preview switch on");
+        return;
+    }
+    const std::array<QString, 4> sliderStates{QStringLiteral("resting"), QStringLiteral("hover"),
+                                              QStringLiteral("pressed"), QStringLiteral("disabled")};
+    const std::array<QString, 4> toggleStates{QStringLiteral("off"), QStringLiteral("on"),
+                                              QStringLiteral("disabled off"), QStringLiteral("disabled on")};
+    Column col;
+
+    // Sliders: the product's Style::sliderHStyle / sliderVStyle, at the
+    // approved cells' sizes, on the window colour.
+    std::array<ProbeSlider*, 4> hSliders{};
+    QVector<DecidedCell> hCells;
+    for (std::size_t i = 0; i < hSliders.size(); ++i) {
+        QWidget* cell = col.cell(QSize(kHSliderWidth, kHSliderHeight));
+        hSliders[i] = new ProbeSlider(Qt::Horizontal, cell);
+        hSliders[i]->setRange(0, kSliderMax);
+        hSliders[i]->setValue(kSliderValue);
+        hSliders[i]->setStyleSheet(Style::sliderHStyle());
+        col.place(hSliders[i], QSize(kHSliderWidth, kHSliderHeight));
+        hCells.append({cell, hSliders[i], sliderStates[i], {}});
+    }
+    hSliders[3]->setEnabled(false);
+    std::array<ProbeSlider*, 4> vSliders{};
+    QVector<DecidedCell> vCells;
+    for (std::size_t i = 0; i < vSliders.size(); ++i) {
+        QWidget* cell = col.cell(QSize(kVSliderWidth, kVSliderHeight));
+        vSliders[i] = new ProbeSlider(Qt::Vertical, cell);
+        vSliders[i]->setRange(0, kSliderMax);
+        vSliders[i]->setValue(kSliderValue);
+        vSliders[i]->setStyleSheet(Style::sliderVStyle());
+        col.place(vSliders[i], QSize(kVSliderWidth, kVSliderHeight));
+        vCells.append({cell, vSliders[i], sliderStates[i], {}});
+    }
+    vSliders[3]->setEnabled(false);
+
+    // Check boxes and radios: with Style::kCheckBoxStyle /
+    // kRadioButtonStyle on the widget (applets) and with no widget sheet
+    // (Setup pages, the app sheet's rules), on the Main Panel and Setup
+    // page backgrounds, as the approved indicator cells.
+    struct IndicatorGroup {
+        QString title;
+        const char* bg;
+        bool widgetSheet;
+    };
+    const QVector<IndicatorGroup> indicatorGroups{
+        {QStringLiteral("Style:: sheet, Main Panel (%1)").arg(QLatin1String(Workspace::kPanelBg)), Workspace::kPanelBg,
+         true},
+        {QStringLiteral("Style:: sheet, Setup page (%1)").arg(QLatin1String(Workspace::kAppBg)), Workspace::kAppBg,
+         true},
+        {QStringLiteral("App sheet only, Setup page (%1)").arg(QLatin1String(Workspace::kAppBg)), Workspace::kAppBg,
+         false}};
+    QVector<QVector<DecidedCell>> indicatorCells;
+    const QSize indicatorSize(kIndicatorWidth, kIndicatorRowHeight);
+    for (const IndicatorGroup& g : indicatorGroups) {
+        QVector<DecidedCell> cells;
+        for (int kind = 0; kind < 2; ++kind) {
+            for (std::size_t i = 0; i < toggleStates.size(); ++i) {
+                QWidget* cell = paintedCell(col, indicatorSize, g.bg);
+                QAbstractButton* b = nullptr;
+                if (kind == 0) {
+                    b = new ProbeCheckBox(QStringLiteral("Check box"), cell);
+                    if (g.widgetSheet) {
+                        b->setStyleSheet(WorkspacePreview::lookQss(QString::fromLatin1(Style::kCheckBoxStyle)));
+                    }
+                } else {
+                    b = new ProbeRadioButton(QStringLiteral("Radio"), cell);
+                    if (g.widgetSheet) {
+                        b->setStyleSheet(
+                            WorkspacePreview::lookQss(QString::fromLatin1(Style::kRadioButtonStyle)));
+                    }
+                }
+                col.place(b, indicatorSize);
+                b->setChecked(i == 1 || i == 3);
+                b->setEnabled(i < 2);
+                cells.append({cell, b, (kind == 0 ? QStringLiteral("box ") : QStringLiteral("radio ")) + toggleStates[i],
+                              {}});
+            }
+        }
+        indicatorCells.append(cells);
+    }
+
+    // Lit buttons: the product's buttonBaseStyle plus each meaning's
+    // checked style, checked, resting and hovered.
+    const auto litSheet = [](Meaning m) {
+        switch (m) {
+        case Meaning::Green: return Style::buttonBaseStyle() + Style::greenCheckedStyle();
+        case Meaning::Blue: return Style::buttonBaseStyle() + Style::blueCheckedStyle();
+        default: return Style::buttonBaseStyle() + Style::amberCheckedStyle();
+        }
+    };
+    std::array<QVector<DecidedCell>, 2> litCells;
+    for (std::size_t g = 0; g < litCells.size(); ++g) {
+        for (const LitLabel& l : litLabels()) {
+            QWidget* cell = paintedCell(col, QSize(kLitButtonWidth, kLitButtonHeight), Workspace::kPanelBg);
+            auto* b = new QPushButton(l.text, cell);
+            b->setCheckable(true);
+            b->setChecked(true);
+            b->setStyleSheet(WorkspacePreview::lookQss(litSheet(l.meaning)));
+            col.place(b, QSize(kLitButtonWidth, kLitButtonHeight));
+            litCells[g].append({cell, b, l.text, {}});
+        }
+    }
+
+    // Combo, line edit, spin box, tabs and push button at today's sizes
+    // with today's sheets (the corner radius follows each height).
+    WorkspacePreview::setEnabledForTest(false);
+    const SizeSet todaySize = measureTodaySizes();
+    const LookSheets today = todaySheets();
+    WorkspacePreview::setEnabledForTest(true);
+    QVector<DecidedCell> fieldCells;
+    {
+        const std::array<QSize, 5> sizes{todaySize.combo, todaySize.lineEdit, todaySize.spinBox, todaySize.tabs,
+                                         todaySize.button};
+        std::array<QWidget*, 5> cells{};
+        for (std::size_t i = 0; i < cells.size(); ++i) {
+            cells[i] = paintedCell(col, sizes[i], Workspace::kPanelBg);
+        }
+        SizeControls c;
+        fillSizeControls(c, cells[0],
+                         SizeSheets{WorkspacePreview::lookQss(today.combo), WorkspacePreview::lookQss(today.lineEdit),
+                                    WorkspacePreview::lookQss(today.spinBox), WorkspacePreview::lookQss(today.tabs),
+                                    Style::buttonBaseStyle()});
+        const std::array<QWidget*, 5> controls{c.combo, c.lineEdit, c.spinBox, c.tabs, c.button};
+        const std::array<QString, 5> names{QStringLiteral("combo"), QStringLiteral("line edit"),
+                                           QStringLiteral("spin box"), QStringLiteral("tabs"),
+                                           QStringLiteral("button")};
+        for (std::size_t i = 0; i < controls.size(); ++i) {
+            controls[i]->setParent(cells[i]);
+            col.place(controls[i], sizes[i]);
+            fieldCells.append({cells[i], controls[i],
+                               QStringLiteral("%1 %2x%3").arg(names[i]).arg(sizes[i].width()).arg(sizes[i].height()),
+                               {}});
+        }
+    }
+
+    // Scroll bars with no sheet of their own (the app sheet's bar, as on
+    // Setup pages and dialogs): resting and handle hovered.
+    std::array<ProbeScrollBar*, 2> bars{};
+    QVector<DecidedCell> barCells;
+    for (std::size_t i = 0; i < bars.size(); ++i) {
+        auto* bar = new ProbeScrollBar(Qt::Vertical);
+        bar->ensurePolished();
+        const int barWidth = bar->sizeHint().width();
+        QWidget* cell = col.cell(QSize(barWidth, kScrollBarHeight));
+        bar->setParent(cell);
+        bar->show();
+        bar->setRange(0, kSliderMax);
+        bar->setPageStep(kScrollBarPage);
+        bar->setValue(kScrollBarValue);
+        col.place(bar, QSize(barWidth, kScrollBarHeight));
+        bars[i] = bar;
+        barCells.append({cell, bar,
+                         QStringLiteral("%1, %2 px").arg(i == 0 ? QStringLiteral("resting") : QStringLiteral("hovered"))
+                             .arg(barWidth),
+                         {}});
+    }
+
+    col.finish();
+    WorkspacePreview::themeSubtree(col.top());
+    pump(kSettleMs);
+    activate(col.top());
+
+    // States that need the shown widget.
+    for (ProbeSlider* s : {hSliders[1], hSliders[2], vSliders[1], vSliders[2]}) {
+        hover(s, s->handleRect().center());
+    }
+    pressHandle(hSliders[2]);
+    pressHandle(vSliders[2]);
+    for (DecidedCell& c : litCells[1]) {
+        hover(c.control, QPoint(kLitButtonWidth / 2, kLitButtonHeight / 2));
+    }
+    hover(bars[1], bars[1]->handleRect().center());
+    pump(kShortSettleMs);
+
+    // Zoom patches, now that the geometry is final.
+    for (QVector<DecidedCell>* cells : {&hCells, &vCells}) {
+        for (DecidedCell& c : *cells) {
+            auto* s = static_cast<ProbeSlider*>(c.control);
+            c.focus = patchAround(s, c.cell, s->handleRect());
+        }
+    }
+    QJsonArray indicatorRects;
+    for (QVector<DecidedCell>& cells : indicatorCells) {
+        for (DecidedCell& c : cells) {
+            QRect ind;
+            if (auto* box = dynamic_cast<ProbeCheckBox*>(c.control)) {
+                ind = box->indicatorRect();
+            } else if (auto* radio = dynamic_cast<ProbeRadioButton*>(c.control)) {
+                ind = radio->indicatorRect();
+            }
+            c.focus = patchAround(c.control, c.cell, ind);
+            indicatorRects.append(QJsonObject{{QStringLiteral("caption"), c.caption},
+                                              {QStringLiteral("indicator_rect"), rectArray(ind)}});
+        }
+    }
+    for (auto& group : litCells) {
+        for (DecidedCell& c : group) {
+            c.focus = QRect(c.control->pos(), c.control->size());
+        }
+    }
+    // The field row zooms each whole control, as the lit buttons do.
+    for (DecidedCell& c : fieldCells) {
+        c.focus = QRect(c.control->pos(), c.control->size());
+    }
+    for (DecidedCell& c : barCells) {
+        const QRect h = static_cast<ProbeScrollBar*>(c.control)->handleRect();
+        c.focus = patchAround(c.control, c.cell, h.adjusted(0, 0, 0, -(h.height() - kZoomSourceHeight)));
+    }
+
+    QVector<GridRow> rows;
+    rows.append({QStringLiteral("slider-h"), QStringLiteral("Horizontal slider, 60 % (Style::sliderHStyle)"),
+                 QStringLiteral("Longpath's slider as is: 12x16 handle, 6 px sunken groove, no filled side."),
+                 {decidedShots(hCells)}});
+    rows.append({QStringLiteral("slider-v"), QStringLiteral("Vertical slider, 60 % (Style::sliderVStyle)"), QString(),
+                 {decidedShots(vCells)}});
+    for (int g = 0; g < indicatorGroups.size(); ++g) {
+        rows.append({QStringLiteral("indicators-%1").arg(g), indicatorGroups[g].title,
+                     g == 0 ? QStringLiteral("Off: rim #58585e, fill #050507 to #1a1a1e. Disabled off: rim #3d3d41, "
+                                             "fill #050507. Disabled on: #4e4e53. On: Longpath blue, no check mark.")
+                            : QString(),
+                     {decidedShots(indicatorCells[g])}});
+    }
+    rows.append({QStringLiteral("lit"), QStringLiteral("Lit buttons, checked (resting, then hovered)"),
+                 QStringLiteral("Green raised bright, blue Longpath's glass, amber raised."),
+                 {decidedShots(litCells[0]), decidedShots(litCells[1])}});
+    rows.append({QStringLiteral("fields"), QStringLiteral("Combo, line edit, spin box, tabs, push button"),
+                 QStringLiteral("Today's sizes; corner radius round(height x 7 / 26)."), {decidedShots(fieldCells)}});
+    rows.append({QStringLiteral("scroll-bar"), QStringLiteral("Scroll bar (app sheet)"), QString(),
+                 {decidedShots(barCells)}});
+
+    QJsonObject sizes{{QStringLiteral("combo"), sizeArray(todaySize.combo)},
+                      {QStringLiteral("line_edit"), sizeArray(todaySize.lineEdit)},
+                      {QStringLiteral("spin_box"), sizeArray(todaySize.spinBox)},
+                      {QStringLiteral("tabs"), sizeArray(todaySize.tabs)},
+                      {QStringLiteral("tab_bar_height"), todaySize.tabBarHeight},
+                      {QStringLiteral("button"), sizeArray(todaySize.button)}};
+    QJsonObject handles{
+        {QStringLiteral("slider_h"), rectArray(hSliders[0]->handleRect())},
+        {QStringLiteral("slider_v"), rectArray(vSliders[0]->handleRect())},
+        {QStringLiteral("scroll_bar"), rectArray(bars[0]->handleRect())}};
+    QJsonObject extra{{QStringLiteral("today_sizes"), sizes},
+                      {QStringLiteral("handles"), handles},
+                      {QStringLiteral("indicators"), indicatorRects},
+                      {QStringLiteral("path"), QStringLiteral("Style:: sheets set with the preview on, then "
+                                                              "WorkspacePreview::themeSubtree on the column")}};
+
+    // The sheet's own labels are drawn in today's look.
+    WorkspacePreview::setEnabledForTest(false);
+    QJsonArray placements;
+    const QImage sheet = assembleGrid(
+        rows, {QStringLiteral("Product, preview on"), QStringLiteral("Hovered")},
+        QStringLiteral("Controls: decided"),
+        QStringLiteral("Real Qt widgets with the workspace preview on, through the product path: the Style:: "
+                       "stylesheets, the app sheet and the scoped pass. Cells match the approved choice cells."),
+        placements);
+    setSheetImages(ctx, scene, sheet, placements, extra);
+
+    QStringList zoomGroups;
+    const QVector<GridRow> zoom = zoomGrid(rows, {QStringLiteral("Product, preview on"), QStringLiteral("Hovered")},
+                                           true, zoomGroups);
+    QJsonArray zoomPlacements;
+    const QImage zoomImage = assembleGrid(
+        zoom, zoomGroups, QStringLiteral("Controls: decided, 5x nearest-neighbour"),
+        QStringLiteral("Cut-outs around each handle, indicator and lit button, enlarged 5x."), zoomPlacements);
+    setSheetImages(ctx, scene + QStringLiteral("--zoom"), zoomImage, zoomPlacements,
+                   QJsonObject{{QStringLiteral("source"), scene},
+                               {QStringLiteral("enlargement"), QStringLiteral("5x nearest-neighbour")}});
+    WorkspacePreview::setEnabledForTest(true);
 }
 
 } // namespace NereusSDR::Preview

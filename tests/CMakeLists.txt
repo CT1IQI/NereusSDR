@@ -2725,6 +2725,15 @@ nereus_add_test(tst_workspace_qss_translator)
 nereus_add_test(tst_qss_translator_forms)
 # Painted chrome, palettes and rich text reach roles through one helper.
 nereus_add_test(tst_workspace_role_colour)
+# The status and data colour choices behind the preview switch.
+nereus_add_test(tst_workspace_colour_choice)
+# JJ's decided control look behind the preview switch: sliders, check
+# boxes and radios, lit buttons, corner radii and scroll bars.
+nereus_add_test(tst_workspace_decided_controls)
+# The remaining dialog, menu and control colours behind the preview
+# switch: one selection colour, the decided slider and group box
+# indicator, the spin arrows, meaning colours, action buttons.
+nereus_add_test(tst_workspace_dialog_colours)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)

@@ -47,6 +47,14 @@ DPR, build tag, git HEAD and dirty state, Qt versions, platform, OS, style,
 font, spectrum RHI backend, the PNG's sha256, crop rectangles, the spectrum
 level checks, and what is frozen, unfrozen or not shown.
 
+Every window and dialog image also gets `<image>.geometry.tsv`: one line per
+visible widget of the grabbed window or dialog, tab-separated, with its path
+(child indexes from the root), class, object name, control kind (`slider`,
+`scrollbar`, `checkbox`, `radio`, `button`, `combo`, `field`, `tabbar`,
+`tabwidget`, `groupbox` or `other`) and its rectangle in the grabbed
+widget's logical px. Two runs compare line for line for moved or resized
+widgets, and a diff can be masked against the control rectangles.
+
 The binary itself runs one scene per process:
 
 ```

@@ -66,6 +66,11 @@
 //                 (Alt bypasses it), the floating resize corner and the
 //                 opaque panel surface behind a free or floating container.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The container carries the background the user chose as
+//                 WorkspacePreview::kUserBackgroundProperty, so a meter
+//                 inside it shows that colour in place of the panel role
+//                 (workspace preview only). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -213,6 +218,8 @@ ContainerWidget::ContainerWidget(QWidget* parent)
 {
     m_id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     setMinimumSize(kMinContainerWidth, kMinContainerHeight);
+    // No user background yet: the content takes the container's role.
+    setProperty(WorkspacePreview::kUserBackgroundProperty, QColor());
     setMouseTracking(true);
     buildUI();
     updateTitleBar();
@@ -1113,12 +1120,21 @@ void ContainerWidget::setBackgroundColor(const QColor& color)
 {
     if(!color.isValid() || m_backgroundColor==color) {return;}
     m_backgroundColor=color;
+    publishUserBackground();
     if (m_groupHeader && color.rgba() == kLegacyContentBackground) {
         // Workspace preview: the default background is the glass plate.
         m_contentHolder->setStyleSheet(QStringLiteral("background: transparent;"));
         return;
     }
     m_contentHolder->setStyleSheet(QStringLiteral("background: %1;").arg(color.name(QColor::HexArgb)));
+}
+
+// Before the content holder's stylesheet changes, so the meters it
+// re-polishes read the new colour (WorkspacePreview::dataBackground()).
+void ContainerWidget::publishUserBackground()
+{
+    const bool user = m_backgroundColor.rgba() != kLegacyContentBackground;
+    setProperty(WorkspacePreview::kUserBackgroundProperty, user ? m_backgroundColor : QColor());
 }
 
 void ContainerWidget::setNoControls(bool noControls) { m_noControls = noControls; }
@@ -1859,6 +1875,7 @@ bool ContainerWidget::deserialize(const QString& data)
     QColor bgColor(p[12]);
     if (bgColor.isValid()) {
         m_backgroundColor = bgColor;
+        publishUserBackground();
         m_contentHolder->setStyleSheet(
             QStringLiteral("background: %1;").arg(bgColor.name(QColor::HexArgb)));
     }

@@ -9,7 +9,7 @@
 // the component treatment (src/gui/styles/WorkspaceComponents): raised,
 // pressed, selected and sunken controls, semantic colours kept, the
 // treatment idempotent, states that render distinct, and size hints
-// that do not change.
+// that do not change (the slider takes Longpath's handle, JJ's decision).
 
 #include <QtTest/QtTest>
 
@@ -298,7 +298,8 @@ private slots:
         QVERIFY2(out.contains(WC::raisedFill()), qPrintable(out));
         QVERIFY(out.contains(QStringLiteral("border-top-color: #38383e")));
         QVERIFY(out.contains(QStringLiteral("border-bottom-color: #1f1f23")));
-        QVERIFY(out.contains(QStringLiteral("border-radius: 4px")));
+        // round(22 x 7 / 26) at the default height without an owner.
+        QVERIFY2(out.contains(QStringLiteral("border-radius: 6px")), qPrintable(out));
         // Padding and border width stay.
         QVERIFY(out.contains(QStringLiteral("padding: 2px 4px")));
         QVERIFY(out.contains(QStringLiteral("border: 1px solid #2c2c31")));
@@ -316,9 +317,13 @@ private slots:
 
     void componentKeepsSemanticAndClearBackgrounds()
     {
+        // A lit green checked button is JJ's raised bright green now; the
+        // other semantic and clear backgrounds stay as they are.
         const QString green = QStringLiteral(
             "QPushButton:checked { background: #1c3a2a; color: #6fa384; border: 1px solid #2c5c44; }");
-        QCOMPARE(WC::componentize(green, nullptr), green);
+        const QString lit = WC::componentize(green, nullptr);
+        QVERIFY2(lit.contains(QStringLiteral("stop:0 #306247")), qPrintable(lit));
+        QVERIFY(lit.contains(QStringLiteral("color: #bbe1c6")));
         const QString clear = QStringLiteral("QPushButton { background: transparent; border: none; }");
         QCOMPARE(WC::componentize(clear, nullptr), clear);
         const QString slice = QStringLiteral("QPushButton { background: #00d4ff; }");
@@ -342,15 +347,17 @@ private slots:
         QCOMPARE(WC::componentize(text, nullptr), text);
     }
 
-    void componentSliderGetsFillAndPill()
+    void componentSliderIsLongpaths()
     {
         const QString out = WC::componentize(QStringLiteral(
             "QSlider::groove:horizontal { height: 4px; background: #1f1f23; border-radius: 2px; }"
             "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
             " background: #4a7ba8; border-radius: 5px; }"), nullptr);
-        QVERIFY2(out.contains(WC::fieldFill()), qPrintable(out));
-        QVERIFY(out.contains(QStringLiteral("QSlider::sub-page:horizontal { background: #4a7ba8;")));
-        QVERIFY(out.contains(QStringLiteral("width: 10px; height: 10px; margin: -3px 0")));
+        // Longpath's groove and handle, and no filled side.
+        QVERIFY2(out.contains(QStringLiteral("background: #050507")), qPrintable(out));
+        QVERIFY(out.contains(WC::raisedFill()));
+        QVERIFY(out.contains(QStringLiteral("width: 10px; height: 14px; margin: -6px 0")));
+        QVERIFY(!out.contains(QStringLiteral("QSlider::sub-page")));
     }
 
     void componentIsIdempotent()
@@ -445,9 +452,16 @@ private slots:
             "QSlider::groove:horizontal { height: 4px; background: #203040; border-radius: 2px; }"
             "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
             " background: #00b4d8; border-radius: 5px; }");
+        // The slider takes Longpath's handle (JJ's decision): its size hint
+        // is Longpath's slider's, not today's.
+        const QString longpathSliderQss = QStringLiteral(
+            "QSlider::groove:horizontal { height: 4px; background: #050507; border: 1px solid #2c2c31;"
+            " border-radius: 3px; }"
+            "QSlider::handle:horizontal { width: 10px; height: 14px; margin: -6px 0;"
+            " background: #1a1a1e; border: 1px solid #4a7ba8; border-radius: 5px; }");
         QSlider l1(Qt::Horizontal);
         QSlider l2(Qt::Horizontal);
-        l1.setStyleSheet(sliderQss);
+        l1.setStyleSheet(longpathSliderQss);
         l2.setStyleSheet(WorkspacePreview::lookQss(sliderQss, &l2));
         QCOMPARE(l2.sizeHint(), l1.sizeHint());
     }

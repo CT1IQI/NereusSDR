@@ -217,7 +217,8 @@ private slots:
         QTest::newRow("off on") << false << int(V::On) << QColor(0x5f, 0xff, 0x8a) << "ok";
         QTest::newRow("off tx") << false << int(V::Tx) << QColor(0xff, 0x60, 0x60) << "tx";
         QTest::newRow("on info") << true << int(V::Info) << QColor(0x5f, 0xa8, 0xff) << "accent";
-        QTest::newRow("on on") << true << int(V::On) << QColor(0x5f, 0xff, 0x8a) << "ok";
+        // The decided indicator tone for ok (WorkspacePreview::statusColour).
+        QTest::newRow("on on") << true << int(V::On) << QColor(0x5f, 0xff, 0x8a) << "live";
         QTest::newRow("on off") << true << int(V::Off) << QColor(0x40, 0x48, 0x58)
                                 << "text-inactive";
         QTest::newRow("on warn") << true << int(V::Warn) << QColor(0xff, 0xd7, 0x00) << "measured";
@@ -297,7 +298,8 @@ private slots:
         const QString text = statusText(dlg);
         QVERIFY2(text.contains(QStringLiteral("Disconnected")), qPrintable(text));
         if (on) {
-            QVERIFY2(text.contains(QStringLiteral("color:%1;").arg(role("danger").name())),
+            // The decided indicator tone for danger (statusColourName).
+            QVERIFY2(text.contains(QStringLiteral("color:%1;").arg(role("tx").name())),
                      qPrintable(text));
             QVERIFY(!text.contains(QStringLiteral("#ff6060")));
         } else {
