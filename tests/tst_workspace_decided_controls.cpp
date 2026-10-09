@@ -402,6 +402,49 @@ private slots:
     // The app-level preview sheet: an unstyled check box gets the decided
     // off state, and scroll bars stay 14 px with Longpath's rounded handle.
     // Runs last: it sets the application's palette and stylesheet.
+    // A box or radio with no sheet of its own keeps the platform style's
+    // size under the app sheet's indicator rules (label margins kept).
+    void zAppSheetKeepsUnstyledBoxSizes()
+    {
+        auto* app = qobject_cast<QApplication*>(QCoreApplication::instance());
+        QVERIFY(app != nullptr);
+        const QPalette savedPalette = app->palette();
+        WorkspacePreview::setEnabledForTest(false);
+        QCheckBox box(QStringLiteral("Include logs"));
+        QRadioButton radio(QStringLiteral("Track band"));
+        const QSize boxToday = box.sizeHint();
+        const QSize radioToday = radio.sizeHint();
+        WorkspacePreview::setEnabledForTest(true);
+        applyWorkspacePalette(*app);
+        QCheckBox box2(QStringLiteral("Include logs"));
+        QRadioButton radio2(QStringLiteral("Track band"));
+        const QSize boxAfter = box2.sizeHint();
+        const QSize radioAfter = radio2.sizeHint();
+        app->setStyleSheet(QString());
+        app->setPalette(savedPalette);
+        QCOMPARE(boxAfter, boxToday);
+        QCOMPARE(radioAfter, radioToday);
+    }
+
+    // A widget sheet's indicator with a size and no border gets the rim
+    // inside that size: the box keeps its size hint.
+    void indicatorRimKeepsAGivenSize()
+    {
+        const QString sheet = QStringLiteral(
+            "QCheckBox { color: #c8d8e8; font-size: 10px; }"
+            "QCheckBox::indicator { width: 12px; height: 12px; background: #1a2a3a; }");
+        WorkspacePreview::setEnabledForTest(false);
+        QCheckBox today(QStringLiteral("Show"));
+        today.setStyleSheet(sheet);
+        WorkspacePreview::setEnabledForTest(true);
+        QCheckBox after(QStringLiteral("Show"));
+        const QString look = WorkspacePreview::lookQss(sheet, &after);
+        after.setStyleSheet(look);
+        QVERIFY2(look.contains(QStringLiteral("width: 10px")), qPrintable(look));
+        QCOMPARE(after.sizeHint(), today.sizeHint());
+        QCOMPARE(WorkspacePreview::lookQss(look, &after), look);
+    }
+
     void zAppSheetIndicatorsAndScrollBars()
     {
         WorkspacePreview::setEnabledForTest(true);

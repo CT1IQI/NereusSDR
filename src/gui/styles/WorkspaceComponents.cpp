@@ -73,6 +73,10 @@
 //                 brighter off state, the lit green, blue and amber, the
 //                 radius round(h x 7 / 26), indicatorRules().
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Check boxes and radios keep today's size: the label
+//                 margins an indicator rule drops come back as padding,
+//                 and a rim added to a sized indicator comes off its size.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -83,6 +87,7 @@
 
 #include <QColor>
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
 #include <QTabBar>
@@ -132,6 +137,17 @@ constexpr auto kHandleRadius = "5px";
 constexpr auto kBoxRadius = "4px";
 constexpr auto kRadioRadius = "7px";
 constexpr auto kIndicatorCheckedTopEdge = "#4b88c1";
+// NereusSDR: the rim width a sheet's indicator gets when it has none.
+constexpr int kIndicatorRimPx = 1;
+// NereusSDR: an indicator rule makes Qt's stylesheet style size a check
+// box or radio as indicator, spacing and text only, without the platform
+// style's label margins (QCommonStyle CT_CheckBox: 4 px wide, 4 px high,
+// less the 2 px the stylesheet style's text rect keeps). The app sheet's
+// indicator rule puts them back as padding, so a box with no sheet of its
+// own keeps today's size. A sheet that styled the indicator itself already
+// sized its boxes without them, so its boxes get the padding back at zero.
+constexpr auto kPlatformLabelMargins = "1px 4px 1px 0px";
+constexpr auto kTodaysRowMarker = "/* workspace: today's indicator row */";
 
 // Longpath's raisedFill: the base lifted at the top, the base at 55 %,
 // dropped by three quarters of the lift at the bottom.
@@ -1001,9 +1017,28 @@ QString indicatorBody(Decls& d, int bg, const Target& t)
         }
         setBackground(d, bg, indicatorOffFill());
         if (b.has) {
-            d.set("border-color", hex(kTextInactive));
+            // A rim already in the off colour (this rewrite's own, on a
+            // second pass) stays as it is.
+            const int shorthand = d.findLast({ "border" });
+            const bool alreadyOff = d.findLast({ "border-color" }) < 0 && shorthand >= 0
+                && d.value(shorthand).contains(hex(kTextInactive), Qt::CaseInsensitive);
+            if (!alreadyOff) {
+                d.set("border-color", hex(kTextInactive));
+            }
         } else {
-            d.set("border", QStringLiteral("1px solid %1").arg(hex(kTextInactive)));
+            // The rim is drawn outside a given width and height: take it
+            // off them, so the indicator keeps its outer size.
+            for (const char* side : { "width", "height" }) {
+                const int i = d.findLast({ side });
+                static const QRegularExpression px(QStringLiteral("^(\\d+)px$"));
+                const QRegularExpressionMatch m =
+                    i < 0 ? QRegularExpressionMatch() : px.match(stripComments(d.value(i)).trimmed());
+                if (m.hasMatch()) {
+                    const int inner = std::max(0, m.captured(1).toInt() - 2 * kIndicatorRimPx);
+                    d.set(side, QStringLiteral("%1px").arg(inner));
+                }
+            }
+            d.set("border", QStringLiteral("%1px solid %2").arg(kIndicatorRimPx).arg(hex(kTextInactive)));
         }
         d.set("border-radius", hex(t.radio ? kRadioRadius : kBoxRadius));
         break;
@@ -1377,6 +1412,7 @@ QString indicatorRules()
         out += indicatorStateRules(s);
         out += QLatin1Char('\n');
     }
+    out += QStringLiteral("QCheckBox, QRadioButton { padding: %1; }\n").arg(QLatin1String(kPlatformLabelMargins));
     return out;
 }
 
@@ -1402,6 +1438,7 @@ QString componentize(const QString& qss, const QWidget* owner)
     bool handleHover = false;
     bool handlePressed = false;
     QStringList indicatorSelectors;
+    QStringList indicatorClasses;
     QStringList ownerButtonSelectors;
     const qsizetype n = qss.size();
     qsizetype i = 0;
@@ -1460,6 +1497,14 @@ QString componentize(const QString& qss, const QWidget* owner)
                     handlePressed = true;
                 }
             }
+            if (st.kind == Kind::Indicator) {
+                const QString type = parseCompound(lastCompound(s)).type;
+                if (type == QLatin1String("QCheckBox") || type == QLatin1String("QRadioButton")) {
+                    indicatorClasses << type;
+                } else {
+                    indicatorClasses << QStringLiteral("QCheckBox") << QStringLiteral("QRadioButton");
+                }
+            }
             if (st.kind == Kind::Indicator && st.state == State::Normal
                 && !lastCompound(s).contains(QLatin1Char(':') + QLatin1String("unchecked"))) {
                 indicatorSelectors << s;
@@ -1479,6 +1524,17 @@ QString componentize(const QString& qss, const QWidget* owner)
         selStart = i;
     }
     out += qss.mid(std::min(selStart, n));
+
+    // Today's row for the boxes this sheet styles: no label margins, ahead
+    // of the sheet's own rules so a padding of its own still wins. The
+    // sheet is rewritten with the row in it, so a second pass is a no-op.
+    indicatorClasses.removeDuplicates();
+    if (!indicatorClasses.isEmpty() && !qss.contains(QLatin1String(kTodaysRowMarker))) {
+        return componentize(QStringLiteral("%1 %2 { padding: 0px; }\n")
+                                .arg(QLatin1String(kTodaysRowMarker), indicatorClasses.join(QStringLiteral(", ")))
+                                + qss,
+                            owner);
+    }
 
     const QString lower = qss.toLower();
 
