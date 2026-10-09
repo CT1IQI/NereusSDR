@@ -36,6 +36,9 @@
 //                 decided sliders, indicators, lit buttons, radii and
 //                 scroll bars through the product path. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - decided--controls--zoom: the field row zooms each whole
+//                 control instead of showing an empty row. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -3678,6 +3681,10 @@ void sceneControlsDecided(SceneContext& ctx)
         for (DecidedCell& c : group) {
             c.focus = QRect(c.control->pos(), c.control->size());
         }
+    }
+    // The field row zooms each whole control, as the lit buttons do.
+    for (DecidedCell& c : fieldCells) {
+        c.focus = QRect(c.control->pos(), c.control->size());
     }
     for (DecidedCell& c : barCells) {
         const QRect h = static_cast<ProbeScrollBar*>(c.control)->handleRect();
