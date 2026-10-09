@@ -100,6 +100,10 @@
 //                 product's own path and grabbed while open; tooltips placed
 //                 for the default 16x16 pointer (profile-rail-open too).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The sample spots no longer re-set the notch markers to
+//                 refresh the GPU overlay: setSpotMarkers marks it dirty
+//                 itself now. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -5474,11 +5478,6 @@ void placeSampleSpots(SceneContext& ctx, SpectrumWidget* s)
             QStringLiteral("W1NNN"), QString(), 20 + i);
     }
     s->setSpotMarkers(spots);
-    // setSpotMarkers repaints with update() only; the labels are drawn into
-    // the GPU path's static overlay, rebuilt when it is marked dirty. The
-    // notch push (markOverlayDirty) with the notches already there marks
-    // it, as the next overlay change would live.
-    s->setNotchMarkers(s->notchMarkersForTest());
     pump(kFinalSettleMs);
     grabWidget(s);
     pump(kFinalSettleMs);
