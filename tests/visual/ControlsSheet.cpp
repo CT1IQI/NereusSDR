@@ -39,6 +39,9 @@
 //   2026-10-09 - decided--controls--zoom: the field row zooms each whole
 //                 control instead of showing an empty row. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - decided--data: the EQ plot now takes the dialog's
+//                 app-bg (D22), so its colour line says so. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "ControlsSheet.h"
@@ -2860,8 +2863,8 @@ constexpr auto kStatusTones = "ok -> live kLiveGreen #4caf6a, warn -> measured k
                               "text-inactive unchanged";
 constexpr auto kDataColours = "spectrum and waterfall app-bg #08080a; meters, dial, filter passband and "
                               "the Thetis bar strip backdrop take the container's background (panel "
-                              "#0c0c0e, or the user's colour); graph app-bg; EQ client app-bg and plot "
-                              "panel; all ink unchanged";
+                              "#0c0c0e, or the user's colour); graph app-bg; EQ client and plot app-bg "
+                              "(the dialog's background); all ink unchanged";
 
 QWidget* firstVisibleTopLevel(const char* className)
 {
