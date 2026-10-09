@@ -12,6 +12,9 @@
 //                 out, not from the last sync's, and grows by each view's
 //                 widget geometry, not its native window's.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Each leaf remembers the geometry placeViews set, so a
+//                 sync can put a view moved since back where it was placed.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QWidget>
 #include <QPointer>
@@ -42,7 +45,9 @@ protected:
     bool eventFilter(QObject*,QEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
 private:
-    struct Leaf { QPointer<QWidget> view, grip, corner; QRectF rect; int order=0; };
+    // placed: the geometry placeViews set; putBacks: how often a sync has
+    // moved the view back to it since.
+    struct Leaf { QPointer<QWidget> view, grip, corner; QRectF rect; int order=0; QRect placed; int putBacks=0; };
     void placeViews();
     QRect projectedBoundary(QWidget*) const;
     void syncPresentation();

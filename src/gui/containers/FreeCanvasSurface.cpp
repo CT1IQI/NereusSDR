@@ -25,6 +25,13 @@
 //                 no longer keeps the canvas larger, and the minimum no
 //                 longer depends on when the native window settled.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - A view moved after placeViews placed it goes back, a few
+//                 times at most. Under a scale factor below one a native
+//                 child window rounds its geometry and reports it back, and
+//                 a report made for an earlier parent could land after the
+//                 placement, leaving the view 1 px off and the minimum with
+//                 it, differently each launch. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "FreeCanvasSurface.h"
 #include "WorkspaceHeader.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -41,6 +48,10 @@
 namespace NereusSDR {
 namespace {
 constexpr int kGripWidth=18, kCornerSize=14, kMargin=20;
+// How often a sync puts a moved view back after one placement. A native
+// window whose rounded report never matches the placed position would
+// otherwise be moved back on every report.
+constexpr int kMaxPutBacks=3;
 class CanvasHandle final : public QWidget {
 public:
     CanvasHandle(bool corner,QWidget* parent):QWidget(parent),m_corner(corner) {
@@ -137,6 +148,7 @@ void FreeCanvasSurface::placeViews() {
         auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
         const QRect rect(pixels(leaf.rect.x()+m_origin.x()),pixels(leaf.rect.y()+m_origin.y()),qMax(0,pixels(leaf.rect.width())),qMax(0,pixels(leaf.rect.height())));
         leaf.view->setGeometry(rect);
+        leaf.placed=leaf.view->geometry();leaf.putBacks=0;
     }
     syncPresentation();queuePresentationSync();
 }
@@ -163,6 +175,13 @@ void FreeCanvasSurface::syncPresentation() {
     std::sort(ids.begin(),ids.end(),[this](const QString& a,const QString& b){return m_leaves[a].order==m_leaves[b].order?a<b:m_leaves[a].order<m_leaves[b].order;});
     for(const QString& id:ids) {
         auto& leaf=m_leaves[id];if(!leaf.view) {continue;}
+        // The surface owns where its views are. Under a scale factor below
+        // one a native child window rounds its geometry and reports it
+        // back, and a report made for an earlier parent can land after the
+        // placement and move the view a pixel off, by launch; it goes back.
+        if(!leaf.placed.isNull() && leaf.view->pos()!=leaf.placed.topLeft() && leaf.putBacks<kMaxPutBacks) {
+            ++leaf.putBacks;leaf.view->move(leaf.placed.topLeft());
+        }
         const QRect rect=projectedBoundary(leaf.view);leaf.view->raise();
         // The extent grows by the widget's own geometry, which is set
         // synchronously here: the native window's can still be settling, so
