@@ -48,9 +48,17 @@
 //                 WorkspacePreview::statusColourName() (the status colour
 //                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-09 -- The page carries its title above the tabs, as every
+//                 Setup page does. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-09 - D25: the button row stacks when narrow (SetupFit::FitRow)
+//                 and the diagnostics line wraps. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RfKitPage.h"
+#include "gui/setup/SetupFit.h"
+#include "gui/SetupPage.h"
 #include "gui/styles/WorkspacePreview.h"
 
 #include "models/AccessoryDataModel.h"
@@ -93,6 +101,9 @@ RfKitPage::RfKitPage(RadioModel* model, QWidget* parent)
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(8, 8, 8, 8);
+
+    // The page title, as every Setup page draws it (SetupPage::init).
+    root->addWidget(SetupPage::makePageTitle(tr("RF-Kit"), this));
 
     m_tabs = new QTabWidget(this);
     root->addWidget(m_tabs);
@@ -266,7 +277,10 @@ QWidget* RfKitPage::buildRf2ksTab()
     m_disconnectBtn->setObjectName(QStringLiteral("rfKitDisconnectButton"));
     m_setTciBtn   = new QPushButton(tr("Set amp to TCI mode"), connBox);
     m_resetErrBtn = new QPushButton(tr("Reset amp error state"), connBox);
-    auto* btnRow  = new QHBoxLayout();
+    // D25: the four buttons stack, in this order, when the window is too
+    // narrow for them in one row.
+    auto* btnRow  = new SetupFit::FitRow();
+    btnRow->setObjectName(QStringLiteral("rfKitButtonRow"));
     btnRow->addWidget(m_testConnBtn);
     btnRow->addWidget(m_disconnectBtn);
     btnRow->addWidget(m_setTciBtn);
@@ -315,6 +329,8 @@ QWidget* RfKitPage::buildRf2ksTab()
     auto* diagLay = new QVBoxLayout(diagBox);
     m_diagnosticsLabel = new QLabel(diagBox);
     m_diagnosticsLabel->setTextFormat(Qt::RichText);
+    // D25: the counts wrap rather than widening the page.
+    m_diagnosticsLabel->setWordWrap(true);
     diagLay->addWidget(m_diagnosticsLabel);
     root->addWidget(diagBox);
 

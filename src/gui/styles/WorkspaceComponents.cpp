@@ -94,6 +94,11 @@
 //   2026-10-09 - JJ's D27: the zoom bar's track is the dark inset with a
 //                 grey rim all round, 8 px overall, the handle 16 px.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - A value chip whose rule set dark neutral text on a light
+//                 fill takes the chip's text colour with the chip fill (the
+//                 HL2 I2C read boxes drew black on black); dim text on a
+//                 dark fill keeps its colour. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -1504,7 +1509,20 @@ QString processBody(const QString& rawBody, const Target& t, bool* restyledOut =
             // tst_workspace_qss_translator). Fields take the flat inset
             // colour; the sunken edges carry the depth. Value chips
             // (labels) have no subcontrols and take the sunken fill.
+            const QColor ruleFill = bg >= 0 ? parseColour(stripComments(d.value(bg))) : QColor();
             setBackground(d, bg, t.kind == Kind::Label ? fieldFill() : hex(kInsetBg));
+            // Text chosen dark for a light neutral fill (the HL2 I2C read
+            // boxes' black on white) vanishes on the dark chip: it takes
+            // the chip's text colour with the fill. Text a dark fill
+            // already carries (a dim "NO CARRIER" lamp) keeps its colour.
+            if (t.kind == Kind::Label && ruleFill.isValid() && ruleFill.lightnessF() >= 0.5f) {
+                const int ci = d.findLast({ "color" });
+                const QColor text = ci >= 0 ? parseColour(stripComments(d.value(ci))) : QColor();
+                if (text.isValid() && text.alpha() == 255 && text.lightnessF() < 0.5f
+                    && text.hsvSaturationF() < 0.25f) {
+                    d.replaceValue(ci, hex(kTextPrimary));
+                }
+            }
             if (b.has && neutralBorder) {
                 if (t.kind == Kind::Label) {
                     // VERSENKT: oben dunkel, unten heller — siehe die Notiz bei

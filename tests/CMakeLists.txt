@@ -3477,6 +3477,12 @@ target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD
 nereus_add_test(tst_setup_dialog_qt_warnings)
 target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TESTS)
 
+# Word ampersands in mnemonic-parsed texts (group titles, buttons, tabs, form
+# labels) are written "&&" so Qt shows them instead of underlining the next
+# character. Sweeps every built Setup page and the VAX first-run button.
+nereus_add_test(tst_setup_ampersand_text)
+target_compile_definitions(tst_setup_ampersand_text PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Issues #272 + #301: lazy SetupDialog page construction ──────────────────
 # buildTree() used to construct all 55 setup pages from the SetupDialog ctor,
 # blocking the Qt main thread on every Tools -> Setup open. That stall starved
@@ -3499,6 +3505,16 @@ target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TEST
 # the stretch (SetupPage::addContent inserts before it, as addSection does).
 nereus_add_test(tst_setup_pages_start_at_top)
 target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
+
+# D25: every Setup page fits the Settings window. Walks every leaf and tab
+# (Hardware Config posed as a Saturn and as a Hermes Lite 2) at 900 x 650
+# and 820 x 600, in today's look and the workspace look: no page or tab
+# scrolls sideways, no tab strip scrolls away with its page, and no label,
+# check box, radio button, push button or group title is cut short or
+# clipped by a parent. At 1440 x 900 the rows that stacked at 900 x 650 are
+# side by side again.
+nereus_add_test(tst_setup_pages_fit_window)
+target_compile_definitions(tst_setup_pages_fit_window PRIVATE NEREUS_BUILD_TESTS)
 
 # R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
 # Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old

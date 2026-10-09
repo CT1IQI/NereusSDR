@@ -129,6 +129,19 @@
 //                 the member-timer cut, so its idle sweep cannot remove the
 //                 sample station in a scene slowed past 30 s by load.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Setup's later tabs (dialog-setup-<page>--<tab>, the HL2
+//                 ones on a posed Hermes Lite 2) and --scrolled step scenes
+//                 for every page and tab that scrolls. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - dialog-setup-hardware-config poses its board (a Saturn)
+//                 as the tab scenes do. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-09 - D25: Setup size scenes, dialog-setup-<page>[--<tab>]--min at
+//                 the dialog's minimum 820 x 600 for the pages that rearrange
+//                 to fit, and --wide at 1440 x 900 for Antenna / ALEX and OC
+//                 Outputs; a --scrolled scene steps a table frame that scrolls
+//                 sideways inside a page that scrolls down. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -142,6 +155,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QUuid>
 #include <QCoreApplication>
@@ -226,6 +240,7 @@
 #include "gui/multidevice/TakeReceiverDialog.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "gui/setup/AppearanceSetupPages.h"
+#include "gui/setup/HardwarePage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -7508,6 +7523,504 @@ void freezeRadioStatusUptime(SceneContext& ctx, QWidget* dialog)
     ctx.notes.append(QStringLiteral("radio-status uptime held at %1").arg(QString::fromLatin1(kFrozenUptime)));
 }
 
+// ---- Setup's other tabs and scrolled pages ---------------------------------
+
+namespace {
+
+// One later tab of a Setup page (the page scenes show each page on its
+// first tab). `path` names the tab from the outside in: a tab inside a tab
+// is {outer, inner}. The board is the identity the model is posed as (a
+// model value; nothing connects): the HL2 tabs show only for a board with
+// the HL2 I/O board (HardwarePage::onCurrentRadioChanged).
+struct SetupTabSpec {
+    QString page;   // the page scene's stem: dialog-setup-<page>
+    QStringList path;
+    HPSDRHW board{HPSDRHW::Saturn};
+};
+
+QVector<SetupTabSpec> setupTabSpecs()
+{
+    const QString cores = QStringLiteral("your-cores");
+    const QString hardware = QStringLiteral("hardware-config");
+    const QString nr = QStringLiteral("nr-anf");
+    const QString amps = QStringLiteral("4o3a");
+    const QString rfKit = QStringLiteral("rf-kit");
+    const QString alex = QStringLiteral("Antenna / ALEX");
+    const QString oc = QStringLiteral("OC Outputs");
+    const QString hl2Oc = QStringLiteral("Hermes Lite Control");
+    const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    return {
+        // CoresSetupPage.cpp:157-159 (a QTabBar over a QStackedWidget).
+        {cores, {QStringLiteral("Addresses")}},
+        {cores, {QStringLiteral("Radio")}},
+        {cores, {QStringLiteral("Devices")}},
+        // HardwarePage.cpp:161-168, shown for the posed board (:301-334).
+        {hardware, {alex}},
+        {hardware, {alex, QStringLiteral("Alex-1 Filters")}},   // AntennaAlexTab.cpp:137
+        {hardware, {alex, QStringLiteral("Alex-2 Filters")}},   // AntennaAlexTab.cpp:156
+        {hardware, {oc}},
+        {hardware, {oc, QStringLiteral("SWL")}},                // OcOutputsTab.cpp:161
+        {hardware, {QStringLiteral("Calibration")}},
+        {hardware, {hl2Oc}, hl2},                               // HardwarePage.cpp:314-315
+        {hardware, {hl2Oc, QStringLiteral("SWL")}, hl2},
+        {hardware, {QStringLiteral("HL2 Options")}, hl2},
+        {hardware, {QStringLiteral("HL2 I/O")}, hl2},
+        // DspSetupPages.cpp:995-1722 (NR1 is the first tab).
+        {nr, {QStringLiteral("NR2")}},
+        {nr, {QStringLiteral("NR3")}},
+        {nr, {QStringLiteral("NR4")}},
+        {nr, {QStringLiteral("DFNR")}},
+        {nr, {QStringLiteral("MNR")}},
+        {nr, {QStringLiteral("NNR")}},
+        {nr, {QStringLiteral("ANF")}},
+        // FourO3APage.cpp:124-129 (a local window).
+        {amps, {QStringLiteral("PowerGenius XL")}},
+        {amps, {QStringLiteral("Tuner Genius XL")}},
+        // RfKitPage.cpp:98-99.
+        {rfKit, {QStringLiteral("RF2K-S")}},
+    };
+}
+
+// The pages and tabs whose content runs past the dialog: each gets a
+// --scrolled scene stepping through it. An empty path is the page's
+// first tab. Measured with the dialog at its own size (the same at both
+// dialog profiles); a scene fails if its page no longer overflows.
+struct SetupScrollSpec {
+    QString page;   // the page scene's stem
+    QStringList path;
+    HPSDRHW board{HPSDRHW::Saturn};
+};
+
+QVector<SetupScrollSpec> setupScrollSpecs()
+{
+    const QString hardware = QStringLiteral("hardware-config");
+    const QString alex = QStringLiteral("Antenna / ALEX");
+    const QString oc = QStringLiteral("OC Outputs");
+    const QString hl2Oc = QStringLiteral("Hermes Lite Control");
+    const QString swl = QStringLiteral("SWL");
+    const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    return {
+        {QStringLiteral("general-options"), {}},
+        {QStringLiteral("pa-gain"), {}},
+        {QStringLiteral("digital-modes"), {}},
+        {QStringLiteral("spectrum-defaults"), {}},
+        {QStringLiteral("waterfall-defaults"), {}},
+        {QStringLiteral("power"), {}},
+        {QStringLiteral("cat-options"), {}},
+        {QStringLiteral("tcp-ip-cat"), {}},
+        {QStringLiteral("tci-server"), {}},
+        {QStringLiteral("4o3a"), {}},
+        {QStringLiteral("4o3a"), {QStringLiteral("PowerGenius XL")}},
+        {QStringLiteral("4o3a"), {QStringLiteral("Tuner Genius XL")}},
+        {QStringLiteral("remote-access"), {}},
+        {hardware, {alex, QStringLiteral("Alex-1 Filters")}},
+        {hardware, {alex, QStringLiteral("Alex-2 Filters")}},
+        {hardware, {oc}},
+        {hardware, {QStringLiteral("Calibration")}},
+        {hardware, {hl2Oc}, hl2},
+        {hardware, {QStringLiteral("HL2 I/O")}, hl2},
+        {QStringLiteral("nr-anf"), {QStringLiteral("NNR")}},
+    };
+}
+
+// The pages and tabs that rearrange to fit the Settings window (JJ's
+// decision D25), shown at another dialog size: `--min` at the dialog's
+// minimum (SetupDialog.cpp:344-345, 820 x 600), where their groups stack,
+// and `--wide` at 1440 x 900, where Antenna / ALEX's and OC Outputs' groups
+// go back side by side.
+struct SetupSizeSpec {
+    QString page;   // the page scene's stem
+    QStringList path;
+    HPSDRHW board{HPSDRHW::Saturn};
+    QString suffix; // "--min" or "--wide"
+    QSize size;
+};
+
+constexpr QSize kSetupMinimumSize{820, 600};
+constexpr QSize kSetupWideSize{1440, 900};
+
+QVector<SetupSizeSpec> setupSizeSpecs()
+{
+    const QString hardware = QStringLiteral("hardware-config");
+    const QString alex = QStringLiteral("Antenna / ALEX");
+    const QString alex1 = QStringLiteral("Alex-1 Filters");
+    const QString alex2 = QStringLiteral("Alex-2 Filters");
+    const QString oc = QStringLiteral("OC Outputs");
+    const QString hl2Oc = QStringLiteral("Hermes Lite Control");
+    const QString swl = QStringLiteral("SWL");
+    const HPSDRHW saturn = HPSDRHW::Saturn;
+    const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    const QString min = QStringLiteral("--min");
+    const QString wide = QStringLiteral("--wide");
+    return {
+        {hardware, {}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex, alex1}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex, alex2}, saturn, min, kSetupMinimumSize},
+        {hardware, {oc}, saturn, min, kSetupMinimumSize},
+        {hardware, {oc, swl}, saturn, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("Calibration")}, saturn, min, kSetupMinimumSize},
+        {hardware, {hl2Oc}, hl2, min, kSetupMinimumSize},
+        {hardware, {hl2Oc, swl}, hl2, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("HL2 Options")}, hl2, min, kSetupMinimumSize},
+        {hardware, {QStringLiteral("HL2 I/O")}, hl2, min, kSetupMinimumSize},
+        {QStringLiteral("pa-gain"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("dexp-vox"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("export-import"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("startup-preferences"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("radio-status"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("nr-anf"), {QStringLiteral("DFNR")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("nr-anf"), {QStringLiteral("MNR")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("4o3a"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
+        {hardware, {alex}, saturn, wide, kSetupWideSize},
+        {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
+        {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
+        {hardware, {oc}, saturn, wide, kSetupWideSize},
+        {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
+    };
+}
+
+QString setupTabStem(const QStringList& path)
+{
+    QString stem;
+    for (const QString& label : path) {
+        stem += QStringLiteral("--") + slug(label);
+    }
+    return stem;
+}
+
+// The test radios the connection panel scene shows (sampleRadio), one per
+// posed board.
+RadioInfo posedRadio(HPSDRHW board)
+{
+    if (board == HPSDRHW::HermesLite) {
+        return sampleRadio(QStringLiteral("Hermes Lite 2"), QStringLiteral("00:1C:C0:7B:90:3C"),
+                           QStringLiteral("192.168.1.31"), HPSDRHW::HermesLite,
+                           ProtocolVersion::Protocol1, 73);
+    }
+    return sampleRadio(QStringLiteral("ANAN-G2"), QStringLiteral("00:1C:C0:4E:21:0A"),
+                       QStringLiteral("192.168.1.20"), HPSDRHW::Saturn, ProtocolVersion::Protocol2, 27);
+}
+
+// Selects each tab of `path` in turn, outside in: a QTabWidget, or a bare
+// QTabBar (Your Cores), that is showing and holds a tab with that text.
+bool selectSetupTabs(SceneContext& ctx, QWidget* dialog, const QStringList& path)
+{
+    for (const QString& label : path) {
+        bool found = false;
+        for (QTabWidget* tabs : dialog->findChildren<QTabWidget*>()) {
+            if (found || !tabs->isVisible()) {
+                continue;
+            }
+            for (int i = 0; i < tabs->count() && !found; ++i) {
+                if (tabs->tabText(i) != label) {
+                    continue;
+                }
+                if (!tabs->isTabVisible(i)) {
+                    ctx.failure = QStringLiteral("Setup tab %1 is hidden").arg(label);
+                    return false;
+                }
+                tabs->setCurrentIndex(i);
+                found = true;
+            }
+        }
+        for (QTabBar* bar : dialog->findChildren<QTabBar*>()) {
+            if (found || !bar->isVisible() || qobject_cast<QTabWidget*>(bar->parentWidget()) != nullptr) {
+                continue;
+            }
+            for (int i = 0; i < bar->count() && !found; ++i) {
+                if (bar->tabText(i) == label && bar->isTabVisible(i)) {
+                    bar->setCurrentIndex(i);
+                    found = true;
+                }
+            }
+        }
+        if (!found) {
+            ctx.failure = QStringLiteral("no Setup tab %1 is showing").arg(label);
+            return false;
+        }
+        pump(kTabSettleMs);
+    }
+    return true;
+}
+
+// No hover on any scroll bar in the dialog from the real pointer, the way
+// the page tree keeps none (poseSetupTree).
+void clearScrollBarHover(QWidget* dialog)
+{
+    for (QScrollBar* bar : dialog->findChildren<QScrollBar*>()) {
+        bar->setAttribute(Qt::WA_Hover, false);
+        QEvent leave(QEvent::Leave);
+        QCoreApplication::sendEvent(bar, &leave);
+    }
+}
+
+bool barOverflows(const QScrollBar* bar)
+{
+    return bar->isVisible() && bar->maximum() > 0;
+}
+
+// The scroll areas that scroll the shown page or tab: every visible
+// QScrollArea in the dialog with a bar showing, less any inside another
+// one. (The page tree is a QTreeWidget, not a QScrollArea.)
+QVector<QScrollArea*> overflowingAreas(QWidget* dialog)
+{
+    QVector<QScrollArea*> all;
+    for (QScrollArea* area : dialog->findChildren<QScrollArea*>()) {
+        if (area->isVisible()
+            && (barOverflows(area->verticalScrollBar()) || barOverflows(area->horizontalScrollBar()))) {
+            all.append(area);
+        }
+    }
+    QVector<QScrollArea*> outer;
+    for (QScrollArea* area : all) {
+        bool inside = false;
+        for (QScrollArea* other : all) {
+            inside = inside || (other != area && other->isAncestorOf(area));
+        }
+        if (!inside) {
+            outer.append(area);
+        }
+    }
+    return outer;
+}
+
+// One viewport per step, the next step starting this much before the end
+// of the last (logical px).
+constexpr int kScrollOverlapPx = 40;
+// The band under each scrolled image that says which step it is.
+constexpr int kStepCaptionPx = 22;
+constexpr int kStepCaptionFontPx = 12;
+constexpr int kStepCaptionInsetPx = 8;
+constexpr QRgb kStepCaptionFill = qRgb(0x2a, 0x2a, 0x30);
+constexpr QRgb kStepCaptionText = qRgb(0xe8, 0xe8, 0xec);
+
+// The scroll positions after the top: one viewport less the overlap at a
+// time, the last one the bottom (or the right end).
+QVector<int> scrollSteps(const QScrollBar* bar)
+{
+    QVector<int> steps;
+    const int page = bar->pageStep();
+    const int stride = std::max(page - kScrollOverlapPx, std::max(1, page / 2));
+    for (int at = stride;; at += stride) {
+        const int pos = std::min(at, bar->maximum());
+        steps.append(pos);
+        if (pos >= bar->maximum()) {
+            break;
+        }
+    }
+    return steps;
+}
+
+// The grab with a band under it naming the step.
+QImage withStepCaption(const QImage& grab, const QString& text)
+{
+    const double dpr = grab.devicePixelRatio();
+    const int band = static_cast<int>(std::lround(kStepCaptionPx * dpr));
+    QImage out(grab.width(), grab.height() + band, QImage::Format_ARGB32_Premultiplied);
+    out.fill(kStepCaptionFill);
+    out.setDevicePixelRatio(dpr);
+    QPainter p(&out);
+    p.drawImage(QPointF(0, 0), grab);
+    QFont font = QApplication::font();
+    font.setPixelSize(kStepCaptionFontPx);
+    p.setFont(font);
+    p.setPen(QColor(kStepCaptionText));
+    const double logicalWidth = grab.width() / dpr;
+    const double logicalHeight = grab.height() / dpr;
+    p.drawText(QRectF(kStepCaptionInsetPx, logicalHeight, logicalWidth - 2 * kStepCaptionInsetPx,
+                      kStepCaptionPx),
+               Qt::AlignVCenter | Qt::AlignLeft, text);
+    p.end();
+    return out;
+}
+
+// Opens Setup on the page at `index`, posed as every page scene is: the
+// item centred in the tree, no hover row, Radio Status's uptime held.
+SetupDialog* openSetupPageScene(SceneContext& ctx, int index)
+{
+    prepareForDialog(ctx);
+    SetupDialog* d = openSetupDialog(ctx.window);
+    if (d == nullptr) {
+        ctx.failure = QStringLiteral("Setup did not open");
+        return nullptr;
+    }
+    auto* tree = d->findChild<QTreeWidget*>();
+    QTreeWidgetItem* item = tree != nullptr ? treeItemForIndex(tree, index) : nullptr;
+    if (item == nullptr) {
+        ctx.failure = QStringLiteral("no tree item for page %1").arg(index);
+        return nullptr;
+    }
+    tree->setCurrentItem(item);
+    // setCurrentItem() scrolls the tree only as far as it must, from
+    // wherever a pending layout left it, so the offset varied by run.
+    // Settle, then centre the item: the same tree scroll every run.
+    pump(kFinalSettleMs);
+    tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    // Qt sends the tree a synthetic enter from the real pointer,
+    // wherever it is on screen, when the dialog shows, and one row
+    // stayed hovered in some runs: no hover in the page tree.
+    tree->viewport()->setAttribute(Qt::WA_Hover, false);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(tree->viewport(), &leave);
+    freezeRadioStatusUptime(ctx, d);
+    return d;
+}
+
+// The page at `index` on the tab `path` (empty: its first tab), with the
+// model posed as `board`. Hardware Config is told the posed radio, as a
+// connect tells it (HardwarePage::onCurrentRadioChanged), so its tab strip
+// is the board's.
+SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page, const QStringList& path,
+                               HPSDRHW board)
+{
+    if (board != HPSDRHW::Saturn) {
+        ctx.model->setBoardForTest(board);
+    }
+    SetupDialog* d = openSetupPageScene(ctx, index);
+    if (d == nullptr) {
+        return nullptr;
+    }
+    if (page == QLatin1String("Hardware Config")) {
+        auto* hardware = d->findChild<HardwarePage*>();
+        if (hardware == nullptr) {
+            ctx.failure = QStringLiteral("no HardwarePage");
+            return nullptr;
+        }
+        const RadioInfo radio = posedRadio(board);
+        hardware->onCurrentRadioChanged(radio);
+        pump(kFinalSettleMs);
+        ctx.notes.append(QStringLiteral("board posed as %1 (RadioModel::setBoardForTest); Hardware Config "
+                                        "told the radio %2 through HardwarePage::onCurrentRadioChanged; "
+                                        "nothing connects")
+                             .arg(board == HPSDRHW::HermesLite ? QStringLiteral("Hermes Lite 2")
+                                                               : QStringLiteral("Saturn (ANAN-G2)"),
+                                  radio.name));
+    }
+    if (!selectSetupTabs(ctx, d, path)) {
+        return nullptr;
+    }
+    clearScrollBarHover(d);
+    return d;
+}
+
+// Grabs each step of the page's (or tab's) own scroll area after the top,
+// named <name>-1 ... <name>-N, each with a band naming its step.
+void captureSetupScrollSteps(SceneContext& ctx, SetupDialog* d, const QString& name, const QString& where)
+{
+    // A table frame that scrolls sideways (SetupFit::SidewaysFrame) is
+    // stepped across with the page, not counted as the page's own area.
+    const auto isSidewaysFrame = [](const QScrollArea* a) {
+        return a->property("nereusSetupScrollsSideways").toBool();
+    };
+    QVector<QScrollArea*> areas = overflowingAreas(d);
+    QScrollArea* sidewaysFrame = nullptr;
+    if (areas.size() > 1) {
+        QVector<QScrollArea*> pages;
+        for (QScrollArea* a : areas) {
+            if (isSidewaysFrame(a)) {
+                sidewaysFrame = a;
+            } else {
+                pages.append(a);
+            }
+        }
+        areas = pages;
+    }
+    if (areas.size() != 1) {
+        QStringList names;
+        for (const QScrollArea* a : areas) {
+            names << QStringLiteral("%1 \"%2\" in %3")
+                         .arg(QString::fromLatin1(a->metaObject()->className()), a->objectName(),
+                              QString::fromLatin1(a->parentWidget() != nullptr
+                                                      ? a->parentWidget()->metaObject()->className()
+                                                      : "none"));
+        }
+        ctx.failure = QStringLiteral("%1: %2 overflowing scroll areas, expected 1 (%3)")
+                          .arg(where).arg(areas.size()).arg(names.join(QStringLiteral(", ")));
+        return;
+    }
+    QScrollArea* area = areas.first();
+    QScrollBar* vertical = area->verticalScrollBar();
+    QScrollBar* horizontal = area->horizontalScrollBar();
+    // A table too wide for the window scrolls sideways inside its own frame
+    // (SetupFit::SidewaysFrame), inside the page or beside its scroll
+    // area, while the page scrolls down: step the frame across as the
+    // page would be.
+    if (!barOverflows(horizontal)) {
+        for (QScrollArea* frame : d->findChildren<QScrollArea*>()) {
+            if (frame != area && frame->isVisible() && area->isAncestorOf(frame) && isSidewaysFrame(frame)
+                && barOverflows(frame->horizontalScrollBar())) {
+                sidewaysFrame = frame;
+            }
+        }
+        if (sidewaysFrame != nullptr) {
+            horizontal = sidewaysFrame->horizontalScrollBar();
+        }
+    }
+    // Every position the page can show, row by row: the top row across,
+    // then each step down across. A page that scrolls one way only steps
+    // that way; (0, 0) is the page scene itself.
+    QVector<int> downs{0};
+    QVector<int> rights{0};
+    if (barOverflows(vertical)) {
+        downs += scrollSteps(vertical);
+    }
+    if (barOverflows(horizontal)) {
+        rights += scrollSteps(horizontal);
+    }
+    QVector<QPair<int, int>> steps;
+    for (int down : downs) {
+        for (int right : rights) {
+            if (down != 0 || right != 0) {
+                steps.append({down, right});
+            }
+        }
+    }
+    auto offsetText = [](const QString& axis, const QScrollBar* bar) {
+        return QStringLiteral("%1 %2 of %3 px").arg(axis).arg(bar->value()).arg(bar->maximum());
+    };
+    for (int i = 0; i < steps.size(); ++i) {
+        vertical->setValue(steps.at(i).first);
+        horizontal->setValue(steps.at(i).second);
+        clearScrollBarHover(d);
+        captureDialog(ctx, d, QStringLiteral("%1-%2").arg(name).arg(i + 1));
+        if (!ctx.failure.isEmpty()) {
+            return;
+        }
+        QStringList offsets;
+        if (barOverflows(vertical)) {
+            offsets << offsetText(QStringLiteral("down"), vertical);
+        }
+        if (barOverflows(horizontal)) {
+            offsets << offsetText(QStringLiteral("right"), horizontal);
+        }
+        const QString caption = QStringLiteral("%1: step %2 of %3, scrolled %4")
+                                    .arg(where).arg(i + 1).arg(steps.size())
+                                    .arg(offsets.join(QStringLiteral(", ")));
+        CapturedImage& img = ctx.images.last();
+        img.image = withStepCaption(img.image, caption);
+        img.extra[QStringLiteral("scroll_step")] = QJsonObject{
+            {QStringLiteral("step"), i + 1},
+            {QStringLiteral("steps"), static_cast<int>(steps.size())},
+            {QStringLiteral("down"), vertical->value()},
+            {QStringLiteral("down_maximum"), barOverflows(vertical) ? vertical->maximum() : 0},
+            {QStringLiteral("down_page_step"), vertical->pageStep()},
+            {QStringLiteral("right"), horizontal->value()},
+            {QStringLiteral("right_maximum"), barOverflows(horizontal) ? horizontal->maximum() : 0},
+            {QStringLiteral("right_page_step"), horizontal->pageStep()},
+            {QStringLiteral("overlap_px"), kScrollOverlapPx},
+            {QStringLiteral("scroll_content_class"),
+             QString::fromLatin1(area->widget() != nullptr ? area->widget()->metaObject()->className() : "")},
+            {QStringLiteral("caption"), caption},
+            {QStringLiteral("caption_band_px"), kStepCaptionPx}};
+    }
+    ctx.notes.append(QStringLiteral("%1: %2 scroll steps after the top, through the page's own scroll area")
+                         .arg(where).arg(steps.size()));
+}
+
+} // namespace
+
 QVector<Scene> setupPageScenes(MainWindow* window)
 {
     QVector<Scene> scenes;
@@ -7531,34 +8044,90 @@ QVector<Scene> setupPageScenes(MainWindow* window)
         const QString category = leaf.category;
         scenes.append({name, QStringLiteral("2v"), true,
                        [name, index, hidden, label, category](SceneContext& ctx) {
-            prepareForDialog(ctx);
-            SetupDialog* d = openSetupDialog(ctx.window);
+            // Hardware Config's tab set is the board's: pose the board
+            // (a Saturn, as the tab scenes do) rather than take whatever
+            // tab set the page was last built with.
+            SetupDialog* d = label == QLatin1String("Hardware Config")
+                ? openSetupTabScene(ctx, index, label, {}, HPSDRHW::Saturn)
+                : openSetupPageScene(ctx, index);
             if (d == nullptr) {
-                ctx.failure = QStringLiteral("Setup did not open");
                 return;
             }
-            auto* tree = d->findChild<QTreeWidget*>();
-            QTreeWidgetItem* item = tree != nullptr ? treeItemForIndex(tree, index) : nullptr;
-            if (item == nullptr) {
-                ctx.failure = QStringLiteral("no tree item for page %1").arg(index);
-                return;
-            }
-            tree->setCurrentItem(item);
-            // setCurrentItem() scrolls the tree only as far as it must, from
-            // wherever a pending layout left it, so the offset varied by run.
-            // Settle, then centre the item: the same tree scroll every run.
-            pump(kFinalSettleMs);
-            tree->scrollToItem(item, QAbstractItemView::PositionAtCenter);
-            // Qt sends the tree a synthetic enter from the real pointer,
-            // wherever it is on screen, when the dialog shows, and one row
-            // stayed hovered in some runs: no hover in the page tree.
-            tree->viewport()->setAttribute(Qt::WA_Hover, false);
-            QEvent leave(QEvent::Leave);
-            QCoreApplication::sendEvent(tree->viewport(), &leave);
-            freezeRadioStatusUptime(ctx, d);
             ctx.notes.append(QStringLiteral("Setup page %1 / %2 (registry index %3)%4")
                                  .arg(category, label).arg(index)
                                  .arg(hidden ? QStringLiteral(", hidden in the tree") : QString()));
+            captureDialog(ctx, d, name);
+        }});
+    }
+    // Each page's later tabs, then the pages and tabs that scroll
+    // (inventory 1.4 and 5.3).
+    QHash<QString, SetupLeaf> leafByStem;
+    for (const SetupLeaf& leaf : leaves) {
+        leafByStem.insert(labelCounts.value(leaf.label) > 1
+                              ? slug(leaf.category) + QLatin1Char('-') + slug(leaf.label)
+                              : slug(leaf.label),
+                          leaf);
+    }
+    auto where = [](const SetupLeaf& leaf, const QStringList& path) {
+        return (QStringList{QStringLiteral("Setup"), leaf.category, leaf.label} + path)
+            .join(QStringLiteral(" > "));
+    };
+    for (const SetupTabSpec& spec : setupTabSpecs()) {
+        if (!leafByStem.contains(spec.page)) {
+            continue;
+        }
+        const SetupLeaf leaf = leafByStem.value(spec.page);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path);
+        const QString title = where(leaf, spec.path);
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            if (d == nullptr) {
+                return;
+            }
+            ctx.notes.append(QStringLiteral("%1 (registry index %2)").arg(title).arg(leaf.index));
+            captureDialog(ctx, d, name);
+        }});
+    }
+    for (const SetupScrollSpec& spec : setupScrollSpecs()) {
+        if (!leafByStem.contains(spec.page)) {
+            continue;
+        }
+        const SetupLeaf leaf = leafByStem.value(spec.page);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path)
+            + QStringLiteral("--scrolled");
+        const QString title = where(leaf, spec.path);
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            if (d == nullptr) {
+                return;
+            }
+            ctx.notes.append(QStringLiteral("%1 (registry index %2)").arg(title).arg(leaf.index));
+            captureSetupScrollSteps(ctx, d, name, title);
+        }});
+    }
+    for (const SetupSizeSpec& spec : setupSizeSpecs()) {
+        if (!leafByStem.contains(spec.page)) {
+            continue;
+        }
+        const SetupLeaf leaf = leafByStem.value(spec.page);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path) + spec.suffix;
+        const QString title = where(leaf, spec.path);
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            if (d == nullptr) {
+                return;
+            }
+            d->resize(spec.size);
+            pump(kFinalSettleMs);
+            clearScrollBarHover(d);
+            if (d->size() != spec.size) {
+                ctx.failure = QStringLiteral("%1: the dialog is %2 x %3, not %4 x %5")
+                                  .arg(title).arg(d->width()).arg(d->height())
+                                  .arg(spec.size.width()).arg(spec.size.height());
+                return;
+            }
+            ctx.notes.append(QStringLiteral("%1 (registry index %2) at %3 x %4")
+                                 .arg(title).arg(leaf.index).arg(spec.size.width()).arg(spec.size.height()));
             captureDialog(ctx, d, name);
         }});
     }

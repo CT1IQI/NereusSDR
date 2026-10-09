@@ -37,6 +37,8 @@
 #                current app (retained-current-app) but for the four that
 #                exist only in the workspace look. J.J. Boyd (KG4VCF),
 #                AI-assisted via Anthropic Claude Code.
+#   2026-10-09 - A --scrolled scene owns its step images <scene>-<N>.
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -150,15 +152,29 @@ def list_scenes(binary):
 KNOWN_SCENES = set()
 
 
+def is_step_of(stem, scene):
+    """True when a file stem is a step image of a --scrolled scene:
+    <scene>-1, <scene>-2, ... (dialog-setup-power--scrolled-1)."""
+    return (scene.endswith(SCROLLED_SUFFIX) and stem.startswith(scene + "-")
+            and stem[len(scene) + 1:].isdigit())
+
+
+SCROLLED_SUFFIX = "--scrolled"
+
+
 def owns(stem, scene):
-    """True when a file stem is one of the scene's images: <scene> or
-    <scene>--<part>, and not an image of a longer scene name that starts
-    the same way (controls-sheet--sizes is its own scene, not a part of
-    controls-sheet)."""
-    if stem != scene and not stem.startswith(scene + "--"):
+    """True when a file stem is one of the scene's images: <scene>,
+    <scene>--<part> or a --scrolled scene's <scene>-<step>, and not an
+    image of a longer scene name that starts the same way
+    (controls-sheet--sizes is its own scene, not a part of controls-sheet;
+    dialog-setup-power--scrolled-1 belongs to dialog-setup-power--scrolled,
+    not to dialog-setup-power)."""
+    def mine(name):
+        return stem == name or stem.startswith(name + "--") or is_step_of(stem, name)
+
+    if not mine(scene):
         return False
-    return not any(len(other) > len(scene) and (stem == other or stem.startswith(other + "--"))
-                   for other in KNOWN_SCENES)
+    return not any(len(other) > len(scene) and mine(other) for other in KNOWN_SCENES)
 
 
 def git_state():

@@ -28,9 +28,15 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
 //                the readouts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - D25: the top and bottom rows of groups stack when the window
+//                is too narrow for them side by side (SetupFit::FitRow), and
+//                the cards area takes the page's height, so stacked cards
+//                scroll down to the bottom of the window. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
+#include "gui/setup/SetupFit.h"
 
 #include "models/RadioModel.h"
 #include "core/PaTempUnit.h"
@@ -52,6 +58,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QScrollArea>
+
+#include <memory>
 
 namespace NereusSDR {
 
@@ -148,7 +156,9 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->setContentsMargins(0, 0, 0, 0);
 
     // ── Top row: 3 cards ──────────────────────────────────────────────────
-    auto* topRow = new QHBoxLayout;
+    // D25: the cards stack in reading order when they do not fit.
+    auto* topRow = new SetupFit::FitRow;
+    topRow->setObjectName(QStringLiteral("radioStatusTopRow"));
     topRow->setSpacing(6);
 
     auto* paCard = new QFrame(this);
@@ -169,7 +179,8 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->addLayout(topRow);
 
     // ── Bottom row: 2 cards ───────────────────────────────────────────────
-    auto* botRow = new QHBoxLayout;
+    auto* botRow = new SetupFit::FitRow;
+    botRow->setObjectName(QStringLiteral("radioStatusBottomRow"));
     botRow->setSpacing(6);
 
     auto* connCard = new QFrame(this);
@@ -186,7 +197,17 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->addStretch();
 
     scroll->setWidget(cardsContainer);
-    outer->addWidget(scroll);
+    // D25: the cards area takes the page's height in place of the trailing
+    // stretch, so stacked cards scroll down inside it to the bottom of the
+    // window rather than inside a box with an empty band below it.
+    outer->addWidget(scroll, 1);
+    {
+        const int last = contentLayout()->count() - 1;
+        if (QLayoutItem* s = contentLayout()->itemAt(last); s != nullptr && s->spacerItem() != nullptr) {
+            std::unique_ptr<QLayoutItem> stretch(contentLayout()->takeAt(last));
+        }
+        contentLayout()->setStretchFactor(outer, 1);
+    }
 
     // Setup description version 15: the readouts' ids.
     const std::pair<QLabel*, const char*> readouts[] = {

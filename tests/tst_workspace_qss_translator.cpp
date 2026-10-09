@@ -347,6 +347,34 @@ private slots:
         QCOMPARE(WC::componentize(text, nullptr), text);
     }
 
+    // A chip's text stays readable on the dark chip fill: dark text chosen
+    // for a light fill (the HL2 I2C read boxes, black on white) takes the
+    // chip's text colour, and dim text a dark fill already carries (the
+    // modulation monitor's "NO CARRIER" lamp) keeps its colour.
+    void componentChipTextFollowsTheRuleFill()
+    {
+        const QString light = WC::componentize(QStringLiteral(
+            "QLabel { background: white; border: 1px solid #304050; color: black; }"), nullptr);
+        QVERIFY2(light.contains(WC::fieldFill()), qPrintable(light));
+        QVERIFY2(!light.contains(QStringLiteral("color: black")), qPrintable(light));
+        const QString dim = WC::componentize(QStringLiteral(
+            "QLabel { background: #0c0c0e; border: 1px solid #232329; color: #58585e; }"), nullptr);
+        QVERIFY2(dim.contains(WC::fieldFill()), qPrintable(dim));
+        QVERIFY2(dim.contains(QStringLiteral("color: #58585e")), qPrintable(dim));
+
+        // The lamp's own sheet (ModMonitorApplet::setLamp) through the
+        // subtree pass: the inactive text stays the inactive colour.
+        WorkspacePreview::setEnabledForTest(true);
+        QWidget root;
+        auto* lamp = new QLabel(QStringLiteral("NO CARRIER"), &root);
+        lamp->setStyleSheet(QStringLiteral(
+            "QLabel { background:#0a0a18; color:#405060; border:1px solid #1e2e3e; "
+            "border-radius:2px; font-weight:bold; font-size:10px; padding:1px 3px; }"));
+        WorkspacePreview::themeSubtree(&root);
+        QVERIFY2(lamp->styleSheet().contains(QStringLiteral("#58585e")), qPrintable(lamp->styleSheet()));
+        QVERIFY2(!lamp->styleSheet().contains(QStringLiteral("#dcdce1")), qPrintable(lamp->styleSheet()));
+    }
+
     void componentSliderIsLongpaths()
     {
         const QString out = WC::componentize(QStringLiteral(

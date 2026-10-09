@@ -75,6 +75,9 @@
 //   2026-09-30 - Level Cal 2 review: with no slice the desktop may
 //                 change, Start is disabled with the ownership words.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the top row of groups stacks when narrow
+//                 (SetupFit::FitRow). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -180,6 +183,7 @@
 #include "CalibrationTab.h"
 #include "HardwareTransmitGate.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/CalibrationController.h"
@@ -248,7 +252,9 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     scrollArea->setWidget(scrollWidget);
     outerLayout->addWidget(scrollArea);
 
-    auto* topRow  = new QHBoxLayout;
+    // D25: the two columns stack, left first, when they do not fit.
+    auto* topRow  = new SetupFit::FitRow;
+    topRow->setObjectName(QStringLiteral("calibrationTopRow"));
     auto* leftCol = new QVBoxLayout;
     auto* rightCol= new QVBoxLayout;
     topRow->addLayout(leftCol, 1);
