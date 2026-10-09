@@ -125,6 +125,10 @@
 //                 before the freeze and before the grab, not only a fixed
 //                 time, and note a pan resized after its feed. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - menu-freedv-reporter stops the dialog's own timers after
+//                 the member-timer cut, so its idle sweep cannot remove the
+//                 sample station in a scene slowed past 30 s by load.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -6441,6 +6445,14 @@ void appendMenuScenes(QVector<Scene>& scenes)
             dialog->show();
             pump(kDialogSettleMs);
             cutTimersInto(c, dialog, kMemberTimerCutWaitMs);
+            // The dialog's own timers (its 30 s idle sweep among them) are
+            // children, which the cut above only reaches when they fire in
+            // its window. The sweep removes the sample station, whose last
+            // update is fixed in the past, so a scene that ran past 30 s
+            // under load shot no row and failed (exit 4).
+            for (const QJsonValue& v : stopTimersUnder(dialog)) {
+                c.stoppedTimers.append(v);
+            }
             c.notes.append(QStringLiteral("one sample station added through FreeDVStationModel::onStationAdded "
                                           "(no reporter client); the dialog's menu bar shown in the window "
                                           "(setNativeMenuBar(false)), as on Windows and Linux"));
