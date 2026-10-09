@@ -32,7 +32,11 @@
 // Ported from Longpath source:
 //   src/gui/StyleConstants.h (the raised, pressed, selected and sunken
 //   fills and edges of buttonBaseStyle, blueCheckedStyle, sunkenFill,
-//   sliderHStyle, glassFieldStyle, insetValueStyle and kComboStyle) at
+//   sliderHStyle, glassFieldStyle, insetValueStyle and kComboStyle; the
+//   three-stop raisedFill; sliderHStyle, sliderVStyle and kSliderStyle
+//   as they are, geometry included; the hover, checked and radius rules
+//   of kCheckBoxStyle and kRadioButtonStyle; the roles of
+//   greenCheckedStyle, dspToggleStyle and amberCheckedStyle) at
 //   revision 551576e30c42731c6d51ce005c5f23ec38be391c,
 //   https://github.com/oe5sos/Longpath, primary author Martin Fischer
 //   (OE5SOS). The upstream banner is copied above.
@@ -40,10 +44,16 @@
 //   The upstream file carries the AetherSDR copyright and GPLv3
 //   notice reproduced above. Longpath's project LICENSE is GPLv3.
 //
-//   Only the colour values and fills are ported. Longpath's padding,
-//   font sizes and handle sizes are not: the workspace preview must not
-//   move or resize any widget. The radius rule (4 px up to 24 px high,
-//   6 px above) is the workspace design's, not Longpath's 7 px.
+//   Only the colour values and fills are ported, and the slider's
+//   geometry. Longpath's padding and font sizes are not, nor its check box
+//   row height (min-height 20 px): the workspace preview keeps today's
+//   sizes. The slider is the exception JJ chose (2026-10-08): Longpath's
+//   6 px groove and 12x16 handle as they are. The radius rule is JJ's
+//   choice (2026-10-08): Longpath's 7 px on its 26 px field, scaled to
+//   the control's height, round(h x 7 / 26). The check box off state
+//   (brighter rim and fill, the disabled states), the raised green and
+//   the raised amber of the lit buttons are JJ's choices from Longpath's
+//   roles, not Longpath's sheets.
 //
 //   componentize() is NereusSDR-original: it rewrites the declarations
 //   of a stylesheet in place, by control class and state, so the
@@ -60,6 +70,9 @@
 //                 Anthropic Claude Code.
 //   2026-10-08 - generatedColours(): the colours componentize() writes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's decided controls: raisedFillOf(), indicatorRules(),
+//                 the radius round(h x 7 / 26).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -75,6 +88,9 @@ namespace NereusSDR::Workspace::Components {
 // Raised: light top, dark bottom (buttons, selectors, tabs).
 QString raisedFill();
 QString raisedHoverFill();
+// Longpath's three-stop raisedFill of `base`: lifted 16 at the top, the
+// base at 55 %, dropped 12 at the bottom (the lit green and amber).
+QString raisedFillOf(const QColor& base);
 // Pressed: the raised fill flipped.
 QString pressedFill();
 // Selected: the glass gradient.
@@ -84,8 +100,14 @@ QString sunkenFill(const char* baseHex, int deepen, int lift);
 QString fieldFill();
 
 // The radius for a control of the given height in device-independent
-// pixels: 4 up to 24 px, 6 above.
+// pixels: Longpath's 7 px on its 26 px field, scaled, round(h x 7 / 26).
 int radiusFor(int heightPx);
+
+// Application-wide rules for check box and radio indicators in the
+// workspace look: the off state, hover, checked, disabled off and
+// disabled on. Colours and the radius only, so an indicator keeps the
+// platform style's size.
+QString indicatorRules();
 
 // Application-wide rules for tables and header sections in the
 // workspace look: grid lines, the line under the titles and the edges
@@ -97,8 +119,12 @@ QString tableRules();
 // every control block in `qss` (already translated to palette values)
 // into the raised, pressed, selected, sunken or disabled treatment.
 // Selectors, widths, paddings, fonts and sizes are kept, so geometry
-// does not change. Semantic colours (green, amber, red, slice colours)
-// and translucent or transparent backgrounds are kept. `owner` is the
+// does not change, except a slider's: its groove and handle take
+// Longpath's sizes, and no side of the groove is filled. Check box and
+// radio indicators take the decided states. A checked button in today's
+// green or amber takes the raised lit form of that meaning. Other
+// semantic colours (red, slice colours) and translucent or transparent
+// backgrounds are kept. `owner` is the
 // widget the sheet is set on (may be null); it resolves selector-less
 // and id-only blocks. Applying it to its own output changes nothing.
 QString componentize(const QString& qss, const QWidget* owner);

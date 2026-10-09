@@ -25,6 +25,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QPalette>
+#include <QStyle>
 #include <QString>
 #include <QStringLiteral>
 
@@ -32,6 +33,7 @@
 #include "WorkspaceComponents.h"
 #include "WorkspacePalette.h"
 #include "WorkspacePreview.h"
+#include "WorkspaceStyle.h"
 
 namespace NereusSDR {
 
@@ -230,7 +232,12 @@ inline void applyWorkspacePalette(QApplication& app)
     ).arg(r("text"), r("button"), r("border"), r("title-text"), r("text-inactive"),
           r("selected-top"), r("selected-text"))
        // Grid lines and header sections (Longpath tableStyle colours).
-       + Workspace::Components::tableRules());
+       + Workspace::Components::tableRules()
+       // Check box and radio indicators, JJ's decided states.
+       + Workspace::Components::indicatorRules()
+       // Longpath's scroll bar at the platform style's thickness (14 px
+       // in Fusion), so no scroll area changes width.
+       + Workspace::scrollBarStyle(app.style()->pixelMetric(QStyle::PM_ScrollBarExtent)));
 
     // Every window, page, menu and popup gets the scoped pass when shown.
     WorkspacePreview::installLiveTheming(app);
