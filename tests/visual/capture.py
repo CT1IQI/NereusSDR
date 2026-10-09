@@ -30,6 +30,9 @@
 #                name (controls-sheet and controls-sheet--sizes): clearing,
 #                stamping and comparing go through owns(). J.J. Boyd
 #                (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-08 - A scene's <name>.geometry.tsv dumps are cleared with its
+#                images. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+#                Claude Code.
 
 import argparse
 import concurrent.futures
@@ -173,7 +176,7 @@ def clear_scene(out_dir, scene):
     out_dir, so a re-capture lists only what this run wrote."""
     for p in list(out_dir.iterdir()) if out_dir.is_dir() else []:
         stem = p.name.split(".", 1)[0]
-        if p.is_file() and p.suffix in (".png", ".json") and owns(stem, scene):
+        if p.is_file() and p.suffix in (".png", ".json", ".tsv") and owns(stem, scene):
             p.unlink()
 
 

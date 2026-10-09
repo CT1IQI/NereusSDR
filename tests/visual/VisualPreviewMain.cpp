@@ -54,6 +54,9 @@
 //   2026-10-08 - NEREUS_PREVIEW_DIAL_PLATE removed: the plate limit is the
 //                 product. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-08 - <name>.geometry.tsv beside every image that carries a
+//                 widget geometry dump. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -564,6 +567,15 @@ bool writeImages(QApplication& app, MainWindow* window, const Args& args, SceneC
             return false;
         }
         sf.write(QJsonDocument(side).toJson(QJsonDocument::Indented));
+        if (!img.geometry.isEmpty()) {
+            QFile gf(QDir(args.out).filePath(img.name + QStringLiteral(".geometry.tsv")));
+            if (!gf.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+                std::fprintf(stderr, "cannot write the geometry dump for %s\n", qPrintable(img.name));
+                return false;
+            }
+            gf.write(img.geometry.join(QLatin1Char('\n')).toUtf8());
+            gf.write("\n");
+        }
     }
     return true;
 }

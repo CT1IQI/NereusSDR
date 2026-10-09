@@ -56,6 +56,10 @@ struct CapturedImage {
     double dpr{1.0};
     QVector<CropRect> crops;   // for a full-window image: every crop cut from it
     QJsonObject extra;         // crop rectangle for a crop, widget class, ...
+    // Window and dialog grabs: one line per visible widget (path, class,
+    // object name, control kind, rectangle in the grabbed widget's
+    // coordinates), written next to the image as <name>.geometry.tsv.
+    QStringList geometry;
 };
 
 struct SceneContext {

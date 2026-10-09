@@ -103,6 +103,9 @@
 //                 --plate-b dial variants are gone (the plate limit is
 //                 unconditional). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - Window and dialog grabs dump every visible widget's
+//                 rectangle (<name>.geometry.tsv). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -719,6 +722,81 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+// The control kind a widget is, for masking a diff against the controls
+// a look restyles; "other" for everything else.
+QString controlKind(const QWidget* w)
+{
+    if (w->inherits("QScrollBar")) {
+        return QStringLiteral("scrollbar");
+    }
+    if (w->inherits("QAbstractSlider")) {
+        return QStringLiteral("slider");
+    }
+    if (w->inherits("QCheckBox")) {
+        return QStringLiteral("checkbox");
+    }
+    if (w->inherits("QRadioButton")) {
+        return QStringLiteral("radio");
+    }
+    if (w->inherits("QAbstractButton")) {
+        return QStringLiteral("button");
+    }
+    if (w->inherits("QComboBox")) {
+        return QStringLiteral("combo");
+    }
+    if (w->inherits("QLineEdit") || w->inherits("QAbstractSpinBox")) {
+        return QStringLiteral("field");
+    }
+    if (w->inherits("QTabBar")) {
+        return QStringLiteral("tabbar");
+    }
+    if (w->inherits("QTabWidget")) {
+        return QStringLiteral("tabwidget");
+    }
+    if (w->inherits("QGroupBox")) {
+        return QStringLiteral("groupbox");
+    }
+    return QStringLiteral("other");
+}
+
+// Every visible widget under `root`, root included, as tab-separated
+// lines: path, class, object name, control kind, x, y, width, height (the
+// rectangle in root's logical coordinates). Two runs of a scene compare
+// line for line for moved or resized widgets.
+QStringList widgetGeometry(QWidget* root)
+{
+    QStringList lines;
+    if (root == nullptr) {
+        return lines;
+    }
+    std::function<void(QWidget*, const QString&)> walk = [&](QWidget* w, const QString& path) {
+        if (!w->isVisible()) {
+            return;
+        }
+        const QRect r(w->mapTo(root, QPoint(0, 0)), w->size());
+        lines << QStringLiteral("%1\t%2\t%3\t%4\t%5\t%6\t%7\t%8")
+                     .arg(path, QString::fromLatin1(w->metaObject()->className()), w->objectName(),
+                          controlKind(w))
+                     .arg(r.x())
+                     .arg(r.y())
+                     .arg(r.width())
+                     .arg(r.height());
+        int index = 0;
+        for (QObject* o : w->children()) {
+            if (!o->isWidgetType()) {
+                continue;
+            }
+            auto* child = static_cast<QWidget*>(o);
+            if (!child->isWindow()) {
+                walk(child, path + QLatin1Char('/') + QString::number(index));
+            }
+            ++index;
+        }
+    };
+    walk(root, QStringLiteral("0"));
+    return lines;
+}
+
 // ---- provenance regions ----------------------------------------------------
 
 // The dynamic property a widget's provenance is tagged with; untagged
@@ -1060,6 +1138,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
             ctx.notes.append(QStringLiteral("could not write the geometry dump"));
         }
     }
+    full.geometry = widgetGeometry(ctx.window);
     full.dpr = full.image.devicePixelRatio();
     if (ctx.crops) {
         SliceModel* sliceA = ctx.model->sliceById(0);
@@ -1937,6 +2016,7 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
     img.dpr = img.image.devicePixelRatio();
     img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(dialog->metaObject()->className());
     img.extra[QStringLiteral("window_title")] = dialog->windowTitle();
+    img.geometry = widgetGeometry(dialog);
     attachRegions(img, dialog);
     ctx.images.append(img);
 }
