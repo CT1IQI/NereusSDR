@@ -121,6 +121,10 @@
 //   2026-10-09 - menu-pan-flyout-ant and menu-pan-flyout-att: the toolbar's
 //                 ANT and ATT flyouts, opened as the BAND one is. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Window scenes wait for a quiet layout (waitForQuietLayout)
+//                 before the freeze and before the grab, not only a fixed
+//                 time, and note a pan resized after its feed. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -1252,6 +1256,54 @@ void recordStandardNotShown(SceneContext& ctx)
     }
 }
 
+// Waits until the window and every visible top-level stop moving (see
+// waitForQuietLayout) and records it in the sidecar when they never did.
+void settleLayout(SceneContext& ctx, const QString& stage)
+{
+    QList<QWidget*> roots{ctx.window};
+    for (QWidget* top : QApplication::topLevelWidgets()) {
+        if (top != ctx.window && top->isVisible()) {
+            roots.append(top);
+        }
+    }
+    const LayoutQuiet quiet = waitForQuietLayout(roots);
+    if (!quiet.quiet) {
+        ctx.unfrozen.append(QJsonObject{
+            {QStringLiteral("item"), QStringLiteral("layout")},
+            {QStringLiteral("region"), stage},
+            {QStringLiteral("reason"), QStringLiteral("still moving after %1 ms: %2")
+                 .arg(quiet.waitedMs).arg(quiet.pending.join(QStringLiteral(", ")))}});
+    }
+}
+
+// Each posed pan's SpectrumWidget size (empty for a missing pan).
+QVector<QSize> panSizes(SceneContext& ctx, const QVector<PanPose>& poses)
+{
+    QVector<QSize> sizes;
+    for (const PanPose& pose : poses) {
+        SpectrumWidget* sw = spectrumFor(ctx.window, pose.panId);
+        sizes.append(sw != nullptr ? sw->size() : QSize());
+    }
+    return sizes;
+}
+
+// A pan resized after its feed shows a waterfall rebuilt from its history
+// at the new size, not the rows as fed; the sidecar says so.
+void noteResizedPans(SceneContext& ctx, const QVector<PanPose>& poses, const QVector<QSize>& fedSizes)
+{
+    const QVector<QSize> now = panSizes(ctx, poses);
+    for (int i = 0; i < poses.size() && i < fedSizes.size(); ++i) {
+        if (now.at(i) != fedSizes.at(i)) {
+            ctx.unfrozen.append(QJsonObject{
+                {QStringLiteral("item"), QStringLiteral("%1 spectrum and waterfall").arg(poses.at(i).panId)},
+                {QStringLiteral("region"), poses.at(i).panId},
+                {QStringLiteral("reason"), QStringLiteral("resized from %1x%2 at the feed to %3x%4 before the grab")
+                     .arg(fedSizes.at(i).width()).arg(fedSizes.at(i).height())
+                     .arg(now.at(i).width()).arg(now.at(i).height())}});
+        }
+    }
+}
+
 // The common main-window pose: tune, scene hook, freeze, meters, data.
 void runWindowScene(SceneContext& ctx, const QVector<PanPose>& poses, int activePanIndex,
                     const std::function<void(SceneContext&)>& beforeFreeze = {},
@@ -1268,17 +1320,25 @@ void runWindowScene(SceneContext& ctx, const QVector<PanPose>& poses, int active
         }
         pump(kSettleMs);
     }
+    // The freeze stops every timer and the feed writes each pan at its
+    // size, so both wait for the layout to stop moving. After a fixed wait
+    // alone, a loaded machine could freeze SpectrumWidget's waterfall
+    // history timer mid-resize and feed a pan at a size it then left.
+    settleLayout(ctx, QStringLiteral("before the freeze"));
     freeze(ctx);
     poseMeters(ctx, poses, activePanIndex);
     feedSpectra(ctx, poses);
     if (!ctx.failure.isEmpty()) {
         return;
     }
+    const QVector<QSize> fedSizes = panSizes(ctx, poses);
     if (afterFeed) {
         afterFeed(ctx);
     }
     waitForNeedle(ctx);
     pump(kFinalSettleMs);
+    settleLayout(ctx, QStringLiteral("before the grab"));
+    noteResizedPans(ctx, poses, fedSizes);
 }
 
 ContainerWidget* mainPanel(SceneContext& ctx)

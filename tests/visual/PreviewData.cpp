@@ -8,15 +8,21 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - waitForQuietLayout: waits until no geometry moves and no
+//                 short single-shot timer is pending under the roots.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewData.h"
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QLabel>
 #include <QPair>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -729,6 +735,91 @@ QJsonArray freezeReadouts(MainWindow* window)
         frozen.append(QStringLiteral("cpu: %1%").arg(kFrozenCpuPercent));
     }
     return frozen;
+}
+
+namespace {
+
+// Every visible widget under the roots, with where it sits, as one string:
+// two equal strings are an unmoved layout.
+QString layoutSignature(const QList<QWidget*>& roots)
+{
+    QString sig;
+    for (QWidget* root : roots) {
+        if (root == nullptr || !root->isVisible()) {
+            continue;
+        }
+        const QRect g = root->geometry();
+        sig += QStringLiteral("%1:%2,%3 %4x%5;").arg(QString::fromLatin1(root->metaObject()->className()))
+                   .arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height());
+        for (QWidget* w : root->findChildren<QWidget*>()) {
+            if (w->isWindow() || !w->isVisible()) {
+                continue;
+            }
+            const QPoint at = w->mapTo(root, QPoint(0, 0));
+            sig += QStringLiteral("%1,%2 %3x%4;").arg(at.x()).arg(at.y()).arg(w->width()).arg(w->height());
+        }
+    }
+    return sig;
+}
+
+// The single-shot timers under the roots still to fire within
+// kPendingTimerMaxMs: work a debounce or a deferred step has yet to do.
+QStringList pendingTimers(const QList<QWidget*>& roots)
+{
+    QStringList pending;
+    for (QWidget* root : roots) {
+        if (root == nullptr) {
+            continue;
+        }
+        for (QTimer* timer : root->findChildren<QTimer*>()) {
+            if (timer->isActive() && timer->isSingleShot() && timer->interval() <= kPendingTimerMaxMs) {
+                pending.append(QStringLiteral("%1 %2 %3 ms").arg(
+                    timer->parent() != nullptr ? QString::fromLatin1(timer->parent()->metaObject()->className())
+                                               : QString(),
+                    timer->objectName()).arg(timer->interval()));
+            }
+        }
+    }
+    return pending;
+}
+
+} // namespace
+
+LayoutQuiet waitForQuietLayout(const QList<QWidget*>& roots, int maxMs)
+{
+    LayoutQuiet q;
+    QElapsedTimer total;
+    total.start();
+    QElapsedTimer sinceChange;
+    sinceChange.start();
+    QString last = layoutSignature(roots);
+    int quietPolls = 0;
+    while (true) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        const QString now = layoutSignature(roots);
+        if (now != last) {
+            last = now;
+            ++q.moves;
+            quietPolls = 0;
+            sinceChange.restart();
+        } else {
+            ++quietPolls;
+        }
+        const QStringList pending = pendingTimers(roots);
+        if (pending.isEmpty() && quietPolls >= kQuietLayoutPolls && sinceChange.elapsed() >= kQuietLayoutMs) {
+            q.quiet = true;
+            break;
+        }
+        if (total.elapsed() >= maxMs) {
+            q.pending = pending;
+            if (quietPolls < kQuietLayoutPolls || sinceChange.elapsed() < kQuietLayoutMs) {
+                q.pending.append(QStringLiteral("geometry moved %1 ms ago").arg(sinceChange.elapsed()));
+            }
+            break;
+        }
+    }
+    q.waitedMs = total.elapsed();
+    return q;
 }
 
 } // namespace NereusSDR::Preview

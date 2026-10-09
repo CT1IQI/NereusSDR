@@ -12,12 +12,18 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Written for the workspace visual review. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - waitForQuietLayout: a scene waits for its layout to stop
+//                 moving, not for a fixed time, before it freezes, feeds
+//                 and grabs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
 
 #include <QJsonArray>
+#include <QList>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -157,6 +163,29 @@ inline constexpr int kFrozenRttMs = 2;
 // Stops every active QTimer under `root` and returns a description of each
 // one stopped (class of its parent, object name, interval).
 QJsonArray stopTimersUnder(QObject* root);
+
+// The layout is quiet when no visible widget under the roots has moved or
+// resized for kQuietLayoutMs and kQuietLayoutPolls polls of the event loop,
+// and no single-shot QTimer under a root with an interval up to
+// kPendingTimerMaxMs is still to fire (a debounced resize or rebuild, such
+// as SpectrumWidget's 250 ms waterfall history timer).
+inline constexpr int kQuietLayoutMs = 300;
+inline constexpr int kQuietLayoutPolls = 5;
+inline constexpr int kPendingTimerMaxMs = 1000;
+inline constexpr int kQuietLayoutMaxMs = 20000;
+
+struct LayoutQuiet {
+    bool quiet{false};
+    qint64 waitedMs{0};
+    int moves{0};           // geometry changes seen while waiting
+    QStringList pending;    // single-shot timers still to fire when it gave up
+};
+
+// Pumps the event loop until the layout under `roots` is quiet, or for at
+// most `maxMs`. A fixed wait captures a layout still in motion when the
+// machine is loaded (a debounce or a deferred step lands later); this waits
+// on what the layout does instead, so load only makes it take longer.
+LayoutQuiet waitForQuietLayout(const QList<QWidget*>& roots, int maxMs = kQuietLayoutMaxMs);
 
 // Freezes the main window's live readouts: UTC clock, connection segment
 // (pulse, rates, RTT, audio pip), CPU tile. Returns what it froze.
