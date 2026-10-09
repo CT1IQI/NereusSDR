@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - The right-click menu lives on the heap under the container
+//                 (OwnedMenu.h): an action that removes the container while
+//                 the menu is open no longer frees a menu on the stack (JJ's
+//                 crash removing a popped-out container). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The minimum width in every dock mode is the larger of
 //                 260 px and what the content needs (setContentMinimumWidth),
 //                 so a docked, overlaid or floating container never cuts its
@@ -117,6 +122,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerContentHost.h"
 #include "gui/widgets/AppIcon.h"
 #include <QMenu>
+#include "gui/containers/OwnedMenu.h"
 #include <QContextMenuEvent>
 #include <QTimer>
 #include <QKeyEvent>
@@ -829,7 +835,10 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
         QWidget::contextMenuEvent(event);
         return;
     }
-    QMenu menu(this);
+    // On the heap under the container: an action can remove the
+    // container, and its shell, while the menu is open (OwnedMenu.h).
+    OwnedMenu owned(this);
+    QMenu& menu = owned.menu();
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addAction(tr("Hide container (retain placement)"), this,
                    [this] { emit hideContainerRequested(); });
