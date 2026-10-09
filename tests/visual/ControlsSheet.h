@@ -35,6 +35,8 @@
 //                 container background and user item colours) replace the
 //                 choice sheets. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08 - sceneControlsDecided (decided--controls + --zoom). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -105,5 +107,12 @@ void sceneStatusColoursDecided(SceneContext& ctx);
 // inside a Meters container with a user background. Call after the window
 // is posed with the Meters, Levels and Needle containers.
 void sceneDataColoursDecided(SceneContext& ctx);
+// decided--controls (+ --zoom): JJ's decided control look through the
+// product path with the preview on: sliders (resting, hover, pressed,
+// disabled), check boxes and radios (off, on, disabled off, disabled on),
+// the seven lit buttons resting and hovered, combo, line edit, spin box,
+// tabs and push button at today's sizes, and the app sheet's scroll bar.
+// Cells have the approved choice cells' sizes and backgrounds.
+void sceneControlsDecided(SceneContext& ctx);
 
 } // namespace NereusSDR::Preview

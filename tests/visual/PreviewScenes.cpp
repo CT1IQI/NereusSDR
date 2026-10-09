@@ -106,6 +106,9 @@
 //   2026-10-08 - Window and dialog grabs dump every visible widget's
 //                 rectangle (<name>.geometry.tsv). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - decided--controls: JJ's decided control look through the
+//                 product path. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -5432,6 +5435,13 @@ QVector<Scene> fixedScenes()
             pump(kSettleMs);
         });
         if (ctx.failure.isEmpty()) { sceneDataColoursDecided(ctx); }
+    }, true});
+    // JJ's decided sliders, indicators, lit buttons, radii and scroll bars
+    // through the product path (ControlsSheet.cpp).
+    scenes.append({QStringLiteral("decided--controls"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, twoBandPoses(), 0);
+        if (ctx.failure.isEmpty()) { sceneControlsDecided(ctx); }
     }, true});
     scenes.append({QStringLiteral("controls-sheet--indicators"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
