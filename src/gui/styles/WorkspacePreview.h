@@ -42,6 +42,8 @@
 //   2026-10-09 - kFilledSliderProperty and kVisibleTrackProperty: the
 //                 speaker volume fill and the visible zoom track (D24).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - kVisibleTrackProperty describes JJ's D27 track.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -70,8 +72,8 @@ inline constexpr auto kSkipProperty = "nereusWorkspaceSkip";
 // the translation, on the decided groove and handle.
 inline constexpr auto kFilledSliderProperty = "nereusWorkspaceFilledSlider";
 // Set to true by the owner on a slider whose track must read on its own
-// (the zoom bar under the pans, JJ's D24): the decided groove keeps
-// today's groove colour through the translation instead of the inset.
+// (the zoom bar under the pans, JJ's D27): the decided groove stays dark,
+// 8 px overall, with the border role as its rim on every side.
 inline constexpr auto kVisibleTrackProperty = "nereusWorkspaceVisibleTrack";
 
 // Rewrites every stylesheet under `root` (root included) from its

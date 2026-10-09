@@ -91,6 +91,9 @@
 //                 through the translation, on the decided groove and handle
 //                 (kFilledSliderProperty, kVisibleTrackProperty).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - JJ's D27: the zoom bar's track is the dark inset with a
+//                 grey rim all round, 8 px overall, the handle 16 px.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -144,6 +147,13 @@ constexpr auto kHandleThickness = "14px";
 constexpr auto kHandleMarginH = "-6px 0";
 constexpr auto kHandleMarginV = "0 -6px";
 constexpr auto kHandleRadius = "5px";
+
+// NereusSDR, JJ's D27 (2026-10-09): the zoom bar's track is the dark inset
+// with the border role as its rim on every side, 6 px inside a 1 px rim
+// (8 px overall), and the handle overhangs it by 4 px so it stays 16 px
+// overall, as the decided handle is.
+constexpr auto kVisibleTrackThickness = "6px";
+constexpr auto kVisibleTrackHandleMarginH = "-4px 0";
 
 // Check box and radio: radius 4 (box) and 7 (radio), the accent rim on
 // hover, the selection gradient when checked with a lighter top edge.
@@ -708,7 +718,7 @@ struct Target {
     bool unresolved = false;
     // The slider's filled side carries meaning (the speaker volume, D24).
     bool filled = false;
-    // The slider's track must read on its own (the zoom bar, D24).
+    // The slider's track must read on its own (the zoom bar, D27).
     bool visibleTrack = false;
 
     bool operator==(const Target& o) const
@@ -1067,19 +1077,25 @@ QString sliderBody(Decls& d, int bg, const FillInfo& f, const Target& t)
         break;
     case Kind::Groove:
         if (t.state == State::Normal && bg >= 0 && f.fill != Fill::Clear) {
-            // NereusSDR, JJ's D24 (2026-10-09): the zoom bar's groove keeps
-            // today's colour through the translation, so the track reads
-            // against the bar; the rest of the decided groove stays.
-            const QString today = d.value(bg);
             sliderGroove(d, bg, t);
-            if (t.visibleTrack) {
-                setBackground(d, bg, today);
+            if (t.visibleTrack && t.horizontal) {
+                // NereusSDR, JJ's D27 (2026-10-09): the zoom bar's track
+                // stays dark and taller, with a brighter grey rim all the
+                // way round, so both long edges read against the bar.
+                d.set("height", hex(kVisibleTrackThickness));
+                d.set("border-top-color", hex(kBorder));
+                d.set("border-bottom-color", hex(kBorder));
             }
         }
         break;
     case Kind::Handle:
         if (t.state == State::Normal && bg >= 0 && f.fill != Fill::Clear) {
             sliderHandle(d, bg, t);
+            if (t.visibleTrack && t.horizontal) {
+                // NereusSDR, JJ's D27 (2026-10-09): 16 px overall on the
+                // 8 px track.
+                d.set("margin", hex(kVisibleTrackHandleMarginH));
+            }
         } else if ((t.state == State::Hover || t.state == State::Pressed) && bg >= 0) {
             // From Longpath src/gui/StyleConstants.h:916, :1239 [@551576e3]
             setBackground(d, bg, hex(kGlassBtnTop));

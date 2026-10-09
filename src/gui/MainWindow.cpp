@@ -660,6 +660,8 @@
 //                kVisibleTrackProperty, so its track reads against the bar
 //                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - The zoom bar's comment names JJ's D27 track. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -7372,8 +7374,8 @@ void MainWindow::buildUI()
     zoomBar->setValue(768);
     zoomBar->setFixedHeight(20);
     zoomBar->setToolTip(QStringLiteral("Zoom: drag to adjust spectrum bandwidth"));
-    // Workspace preview (JJ's D24): the track keeps today's groove colour so
-    // it reads against the bar. No effect with the preview off.
+    // Workspace preview (JJ's D27): the track is a dark channel with a grey
+    // rim all round so it reads against the bar. No effect with the preview off.
     zoomBar->setProperty(WorkspacePreview::kVisibleTrackProperty, true);
     zoomBar->setStyleSheet(QStringLiteral(
         "QSlider { background: #0a0a14; }"

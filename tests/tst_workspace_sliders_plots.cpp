@@ -7,8 +7,8 @@
 //
 // Covers, with the switch on: the PC and RADIO speaker volume sliders keep a
 // filled side up to the handle (D24) and every other slider stays unfilled
-// (D5); the zoom bar's track reads against the bar at least as well as the
-// decided groove reads against a panel; the TX CFC / TX EQ plot and the amp
+// (D5); the zoom bar's track is the dark inset with a grey rim all round,
+// 8 px overall, with a 16 px handle (D27); the TX CFC / TX EQ plot and the amp
 // view chart take their container's background (D22); the Longpath
 // reference column keeps Longpath's own spin arrows; the overlay's step
 // attenuator check box shows the decided checked indicator at its size.
@@ -20,6 +20,9 @@
 //                 Anthropic Claude Code.
 //   2026-10-09 - The RADIO fill and the Audio Setup reason lines take the
 //                 workspace amber (JJ's choice A).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The zoom track test follows JJ's D27: the dark track with
+//                 the grey rim, 8 px overall, the handle 16 px.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
@@ -64,12 +67,6 @@ const char* const kZoomBarSheet =
 // The Audio Setup reason lines (AudioOutputsPage kReason), as the page
 // sets them.
 const char* const kReasonSheet = "QLabel { color: #e0a030; font-size: 11px; }";
-
-// The decided groove (#050507) on the controls sheet's panel (#141418),
-// measured in controls-sheet at laptop-1280x800@1: the contrast the zoom
-// track must reach against its bar.
-constexpr auto kDecidedGroove = "#050507";
-constexpr auto kSheetPanel = "#141418";
 
 class ProbeSlider : public QSlider
 {
@@ -249,38 +246,66 @@ private slots:
         QVERIFY2(groove == role("inset"), qPrintable(groove.name()));
     }
 
-    // D24: the zoom bar's track reads against the bar at least as well as
-    // the decided groove reads against a panel of the controls sheet; a
-    // slider with the zoom bar's sheet that is not marked keeps the decided
-    // groove.
+    // D27 (JJ's choice 3): the zoom bar's track stays the dark inset with a
+    // brighter grey rim (the border role) on every side, 6 px inside a 1 px
+    // rim (8 px overall), and both long edges read against the bar at about
+    // 1.42:1; the handle stays 16 px overall. A slider with the zoom bar's
+    // sheet that is not marked keeps the decided groove.
     void zoomTrackIsVisible()
     {
-        const double threshold = contrast(QColor(QLatin1String(kDecidedGroove)), QColor(QLatin1String(kSheetPanel)));
         WorkspaceApp look;
-        const auto measure = [](bool visible) {
-            QWidget host;
+        const auto make = [](QWidget& host, bool visible) {
             auto* s = new ProbeSlider(Qt::Horizontal, &host);
             if (visible) {
                 s->setProperty(WorkspacePreview::kVisibleTrackProperty, true);
             }
             s->setRange(1, 768);
-            s->setValue(768);
+            s->setValue(1);
             s->setFixedSize(400, 20);
             s->setStyleSheet(QLatin1String(kZoomBarSheet));
             WorkspacePreview::themeSubtree(&host);
-            const QRect g = s->grooveRect();
-            const QImage img = s->grab().toImage();
-            const QColor track = img.pixelColor(g.left() + 40, g.center().y());
-            const QColor bar = img.pixelColor(g.left() + 40, 1);
-            return std::make_pair(track, bar);
+            return s;
         };
-        const auto [track, bar] = measure(true);
-        const double c = contrast(track, bar);
-        QVERIFY2(c >= threshold, qPrintable(QStringLiteral("track %1 on %2: %3 < %4")
-                                                .arg(track.name(), bar.name()).arg(c).arg(threshold)));
-        const auto [plain, plainBar] = measure(false);
-        Q_UNUSED(plainBar);
-        QVERIFY2(plain == role("inset"), qPrintable(plain.name()));
+        QWidget host;
+        ProbeSlider* s = make(host, true);
+        const QImage img = s->grab().toImage();
+        // A column clear of the handle: the rows that differ from the bar.
+        const int x = s->width() - 40;
+        const QColor bar = img.pixelColor(x, 0);
+        int top = -1;
+        int bottom = -1;
+        for (int y = 0; y < img.height(); ++y) {
+            if (img.pixelColor(x, y) != bar) {
+                if (top < 0) {
+                    top = y;
+                }
+                bottom = y;
+            }
+        }
+        QVERIFY2(top >= 0, qPrintable(bar.name()));
+        QCOMPARE(bottom - top + 1, 8);
+        QCOMPARE(img.pixelColor(x, top), role("border"));
+        QCOMPARE(img.pixelColor(x, bottom), role("border"));
+        for (int y = top + 1; y < bottom; ++y) {
+            QVERIFY2(img.pixelColor(x, y) == role("inset"), qPrintable(img.pixelColor(x, y).name()));
+        }
+        const double edge = contrast(role("border"), bar);
+        QVERIFY2(edge > 1.42 && edge < 1.43, qPrintable(QString::number(edge)));
+        // The handle stays 16 px overall: the drawn rows through its middle.
+        const int hx = s->handleRect().center().x();
+        int handleRows = 0;
+        for (int y = 0; y < img.height(); ++y) {
+            if (img.pixelColor(hx, y) != bar) {
+                ++handleRows;
+            }
+        }
+        QCOMPARE(handleRows, 16);
+        // Not marked: the decided groove.
+        QWidget plainHost;
+        ProbeSlider* plain = make(plainHost, false);
+        const QImage pimg = plain->grab().toImage();
+        const QColor groove = pimg.pixelColor(plain->width() - 40, plain->grooveRect().center().y());
+        QVERIFY2(groove == role("inset"), qPrintable(groove.name()));
     }
 
     // D22: the TX CFC / TX EQ plot takes its container's background (the
