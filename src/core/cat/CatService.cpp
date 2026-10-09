@@ -70,6 +70,11 @@ Added extended CAT commands for APF funtions - May 2017.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-06 - A rigctld client that sends q gets RPRT 0 and is then closed.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09 - Retirement runs once: RadioModel retires the service while its
+//              slices exist, and the destructor no longer reports every channel
+//              stopped again after the model has deleted them (a use-after-free
+//              in the CAT channel pages on exit). J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -109,6 +114,11 @@ CatService::CatService(RadioModel& model, QObject* parent)
 CatService::~CatService() { beginRetirement(); }
 void CatService::beginRetirement()
 {
+    // Once only. RadioModel's destructor retires the service while the
+    // model's slices still exist, then deletes the slices, then deletes this
+    // child. A second stopAll here reported every channel stopped again,
+    // into listeners that read the model's slices, which were gone.
+    if (m_destroying) { return; }
     m_destroying = true;
     stopAll();
 }
