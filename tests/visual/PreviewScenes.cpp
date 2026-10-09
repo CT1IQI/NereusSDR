@@ -4767,6 +4767,9 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
 
 constexpr int kPopupWaitMs = 5000;
 constexpr int kPopupGraceMs = 5000;
+// How long profile-rail-open keeps its tooltip up (QTipLabel's own timer
+// is about 10 s).
+constexpr int kRailTipHoldMs = 600000;
 
 struct PopupShot {
     // The popup, when it is not QApplication::activePopupWidget().
@@ -6850,7 +6853,10 @@ QVector<Scene> fixedScenes()
             QCoreApplication::sendEvent(d, &enter);
             d->update();
             // The pointer's spot; Qt offsets the tooltip from it as it does live.
-            QToolTip::showText(d->mapToGlobal(local.toPoint()), d->toolTip(), d);
+            // QTipLabel hides itself after about 10 s, which a loaded run
+            // can pass before the composite; it is held for the scene.
+            QToolTip::showText(d->mapToGlobal(local.toPoint()), d->toolTip(), d, QRect(),
+                               kRailTipHoldMs);
             pump(kFinalSettleMs);
             *tip = visibleToolTip();
             // Qt offsets the tip by the desktop's current pointer size, which
