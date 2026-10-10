@@ -154,6 +154,26 @@ With the look off the sheets above draw as written.
   is the selection rim `#3d78b0` all round (no light top edge).
 - **Kept as they are:** the TX filter overlay label (`#ffaa70`, the user's
   setting) and the Block TX tint.
+- **Where the keyboard is (JJ, 2026-10-10):** one colour, the selection rim
+  `#3d78b0`, marks the control the keyboard acts on, wherever the platform
+  style draws the control.
+  - **A dialog's default button** (the one Enter presses): its rim is the
+    selection rim, 1 px, in the shape the platform style draws, so it has the
+    corner radius and size of the buttons beside it. Its fill (the platform
+    style's faint blue tint, `#212630` at its base), its text and its size
+    are unchanged.
+  - **A push button the keyboard moved the focus to** takes the same rim. A
+    button focused by a click shows nothing, as before.
+  - **The current cell of a list, table or tree:** a 1 px outline in the
+    selection rim, with nothing tinted inside it. A selected row is the
+    selection fill as before.
+  - These are drawn by the look's style object (`Workspace::LookStyle`,
+    `src/gui/styles/WorkspaceLookStyle.cpp`), not by a sheet: a sheet block
+    on one button would change its corner radius against its neighbours.
+    Do not style a dialog's buttons to get the rim; leave them unstyled.
+  - A button a sheet draws (the glass buttons of applets and panels) is not
+    affected. An action button a sheet draws marks its default state through
+    `:default` with the same rim colour.
 
 ### Sliders
 

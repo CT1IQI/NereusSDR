@@ -51,6 +51,9 @@
 //                 the selection glass (D31), on buttons that stay plain
 //                 push buttons. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - installLiveTheming() also installs the look's style
+//                 object. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -116,7 +119,9 @@ void themeOnShow(QWidget* dialog);
 // keeps the pass out of its own window only, not out of a menu or popup
 // it opens. A widget whose stylesheet has not changed since its last
 // pass is not translated again. Installs once; does nothing when the
-// switch is off. applyWorkspacePalette() calls it.
+// switch is off. applyWorkspacePalette() calls it. It also makes
+// Workspace::LookStyle the application's style (WorkspaceLookStyle.h): the
+// default button's rim and the current cell's outline.
 void installLiveTheming(QApplication& app);
 
 // The workspace look of one stylesheet: QssTranslator (with the

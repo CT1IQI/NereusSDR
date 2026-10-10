@@ -38,6 +38,13 @@
 //   2026-10-10 - The connection pill left the stopped list: its states
 //                 take their meaning, stale the warn colour. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - JJ's option 1: the default button's rim and the LAN scan
+//                 list's current cell left the stopped list; the default
+//                 button's tint is kept by decision. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Merging the two: nothing is stopped for JJ, so the
+//                 stopped list is empty (a zero-length std::array). J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -55,6 +62,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <iterator>
@@ -197,19 +205,17 @@ const Listed kKeptByDecision[] = {
     { "look-dialog-lit-psa-on", "QLabel", "#ffaa70",
       "kept (settled 2026-10-10): the TX filter overlay label is the user's colour setting "
       "(StyleConstants:388)" },
-};
-// Stopped for JJ (task 46 report): the meaning or the mechanism is his to
-// choose.
-const Listed kStoppedForJJ[] = {
     { "look-dialog-*", "QPushButton*", "#212630",
-      "the tinted fill Fusion draws on a dialog's default button from the palette Highlight (with the "
-      "#264c75 outline); no sheet draws it, and the selection rim there needs a drawing mechanism JJ "
-      "has not chosen" },
-    { "look-dialog-lan-scan", "QWidget#qt_scrollarea_viewport", "*",
-      "the keyboard focus rectangle Fusion draws on the list's current cell from the palette Highlight "
-      "(96 by 3 px of the first cell); the viewport itself is the inset surface. The same question as the "
-      "default button's tint" },
+      "kept (JJ 2026-10-10, option 1): the tinted fill Fusion draws on a dialog's default button from the "
+      "palette Highlight. Only the rim changed, to the selection rim (Workspace::LookStyle); the fill, the "
+      "shape and the text are Fusion's" },
 };
+// Stopped for JJ: the meaning or the mechanism is his to choose. Empty
+// since 2026-10-10: the connection pill, the default button and the LAN
+// scan list's current cell were all answered. To stop a finding for JJ
+// again, raise the count and add a { image, owner, colour, why } entry as
+// in kKeptByDecision; the sweep counts and prints it without failing.
+const std::array<Listed, 0> kStoppedForJJ = {};
 
 const Listed* listedIn(const Listed* first, const Listed* last, const QString& image, const QString& owner,
                        const QString& colour)
@@ -233,7 +239,7 @@ const Listed* keptFor(const QString& image, const QString& owner, const QString&
 
 const Listed* stoppedFor(const QString& image, const QString& owner, const QString& colour)
 {
-    return listedIn(std::begin(kStoppedForJJ), std::end(kStoppedForJJ), image, owner, colour);
+    return listedIn(kStoppedForJJ.data(), kStoppedForJJ.data() + kStoppedForJJ.size(), image, owner, colour);
 }
 
 QString unqualified(const QString& className)
