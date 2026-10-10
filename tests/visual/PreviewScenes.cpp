@@ -142,6 +142,11 @@
 //                 Outputs; a --scrolled scene steps a table frame that scrolls
 //                 sideways inside a page that scrolls down. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - cw-digital seeds the TX profiles (the Phone / CW mic
+//                 profile list was empty) and puts its CW page plate in the
+//                 applet's own layout, above its first row, instead of over
+//                 its level meter. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -184,6 +189,7 @@
 #include <QTreeWidget>
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QVBoxLayout>
 #include <QHash>
 #include <QJsonDocument>
 #include <QListWidget>
@@ -3158,12 +3164,15 @@ QVector<PanPose> cwDigitalPoses()
     return {a, b};
 }
 
+QJsonObject seedTxProfiles(SceneContext& ctx);
+
 void sceneCwDigital(SceneContext& ctx)
 {
     ctx.provenance = provProposed();
     ctx.proposedValues = proposedEdgeValues();
     ctx.extraCrops = addAllStripCrops;
-    runWindowScene(ctx, cwDigitalPoses(), 0, [](SceneContext& c) {
+    QJsonObject txProfileSeed;
+    runWindowScene(ctx, cwDigitalPoses(), 0, [&txProfileSeed](SceneContext& c) {
         if (!registerPreviewApplets(c)) {
             return;
         }
@@ -3187,26 +3196,66 @@ void sceneCwDigital(SceneContext& ctx)
         phcw->showPage(1);
         c.notes.append(QStringLiteral("Main Panel in the left strip; Phone / CW moved to the right strip, "
                                       "PhoneCwApplet::showPage(1) (its CW page)"));
+        // The Phone page's mic profile list reads MicProfileManager, as the
+        // TX applet's profile selector does in tx-processing.
+        txProfileSeed = seedTxProfiles(c);
     }, [](SceneContext& c) {
         // The CW page is not built in this build: showPage(1) falls back to
-        // the Phone page, so a plate says so over the applet's top.
+        // the Phone page, so a plate says so above the applet's first row,
+        // in the applet's own layout, where it covers no control.
         if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
             return;
         }
         auto* phcw = c.window->findChild<PhoneCwApplet*>();
-        addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
-                               QStringLiteral("CW page: not built yet in NereusSDR"),
-                               QStringLiteral("the Phone / CW applet's CW page is gated by "
-                                              "UnbuiltFeature::Cwx; showPage(1) shows the Phone page"),
-                               false);
+        auto* root = qobject_cast<QBoxLayout*>(phcw->layout());
+        if (root == nullptr) {
+            c.failure = QStringLiteral("the Phone / CW applet has no box layout for the plate");
+            return;
+        }
+        QLabel* plate = addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
+                                               QStringLiteral("CW page: not built yet in NereusSDR"),
+                                               QStringLiteral("the Phone / CW applet's CW page is gated by "
+                                                              "UnbuiltFeature::Cwx; showPage(1) shows the "
+                                                              "Phone page"),
+                                               false);
+        auto* holder = new QWidget(phcw);
+        auto* box = new QVBoxLayout(holder);
+        box->setContentsMargins(kPlateGapPx, kPlateGapPx, kPlateGapPx, kPlateGapPx);
+        plate->setParent(holder);
+        plate->setMinimumWidth(0);
+        plate->setMaximumWidth(QWIDGETSIZE_MAX);
+        box->addWidget(plate);
+        root->insertWidget(0, holder);
+        plate->show();
+        holder->show();
+        pump(kFinalSettleMs);
         c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
-                                      "its Phone page and a not-implemented plate covers its top"));
+                                      "its Phone page and a not-implemented plate sits above its first row, "
+                                      "in its own layout"));
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
+    // The applet's combo that lists the seeded profiles is its mic profile list.
+    MicProfileManager* profiles = ctx.model->micProfileManager();
+    auto* phcw = ctx.window->findChild<PhoneCwApplet*>();
+    if (profiles != nullptr && phcw != nullptr) {
+        QString listed = QStringLiteral("no list shows the active profile");
+        for (QComboBox* combo : phcw->findChildren<QComboBox*>()) {
+            if (!profiles->activeProfileName().isEmpty()
+                && combo->findText(profiles->activeProfileName()) >= 0) {
+                listed = QStringLiteral("%1 profile(s), \"%2\"").arg(combo->count()).arg(combo->currentText());
+            }
+        }
+        ctx.notes.append(QStringLiteral("Phone / CW mic profile list: %1").arg(listed));
+    }
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("cw-digital"));
+    for (CapturedImage& img : ctx.images) {
+        if (img.name == QLatin1String("cw-digital") && !txProfileSeed.isEmpty()) {
+            img.extra[QStringLiteral("tx_profile_seed")] = txProfileSeed;
+        }
+    }
     captureStripsFull(ctx, QStringLiteral("cw-digital"));
     annotateSlices(ctx);
 }

@@ -39,6 +39,9 @@
 #                AI-assisted via Anthropic Claude Code.
 #   2026-10-09 - A --scrolled scene owns its step images <scene>-<N>.
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-09 - A failed run prints the preview's own failure line, not
+#                the last log line it wrote. J.J. Boyd (KG4VCF),
+#                AI-assisted via Anthropic Claude Code.
 
 import argparse
 import concurrent.futures
@@ -79,6 +82,17 @@ RUN_TIMEOUT_S = 180
 # sourcemap.py writes <image>.sourcemap.png next to each capture (its
 # SUFFIX); those are never captures.
 MAP_SUFFIX = ".sourcemap.png"
+
+
+def failure_line(stderr):
+    """The preview's own failure line ("nereus_visual_preview: ..."), not
+    whatever log line the run printed last; the last line when it printed
+    none."""
+    lines = [l for l in (stderr or "").strip().splitlines() if l.strip()]
+    for line in reversed(lines):
+        if line.startswith("nereus_visual_preview:"):
+            return line
+    return lines[-1] if lines else ""
 
 
 def scene_provenance(name):
@@ -289,7 +303,7 @@ def verify_against(binary, screen_dpr, runs, jobs, stored):
         for scene, profile, r in results:
             if r["returncode"] != 0:
                 print("%s @ %s: RUN FAILED (%s) %s" % (
-                    scene, profile, r["returncode"], r["stderr"].strip().splitlines()[-1:]))
+                    scene, profile, r["returncode"], failure_line(r["stderr"])))
                 failures += 1
                 continue
             produced = {png.name for png in images_of(work / profile, scene)}
@@ -334,7 +348,7 @@ def verify(binary, screen_dpr, runs, jobs):
             if a["returncode"] != 0 or b["returncode"] != 0:
                 print("%s @ %s: RUN FAILED (%s / %s) %s" % (
                     scene, profile, a["returncode"], b["returncode"],
-                    (a["stderr"] or b["stderr"]).strip().splitlines()[-1:]))
+                    failure_line(a["stderr"] if a["returncode"] != 0 else b["stderr"])))
                 failures += 1
                 continue
             for png_a in images_of(work / "a" / profile, scene):
@@ -415,7 +429,7 @@ def main():
             status = "ok" if r["returncode"] == 0 else "FAILED (%s)" % r["returncode"]
             print("%s @ %s: %s" % (r["scene"], r["profile"], status), flush=True)
             if r["returncode"] != 0 and r["stderr"].strip():
-                print("    " + r["stderr"].strip().splitlines()[-1], flush=True)
+                print("    " + failure_line(r["stderr"]), flush=True)
             results.append(r)
 
     order = {pair: i for i, pair in enumerate(runs)}

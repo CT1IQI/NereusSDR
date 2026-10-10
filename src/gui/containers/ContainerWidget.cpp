@@ -16,6 +16,10 @@
 //                 the menu is open no longer frees a menu on the stack (JJ's
 //                 crash removing a popped-out container). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the content host learns how far the
+//                 overlaid group header reaches into it, so an overlaid
+//                 entry header sits below it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The minimum width in every dock mode is the larger of
 //                 260 px and what the content needs (setContentMinimumWidth),
 //                 so a docked, overlaid or floating container never cuts its
@@ -638,8 +642,16 @@ void ContainerWidget::placeWorkspaceOverlays()
             w->raise();
         }
     };
-    if (static_cast<QVBoxLayout*>(layout())->indexOf(m_groupHeader) < 0) {
+    const bool overlaid = static_cast<QVBoxLayout*>(layout())->indexOf(m_groupHeader) < 0;
+    if (overlaid) {
         place(m_groupHeader, QRect(0, 0, width(), WorkspaceGroupHeader::kHeight));
+    }
+    if (auto* host = qobject_cast<ContainerContentHost*>(m_content)) {
+        // How far the overlaid group header reaches into the content.
+        const int reach = overlaid && !m_groupHeader->isHidden()
+            ? WorkspaceGroupHeader::kHeight - host->mapTo(this, QPoint()).y()
+            : 0;
+        host->setTopOverlayInset(reach);
     }
     place(m_revealShadow, QRect(0, WorkspaceGroupHeader::kHeight, width(), kRevealShadowPx));
     place(m_arrangeFrame, rect());

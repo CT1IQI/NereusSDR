@@ -15,6 +15,7 @@
 #include <QApplication>
 
 #include <QAbstractButton>
+#include <QComboBox>
 #include <QGroupBox>
 #include <QLabel>
 #include <QPushButton>
@@ -147,6 +148,32 @@ private slots:
         QVERIFY(titles.contains(QStringLiteral("Calibration && Peak Hold")));
         QVERIFY(buttons.contains(QStringLiteral("Save && Reboot Amp")));
         QVERIFY(buttons.contains(QStringLiteral("Save && Reboot Tuner")));
+    }
+
+    // Combo box items are drawn as written: none shows a doubled ampersand,
+    // and NB2 Mode reads as Thetis's comboDSPNOBmode does
+    // (setup.designer.cs:44550-44555 [v2.10.3.15]).
+    void comboItemsShowOneAmpersand()
+    {
+        RadioModel model;
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        QStringList faults;
+        bool sampleAndHold = false;
+        bool holdAndSample = false;
+        for (const QComboBox* combo : dialog.findChildren<QComboBox*>()) {
+            for (int i = 0; i < combo->count(); ++i) {
+                const QString text = combo->itemText(i);
+                if (text.contains(QStringLiteral("&&"))) {
+                    faults << QStringLiteral("combo item \"%1\"").arg(text);
+                }
+                sampleAndHold = sampleAndHold || text == QStringLiteral("Sample & Hold");
+                holdAndSample = holdAndSample || text == QStringLiteral("Hold & Sample");
+            }
+        }
+        QVERIFY2(faults.isEmpty(), qPrintable(faults.join(QStringLiteral("; "))));
+        QVERIFY(sampleAndHold);
+        QVERIFY(holdAndSample);
     }
 
     // The VAX first-run "Apply to VAX N & M" button.

@@ -12,7 +12,7 @@
 //              what Thetis's options do, their defaults come from
 //              TciProtocol.h, and Forget follows Duplicate as in Thetis.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-// 2026-10-09 - D25: the Peripherals grid (958 px) cannot fit the Settings
+// 2026-10-09 - D25: the Peripherals grid (960 px) cannot fit the Settings
 //              window, so it scrolls sideways inside its own frame
 //              (SetupFit::SidewaysFrame) instead of being squeezed. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.

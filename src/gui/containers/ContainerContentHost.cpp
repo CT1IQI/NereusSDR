@@ -7,6 +7,10 @@
 //                 (OwnedMenu.h): an entry action that removes the container
 //                 while its menu is open no longer frees a menu on the
 //                 stack. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//   2026-10-09 - Workspace preview only: an overlaid entry header sits below
+//                 the container's overlaid group header (Arrange in Reveal
+//                 and Hidden), which covered the first entry header's
+//                 buttons. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-10-08 - Workspace preview only: a factory widget's own config
 //                 edits (ContentConfigNotifier) go to the workspace document
@@ -993,6 +997,15 @@ void ContainerContentHost::setArrangeActive(bool active)
     m_arrangeActive = active;
     updateEntryHeaders();
 }
+void ContainerContentHost::setTopOverlayInset(int px)
+{
+    const int inset = qMax(0, px);
+    if (m_topOverlayInset == inset) {
+        return;
+    }
+    m_topOverlayInset = inset;
+    updateEntryHeaders();
+}
 void ContainerContentHost::setContainerHeaderMode(HeaderMode mode)
 {
     if (m_containerHeaderMode == mode) {
@@ -1107,7 +1120,12 @@ void ContainerContentHost::updateEntryHeaders()
             continue;
         }
         const QRect boundary = entryBoundary(row.entryId);
-        const int top = m_body->mapFrom(this, boundary.topLeft()).y() - (reserve ? WorkspaceEntryHeader::kHeight : 0);
+        int top = m_body->mapFrom(this, boundary.topLeft()).y() - (reserve ? WorkspaceEntryHeader::kHeight : 0);
+        if (!reserve && m_topOverlayInset > 0) {
+            // Below the container's overlaid group header, which would
+            // otherwise cover this header's buttons.
+            top = qMax(top, m_body->mapFrom(this, QPoint(0, m_topOverlayInset)).y());
+        }
         const QRect target(margins.left(), top, qMax(0, m_body->width() - margins.left() - margins.right()),
                            WorkspaceEntryHeader::kHeight);
         if (header->geometry() != target) {

@@ -11,6 +11,9 @@
 //                 Panel and splitter handle width; the fixture's middle
 //                 splitter is the app's EdgeDockSplitter. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The right strip's handle draws today's 3 px and grabs
+//                 what today's 3 px handle grabs. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -306,7 +309,19 @@ private slots:
             // The handle on the spectrum side is today's 3 px.
             QSplitterHandle* handle = f.middle->handle(f.middle->indexOf(right));
             QVERIFY(handle != nullptr && handle->isVisible());
-            QCOMPARE(handle->width(), EdgeDockArea::kMigratedHandlePx);
+            // It draws today's 3 px and grabs what today's handle grabs:
+            // the same geometry around the same split, mouse input over
+            // all of it, and the same drawn (masked) part.
+            QSplitterHandle* todayHandle = splitter->handle(1);
+            QCOMPARE(handle->sizeHint().width(), EdgeDockArea::kMigratedHandlePx);
+            QCOMPARE(handle->contentsRect().width(), EdgeDockArea::kMigratedHandlePx);
+            QCOMPARE(handle->width(), todayHandle->width());
+            QCOMPARE(handle->x() - f.center->geometry().right(),
+                     todayHandle->x() - spectrum->geometry().right());
+            QCOMPARE(handle->contentsRect(), todayHandle->contentsRect());
+            QCOMPARE(handle->testAttribute(Qt::WA_MouseNoMask),
+                     todayHandle->testAttribute(Qt::WA_MouseNoMask));
+            QCOMPARE(handle->mask(), todayHandle->mask());
             QVERIFY2(f.center->width() == spectrum->width(),
                      qPrintable(QStringLiteral("spectrum %1 vs today's %2 %3")
                                     .arg(f.center->width()).arg(spectrum->width()).arg(at)));

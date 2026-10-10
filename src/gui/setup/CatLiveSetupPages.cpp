@@ -21,6 +21,9 @@
 //              destroyed (quit with Setup open) stops listening to CAT, so
 //              CatService's teardown no longer reads deleted slices.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09 - "Always recenter VFOs" takes the check box style and height
+//              the other option rows take, so its indicator sits in their
+//              column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
 #include "core/cat/CatPtyDialects.h"
@@ -391,7 +394,7 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
     addCheck(form,tr("AI to serial CAT 4"),"catAiSerial4",&CatGlobalConfig::aiSerial4);
     addCheck(form,tr("Report DIGL / DIGU as LSB / USB"),"catDigitalSideband",&CatGlobalConfig::digitalReportsSideband);
     addCheck(form,tr("Apply power limits to CAT power queries"),"catLimitPower",&CatGlobalConfig::limitReportedPower);
-    auto* recenter=new QCheckBox(tr("Always recenter VFOs"),options); recenter->setEnabled(false); recenter->setToolTip(tr("A frequency from CAT moves the panadapter the way tuning by hand does: it follows the VFO, and with CTUN on it stays put unless the band changes.")); form->addRow(recenter);
+    auto* recenter=new QCheckBox(tr("Always recenter VFOs"),options); recenter->setMinimumHeight(Style::kButtonH); recenter->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle)); recenter->setEnabled(false); recenter->setToolTip(tr("A frequency from CAT moves the panadapter the way tuning by hand does: it follows the VFO, and with CTUN on it stays put unless the band changes.")); form->addRow(recenter);
     auto* rtty=addSection(tr("RTTY frequency reporting")); auto* offsets=sectionForm(rtty);
     addCheck(offsets,tr("Apply offset to VFO A"),"catRttyA",&CatGlobalConfig::rttyOffsetAEnabled);
     addCheck(offsets,tr("Apply offset to VFO B"),"catRttyB",&CatGlobalConfig::rttyOffsetBEnabled);

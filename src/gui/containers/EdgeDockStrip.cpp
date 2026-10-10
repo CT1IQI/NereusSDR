@@ -102,6 +102,10 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The 3 px right-strip handle keeps its drawn width and
+//                 takes the 5 px grab area Qt gives today's 3 px splitter
+//                 handle. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "EdgeDockStrip.h"
@@ -174,6 +178,10 @@ public:
     }
 
 private:
+    // The narrowest grab area QSplitterHandle gives a thin handle (Qt's
+    // QSplitterHandle::resizeEvent, margin (5 - handleWidth) / 2).
+    static constexpr int kMinGrabPx = 5;
+
     // A handle sits before the widget at its index: the strip it opens.
     int extent() const
     {
@@ -186,6 +194,31 @@ private:
     }
 
 protected:
+    // The grab area QSplitterHandle::resizeEvent gives a handle thinner
+    // than 5 px, worked out from this handle's own extent rather than the
+    // splitter's handleWidth (6): margins on both sides that the splitter
+    // adds to the handle's geometry, mouse input over all of it, and a
+    // mask so only the extent itself draws. The 3 px right-strip handle
+    // grabs 5 px, as today's 3 px splitter handle does.
+    void resizeEvent(QResizeEvent* event) override
+    {
+        const int margin = (kMinGrabPx - extent()) / 2;
+        const bool tiny = margin > 0;
+        setAttribute(Qt::WA_MouseNoMask, tiny);
+        if (tiny) {
+            if (orientation() == Qt::Horizontal) {
+                setContentsMargins(margin, 0, margin, 0);
+            } else {
+                setContentsMargins(0, margin, 0, margin);
+            }
+            setMask(QRegion(contentsRect()));
+        } else {
+            setContentsMargins(0, 0, 0, 0);
+            clearMask();
+        }
+        QWidget::resizeEvent(event);
+    }
+
     void paintEvent(QPaintEvent*) override
     {
         QPainter painter(this);
