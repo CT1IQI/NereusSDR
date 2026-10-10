@@ -142,6 +142,14 @@
 //                 Outputs; a --scrolled scene steps a table frame that scrolls
 //                 sideways inside a page that scrolls down. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Lit-state scenes posed after the window is shown and the
+//                 live pass has run: dialog-lit-operate (OPERATE on in the
+//                 tuner, PGXL and RF2K-S applets), dialog-lit-antenna (a
+//                 tuner antenna selected), dialog-lit-psa-on (PS-A checked)
+//                 and dialog-lit-ps-badge (the PureSignal badge), all
+//                 through setters and injected status lines; nothing
+//                 connects or starts discovery. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -268,6 +276,14 @@
 #include "gui/applets/EqApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/AmpApplet.h"
+#include "gui/applets/Rf2ksApplet.h"
+#include "gui/applets/TunerApplet.h"
+#include "gui/PsaIndicatorWidget.h"
+#include "core/TgxlConnection.h"
+#include "models/TunerModel.h"
+#include <QHBoxLayout>
+#include <QSignalBlocker>
 #include "gui/applets/TxCfcDialog.h"
 #include "gui/applets/TxEqDialog.h"
 #include "gui/containers/ContainerManager.h"
@@ -4558,6 +4574,110 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         dialog.show();
         captureDialog(ctx, &dialog, QStringLiteral("dialog-about"));
         dialog.close();
+    }});
+
+    // Lit states posed after show: each host is shown, the live pass runs,
+    // and only then does the state change, through the applet's setter or
+    // a status line injected into a never-connected TgxlConnection. No
+    // toggle signal is let through, nothing connects or starts discovery.
+    const auto litHost = [](SceneContext& ctx, const QString& title) {
+        prepareForDialog(ctx);
+        auto host = std::make_unique<QWidget>(ctx.window, Qt::Tool);
+        host->setObjectName(QStringLiteral("LitStatesHost"));
+        host->setWindowTitle(title);
+        auto* row = new QHBoxLayout(host.get());
+        row->setContentsMargins(8, 8, 8, 8);
+        row->setSpacing(8);
+        return host;
+    };
+    const auto showThenPose = [](QWidget* host, const std::function<void()>& pose) {
+        host->adjustSize();
+        host->show();
+        pump(kDialogSettleMs);
+        pose();
+        QCoreApplication::processEvents();
+    };
+    scenes.append({QStringLiteral("dialog-lit-operate"), QStringLiteral("2v"), true,
+                   [litHost, showThenPose](SceneContext& ctx) {
+        // The models outlive the host, which owns the applets.
+        TgxlConnection tgxl;
+        TunerModel tuner;
+        tuner.bindConnection(&tgxl);
+        auto host = litHost(ctx, QStringLiteral("OPERATE on"));
+        auto* tunerApplet = new TunerApplet(nullptr, &tuner, host.get());
+        auto* amp = new AmpApplet(nullptr, host.get());
+        auto* rf2ks = new Rf2ksApplet(nullptr, host.get());
+        for (QWidget* w : {static_cast<QWidget*>(tunerApplet), static_cast<QWidget*>(amp),
+                           static_cast<QWidget*>(rf2ks)}) {
+            w->setMinimumWidth(260);
+            host->layout()->addWidget(w);
+        }
+        showThenPose(host.get(), [&] {
+            tgxl.injectLineForTesting(QStringLiteral("V1.2.17"));
+            tgxl.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0"));
+            amp->setState(QStringLiteral("OPERATE"));
+            rf2ks->setOperateMode(QStringLiteral("OPERATE"));
+        });
+        ctx.notes.append(QStringLiteral("TgxlConnection status state=1 bypass=0, AmpApplet::setState(OPERATE), "
+                                        "Rf2ksApplet::setOperateMode(OPERATE), after show"));
+        captureDialog(ctx, host.get(), QStringLiteral("dialog-lit-operate"));
+        host->close();
+    }});
+    scenes.append({QStringLiteral("dialog-lit-antenna"), QStringLiteral("2v"), true,
+                   [litHost, showThenPose](SceneContext& ctx) {
+        TgxlConnection tgxl;
+        TunerModel tuner;
+        tuner.bindConnection(&tgxl);
+        auto host = litHost(ctx, QStringLiteral("Antenna selected"));
+        auto* tunerApplet = new TunerApplet(nullptr, &tuner, host.get());
+        tunerApplet->setMinimumWidth(260);
+        host->layout()->addWidget(tunerApplet);
+        showThenPose(host.get(), [&] {
+            // The antenna row shows for a TGXL with the switch, reached
+            // here as a station state: model fields only, no connection
+            // (TunerModel.cpp:39-80).
+            TunerModel::StationConnectionState station;
+            station.phase = TunerModel::ConnectionPhase::Connected;
+            tuner.setStationConnectionState(station);
+            tgxl.injectLineForTesting(QStringLiteral("V1.2.17"));
+            tgxl.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0 antA=1 3way=1"));
+        });
+        ctx.notes.append(QStringLiteral("TgxlConnection status antA=1 (ANT 2), after show"));
+        captureDialog(ctx, host.get(), QStringLiteral("dialog-lit-antenna"));
+        host->close();
+    }});
+    scenes.append({QStringLiteral("dialog-lit-psa-on"), QStringLiteral("2v"), true,
+                   [litHost, showThenPose](SceneContext& ctx) {
+        RadioModel radio;
+        auto host = litHost(ctx, QStringLiteral("PS-A on"));
+        auto* tx = new TxApplet(&radio, host.get());
+        host->layout()->addWidget(tx);
+        auto* psa = tx->findChild<QPushButton*>(QStringLiteral("TxAppletPsaBtn"));
+        if (psa == nullptr) {
+            ctx.failure = QStringLiteral("no TxAppletPsaBtn");
+            return;
+        }
+        psa->setVisible(true);
+        showThenPose(host.get(), [psa] {
+            const QSignalBlocker block(psa);
+            psa->setChecked(true);
+        });
+        ctx.notes.append(QStringLiteral("TxAppletPsaBtn checked with its signals blocked, after show"));
+        captureDialog(ctx, host.get(), QStringLiteral("dialog-lit-psa-on"));
+        host->close();
+    }});
+    scenes.append({QStringLiteral("dialog-lit-ps-badge"), QStringLiteral("2v"), true,
+                   [litHost, showThenPose](SceneContext& ctx) {
+        auto host = litHost(ctx, QStringLiteral("PureSignal badge"));
+        auto* badge = new PsaIndicatorWidget(nullptr, host.get());
+        host->layout()->addWidget(badge);
+        showThenPose(host.get(), [badge] {
+            badge->setPsEnabled(true);
+            badge->setMox(false);
+        });
+        ctx.notes.append(QStringLiteral("PsaIndicatorWidget::setPsEnabled(true), setMox(false), after show"));
+        captureDialog(ctx, host.get(), QStringLiteral("dialog-lit-ps-badge"));
+        host->close();
     }});
 
     // D3: Add custom radio (ConnectionPanel.cpp:1185); Probe is never pressed.
