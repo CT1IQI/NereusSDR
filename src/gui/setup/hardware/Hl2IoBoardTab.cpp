@@ -66,6 +66,10 @@
 //               decided ok, Reset is danger, the rest the surface and its
 //               edge). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-10 - Workspace look only: "throttled" is the decided danger
+//               (status lights by meaning, D21); "not throttled" and the
+//               LEDs take ok and off through the colour table. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -1034,8 +1038,11 @@ void Hl2IoBoardTab::showThrottleState(std::optional<bool> throttled)
         m_throttleStatusLabel->setStyleSheet(QStringLiteral("font-size: 10px;"));
     } else if (*throttled) {
         m_throttleStatusLabel->setText(tr("● throttled"));
+        // Workspace look (D21, settled 2026-10-10): a throttled link is a
+        // fault, the decided danger.
         m_throttleStatusLabel->setStyleSheet(
-            QStringLiteral("font-size: 10px; color: #ff4444;"));
+            QStringLiteral("font-size: 10px; color: %1;")
+                .arg(WorkspacePreview::statusColourName("#ff4444", "danger")));
     } else {
         m_throttleStatusLabel->setText(tr("○ not throttled"));
         m_throttleStatusLabel->setStyleSheet(
@@ -1444,6 +1451,11 @@ int Hl2IoBoardTab::ep2BarPercentForTest() const
 QString Hl2IoBoardTab::throttleStatusTextForTest() const
 {
     return m_throttleStatusLabel ? m_throttleStatusLabel->text() : QString();
+}
+
+QString Hl2IoBoardTab::throttleStatusSheetForTest() const
+{
+    return m_throttleStatusLabel ? m_throttleStatusLabel->styleSheet() : QString();
 }
 
 QString Hl2IoBoardTab::throttleEventTextForTest() const

@@ -26,6 +26,15 @@
 //                 PS-A checked leave the kept list for the engaged green
 //                 (dsp-on, as Longpath's OPERATE). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Status lights by meaning (D21, settled with JJ's colour
+//                 answers): the RF2K-S, sound system and VAX dots, the
+//                 Alex and HL2 LEDs, the speech chain's on dot and the HL2
+//                 "not throttled" text leave the kept list for live (on,
+//                 connected), tx (disconnected, fault) and text-inactive
+//                 (off); an output pin that is off is filled with the
+//                 border colour. The engaged green's comment names D30
+//                 and D31. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -296,11 +305,38 @@ const QVector<ColourRow>& rows()
         // Longpath's own OPERATE on is dsp-on-bg with the ok edge and the
         // dsp-on-border hover (Longpath TunerApplet.cpp:574-577); a
         // checked button with it takes the lit green (componentize(),
-        // D15). The selected tuner antenna shares the literal and is a
-        // selection: its call site writes the glass (TunerApplet:1008).
+        // D15), and so does OPERATE on, which is not checkable and says so
+        // with kLitWhenOnProperty (JJ's D30, 2026-10-10). The chosen tuner
+        // antenna shares the literal and is a selection: its buttons carry
+        // kChoiceProperty and componentize() draws the glass (D31).
         { "#006030", kBg, "dsp-on-bg" },         // OPERATE on, PS-A checked
         { "#007040", kBg, "dsp-on-border" },     // OPERATE on, hover
         { "#008040", kBorder, "ok" },            // OPERATE on, PS-A checked edge
+
+        // ── Status lights by meaning (D21, settled 2026-10-10) ───
+        // A light that is on or connected is the decided ok (live,
+        // #4caf6a), one that is disconnected or reports a fault the
+        // decided danger (tx, #c25a5c), one that is off the inactive text
+        // colour (#58585e). Every state of each light has its row.
+        { "#34c759", kBg, "live" },              // Rf2ksApplet:634 dot, connected
+        { "#e64949", kBg, "tx" },                // Rf2ksApplet:635 dot, disconnected
+        { "#33dd88", kBg, "live" },              // SoundSystemLine:28, AudioVaxPage:223 dot, working
+        { "#e04848", kBg, "tx" },                // SoundSystemLine:30, AudioVaxPage:225 dot, problem
+        { "#20e070", kText, "live" },            // TransmitSetupPages:1149 stage dot, on (off is
+                                                 // text-inactive at the call site)
+        { "#00cc00", kBg, "live" },              // AntennaAlexAlex2Tab:531 board LED, active
+        { "#666666", kBg, "text-inactive" },     // AntennaAlexAlex2Tab:234,537 board LED, not detected
+        { "#00cc44", kBg, "live" },              // AntennaAlexAlex1Tab:860, Alex2Tab:700,
+                                                 // OcOutputsHfTab:677 LED, lit
+        { "#33dd55", kBorder, "live" },          // OcOutputsHfTab:678 LED edge, lit
+        { "#444444", kBg, "text-inactive" },     // AntennaAlexAlex1Tab:863, Alex2Tab:703 LED, off
+        { "#22cc44", kBg, "live" },              // Hl2IoBoardTab:295 LED, on
+        { "#22cc44", kText, "live" },            // Hl2IoBoardTab:792,1042 "not throttled"
+        { "#606060", kBg, "text-inactive" },     // Hl2IoBoardTab:287,298 LED, off
+        // An output pin that is off (settled 2026-10-10): the border
+        // colour as its fill, so the pin reads as an empty socket on the
+        // page and not as a legacy grey.
+        { "#222222", kBg, "border" },            // Hl2IoBoardTab:508,849,898, OcLedStripWidget:161
     };
     return table;
 }
@@ -332,7 +368,6 @@ const QVector<KeptLiteral>& kept()
         { "#4488ff", kAny, "lit: :checked text (RxApplet:691), the same value unchecked at :712, "
                            "and a spot colour default (SpotHubDialog:1107)" },
         { "#66aaff", kText, "on/off pair: hover of the RxApplet:712 text (RxApplet:715)" },
-        { "#20e070", kAny, "lit: on dot (TransmitSetupPages:1144)" },
         { "#6a3030", kBg, "lit: flag :checked (VfoWidget:853,2698)" },
         { "#2a2a1a", kBg, "lit: flag :checked (VfoWidget:786)" },
         { "#ffcc44", kText, "lit: flag :checked (VfoWidget:786)" },
@@ -344,28 +379,18 @@ const QVector<KeptLiteral>& kept()
                                       "kMenuBtnActive) shares the value with its hover" },
 
         // ── Indicators, LEDs and state dots ──────────────────────
-        { "#00cc00", kBg, "LED (AntennaAlexAlex2Tab:496)" },
-        { "#00cc44", kBg, "LED (AntennaAlexAlex1Tab:844, Alex2Tab:665, OcOutputsHfTab:625)" },
-        { "#33dd55", kBorder, "LED edge (OcOutputsHfTab:626)" },
-        { "#444444", kBg, "LED off (AntennaAlexAlex1Tab:847, Alex2Tab:668)" },
-        { "#666666", kBg, "LED off (AntennaAlexAlex2Tab:203,502)" },
-        { "#22cc44", kAny, "LED and lit pin badge (Hl2IoBoardTab:261,681,846,849,942)" },
         { "#44ff44", kBg, "LED on (Hl2IoBoardTab:788, OcLedStripWidget:146)" },
         { "#88ff88", kBorder, "LED on edge (Hl2IoBoardTab:788, OcLedStripWidget:146)" },
-        { "#222", kBg, "LED and pin badge off (Hl2IoBoardTab, OcLedStripWidget:148)" },
         { "#444", kAny, "LED and pin badge off fill and edge, and the Hl2 group frame edge "
                         "(Hl2IoBoardTab:373-837)" },
         { "#555", kBorder, "LED off edge (Hl2IoBoardTab, OcLedStripWidget:148) and the "
                            "Hl2OptionsTab:503 readout edge" },
-        { "#606060", kBg, "LED off (Hl2IoBoardTab:253,264)" },
         { "#2a2a2a", kBg, "two jobs: Hl2 group frame (Hl2IoBoardTab:373,721) and the "
                           "slice-colour button fill (RxApplet:1842)" },
         { "#1a2f1a", kBg, "lit: Hl2 pin frame on (Hl2IoBoardTab:714,847)" },
         { "#2a5a2a", kBorder, "lit: Hl2 pin frame on (Hl2IoBoardTab:714)" },
         { "#ff4500", kBg, "LED TX (OcLedStripWidget:141)" },
         { "#ff7f50", kBorder, "LED TX edge (OcLedStripWidget:141)" },
-        { "#33dd88", kBg, "state dot (SoundSystemLine:27, AudioVaxPage:223)" },
-        { "#e04848", kBg, "state dot (SoundSystemLine:29, AudioVaxPage:225)" },
         { "#7a8088", kAny, "RADE state dot and label, idle (RadeApplet:143,151)" },
         { "#4caf50", kBg, "RADE state dot, synced (RadeApplet:76)" },
         { "#e6c200", kBg, "RADE state dot, searching (RadeApplet:75)" },
@@ -392,8 +417,6 @@ const QVector<KeptLiteral>& kept()
         { "#c14848", kText, "connection state pill, offline (ConnectionPanel:157,624)" },
         { "#208040", kBg, "LED (CatApplet:237)" },
         { "#a04040", kBg, "LED (CatApplet:237)" },
-        { "#34c759", kBg, "state dot (Rf2ksApplet:627)" },
-        { "#e64949", kBg, "state dot (Rf2ksApplet:628)" },
         { "#00cc66", kBg, "state dot (TciApplet:72)" },
         { "#00e0e0", kBg, "state dot (TciApplet:73)" },
         { "#d4a017", kBg, "Clarity badge, paused (SpectrumOverlayPanel:1517)" },

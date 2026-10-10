@@ -68,6 +68,12 @@
 //               a remote TUNE click while the Core is on the air starts
 //               nothing and puts the reason back. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: Workspace look, JJ's D30 and D31: OPERATE carries
+//               kLitWhenOnProperty and the ANT buttons kChoiceProperty,
+//               so the on sheet draws the lit green and the chosen
+//               antenna the selection glass; the buttons stay plain push
+//               buttons and clicking is unchanged. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TunerApplet.h"
@@ -75,6 +81,7 @@
 #include "core/MoxController.h"
 #include "gui/HGauge.h"
 #include "gui/RelayBar.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
 #include "models/TunerModel.h"
 #include "models/AccessoryDataModel.h"
@@ -331,6 +338,9 @@ void TunerApplet::buildUI()
     // Single cycle button: OPERATE -> BYPASS -> STANDBY -> OPERATE.
     // From AetherSDR src/gui/TunerApplet.cpp:buildUI() m_operateBtn [@0cd4559]
     m_operateBtn = new QPushButton(QStringLiteral("STANDBY"), this);
+    // Workspace look (JJ's D30, 2026-10-10): OPERATE on is the lit green.
+    // The property is read only by the workspace look's sheet pass.
+    m_operateBtn->setProperty(WorkspacePreview::kLitWhenOnProperty, true);
     m_operateBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     m_operateBtn->setStyleSheet(QStringLiteral(
         "QPushButton { background: #1a3a5a; border: 1px solid #205070; "
@@ -364,6 +374,11 @@ void TunerApplet::buildUI()
         // From AetherSDR src/gui/TunerApplet.cpp:buildUI() makeAntBtn [@0cd4559]
         auto makeAntBtn = [this](const QString& text) {
             auto* btn = new QPushButton(text, this);
+            // Workspace look (JJ's D31, 2026-10-10): the chosen antenna is
+            // the selection glass. The button stays a plain push button
+            // (a click asks the tuner; the sheet follows its report), and
+            // the property is read only by the workspace look's sheet pass.
+            btn->setProperty(WorkspacePreview::kChoiceProperty, true);
             btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             btn->setFixedHeight(22);
             btn->setStyleSheet(QStringLiteral(

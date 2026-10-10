@@ -212,10 +212,15 @@
 //                window is too narrow for the two columns
 //                (SetupFit::FitGrid). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-10 - Workspace look only: a speech chain stage that is off
+//                shows its dot in the inactive text colour (status lights
+//                by meaning, D21). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 #include "TransmitSetupPages.h"
 #include "gui/setup/SetupFit.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "core/AppSettings.h"
 #include "core/MicProfileManager.h"
 #include "models/RadioModel.h"
@@ -1146,7 +1151,11 @@ constexpr QChar kHollowCircle = QChar(0x25CB);  // ○
 //   alc  → cyan         (#00b4d8)  for the "always-on" callout
 QString dotStyleFor(bool on)
 {
-    const QString colour = on ? QStringLiteral("#20e070") : QStringLiteral("#607080");
+    // Workspace look (status lights by meaning, D21, settled 2026-10-10):
+    // on is the decided ok through the colour table's row; off is the
+    // inactive text colour, which the scale grey #607080 does not name.
+    const QString colour = on ? QStringLiteral("#20e070")
+                              : WorkspacePreview::roleColourName("#607080", "text-inactive");
     return QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }").arg(colour);
 }
 

@@ -83,6 +83,9 @@
 //   2026-10-10 - sliderRulesFor() draws JJ's D29 track and its disabled
 //                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - progressChunkRules(): a progress bar's filled part is
+//                 the selection glass. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -130,6 +133,9 @@ QString groupBoxIndicatorRules(int widthPx, int heightPx);
 // track and disabled track, no filled side) for a slider no sheet styles. The live pass
 // gives them to each such slider with what keeps its size.
 QString sliderRulesFor(bool vertical);
+// The filled part of a progress bar no sheet styles: the selection glass
+// (settled 2026-10-10). The groove stays the platform style's.
+QString progressChunkRules();
 
 // The decided handle's span across the slider (14 px plus a 1 px rim on
 // each side). A slider thinner than this cuts the handle off, so the look
