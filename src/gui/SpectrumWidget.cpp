@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09  J.J. Boyd / KG4VCF. The GPU dynamic overlay clears and
+//                 uploads every row an earlier frame may have left (a
+//                 created texture, a taller spectrum band) with the band,
+//                 so stale noise-floor lines no longer show over the
+//                 frequency scale and waterfall after the spectrum gets
+//                 shorter. AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF. Receiver flags that fold are placed
 //                 again when they fold or open, and the pan reports where
 //                 its flags show (receiverFlagRegion) so its corner badges
@@ -11598,6 +11604,10 @@ void SpectrumWidget::initOverlayPipeline()
     // noise-floor overlays.  Chrome stays in the static layer.
     m_ovDynGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
     m_ovDynGpuTex->create();
+    // A created texture's memory is undefined: the first rebuild clears
+    // and uploads every row, not just the spectrum band.
+    m_overlayDynamicRows.textureCreated(ph);
+    m_overlayDynamicDirty = true;
     m_ovDynSrb = r->newShaderResourceBindings();
     m_ovDynSrb->setBindings({
         QRhiShaderResourceBinding::sampledTexture(1,
@@ -12646,12 +12656,25 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                        "SpectrumWidget::m_overlayDynamic (resize)");
             m_ovDynGpuTex->setPixelSize(QSize(pw, ph));
             m_ovDynGpuTex->create();
+            // Clearing the QImage above does not reach the new texture,
+            // whose memory is undefined until uploaded: the next rebuild
+            // uploads every row of it.
+            m_overlayDynamicRows.textureCreated(ph);
             m_ovDynSrb->setBindings({
                 QRhiShaderResourceBinding::sampledTexture(1,
                     QRhiShaderResourceBinding::FragmentStage,
                     m_ovDynGpuTex, m_ovSampler),
             });
             m_ovDynSrb->create();
+            m_overlayDynamicDirty = true;
+        }
+
+        // The spectrum band in device rows. When it differs from the rows
+        // that may still hold earlier pixels (it got shorter, or the
+        // texture was just created), rebuild now even if no overlay
+        // feature asked: those rows must be cleared on the GPU.
+        const int dynBandRows = qMax(1, static_cast<int>(specH * dpr));
+        if (m_overlayDynamicRows.needsRebuild(dynBandRows)) {
             m_overlayDynamicDirty = true;
         }
 
@@ -12672,11 +12695,16 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             // Clear + upload only the spectrum region in device pixels.
             // CompositionMode_Source replaces the existing pixels with
             // transparent (vs Alpha-blend which would leave them).
-            // The waterfall portion of the texture stays transparent
-            // from the first full-window init -- the partial upload
-            // never touches it.
+            // 2026-10-09 KG4VCF: the band alone was not enough. Rows
+            // below a spectrum that got shorter kept the lines drawn
+            // while it was taller, and a created texture's rows below
+            // the band were never written at all, so stale noise-floor
+            // lines showed over the frequency scale and the waterfall.
+            // The region now also covers every row that may still hold
+            // an earlier frame (m_overlayDynamicRows), which is the
+            // band itself in steady state.
             const QRect dynRectDevPx(0, 0, pw,
-                qMax(1, static_cast<int>(specH * dpr)));
+                m_overlayDynamicRows.beginUpload(dynBandRows));
 
             {
                 QPainter clearP(&m_overlayDynamic);
@@ -12686,6 +12714,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
             QPainter pd(&m_overlayDynamic);
             pd.setRenderHint(QPainter::Antialiasing, false);
+            // Paint only inside the band, so the rows beyond it that this
+            // upload clears hold nothing the row tracking does not know
+            // about. Nothing below the band was ever uploaded from here.
+            pd.setClipRect(QRectF(0.0, 0.0, pw / dpr, dynBandRows / dpr));
 
             if ((m_activePeakHold.enabled() || m_peakBlobs.enabled()) &&
                 !m_renderedPixels.isEmpty()) {
