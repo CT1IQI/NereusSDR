@@ -35,6 +35,9 @@
 //                 the lights, the HL2 pins, the LAN scan bar and the NR2
 //                 rim left the stopped list. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - The connection pill left the stopped list: its states
+//                 take their meaning, stale the warn colour. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -198,9 +201,6 @@ const Listed kKeptByDecision[] = {
 // Stopped for JJ (task 46 report): the meaning or the mechanism is his to
 // choose.
 const Listed kStoppedForJJ[] = {
-    { "look-dialog-connection-panel", "QWidget", "#39c167",
-      "the connection pill (ConnectionPanel.cpp:166-169) has a state that is none of on, fault and off "
-      "(stale, amber #d39c2a), so the whole light waits for JJ" },
     { "look-dialog-*", "QPushButton*", "#212630",
       "the tinted fill Fusion draws on a dialog's default button from the palette Highlight (with the "
       "#264c75 outline); no sheet draws it, and the selection rim there needs a drawing mechanism JJ "

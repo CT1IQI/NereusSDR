@@ -26,11 +26,16 @@
 //                 status lights by meaning and the settled items of the
 //                 colour round. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - The connection light's four states (stale is the warn
+//                 colour). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 #include <QtTest/QtTest>
 
 #include <QApplication>
 #include <QFrame>
+#include <QHBoxLayout>
+#include <QHostAddress>
 #include <QLabel>
 #include <QListWidget>
 #include <QProgressBar>
@@ -46,7 +51,10 @@
 
 #include "core/AppSettings.h"
 #include "core/TgxlConnection.h"
+#include "core/HpsdrModel.h"
+#include "core/RadioDiscovery.h"
 #include "fakes/RemoteWindowHarness.h"
+#include "gui/ConnectionPanel.h"
 #include "gui/PsaIndicatorWidget.h"
 #include "gui/VaxFirstRunDialog.h"
 #include "gui/applets/AmpApplet.h"
@@ -718,6 +726,109 @@ private slots:
         badge.setMox(false);
         QApplication::processEvents();
         QCOMPARE(badge.psBackgroundColor().name(), QString::fromLatin1(kOk));
+    }
+
+    // The connection light (ConnectionPanel's state pill), every state:
+    // connected and online are ok, offline is danger (D21), and stale is
+    // the decided warn colour (settled 2026-10-10, listed to JJ for veto).
+    // The sheet a row writes keeps today's literals, so the look off is
+    // unchanged; with the look on the translation gives the meaning.
+    void connectionLightTakesItsMeaning()
+    {
+        // Warn is the palette's constant, not a literal of this test.
+        const QString warn = role("measured");
+        QCOMPARE(warn, QString::fromLatin1(Workspace::kAmberText));
+        QCOMPARE(warn, QString::fromLatin1(kWarn));
+        struct State {
+            ConnectionPanel::StatePill pill;
+            const char* what;
+            const char* written;
+            QString want;
+        };
+        const State states[] = {
+            { ConnectionPanel::StatePill::Connected, "connected", "#39c167", QLatin1String(kOk) },
+            { ConnectionPanel::StatePill::Online, "online", "#39c167", QLatin1String(kOk) },
+            { ConnectionPanel::StatePill::Stale, "stale", "#d39c2a", warn },
+            { ConnectionPanel::StatePill::Offline, "offline", "#c14848", QLatin1String(kDanger) },
+        };
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        showAndSettle(host);
+        for (const State& s : states) {
+            const QString sheet = ConnectionPanel::pillStyleSheet(s.pill);
+            // As written (what the look off draws).
+            QVERIFY2(sheet.contains(QLatin1String(s.written)), qPrintable(sheet));
+            // Computed: the translation every sheet takes.
+            const QString look = WorkspacePreview::lookQss(sheet);
+            QVERIFY2(look.contains(s.want), qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(s.what), look)));
+            // Rendered: a pill made after the window shows, as a row's
+            // refresh makes it.
+            auto* line = new QHBoxLayout;
+            layout->addLayout(line);
+            auto* pill = new QWidget(&host);
+            line->addWidget(pill);
+            line->addWidget(new QLabel(QString::fromLatin1(s.what), &host), 1);
+            pill->setStyleSheet(sheet);
+            showAndSettle(host);
+            QVERIFY2(pill->styleSheet().contains(s.want),
+                     qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(s.what), pill->styleSheet())));
+            const QColor drawn = centre(pill);
+            QVERIFY2(distance(drawn, QColor(s.want)) <= 6,
+                     qPrintable(QStringLiteral("%1 draws %2, wants %3").arg(QLatin1String(s.what), drawn.name(), s.want)));
+        }
+
+        // NEREUS_CONNECTION_LIGHT_IMAGES names a folder the four states are
+        // saved in, with the look on and as written (the look off).
+        const QString folder = qEnvironmentVariable("NEREUS_CONNECTION_LIGHT_IMAGES");
+        if (!folder.isEmpty()) {
+            QVERIFY(host.grab().save(folder + QStringLiteral("/connection-light--look-on.png")));
+            WorkspacePreview::setEnabledForTest(false);
+            QWidget written;
+            auto* writtenLayout = new QVBoxLayout(&written);
+            for (const State& s : states) {
+                auto* line = new QHBoxLayout;
+                writtenLayout->addLayout(line);
+                auto* pill = new QWidget(&written);
+                pill->setStyleSheet(ConnectionPanel::pillStyleSheet(s.pill));
+                line->addWidget(pill);
+                line->addWidget(new QLabel(QString::fromLatin1(s.what), &written), 1);
+            }
+            showAndSettle(written);
+            const bool saved = written.grab().save(folder + QStringLiteral("/connection-light--look-off.png"));
+            WorkspacePreview::setEnabledForTest(true);
+            QVERIFY(saved);
+        }
+
+        // The panel itself, discovery skipped by its seam: a radio just
+        // seen is online, and its row's pill is ok.
+        ConnectionPanel::setDiscoveryStartSkippedForTest(true);
+        {
+            RadioModel model;
+            ConnectionPanel panel(&model);
+            showAndSettle(panel);
+            RadioInfo info;
+            info.name = QStringLiteral("ANAN-G2");
+            info.macAddress = QStringLiteral("00:1C:C0:4E:21:0A");
+            info.address = QHostAddress(QStringLiteral("192.168.1.20"));
+            info.boardType = HPSDRHW::Saturn;
+            info.protocol = ProtocolVersion::Protocol2;
+            info.firmwareVersion = 27;
+            info.adcCount = RadioInfo::adcCountForBoard(info.boardType);
+            info.maxReceivers = RadioInfo::maxReceiversForBoard(info.boardType);
+            panel.onRadioDiscovered(info);
+            showAndSettle(panel);
+            int pills = 0;
+            for (auto* w : panel.findChildren<QWidget*>()) {
+                const QString sheet = w->styleSheet();
+                if (sheet.contains(QLatin1String("max-width: 14px"))) {
+                    QVERIFY2(sheet.contains(QLatin1String(kOk)), qPrintable(sheet));
+                    QVERIFY2(!sheet.contains(QLatin1String("#39c167")), qPrintable(sheet));
+                    ++pills;
+                }
+            }
+            QCOMPARE(pills, 1);
+        }
+        ConnectionPanel::setDiscoveryStartSkippedForTest(false);
     }
 
     void cleanupTestCase()

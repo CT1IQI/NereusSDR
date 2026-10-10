@@ -20,6 +20,10 @@
 //               discovery (setDiscoveryStartSkippedForTest), for offscreen
 //               tests and the visual preview. AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-10  J.J. Boyd (KG4VCF): the state pill's sheet comes from
+//               pillStyleSheet(), one place per state, so the workspace
+//               look's translation and its test read what a row shows.
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -167,6 +171,11 @@ static const char* kPillOnlineColor    = "#39c167";   // green  — last seen < 
 static const char* kPillStaleColor     = "#d39c2a";   // amber  — last seen 60 s – 5 min
 static const char* kPillOfflineColor   = "#c14848";   // red    — last seen > 5 min / never
 static const char* kPillConnectedColor = "#39c167";   // green  — currently connected
+// With the workspace look on these are translated by meaning
+// (StylesheetColourTable.cpp, "The connection light"): connected and online
+// are ok, offline is danger, and stale is the decided warn colour (settled
+// 2026-10-10, listed to JJ for veto). With the look off they draw as
+// written here.
 
 // ---------------------------------------------------------------------------
 // StatePill — pure static threshold function (Phase 3Q Task 5 Step 3)
@@ -762,6 +771,26 @@ void ConnectionPanel::refreshLastSeenColumn()
     }
 }
 
+// The sheet of the state-pill circle for one state.
+QString ConnectionPanel::pillStyleSheet(StatePill pill)
+{
+    const char* pillColor = kPillOfflineColor;
+    switch (pill) {
+        case StatePill::Online:    pillColor = kPillOnlineColor;    break;
+        case StatePill::Stale:     pillColor = kPillStaleColor;     break;
+        case StatePill::Offline:   pillColor = kPillOfflineColor;   break;
+        case StatePill::Connected: pillColor = kPillConnectedColor; break;
+    }
+    return QString::fromLatin1(
+        "QWidget {"
+        "  background-color: %1;"
+        "  border-radius: 7px;"
+        "  max-width: 14px; max-height: 14px;"
+        "  min-width: 14px; min-height: 14px;"
+        "  margin: 4px;"
+        "}").arg(QString::fromLatin1(pillColor));
+}
+
 // Paint a small coloured circle into the state-pill cell. Embedding a
 // QFrame widget via setCellWidget bypasses both the table's stylesheet
 // `color: ...` rule (which overrode setForeground) and any QIcon mode
@@ -775,23 +804,9 @@ void ConnectionPanel::setPillIconForRow(int row, const QString& mac)
     const StatePill pill = isConnected
         ? StatePill::Connected
         : statePillForLastSeen(m_lastSeenMs.value(mac, 0LL), now);
-    const char* pillColor = kPillOfflineColor;
-    switch (pill) {
-        case StatePill::Online:    pillColor = kPillOnlineColor;    break;
-        case StatePill::Stale:     pillColor = kPillStaleColor;     break;
-        case StatePill::Offline:   pillColor = kPillOfflineColor;   break;
-        case StatePill::Connected: pillColor = kPillConnectedColor; break;
-    }
 
     auto* pillWidget = new QWidget();
-    pillWidget->setStyleSheet(QString::fromLatin1(
-        "QWidget {"
-        "  background-color: %1;"
-        "  border-radius: 7px;"
-        "  max-width: 14px; max-height: 14px;"
-        "  min-width: 14px; min-height: 14px;"
-        "  margin: 4px;"
-        "}").arg(QString::fromLatin1(pillColor)));
+    pillWidget->setStyleSheet(pillStyleSheet(pill));
     auto* container = new QWidget();
     auto* layout = new QHBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);

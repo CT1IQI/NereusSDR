@@ -140,6 +140,13 @@ With the look off the sheets above draw as written.
   colour through `WorkspacePreview::statusColourName()` or takes a row in
   `StylesheetColourTable.cpp`; a state that is none of the three is asked
   first.
+- **The connection light's stale state:** the state pill of a radio last
+  seen one to five minutes ago is none of the three; it is the warn colour
+  `#d8a55f` (the `measured` role, `Workspace::kAmberText`; settled
+  2026-10-10). Its other states follow the rule above: connected and online
+  are ok, offline is danger. `ConnectionPanel::pillStyleSheet()` writes
+  today's literals (`#39c167`, `#d39c2a`, `#c14848`), which the look
+  translates by their rows.
 - **Output pin LEDs, off:** filled with the border colour `#2c2c31`.
 - **Progress bars:** the filled part is the selection glass; the groove is
   the platform style's, and the percent text stays centred.

@@ -35,6 +35,11 @@
 //                 border colour. The engaged green's comment names D30
 //                 and D31. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - The connection light leaves the kept list: connected and
+//                 online are live, offline is tx (danger) and stale is the
+//                 decided warn (measured, #d8a55f; settled 2026-10-10,
+//                 listed to JJ for veto). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -333,6 +338,16 @@ const QVector<ColourRow>& rows()
         { "#22cc44", kBg, "live" },              // Hl2IoBoardTab:295 LED, on
         { "#22cc44", kText, "live" },            // Hl2IoBoardTab:792,1042 "not throttled"
         { "#606060", kBg, "text-inactive" },     // Hl2IoBoardTab:287,298 LED, off
+        // The connection light (ConnectionPanel's state pill and the dot
+        // of its status strip). Connected or seen in the last minute is
+        // ok and not seen for five minutes is danger, as every status
+        // light (D21). Stale, seen one to five minutes ago, is none of
+        // on, fault and off: it takes the decided warn colour (measured,
+        // #d8a55f; settled 2026-10-10, listed to JJ for veto).
+        { "#39c167", kBg, "live" },              // ConnectionPanel:170,173 pill, online and connected
+        { "#39c167", kText, "live" },            // ConnectionPanel:705 strip dot, connected
+        { "#d39c2a", kBg, "measured" },          // ConnectionPanel:171 pill, stale
+        { "#c14848", kBg, "tx" },                // ConnectionPanel:172 pill, offline
         // An output pin that is off (settled 2026-10-10): the border
         // colour as its fill, so the pin reads as an empty socket on the
         // page and not as a legacy grey.
@@ -379,7 +394,8 @@ const QVector<KeptLiteral>& kept()
                                       "kMenuBtnActive) shares the value with its hover" },
 
         // ── Indicators, LEDs and state dots ──────────────────────
-        { "#44ff44", kBg, "LED on (Hl2IoBoardTab:788, OcLedStripWidget:146)" },
+        { "#44ff44", kBg, "LED on (Hl2IoBoardTab:788, OcLedStripWidget:146); the OC pin LEDs stay "
+                          "as they are (kept, 2026-10-10)" },
         { "#88ff88", kBorder, "LED on edge (Hl2IoBoardTab:788, OcLedStripWidget:146)" },
         { "#444", kAny, "LED and pin badge off fill and edge, and the Hl2 group frame edge "
                         "(Hl2IoBoardTab:373-837)" },
@@ -389,7 +405,8 @@ const QVector<KeptLiteral>& kept()
                           "slice-colour button fill (RxApplet:1842)" },
         { "#1a2f1a", kBg, "lit: Hl2 pin frame on (Hl2IoBoardTab:714,847)" },
         { "#2a5a2a", kBorder, "lit: Hl2 pin frame on (Hl2IoBoardTab:714)" },
-        { "#ff4500", kBg, "LED TX (OcLedStripWidget:141)" },
+        { "#ff4500", kBg, "LED TX (OcLedStripWidget:141), Thetis OrangeRed; kept with the pin LEDs "
+                          "(2026-10-10)" },
         { "#ff7f50", kBorder, "LED TX edge (OcLedStripWidget:141)" },
         { "#7a8088", kAny, "RADE state dot and label, idle (RadeApplet:143,151)" },
         { "#4caf50", kBg, "RADE state dot, synced (RadeApplet:76)" },
@@ -412,9 +429,9 @@ const QVector<KeptLiteral>& kept()
         { "#423414", kBg, "feature button hover, shiftL(measured-bg, 10) set by TitleBar:862 "
                           "with the switch on" },
         { "#ffaa00", kAny, "SWR protection LED (TxApplet:1222)" },
-        { "#39c167", kAny, "connection state pill, online (ConnectionPanel:155)" },
-        { "#d39c2a", kAny, "connection state pill, stale (ConnectionPanel:156)" },
-        { "#c14848", kText, "connection state pill, offline (ConnectionPanel:157,624)" },
+        { "#c14848", kText, "connection strip dot, disconnected (ConnectionPanel:651,724): the "
+                            "literal is also the spectrum's DISCONNECTED text (SpectrumWidget:689), "
+                            "which a text row would move with it" },
         { "#208040", kBg, "LED (CatApplet:237)" },
         { "#a04040", kBg, "LED (CatApplet:237)" },
         { "#00cc66", kBg, "state dot (TciApplet:72)" },
