@@ -1694,6 +1694,8 @@ set(GUI_SOURCES
     src/gui/styles/StylesheetColourTable.h
     src/gui/styles/WorkspaceComponents.cpp
     src/gui/styles/WorkspaceComponents.h
+    src/gui/styles/WorkspaceLookStyle.cpp
+    src/gui/styles/WorkspaceLookStyle.h
     src/gui/styles/WorkspacePalette.cpp
     src/gui/styles/WorkspacePalette.h
     src/gui/styles/WorkspacePreview.cpp

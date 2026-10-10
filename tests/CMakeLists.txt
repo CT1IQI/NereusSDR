@@ -2797,6 +2797,11 @@ endif()
 nereus_add_test(tst_workspace_settings_colours
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_workspace_settings_colours PRIVATE NEREUS_BUILD_TESTS)
+# The default button's rim and the current cell's outline are the selection
+# rim, in the shape the platform style draws.
+nereus_add_test(tst_workspace_default_button
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_default_button PRIVATE NEREUS_BUILD_TESTS)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)

@@ -49,12 +49,17 @@
 //                 as its filled part (settled with JJ's colour answers),
 //                 at the size it has today. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - installLiveTheming() also installs the look's style
+//                 object (Workspace::LookStyle): the default button's rim
+//                 and the current cell's outline. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
 
 #include "QssTranslator.h"
 #include "WorkspaceComponents.h"
+#include "WorkspaceLookStyle.h"
 #include "WorkspacePalette.h"
 #include "WorkspaceStyle.h"
 
@@ -761,6 +766,8 @@ void installLiveTheming(QApplication& app)
     if (!enabled()) {
         return;
     }
+    // What the look changes in the platform style's own drawing.
+    Workspace::LookStyle::install(app);
     if (app.findChild<QObject*>(QString::fromLatin1(kLiveFilterName),
                                 Qt::FindDirectChildrenOnly) != nullptr) {
         return;
