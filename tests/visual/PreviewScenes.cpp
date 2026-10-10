@@ -147,6 +147,10 @@
 //                 applet's own layout, above its first row, instead of over
 //                 its level meter. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - strip-scroll scenes: a Receive strip, the RX applet over
+//                 GPU meters, unscrolled and scrolled, in both looks, with
+//                 where each meter's native window sits. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -182,6 +186,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QWindow>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QStatusBar>
@@ -6842,6 +6847,99 @@ void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
     }
 }
 
+// ---- a strip container scrolled over its meters -------------------------------
+
+// JJ's left strip: the RX applet with GPU meters below it, in one stack.
+// The RX applet is a singleton, so it leaves wherever it was placed.
+QString addReceiveStrip(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return {};
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    for (auto& c : draft.containers) {
+        c.contents.erase(std::remove_if(c.contents.begin(), c.contents.end(),
+                                        [](const ContentEntry& e) { return e.typeId == QLatin1String("applet:rx"); }),
+                         c.contents.end());
+    }
+    const ContainerDocument d = makeSceneContainer(manager, QStringLiteral("Receive"), DockEdge::Left,
+        ContentLayout::VerticalStack,
+        {{QStringLiteral("applet:rx"), {}}, {QStringLiteral("meter.mic"), {}}, {QStringLiteral("meter.alc"), {}},
+         {QStringLiteral("meter.mic"), {}}, {QStringLiteral("meter.alc"), {}}, {QStringLiteral("meter.mic"), {}},
+         {QStringLiteral("meter.alc"), {}}});
+    draft.containers.append(d);
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not add the Receive container");
+        return {};
+    }
+    return d.id;
+}
+
+QScrollArea* receiveStripScroll(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    ContainerContentHost* host = manager ? manager->contentHost(QStringLiteral("preview-receive")) : nullptr;
+    return host ? host->findChild<QScrollArea*>() : nullptr;
+}
+
+// Where Qt placed each meter's native window against the widget it
+// belongs to and the scroll viewport that should clip it.
+void noteMeterWindows(SceneContext& ctx, QScrollArea* scroll, const QString& when)
+{
+    QWidget* viewport = scroll->viewport();
+    const QRect clip(viewport->mapTo(ctx.window, QPoint()), viewport->size());
+    for (MeterWidget* m : scroll->findChildren<MeterWidget*>()) {
+        const QRect widget(m->mapTo(ctx.window, QPoint()), m->size());
+        QJsonObject note{{QStringLiteral("when"), when},
+                         {QStringLiteral("meter"), m->objectName().isEmpty() ? QStringLiteral("MeterWidget") : m->objectName()},
+                         {QStringLiteral("widget_in_window"), rectJson(widget)},
+                         {QStringLiteral("viewport_in_window"), rectJson(clip)},
+                         {QStringLiteral("visible_part"), rectJson(widget.intersected(clip))},
+                         {QStringLiteral("native"), m->testAttribute(Qt::WA_NativeWindow)}};
+        if (QWindow* w = m->windowHandle()) {
+            note.insert(QStringLiteral("native_window_geometry"), rectJson(w->geometry()));
+            note.insert(QStringLiteral("native_parent"), w->parent() ? w->parent()->objectName() : QStringLiteral("(none)"));
+            note.insert(QStringLiteral("native_mask_empty"), w->mask().isEmpty());
+            // The widget that owns the native parent window, and how far
+            // up the meter it sits.
+            int depth = 0;
+            for (QWidget* a = m->parentWidget(); a != nullptr; a = a->parentWidget(), ++depth) {
+                if (a->windowHandle() != nullptr && a->windowHandle() == w->parent()) {
+                    note.insert(QStringLiteral("native_parent_widget"),
+                                QStringLiteral("%1 '%2' %3 levels up%4%5")
+                                    .arg(QString::fromLatin1(a->metaObject()->className()), a->objectName())
+                                    .arg(depth + 1)
+                                    .arg(a == viewport ? QStringLiteral(" (the scroll viewport)") : QString(),
+                                         a == scroll->widget() ? QStringLiteral(" (the scrolled body)") : QString()));
+                    break;
+                }
+            }
+        }
+        // Every ancestor up to the window: which own a native window, and
+        // where that window sits against its parent.
+        QJsonArray chain;
+        for (QWidget* a = m->parentWidget(); a != nullptr; a = a->parentWidget()) {
+            QString line = QStringLiteral("%1 '%2'").arg(QString::fromLatin1(a->metaObject()->className()), a->objectName());
+            if (a == viewport) { line += QStringLiteral(" [viewport]"); }
+            if (a == scroll->widget()) { line += QStringLiteral(" [body]"); }
+            if (a->internalWinId() != 0) {
+                line += QStringLiteral(" native");
+                if (a->testAttribute(Qt::WA_NativeWindow)) { line += QStringLiteral(" (asked)"); }
+                if (a->windowHandle() != nullptr) {
+                    const QRect g = a->windowHandle()->geometry();
+                    line += QStringLiteral(" at %1,%2 %3x%4").arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height());
+                }
+            }
+            chain.append(line);
+            if (a->isWindow()) { break; }
+        }
+        note.insert(QStringLiteral("ancestors"), chain);
+        ctx.notes.append(note);
+    }
+}
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -7412,6 +7510,37 @@ QVector<Scene> fixedScenes()
         });
         if (ctx.failure.isEmpty()) { sceneDataColoursDecided(ctx); }
     }, true});
+    // JJ's left strip, the RX applet over GPU meters,
+    // unscrolled (the meters must show their scales) and scrolled part way,
+    // in today's look and the workspace look.
+    for (const bool look : {false, true}) {
+        for (const int scrollPx : {0, 70}) {
+            const QString name = QStringLiteral("strip-scroll--%1-%2")
+                .arg(look ? QStringLiteral("workspace") : QStringLiteral("today"),
+                     scrollPx == 0 ? QStringLiteral("unscrolled") : QStringLiteral("scrolled"));
+            scenes.append({name, QStringLiteral("2v"), false, [name, scrollPx](SceneContext& ctx) {
+                ctx.extraCrops = addStripCrops;
+                runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) { addReceiveStrip(c); },
+                               [scrollPx](SceneContext& c) {
+                    QScrollArea* scroll = receiveStripScroll(c);
+                    if (scroll == nullptr) {
+                        c.failure = QStringLiteral("no Receive strip scroll area");
+                        return;
+                    }
+                    noteMeterWindows(c, scroll, QStringLiteral("before scrolling"));
+                    QScrollBar* bar = scroll->verticalScrollBar();
+                    bar->setValue(qMin(scrollPx, bar->maximum()));
+                    pump(kSettleMs);
+                    c.notes.append(QJsonObject{{QStringLiteral("scroll_value"), bar->value()},
+                                               {QStringLiteral("scroll_maximum"), bar->maximum()}});
+                    noteMeterWindows(c, scroll, QStringLiteral("after scrolling"));
+                });
+                if (ctx.failure.isEmpty()) {
+                    captureWindow(ctx, name);
+                }
+            }, look});
+        }
+    }
     // JJ's decided sliders, indicators, lit buttons, radii and scroll bars
     // through the product path (ControlsSheet.cpp).
     scenes.append({QStringLiteral("decided--controls"), QStringLiteral("2v"), false,
