@@ -7,9 +7,10 @@
 // ends up with, or a pixel of its grab, and checks the colour its meaning
 // takes: the decided status tones (D21: ok #4caf6a, warn #d8a55f, danger
 // #c25a5c), the container's surface for panels and data backgrounds
-// (D22), the secondary text for notes, the glass for a selection, the
-// engaged green for an amplifier in operate and the lit green (D15) for a
-// checked processing button.
+// (D22), the secondary text for notes, the glass for a selection (D31:
+// the tuner's chosen antenna), the lit green (D15) for a checked
+// processing button and for OPERATE on (D30), and the status lights by
+// meaning.
 //
 // The applet cases pose their states after the window is shown and the
 // live pass has run, through the applets' own setters or a tuner model
@@ -20,6 +21,11 @@
 //   2026-10-09 - Written for the colour round on Settings pages, dialogs
 //                 and applet states. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - JJ's D30 (OPERATE on is the lit green) and D31 (the
+//                 tuner's chosen antenna is the selection glass), the
+//                 status lights by meaning and the settled items of the
+//                 colour round. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -27,12 +33,16 @@
 #include <QFrame>
 #include <QLabel>
 #include <QListWidget>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSignalBlocker>
 #include <QStyleFactory>
+#include <QVBoxLayout>
 
 #include <cmath>
 #include <memory>
+#include <optional>
 
 #include "core/AppSettings.h"
 #include "core/TgxlConnection.h"
@@ -48,8 +58,10 @@
 #include "gui/diagnostics/RadioStatusPage.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/setup/hardware/AntennaAlexAlex2Tab.h"
+#include "gui/setup/TransmitSetupPages.h"
 #include "gui/setup/hardware/Hl2IoBoardTab.h"
 #include "gui/styles/AppTheme.h"
+#include "gui/styles/WorkspaceComponents.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/DiversityRadarWidget.h"
@@ -341,11 +353,31 @@ private slots:
         QVERIFY2(px.green() > px.red() && px.green() > px.blue(), qPrintable(px.name()));
     }
 
-    // OPERATE on, posted after the pass, is the engaged green (dsp-on, as
-    // Longpath's OPERATE), in all three applets.
-    void operateOnAfterShowIsTheEngagedGreen()
+    // D30 (JJ, 2026-10-10): OPERATE on, posted after the pass, is the
+    // raised lit green of PS-A on (D15), in all three applets; it stays
+    // lit under the pointer, and the buttons stay plain push buttons.
+    void operateOnAfterShowIsLitGreen()
     {
-        const QString engaged = role("dsp-on-bg");
+        const auto isLit = [](QPushButton* op) {
+            const QString s = op->styleSheet();
+            for (const char* part : { "#306247", "#254d38", "#1d3d2c", "color: #bbe1c6",
+                                      "border-color: #3e7e5c", "border-top-color: #48946b" }) {
+                if (!s.contains(QLatin1String(part))) {
+                    return QStringLiteral("no %1 in: %2").arg(QLatin1String(part), s);
+                }
+            }
+            if (s.contains(QLatin1String("#006030")) || s.contains(role("dsp-on-border"))) {
+                return QStringLiteral("flat engaged green in: %1").arg(s);
+            }
+            if (op->isCheckable()) {
+                return QStringLiteral("checkable");
+            }
+            const QColor px = op->grab().toImage().pixelColor(3, op->height() / 2);
+            if (distance(px, QColor(QStringLiteral("#254d38"))) > 24) {
+                return QStringLiteral("pixel %1").arg(px.name());
+            }
+            return QString();
+        };
         {
             TgxlConnection connection;
             TunerModel tuner;
@@ -357,8 +389,12 @@ private slots:
             QApplication::processEvents();
             QPushButton* op = applet.operateButtonForTesting();
             QCOMPARE(op->text(), QStringLiteral("OPERATE"));
-            QVERIFY2(op->styleSheet().contains(engaged), qPrintable(op->styleSheet()));
-            QVERIFY2(!op->styleSheet().contains(QLatin1String("#006030")), qPrintable(op->styleSheet()));
+            QVERIFY2(isLit(op).isEmpty(), qPrintable(isLit(op)));
+            // Standby again: the lit green goes with the state.
+            connection.injectLineForTesting(QStringLiteral("S0|state state=0 bypass=0"));
+            QApplication::processEvents();
+            QCOMPARE(op->text(), QStringLiteral("STANDBY"));
+            QVERIFY2(!op->styleSheet().contains(QLatin1String("#306247")), qPrintable(op->styleSheet()));
         }
         {
             AmpApplet applet(nullptr);
@@ -367,7 +403,10 @@ private slots:
             QApplication::processEvents();
             QPushButton* op = buttonWithText(applet, QStringLiteral("OPERATE"));
             QVERIFY(op != nullptr);
-            QVERIFY2(op->styleSheet().contains(engaged), qPrintable(op->styleSheet()));
+            QVERIFY2(isLit(op).isEmpty(), qPrintable(isLit(op)));
+            applet.setState(QStringLiteral("STANDBY"));
+            QApplication::processEvents();
+            QVERIFY2(!op->styleSheet().contains(QLatin1String("#306247")), qPrintable(op->styleSheet()));
         }
         {
             Rf2ksApplet applet(nullptr);
@@ -376,16 +415,18 @@ private slots:
             QApplication::processEvents();
             QPushButton* op = buttonWithText(applet, QStringLiteral("OPERATE"));
             QVERIFY(op != nullptr);
-            QVERIFY2(op->styleSheet().contains(engaged), qPrintable(op->styleSheet()));
+            QVERIFY2(isLit(op).isEmpty(), qPrintable(isLit(op)));
+            applet.setOperateMode(QStringLiteral("STANDBY"));
+            QApplication::processEvents();
+            QVERIFY2(!op->styleSheet().contains(QLatin1String("#306247")), qPrintable(op->styleSheet()));
         }
     }
 
-    // The selected tuner antenna, posted after the pass, takes the engaged
-    // green its sheet shares with OPERATE (TunerApplet.cpp:1004-1009): the
-    // buttons are not checkable, so the live pass reads a flat blue as an
-    // action button, and the glass would need them checkable (stopped for
-    // JJ).
-    void selectedAntennaAfterShowIsTheEngagedGreen()
+    // D31 (JJ, 2026-10-10): the tuner's chosen antenna, posted after the
+    // pass, is the blue selection glass; the others are raised buttons.
+    // The buttons stay plain push buttons: a click on the chosen one
+    // keeps it chosen, and the chosen state follows the tuner's report.
+    void chosenTunerAntennaIsSelectionGlass()
     {
         TgxlConnection connection;
         TunerModel tuner;
@@ -401,12 +442,240 @@ private slots:
         connection.injectLineForTesting(QStringLiteral("V1.2.17"));
         connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0 antA=1 3way=1"));
         QApplication::processEvents();
-        QPushButton* ant2 = buttonWithText(applet, QStringLiteral("ANT 2"));
-        QVERIFY(ant2 != nullptr);
-        QVERIFY2(ant2->styleSheet().contains(role("dsp-on-bg")), qPrintable(ant2->styleSheet()));
-        QVERIFY2(!ant2->styleSheet().contains(QLatin1String("#006030")), qPrintable(ant2->styleSheet()));
-        QVERIFY(ant2->isVisibleTo(&applet));
-        QCOMPARE(centre(ant2).name(), role("dsp-on-bg"));
+        const auto glass = [](QPushButton* b) {
+            const QString s = b->styleSheet();
+            return s.contains(QLatin1String("#2f5f92")) && s.contains(QLatin1String("color: #dbe9f8"))
+                && s.contains(QLatin1String("border-color: #3d78b0")) && !s.contains(QLatin1String("#006030"));
+        };
+        QPushButton* ant[3] = { applet.antennaButtonForTesting(1), applet.antennaButtonForTesting(2),
+                                applet.antennaButtonForTesting(3) };
+        for (auto* b : ant) {
+            QVERIFY(b != nullptr);
+            QVERIFY(!b->isCheckable());
+        }
+        QVERIFY(ant[1]->isVisibleTo(&applet));
+        QVERIFY2(glass(ant[1]), qPrintable(ant[1]->styleSheet()));
+        QVERIFY2(!glass(ant[0]) && !glass(ant[2]), qPrintable(ant[0]->styleSheet()));
+        QVERIFY2(!ant[1]->styleSheet().contains(role("dsp-on-bg")), qPrintable(ant[1]->styleSheet()));
+        // Rendered: the glass runs #2f5f92 to #1e3d5f, blue leading.
+        const QColor px = ant[1]->grab().toImage().pixelColor(3, ant[1]->height() / 2);
+        QVERIFY2(px.blue() > px.green() && px.green() > px.red() && px.blue() >= 0x5f, qPrintable(px.name()));
+        const QColor other = ant[0]->grab().toImage().pixelColor(3, ant[0]->height() / 2);
+        QVERIFY2(other.blue() < 0x40, qPrintable(other.name()));
+        // A click on the chosen antenna asks the tuner for it again and
+        // changes nothing here.
+        ant[1]->click();
+        QApplication::processEvents();
+        QVERIFY2(glass(ant[1]), qPrintable(ant[1]->styleSheet()));
+        QVERIFY(!glass(ant[0]) && !glass(ant[2]));
+        // A click on another antenna only asks: the glass moves when the
+        // tuner reports the change, not before.
+        ant[2]->click();
+        QApplication::processEvents();
+        QVERIFY(glass(ant[1]) && !glass(ant[2]));
+        connection.injectLineForTesting(QStringLiteral("S0|state state=1 bypass=0 antA=2 3way=1"));
+        QApplication::processEvents();
+        QVERIFY2(glass(ant[2]), qPrintable(ant[2]->styleSheet()));
+        QVERIFY2(!glass(ant[0]) && !glass(ant[1]), qPrintable(ant[1]->styleSheet()));
+    }
+
+    // The status lights by meaning (D21, settled 2026-10-10): on or
+    // connected is ok, disconnected or a fault is danger, off is the
+    // inactive text colour. Every state of each light.
+    void statusLightsTakeTheirMeaning()
+    {
+        const QString off = role("text-inactive");
+        QCOMPARE(off, QStringLiteral("#58585e"));
+        // The RF2K-S connection dot.
+        {
+            Rf2ksApplet applet(nullptr);
+            showAndSettle(applet);
+            int dots = 0;
+            for (bool connected : { true, false }) {
+                applet.setConnectedState(connected);
+                QApplication::processEvents();
+                for (auto* l : applet.findChildren<QLabel*>()) {
+                    const QString s = l->styleSheet();
+                    if (s.contains(QLatin1String("border-radius:5px")) || s.contains(QLatin1String("border-radius: 5px"))) {
+                        QVERIFY2(s.contains(QLatin1String(connected ? kOk : kDanger)), qPrintable(s));
+                        ++dots;
+                    }
+                }
+            }
+            QCOMPARE(dots, 2);
+        }
+        // The sheets the other lights set, state by state, through the
+        // translation every sheet takes (WorkspacePreview::lookQss).
+        struct Light {
+            const char* what;
+            const char* sheet;
+            QString want;
+        };
+        const Light lights[] = {
+            { "sound system dot, working", "QLabel { background: #33dd88; border-radius: 4px; }",
+              QLatin1String(kOk) },
+            { "sound system dot, problem", "QLabel { background: #e04848; border-radius: 4px; }",
+              QLatin1String(kDanger) },
+            { "Alex-2 board LED, active", "QLabel { background: #00cc00; border-radius: 5px; }",
+              QLatin1String(kOk) },
+            { "Alex-2 board LED, not detected", "QLabel { background: #666666; border-radius: 5px; }", off },
+            { "Alex filter LED, lit", "QFrame { background: #00cc44; border-radius: 5px; }",
+              QLatin1String(kOk) },
+            { "Alex filter LED, off", "QFrame { background: #444444; border-radius: 5px; }", off },
+            { "HL2 I/O LED, on", "QFrame { background: #22cc44; border-radius: 6px; }", QLatin1String(kOk) },
+            { "HL2 I/O LED, off", "QFrame { background: #606060; border-radius: 6px; }", off },
+            { "HL2 not throttled", "font-size: 10px; color: #22cc44;", QLatin1String(kOk) },
+            { "speech chain dot, on", "QLabel { color: #20e070; font-size: 14px; font-weight: bold; }",
+              QLatin1String(kOk) },
+        };
+        for (const Light& l : lights) {
+            const QString look = WorkspacePreview::lookQss(QString::fromLatin1(l.sheet));
+            QVERIFY2(look.contains(l.want), qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(l.what), look)));
+        }
+    }
+
+    // The HL2 throttle line: throttled is a fault (danger), not throttled
+    // is ok, and "Unavailable" carries no colour.
+    void hl2ThrottleLineTakesItsMeaning()
+    {
+        RadioModel radio;
+        Hl2IoBoardTab tab(&radio);
+        showAndSettle(tab);
+        tab.showThrottleStateForTest(std::nullopt);
+        QApplication::processEvents();
+        QCOMPARE(tab.throttleStatusTextForTest(), QStringLiteral("Unavailable"));
+        QVERIFY2(!tab.throttleStatusSheetForTest().contains(QLatin1String("color")),
+                 qPrintable(tab.throttleStatusSheetForTest()));
+        tab.showThrottleStateForTest(true);
+        QApplication::processEvents();
+        QVERIFY2(tab.throttleStatusSheetForTest().contains(QStringLiteral("color: %1").arg(QLatin1String(kDanger))),
+                 qPrintable(tab.throttleStatusSheetForTest()));
+        tab.showThrottleStateForTest(false);
+        QApplication::processEvents();
+        QVERIFY2(tab.throttleStatusSheetForTest().contains(QStringLiteral("color: %1").arg(QLatin1String(kOk))),
+                 qPrintable(tab.throttleStatusSheetForTest()));
+    }
+
+    // The speech chain's stage dots: a stage that is on is ok, one that
+    // is off is the inactive text colour.
+    void speechChainDotsTakeTheirMeaning()
+    {
+        RadioModel radio;
+        SpeechProcessorPage page(&radio);
+        showAndSettle(page);
+        int on = 0;
+        int offDots = 0;
+        for (auto* l : page.findChildren<QLabel*>()) {
+            if (!l->objectName().startsWith(QLatin1String("dot_"))) {
+                continue;
+            }
+            const QString s = l->styleSheet();
+            QVERIFY2(!s.contains(QLatin1String("#20e070")) && !s.contains(QLatin1String("#607080")), qPrintable(s));
+            if (s.contains(QLatin1String(kOk))) {
+                ++on;
+            } else if (s.contains(role("text-inactive"))) {
+                ++offDots;
+            } else {
+                QFAIL(qPrintable(l->objectName() + QLatin1String(": ") + s));
+            }
+        }
+        QVERIFY2(on >= 1 && offDots >= 1, qPrintable(QStringLiteral("on %1 off %2").arg(on).arg(offDots)));
+    }
+
+    // Settled 2026-10-10: an output pin that is off (the HL2 tabs' pin
+    // LEDs and the OC strip) is filled with the border colour, not the
+    // legacy #222.
+    void offPinLedsAreTheBorderColour()
+    {
+        const QString look = WorkspacePreview::lookQss(QStringLiteral(
+            "QFrame { background: #222; border: 1px solid #555; border-radius: 5px; }"));
+        QVERIFY2(look.contains(QStringLiteral("background: %1").arg(role("border"))), qPrintable(look));
+        QCOMPARE(role("border"), QStringLiteral("#2c2c31"));
+        RadioModel radio;
+        Hl2IoBoardTab tab(&radio);
+        showAndSettle(tab);
+        int pins = 0;
+        for (auto* f : tab.findChildren<QFrame*>()) {
+            const QString s = f->styleSheet();
+            if (s.contains(QLatin1String("border-radius: 5px")) && s.contains(QLatin1String("1px solid"))) {
+                QVERIFY2(s.contains(QStringLiteral("background: %1").arg(role("border"))), qPrintable(s));
+                ++pins;
+            }
+        }
+        QVERIFY(pins > 0);
+    }
+
+    // Settled 2026-10-10: a checked radio whose sheet draws a 2 px rim
+    // (the NR2 page, DspSetupPages.cpp:875-880) has the checked radio's
+    // rim all round; the 1 px light top edge on it drew a second ring
+    // and a blend where the two met (#4885be).
+    void wideRadioRimIsTheCheckedRim()
+    {
+        QWidget host;
+        auto* radio = new QRadioButton(QStringLiteral("Pre-AGC"), &host);
+        radio->setStyleSheet(QStringLiteral(
+            "QRadioButton { color: #c8d8e8; font-size: 12px; }"
+            "QRadioButton::indicator { width: 14px; height: 14px; }"
+            "QRadioButton::indicator:unchecked { border: 2px solid #304050; "
+            "border-radius: 7px; background: #1a2a3a; }"
+            "QRadioButton::indicator:checked { border: 2px solid #00b4d8; "
+            "border-radius: 7px; background: #00b4d8; }"));
+        radio->setChecked(true);
+        host.resize(120, 40);
+        showAndSettle(host);
+        const QString s = radio->styleSheet();
+        QVERIFY2(s.contains(QLatin1String("border-color: #3d78b0")), qPrintable(s));
+        QVERIFY2(!s.contains(QLatin1String("#4b88c1")), qPrintable(s));
+        const QImage img = radio->grab().toImage();
+        int rim = 0;
+        for (int y = 0; y < img.height(); ++y) {
+            for (int x = 0; x < img.width(); ++x) {
+                const QString px = img.pixelColor(x, y).name();
+                QVERIFY2(px != QLatin1String("#4885be") && px != QLatin1String("#4b88c1"),
+                         qPrintable(QStringLiteral("%1 at %2,%3").arg(px).arg(x).arg(y)));
+                rim += px == QLatin1String("#3d78b0") ? 1 : 0;
+            }
+        }
+        QVERIFY2(rim > 20, qPrintable(QString::number(rim)));
+        // The decided 1 px radio keeps its light top edge.
+        const QString decided = Workspace::Components::indicatorRulesFor(true);
+        QVERIFY2(decided.contains(QLatin1String("border-top-color: #4b88c1")), qPrintable(decided));
+    }
+
+    // Settled 2026-10-10: the filled part of a progress bar no sheet
+    // styles (the LAN scan's) is the selection glass, not the platform
+    // style's lightened highlight (#3870ad at the top); the bar keeps its
+    // size.
+    void progressChunkIsTheSelectionGlass()
+    {
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* bar = new QProgressBar(&host);
+        bar->setRange(0, 100);
+        bar->setValue(100);
+        bar->setTextVisible(false);
+        layout->addWidget(bar);
+        host.resize(300, 60);
+        const QSize before = bar->sizeHint();
+        showAndSettle(host);
+        QCOMPARE(bar->sizeHint(), before);
+        QVERIFY2(bar->styleSheet().contains(QLatin1String("QProgressBar::chunk")), qPrintable(bar->styleSheet()));
+        const QImage img = bar->grab().toImage();
+        const QColor top(QStringLiteral("#2f5f92"));
+        const QColor bottom(QStringLiteral("#1e3d5f"));
+        int glass = 0;
+        int lightened = 0;
+        const int x = img.width() / 2;
+        for (int y = 0; y < img.height(); ++y) {
+            const QColor px = img.pixelColor(x, y);
+            lightened += distance(px, QColor(QStringLiteral("#3870ad"))) <= 6 ? 1 : 0;
+            glass += (px.blue() <= top.blue() + 1 && px.blue() >= bottom.blue() - 1
+                      && px.red() <= top.red() + 1 && px.red() >= bottom.red() - 1
+                      && px.blue() > px.green() && px.green() > px.red())
+                ? 1 : 0;
+        }
+        QCOMPARE(lightened, 0);
+        QVERIFY2(glass >= img.height() - 4, qPrintable(QStringLiteral("%1 of %2").arg(glass).arg(img.height())));
     }
 
     // The PureSignal banner's status fills are the decided tones (D21).

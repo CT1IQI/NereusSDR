@@ -29,6 +29,12 @@
 //   2026-10-09 - Written for the colour round on Settings pages and
 //                 dialogs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - JJ's colour answers: the lists split into kept by
+//                 decision (Block TX tint, TX filter label, the PureSignal
+//                 badge's DimGray and DodgerBlue, D32) and stopped for JJ;
+//                 the lights, the HL2 pins, the LAN scan bar and the NR2
+//                 rim left the stopped list. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -48,6 +54,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <memory>
 
 #include "core/AppSettings.h"
@@ -166,62 +173,67 @@ const QStringList kDataSurfaceObjects = {
     QStringLiteral("remoteRadioLinkGraph"),
 };
 
-// Findings stopped for JJ (task 40 report): colours no decided meaning
-// matches, or whose meaning is his to choose. Matched by image and owner
-// (wildcards) and colour ("*": any); counted and printed, not failed. A
-// finding not on the list fails the sweep.
-struct Stopped {
+// Findings kept by decision and findings stopped for JJ. Both are matched
+// by image and owner (wildcards) and colour ("*": any), counted and
+// printed, not failed. A finding on neither list fails the sweep.
+struct Listed {
     const char* image;
     const char* owner;
     const char* colour;
     const char* why;
 };
-const Stopped kStoppedForJJ[] = {
-    { "look-dialog-lit-operate", "QLabel", "#e64949",
-      "the RF2K-S disconnected dot (Rf2ksApplet.cpp:628): a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-connection-panel", "QWidget", "#39c167",
-      "the online connection pill (ConnectionPanel.cpp:155): a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-outputs", "QLabel#soundSystemDot", "#33dd88",
-      "the sound system dot: a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-digital-modes", "QLabel#vaxSystemStatusDot", "#33dd88",
-      "the VAX system dot: a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-speech-processor", "QLabel#dot_ALC", "#20e070",
-      "the ALC activity dot: a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-hardware-config--antenna-alex--alex-2-filters*", "QLabel", "#00cc00",
-      "the Alex-2 live LED on (AntennaAlexAlex2Tab.cpp:531): a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-hardware-config--antenna-alex--alex-?-filters*", "QFrame", "#444444",
-      "the Alex filter LED off (AntennaAlexAlex1Tab.cpp:863, Alex2Tab.cpp:703): a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-hardware-config--hl2-i-o--scrolled-*", "QLabel", "#146325",
-      "the HL2 LAN PHY throttle text in #22cc44 (Hl2IoBoardTab.cpp:792): a status LED or dot the table keeps (StylesheetColourTable.cpp kept rows); D21 would map it, JJ to rule" },
-    { "look-dialog-setup-hardware-config--hl2-*", "QFrame", "#222222",
-      "an HL2 tab frame no table row names; no decided meaning matches" },
+// Kept by decision (JJ's colour answers, 2026-10-10): the colour stays
+// outside the palette on purpose.
+const Listed kKeptByDecision[] = {
     { "look-dialog-setup-hardware-config--antenna-alex*", "QFrame", "#140f12",
-      "the Block TX safety frame: already danger at the source's 8 percent alpha (AntennaAlexAntennaControlTab.cpp:247); a flat translucent tint the analyser does not model" },
+      "kept (settled 2026-10-10): the Block TX safety frame, danger at the source's 8 percent alpha "
+      "(AntennaAlexAntennaControlTab.cpp:247), a translucent tint the analyser does not model" },
     { "look-dialog-setup-hardware-config--antenna-alex*", "QLabel", "#1f161a",
-      "the Block TX safety note over that tint (AntennaAlexAntennaControlTab.cpp:267)" },
+      "kept (settled 2026-10-10): the Block TX safety note over that tint "
+      "(AntennaAlexAntennaControlTab.cpp:267)" },
     { "look-dialog-lit-psa-on", "QLabel", "#ffaa70",
-      "the TX filter overlay label, a user setting kept by the table (StyleConstants:388)" },
+      "kept (settled 2026-10-10): the TX filter overlay label is the user's colour setting "
+      "(StyleConstants:388)" },
+};
+// Stopped for JJ (task 46 report): the meaning or the mechanism is his to
+// choose.
+const Listed kStoppedForJJ[] = {
+    { "look-dialog-connection-panel", "QWidget", "#39c167",
+      "the connection pill (ConnectionPanel.cpp:166-169) has a state that is none of on, fault and off "
+      "(stale, amber #d39c2a), so the whole light waits for JJ" },
     { "look-dialog-*", "QPushButton*", "#212630",
-      "the focus ring Fusion draws on the dialog's focused button from the palette, not a sheet colour" },
-    { "look-dialog-lan-scan", "QProgressBar", "#3870ad",
-      "the progress chunk Fusion draws from the palette Highlight" },
+      "the tinted fill Fusion draws on a dialog's default button from the palette Highlight (with the "
+      "#264c75 outline); no sheet draws it, and the selection rim there needs a drawing mechanism JJ "
+      "has not chosen" },
     { "look-dialog-lan-scan", "QWidget#qt_scrollarea_viewport", "*",
-      "the LAN scan list viewport; no decided meaning matches" },
-    { "look-dialog-setup-nr-anf--nr2", "QRadioButton", "#4885be",
-      "six pixels of a radio indicator's antialiased rim" },
+      "the keyboard focus rectangle Fusion draws on the list's current cell from the palette Highlight "
+      "(96 by 3 px of the first cell); the viewport itself is the inset surface. The same question as the "
+      "default button's tint" },
 };
 
-const Stopped* stoppedFor(const QString& image, const QString& owner, const QString& colour)
+const Listed* listedIn(const Listed* first, const Listed* last, const QString& image, const QString& owner,
+                       const QString& colour)
 {
-    for (const Stopped& st : kStoppedForJJ) {
-        const QRegularExpression re(QRegularExpression::wildcardToRegularExpression(QString::fromLatin1(st.image)));
+    for (const Listed* st = first; st != last; ++st) {
+        const QRegularExpression re(QRegularExpression::wildcardToRegularExpression(QString::fromLatin1(st->image)));
         const QRegularExpression ownerRe(
-            QRegularExpression::wildcardToRegularExpression(QString::fromLatin1(st.owner)));
-        if (re.match(image).hasMatch() && ownerRe.match(owner).hasMatch() && (qstrcmp(st.colour, "*") == 0 || colour == QLatin1String(st.colour))) {
-            return &st;
+            QRegularExpression::wildcardToRegularExpression(QString::fromLatin1(st->owner)));
+        if (re.match(image).hasMatch() && ownerRe.match(owner).hasMatch()
+            && (qstrcmp(st->colour, "*") == 0 || colour == QLatin1String(st->colour))) {
+            return st;
         }
     }
     return nullptr;
+}
+
+const Listed* keptFor(const QString& image, const QString& owner, const QString& colour)
+{
+    return listedIn(std::begin(kKeptByDecision), std::end(kKeptByDecision), image, owner, colour);
+}
+
+const Listed* stoppedFor(const QString& image, const QString& owner, const QString& colour)
+{
+    return listedIn(std::begin(kStoppedForJJ), std::end(kStoppedForJJ), image, owner, colour);
 }
 
 QString unqualified(const QString& className)
@@ -826,10 +838,13 @@ private slots:
         QSet<QString> owners;
         QVector<Finding> unexpected;
         int stopped = 0;
+        int kept = 0;
         for (const Finding& f : findings) {
             colours.insert(f.colour);
             owners.insert(f.owner);
-            if (stoppedFor(f.image, f.owner, f.colour) != nullptr) {
+            if (keptFor(f.image, f.owner, f.colour) != nullptr) {
+                ++kept;
+            } else if (stoppedFor(f.image, f.owner, f.colour) != nullptr) {
                 ++stopped;
             } else {
                 unexpected.append(f);
@@ -838,7 +853,8 @@ private slots:
         qInfo("colour sweep: %d scenes, %d images, %d findings, %d colours, %d widgets, %d scenes failed",
               int(scenes.size()), images, int(findings.size()), int(colours.size()), int(owners.size()),
               int(failed.size()));
-        qInfo("colour sweep: %d findings stopped for JJ, %d not on the list", stopped, int(unexpected.size()));
+        qInfo("colour sweep: %d findings kept by decision, %d stopped for JJ, %d on neither list", kept, stopped,
+              int(unexpected.size()));
         QVERIFY2(failed.isEmpty(), qPrintable(failed.join(QLatin1Char('\n'))));
         QVERIFY(images > 0);
         QVERIFY2(unexpected.isEmpty(), qPrintable(describe(unexpected)));
@@ -958,22 +974,30 @@ private slots:
         }
         {
             // The badge's fills by feedback level (PsaIndicatorWidget.cpp):
-            // the status tones are the palette; the off grey and the
-            // over-range blue are listed for JJ, so they are reported.
+            // the status tones are the palette. The off grey (Thetis
+            // DimGray) and the over-range blue (Thetis DodgerBlue,
+            // feedback above 181) keep their colours by JJ's D32
+            // (2026-10-10): neither is a status the decided tones name, and
+            // the banner is read against Thetis. Both are posed, checked to
+            // be those colours and counted as kept.
             PsaIndicatorWidget badge(nullptr);
             settle(badge);
+            badge.setPsEnabled(false);
+            ++poses;
+            analyseInPlace(palette, QStringLiteral("posed-PsaIndicator-off"), &badge, &badge);
+            QCOMPARE(badge.psBackgroundColor(), QColor(105, 105, 105));
+            exempted[QStringLiteral("PureSignal badge off, DimGray (kept, D32)")] += 1;
             badge.setPsEnabled(true);
             badge.setMox(true);
             badge.setCorrectionsBeingApplied(true);
-            // The over-range blue (feedback above 181) has no status
-            // meaning to map to; it is stopped for JJ and counted here.
             for (int level : { 0, 100, 160, 200, 255 }) {
                 badge.setFeedbackLevel(level);
                 ++poses;
                 const QVector<Finding> f = analyseInPlace(
                     palette, QStringLiteral("posed-PsaIndicator-level-%1").arg(level), &badge, &badge);
-                if (level > 181 && badge.psBackgroundColor() == QColor(30, 144, 255)) {
-                    exempted[QStringLiteral("PureSignal badge over-range blue (stopped for JJ)")] += 1;
+                if (level > 181) {
+                    QCOMPARE(badge.psBackgroundColor(), QColor(30, 144, 255));
+                    exempted[QStringLiteral("PureSignal badge over range, DodgerBlue (kept, D32)")] += 1;
                     continue;
                 }
                 findings += f;

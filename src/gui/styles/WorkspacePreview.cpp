@@ -45,6 +45,10 @@
 //                 widgets beside it keep their size.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-10 - A progress bar no sheet styles takes the selection glass
+//                 as its filled part (settled with JJ's colour answers),
+//                 at the size it has today. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -333,6 +337,59 @@ QString sliderBlock(QWidget* w, const QString& look, const QString& current)
     return rules + QStringLiteral("QSlider {%1 }\n").arg(decls);
 }
 
+// True when a sheet on the progress bar, an ancestor or the application
+// styles a progress bar: that sheet drew it already.
+bool isUnstyledProgressBar(const QWidget* w, const QString& own)
+{
+    if (!w->inherits("QProgressBar")) {
+        return false;
+    }
+    const auto styles = [](const QString& sheet) {
+        return sheet.contains(QLatin1String("QProgressBar"), Qt::CaseInsensitive);
+    };
+    if (styles(own) || own.contains(QLatin1String("::chunk"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    for (const QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (styles(p->styleSheet())) {
+            return false;
+        }
+    }
+    return qApp == nullptr || !styles(qApp->styleSheet());
+}
+
+// The selection glass as the filled part of a progress bar no sheet
+// styles (settled 2026-10-10), with what keeps its size: the bar is
+// measured as it is and with the rule, and today's thickness goes back
+// as a minimum and maximum where the rule changed it. A thickness the
+// program fixed stays as it is.
+QString progressBlock(QWidget* w, const QString& look, const QString& current)
+{
+    const bool vertical = w->property("orientation").toInt() == Qt::Vertical;
+    const QString rules = Workspace::Components::progressChunkRules();
+    const QSize today = w->sizeHint();
+    const auto measure = [w](const QString& sheet) {
+        w->setProperty(kThemedQssProperty, sheet);
+        w->setStyleSheet(sheet);
+        return w->sizeHint();
+    };
+    const QSize bare = measure(look + rules);
+    QString decls;
+    if (vertical) {
+        if (bare.width() != today.width() && w->minimumWidth() != w->maximumWidth()) {
+            decls += QStringLiteral(" min-width: %1px; max-width: %1px;").arg(today.width());
+        }
+    } else if (bare.height() != today.height() && w->minimumHeight() != w->maximumHeight()) {
+        decls += QStringLiteral(" min-height: %1px; max-height: %1px;").arg(today.height());
+    }
+    w->setProperty(kThemedQssProperty, current);
+    w->setStyleSheet(current);
+    if (decls.isEmpty()) {
+        return rules;
+    }
+    return rules + QStringLiteral("QProgressBar {%1 }\n").arg(decls);
+}
+
 // The decided indicator for a checkable group box, at the size the
 // group box draws its indicator now. The option is filled as
 // QGroupBox::initStyleOption() fills it (protected).
@@ -519,12 +576,15 @@ void themeOne(QWidget* w)
 
     // A box no sheet styles the indicator of gets JJ's indicator rules
     // with what keeps its size, measured once per original sheet; so do a
-    // slider no sheet styles (the decided slider) and a checkable group
-    // box (the decided indicator).
+    // slider no sheet styles (the decided slider), a checkable group
+    // box (the decided indicator) and a progress bar no sheet styles (the
+    // selection glass as its filled part).
     const bool toggleBlock = isToggle(w) && !indicatorStyled(w, original);
     const bool sliderNeedsBlock = !toggleBlock && isUnstyledSlider(w, original);
     const bool groupNeedsBlock = !toggleBlock && !sliderNeedsBlock && isUnstyledCheckableGroup(w, original);
-    const bool needsBlock = toggleBlock || sliderNeedsBlock || groupNeedsBlock;
+    const bool progressNeedsBlock =
+        !toggleBlock && !sliderNeedsBlock && !groupNeedsBlock && isUnstyledProgressBar(w, original);
+    const bool needsBlock = toggleBlock || sliderNeedsBlock || groupNeedsBlock || progressNeedsBlock;
     QString block;
     if (needsBlock && !fresh) {
         block = w->property(kIndicatorBlockProperty).toString();
@@ -559,9 +619,10 @@ void themeOne(QWidget* w)
             look = QStringLiteral("* {%1}\n").arg(look);
         }
         if (block.isEmpty()) {
-            block = toggleBlock       ? indicatorBlock(w, look, current)
-                  : sliderNeedsBlock  ? sliderBlock(w, look, current)
-                                      : groupBoxBlock(w);
+            block = toggleBlock        ? indicatorBlock(w, look, current)
+                  : sliderNeedsBlock   ? sliderBlock(w, look, current)
+                  : progressNeedsBlock ? progressBlock(w, look, current)
+                                       : groupBoxBlock(w);
             w->setProperty(kIndicatorBlockProperty, block);
         }
         look += block;

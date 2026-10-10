@@ -104,6 +104,14 @@
 //                 disabled track the inset inside a border-muted rim; the
 //                 zoom track keeps its inset fill and takes the same rim.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - JJ's D30 and D31: a push button that is not checkable
+//                 and is given today's engaged green as its sheet takes
+//                 the lit green (OPERATE on, kLitWhenOnProperty) or the
+//                 selection glass (the tuner's chosen antenna,
+//                 kChoiceProperty). A checked radio whose sheet draws a
+//                 rim wider than 1 px keeps the selection rim all round;
+//                 progressChunkRules() for the live pass. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -712,6 +720,8 @@ struct Target {
     bool checked = false;
     // A radio button's indicator (round), not a check box's.
     bool radio = false;
+    // A radio whose sheet draws its rim wider than 1 px.
+    bool wideRim = false;
     // The block's control is the widget the sheet is set on.
     bool isOwner = false;
     // A push button that cannot be checked: a blue fill on it is an
@@ -730,6 +740,12 @@ struct Target {
     bool filled = false;
     // The slider's track must read on its own (the zoom bar, D27).
     bool visibleTrack = false;
+    // A button that is not checkable and shows "on" by its sheet (OPERATE,
+    // D30).
+    bool litWhenOn = false;
+    // A button that is not checkable and shows "chosen" by its sheet (the
+    // tuner's antenna, D31).
+    bool choice = false;
 
     bool operator==(const Target& o) const
     {
@@ -886,6 +902,10 @@ void resolveTarget(Target& t, const QString& type, const QWidget* owner, const Q
     if (resolved != nullptr && resolved->inherits("QAbstractSlider")) {
         t.filled = resolved->property(WorkspacePreview::kFilledSliderProperty).toBool();
         t.visibleTrack = resolved->property(WorkspacePreview::kVisibleTrackProperty).toBool();
+    }
+    if (resolved != nullptr && resolved->inherits("QAbstractButton")) {
+        t.litWhenOn = resolved->property(WorkspacePreview::kLitWhenOnProperty).toBool();
+        t.choice = resolved->property(WorkspacePreview::kChoiceProperty).toBool();
     }
 }
 
@@ -1202,11 +1222,17 @@ QString indicatorBody(Decls& d, int bg, const Target& t)
     case State::Hover:
         d.set("border-color", hex(kAccent));
         break;
-    case State::Checked:
+    case State::Checked: {
         setBackground(d, bg, glassFill());
         d.set("border-color", hex(kGlassSelBorder));
-        d.set("border-top-color", hex(kIndicatorCheckedTopEdge));
+        // NereusSDR (settled 2026-10-10): the light top edge is a 1 px
+        // edge. On a radio whose sheet draws a wider rim (the NR2 page's
+        // 2 px, DspSetupPages.cpp:877-880) it became a second ring that
+        // met the rim in a blend of the two; that rim is the checked
+        // radio's rim colour all round (D6, D10).
+        d.set("border-top-color", hex(t.wideRim ? kGlassSelBorder : kIndicatorCheckedTopEdge));
         break;
+    }
     case State::Disabled:
         if (t.checked) {
             setBackground(d, bg, hex(kDisabledText));
@@ -1227,15 +1253,16 @@ QString indicatorBody(Decls& d, int bg, const Target& t)
 // The hover, checked and disabled states for an indicator selector `s`
 // (no state of its own), as rules that follow the sheet's own: a widget
 // sheet's plain indicator rule would otherwise paint every state off.
-QString indicatorStateRules(const QString& s)
+QString indicatorStateRules(const QString& s, bool wideRim = false)
 {
     return QStringLiteral(
         "\n%1:hover { border-color: %2; }"
         "\n%1:checked { background: %3; border-color: %4; border-top-color: %5; }"
         "\n%1:disabled { background: %6; border-color: %7; }"
         "\n%1:checked:disabled { background: %8; border-color: %8; border-top-color: %8; }")
-        .arg(s, hex(kAccent), glassFill(), hex(kGlassSelBorder), hex(kIndicatorCheckedTopEdge),
-             hex(kInsetBg), hex(kBorderMuted), hex(kDisabledText));
+        .arg(s, hex(kAccent), glassFill(), hex(kGlassSelBorder),
+             hex(wideRim ? kGlassSelBorder : kIndicatorCheckedTopEdge), hex(kInsetBg), hex(kBorderMuted),
+             hex(kDisabledText));
 }
 
 // ---- Lit buttons ----
@@ -1433,6 +1460,30 @@ QString processBody(const QString& rawBody, const Target& t, bool* restyledOut =
         return d.render();
     default:
         break;
+    }
+    // JJ's D30 and D31 (2026-10-10): a button that is not checkable and
+    // is given today's engaged green as its whole sheet while it is on.
+    // OPERATE on is the raised lit green of a checked processing button
+    // (D15) and stays lit under the pointer; the tuner's chosen antenna is
+    // the selection glass. Both take the button's radius (D12).
+    if (t.kind == Kind::Button && (t.litWhenOn || t.choice) && bg >= 0) {
+        if (t.state == State::Normal && litOf(d.value(bg)) == Lit::Green) {
+            if (t.choice) {
+                glassTreatment(d);
+            } else {
+                litTreatment(d, bg, Lit::Green);
+            }
+            d.set("border-radius", QStringLiteral("%1px").arg(radiusFor(t.height)));
+            return d.render();
+        }
+        if (t.state == State::Hover && t.litWhenOn) {
+            const QColor hover = parseColour(stripComments(d.value(bg)));
+            if (hover.isValid()
+                && hover.name() == WorkspacePalette::glassAndDepth().color(QStringLiteral("dsp-on-border")).name()) {
+                setBackground(d, bg, litGreenFill());
+                return d.render();
+            }
+        }
     }
     if (t.kind == Kind::Button && t.state == State::Normal && t.notChecked) {
         if (restyledOut != nullptr) {
@@ -1775,6 +1826,17 @@ QString groupBoxIndicatorRules(int widthPx, int heightPx)
     return out;
 }
 
+QString progressChunkRules()
+{
+    // NereusSDR (settled 2026-10-10): the filled part of a progress bar
+    // is the selection, the same glass as every other selection; the
+    // platform style drew it from a lightened QPalette::Highlight. The
+    // groove stays the platform style's, and the chunk stays inside its
+    // 1 px rim.
+    // [original comment from StyleConstants.h:808-816 is at glassTreatment() above]
+    return QStringLiteral("QProgressBar::chunk { background: %1; margin: 1px; }\n").arg(glassFill());
+}
+
 QString sliderRulesFor(bool vertical)
 {
     // [original comment from StyleConstants.h:899-902 is at sliderGroove() above]
@@ -1823,6 +1885,13 @@ QString componentize(const QString& qss, const QWidget* owner)
     bool handleHover = false;
     bool handlePressed = false;
     QStringList indicatorSelectors;
+    // An indicator rule of the sheet draws a rim wider than 1 px (the NR2
+    // page's radios, 2 px): a radio's checked rim then keeps one colour.
+    static const QRegularExpression wideIndicatorRim(
+        QStringLiteral("::indicator[^{}]*\\{[^}]*border(?:-width)?\\s*:\\s*(?:[2-9]|\\d{2,})px"),
+        QRegularExpression::CaseInsensitiveOption);
+    const bool sheetWideIndicatorRim = wideIndicatorRim.match(qss).hasMatch();
+    bool wideRimSelectors = false;
     QStringList ownerButtonSelectors;
     QStringList defaultSelectors;
     const QString lowerSheet = qss.toLower();
@@ -1877,6 +1946,10 @@ QString componentize(const QString& qss, const QWidget* owner)
             if (st.kind == Kind::Button && st.state == State::Normal && !st.notChecked && sheetDims
                 && isCheckableButton(st.isOwner ? owner : nullptr)) {
                 st.baseIsChecked = true;
+            }
+            if (st.kind == Kind::Indicator && st.radio && sheetWideIndicatorRim) {
+                st.wideRim = true;
+                wideRimSelectors = true;
             }
             if (first) {
                 t = st;
@@ -1985,7 +2058,7 @@ QString componentize(const QString& qss, const QWidget* owner)
     if (!indicatorSelectors.isEmpty() && !qss.contains(QLatin1String(kIndicatorStatesMarker))) {
         out += QLatin1Char('\n') + QLatin1String(kIndicatorStatesMarker);
         for (const QString& s : indicatorSelectors) {
-            out += indicatorStateRules(s);
+            out += indicatorStateRules(s, wideRimSelectors);
         }
     }
     return out;

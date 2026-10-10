@@ -46,6 +46,11 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - kVisibleTrackProperty: the rim is JJ's D29 rim.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - kLitWhenOnProperty and kChoiceProperty: OPERATE on is
+//                 the lit green (JJ's D30) and the tuner's chosen antenna
+//                 the selection glass (D31), on buttons that stay plain
+//                 push buttons. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -77,6 +82,18 @@ inline constexpr auto kFilledSliderProperty = "nereusWorkspaceFilledSlider";
 // (the zoom bar under the pans, JJ's D27): the decided groove stays dark,
 // 8 px overall, with the D29 text-inactive rim on every side.
 inline constexpr auto kVisibleTrackProperty = "nereusWorkspaceVisibleTrack";
+// Set to true by the owner on a push button that is not checkable and
+// shows "on" by the sheet it is given (OPERATE on the amplifier, tuner and
+// RF2K-S applets, JJ's D30): while its sheet is today's engaged green the
+// workspace look draws the raised lit green of a checked processing
+// button (D15), under the pointer too.
+inline constexpr auto kLitWhenOnProperty = "nereusWorkspaceLitWhenOn";
+// Set to true by the owner on a push button that is one of a set of
+// choices, is not checkable and shows "chosen" by the sheet it is given
+// (the tuner's ANT buttons, JJ's D31): while its sheet is today's engaged
+// green the workspace look draws the blue selection glass. Clicking is
+// unchanged: the button only asks, and the sheet follows the device.
+inline constexpr auto kChoiceProperty = "nereusWorkspaceChoice";
 
 // Rewrites every stylesheet under `root` (root included) from its
 // retained original. The first time a widget is seen, or when its

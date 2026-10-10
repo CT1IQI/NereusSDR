@@ -33,6 +33,9 @@
 //   follow the amp's report, never the click, and never reach this
 //   computer's own connection. coreDiagnosticsText for Copy diagnostics.
 //   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10  Workspace look, JJ's D30: OPERATE carries
+//   kLitWhenOnProperty, so its on sheet draws the lit green.
+//   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "Rf2ksApplet.h"
@@ -42,6 +45,7 @@
 #include "gui/OperatorReasonText.h"
 #include "gui/StyleConstants.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/AccessoryDataModel.h"
 #include "models/RadioModel.h"
 #include "models/RfKitModel.h"
@@ -86,6 +90,9 @@ Rf2ksApplet::Rf2ksApplet(RadioModel* model, QWidget* parent)
     header->addWidget(m_statusDot);
 
     m_operateBtn = new QPushButton(QStringLiteral("STANDBY"), headerWrap);
+    // Workspace look (JJ's D30, 2026-10-10): OPERATE on is the lit green.
+    // The property is read only by the workspace look's sheet pass.
+    m_operateBtn->setProperty(WorkspacePreview::kLitWhenOnProperty, true);
     m_operateMode = QStringLiteral("STANDBY");
     connect(m_operateBtn, &QPushButton::clicked, this, [this]() {
         const bool wantOperate = m_operateMode != QStringLiteral("OPERATE");
