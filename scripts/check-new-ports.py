@@ -18,6 +18,8 @@ Heuristics (any one match flags the file):
     these are Samphire-era Thetis conventions and are very unusual in
     NereusSDR-original code
   - Explicit `// Source:` or `// From <thetis-file>` citation comments
+  - A `// From Longpath ...` (or `Source:` / `Ported from`) comment naming
+    Longpath; registered Longpath ports live in LONGPATH-PROVENANCE.md
 
 Skip conditions (file is not flagged):
 
@@ -187,6 +189,23 @@ RE_FREEDV_CITE = re.compile(
     r"[\w./-]+\.(?:c|h|cpp|cc|hpp)(?::\d+(?:[,\s]+\d+)*)"
 )
 
+# Longpath (oe5sos/Longpath, a GPL-3 NereusSDR fork; rotor control ports
+# since 2026-10-08). Its files carry no contributor callsigns in comments
+# and its filenames (BeamHeading, RotorModels, ...) are ordinary words, so
+# the tell is the cite itself: `// From Longpath <path>:<line>` or a
+# `Source:` / `Ported from` comment naming Longpath. "Longpath" is
+# distinctive enough to run in both modes. Registered files live in
+# LONGPATH-PROVENANCE.md.
+RE_LONGPATH_COMMENT = re.compile(
+    r"//\s*(Source|From|Ported from|Layout from|Pattern from)\b.*\bLongpath\b",
+    re.IGNORECASE,
+)
+# Diff-mode cite-version stamp gate for Longpath ports, as for Thetis and
+# freedv-gui: `// From Longpath src/core/BeamHeading.cpp:51 [@551576e]`.
+RE_LONGPATH_CITE = re.compile(
+    r"//\s*From\s+Longpath\s+[\w./-]+\.(?:h|cpp|cc|hpp)(?::\d+(?:[-,\s]+\d+)*)"
+)
+
 
 def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
@@ -352,6 +371,7 @@ def check_file(rel, listed, diff_lines=None, text=None):
         (RE_THETIS_FILE, "Thetis filename reference"),
         (RE_CALLSIGN, "Thetis contributor callsign"),
         (RE_THETIS_CLASS, "Thetis-style C# class name (cls*/uc*/frm*)"),
+        (RE_LONGPATH_COMMENT, "Source: comment citing Longpath"),
     ]
     if FULL_TREE:
         patterns.extend([
@@ -392,6 +412,14 @@ def check_file(rel, listed, diff_lines=None, text=None):
                 findings.append((
                     i,
                     "freedv-gui cite missing version stamp",
+                    m.group(0).strip(),
+                ))
+                continue
+            m = RE_LONGPATH_CITE.search(line)
+            if m and not RE_HAS_VERSION_STAMP.search(line):
+                findings.append((
+                    i,
+                    "Longpath cite missing version stamp",
                     m.group(0).strip(),
                 ))
 

@@ -225,6 +225,10 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Issue #357: syncDesktopKeyState's
+//                fallback reads the transmit model's TUNE, which the
+//                release press clears, as the hosting window's handler
+//                does. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2259,7 +2263,10 @@ void TxApplet::syncDesktopKeyState()
     const QSignalBlocker tuneBlock(m_tuneBtn);
     m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn()
                                        : m_model->moxController()->isMox());
-    const bool tuning = m_desktopTuneOn ? m_desktopTuneOn() : m_model->isTune();
+    // Issue #357: the TUNE the release press clears, not isTune(), which
+    // holds until the radio is back on receive.
+    const bool tuning = m_desktopTuneOn ? m_desktopTuneOn()
+                                        : m_model->transmitModel().isTune();
     m_tuneBtn->setChecked(tuning);
     m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
 }
