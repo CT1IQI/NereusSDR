@@ -151,6 +151,10 @@
 //                 GPU meters, unscrolled and scrolled, in both looks, with
 //                 where each meter's native window sits. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - A --strip-<edge>-full grab waits until the grown strip's
+//                 size stops changing (cw-digital at laptop@1.25 caught it
+//                 one pixel short in some runs). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -2879,6 +2883,8 @@ constexpr int kFreeBottomClearancePx = 24;
 constexpr auto kPreviewTxProfileScope = "02:00:00:00:00:00";
 // At most this many window growths for a strip's full-content image.
 constexpr int kFullStripGrowSteps = 4;
+// Settles at most to let a grown strip's size stop changing.
+constexpr int kFullStripStableSteps = 6;
 
 // Applets the source has but MainWindow does not construct (their lines
 // are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
@@ -3131,6 +3137,18 @@ void captureStripsFull(SceneContext& ctx, const QString& scene)
             pump(kSettleMs);
             overflow = stripOverflow(strip);
         }
+        // The strip's width follows its content's minimum a pass after the
+        // window grows (a scroll bar that went away gives its width back),
+        // so a single settle can catch it one pixel short at a fractional
+        // scale. Wait until two settles in a row leave it the same size.
+        for (int step = 0; step < kFullStripStableSteps; ++step) {
+            const QSize seen = strip->size();
+            pump(kSettleMs);
+            if (strip->size() == seen) {
+                break;
+            }
+        }
+        overflow = stripOverflow(strip);
         const QString name = scene + QStringLiteral("--") + edgeName + QStringLiteral("-full");
         CapturedImage img;
         img.name = name;
