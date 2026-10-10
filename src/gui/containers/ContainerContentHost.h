@@ -1,6 +1,10 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: setTopOverlayInset keeps overlaid
+//                 entry headers below the container's overlaid group
+//                 header. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: a factory widget's own config
 //                 edits (ContentConfigNotifier) are committed through the
 //                 arrange controller, and a widget already showing the new
@@ -73,6 +77,11 @@ public:
     void setArrangeActive(bool active);
     bool arrangeActive() const { return m_arrangeActive; }
     void setContainerHeaderMode(HeaderMode mode);
+    // Workspace preview: the height, from the host's top, that the
+    // container's overlaid group header covers (0 when it is in the layout
+    // or hidden). An overlaid entry header sits below it, so the group
+    // header never covers an entry header's buttons.
+    void setTopOverlayInset(int px);
     // Workspace preview: the entry header of one entry, or nullptr.
     WorkspaceEntryHeader* entryHeader(const QString& entryId) const;
     static QJsonObject effectiveContext(const ContainerDocument& document, const ContentEntry& entry);
@@ -109,6 +118,7 @@ private:
     QHash<QString, QPointer<WorkspaceEntryHeader>> m_entryHeaders;
     HeaderMode m_containerHeaderMode = HeaderMode::Always;
     bool m_arrangeActive = false;
+    int m_topOverlayInset = 0;
     QPointer<ContainerArrangeController> m_arrange;
     QVector<QPointer<QWidget>> m_grips;
     QWidget* m_indicator = nullptr;

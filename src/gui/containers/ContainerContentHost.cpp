@@ -1,5 +1,17 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: the entry header's options menu
+//                 lives on the heap under the host too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The entry menus live on the heap under the host
+//                 (OwnedMenu.h): an entry action that removes the container
+//                 while its menu is open no longer frees a menu on the
+//                 stack. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//   2026-10-09 - Workspace preview only: an overlaid entry header sits below
+//                 the container's overlaid group header (Arrange in Reveal
+//                 and Hidden), which covered the first entry header's
+//                 buttons. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-08 - Workspace preview only: a factory widget's own config
 //                 edits (ContentConfigNotifier) go to the workspace document
 //                 through ContainerArrangeController::setEntryConfig, queued
@@ -73,6 +85,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include <QLabel>
 #include <QPushButton>
 #include <QMenu>
+#include "gui/containers/OwnedMenu.h"
 #include <QStyle>
 #include <QJsonArray>
 #include <QScrollArea>
@@ -124,7 +137,7 @@ ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, Q
         const auto result=m_arrange->placeFreeCanvas(id,rect,original);
         if(!result.ok) {qCWarning(lcFreeCanvas)<<result.error;m_canvas->project(m_document,[this]{QHash<QString,QPointer<QWidget>> views;for(const auto& row:m_rows) {views[row.entryId]=row.widget;}return views;}());}
     });
-    connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){QMenu menu(this);addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
+    connect(m_canvas,&FreeCanvasSurface::entryContextMenuRequested,this,[this](const QString& id,const QPoint& position){OwnedMenu owned(this);QMenu& menu=owned.menu();addEntryActions(menu,id);if(!menu.isEmpty()) {menu.exec(position);}});
     connect(m_canvas,&FreeCanvasSurface::entryPopOutRequested,this,&ContainerContentHost::popOutEntry);
     connect(m_canvas,&FreeCanvasSurface::entryHideRequested,this,&ContainerContentHost::hideEntry);
     if (WorkspacePreview::enabled()) {
@@ -984,6 +997,15 @@ void ContainerContentHost::setArrangeActive(bool active)
     m_arrangeActive = active;
     updateEntryHeaders();
 }
+void ContainerContentHost::setTopOverlayInset(int px)
+{
+    const int inset = qMax(0, px);
+    if (m_topOverlayInset == inset) {
+        return;
+    }
+    m_topOverlayInset = inset;
+    updateEntryHeaders();
+}
 void ContainerContentHost::setContainerHeaderMode(HeaderMode mode)
 {
     if (m_containerHeaderMode == mode) {
@@ -1056,7 +1078,8 @@ void ContainerContentHost::updateEntryHeaders()
                 if (!source) {
                     return;
                 }
-                QMenu menu(this);
+                OwnedMenu owned(this);
+                QMenu &menu = owned.menu();
                 addEntryActions(menu, id);
                 if (!menu.isEmpty()) {
                     QPushButton *button = source->optionsButton();
@@ -1097,7 +1120,12 @@ void ContainerContentHost::updateEntryHeaders()
             continue;
         }
         const QRect boundary = entryBoundary(row.entryId);
-        const int top = m_body->mapFrom(this, boundary.topLeft()).y() - (reserve ? WorkspaceEntryHeader::kHeight : 0);
+        int top = m_body->mapFrom(this, boundary.topLeft()).y() - (reserve ? WorkspaceEntryHeader::kHeight : 0);
+        if (!reserve && m_topOverlayInset > 0) {
+            // Below the container's overlaid group header, which would
+            // otherwise cover this header's buttons.
+            top = qMax(top, m_body->mapFrom(this, QPoint(0, m_topOverlayInset)).y());
+        }
         const QRect target(margins.left(), top, qMax(0, m_body->width() - margins.left() - margins.right()),
                            WorkspaceEntryHeader::kHeight);
         if (header->geometry() != target) {
@@ -1224,7 +1252,8 @@ bool ContainerContentHost::eventFilter(QObject *watched, QEvent *event)
     if (!id.isEmpty()) {
         if (event->type() == QEvent::ContextMenu) {
             auto *context = static_cast<QContextMenuEvent *>(event);
-            QMenu menu(this);
+            OwnedMenu owned(this);
+            QMenu &menu = owned.menu();
             addEntryActions(menu, id);
             menu.exec(context->globalPos());
             return true;

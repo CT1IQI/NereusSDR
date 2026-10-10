@@ -2,6 +2,9 @@
 // wiring.  Phase 3L commit #9.  Cite comments to mi0bot setup.designer.cs
 // are documentary only — the ported logic lives in the .cpp where the
 // attribution header + PROVENANCE row already cover it.
+// 2026-10-09: the I/O Pin State strips lay their LEDs out evenly from the
+// strip's left edge after a DisplayBits change. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -16,12 +19,40 @@
 #include "core/Hl2OptionsModel.h"
 #include "core/IoBoardHl2.h"
 #include "gui/setup/hardware/Hl2OptionsTab.h"
+#include "gui/widgets/OcLedStripWidget.h"
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
 class TestHl2OptionsTab : public QObject {
     Q_OBJECT
+
+private:
+    // The visible LED frames of a strip, left to right.
+    static QList<QFrame*> visibleLeds(OcLedStripWidget* strip)
+    {
+        QList<QFrame*> leds;
+        for (QFrame* f : strip->findChildren<QFrame*>(Qt::FindDirectChildrenOnly)) {
+            if (f->isVisible()) {
+                leds.append(f);
+            }
+        }
+        std::sort(leds.begin(), leds.end(), [](QFrame* a, QFrame* b) {
+            return a->x() < b->x();
+        });
+        return leds;
+    }
+
+    // The LEDs start at the strip's left edge and sit one spacing apart.
+    static void checkEvenFromLeft(OcLedStripWidget* strip, int expected)
+    {
+        const QList<QFrame*> leds = visibleLeds(strip);
+        QCOMPARE(leds.size(), expected);
+        QCOMPARE(leds.first()->x(), 0);
+        for (int i = 1; i < leds.size(); ++i) {
+            QCOMPARE(leds[i]->x() - leds[i - 1]->x(), leds[0]->width() + 2);
+        }
+    }
 
 private slots:
     void initTestCase()
@@ -456,6 +487,45 @@ private slots:
         QCOMPARE(tab.inputBitsForTest(), quint8(0x15));
         model.ioBoardMutable().setRegisterValue(IoBoardHl2::Register::REG_INPUT_PINS, 0x00);
         QCOMPARE(tab.inputBitsForTest(), quint8(0));
+    }
+
+    // Changing DisplayBits leaves no stale LEDs and no second stretch
+    // ahead of the new LEDs: they start at the left edge, evenly spaced,
+    // as mi0bot's ucOCLedStrip draws its pins from x = 0 in equal steps
+    // (x = nPin * 16, ucOCLedStrip.cs:94-98 [@c26a8a4]).
+    void led_strip_redraws_evenly_after_display_bits_change()
+    {
+        OcLedStripWidget strip;
+        strip.resize(300, 12);
+        strip.show();
+        QCoreApplication::processEvents();
+        checkEvenFromLeft(&strip, 8);
+        if (QTest::currentTestFailed()) { return; }
+        strip.setDisplayBits(6);
+        QCoreApplication::processEvents();
+        checkEvenFromLeft(&strip, 6);
+        if (QTest::currentTestFailed()) { return; }
+        strip.setDisplayBits(8);
+        QCoreApplication::processEvents();
+        checkEvenFromLeft(&strip, 8);
+        if (QTest::currentTestFailed()) { return; }
+    }
+
+    // The HL2 input strip (6 pins, set after the strip was built with 8)
+    // starts at its left edge like the output strip beneath it.
+    void input_and_output_strips_start_at_the_same_x()
+    {
+        RadioModel model;
+        Hl2OptionsTab tab(&model);
+        tab.resize(900, 650);
+        tab.show();
+        QCoreApplication::processEvents();
+        const QList<OcLedStripWidget*> strips = tab.findChildren<OcLedStripWidget*>();
+        QCOMPARE(strips.size(), 2);
+        for (OcLedStripWidget* strip : strips) {
+            checkEvenFromLeft(strip, strip->displayBits());
+            if (QTest::currentTestFailed()) { return; }
+        }
     }
 
     // Write button stays disabled until BOTH chkI2CEnable and write-enable

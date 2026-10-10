@@ -69,6 +69,10 @@
 //   2026-10-09 - D25: the two slider-row labels keep their 80 px column but
 //               widen when their text needs more (SetupFit::widthAtLeast).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - NB2 Mode reads "Sample & Hold" and "Hold & Sample" as
+//               Thetis does: a combo box draws its item text as written, so
+//               the doubled ampersand showed twice. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1926,9 +1930,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent,
     // NB2 Mode — Thetis comboDSPNOBmode.
     auto* nb1Mode = new QComboBox;
     nb1Mode->setProperty("nereusSetupId", "dsp.nbSnb.nb2Mode");
-    // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44434 [v2.10.3.13]).
-    nb1Mode->addItems({tr("Zero"), tr("Sample && Hold"), tr("Mean-Hold"),
-                       tr("Hold && Sample"), tr("Linear Interpolate")});
+    // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44550-44555 [v2.10.3.15]).
+    // A combo box item is not a mnemonic text: one "&" draws one "&".
+    nb1Mode->addItems({tr("Zero"), tr("Sample & Hold"), tr("Mean-Hold"),
+                       tr("Hold & Sample"), tr("Linear Interpolate")});
     nb1Mode->setCurrentIndex(slice ? slice->nb2Mode() : 0);
     nb1Mode->setToolTip(tr(
         "Method used to fill in the blanked samples when NB2 triggers.\n"

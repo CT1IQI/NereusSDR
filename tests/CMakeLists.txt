@@ -576,10 +576,16 @@ nereus_add_test(tst_container_legacy_import)
 nereus_add_test(tst_container_persistence)
 nereus_add_test(tst_container_arrangement)
 nereus_add_test(tst_container_application_quit)
+# Removing a popped-out container from its own settings dialog, and the
+# shells an emptied container leaves (offscreen; JJ crash 2026-10-09).
+nereus_add_test(tst_container_popout_removal)
 nereus_add_test(tst_container_position_restore)
 nereus_add_test(tst_container_follow_selected_rx)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
+# A scrolled docked stack shows no black band over its GPU
+# meters on the composited window (own-window capture; native only).
+nereus_add_test(tst_container_strip_scroll_native NATIVE_WINDOW)
 nereus_add_test(tst_container_workspace_integration)
 nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
 nereus_add_test(tst_container_chrome NATIVE_WINDOW)

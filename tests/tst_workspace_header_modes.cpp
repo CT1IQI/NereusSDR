@@ -3,6 +3,9 @@
 //   2026-10-07 - Reveal, Arrange and header button checks for the workspace
 //                 preview by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-09 - In Arrange no header covers another header's buttons, in
+//                 every header mode. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QPushButton>
@@ -214,6 +217,57 @@ private slots:
             QCOMPARE(fixture.manager.contentHost(id)->mapTo(c, QPoint()), contentTop[id]);
             QCOMPARE(c->headerMode(), fixture.store.snapshot().containers[ids.indexOf(id)].header);
         }
+        fixture.dock.hide();
+    }
+
+    // In Arrange every header shows. The group header overlays the content
+    // in Reveal and Hidden; it must not cover an entry header's buttons
+    // (it covered the first entry header's pop-out, hide and options).
+    void arrangeHeadersNeverCoverEachOthersButtons()
+    {
+        WorkspaceFixture fixture;
+        WorkspaceDocument document;
+        document.containers.append(fixture.container("always", HeaderMode::Always, 10));
+        document.containers.append(fixture.container("reveal", HeaderMode::Reveal, 400));
+        document.containers.append(fixture.container("hidden", HeaderMode::Hidden, 790));
+        document.mainContainerId = "always";
+        const auto committed = fixture.manager.commitWorkspace(document, 0);
+        QVERIFY2(committed.status == CommitStatus::Saved, qPrintable(committed.error));
+        fixture.dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&fixture.dock));
+        settle();
+        fixture.manager.setArrangeMode(true);
+        settle();
+
+        for (const QString& id : {QStringLiteral("always"), QStringLiteral("reveal"), QStringLiteral("hidden")}) {
+            auto* c = fixture.manager.container(id);
+            QVERIFY(c);
+            WorkspaceGroupHeader* group = c->workspaceHeader();
+            QVERIFY2(group && group->isVisible(), qPrintable(id));
+            const QRect groupRect = group->geometry();
+            QList<QRect> entryRects;
+            for (const QString& entry : {id + "-signalMaxBin", id + "-comp"}) {
+                WorkspaceEntryHeader* header = fixture.manager.contentHost(id)->entryHeader(entry);
+                QVERIFY2(header && header->isVisible(), qPrintable(entry));
+                const QRect headerRect(header->mapTo(c, QPoint()), header->size());
+                for (QPushButton* button : {header->popOutButton(), header->hideButton(), header->optionsButton()}) {
+                    QVERIFY(button && button->isVisible());
+                    const QRect r(button->mapTo(c, QPoint()), button->size());
+                    QVERIFY2(!r.intersects(groupRect),
+                             qPrintable(QStringLiteral("%1: the group header %2,%3 %4x%5 covers a button "
+                                                       "of %6 at %7,%8 %9x%10")
+                                            .arg(id).arg(groupRect.x()).arg(groupRect.y())
+                                            .arg(groupRect.width()).arg(groupRect.height()).arg(entry)
+                                            .arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height())));
+                    for (const QRect& other : entryRects) {
+                        QVERIFY2(!r.intersects(other), qPrintable(entry));
+                    }
+                }
+                entryRects.append(headerRect);
+            }
+        }
+        fixture.manager.setArrangeMode(false);
+        settle();
         fixture.dock.hide();
     }
 

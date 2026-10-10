@@ -17,6 +17,13 @@
 // with its widths, rather than failed.
 //
 // no-port-check: NereusSDR-original test; no upstream logic is ported.
+//
+// Modification history (NereusSDR):
+//   2026-10-09 - Table, tree and list cells are checked too: a cell whose
+//                 text is elided or cut by its own column, or clipped by
+//                 the view or a parent where no scroll reaches it, is a
+//                 fault (planted-cell case pageFaultsCatchAClippedCell).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -24,8 +31,10 @@
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QGroupBox>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLayout>
+#include <QListView>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
@@ -37,7 +46,10 @@
 #include <QStyleOptionGroupBox>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTextDocument>
+#include <QTreeView>
+#include <QVBoxLayout>
 
 #include "GridHeaderAlignment.h"
 #include "core/AppSettings.h"
@@ -307,6 +319,108 @@ QStringList textFaults(QWidget* leaf)
     return faults;
 }
 
+// The text a delegate draws for a cell needs `hint`; the view must give it
+// that much, in its own cell and in what the viewport and parents show.
+QStyleOptionViewItem cellOption(const QAbstractItemView* view, const QRect& rect)
+{
+    QStyleOptionViewItem option;
+    option.initFrom(view->viewport());
+    option.widget = view;
+    option.font = view->font();
+    option.fontMetrics = view->fontMetrics();
+    option.rect = rect;
+    option.textElideMode = view->textElideMode();
+    const QSize icon = view->iconSize();
+    if (icon.isValid()) {
+        option.decorationSize = icon;
+    } else {
+        const int extent = view->style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, view);
+        option.decorationSize = QSize(extent, extent);
+    }
+    bool wrap = false;
+    if (auto* table = qobject_cast<const QTableView*>(view)) {
+        wrap = table->wordWrap();
+    } else if (auto* tree = qobject_cast<const QTreeView*>(view)) {
+        wrap = tree->wordWrap();
+    } else if (auto* list = qobject_cast<const QListView*>(view)) {
+        wrap = list->wordWrap();
+    }
+    if (wrap) {
+        option.features |= QStyleOptionViewItem::WrapText;
+    }
+    return option;
+}
+
+// Cell faults of one shown page or tab, for every table, tree and list:
+// a cell whose text its own rect cuts short (elided or cut), or a cell the
+// viewport or a parent clips where no scroll bar of the view reaches it.
+// A cell holding an index widget draws that widget instead and is left
+// out. Inside a frame that scrolls sideways, parents clip sideways by
+// design and only the cell's own rect counts.
+int cellsChecked = 0;  // cells with text the cell check has measured
+
+QStringList cellFaults(QWidget* leaf)
+{
+    QStringList faults;
+    for (QAbstractItemView* view : leaf->findChildren<QAbstractItemView*>()) {
+        if (!view->isVisible() || !onShownStackPage(view, leaf) || view->model() == nullptr) {
+            continue;
+        }
+        QWidget* viewport = view->viewport();
+        const bool sideways = insideSidewaysFrame(view, leaf) || view->property(kScrollsSideways).toBool();
+        // A bar turned off still has a range; the user cannot reach it.
+        const bool scrollsAcross = view->horizontalScrollBarPolicy() != Qt::ScrollBarAlwaysOff
+            && view->horizontalScrollBar()->maximum() > 0;
+        const bool scrollsDown = view->verticalScrollBarPolicy() != Qt::ScrollBarAlwaysOff
+            && view->verticalScrollBar()->maximum() > 0;
+        const QRect seen = sideways ? viewport->rect() : visiblePart(viewport, viewport->rect(), leaf);
+        QList<QModelIndex> parents{view->rootIndex()};
+        while (!parents.isEmpty()) {
+            const QModelIndex parent = parents.takeFirst();
+            const QAbstractItemModel* model = view->model();
+            for (int row = 0; row < model->rowCount(parent); ++row) {
+                for (int column = 0; column < model->columnCount(parent); ++column) {
+                    const QModelIndex index = model->index(row, column, parent);
+                    if (column == 0 && model->hasChildren(index)) {
+                        auto* tree = qobject_cast<QTreeView*>(view);
+                        if (tree != nullptr && tree->isExpanded(index)) {
+                            parents.append(index);
+                        }
+                    }
+                    const QRect rect = view->visualRect(index);
+                    const QString text = index.data(Qt::DisplayRole).toString();
+                    if (rect.isEmpty() || text.trimmed().isEmpty() || view->indexWidget(index) != nullptr) {
+                        continue;
+                    }
+                    const QStyleOptionViewItem option = cellOption(view, rect);
+                    const QSize hint = view->itemDelegateForIndex(index)->sizeHint(option, index);
+                    const QString who = QStringLiteral("%1 cell %2,%3 %4")
+                                            .arg(QString::fromLatin1(view->metaObject()->className()))
+                                            .arg(row).arg(column).arg(describe(view, text));
+                    ++cellsChecked;
+                    if (hint.width() > rect.width() || hint.height() > rect.height()) {
+                        faults << QStringLiteral("%1 cut short: needs %2 x %3 px, has %4 x %5")
+                                      .arg(who).arg(hint.width()).arg(hint.height())
+                                      .arg(rect.width()).arg(rect.height());
+                        continue;
+                    }
+                    const QRect shown = rect.intersected(seen);
+                    const bool clippedAcross = shown.width() < rect.width() && !scrollsAcross;
+                    const bool clippedDown = shown.height() < rect.height() && !scrollsDown;
+                    if (!shown.isEmpty() || (!scrollsAcross && !scrollsDown)) {
+                        if (clippedAcross || clippedDown) {
+                            faults << QStringLiteral("%1 clipped: %2 x %3 of %4 x %5 px showing")
+                                          .arg(who).arg(shown.width()).arg(shown.height())
+                                          .arg(rect.width()).arg(rect.height());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return faults;
+}
+
 // Scroll faults of one shown page or tab: a scroll area that scrolls
 // sideways, or a tab strip inside a scroll area that scrolls.
 QStringList scrollFaults(QWidget* leaf, QStringList* sideways)
@@ -448,22 +562,28 @@ void recordRows(QWidget* leaf, const QString& where, Walk* walk)
     }
 }
 
+// Every fault of one shown page or tab; the frames that scroll sideways
+// inside themselves go to `sideways`.
+QStringList pageFaults(QWidget* leaf, QStringList* sideways)
+{
+    QStringList faults = scrollFaults(leaf, sideways);
+    faults += textFaults(leaf);
+    faults += squeezeFaults(leaf);
+    faults += cellFaults(leaf);
+    return faults;
+}
+
 void checkShown(QWidget* leaf, const QString& where, Walk* walk)
 {
     settle();
     walk->shown << where;
     QStringList sideways;
-    for (const QString& f : scrollFaults(leaf, &sideways)) {
+    const QStringList faults = pageFaults(leaf, &sideways);
+    for (const QString& f : faults) {
         walk->faults << QStringLiteral("%1: %2").arg(where, f);
     }
     for (const QString& s : sideways) {
         walk->sideways << QStringLiteral("%1: %2").arg(where, s);
-    }
-    for (const QString& f : textFaults(leaf)) {
-        walk->faults << QStringLiteral("%1: %2").arg(where, f);
-    }
-    for (const QString& f : squeezeFaults(leaf)) {
-        walk->faults << QStringLiteral("%1: %2").arg(where, f);
     }
     recordRows(leaf, where, walk);
 }
@@ -605,12 +725,14 @@ private slots:
         QFETCH(bool, workspace);
         QFETCH(int, width);
         QFETCH(int, height);
+        cellsChecked = 0;
         Walk saturn = walkDialog(workspace, width, height, HPSDRHW::Saturn, false);
         Walk hl2 = walkDialog(workspace, width, height, HPSDRHW::HermesLite, true);
         const QStringList faults = saturn.faults + hl2.faults;
         const QStringList sideways = saturn.sideways + hl2.sideways;
         const int shown = static_cast<int>(saturn.shown.size() + hl2.shown.size());
-        qInfo().noquote() << QStringLiteral("%1 pages and tabs checked").arg(shown);
+        qInfo().noquote() << QStringLiteral("%1 pages and tabs checked, %2 table cells measured")
+                                 .arg(shown).arg(cellsChecked);
         for (const QString& s : sideways) {
             qInfo().noquote() << "SCROLLS INSIDE ITS FRAME" << s;
         }
@@ -620,6 +742,39 @@ private slots:
         }
         QVERIFY2(faults.isEmpty(),
                  qPrintable(QStringLiteral("%1 faults, listed above as FAULT lines").arg(faults.size())));
+    }
+
+    // A planted table: one cell whose text its 40 px column cuts short,
+    // one that fits, and a column the frame clips with no sideways scroll.
+    // The page check finds the first and the last and nothing else.
+    void pageFaultsCatchAClippedCell()
+    {
+        QWidget page;
+        auto* layout = new QVBoxLayout(&page);
+        auto* table = new QTableWidget(1, 3, &page);
+        table->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        table->horizontalHeader()->setVisible(false);
+        table->verticalHeader()->setVisible(false);
+        table->setItem(0, 0, new QTableWidgetItem(QStringLiteral("A cell far wider than its column")));
+        table->setItem(0, 1, new QTableWidgetItem(QStringLiteral("OK")));
+        table->setItem(0, 2, new QTableWidgetItem(QStringLiteral("Off")));
+        table->setColumnWidth(0, 40);
+        table->setColumnWidth(1, 60);
+        table->setColumnWidth(2, 200);
+        table->setFixedWidth(160);
+        layout->addWidget(table);
+        page.resize(400, 200);
+        page.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&page));
+        settle();
+        QStringList sideways;
+        const QStringList faults = pageFaults(&page, &sideways);
+        for (const QString& f : faults) {
+            qInfo().noquote() << "FAULT" << f;
+        }
+        QCOMPARE(faults.size(), 2);
+        QVERIFY(faults.at(0).contains(QStringLiteral("A cell far wider")));
+        QVERIFY(faults.at(1).contains(QStringLiteral("Off")));
     }
 
     // The rows that stacked at 820 x 600 are side by side again at

@@ -7,6 +7,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: the header options and source menus
+//                 live on the heap under the container too, and no menu
+//                 touches the container after an action removed it. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - The right-click menu lives on the heap under the container
+//                 (OwnedMenu.h): an action that removes the container while
+//                 the menu is open no longer frees a menu on the stack (JJ's
+//                 crash removing a popped-out container). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the content host learns how far the
+//                 overlaid group header reaches into it, so an overlaid
+//                 entry header sits below it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The minimum width in every dock mode is the larger of
 //                 260 px and what the content needs (setContentMinimumWidth),
 //                 so a docked, overlaid or floating container never cuts its
@@ -122,6 +135,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerContentHost.h"
 #include "gui/widgets/AppIcon.h"
 #include <QMenu>
+#include "gui/containers/OwnedMenu.h"
 #include <QContextMenuEvent>
 #include <QTimer>
 #include <QKeyEvent>
@@ -633,8 +647,16 @@ void ContainerWidget::placeWorkspaceOverlays()
             w->raise();
         }
     };
-    if (static_cast<QVBoxLayout*>(layout())->indexOf(m_groupHeader) < 0) {
+    const bool overlaid = static_cast<QVBoxLayout*>(layout())->indexOf(m_groupHeader) < 0;
+    if (overlaid) {
         place(m_groupHeader, QRect(0, 0, width(), WorkspaceGroupHeader::kHeight));
+    }
+    if (auto* host = qobject_cast<ContainerContentHost*>(m_content)) {
+        // How far the overlaid group header reaches into the content.
+        const int reach = overlaid && !m_groupHeader->isHidden()
+            ? WorkspaceGroupHeader::kHeight - host->mapTo(this, QPoint()).y()
+            : 0;
+        host->setTopOverlayInset(reach);
     }
     place(m_revealShadow, QRect(0, WorkspaceGroupHeader::kHeight, width(), kRevealShadowPx));
     place(m_arrangeFrame, rect());
@@ -714,11 +736,16 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
 
 void ContainerWidget::showWorkspaceOptions()
 {
-    QMenu menu(this);
+    OwnedMenu owned(this);
+    QMenu& menu = owned.menu();
     populateWorkspaceMenu(menu);
     m_workspaceMenuOpen = true;
     QPushButton* button = m_groupHeader->optionsButton();
+    const QPointer<ContainerWidget> self(this);
     menu.exec(button->mapToGlobal(QPoint(0, button->height())));
+    if (!self) {
+        return;
+    }
     m_workspaceMenuOpen = false;
     trackRevealBand(QCursor::pos());
 }
@@ -756,11 +783,16 @@ void ContainerWidget::populateSourceMenu(QMenu& menu)
 
 void ContainerWidget::showSourceMenu()
 {
-    QMenu menu(this);
+    OwnedMenu owned(this);
+    QMenu& menu = owned.menu();
     populateSourceMenu(menu);
     m_workspaceMenuOpen = true;
     QWidget* chip = m_groupHeader->sourceChip();
+    const QPointer<ContainerWidget> self(this);
     menu.exec(chip->mapToGlobal(QPoint(0, chip->height())));
+    if (!self) {
+        return;
+    }
     m_workspaceMenuOpen = false;
     trackRevealBand(QCursor::pos());
 }
@@ -834,7 +866,10 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
         QWidget::contextMenuEvent(event);
         return;
     }
-    QMenu menu(this);
+    // On the heap under the container: an action can remove the
+    // container, and its shell, while the menu is open (OwnedMenu.h).
+    OwnedMenu owned(this);
+    QMenu& menu = owned.menu();
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addAction(tr("Hide container (retain placement)"), this,
                    [this] { emit hideContainerRequested(); });
@@ -867,7 +902,11 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
         host->addContentsMenu(menu);
     }
     m_workspaceMenuOpen = true;
+    const QPointer<ContainerWidget> self(this);
     menu.exec(event->globalPos());
+    if (!self) {
+        return;
+    }
     m_workspaceMenuOpen = false;
 }
 

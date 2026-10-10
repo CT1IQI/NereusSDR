@@ -18,6 +18,10 @@
 //                 slider 16 px, thinning the 18 px applet sliders and the
 //                 20 px zoom bar. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-09 - D28: neighboursKeepTheirSize: a slider the look raised
+//                 to the handle takes its pixels from the panel, not from
+//                 the widgets beside it. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -144,6 +148,96 @@ private:
     QPalette m_palette;
     QString m_sheet;
 };
+
+// Today's look: the startup sequence of main.cpp with the preview off.
+class TodayApp
+{
+public:
+    TodayApp()
+        : m_app(qobject_cast<QApplication*>(QCoreApplication::instance()))
+        , m_palette(m_app->palette())
+        , m_sheet(m_app->styleSheet())
+    {
+        WorkspacePreview::setEnabledForTest(false);
+        applyDarkPalette(*m_app);
+        applyAppBaselineQss(*m_app);
+    }
+    ~TodayApp()
+    {
+        m_app->setStyleSheet(m_sheet);
+        m_app->setPalette(m_palette);
+    }
+    TodayApp(const TodayApp&) = delete;
+    TodayApp& operator=(const TodayApp&) = delete;
+
+private:
+    QApplication* m_app;
+    QPalette m_palette;
+    QString m_sheet;
+};
+
+// The applets whose fixed-height rows hold sliders the look may raise.
+std::vector<std::pair<QString, QWidget*>> sliderApplets(RadioModel* model, QWidget* host)
+{
+    return {
+        { QStringLiteral("RxApplet"), new RxApplet(nullptr, model, host) },
+        { QStringLiteral("TxApplet"), new TxApplet(model, host) },
+        { QStringLiteral("PhoneCwApplet"), new PhoneCwApplet(model, host) },
+        { QStringLiteral("EqApplet"), new EqApplet(model, host) },
+        { QStringLiteral("FmApplet"), new FmApplet(model, host) },
+        { QStringLiteral("DigitalApplet"), new DigitalApplet(model, host) },
+        { QStringLiteral("DisplayApplet"), new DisplayApplet(model, host) },
+        { QStringLiteral("DiversityApplet"), new DiversityApplet(model, host) },
+        { QStringLiteral("CwxApplet"), new CwxApplet(model, host) },
+        { QStringLiteral("DvkApplet"), new DvkApplet(model, host) },
+    };
+}
+
+// Every widget under `root` by its path of child indexes, with its class,
+// name and size. Two copies built the same way have the same paths.
+struct Placed {
+    QString name;
+    QSize size;
+    bool visible = false;
+};
+
+void collect(QWidget* w, const QString& path, QHash<QString, Placed>& out)
+{
+    out.insert(path, Placed{ nameOf(w), w->size(), w->isVisible() });
+    int i = 0;
+    for (QObject* o : w->children()) {
+        if (auto* c = qobject_cast<QWidget*>(o)) {
+            collect(c, path + QLatin1Char('/') + QString::number(i), out);
+        }
+        ++i;
+    }
+}
+
+// Lays the applets out as the applet column does: fixed width, the height
+// they ask for.
+void layOut(std::vector<std::pair<QString, QWidget*>>& parts)
+{
+    int y = 0;
+    for (auto& [name, w] : parts) {
+        w->setFixedWidth(260);
+        w->adjustSize();
+        w->move(0, y);
+        y += w->height() + 8;
+    }
+}
+
+void settleLayouts(QWidget* host)
+{
+    for (int pass = 0; pass < 3; ++pass) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QCoreApplication::processEvents();
+        for (QWidget* w : host->findChildren<QWidget*>()) {
+            if (w->layout() != nullptr) {
+                w->layout()->activate();
+            }
+        }
+    }
+}
 
 // Checks every visible slider under `root`, then every tab of every tab
 // widget under it in turn. `where` names the place in the findings.
@@ -348,6 +442,72 @@ private slots:
               checked, raised, int(found.size()));
         QVERIFY(checked > 0);
         QVERIFY2(found.isEmpty(), qPrintable(found.join(QLatin1Char('\n'))));
+    }
+
+    // D28 (JJ, 2026-10-09): a slider the look raises to the handle takes
+    // its pixels from the panel, which grows; no widget beside it shrinks.
+    // Each applet is built in today's look and in the workspace look and
+    // laid out the same way; no visible widget other than a slider (or a
+    // widget that holds one) is shorter with the look on.
+    void neighboursKeepTheirSize()
+    {
+        QHash<QString, QHash<QString, Placed>> today;
+        {
+            TodayApp look;
+            RadioModel model;
+            QWidget host;
+            host.resize(300, 6000);
+            auto parts = sliderApplets(&model, &host);
+            layOut(parts);
+            host.show();
+            settleLayouts(&host);
+            layOut(parts);
+            settleLayouts(&host);
+            for (auto& [name, w] : parts) {
+                collect(w, name, today[name]);
+            }
+        }
+        WorkspaceApp look;
+        RadioModel model;
+        QWidget host;
+        host.resize(300, 6000);
+        auto parts = sliderApplets(&model, &host);
+        layOut(parts);
+        host.show();
+        WorkspacePreview::themeSubtree(&host);
+        settleLayouts(&host);
+        layOut(parts);
+        settleLayouts(&host);
+        QStringList found;
+        int compared = 0;
+        for (auto& [name, w] : parts) {
+            QHash<QString, Placed> now;
+            collect(w, name, now);
+            for (auto it = now.cbegin(); it != now.cend(); ++it) {
+                const auto before = today.value(name).constFind(it.key());
+                if (before == today.value(name).cend() || !it->visible || !before->visible) {
+                    continue;
+                }
+                // Sliders, and the widgets that hold them, may grow; the
+                // rest keep today's height.
+                if (it->name.contains(QLatin1String("Slider")) || it->name == QLatin1String("QSlider")) {
+                    continue;
+                }
+                ++compared;
+                if (it->size.height() < before->size.height()) {
+                    found << QStringLiteral("%1 %2: %3 px tall, %4 in today's look")
+                                 .arg(it.key(), it->name).arg(it->size.height())
+                                 .arg(before->size.height());
+                }
+            }
+        }
+        qInfo("Neighbours: %d widgets compared, %d shorter with the look on", compared,
+              int(found.size()));
+        for (const QString& f : found) {
+            qInfo().noquote() << "SHORTER" << f;
+        }
+        QVERIFY(compared > 0);
+        QVERIFY2(found.isEmpty(), qPrintable(QStringLiteral("%1 widgets shorter").arg(found.size())));
     }
 
     // With the look off, a slider the program fixed keeps its sheet and

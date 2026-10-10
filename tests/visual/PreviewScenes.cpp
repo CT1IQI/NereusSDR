@@ -150,6 +150,19 @@
 //                 through setters and injected status lines; nothing
 //                 connects or starts discovery. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - cw-digital seeds the TX profiles (the Phone / CW mic
+//                 profile list was empty) and puts its CW page plate in the
+//                 applet's own layout, above its first row, instead of over
+//                 its level meter. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-09 - strip-scroll scenes: a Receive strip, the RX applet over
+//                 GPU meters, unscrolled and scrolled, in both looks, with
+//                 where each meter's native window sits. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - A --strip-<edge>-full grab waits until the grown strip's
+//                 size stops changing (cw-digital at laptop@1.25 caught it
+//                 one pixel short in some runs). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -185,6 +198,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QWindow>
 #include <QSplitter>
 #include <QSplitterHandle>
 #include <QStatusBar>
@@ -192,6 +206,7 @@
 #include <QTreeWidget>
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QVBoxLayout>
 #include <QHash>
 #include <QJsonDocument>
 #include <QListWidget>
@@ -2884,6 +2899,8 @@ constexpr int kFreeBottomClearancePx = 24;
 constexpr auto kPreviewTxProfileScope = "02:00:00:00:00:00";
 // At most this many window growths for a strip's full-content image.
 constexpr int kFullStripGrowSteps = 4;
+// Settles at most to let a grown strip's size stop changing.
+constexpr int kFullStripStableSteps = 6;
 
 // Applets the source has but MainWindow does not construct (their lines
 // are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
@@ -3136,6 +3153,18 @@ void captureStripsFull(SceneContext& ctx, const QString& scene)
             pump(kSettleMs);
             overflow = stripOverflow(strip);
         }
+        // The strip's width follows its content's minimum a pass after the
+        // window grows (a scroll bar that went away gives its width back),
+        // so a single settle can catch it one pixel short at a fractional
+        // scale. Wait until two settles in a row leave it the same size.
+        for (int step = 0; step < kFullStripStableSteps; ++step) {
+            const QSize seen = strip->size();
+            pump(kSettleMs);
+            if (strip->size() == seen) {
+                break;
+            }
+        }
+        overflow = stripOverflow(strip);
         const QString name = scene + QStringLiteral("--") + edgeName + QStringLiteral("-full");
         CapturedImage img;
         img.name = name;
@@ -3174,12 +3203,15 @@ QVector<PanPose> cwDigitalPoses()
     return {a, b};
 }
 
+QJsonObject seedTxProfiles(SceneContext& ctx);
+
 void sceneCwDigital(SceneContext& ctx)
 {
     ctx.provenance = provProposed();
     ctx.proposedValues = proposedEdgeValues();
     ctx.extraCrops = addAllStripCrops;
-    runWindowScene(ctx, cwDigitalPoses(), 0, [](SceneContext& c) {
+    QJsonObject txProfileSeed;
+    runWindowScene(ctx, cwDigitalPoses(), 0, [&txProfileSeed](SceneContext& c) {
         if (!registerPreviewApplets(c)) {
             return;
         }
@@ -3203,26 +3235,66 @@ void sceneCwDigital(SceneContext& ctx)
         phcw->showPage(1);
         c.notes.append(QStringLiteral("Main Panel in the left strip; Phone / CW moved to the right strip, "
                                       "PhoneCwApplet::showPage(1) (its CW page)"));
+        // The Phone page's mic profile list reads MicProfileManager, as the
+        // TX applet's profile selector does in tx-processing.
+        txProfileSeed = seedTxProfiles(c);
     }, [](SceneContext& c) {
         // The CW page is not built in this build: showPage(1) falls back to
-        // the Phone page, so a plate says so over the applet's top.
+        // the Phone page, so a plate says so above the applet's first row,
+        // in the applet's own layout, where it covers no control.
         if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
             return;
         }
         auto* phcw = c.window->findChild<PhoneCwApplet*>();
-        addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
-                               QStringLiteral("CW page: not built yet in NereusSDR"),
-                               QStringLiteral("the Phone / CW applet's CW page is gated by "
-                                              "UnbuiltFeature::Cwx; showPage(1) shows the Phone page"),
-                               false);
+        auto* root = qobject_cast<QBoxLayout*>(phcw->layout());
+        if (root == nullptr) {
+            c.failure = QStringLiteral("the Phone / CW applet has no box layout for the plate");
+            return;
+        }
+        QLabel* plate = addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
+                                               QStringLiteral("CW page: not built yet in NereusSDR"),
+                                               QStringLiteral("the Phone / CW applet's CW page is gated by "
+                                                              "UnbuiltFeature::Cwx; showPage(1) shows the "
+                                                              "Phone page"),
+                                               false);
+        auto* holder = new QWidget(phcw);
+        auto* box = new QVBoxLayout(holder);
+        box->setContentsMargins(kPlateGapPx, kPlateGapPx, kPlateGapPx, kPlateGapPx);
+        plate->setParent(holder);
+        plate->setMinimumWidth(0);
+        plate->setMaximumWidth(QWIDGETSIZE_MAX);
+        box->addWidget(plate);
+        root->insertWidget(0, holder);
+        plate->show();
+        holder->show();
+        pump(kFinalSettleMs);
         c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
-                                      "its Phone page and a not-implemented plate covers its top"));
+                                      "its Phone page and a not-implemented plate sits above its first row, "
+                                      "in its own layout"));
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
+    // The applet's combo that lists the seeded profiles is its mic profile list.
+    MicProfileManager* profiles = ctx.model->micProfileManager();
+    auto* phcw = ctx.window->findChild<PhoneCwApplet*>();
+    if (profiles != nullptr && phcw != nullptr) {
+        QString listed = QStringLiteral("no list shows the active profile");
+        for (QComboBox* combo : phcw->findChildren<QComboBox*>()) {
+            if (!profiles->activeProfileName().isEmpty()
+                && combo->findText(profiles->activeProfileName()) >= 0) {
+                listed = QStringLiteral("%1 profile(s), \"%2\"").arg(combo->count()).arg(combo->currentText());
+            }
+        }
+        ctx.notes.append(QStringLiteral("Phone / CW mic profile list: %1").arg(listed));
+    }
     noteStrips(ctx);
     captureWindow(ctx, QStringLiteral("cw-digital"));
+    for (CapturedImage& img : ctx.images) {
+        if (img.name == QLatin1String("cw-digital") && !txProfileSeed.isEmpty()) {
+            img.extra[QStringLiteral("tx_profile_seed")] = txProfileSeed;
+        }
+    }
     captureStripsFull(ctx, QStringLiteral("cw-digital"));
     annotateSlices(ctx);
 }
@@ -6913,6 +6985,99 @@ void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
     }
 }
 
+// ---- a strip container scrolled over its meters -------------------------------
+
+// JJ's left strip: the RX applet with GPU meters below it, in one stack.
+// The RX applet is a singleton, so it leaves wherever it was placed.
+QString addReceiveStrip(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr || manager->contentRegistry() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return {};
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    for (auto& c : draft.containers) {
+        c.contents.erase(std::remove_if(c.contents.begin(), c.contents.end(),
+                                        [](const ContentEntry& e) { return e.typeId == QLatin1String("applet:rx"); }),
+                         c.contents.end());
+    }
+    const ContainerDocument d = makeSceneContainer(manager, QStringLiteral("Receive"), DockEdge::Left,
+        ContentLayout::VerticalStack,
+        {{QStringLiteral("applet:rx"), {}}, {QStringLiteral("meter.mic"), {}}, {QStringLiteral("meter.alc"), {}},
+         {QStringLiteral("meter.mic"), {}}, {QStringLiteral("meter.alc"), {}}, {QStringLiteral("meter.mic"), {}},
+         {QStringLiteral("meter.alc"), {}}});
+    draft.containers.append(d);
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not add the Receive container");
+        return {};
+    }
+    return d.id;
+}
+
+QScrollArea* receiveStripScroll(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    ContainerContentHost* host = manager ? manager->contentHost(QStringLiteral("preview-receive")) : nullptr;
+    return host ? host->findChild<QScrollArea*>() : nullptr;
+}
+
+// Where Qt placed each meter's native window against the widget it
+// belongs to and the scroll viewport that should clip it.
+void noteMeterWindows(SceneContext& ctx, QScrollArea* scroll, const QString& when)
+{
+    QWidget* viewport = scroll->viewport();
+    const QRect clip(viewport->mapTo(ctx.window, QPoint()), viewport->size());
+    for (MeterWidget* m : scroll->findChildren<MeterWidget*>()) {
+        const QRect widget(m->mapTo(ctx.window, QPoint()), m->size());
+        QJsonObject note{{QStringLiteral("when"), when},
+                         {QStringLiteral("meter"), m->objectName().isEmpty() ? QStringLiteral("MeterWidget") : m->objectName()},
+                         {QStringLiteral("widget_in_window"), rectJson(widget)},
+                         {QStringLiteral("viewport_in_window"), rectJson(clip)},
+                         {QStringLiteral("visible_part"), rectJson(widget.intersected(clip))},
+                         {QStringLiteral("native"), m->testAttribute(Qt::WA_NativeWindow)}};
+        if (QWindow* w = m->windowHandle()) {
+            note.insert(QStringLiteral("native_window_geometry"), rectJson(w->geometry()));
+            note.insert(QStringLiteral("native_parent"), w->parent() ? w->parent()->objectName() : QStringLiteral("(none)"));
+            note.insert(QStringLiteral("native_mask_empty"), w->mask().isEmpty());
+            // The widget that owns the native parent window, and how far
+            // up the meter it sits.
+            int depth = 0;
+            for (QWidget* a = m->parentWidget(); a != nullptr; a = a->parentWidget(), ++depth) {
+                if (a->windowHandle() != nullptr && a->windowHandle() == w->parent()) {
+                    note.insert(QStringLiteral("native_parent_widget"),
+                                QStringLiteral("%1 '%2' %3 levels up%4%5")
+                                    .arg(QString::fromLatin1(a->metaObject()->className()), a->objectName())
+                                    .arg(depth + 1)
+                                    .arg(a == viewport ? QStringLiteral(" (the scroll viewport)") : QString(),
+                                         a == scroll->widget() ? QStringLiteral(" (the scrolled body)") : QString()));
+                    break;
+                }
+            }
+        }
+        // Every ancestor up to the window: which own a native window, and
+        // where that window sits against its parent.
+        QJsonArray chain;
+        for (QWidget* a = m->parentWidget(); a != nullptr; a = a->parentWidget()) {
+            QString line = QStringLiteral("%1 '%2'").arg(QString::fromLatin1(a->metaObject()->className()), a->objectName());
+            if (a == viewport) { line += QStringLiteral(" [viewport]"); }
+            if (a == scroll->widget()) { line += QStringLiteral(" [body]"); }
+            if (a->internalWinId() != 0) {
+                line += QStringLiteral(" native");
+                if (a->testAttribute(Qt::WA_NativeWindow)) { line += QStringLiteral(" (asked)"); }
+                if (a->windowHandle() != nullptr) {
+                    const QRect g = a->windowHandle()->geometry();
+                    line += QStringLiteral(" at %1,%2 %3x%4").arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height());
+                }
+            }
+            chain.append(line);
+            if (a->isWindow()) { break; }
+        }
+        note.insert(QStringLiteral("ancestors"), chain);
+        ctx.notes.append(note);
+    }
+}
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -7483,6 +7648,37 @@ QVector<Scene> fixedScenes()
         });
         if (ctx.failure.isEmpty()) { sceneDataColoursDecided(ctx); }
     }, true});
+    // JJ's left strip, the RX applet over GPU meters,
+    // unscrolled (the meters must show their scales) and scrolled part way,
+    // in today's look and the workspace look.
+    for (const bool look : {false, true}) {
+        for (const int scrollPx : {0, 70}) {
+            const QString name = QStringLiteral("strip-scroll--%1-%2")
+                .arg(look ? QStringLiteral("workspace") : QStringLiteral("today"),
+                     scrollPx == 0 ? QStringLiteral("unscrolled") : QStringLiteral("scrolled"));
+            scenes.append({name, QStringLiteral("2v"), false, [name, scrollPx](SceneContext& ctx) {
+                ctx.extraCrops = addStripCrops;
+                runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) { addReceiveStrip(c); },
+                               [scrollPx](SceneContext& c) {
+                    QScrollArea* scroll = receiveStripScroll(c);
+                    if (scroll == nullptr) {
+                        c.failure = QStringLiteral("no Receive strip scroll area");
+                        return;
+                    }
+                    noteMeterWindows(c, scroll, QStringLiteral("before scrolling"));
+                    QScrollBar* bar = scroll->verticalScrollBar();
+                    bar->setValue(qMin(scrollPx, bar->maximum()));
+                    pump(kSettleMs);
+                    c.notes.append(QJsonObject{{QStringLiteral("scroll_value"), bar->value()},
+                                               {QStringLiteral("scroll_maximum"), bar->maximum()}});
+                    noteMeterWindows(c, scroll, QStringLiteral("after scrolling"));
+                });
+                if (ctx.failure.isEmpty()) {
+                    captureWindow(ctx, name);
+                }
+            }, look});
+        }
+    }
     // JJ's decided sliders, indicators, lit buttons, radii and scroll bars
     // through the product path (ControlsSheet.cpp).
     scenes.append({QStringLiteral("decided--controls"), QStringLiteral("2v"), false,
