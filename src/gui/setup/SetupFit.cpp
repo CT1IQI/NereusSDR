@@ -12,17 +12,22 @@
 // Modification history (NereusSDR):
 //   2026-10-09  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  FitScrollArea, used by scrollingTab.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupFit.h"
 
 #include <algorithm>
 
+#include <QEvent>
 #include <QFrame>
 #include <QLabel>
 #include <QResizeEvent>
+#include <QScopedValueRollback>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QShowEvent>
 #include <QWidget>
 
 namespace NereusSDR::SetupFit {
@@ -43,6 +48,41 @@ bool takesNoRoom(QLayoutItem* item)
 bool isSpacer(QLayoutItem* item)
 {
     return item->spacerItem() != nullptr;
+}
+
+// A layout pass is bounded: each one settles one more level of nesting.
+constexpr int kMaxLayoutPasses = 8;
+
+// True when a showing row or grid under content is stacked.
+bool hasStackedRow(const QWidget* content)
+{
+    const QList<QLayout*> layouts = content->findChildren<QLayout*>();
+    for (const QLayout* layout : layouts) {
+        if (layout->property(kFitRowStackedProperty).toBool() && layout->parentWidget() != nullptr
+            && layout->parentWidget()->isVisible()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Brings the layouts under w up to date now, children first, so each
+// parent sees its children's new needs. Qt does the same over several
+// posted layout requests; a decision made in between would read old sizes.
+// True when a layout had work to do.
+bool activateLayouts(QWidget* w)
+{
+    bool worked = false;
+    const QList<QWidget*> children = w->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly);
+    for (QWidget* child : children) {
+        if (!child->isHidden() && !child->isWindow()) {
+            worked = activateLayouts(child) || worked;
+        }
+    }
+    if (QLayout* layout = w->layout()) {
+        worked = layout->activate() || worked;
+    }
+    return worked;
 }
 
 } // namespace
@@ -238,9 +278,96 @@ void widthAtLeast(QLabel* label, int px)
     label->setFixedWidth(std::max(px, label->sizeHint().width()));
 }
 
+FitScrollArea::FitScrollArea(QWidget* parent)
+    : QScrollArea(parent)
+{
+}
+
+bool FitScrollArea::event(QEvent* event)
+{
+    const bool handled = QScrollArea::event(event);
+    if (event->type() == QEvent::LayoutRequest) {
+        preferNoBar();
+    }
+    return handled;
+}
+
+void FitScrollArea::resizeEvent(QResizeEvent* event)
+{
+    QScrollArea::resizeEvent(event);
+    preferNoBar();
+}
+
+void FitScrollArea::showEvent(QShowEvent* event)
+{
+    QScrollArea::showEvent(event);
+    preferNoBar();
+}
+
+void FitScrollArea::layOutNow()
+{
+    for (int pass = 0; pass < kMaxLayoutPasses; ++pass) {
+        const bool worked = activateLayouts(widget());
+        // QScrollArea sizes the content and the bars' ranges on a layout
+        // request; this is that step, taken now.
+        QEvent request(QEvent::LayoutRequest);
+        QScrollArea::event(&request);
+        if (!worked) {
+            break;
+        }
+    }
+}
+
+void FitScrollArea::preferNoBar()
+{
+    QWidget* content = widget();
+    QScrollBar* bar = verticalScrollBar();
+    if (m_trying || content == nullptr || !isVisible() || !widgetResizable()
+        || verticalScrollBarPolicy() != Qt::ScrollBarAsNeeded) {
+        return;
+    }
+    if (!bar->isVisible()) {
+        // Nothing to decide: the rows have the whole width already.
+        m_tried.clear();
+        return;
+    }
+    if (!hasStackedRow(content)) {
+        return;
+    }
+    const QSize whole = maximumViewportSize();
+    if (whole != m_triedFor) {
+        m_triedFor = whole;
+        m_tried.clear();
+    }
+    const QSize needs = content->minimumSizeHint();
+    if (m_tried.contains(needs)) {
+        return;
+    }
+    m_tried.append(needs);
+
+    const QScopedValueRollback<bool> trying(m_trying, true);
+    const int scrolledTo = bar->value();
+    // The whole width, as it is with no bar: the rows that fit it go side
+    // by side, and the bar's range then says whether the page fits.
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    layOutNow();
+    const bool fits = bar->maximum() <= bar->minimum();
+    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    layOutNow();
+    if (fits) {
+        m_tried.clear();
+        return;
+    }
+    bar->setValue(scrolledTo);
+    const QSize stackedNeeds = content->minimumSizeHint();
+    if (!m_tried.contains(stackedNeeds)) {
+        m_tried.append(stackedNeeds);
+    }
+}
+
 QScrollArea* scrollingTab(QWidget* content)
 {
-    auto* area = new QScrollArea;
+    auto* area = new FitScrollArea;
     area->setObjectName(QStringLiteral("setupTabScroll"));
     area->setWidgetResizable(true);
     area->setFrameShape(QFrame::NoFrame);

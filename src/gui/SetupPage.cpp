@@ -56,6 +56,10 @@
 //                 widens when its text needs more (SetupFit::widthAtLeast), so
 //                 no label is cut short. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - D25: the page scrolls in a SetupFit::FitScrollArea, so a
+//                 row that fits side by side without a scroll bar is side
+//                 by side whatever was shown before. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
@@ -110,8 +114,9 @@ void SetupPage::init(const QString& title)
     // Page title
     rootLayout->addWidget(makePageTitle(title));
 
-    // Scrollable content area
-    auto* scroll = new QScrollArea;
+    // Scrollable content area. D25: rows that fit side by side without a
+    // vertical scroll bar stay side by side (SetupFit::FitScrollArea).
+    auto* scroll = new SetupFit::FitScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setStyleSheet("QScrollArea { background: #0f0f1a; border: none; }");

@@ -163,6 +163,10 @@
 //                 size stops changing (cw-digital at laptop@1.25 caught it
 //                 one pixel short in some runs). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - No --scrolled scene for Hardware Config > Calibration: at
+//                 the dialog's own size its groups now always sit side by
+//                 side with nothing to scroll (D25, SetupFit::FitScrollArea).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -7932,7 +7936,12 @@ QVector<SetupScrollSpec> setupScrollSpecs()
         {hardware, {alex, QStringLiteral("Alex-1 Filters")}},
         {hardware, {alex, QStringLiteral("Alex-2 Filters")}},
         {hardware, {oc}},
-        {hardware, {QStringLiteral("Calibration")}},
+        // No Calibration entry: under D25 a row that fits side by side
+        // without a vertical scroll bar is side by side, and at the
+        // dialog's own size the tab's two columns do, with nothing left to
+        // scroll (SetupFit::FitScrollArea). It used to stack, and so
+        // scroll, only when a scroll bar happened to show first. The --min
+        // scene still shows it stacked at 820 x 600.
         {hardware, {hl2Oc}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
         {QStringLiteral("nr-anf"), {QStringLiteral("NNR")}},

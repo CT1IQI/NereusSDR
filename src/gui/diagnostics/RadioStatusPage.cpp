@@ -37,6 +37,10 @@
 //                the page (the container's surface, its edge and secondary
 //                captions), and "No issues found" is the decided ok. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - D25: the cards scroll in a SetupFit::FitScrollArea, so
+//                rows that fit side by side without a scroll bar are side
+//                by side whatever was shown before. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
@@ -152,7 +156,7 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     outer->addWidget(statusBar);
 
     // ── Scroll area for cards ─────────────────────────────────────────────
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = new SetupFit::FitScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));

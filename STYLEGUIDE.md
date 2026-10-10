@@ -240,6 +240,12 @@ QFrame { color: #1e2e3e; }
 ```
 Using `QFrame::HLine` with `QFrame::Sunken`, fixed height 2px.
 
+### Setup Page Reflow (D25)
+
+A Setup page wider than the Settings window rearranges to fit: groups that sit side by side stack in reading order (`SetupFit::FitRow`, `SetupFit::FitGrid`), notes wrap, tabs stay at the top, and the page never scrolls sideways.
+
+Rows stack only when they cannot fit side by side: a row that fits the page's width and height without a vertical scroll bar is side by side, whatever was shown before. Host the page or tab in a `SetupFit::FitScrollArea` (or `SetupFit::scrollingTab`), not a plain `QScrollArea`, so a scroll bar that showed first cannot keep the row stacked.
+
 ---
 
 ## Patterns

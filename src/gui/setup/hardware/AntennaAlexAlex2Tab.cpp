@@ -35,6 +35,10 @@
 //                detected" are the page's secondary text; the workspace
 //                palette's mid is the panel colour, which hid them. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - D25: the tab scrolls in a SetupFit::FitScrollArea, so
+//                columns that fit side by side without a scroll bar are
+//                side by side whatever was shown before. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -194,7 +198,7 @@ QDoubleSpinBox* AntennaAlexAlex2Tab::makeFreqSpin(double defaultMhz, QWidget* pa
 AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     : QWidget(parent), m_model(model)
 {
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = new SetupFit::FitScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
 

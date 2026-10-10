@@ -78,6 +78,11 @@
 //   2026-10-09 - D25: the top row of groups stacks when narrow
 //                 (SetupFit::FitRow). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-10 - D25: the tab scrolls in a SetupFit::FitScrollArea, so at
+//                 the window's own size the two columns are side by side
+//                 with no scroll bar by every route to the tab, not
+//                 stacked when a bar happened to show first. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -243,7 +248,9 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     // We lay out the 5 group boxes in a 2-column grid using two QVBoxLayouts
     // inside a QHBoxLayout (top half: col 0 = Freq Cal + Level Cal,
     // col 1 = HPSDR Diag + TX Display Cal; bottom: Volts/Amps Cal full-width).
-    auto* scrollArea = new QScrollArea(this);
+    // D25: side by side whenever the columns fit without a vertical scroll
+    // bar (SetupFit::FitScrollArea).
+    auto* scrollArea = new SetupFit::FitScrollArea(this);
     scrollArea->setWidgetResizable(true);
     auto* scrollWidget = new QWidget(scrollArea);
     auto* mainLayout   = new QVBoxLayout(scrollWidget);

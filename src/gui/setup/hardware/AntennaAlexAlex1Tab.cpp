@@ -55,6 +55,10 @@
 //                the tab going below them; the BPF1 form drops its own
 //                margins so the group fits. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-10 - D25: the tab scrolls in a SetupFit::FitScrollArea, so
+//                columns that fit side by side without a scroll bar are
+//                side by side whatever was shown before. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -322,7 +326,7 @@ AntennaAlexAlex1Tab::AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent)
     : QWidget(parent), m_model(model)
 {
     // Outer layout: scroll area + horizontal column layout.
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = new SetupFit::FitScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
 

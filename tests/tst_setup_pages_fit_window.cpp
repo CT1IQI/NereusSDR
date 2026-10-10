@@ -24,12 +24,18 @@
 //                 the view or a parent where no scroll reaches it, is a
 //                 fault (planted-cell case pageFaultsCatchAClippedCell).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A row that fits side by side without a vertical scroll
+//                 bar sits side by side whatever was shown before: a
+//                 planted row from each history, and the Calibration tab
+//                 by each route to it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QApplication>
 
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
@@ -57,6 +63,7 @@
 #include "core/RadioDiscovery.h"
 #include "gui/SetupDialog.h"
 #include "gui/setup/HardwarePage.h"
+#include "gui/setup/SetupFit.h"
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
@@ -683,6 +690,116 @@ Walk walkDialog(bool workspace, int width, int height, HPSDRHW board, bool onlyH
     return walk;
 }
 
+// A row of two columns in a tab's scroll area (SetupFit::scrollingTab),
+// sized so the columns fit side by side in the area's width without a
+// vertical scroll bar and not in the width a bar leaves.
+struct PlantedRow {
+    QScrollArea* area = nullptr;
+    SetupFit::FitRow* row = nullptr;
+    int barWidth = 0;
+    int sideBySideWidth = 0; // the area width the test settles at
+    int columnHeight = 0;
+
+    bool barShows() const { return area->verticalScrollBar()->isVisible(); }
+    QString state() const
+    {
+        return QStringLiteral("%1, %2, viewport %3 x %4, content %5 x %6")
+            .arg(row->isStacked() ? QStringLiteral("stacked") : QStringLiteral("side by side"),
+                 barShows() ? QStringLiteral("bar") : QStringLiteral("no bar"))
+            .arg(area->viewport()->width()).arg(area->viewport()->height())
+            .arg(area->widget()->width()).arg(area->widget()->height());
+    }
+};
+
+PlantedRow plantRow(QWidget* host)
+{
+    constexpr int kColumnWidth = 300;
+    constexpr int kColumnHeight = 260;
+    constexpr int kSpacing = 6;
+    PlantedRow p;
+    auto* content = new QWidget;
+    auto* page = new QVBoxLayout(content);
+    page->setContentsMargins(0, 0, 0, 0);
+    p.row = new SetupFit::FitRow;
+    p.row->setContentsMargins(0, 0, 0, 0);
+    p.row->setSpacing(kSpacing);
+    for (int i = 0; i < 2; ++i) {
+        auto* column = new QFrame(content);
+        column->setMinimumSize(kColumnWidth, kColumnHeight);
+        p.row->addWidget(column, 1);
+    }
+    page->addLayout(p.row);
+    page->addStretch(1);
+    p.area = SetupFit::scrollingTab(content);
+    p.area->setParent(host);
+    p.barWidth = p.area->verticalScrollBar()->sizeHint().width();
+    p.sideBySideWidth = p.row->sideBySideMinimumWidth() + p.barWidth / 2;
+    p.columnHeight = kColumnHeight;
+    return p;
+}
+
+// Puts the application font back when a case that changes it ends.
+struct FontRestore {
+    QFont font{QApplication::font()};
+    FontRestore() = default;
+    FontRestore(const FontRestore&) = delete;
+    FontRestore& operator=(const FontRestore&) = delete;
+    ~FontRestore() { QApplication::setFont(font); }
+};
+
+// Where the Calibration tab's top row of groups stands.
+struct CalibrationState {
+    bool found = false;
+    bool stacked = false;
+    bool bar = false;
+    QString text;
+};
+
+QTabWidget* tabsHolding(QWidget* leaf, const QString& tabText, int* index)
+{
+    for (QTabWidget* tabs : leaf->findChildren<QTabWidget*>()) {
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->tabText(i) == tabText) {
+                *index = i;
+                return tabs;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// The scroll area the Calibration tab's groups scroll in.
+QScrollArea* calibrationArea(QWidget* leaf)
+{
+    auto* row = leaf->findChild<QBoxLayout*>(QStringLiteral("calibrationTopRow"));
+    QScrollArea* area = nullptr;
+    for (QWidget* w = row != nullptr ? row->parentWidget() : nullptr; w != nullptr && area == nullptr;
+         w = w->parentWidget()) {
+        area = qobject_cast<QScrollArea*>(w);
+    }
+    return area;
+}
+
+CalibrationState calibrationState(QWidget* leaf)
+{
+    CalibrationState s;
+    auto* row = leaf->findChild<QBoxLayout*>(QStringLiteral("calibrationTopRow"));
+    QScrollArea* area = calibrationArea(leaf);
+    if (row == nullptr || area == nullptr || !area->isVisible()) {
+        s.text = QStringLiteral("the Calibration tab is not showing");
+        return s;
+    }
+    s.found = true;
+    s.stacked = row->property(kFitRowStacked).toBool();
+    s.bar = area->verticalScrollBar()->isVisible();
+    s.text = QStringLiteral("%1, %2, viewport %3 x %4, content %5 x %6")
+                 .arg(s.stacked ? QStringLiteral("stacked") : QStringLiteral("side by side"),
+                      s.bar ? QStringLiteral("bar") : QStringLiteral("no bar"))
+                 .arg(area->viewport()->width()).arg(area->viewport()->height())
+                 .arg(area->widget()->width()).arg(area->widget()->height());
+    return s;
+}
+
 } // namespace
 
 class TstSetupPagesFitWindow : public QObject {
@@ -691,6 +808,7 @@ class TstSetupPagesFitWindow : public QObject {
 private slots:
     void initTestCase()
     {
+        m_startFont = QApplication::font();
         AppSettings::instance().clear();
 #ifdef Q_OS_MAC
         // The font the window gets on macOS (the scenes' sidecars record
@@ -819,6 +937,245 @@ private slots:
         QVERIFY2(antenna, "no Antenna / ALEX row stacked at 820 x 600");
         QVERIFY2(oc, "no OC Outputs row stacked at 820 x 600");
     }
+
+    void rowThatFitsWithoutABarIsSideBySide_data()
+    {
+        QTest::addColumn<QString>("history");
+        QTest::newRow("shown at its size") << QStringLiteral("direct");
+        QTest::newRow("widened from a stacked row with a bar") << QStringLiteral("narrow");
+        QTest::newRow("narrowed from a wide row") << QStringLiteral("wide");
+        QTest::newRow("grown from a height that needs the bar") << QStringLiteral("short");
+    }
+
+    // The columns fit side by side in the area's width and height with no
+    // vertical scroll bar, and not in the width a bar would leave: the row
+    // settles side by side with no bar, whatever it showed before.
+    void rowThatFitsWithoutABarIsSideBySide()
+    {
+        QFETCH(QString, history);
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        PlantedRow p = plantRow(&host);
+        layout->addWidget(p.area);
+        if (p.barWidth < 2) {
+            QSKIP("this style's scroll bar takes no width, so a row cannot flip");
+        }
+        const QSize fits(p.sideBySideWidth, p.columnHeight + 40);
+        QSize first = fits;
+        if (history == QLatin1String("narrow")) {
+            first = QSize(p.sideBySideWidth - 4 * p.barWidth, fits.height());
+        } else if (history == QLatin1String("wide")) {
+            first = QSize(p.sideBySideWidth * 2, fits.height());
+        } else if (history == QLatin1String("short")) {
+            first = QSize(p.sideBySideWidth, p.columnHeight - 40);
+        }
+        host.resize(first);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        settle();
+        qInfo().noquote() << "first:" << p.state();
+        if (history == QLatin1String("narrow") || history == QLatin1String("short")) {
+            QVERIFY2(p.row->isStacked() && p.barShows(), qPrintable(p.state()));
+        }
+        host.resize(fits);
+        settle();
+        qInfo().noquote() << "settled:" << p.state();
+        QVERIFY2(!p.row->isStacked(), qPrintable(p.state()));
+        QVERIFY2(!p.barShows(), qPrintable(p.state()));
+        QCOMPARE(p.area->viewport()->width(), p.sideBySideWidth);
+    }
+
+    void rowThatCannotFitStacksAndScrolls_data()
+    {
+        QTest::addColumn<QString>("history");
+        QTest::newRow("shown at its size") << QStringLiteral("direct");
+        QTest::newRow("shrunk from a row side by side") << QStringLiteral("tall");
+        QTest::newRow("narrowed from a wide row") << QStringLiteral("wide");
+    }
+
+    // Side by side the columns are taller than the area, so the bar is
+    // needed, and the width it leaves is too narrow for them: the row
+    // stacks and the page scrolls down, never sideways, from any history,
+    // and a page scrolled part way down stays where it was.
+    void rowThatCannotFitStacksAndScrolls()
+    {
+        QFETCH(QString, history);
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        PlantedRow p = plantRow(&host);
+        layout->addWidget(p.area);
+        if (p.barWidth < 2) {
+            QSKIP("this style's scroll bar takes no width, so a row cannot flip");
+        }
+        const QSize tooShort(p.sideBySideWidth, p.columnHeight - 40);
+        QSize first = tooShort;
+        if (history == QLatin1String("tall")) {
+            first = QSize(p.sideBySideWidth, p.columnHeight + 40);
+        } else if (history == QLatin1String("wide")) {
+            first = QSize(p.sideBySideWidth * 2, p.columnHeight + 40);
+        }
+        host.resize(first);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        settle();
+        qInfo().noquote() << "first:" << p.state();
+        host.resize(tooShort);
+        settle();
+        qInfo().noquote() << "settled:" << p.state();
+        QVERIFY2(p.row->isStacked(), qPrintable(p.state()));
+        QVERIFY2(p.barShows(), qPrintable(p.state()));
+        QVERIFY2(!p.area->horizontalScrollBar()->isVisible(), qPrintable(p.state()));
+        QCOMPARE(p.area->widget()->width(), p.area->viewport()->width());
+
+        // Scrolled part way, a new layout pass leaves the page where it is.
+        QScrollBar* bar = p.area->verticalScrollBar();
+        QVERIFY(bar->maximum() > 20);
+        bar->setValue(20);
+        p.area->widget()->layout()->invalidate();
+        settle();
+        QCOMPARE(bar->value(), 20);
+        host.resize(tooShort + QSize(0, 3));
+        settle();
+        QVERIFY2(p.row->isStacked() && p.barShows(), qPrintable(p.state()));
+        QCOMPARE(bar->value(), 20);
+    }
+
+    void calibrationSettlesSideBySide_data()
+    {
+        QTest::addColumn<bool>("workspace");
+        QTest::addColumn<QString>("route");
+        for (const bool workspace : {false, true}) {
+            const QByteArray look = workspace ? "workspace" : "today";
+            QTest::newRow(look + ", straight to the tab") << workspace << QStringLiteral("direct");
+            QTest::newRow(look + ", through the tabs before it") << workspace << QStringLiteral("tabs");
+            QTest::newRow(look + ", opened at the minimum size") << workspace << QStringLiteral("from-min");
+            QTest::newRow(look + ", to the minimum size and back") << workspace << QStringLiteral("min-and-back");
+            QTest::newRow(look + ", opened wide") << workspace << QStringLiteral("from-wide");
+            QTest::newRow(look + ", seen at the minimum size, resized on another tab")
+                << workspace << QStringLiteral("min-then-elsewhere");
+            QTest::newRow(look + ", seen at the minimum size, resized on another page")
+                << workspace << QStringLiteral("min-then-another-page");
+        }
+    }
+
+    // Setup > Hardware Config > Calibration at the window's own size
+    // (900 x 650): its two columns of groups fit side by side with no
+    // vertical scroll bar, so that is how the tab settles by every route
+    // to it (JJ's decision D25). At the minimum size they cannot fit and
+    // stack.
+    void calibrationSettlesSideBySide()
+    {
+        QFETCH(bool, workspace);
+        QFETCH(QString, route);
+        // The font the process started with, as tst_workspace_colour_sweep
+        // runs in, where the tab was seen in both layouts. At the 13 pt the
+        // other cases set (larger offscreen, stricter for them) these
+        // columns cannot fit side by side at 900 x 650 at all.
+        const FontRestore restore;
+        QApplication::setFont(m_startFont);
+        AppLook look(workspace);
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        look.apply(&dialog);
+        QSize first(kDefaultWidth, kDefaultHeight);
+        if (route == QLatin1String("from-min")) {
+            first = QSize(kMinimumWidth, kMinimumHeight);
+        } else if (route == QLatin1String("from-wide")) {
+            first = QSize(kWideWidth, kWideHeight);
+        }
+        dialog.resize(first);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        settle();
+        auto* hardware = dialog.findChild<HardwarePage*>();
+        QVERIFY(hardware != nullptr);
+        hardware->onCurrentRadioChanged(posedRadio(HPSDRHW::Saturn));
+        auto* stack = dialog.findChild<QStackedWidget*>();
+        QVERIFY(stack != nullptr);
+        QWidget* leaf = dialog.realizePageAtForTest(
+            static_cast<int>(dialog.pageLabelsForTest().indexOf(QStringLiteral("Hardware Config"))));
+        QVERIFY(leaf != nullptr);
+        stack->setCurrentWidget(leaf);
+        settle();
+        int calibration = -1;
+        QTabWidget* tabs = tabsHolding(leaf, QStringLiteral("Calibration"), &calibration);
+        QVERIFY(tabs != nullptr);
+        if (route == QLatin1String("tabs")) {
+            for (int i = 0; i < calibration; ++i) {
+                if (tabs->isTabVisible(i)) {
+                    tabs->setCurrentIndex(i);
+                    settle();
+                }
+            }
+        }
+        tabs->setCurrentIndex(calibration);
+        settle();
+        qInfo().noquote() << "first:" << calibrationState(leaf).text;
+        if (route == QLatin1String("from-min")) {
+            const CalibrationState narrow = calibrationState(leaf);
+            QVERIFY2(narrow.found && narrow.stacked, qPrintable(narrow.text));
+        }
+        if (route == QLatin1String("min-and-back")) {
+            dialog.resize(kMinimumWidth, kMinimumHeight);
+            settle();
+            const CalibrationState narrow = calibrationState(leaf);
+            qInfo().noquote() << "at the minimum:" << narrow.text;
+            QVERIFY2(narrow.found && narrow.stacked, qPrintable(narrow.text));
+        }
+        if (route == QLatin1String("min-then-elsewhere") || route == QLatin1String("min-then-another-page")) {
+            // As a run of scenes does: the tab at the minimum size, then
+            // the window back at its own size while something else shows.
+            dialog.resize(kMinimumWidth, kMinimumHeight);
+            settle();
+            const CalibrationState narrow = calibrationState(leaf);
+            QVERIFY2(narrow.found && narrow.stacked, qPrintable(narrow.text));
+            if (route == QLatin1String("min-then-elsewhere")) {
+                tabs->setCurrentIndex(0);
+            } else {
+                stack->setCurrentWidget(dialog.realizePageAtForTest(0));
+            }
+            settle();
+            dialog.resize(kDefaultWidth, kDefaultHeight);
+            settle();
+            stack->setCurrentWidget(leaf);
+            tabs->setCurrentIndex(calibration);
+            settle();
+        }
+        dialog.resize(kDefaultWidth, kDefaultHeight);
+        settle();
+        const CalibrationState state = calibrationState(leaf);
+        qInfo().noquote() << "settled:" << state.text;
+        QVERIFY2(state.found, qPrintable(state.text));
+
+        // Whether the columns fit without the bar, asked of the page with
+        // the bar taken away: side by side and nothing left to scroll.
+        QScrollArea* area = calibrationArea(leaf);
+        QVERIFY(area != nullptr);
+        area->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        settle();
+        const CalibrationState noBar = calibrationState(leaf);
+        const bool fits = !noBar.stacked && area->verticalScrollBar()->maximum() == 0;
+        qInfo().noquote() << "with no bar:" << noBar.text << (fits ? "(fits)" : "(does not fit)");
+        area->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        settle();
+#ifdef Q_OS_MAC
+        QVERIFY2(fits, "the columns no longer fit 900 x 650 side by side in this font; the case proves nothing");
+#endif
+        if (fits) {
+            QVERIFY2(!state.stacked, qPrintable(state.text));
+            QVERIFY2(!state.bar, qPrintable(state.text));
+        } else {
+            QVERIFY2(state.stacked, qPrintable(state.text));
+            QVERIFY2(state.bar, qPrintable(state.text));
+        }
+    }
+
+private:
+    QFont m_startFont;
 };
 
 QTEST_MAIN(TstSetupPagesFitWindow)

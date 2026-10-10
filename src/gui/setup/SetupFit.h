@@ -28,6 +28,14 @@
 // tab strip stays at the top while each tab's content scrolls down;
 // showWhole() makes a scroll area nested inside one show all of its content.
 //
+// FitScrollArea is the scroll area a page or tab scrolls down in. A row
+// that fits side by side in the area's width and height with no vertical
+// scroll bar is side by side, whatever was shown before: the bar, once
+// showing, takes the width that makes the row stack, and the stacked rows
+// then need the bar, so a plain QScrollArea keeps whichever of the two
+// layouts it reached first. A row stacks only when it cannot fit side by
+// side, bar or no bar.
+//
 // SidewaysFrame is the one exception D25 allows: a row that cannot fit the
 // window at its narrowest scrolls sideways inside its own frame.
 //
@@ -41,6 +49,11 @@
 // Modification history (NereusSDR):
 //   2026-10-09  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  FitScrollArea: a row that fits side
+//                                    by side without a vertical scroll bar
+//                                    is side by side whatever was shown
+//                                    before. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QBoxLayout>
@@ -48,8 +61,10 @@
 #include <QList>
 #include <QScrollArea>
 
+class QEvent;
 class QLabel;
 class QResizeEvent;
+class QShowEvent;
 class QWidget;
 
 namespace NereusSDR::SetupFit {
@@ -144,6 +159,33 @@ private:
     bool needsBar() const;
 
     bool m_hadBar = false;
+};
+
+// The scroll area of a page or tab whose rows rearrange to fit (FitRow,
+// FitGrid). While a row is stacked and the vertical scroll bar shows, it
+// lays the content out once in the width without the bar: if everything
+// then fits the height, the bar goes and the rows stay side by side; if
+// not, the bar and the stacked rows come back as they were, scrolled to
+// where they were. It asks again only when the area's size or the
+// content's needs change. Pages with no stacked row are left to
+// QScrollArea alone.
+class FitScrollArea : public QScrollArea
+{
+public:
+    explicit FitScrollArea(QWidget* parent = nullptr);
+
+protected:
+    bool event(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+
+private:
+    void preferNoBar();
+    void layOutNow();
+
+    bool m_trying = false;
+    QSize m_triedFor;        // the area's size without bars the list is for
+    QList<QSize> m_tried;    // the content's needs that did not fit there
 };
 
 // Puts content in a scroll area that fills its tab and scrolls down, with
