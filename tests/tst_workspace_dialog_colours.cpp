@@ -15,6 +15,8 @@
 //   2026-10-09 - Written for the remaining dialog, menu and control
 //                 colours. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - The unstyled slider's groove is JJ's D29 track.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -197,9 +199,10 @@ private slots:
         const QImage img = h->grab().toImage();
         const QColor rim = img.pixelColor(hr.left(), hr.center().y());
         QVERIFY2(rim == role("accent"), qPrintable(rim.name()));
-        // No filled side: the groove left of the handle is the sunken inset.
+        // No filled side: the groove left of the handle is the D29 track's
+        // button fill.
         const QColor groove = img.pixelColor(hr.left() / 2, hr.center().y());
-        QVERIFY2(groove == role("inset"), qPrintable(groove.name()));
+        QVERIFY2(groove == role("button"), qPrintable(groove.name()));
     }
 
     // Rule 4, D10: a checkable group box no sheet styles gets the decided

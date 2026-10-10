@@ -2,8 +2,9 @@
 // the workspace preview (src/gui/styles/WorkspaceComponents componentize()
 // and the app-level preview sheet in src/gui/styles/AppTheme.h).
 //
-// Covers, with the switch on: Longpath's slider (sunken flat groove, raised
-// pill handle with the accent rim, no filled sub-page), the brighter check
+// Covers, with the switch on: Longpath's slider (JJ's D29 track: the button
+// fill inside a text-inactive rim on all four sides, raised pill handle
+// with the accent rim, no filled sub-page), the brighter check
 // box and radio off state with its disabled states, the three lit meanings
 // (green, blue, amber) with red left as it was, the corner radius from the
 // control's height (round(h x 7 / 26)), and 14 px scroll bars with
@@ -13,6 +14,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the decided control look. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - The groove is JJ's D29 track, with its disabled rule.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -139,14 +142,19 @@ private slots:
     {
         WorkspacePreview::setEnabledForTest(true);
         const QString out = Style::sliderHStyle();
-        // Groove: 4 px plus a 1 px border, flat inset, shade top and light
-        // bottom edge, radius 3.
-        QVERIFY2(out.contains(QStringLiteral("height: 4px")), qPrintable(out));
-        QVERIFY2(out.contains(QStringLiteral("background: #050507")), qPrintable(out));
-        QVERIFY2(out.contains(QStringLiteral("border: 1px solid #2c2c31")), qPrintable(out));
-        QVERIFY(out.contains(QStringLiteral("border-top-color: rgba(0, 0, 0, 160)")));
-        QVERIFY(out.contains(QStringLiteral("border-bottom-color: rgba(255, 255, 255, 18)")));
-        QVERIFY(out.contains(QStringLiteral("border-radius: 3px")));
+        // Groove (D29): 4 px plus a 1 px border, the flat button fill, the
+        // text-inactive rim on all four sides, radius 3; disabled, the inset
+        // inside the border-muted rim.
+        QVERIFY2(out.contains(QStringLiteral("height: 4px; background: #1a1a1e; border-radius: 3px;"
+                                             " border: 1px solid #58585e; border-color: #58585e;"
+                                             " border-top-color: #58585e; border-bottom-color: #58585e;")),
+                 qPrintable(out));
+        QVERIFY2(out.contains(QStringLiteral("QSlider::groove:horizontal:disabled { background: #050507;"
+                                             " border-color: #3d3d41; border-top-color: #3d3d41;"
+                                             " border-bottom-color: #3d3d41;}")),
+                 qPrintable(out));
+        QVERIFY(!out.contains(QStringLiteral("rgba(0, 0, 0, 160)")));
+        QVERIFY(!out.contains(QStringLiteral("rgba(255, 255, 255, 18)")));
         // Handle: a 10x14 pill with a 1 px accent rim and a lighter top edge.
         QVERIFY2(out.contains(QStringLiteral("width: 10px")), qPrintable(out));
         QVERIFY(out.contains(QStringLiteral("height: 14px")));
@@ -166,7 +174,7 @@ private slots:
         QVERIFY(!out.contains(QStringLiteral("::add-page")));
 
         // Rendered at the approved row's size: the groove left of the
-        // handle is the flat inset, the handle has the accent rim.
+        // handle is the flat button fill, the handle has the accent rim.
         ProbeSlider s(Qt::Horizontal);
         s.setRange(0, 100);
         s.setValue(50);
@@ -175,7 +183,7 @@ private slots:
         const QRect h = s.handleRect();
         const QImage img = grabOf(s);
         const QColor groove = img.pixelColor(h.left() / 2, h.center().y());
-        QVERIFY2(groove == QColor(0x05, 0x05, 0x07), qPrintable(groove.name()));
+        QVERIFY2(groove == QColor(0x1a, 0x1a, 0x1e), qPrintable(groove.name()));
         QCOMPARE(h.height(), 16);
         QCOMPARE(h.width(), 12);
         const QColor rim = img.pixelColor(h.left(), h.center().y());
@@ -203,15 +211,16 @@ private slots:
         s.resize(kSliderWidth, kSliderHeight);
         const QRect h = s.handleRect();
         const QColor groove = grabOf(s).pixelColor(h.left() / 2, h.center().y());
-        QVERIFY2(groove == QColor(0x05, 0x05, 0x07), qPrintable(groove.name()));
+        QVERIFY2(groove == QColor(0x1a, 0x1a, 0x1e), qPrintable(groove.name()));
     }
 
     void sliderVerticalIsLongpaths()
     {
         WorkspacePreview::setEnabledForTest(true);
         const QString out = Style::sliderVStyle();
-        QVERIFY2(out.contains(QStringLiteral("width: 4px")), qPrintable(out));
-        QVERIFY(out.contains(QStringLiteral("background: #050507")));
+        QVERIFY2(out.contains(QStringLiteral("width: 4px; background: #1a1a1e;")), qPrintable(out));
+        QVERIFY(out.contains(QStringLiteral("border: 1px solid #58585e")));
+        QVERIFY(out.contains(QStringLiteral("QSlider::groove:vertical:disabled { background: #050507;")));
         QVERIFY(out.contains(QStringLiteral("height: 10px")));
         QVERIFY(out.contains(QStringLiteral("width: 14px")));
         QVERIFY(out.contains(QStringLiteral("margin: 0 -6px")));

@@ -134,6 +134,29 @@ QSlider::handle:vertical {
 }
 ```
 
+**Workspace look (preview switch on):** the live pass rewrites every
+slider's groove (`WorkspaceComponents.cpp` `sliderGroove()`); the sheets
+above stay as they are with the switch off.
+
+- **Track (JJ's D29, 2026-10-09):** fill `#1a1a1e` (button), flat, inside a
+  1 px rim `#58585e` (text-inactive, the unticked check box's rim), the same
+  colour on all four sides. No shade above or light below. Thickness (4 px
+  plus the rim) and radius (3 px) are Longpath's.
+- **Disabled track:** fill `#050507` (inset) inside a 1 px rim `#3d3d41`
+  (border-muted) on all four sides, the disabled unticked box (D10). A sheet
+  with no disabled groove rule gets one. Other disabled rules keep their
+  colours.
+- **Zoom track (D27, `nereusWorkspaceVisibleTrack`):** 6 px inside the 1 px
+  rim (8 px overall), the 16 px handle; the fill stays `#050507` (inset) and
+  the rim is the D29 `#58585e` on all four sides.
+- **Filled sliders (D24, D26, `nereusWorkspaceFilledSlider`, the PC and
+  RADIO speaker volume):** the filled side keeps its colour (PC accent
+  `#4a7ba8`, RADIO `#d8a55f`); the unfilled part of the groove is the D29
+  track.
+- **Handle:** unchanged (D5): 10x14 plus a 1 px accent rim, never thinner
+  than its 16 px span (D28: a slider the look raises takes its pixels from
+  the panel).
+
 ### Inset Value Display
 
 Used for numeric readouts (step size, RIT/XIT, pitch, filter cuts, slider values):

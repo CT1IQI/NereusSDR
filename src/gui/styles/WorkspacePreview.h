@@ -44,6 +44,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - kVisibleTrackProperty describes JJ's D27 track.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - kVisibleTrackProperty: the rim is JJ's D29 rim.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -73,7 +75,7 @@ inline constexpr auto kSkipProperty = "nereusWorkspaceSkip";
 inline constexpr auto kFilledSliderProperty = "nereusWorkspaceFilledSlider";
 // Set to true by the owner on a slider whose track must read on its own
 // (the zoom bar under the pans, JJ's D27): the decided groove stays dark,
-// 8 px overall, with the border role as its rim on every side.
+// 8 px overall, with the D29 text-inactive rim on every side.
 inline constexpr auto kVisibleTrackProperty = "nereusWorkspaceVisibleTrack";
 
 // Rewrites every stylesheet under `root` (root included) from its

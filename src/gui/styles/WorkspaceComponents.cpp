@@ -99,6 +99,11 @@
 //                 HL2 I2C read boxes drew black on black); dim text on a
 //                 dark fill keeps its colour. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - JJ's D29: every slider track is the button fill inside a
+//                 1 px text-inactive rim, the same on all four sides; a
+//                 disabled track the inset inside a border-muted rim; the
+//                 zoom track keeps its inset fill and takes the same rim.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceComponents.h"
@@ -154,9 +159,9 @@ constexpr auto kHandleMarginV = "0 -6px";
 constexpr auto kHandleRadius = "5px";
 
 // NereusSDR, JJ's D27 (2026-10-09): the zoom bar's track is the dark inset
-// with the border role as its rim on every side, 6 px inside a 1 px rim
-// (8 px overall), and the handle overhangs it by 4 px so it stays 16 px
-// overall, as the decided handle is.
+// with a rim on every side (the D29 rim since 2026-10-10), 6 px inside a
+// 1 px rim (8 px overall), and the handle overhangs it by 4 px so it stays
+// 16 px overall, as the decided handle is.
 constexpr auto kVisibleTrackThickness = "6px";
 constexpr auto kVisibleTrackHandleMarginH = "-4px 0";
 
@@ -1030,12 +1035,42 @@ void sliderGroove(Decls& d, int bg, const Target& t)
     } else if (t.vertical) {
         d.set("width", hex(kGrooveThickness));
     }
-    setBackground(d, bg, hex(kInsetBg));
-    d.set("border", QStringLiteral("1px solid %1").arg(hex(kBorder)));
-    d.set("border-color", hex(kBorder));
-    d.set("border-top-color", hex(kGlassShade));
-    d.set("border-bottom-color", hex(kGlassLight));
+    // NereusSDR, JJ's D29 (2026-10-09): the track must be seen. Not
+    // Longpath's sunken black with the shade above and the light below:
+    // the button fill, flat, inside a 1 px rim in the unticked box's rim
+    // colour, the same on all four sides. Thickness and radius stay.
+    setBackground(d, bg, hex(kButtonBg));
+    d.set("border", QStringLiteral("1px solid %1").arg(hex(kTextInactive)));
+    d.set("border-color", hex(kTextInactive));
+    d.set("border-top-color", hex(kTextInactive));
+    d.set("border-bottom-color", hex(kTextInactive));
     d.set("border-radius", hex(kGrooveRadius));
+}
+
+// NereusSDR, settled with JJ's D29 (2026-10-09): a disabled track is the
+// disabled unticked box (D10), the inset inside a border-muted rim on all
+// four sides.
+void sliderGrooveDisabled(Decls& d, int bg)
+{
+    setBackground(d, bg, hex(kInsetBg));
+    d.set("border-color", hex(kBorderMuted));
+    d.set("border-top-color", hex(kBorderMuted));
+    d.set("border-bottom-color", hex(kBorderMuted));
+}
+
+// True when sliderBody() draws the groove block `body` as the track.
+bool grooveTreated(const QString& body)
+{
+    Decls d(body);
+    const int bg = d.findLast({ "background", "background-color" });
+    return bg >= 0 && classifyFill(d.value(bg)).fill != Fill::Clear;
+}
+
+QString grooveDisabledDecls()
+{
+    Decls d(QString{});
+    sliderGrooveDisabled(d, -1);
+    return d.render();
 }
 
 void sliderHandle(Decls& d, int bg, const Target& t)
@@ -1060,7 +1095,8 @@ void sliderHandle(Decls& d, int bg, const Target& t)
 
 // Longpath's slider as it is, JJ's choice (2026-10-08): the groove and
 // handle take Longpath's colours and geometry, and no side of the groove
-// is filled. Disabled rules keep their colours (Longpath has none).
+// is filled. Disabled rules keep their colours (Longpath has none), except
+// the groove's (JJ's D29, 2026-10-09).
 QString sliderBody(Decls& d, int bg, const FillInfo& f, const Target& t)
 {
     switch (t.kind) {
@@ -1087,10 +1123,13 @@ QString sliderBody(Decls& d, int bg, const FillInfo& f, const Target& t)
                 // NereusSDR, JJ's D27 (2026-10-09): the zoom bar's track
                 // stays dark and taller, with a brighter grey rim all the
                 // way round, so both long edges read against the bar.
+                // JJ's D29 (2026-10-09): the rim is the D29 rim; the fill
+                // stays the dark inset.
                 d.set("height", hex(kVisibleTrackThickness));
-                d.set("border-top-color", hex(kBorder));
-                d.set("border-bottom-color", hex(kBorder));
+                d.replaceValue(d.findLast({ "background", "background-color" }), hex(kInsetBg));
             }
+        } else if (t.state == State::Disabled && (bg < 0 || f.fill != Fill::Clear)) {
+            sliderGrooveDisabled(d, bg);
         }
         break;
     case Kind::Handle:
@@ -1751,8 +1790,9 @@ QString sliderRulesFor(bool vertical)
     // From Longpath src/gui/StyleConstants.h:916, :1239 [@551576e3]
     return QStringLiteral("QSlider::groove:%1 {%2}\n"
                           "QSlider::handle:%1 {%3}\n"
-                          "QSlider::handle:%1:hover, QSlider::handle:%1:pressed { background: %4; }\n")
-        .arg(orient, groove.render(), handle.render(), hex(kGlassBtnTop));
+                          "QSlider::handle:%1:hover, QSlider::handle:%1:pressed { background: %4; }\n"
+                          "QSlider::groove:%1:disabled {%5}\n")
+        .arg(orient, groove.render(), handle.render(), hex(kGlassBtnTop), grooveDisabledDecls());
 }
 
 QString componentize(const QString& qss, const QWidget* owner)
@@ -1778,6 +1818,8 @@ QString componentize(const QString& qss, const QWidget* owner)
     QString out;
     out.reserve(qss.size() + qss.size() / 2);
     QStringList handleSelectors;
+    QStringList grooveSelectors;
+    QStringList disabledGrooveSelectors;
     bool handleHover = false;
     bool handlePressed = false;
     QStringList indicatorSelectors;
@@ -1823,6 +1865,7 @@ QString componentize(const QString& qss, const QWidget* owner)
         const QString body = qss.mid(i + 1, j - i - 1);
 
         const QStringList sels = splitSelectors(selectorText);
+        QStringList blockGrooves;
         Target t;
         bool first = true;
         bool agree = !sels.isEmpty();
@@ -1840,6 +1883,11 @@ QString componentize(const QString& qss, const QWidget* owner)
                 first = false;
             } else if (!(st == t)) {
                 agree = false;
+            }
+            if (st.kind == Kind::Groove && st.state == State::Normal) {
+                blockGrooves << s.trimmed();
+            } else if (st.kind == Kind::Groove && st.state == State::Disabled) {
+                disabledGrooveSelectors << s.trimmed();
             }
             if (st.kind == Kind::Handle) {
                 if (st.state == State::Normal) {
@@ -1860,6 +1908,9 @@ QString componentize(const QString& qss, const QWidget* owner)
         bool restyled = false;
         bool action = false;
         out += agree ? processBody(body, t, &restyled, &action) : body;
+        if (agree && grooveTreated(body)) {
+            grooveSelectors << blockGrooves;
+        }
         if (agree && restyled && t.kind == Kind::Button && t.state == State::Normal && t.isOwner) {
             ownerButtonSelectors << sels;
         }
@@ -1906,6 +1957,21 @@ QString componentize(const QString& qss, const QWidget* owner)
     }
     if (!handleSelectors.isEmpty() && !handlePressed) {
         appendHandleState("pressed");
+    }
+
+    // NereusSDR, JJ's D29 (2026-10-09): a track the look draws gets the
+    // disabled track when its sheet has no disabled groove rule (Qt would
+    // draw the enabled track on a disabled slider).
+    QStringList disabledGrooves;
+    for (const QString& s : grooveSelectors) {
+        const QString ds = s + QStringLiteral(":disabled");
+        if (!disabledGrooveSelectors.contains(ds)) {
+            disabledGrooves << ds;
+        }
+    }
+    disabledGrooves.removeDuplicates();
+    if (!disabledGrooves.isEmpty()) {
+        out += QStringLiteral("\n%1 {%2}").arg(disabledGrooves.join(QStringLiteral(", ")), grooveDisabledDecls());
     }
 
     // The default button's rim, once.

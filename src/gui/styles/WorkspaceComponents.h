@@ -80,6 +80,9 @@
 //   2026-10-09 - kSliderHandleSpanPx: no slider thinner than the decided
 //                 handle. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-10 - sliderRulesFor() draws JJ's D29 track and its disabled
+//                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #pragma once
@@ -123,8 +126,8 @@ QString indicatorRules();
 // is the platform style's `widthPx` x `heightPx`: the rim comes off it.
 QString groupBoxIndicatorRules(int widthPx, int heightPx);
 
-// Longpath's slider (the decided D5 groove and handle, hover and
-// pressed, no filled side) for a slider no sheet styles. The live pass
+// Longpath's slider (the decided D5 handle, hover and pressed, JJ's D29
+// track and disabled track, no filled side) for a slider no sheet styles. The live pass
 // gives them to each such slider with what keeps its size.
 QString sliderRulesFor(bool vertical);
 

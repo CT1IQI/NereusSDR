@@ -12,7 +12,11 @@
 // view chart take their container's background (D22); the Longpath
 // reference column keeps Longpath's own spin arrows; the overlay's step
 // attenuator check box shows the decided checked indicator at its size.
-// With the switch off, today's sheets and colours exactly.
+// With the switch off, today's sheets and colours exactly. JJ's D29: every
+// track, read from the rendered pixels, is the dark button fill inside a
+// 1 px text-inactive rim, the same on all four sides; disabled, the inset
+// inside a border-muted rim; the zoom track keeps its dark inset with the
+// D29 rim; a filled speaker slider's unfilled part is the D29 track.
 //
 // Modification history (NereusSDR):
 //   2026-10-09 - Written for the speaker volume fill, the zoom track and
@@ -23,6 +27,10 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - The zoom track test follows JJ's D27: the dark track with
 //                 the grey rim, 8 px overall, the handle 16 px.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - JJ's D29: the slider track read from its pixels (normal,
+//                 disabled, the zoom track, a filled speaker slider); the
+//                 unfilled and zoom cases take the D29 rim and fill.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
@@ -46,11 +54,13 @@
 
 #include "gui/AmpViewChart.h"
 #include "gui/SpectrumOverlayPanel.h"
+#include "gui/StyleConstants.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/MasterOutputWidget.h"
 #include "gui/widgets/ParametricEqWidget.h"
+#include "gui/widgets/VfoStyles.h"
 #include "visual/LongpathControlStyles.h"
 
 using namespace NereusSDR;
@@ -63,6 +73,13 @@ const char* const kZoomBarSheet =
     "QSlider { background: #0a0a14; }"
     "QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
     "QSlider::handle:horizontal { background: #00b4d8; width: 14px; margin: -4px 0; border-radius: 7px; }";
+
+// A Setup page's threshold slider sheet (DspSetupPages kSlider), as the
+// page sets it.
+const char* const kThresholdSheet =
+    "QSlider::groove:horizontal { background: #1a2a3a; height: 4px; border-radius: 2px; }"
+    "QSlider::handle:horizontal { background: #00b4d8; width: 12px; height: 12px; "
+    "border-radius: 6px; margin: -4px 0; }";
 
 // The Audio Setup reason lines (AudioOutputsPage kReason), as the page
 // sets them.
@@ -174,6 +191,69 @@ QColor leftOfHandle(ProbeSlider* s)
     return img.pixelColor(hr.left() / 2, hr.center().y());
 }
 
+// The slider as its window draws it (the host's background around it).
+QImage drawnSlider(QWidget& host, QSlider* s)
+{
+    return host.grab().toImage().copy(s->geometry());
+}
+
+// The rows of column `x` that are not the surround (row 0).
+QVector<QColor> trackColumn(const QImage& img, int x)
+{
+    const QColor bar = img.pixelColor(x, 0);
+    int top = -1;
+    int bottom = -1;
+    for (int y = 0; y < img.height(); ++y) {
+        if (img.pixelColor(x, y) != bar) {
+            if (top < 0) {
+                top = y;
+            }
+            bottom = y;
+        }
+    }
+    QVector<QColor> out;
+    for (int y = top; top >= 0 && y <= bottom; ++y) {
+        out << img.pixelColor(x, y);
+    }
+    return out;
+}
+
+QString names(const QVector<QColor>& cs)
+{
+    QStringList out;
+    for (const QColor& c : cs) {
+        out << c.name();
+    }
+    return out.join(QLatin1Char(' '));
+}
+
+// D29: `rows` rows, the first and last `rim`, the ones between `fill`.
+bool isTrack(const QVector<QColor>& col, int rows, const QColor& rim, const QColor& fill)
+{
+    if (col.size() != rows || col.front() != rim || col.back() != rim) {
+        return false;
+    }
+    for (int i = 1; i + 1 < col.size(); ++i) {
+        if (col.at(i) != fill) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A horizontal slider, 160 x 16 at 60 %, in `host`.
+ProbeSlider* trackSlider(QWidget& host, const char* sheet)
+{
+    auto* s = new ProbeSlider(Qt::Horizontal, &host);
+    s->setRange(0, 100);
+    s->setValue(60);
+    s->setGeometry(10, 10, 160, 16);
+    if (sheet != nullptr) {
+        s->setStyleSheet(QLatin1String(sheet));
+    }
+    return s;
+}
+
 } // namespace
 
 class TestWorkspaceSlidersPlots : public QObject
@@ -235,7 +315,8 @@ private slots:
     }
 
     // D5: a slider with the same sheet that is not a speaker volume, and
-    // every other sheet-styled slider, keeps no filled side.
+    // every other sheet-styled slider, keeps no filled side: the groove
+    // left of the handle is the D29 track's button fill.
     void otherSlidersStayUnfilled()
     {
         WorkspaceApp look;
@@ -243,14 +324,15 @@ private slots:
         ProbeSlider* s = speakerSlider(host, HeaderVolumeStyle::kPcSlider, false);
         WorkspacePreview::themeSubtree(&host);
         const QColor groove = leftOfHandle(s);
-        QVERIFY2(groove == role("inset"), qPrintable(groove.name()));
+        QVERIFY2(groove == role("button"), qPrintable(groove.name()));
     }
 
     // D27 (JJ's choice 3): the zoom bar's track stays the dark inset with a
-    // brighter grey rim (the border role) on every side, 6 px inside a 1 px
-    // rim (8 px overall), and both long edges read against the bar at about
-    // 1.42:1; the handle stays 16 px overall. A slider with the zoom bar's
-    // sheet that is not marked keeps the decided groove.
+    // brighter grey rim on every side, 6 px inside a 1 px rim (8 px
+    // overall); the handle stays 16 px overall. D29: the rim is the
+    // text-inactive rim, so both long edges read against the bar at about
+    // 2.8:1. A slider with the zoom bar's sheet that is not marked keeps the
+    // D29 track.
     void zoomTrackIsVisible()
     {
         WorkspaceApp look;
@@ -284,13 +366,13 @@ private slots:
         }
         QVERIFY2(top >= 0, qPrintable(bar.name()));
         QCOMPARE(bottom - top + 1, 8);
-        QCOMPARE(img.pixelColor(x, top), role("border"));
-        QCOMPARE(img.pixelColor(x, bottom), role("border"));
+        QCOMPARE(img.pixelColor(x, top), role("text-inactive"));
+        QCOMPARE(img.pixelColor(x, bottom), role("text-inactive"));
         for (int y = top + 1; y < bottom; ++y) {
             QVERIFY2(img.pixelColor(x, y) == role("inset"), qPrintable(img.pixelColor(x, y).name()));
         }
-        const double edge = contrast(role("border"), bar);
-        QVERIFY2(edge > 1.42 && edge < 1.43, qPrintable(QString::number(edge)));
+        const double edge = contrast(role("text-inactive"), bar);
+        QVERIFY2(edge > 2.7 && edge < 2.9, qPrintable(QString::number(edge)));
         // The handle stays 16 px overall: the drawn rows through its middle.
         const int hx = s->handleRect().center().x();
         int handleRows = 0;
@@ -300,12 +382,101 @@ private slots:
             }
         }
         QCOMPARE(handleRows, 16);
-        // Not marked: the decided groove.
+        // Not marked: the D29 track.
         QWidget plainHost;
         ProbeSlider* plain = make(plainHost, false);
         const QImage pimg = plain->grab().toImage();
         const QColor groove = pimg.pixelColor(plain->width() - 40, plain->grooveRect().center().y());
-        QVERIFY2(groove == role("inset"), qPrintable(groove.name()));
+        QVERIFY2(groove == role("button"), qPrintable(groove.name()));
+    }
+
+    // D29 (JJ, 2026-10-09): every slider track, as drawn, is the button
+    // fill inside a 1 px text-inactive rim, the same colour on all four
+    // sides: a sheet's groove (a Setup threshold slider, an applet slider),
+    // a slider no sheet styles, and a vertical one. Columns on both sides
+    // of the handle, clear of the rounded ends.
+    void sliderTrackIsVisible()
+    {
+        WorkspaceApp look;
+        const QColor rim = role("text-inactive");
+        const QColor fill = role("button");
+        QCOMPARE(rim, QColor(QStringLiteral("#58585e")));
+        QCOMPARE(fill, QColor(QStringLiteral("#1a1a1e")));
+        QWidget host;
+        host.resize(400, 200);
+        ProbeSlider* threshold = trackSlider(host, kThresholdSheet);
+        ProbeSlider* bare = trackSlider(host, nullptr);
+        bare->move(10, 40);
+        auto* vertical = new ProbeSlider(Qt::Vertical, &host);
+        vertical->setRange(0, 100);
+        vertical->setValue(60);
+        vertical->setGeometry(200, 10, 16, 160);
+        vertical->setStyleSheet(kSliderStyle.toString());
+        WorkspacePreview::themeSubtree(&host);
+        for (ProbeSlider* s : { threshold, bare }) {
+            const QImage img = drawnSlider(host, s);
+            for (int x : { 20, s->width() - 20 }) {
+                const QVector<QColor> col = trackColumn(img, x);
+                QVERIFY2(isTrack(col, 6, rim, fill), qPrintable(QStringLiteral("x %1: %2").arg(x).arg(names(col))));
+            }
+        }
+        // The vertical track: a row clear of the handle, read across.
+        const QImage vimg = drawnSlider(host, vertical).transformed(QTransform().rotate(90));
+        const QVector<QColor> row = trackColumn(vimg, 20);
+        QVERIFY2(isTrack(row, 6, rim, fill), qPrintable(names(row)));
+    }
+
+    // D29, settled with it: a disabled track is the inset inside a
+    // border-muted rim on all four sides (the disabled unticked box, D10),
+    // also where the sheet has its own disabled groove rule (the dark page
+    // style's).
+    void disabledSliderTrackIsMuted()
+    {
+        WorkspaceApp look;
+        const QColor rim = role("border-muted");
+        const QColor fill = role("inset");
+        QCOMPARE(rim, QColor(QStringLiteral("#3d3d41")));
+        QWidget host;
+        host.resize(400, 200);
+        ProbeSlider* threshold = trackSlider(host, kThresholdSheet);
+        ProbeSlider* bare = trackSlider(host, nullptr);
+        bare->move(10, 40);
+        const QByteArray paged = QByteArray(kThresholdSheet) + Style::darkPageDisabledRules().toLatin1();
+        ProbeSlider* page = trackSlider(host, paged.constData());
+        page->move(10, 70);
+        WorkspacePreview::themeSubtree(&host);
+        for (ProbeSlider* s : { threshold, bare, page }) {
+            s->setEnabled(false);
+        }
+        for (ProbeSlider* s : { threshold, bare, page }) {
+            const QImage img = drawnSlider(host, s);
+            for (int x : { 20, s->width() - 20 }) {
+                const QVector<QColor> col = trackColumn(img, x);
+                QVERIFY2(isTrack(col, 6, rim, fill), qPrintable(QStringLiteral("x %1: %2").arg(x).arg(names(col))));
+            }
+        }
+        // Enabled again: the D29 track.
+        threshold->setEnabled(true);
+        const QVector<QColor> col = trackColumn(drawnSlider(host, threshold), 20);
+        QVERIFY2(isTrack(col, 6, role("text-inactive"), role("button")), qPrintable(names(col)));
+    }
+
+    // D29 with D24: a filled speaker slider keeps its fill left of the
+    // handle; right of it the groove is the D29 track.
+    void filledSliderUnfilledPartIsTheTrack()
+    {
+        WorkspaceApp look;
+        QWidget host;
+        host.resize(300, 100);
+        ProbeSlider* s = speakerSlider(host, HeaderVolumeStyle::kPcSlider, true);
+        s->move(10, 10);
+        WorkspacePreview::themeSubtree(&host);
+        const QImage img = drawnSlider(host, s);
+        const QVector<QColor> right = trackColumn(img, s->width() - 12);
+        QVERIFY2(isTrack(right, 6, role("text-inactive"), role("button")), qPrintable(names(right)));
+        const QRect hr = s->handleRect();
+        QVERIFY2(img.pixelColor(hr.left() / 2, hr.center().y()) == role("accent"),
+                 qPrintable(img.pixelColor(hr.left() / 2, hr.center().y()).name()));
     }
 
     // D22: the TX CFC / TX EQ plot takes its container's background (the

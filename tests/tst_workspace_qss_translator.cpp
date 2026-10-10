@@ -10,6 +10,11 @@
 // pressed, selected and sunken controls, semantic colours kept, the
 // treatment idempotent, states that render distinct, and size hints
 // that do not change (the slider takes Longpath's handle, JJ's decision).
+//
+// Modification history (NereusSDR):
+//   2026-10-10 - The component slider checks JJ's D29 track and its
+//                 disabled rule. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -381,8 +386,14 @@ private slots:
             "QSlider::groove:horizontal { height: 4px; background: #1f1f23; border-radius: 2px; }"
             "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
             " background: #4a7ba8; border-radius: 5px; }"), nullptr);
-        // Longpath's groove and handle, and no filled side.
-        QVERIFY2(out.contains(QStringLiteral("background: #050507")), qPrintable(out));
+        // Longpath's groove and handle, and no filled side. The groove is
+        // JJ's D29 track (button fill, text-inactive rim on all four sides)
+        // with the disabled track appended (inset, border-muted rim).
+        QVERIFY2(out.contains(QStringLiteral("background: #1a1a1e; border-radius: 3px; border: 1px solid #58585e;")),
+                 qPrintable(out));
+        QVERIFY2(out.contains(QStringLiteral("QSlider::groove:horizontal:disabled { background: #050507;"
+                                             " border-color: #3d3d41;")),
+                 qPrintable(out));
         QVERIFY(out.contains(WC::raisedFill()));
         QVERIFY(out.contains(QStringLiteral("width: 10px; height: 14px; margin: -6px 0")));
         QVERIFY(!out.contains(QStringLiteral("QSlider::sub-page")));
