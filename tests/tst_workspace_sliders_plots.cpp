@@ -32,6 +32,9 @@
 //                 disabled, the zoom track, a filled speaker slider); the
 //                 unfilled and zoom cases take the D29 rim and fill.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - The filled PC and RADIO sliders' unfilled part read at
+//                 1x and 2x, enabled and disabled.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -477,6 +480,53 @@ private slots:
         const QRect hr = s->handleRect();
         QVERIFY2(img.pixelColor(hr.left() / 2, hr.center().y()) == role("accent"),
                  qPrintable(img.pixelColor(hr.left() / 2, hr.center().y()).name()));
+    }
+
+    // D29 at the capture scales: the unfilled part of the PC and of the
+    // RADIO speaker slider, drawn at 1x and at 2x (the mac profile), is the
+    // D29 track, one rim row per logical pixel; a disabled RADIO slider is
+    // the disabled track; the filled side keeps its colour. (The preview
+    // tool's scenes hold both sliders at full volume or offline, so the
+    // unfilled part is read here.)
+    void filledSliderUnfilledPartAtBothScales()
+    {
+        WorkspaceApp look;
+        const auto column = [](QWidget& host, const QSlider* s, int scale) {
+            QImage img(host.size() * scale, QImage::Format_ARGB32_Premultiplied);
+            img.setDevicePixelRatio(scale);
+            img.fill(Qt::transparent);
+            host.render(&img);
+            const QRect g = s->geometry();
+            const QImage part = img.copy(g.x() * scale, g.y() * scale, g.width() * scale, g.height() * scale);
+            return trackColumn(part, (g.width() - 12) * scale);
+        };
+        const auto band = [](const QColor& rim, const QColor& fill, int scale) {
+            QVector<QColor> want;
+            want.fill(rim, scale);
+            want += QVector<QColor>(4 * scale, fill);
+            want += QVector<QColor>(scale, rim);
+            return want;
+        };
+        for (const int scale : { 1, 2 }) {
+            for (const char* sheet : { HeaderVolumeStyle::kPcSlider, HeaderVolumeStyle::kRadioSlider }) {
+                QWidget host;
+                host.resize(300, 100);
+                ProbeSlider* s = speakerSlider(host, sheet, true);
+                s->move(10, 10);
+                WorkspacePreview::themeSubtree(&host);
+                const QVector<QColor> on = column(host, s, scale);
+                QVERIFY2(on == band(role("text-inactive"), role("button"), scale),
+                         qPrintable(QStringLiteral("%1x enabled: %2").arg(scale).arg(names(on))));
+                s->setEnabled(false);
+                const QVector<QColor> off = column(host, s, scale);
+                QVERIFY2(off == band(role("border-muted"), role("inset"), scale),
+                         qPrintable(QStringLiteral("%1x disabled: %2").arg(scale).arg(names(off))));
+            }
+        }
+        QCOMPARE(role("text-inactive"), QColor(QStringLiteral("#58585e")));
+        QCOMPARE(role("button"), QColor(QStringLiteral("#1a1a1e")));
+        QCOMPARE(role("border-muted"), QColor(QStringLiteral("#3d3d41")));
+        QCOMPARE(role("inset"), QColor(QStringLiteral("#050507")));
     }
 
     // D22: the TX CFC / TX EQ plot takes its container's background (the
