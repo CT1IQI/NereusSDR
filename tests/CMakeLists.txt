@@ -2750,6 +2750,30 @@ nereus_add_test(tst_workspace_sliders_plots)
 # tab, an applet, the pan overlay or the title bar.
 nereus_add_test(tst_workspace_slider_handles)
 target_compile_definitions(tst_workspace_slider_handles PRIVATE NEREUS_BUILD_TESTS)
+# The workspace preview: every Setup page, tab and dialog the visual
+# preview tool's scenes cover paints only workspace palette colours, user
+# and identity colours excepted. Runs the tool's dialog scenes in-process.
+nereus_add_test(tst_workspace_colour_sweep
+    visual/PreviewScenes.cpp
+    visual/ControlsSheet.cpp
+    visual/PreviewData.cpp
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_colour_sweep PRIVATE NEREUS_BUILD_TESTS)
+# One function walks every dialog and Setup scene (161 scenes, 173 grabs)
+# on one window: measured 2026-10-09 on the M5 Max at 531 s, and 872 s
+# with four preview captures running beside it. QtTest's function watchdog (300 s
+# by default, 240 s on the Linux CI job) would abort it, so this test
+# carries its own, and TIMEOUT is about twice the loaded measurement.
+if(TEST tst_workspace_colour_sweep)
+    set_tests_properties(tst_workspace_colour_sweep PROPERTIES TIMEOUT 1800 PROCESSORS 2)
+    set_property(TEST tst_workspace_colour_sweep APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=1700000")
+endif()
+# The colour round's items by meaning, and the applets' lit states posed
+# after the live pass (OPERATE, PS-A, the tuner antenna, the PureSignal badge).
+nereus_add_test(tst_workspace_settings_colours
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_settings_colours PRIVATE NEREUS_BUILD_TESTS)
 # The workspace preview's live pass reaches every window without a call site.
 nereus_add_test(tst_workspace_live_theming)
 target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)
