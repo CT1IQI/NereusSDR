@@ -35,8 +35,9 @@
 //                 the lights, the HL2 pins, the LAN scan bar and the NR2
 //                 rim left the stopped list. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-//   2026-10-10 - JJ's option 1: the default button's rim left the stopped
-//                 list; its tint is kept by decision. J.J. Boyd (KG4VCF),
+//   2026-10-10 - JJ's option 1: the default button's rim and the LAN scan
+//                 list's current cell left the stopped list; the default
+//                 button's tint is kept by decision. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
@@ -208,10 +209,6 @@ const Listed kStoppedForJJ[] = {
     { "look-dialog-connection-panel", "QWidget", "#39c167",
       "the connection pill (ConnectionPanel.cpp:166-169) has a state that is none of on, fault and off "
       "(stale, amber #d39c2a), so the whole light waits for JJ" },
-    { "look-dialog-lan-scan", "QWidget#qt_scrollarea_viewport", "*",
-      "the keyboard focus rectangle Fusion draws on the list's current cell from the palette Highlight "
-      "(96 by 3 px of the first cell); the viewport itself is the inset surface. The same question as the "
-      "default button's tint" },
 };
 
 const Listed* listedIn(const Listed* first, const Listed* last, const QString& image, const QString& owner,

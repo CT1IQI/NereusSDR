@@ -37,6 +37,13 @@ constexpr qreal kButtonOutlineShiftX = 0.5;
 constexpr qreal kButtonOutlineShiftY = -0.5;
 constexpr qreal kButtonOutlineRadius = 2.0;
 
+// The geometry Fusion gives a focus rectangle (PE_FrameFocusRect): the
+// option's rectangle less its last row and column, the painter moved half
+// a pixel right and down, corners of radius 1.
+constexpr int kFocusRectInset = -1;
+constexpr qreal kFocusRectShift = 0.5;
+constexpr qreal kFocusRectRadius = 1.0;
+
 QColor selectionRim()
 {
     return QColor::fromString(QLatin1StringView(kGlassSelBorder));
@@ -75,6 +82,20 @@ void drawButtonRim(const QStyleOption* option, QPainter* painter)
     painter->restore();
 }
 
+// The current cell of a list, table or tree: the outline alone, solid, in
+// the selection rim. Fusion's translucent tint inside it is not drawn.
+void drawItemFocusRect(const QStyleOption* option, QPainter* painter)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->translate(kFocusRectShift, kFocusRectShift);
+    painter->setPen(QPen(selectionRim()));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawRoundedRect(option->rect.adjusted(0, 0, kFocusRectInset, kFocusRectInset), kFocusRectRadius,
+                             kFocusRectRadius);
+    painter->restore();
+}
+
 } // namespace
 
 LookStyle::LookStyle()
@@ -97,6 +118,15 @@ void LookStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* opti
             drawButtonRim(option, painter);
         }
         return;
+    case PE_FrameFocusRect:
+        // An item view marks its current cell with State_Item and always
+        // asks for the rectangle (QCommonStyle, CE_ItemViewItem); any
+        // other focus rectangle stays Fusion's.
+        if ((option->state & State_Item) && (option->state & State_KeyboardFocusChange)) {
+            drawItemFocusRect(option, painter);
+            return;
+        }
+        break;
     default:
         break;
     }

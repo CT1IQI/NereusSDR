@@ -1,7 +1,7 @@
 // no-port-check: NereusSDR-original test for the workspace look's mark of
 // "this is where the keyboard is" on controls the platform style draws: a
-// dialog's default button and a push button with keyboard focus (JJ,
-// 2026-10-10, option 1).
+// dialog's default button, a push button with keyboard focus, and the
+// current cell of a list or table (JJ, 2026-10-10, option 1).
 //
 // Every case draws real widgets twice: once as the application draws them
 // with the look on (applyWorkspacePalette, as main.cpp does with the
@@ -11,9 +11,14 @@
 // so the cases can say that the rim is the selection rim #3d78b0, that
 // nothing but the rim changed, and that the shape is Fusion's own.
 //
+// The LAN scan dialog is built through its test seam
+// (LanScanDialog::setDiscoveryStartSkippedForTest): no scan starts and no
+// socket is bound. Nothing connects to a radio.
+//
 // Modification history (NereusSDR):
-//   2026-10-10 - Written for the default button's rim. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Written for the default button's rim and the current-row
+//                 outline. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -28,11 +33,13 @@
 #include <QStyle>
 #include <QStyleFactory>
 #include <QStyleOptionButton>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <memory>
 
 #include "fakes/RemoteWindowHarness.h"
+#include "gui/LanScanDialog.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -301,6 +308,68 @@ private slots:
         usePlainFusion({c.cancel, c.confirm});
         const QImage fusion = draw(&c.dialog, 1.0);
         QCOMPARE(off, fusion);
+    }
+
+    // The LAN scan list's current cell: the outline is the selection rim,
+    // a closed rectangle, with nothing tinted inside it.
+    void lanScanCurrentCellOutline()
+    {
+        LanScanDialog::setDiscoveryStartSkippedForTest(true);
+        const auto restore = qScopeGuard([] { LanScanDialog::setDiscoveryStartSkippedForTest(false); });
+        LanScanDialog dialog;
+        QVERIFY(QMetaObject::invokeMethod(&dialog, "onDeviceDiscovered", Qt::DirectConnection,
+                                          Q_ARG(QString, QStringLiteral("TunerGeniusXL")),
+                                          Q_ARG(QString, QStringLiteral("192.168.1.60")),
+                                          Q_ARG(quint16, quint16(9010)), Q_ARG(QString, QStringLiteral("1.2.11")),
+                                          Q_ARG(QString, QStringLiteral("1520-1104-8823")),
+                                          Q_ARG(QString, QStringLiteral("Shack TGXL"))));
+        QVERIFY(QMetaObject::invokeMethod(&dialog, "onScanFinished", Qt::DirectConnection));
+        QCOMPARE(dialog.rowCountForTesting(), 1);
+        dialog.show();
+        dialog.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&dialog));
+        auto* table = dialog.findChild<QTableWidget*>();
+        QVERIFY(table != nullptr);
+        table->setFocus();
+        // Current, not selected: the outline alone marks the cell.
+        table->selectionModel()->setCurrentIndex(table->model()->index(0, 0), QItemSelectionModel::NoUpdate);
+        QApplication::processEvents();
+        QVERIFY(table->hasFocus());
+
+        const QRect cell(table->viewport()->mapTo(&dialog, table->visualItemRect(table->item(0, 0)).topLeft()),
+                         table->visualItemRect(table->item(0, 0)).size());
+        const QColor rim = QColor::fromString(QLatin1StringView(kRim));
+        const QImage look = draw(&dialog, 1.0);
+
+        // The bounding box of the rim's pixels is a closed outline.
+        QRect box;
+        for (int y = cell.top(); y <= cell.bottom(); ++y) {
+            for (int x = cell.left(); x <= cell.right(); ++x) {
+                if (look.pixelColor(x, y) == rim) {
+                    box = box.united(QRect(x, y, 1, 1));
+                }
+            }
+        }
+        QVERIFY2(!box.isEmpty(), "no selection rim pixel in the current cell");
+        QVERIFY2(box.width() > 20 && box.height() > 8,
+                 qPrintable(QStringLiteral("the outline is %1 x %2").arg(box.width()).arg(box.height())));
+        for (int x = box.left() + 2; x <= box.right() - 2; ++x) {
+            QCOMPARE(look.pixelColor(x, box.top()), rim);
+            QCOMPARE(look.pixelColor(x, box.bottom()), rim);
+        }
+        for (int y = box.top() + 2; y <= box.bottom() - 2; ++y) {
+            QCOMPARE(look.pixelColor(box.left(), y), rim);
+            QCOMPARE(look.pixelColor(box.right(), y), rim);
+        }
+
+        // Inside the outline the cell is the cell without the keyboard:
+        // no tint.
+        table->selectionModel()->setCurrentIndex(QModelIndex(), QItemSelectionModel::NoUpdate);
+        QApplication::processEvents();
+        const QImage plain = draw(&dialog, 1.0);
+        const QRect inside = box.adjusted(2, 2, -2, -2);
+        QCOMPARE(difference(look, plain, inside).pixels, 0);
+        QCOMPARE(countOf(plain, cell, rim), 0);
     }
 
     void cleanupTestCase()

@@ -8,12 +8,16 @@
 //
 // The look is stylesheets (WorkspacePreview, WorkspaceComponents) on top
 // of the Fusion style. A control no sheet styles is drawn by Fusion from
-// the palette, and one of its marks cannot be reached through the palette
-// or a sheet without changing the control's shape: the outline of a
-// dialog's default button, and of a push button with keyboard focus
-// (Fusion: the palette Highlight darkened, #264c75 in the look).
+// the palette, and two of its marks cannot be reached through the palette
+// or a sheet without changing the control's shape:
 //
-// JJ (2026-10-10, option 1): it is the selection rim, kGlassSelBorder,
+//   - the outline of a dialog's default button, and of a push button with
+//     keyboard focus (Fusion: the palette Highlight darkened, #264c75 in
+//     the look);
+//   - the focus rectangle of the current cell in a list, table or tree
+//     (Fusion: the same colour, translucent, over a translucent tint).
+//
+// JJ (2026-10-10, option 1): both are the selection rim, kGlassSelBorder,
 // in the shape the platform style draws. LookStyle wraps Fusion, lets it
 // draw, and draws the rim over Fusion's outline along the same path, so
 // the button keeps its corner radius, size, fill and text and stays level

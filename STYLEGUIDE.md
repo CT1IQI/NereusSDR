@@ -157,6 +157,9 @@ With the look off the sheets above draw as written.
     are unchanged.
   - **A push button the keyboard moved the focus to** takes the same rim. A
     button focused by a click shows nothing, as before.
+  - **The current cell of a list, table or tree:** a 1 px outline in the
+    selection rim, with nothing tinted inside it. A selected row is the
+    selection fill as before.
   - These are drawn by the look's style object (`Workspace::LookStyle`,
     `src/gui/styles/WorkspaceLookStyle.cpp`), not by a sheet: a sheet block
     on one button would change its corner radius against its neighbours.
