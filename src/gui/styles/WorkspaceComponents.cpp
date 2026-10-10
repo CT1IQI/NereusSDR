@@ -1832,9 +1832,11 @@ QString progressChunkRules()
     // is the selection, the same glass as every other selection; the
     // platform style drew it from a lightened QPalette::Highlight. The
     // groove stays the platform style's, and the chunk stays inside its
-    // 1 px rim.
+    // 1 px rim. A sheet on a progress bar left-aligns the percent text,
+    // so the rule says where the platform style drew it: the middle.
     // [original comment from StyleConstants.h:808-816 is at glassTreatment() above]
-    return QStringLiteral("QProgressBar::chunk { background: %1; margin: 1px; }\n").arg(glassFill());
+    return QStringLiteral("QProgressBar { text-align: center; }\n"
+                          "QProgressBar::chunk { background: %1; margin: 1px; }\n").arg(glassFill());
 }
 
 QString sliderRulesFor(bool vertical)

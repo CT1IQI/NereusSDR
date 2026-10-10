@@ -142,7 +142,7 @@ With the look off the sheets above draw as written.
   first.
 - **Output pin LEDs, off:** filled with the border colour `#2c2c31`.
 - **Progress bars:** the filled part is the selection glass; the groove is
-  the platform style's.
+  the platform style's, and the percent text stays centred.
 - **A radio whose own sheet draws a rim wider than 1 px:** checked, the rim
   is the selection rim `#3d78b0` all round (no light top edge).
 - **Kept as they are:** the TX filter overlay label (`#ffaa70`, the user's

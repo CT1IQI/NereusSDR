@@ -678,6 +678,37 @@ private slots:
         QVERIFY2(glass >= img.height() - 4, qPrintable(QStringLiteral("%1 of %2").arg(glass).arg(img.height())));
     }
 
+    // The percent text stays where the platform style drew it, in the
+    // middle of the bar; a sheet on a QProgressBar left-aligns it unless
+    // told otherwise.
+    void progressTextStaysCentred()
+    {
+        QWidget host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* bar = new QProgressBar(&host);
+        bar->setRange(0, 100);
+        bar->setValue(0);
+        layout->addWidget(bar);
+        host.resize(400, 60);
+        showAndSettle(host);
+        QVERIFY2(bar->styleSheet().contains(QLatin1String("QProgressBar::chunk")), qPrintable(bar->styleSheet()));
+        const QImage img = bar->grab().toImage();
+        int left = img.width();
+        int right = -1;
+        for (int y = 0; y < img.height(); ++y) {
+            for (int x = 0; x < img.width(); ++x) {
+                if (img.pixelColor(x, y).lightness() > 120) {
+                    left = qMin(left, x);
+                    right = qMax(right, x);
+                }
+            }
+        }
+        QVERIFY2(right >= 0, "no percent text drawn");
+        const int centre = (left + right) / 2;
+        QVERIFY2(qAbs(centre - img.width() / 2) <= 6,
+                 qPrintable(QStringLiteral("text spans %1..%2 of %3").arg(left).arg(right).arg(img.width())));
+    }
+
     // The PureSignal banner's status fills are the decided tones (D21).
     void pureSignalBadgeIsStatus()
     {
