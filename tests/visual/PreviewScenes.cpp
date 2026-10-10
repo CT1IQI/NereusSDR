@@ -167,6 +167,11 @@
 //                 the dialog's own size its groups now always sit side by
 //                 side with nothing to scroll (D25, SetupFit::FitScrollArea).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - shootOpenPopup() places a popup again from the size it
+//                 settles at: the DSP popups with sliders grew after they
+//                 were placed, in some runs, and ran past the window's
+//                 lower edge at laptop-1280x800@1. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PreviewScenes.h"
@@ -5136,6 +5141,8 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
 //   <name>--sub-<item>  the same with that submenu open (one level deep)
 
 constexpr int kPopupWaitMs = 5000;
+// How often shootOpenPopup places a popup again after its size changed.
+constexpr int kPopupPlacePasses = 4;
 constexpr int kPopupGraceMs = 5000;
 // How long profile-rail-open keeps its tooltip up (QTipLabel's own timer
 // is about 10 s).
@@ -5356,11 +5363,34 @@ void shootOpenPopup(SceneContext& ctx, const QString& name, QWidget* top, const 
     for (const QJsonValue& v : stopTimersUnder(top)) {
         ctx.stoppedTimers.append(v);
     }
-    {
-        const QPoint qtAt = top->pos() - globalOf(base);
-        const QPoint at = placeInBase(top, shot.anchor.value_or(top->pos()), base, false);
+    // Where the product asks for the popup, and where Qt put it.
+    const QPoint asked = shot.anchor.value_or(top->pos());
+    const QPoint qtAt = top->pos() - globalOf(base);
+    top->move(placeInBase(top, asked, base, false));
+    tagProvenance(top, shot.provenance.isEmpty() ? provRetained() : shot.provenance, false);
+    auto* menu = qobject_cast<QMenu*>(top);
+    if (menu != nullptr) {
+        highlightFirst(menu);
+    }
+    pump(kFinalSettleMs);
+    // A popup can still change size after it is shown: with the workspace
+    // look on, the live pass raises a slider thinner than the decided
+    // handle when the slider is shown, and the popup's layout grows the
+    // popup on a later turn of the event loop. Placed before that, a popup
+    // near the base's lower edge ran past it by the pixels it grew (the
+    // DSP popups with sliders at laptop-1280x800@1, 5 px), or not, by how
+    // the events fell. So it is placed again from the size it settled at,
+    // until the place holds.
+    for (int pass = 0; pass < kPopupPlacePasses; ++pass) {
+        const QPoint at = placeInBase(top, asked, base, false);
+        if (at == top->pos()) {
+            break;
+        }
         top->move(at);
-        const QPoint shown = at - globalOf(base);
+        pump(kFinalSettleMs);
+    }
+    {
+        const QPoint shown = top->pos() - globalOf(base);
         if (shown != qtAt) {
             ctx.notes.append(QStringLiteral("%1: placed at %2,%3 of the base, where the product asks for it "
                                             "and kept inside the base (Qt had kept it on the desktop screen, "
@@ -5368,12 +5398,6 @@ void shootOpenPopup(SceneContext& ctx, const QString& name, QWidget* top, const 
                                  .arg(name).arg(shown.x()).arg(shown.y()).arg(qtAt.x()).arg(qtAt.y()));
         }
     }
-    tagProvenance(top, shot.provenance.isEmpty() ? provRetained() : shot.provenance, false);
-    auto* menu = qobject_cast<QMenu*>(top);
-    if (menu != nullptr) {
-        highlightFirst(menu);
-    }
-    pump(kFinalSettleMs);
     QList<QWidget*> tops = shot.under;
     tops.append(top);
     appendPopupImages(ctx, name, base, tops, top);
