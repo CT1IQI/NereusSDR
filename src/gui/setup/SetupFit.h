@@ -17,7 +17,11 @@
 // exactly as a QHBoxLayout does while they fit, so a page that already
 // fits looks as it did, and switches to top-to-bottom when they do not.
 // Its minimum width is its widest item. Stacked, items keep their own
-// height and do not stretch to fill the page. FitGrid does the same for a
+// height and do not stretch to fill the page. Side by side, the row is as
+// tall as its tallest column needs: a column's trailing stretch keeps a
+// shorter column's groups at the top and does not ask for the page's
+// spare height, which the page's own trailing stretch puts at the bottom.
+// The row grows only when one of its widgets asks to. FitGrid does the same for a
 // QGridLayout: each widget keeps its cell while the columns fit and takes
 // a row of its own, in reading order, when they do not.
 //
@@ -54,6 +58,10 @@
 //                                    is side by side whatever was shown
 //                                    before. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  FitRow side by side takes the page's
+//                                    spare height only when one of its
+//                                    widgets asks for it. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QBoxLayout>

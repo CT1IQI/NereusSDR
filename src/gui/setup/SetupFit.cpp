@@ -14,6 +14,10 @@
 //                                    Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF  FitScrollArea, used by scrollingTab.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-10  J.J. Boyd / KG4VCF  FitRow: a column's trailing spacer no
+//                                    longer makes the row take the page's
+//                                    spare height. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "SetupFit.h"
@@ -48,6 +52,26 @@ bool takesNoRoom(QLayoutItem* item)
 bool isSpacer(QLayoutItem* item)
 {
     return item->spacerItem() != nullptr;
+}
+
+// True when a widget under item, through the layouts nested in it, asks
+// for more height than it needs. A spacer does not: the stretch that ends
+// a column of groups keeps the groups at the top of the row and is no
+// request for the page's spare height.
+bool wantsHeight(QLayoutItem* item)
+{
+    if (item == nullptr || isSpacer(item)) {
+        return false;
+    }
+    if (QLayout* nested = item->layout()) {
+        for (int i = 0; i < nested->count(); ++i) {
+            if (wantsHeight(nested->itemAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return !item->isEmpty() && item->expandingDirections().testFlag(Qt::Vertical);
 }
 
 // A layout pass is bounded: each one settles one more level of nesting.
@@ -138,7 +162,20 @@ Qt::Orientations FitRow::expandingDirections() const
     // Stacked, the groups keep their own height: what is left of the page
     // goes to its bottom, not into the gaps between groups.
     const Qt::Orientations own = QBoxLayout::expandingDirections();
-    return isStacked() ? (own & ~Qt::Vertical) : own;
+    if (isStacked()) {
+        return own & ~Qt::Vertical;
+    }
+    // Side by side, the row is as tall as its tallest column needs unless
+    // one of its widgets asks for more: the spare height of a shorter
+    // column is under that column's last group, and the page's own spare
+    // height goes to the bottom of the page, not between this row and the
+    // group under it (JJ, 2026-10-10).
+    for (int i = 0; i < count(); ++i) {
+        if (wantsHeight(itemAt(i))) {
+            return own;
+        }
+    }
+    return own & ~Qt::Vertical;
 }
 
 void FitRow::setGeometry(const QRect& rect)

@@ -29,6 +29,14 @@
 //                 planted row from each history, and the Calibration tab
 //                 by each route to it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - The Calibration tab side by side: Volts/Amps sits under
+//                 the columns at the page's spacing, each group is as tall
+//                 as its content needs, and Level Cal has no empty row; a
+//                 planted row of columns leaves the page's spare height
+//                 to the page.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+
+#include <algorithm>
 
 #include <QtTest/QtTest>
 #include <QApplication>
@@ -1172,6 +1180,164 @@ private slots:
             QVERIFY2(state.stacked, qPrintable(state.text));
             QVERIFY2(state.bar, qPrintable(state.text));
         }
+    }
+
+    void sideBySideRowLeavesSpareHeightToThePage_data()
+    {
+        QTest::addColumn<bool>("widgetAsksForHeight");
+        QTest::newRow("columns of groups ending in a stretch") << false;
+        QTest::newRow("a widget in a column asks for height") << true;
+    }
+
+    // A side-by-side row of columns is as tall as its taller column: the
+    // stretch that ends a column is not a request for the page's spare
+    // height, so the group under the row follows at the page's spacing
+    // and the spare is at the bottom of the page (JJ, 2026-10-10). A row
+    // holding a widget that asks for height still takes it.
+    void sideBySideRowLeavesSpareHeightToThePage()
+    {
+        QFETCH(bool, widgetAsksForHeight);
+        QWidget page;
+        auto* pageLayout = new QVBoxLayout(&page);
+        pageLayout->setContentsMargins(0, 0, 0, 0);
+        pageLayout->setSpacing(8);
+        auto* row = new SetupFit::FitRow;
+        auto* left = new QVBoxLayout;
+        auto* right = new QVBoxLayout;
+        row->addLayout(left, 1);
+        row->addLayout(right, 1);
+        pageLayout->addLayout(row);
+        auto* tall = new QFrame(&page);
+        tall->setFixedHeight(120);
+        tall->setMinimumWidth(100);
+        left->addWidget(tall);
+        left->addStretch();
+        auto* shortOne = new QFrame(&page);
+        shortOne->setMinimumSize(100, 40);
+        shortOne->setSizePolicy(QSizePolicy::Preferred,
+                                widgetAsksForHeight ? QSizePolicy::Expanding : QSizePolicy::Fixed);
+        right->addWidget(shortOne);
+        right->addStretch();
+        auto* under = new QFrame(&page);
+        under->setFixedHeight(50);
+        pageLayout->addWidget(under);
+        // A plain trailing stretch (factor 0), as HL2 Options ends.
+        pageLayout->addStretch();
+        page.resize(400, 400);
+        page.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&page));
+        settle();
+        QVERIFY(!row->isStacked());
+        const int gap = under->y() - (tall->geometry().bottom() + 1);
+        if (widgetAsksForHeight) {
+            QVERIFY2(gap > 8, qPrintable(QStringLiteral("the row did not grow: %1 px").arg(gap)));
+            QVERIFY(shortOne->height() > 40);
+        } else {
+            QVERIFY2(gap == 8, qPrintable(QStringLiteral("%1 px between the row and the group under it; "
+                                                         "the page's spacing is 8").arg(gap)));
+            QCOMPARE(shortOne->height(), 40);
+            QCOMPARE(shortOne->y(), tall->y());
+        }
+    }
+
+    void calibrationGroupsSitTogether_data()
+    {
+        QTest::addColumn<bool>("workspace");
+        QTest::newRow("today") << false;
+        QTest::newRow("workspace") << true;
+    }
+
+    // Side by side, the Calibration tab's spare height is at the bottom of
+    // the page (JJ, 2026-10-10): Volts/Amps Calibration sits under the two
+    // columns at the page's spacing between groups, each group is as tall
+    // as its content needs, and Level Cal ends under its progress bar
+    // while it has no message to show.
+    void calibrationGroupsSitTogether()
+    {
+        QFETCH(bool, workspace);
+        // The sweep's font, as calibrationSettlesSideBySide() explains.
+        const FontRestore restore;
+        QApplication::setFont(m_startFont);
+        AppLook look(workspace);
+        RadioModel model;
+        model.setBoardForTest(HPSDRHW::Saturn);
+        SetupDialog dialog(&model);
+        dialog.realizeAllPagesForTest();
+        look.apply(&dialog);
+        dialog.resize(kDefaultWidth, kDefaultHeight);
+        dialog.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+        settle();
+        auto* hardware = dialog.findChild<HardwarePage*>();
+        QVERIFY(hardware != nullptr);
+        hardware->onCurrentRadioChanged(posedRadio(HPSDRHW::Saturn));
+        auto* stack = dialog.findChild<QStackedWidget*>();
+        QVERIFY(stack != nullptr);
+        QWidget* leaf = dialog.realizePageAtForTest(
+            static_cast<int>(dialog.pageLabelsForTest().indexOf(QStringLiteral("Hardware Config"))));
+        QVERIFY(leaf != nullptr);
+        stack->setCurrentWidget(leaf);
+        settle();
+        int calibration = -1;
+        QTabWidget* tabs = tabsHolding(leaf, QStringLiteral("Calibration"), &calibration);
+        QVERIFY(tabs != nullptr);
+        tabs->setCurrentIndex(calibration);
+        settle();
+        const CalibrationState state = calibrationState(leaf);
+        QVERIFY2(state.found && !state.stacked && !state.bar, qPrintable(state.text));
+
+        QScrollArea* area = calibrationArea(leaf);
+        QVERIFY(area != nullptr);
+        QWidget* page = area->widget();
+        QVERIFY(page != nullptr && page->layout() != nullptr);
+        const auto group = [page](const QString& title) -> QGroupBox* {
+            for (QGroupBox* g : page->findChildren<QGroupBox*>()) {
+                if (g->title() == title) {
+                    return g;
+                }
+            }
+            return nullptr;
+        };
+        QGroupBox* freqCal = group(QStringLiteral("Freq Cal"));
+        QGroupBox* levelCal = group(QStringLiteral("Level Cal"));
+        QGroupBox* diagnostic = group(QStringLiteral("HPSDR Freq Cal Diagnostic"));
+        QGroupBox* txDisplay = group(QStringLiteral("TX Display Cal"));
+        QGroupBox* voltsAmps = group(QStringLiteral("Volts/Amps Calibration"));
+        QVERIFY(freqCal && levelCal && diagnostic && txDisplay && voltsAmps);
+
+        // Each group is as tall as its content needs at its width.
+        const auto need = [](const QGroupBox* g) {
+            return g->hasHeightForWidth() ? g->heightForWidth(g->width()) : g->sizeHint().height();
+        };
+        for (const QGroupBox* g : {freqCal, levelCal, diagnostic, txDisplay, voltsAmps}) {
+            QVERIFY2(g->height() == need(g),
+                     qPrintable(QStringLiteral("%1 is %2 px tall and needs %3")
+                                    .arg(g->title()).arg(g->height()).arg(need(g))));
+        }
+
+        // Volts/Amps is under the taller column at the page's spacing.
+        const int spacing = page->layout()->spacing();
+        const int columnsEnd = std::max(levelCal->geometry().bottom(), txDisplay->geometry().bottom()) + 1;
+        QVERIFY2(voltsAmps->y() - columnsEnd == spacing,
+                 qPrintable(QStringLiteral("Volts/Amps is %1 px under the columns; the page's spacing is %2")
+                                .arg(voltsAmps->y() - columnsEnd).arg(spacing)));
+        // The shorter column's spare is under its last group: both
+        // columns start at the same height and hold their groups at the
+        // same distance.
+        QCOMPARE(diagnostic->y(), freqCal->y());
+        QCOMPARE(txDisplay->y() - (diagnostic->geometry().bottom() + 1),
+                 levelCal->y() - (freqCal->geometry().bottom() + 1));
+        // What is left of the page is under Volts/Amps.
+        QVERIFY(voltsAmps->geometry().bottom() < page->height());
+
+        // Level Cal ends under its progress bar: no empty row for a
+        // message it does not have.
+        auto* progress = levelCal->findChild<QWidget*>(QStringLiteral("levelCalProgressBar"));
+        auto* status = levelCal->findChild<QLabel*>(QStringLiteral("levelCalStatusLabel"));
+        QVERIFY(progress != nullptr && status != nullptr && levelCal->layout() != nullptr);
+        QVERIFY(status->text().isEmpty());
+        const int under = levelCal->layout()->contentsRect().bottom() - progress->geometry().bottom();
+        QVERIFY2(under == 0, qPrintable(QStringLiteral("%1 px of empty space under the progress bar").arg(under)));
     }
 
 private:

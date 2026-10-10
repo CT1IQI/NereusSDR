@@ -83,6 +83,11 @@
 //                 with no scroll bar by every route to the tab, not
 //                 stacked when a bar happened to show first. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - The page's spare height goes under Volts/Amps
+//                 Calibration (a trailing stretch), not between it and the
+//                 columns, and Level Cal's message takes a row only while
+//                 there is one. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 // --- From setup.cs ---
@@ -378,6 +383,8 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     m_levelCalStatusLabel->setObjectName(QStringLiteral("levelCalStatusLabel"));
     m_levelCalStatusLabel->setWordWrap(true);
     levelCalForm->addRow(m_levelCalStatusLabel);
+    // No message yet: no row (setLevelCalStatusText()).
+    levelCalForm->setRowVisible(m_levelCalStatusLabel, false);
 
     leftCol->addWidget(levelCalGroup);
     leftCol->addStretch();
@@ -511,6 +518,9 @@ CalibrationTab::CalibrationTab(RadioModel* model, QWidget* parent)
     vaCalForm->addRow(m_logVoltsAmpsCheck);
 
     mainLayout->addWidget(vaCalGroup);
+    // The groups keep their own height; what is left of the page goes
+    // below them (JJ, 2026-10-10), as on the other Setup pages.
+    mainLayout->addStretch(1);
 
     // Note: the per-board PA forward-power cal spinbox group (PaCalibrationGroup)
     // previously lived here as Group 6.  Migrated to PA → Watt Meter
@@ -838,6 +848,17 @@ void CalibrationTab::restoreSettings(const QMap<QString, QVariant>& /*settings*/
 
 // -- Level Cal: the run -------------------------------------------------------
 
+// The run's last word under the progress bar. With nothing to say the row
+// is hidden, so Level Cal ends under its progress bar and is as tall as
+// its content needs (JJ, 2026-10-10).
+void CalibrationTab::setLevelCalStatusText(const QString& text)
+{
+    m_levelCalStatusLabel->setText(text);
+    if (auto* form = qobject_cast<QFormLayout*>(m_levelCalStatusLabel->parentWidget()->layout())) {
+        form->setRowVisible(m_levelCalStatusLabel, !text.isEmpty());
+    }
+}
+
 void CalibrationTab::refreshLevelCalControls()
 {
     if (!m_model) {
@@ -879,7 +900,7 @@ void CalibrationTab::refreshLevelCalControls()
                       : tr("Nothing to stop: no level calibration is running."));
 
     m_levelCalProgress->setValue(m_model->levelCalPercent());
-    m_levelCalStatusLabel->setText(running ? QString() : m_model->levelCalMessage());
+    setLevelCalStatusText(running ? QString() : m_model->levelCalMessage());
 
     const bool ended = m_levelCalWasRunning && !running;
     m_levelCalWasRunning = running;

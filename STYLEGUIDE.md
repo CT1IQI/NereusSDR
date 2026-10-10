@@ -284,6 +284,8 @@ A Setup page wider than the Settings window rearranges to fit: groups that sit s
 
 Rows stack only when they cannot fit side by side: a row that fits the page's width and height without a vertical scroll bar is side by side, whatever was shown before. Host the page or tab in a `SetupFit::FitScrollArea` (or `SetupFit::scrollingTab`), not a plain `QScrollArea`, so a scroll bar that showed first cannot keep the row stacked.
 
+Group spacing: groups keep the height their content needs, and one group follows the next at the page layout's spacing, side by side or stacked. A page ends with a trailing stretch (`addStretch(1)`), so the height left over is at the bottom of the page, never between groups. A side-by-side row is as tall as its taller column; a shorter column ends with its own stretch, which puts its spare under its last group and does not ask for the page's spare (`FitRow::expandingDirections`). The row grows only when a widget in it asks to. A row for a message that is empty is hidden (`QFormLayout::setRowVisible`) instead of holding an empty band.
+
 ---
 
 ## Patterns
