@@ -110,6 +110,44 @@ depending on the button's semantic role.
 - **Pressed:** `#00b4d8`
 - Paints a filled triangle (left or right), `#c8d8e8` normally, black when pressed
 
+### Workspace look: lit buttons, choices and status lights
+
+These apply with the workspace look on (JJ's colour answers, 2026-10-10).
+With the look off the sheets above draw as written.
+
+- **OPERATE on (D30):** the raised lit green of a checked processing button
+  (D15, as PS-A on): fill `#306247` / `#254d38` / `#1d3d2c`, text `#bbe1c6`,
+  rim `#3e7e5c`, top edge `#48946b`, the button's radius. It stays lit under
+  the pointer. OPERATE on the amplifier, tuner and RF2K-S applets is a plain
+  push button that shows its state by its sheet; it says so with the
+  `nereusWorkspaceLitWhenOn` property and keeps today's engaged green sheet
+  (`#006030`), which the look redraws.
+- **The tuner's chosen antenna (D31):** the blue selection glass (fill
+  `#2f5f92` to `#1e3d5f`, text `#dbe9f8`, rim `#3d78b0`); the other ANT
+  buttons are raised buttons. The buttons are not checkable: a click asks
+  the tuner, and the glass follows the tuner's report. They carry the
+  `nereusWorkspaceChoice` property. A new set of buttons that shows one
+  choice the same way uses the same property.
+- **The PureSignal badge (D32):** its off state keeps Thetis DimGray
+  (`#696969`) and its over-range state DodgerBlue (`#1e90ff`); the other
+  states are the status tones.
+- **Status lights by meaning (D21):** a light or dot that is on or
+  connected is ok `#4caf6a`; one that is disconnected or reports a fault is
+  danger `#c25a5c`; one that is off is `#58585e` (text-inactive). This holds
+  for every state of the RF2K-S connection dot, the sound system and VAX
+  dots, the speech chain's stage dots, the Alex filter and Alex-2 board
+  LEDs, the HL2 I/O LEDs and the HL2 throttle line. A new light writes its
+  colour through `WorkspacePreview::statusColourName()` or takes a row in
+  `StylesheetColourTable.cpp`; a state that is none of the three is asked
+  first.
+- **Output pin LEDs, off:** filled with the border colour `#2c2c31`.
+- **Progress bars:** the filled part is the selection glass; the groove is
+  the platform style's.
+- **A radio whose own sheet draws a rim wider than 1 px:** checked, the rim
+  is the selection rim `#3d78b0` all round (no light top edge).
+- **Kept as they are:** the TX filter overlay label (`#ffaa70`, the user's
+  setting) and the Block TX tint.
+
 ### Sliders
 
 **Horizontal:**
