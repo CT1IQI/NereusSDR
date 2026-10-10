@@ -71,6 +71,11 @@
 //                 inside it shows that colour in place of the panel role
 //                 (workspace preview only). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-09 - contentBackground() and userBackground() hold the content
+//                 background and the user's colour, so the Container
+//                 Settings preview paints through the same path (workspace
+//                 preview only). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -357,7 +362,7 @@ void ContainerWidget::buildUI()
         // Selector-less on purpose, like the original: the content's
         // descendants inherit this background.
         m_contentHolder->setStyleSheet(QStringLiteral("background: %1;")
-                                           .arg(Workspace::role("panel", "#0f0f1a")));
+                                           .arg(contentBackground(QColor::fromRgba(kLegacyContentBackground)).name()));
     }
     new QVBoxLayout(m_contentHolder);
     m_contentHolder->layout()->setContentsMargins(0, 0, 0, 0);
@@ -1015,7 +1020,7 @@ void ContainerWidget::setDockMode(DockMode mode)
         // In a strip the app background shows around the plate instead.
         const bool covers = mode != DockMode::PanelDocked;
         QPalette surface = palette();
-        surface.setColor(QPalette::Window, QColor(Workspace::role("panel", "#0f0f1a")));
+        surface.setColor(QPalette::Window, contentBackground(QColor::fromRgba(kLegacyContentBackground)));
         setPalette(surface);
         setAutoFillBackground(covers);
     }
@@ -1133,8 +1138,20 @@ void ContainerWidget::setBackgroundColor(const QColor& color)
 // re-polishes read the new colour (WorkspacePreview::dataBackground()).
 void ContainerWidget::publishUserBackground()
 {
-    const bool user = m_backgroundColor.rgba() != kLegacyContentBackground;
-    setProperty(WorkspacePreview::kUserBackgroundProperty, user ? m_backgroundColor : QColor());
+    setProperty(WorkspacePreview::kUserBackgroundProperty, userBackground(m_backgroundColor));
+}
+
+QColor ContainerWidget::contentBackground(const QColor& configured)
+{
+    if (WorkspacePreview::enabled() && configured.rgba() == kLegacyContentBackground) {
+        return QColor(Workspace::role("panel", "#0f0f1a"));
+    }
+    return configured;
+}
+
+QColor ContainerWidget::userBackground(const QColor& configured)
+{
+    return configured.rgba() != kLegacyContentBackground ? configured : QColor();
 }
 
 void ContainerWidget::setNoControls(bool noControls) { m_noControls = noControls; }

@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: the preview paints the content
+//                 background the container paints in the window, through
+//                 ContainerWidget::contentBackground() and userBackground().
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: widget-factory previews get the
 //                 entry's effective context. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -13,8 +17,10 @@
 #include "ContainerPreviewWidget.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerContentHost.h"
+#include "ContainerWidget.h"
 #include "ContainerControlCatalog.h"
 #include "FreeCanvasSurface.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/CompositePresetItem.h"
@@ -65,7 +71,18 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
     }
     const auto prior=m_document; const bool reuse=m_materialized && document.layout!=ContentLayout::LegacyCanvas && prior.layout==document.layout;
     const auto oldViews=m_views; QSet<QWidget*> retained;
-    setStyleSheet(QStringLiteral("#containerDraftPreview {background:%1;}").arg(document.config.value("backgroundColor").toString("#0f0f1a")));
+    QString background=document.config.value("backgroundColor").toString("#0f0f1a");
+    if (WorkspacePreview::enabled()) {
+        // The window's path: the container's content background and the
+        // user's colour its meters read (ContainerWidget).
+        const QColor configured=QColor::fromString(background);
+        const QColor painted=ContainerWidget::contentBackground(configured);
+        if (painted.isValid()) {
+            background=painted.name(painted.alpha()<255 ? QColor::HexArgb : QColor::HexRgb);
+        }
+        setProperty(WorkspacePreview::kUserBackgroundProperty, ContainerWidget::userBackground(configured));
+    }
+    setStyleSheet(QStringLiteral("#containerDraftPreview {background:%1;}").arg(background));
     m_document=document; m_materialized=true; m_surfaces.clear(); m_views.clear();
     m_layout->setAlignment(document.layout==ContentLayout::VerticalStack ? Qt::AlignTop : Qt::Alignment());
     while (auto* child=m_layout->takeAt(0)) { delete child; }

@@ -45,6 +45,10 @@
 //                 the layout, Reveal as a zero-space overlay, Hidden),
 //                 Arrange presentation and inside resize handles. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - contentBackground() and userBackground(): the content
+//                 background a container paints, shared with the Container
+//                 Settings preview (workspace preview). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -248,6 +252,14 @@ public:
     // --- Container Properties ---
     QColor backgroundColor() const {return m_backgroundColor;}
     void setBackgroundColor(const QColor& color);
+    // The colour a container configured with `configured` paints behind
+    // its content: `configured`, or with the workspace preview on the
+    // panel role for the default background. The Container Settings
+    // preview paints the same.
+    static QColor contentBackground(const QColor& configured);
+    // The background the user chose (kUserBackgroundProperty): `configured`,
+    // or an invalid QColor for the default background.
+    static QColor userBackground(const QColor& configured);
     bool hasBorder() const { return m_border; }
     void setBorder(bool border);
     bool isLocked() const { return m_locked; }

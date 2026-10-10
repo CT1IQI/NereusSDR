@@ -33,6 +33,10 @@
 //                the cards area takes the page's height, so stacked cards
 //                scroll down to the bottom of the window. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the top status bar is a panel on
+//                the page (the container's surface, its edge and secondary
+//                captions), and "No issues found" is the decided ok. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
@@ -46,6 +50,7 @@
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/PttSource.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -132,13 +137,16 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     // ── Top status bar ────────────────────────────────────────────────────
     auto* statusBar = new QFrame(this);
     statusBar->setFrameShape(QFrame::StyledPanel);
+    // A panel, not a state: with the workspace preview on it takes the
+    // surface and edge of the page around it.
     statusBar->setStyleSheet(QStringLiteral(
         "QFrame {"
-        "  background: #0a1a10;"
+        "  background: %2;"
         "  border: 1px solid %1;"
         "  border-radius: 4px;"
         "}"
-    ).arg(QLatin1String(Style::kGreenBorder)));
+    ).arg(WorkspacePreview::roleColourName(Style::kGreenBorder, "border"),
+          WorkspacePreview::roleColourName("#0a1a10", "panel")));
     statusBar->setFixedHeight(Style::kStatusBarH);
     buildStatusBar(statusBar);
     outer->addWidget(statusBar);
@@ -277,7 +285,8 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
     auto makeCol = [&](const QString& label) -> QLabel* {
         auto* lbl = new QLabel(label, bar);
         lbl->setStyleSheet(QStringLiteral("font-size: 10px; color: %1;")
-                               .arg(QLatin1String(Style::kGreenText)));
+                               .arg(WorkspacePreview::roleColourName(Style::kGreenText,
+                                                                     "text-secondary")));
         return lbl;
     };
 
@@ -958,7 +967,7 @@ void RadioStatusPage::refreshHygieneRows()
 
     if (issues.isEmpty()) {
         auto* item = new QListWidgetItem(QStringLiteral("No issues found. Settings are valid."));
-        item->setForeground(QColor(QLatin1String(Style::kGreenText)));
+        item->setForeground(WorkspacePreview::statusColour(QColor(QLatin1String(Style::kGreenText)), "ok"));
         m_issueList->addItem(item);
         return;
     }

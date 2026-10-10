@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: a preview tile has no background of
+//                 its own, so the container's background shows through it as
+//                 it does around the applet in the window. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: a widget factory registers its
 //                 declared properties (declaredProperties). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -18,6 +22,7 @@
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <QUuid>
 #include <QJsonDocument>
 #include "gui/meters/presets/BarPresetItem.h"
@@ -461,6 +466,10 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     }
     auto* tile=new QWidget(parent); auto* layout=new QVBoxLayout(tile);
     tile->setMinimumHeight(64); tile->setStyleSheet("background:#172534;color:#c8d8e8;border:1px solid #203040;");
+    if (WorkspacePreview::enabled()) {
+        // The container's background (ContainerPreviewWidget) shows through.
+        tile->setStyleSheet("background:transparent;color:#c8d8e8;border:1px solid #203040;");
+    }
     const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
         : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("This applet keeps its current radio and slice. Preview controls are disabled."))
         : tr("Unsupported configuration; original data retained."));

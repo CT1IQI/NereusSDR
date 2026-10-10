@@ -60,6 +60,12 @@
 //               as wide as its columns, so its decoded values are never cut
 //               short. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-09 - Workspace preview only: the status bar, the state-machine
+//               steps and the Reset outline take the workspace colour for
+//               their meaning (the lit step and an active board are the
+//               decided ok, Reset is danger, the rest the surface and its
+//               edge). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 //
 // --- From Console/setup.cs ---
@@ -205,6 +211,7 @@ mw0lge@grange-lane.co.uk
 #include "Hl2IoBoardTab.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/setup/SetupFit.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/BoardCapabilities.h"
 #include "core/HermesLiteBandwidthMonitor.h"
@@ -290,6 +297,58 @@ static void setLedColor(QFrame* led, bool active)
         led->setStyleSheet(QStringLiteral(
             "QFrame { background: #606060; border-radius: 6px; }"));
     }
+}
+
+// ── Workspace colours by meaning ─────────────────────────────────────────────
+// With the workspace preview off each sheet is byte for byte the original
+// literal sheet; with it on the colours are the roles of their meaning.
+
+// The status bar: an active board is the ok state, otherwise the surface.
+static QString statusFrameSheet(bool detected)
+{
+    using WorkspacePreview::roleColourName;
+    if (detected) {
+        return QStringLiteral(
+            "QFrame { background: %1; border: 1px solid %2; border-radius: 4px; }")
+            .arg(roleColourName("#1a2f1a", "ok-bg"), roleColourName("#2a5a2a", "ok-border"));
+    }
+    return QStringLiteral(
+        "QFrame { background: %1; border: 1px solid %2; border-radius: 4px; }")
+        .arg(roleColourName("#2a2a2a", "panel"), roleColourName("#444", "border"));
+}
+
+// One step of the state machine: the step the machine is on is a live
+// status (the decided ok), the others the surface and its edge.
+static QString stepFrameSheet(bool lit)
+{
+    using WorkspacePreview::roleColourName;
+    if (lit) {
+        return QStringLiteral(
+            "QFrame { border: 2px solid %1; border-radius: 4px; "
+            "background: %2; padding: 2px; }")
+            .arg(WorkspacePreview::statusColourName("#22cc44", "ok"),
+                 roleColourName("#1a2f1a", "ok-bg"));
+    }
+    return QStringLiteral(
+        "QFrame { border: 1px solid %1; border-radius: 4px; "
+        "background: %2; padding: 2px; }")
+        .arg(roleColourName("#444", "border"), roleColourName("#222", "panel"));
+}
+
+static QString stepNumberSheet(bool lit)
+{
+    if (lit) {
+        return QStringLiteral(
+            "QLabel { background: %1; border-radius: 8px; "
+            "font-weight: bold; font-size: 10px; color: #000; min-width: 16px; "
+            "max-width: 16px; min-height: 16px; max-height: 16px; }")
+            .arg(WorkspacePreview::statusColourName("#22cc44", "ok"));
+    }
+    return QStringLiteral(
+        "QLabel { background: %1; border-radius: 8px; "
+        "font-weight: bold; font-size: 10px; min-width: 16px; "
+        "max-width: 16px; min-height: 16px; max-height: 16px; }")
+        .arg(WorkspacePreview::roleColourName("#444", "button"));
 }
 
 // ── Constructor ───────────────────────────────────────────────────────────────
@@ -396,8 +455,7 @@ void Hl2IoBoardTab::buildStatusBar(QVBoxLayout* outer)
 {
     m_statusFrame = new QFrame(this);
     m_statusFrame->setFrameShape(QFrame::StyledPanel);
-    m_statusFrame->setStyleSheet(QStringLiteral(
-        "QFrame { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; }"));
+    m_statusFrame->setStyleSheet(statusFrameSheet(false));
 
     // D25: the bar holds three parts (the board, the live OC byte, the
     // probe) that stack in that order when the tab is too narrow for them.
@@ -537,9 +595,11 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
     auto* btnRow = new QHBoxLayout;
     m_probeButton = new QPushButton(tr("Probe board"), configGroup);
     m_resetButton = new QPushButton(tr("Reset I/O board"), configGroup);
+    // Reset clears the board: a destructive action, the decided danger.
     m_resetButton->setStyleSheet(QStringLiteral(
-        "QPushButton { color: #ff6666; border: 1px solid #ff6666; "
-        "border-radius: 3px; padding: 2px 6px; }"));
+        "QPushButton { color: %1; border: 1px solid %1; "
+        "border-radius: 3px; padding: 2px 6px; }")
+        .arg(WorkspacePreview::statusColourName("#ff6666", "danger")));
     btnRow->addWidget(m_probeButton);
     btnRow->addWidget(m_resetButton);
     configLayout->addLayout(btnRow);
@@ -611,9 +671,7 @@ void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
         // Each cell: vertical layout — numbered circle + descriptor
         auto* cell = new QFrame(smCells);
         cell->setFrameShape(QFrame::StyledPanel);
-        cell->setStyleSheet(QStringLiteral(
-            "QFrame { border: 1px solid #444; border-radius: 4px; "
-            "background: #222; padding: 2px; }"));
+        cell->setStyleSheet(stepFrameSheet(false));
         auto* cellLayout = new QVBoxLayout(cell);
         cellLayout->setSpacing(2);
         cellLayout->setContentsMargins(4, 2, 4, 2);
@@ -621,10 +679,7 @@ void Hl2IoBoardTab::buildStateMachineRow(QVBoxLayout* outer)
         // Step number circle (label styled as circle)
         auto* numLabel = new QLabel(QString::number(i), cell);
         numLabel->setAlignment(Qt::AlignCenter);
-        numLabel->setStyleSheet(QStringLiteral(
-            "QLabel { background: #444; border-radius: 8px; "
-            "font-weight: bold; font-size: 10px; min-width: 16px; "
-            "max-width: 16px; min-height: 16px; max-height: 16px; }"));
+        numLabel->setStyleSheet(stepNumberSheet(false));
         cellLayout->addWidget(numLabel, 0, Qt::AlignHCenter);
 
         // Step descriptor
@@ -766,15 +821,13 @@ void Hl2IoBoardTab::updateStatusBar(bool detected)
 
     if (detected) {
         m_statusLabel->setText(tr("mi0bot custom I/O board (0x41): Active"));
-        m_statusFrame->setStyleSheet(QStringLiteral(
-            "QFrame { background: #1a2f1a; border: 1px solid #2a5a2a; border-radius: 4px; }"));
+        m_statusFrame->setStyleSheet(statusFrameSheet(true));
         m_lastProbeLabel->setText(
             QStringLiteral("Last probe: %1")
                 .arg(QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss"))));
     } else {
         m_statusLabel->setText(tr("mi0bot custom I/O board (0x41): Not detected"));
-        m_statusFrame->setStyleSheet(QStringLiteral(
-            "QFrame { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; }"));
+        m_statusFrame->setStyleSheet(statusFrameSheet(false));
     }
 }
 
@@ -887,25 +940,15 @@ void Hl2IoBoardTab::highlightStep(int step)
 {
     // Clear previous highlight
     if (m_currentHighlightedStep >= 0 && m_currentHighlightedStep < kSteps) {
-        m_stepFrames[m_currentHighlightedStep]->setStyleSheet(QStringLiteral(
-            "QFrame { border: 1px solid #444; border-radius: 4px; "
-            "background: #222; padding: 2px; }"));
-        m_stepNumLabels[m_currentHighlightedStep]->setStyleSheet(QStringLiteral(
-            "QLabel { background: #444; border-radius: 8px; "
-            "font-weight: bold; font-size: 10px; min-width: 16px; "
-            "max-width: 16px; min-height: 16px; max-height: 16px; }"));
+        m_stepFrames[m_currentHighlightedStep]->setStyleSheet(stepFrameSheet(false));
+        m_stepNumLabels[m_currentHighlightedStep]->setStyleSheet(stepNumberSheet(false));
     }
 
     m_currentHighlightedStep = step;
 
     if (step >= 0 && step < kSteps) {
-        m_stepFrames[step]->setStyleSheet(QStringLiteral(
-            "QFrame { border: 2px solid #22cc44; border-radius: 4px; "
-            "background: #1a2f1a; padding: 2px; }"));
-        m_stepNumLabels[step]->setStyleSheet(QStringLiteral(
-            "QLabel { background: #22cc44; border-radius: 8px; "
-            "font-weight: bold; font-size: 10px; color: #000; min-width: 16px; "
-            "max-width: 16px; min-height: 16px; max-height: 16px; }"));
+        m_stepFrames[step]->setStyleSheet(stepFrameSheet(true));
+        m_stepNumLabels[step]->setStyleSheet(stepNumberSheet(true));
     }
 }
 

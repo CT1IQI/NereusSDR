@@ -202,6 +202,22 @@ inline void applyWorkspacePalette(QApplication& app)
     p.setColor(QPalette::Disabled, QPalette::Base,            disabledBg);
     p.setColor(QPalette::Disabled, QPalette::HighlightedText, disabledText);
     p.setColor(QPalette::Disabled, QPalette::PlaceholderText, disabledText);
+    // A disabled page keeps the workspace surfaces: without these the
+    // Disabled group keeps the platform's own (a light grey offscreen,
+    // #1e1e1e on macOS), which a disabled page such as the 4O3A
+    // peripheral tabs paints behind its content.
+    p.setColor(QPalette::Disabled, QPalette::Window,          appBg);
+    p.setColor(QPalette::Disabled, QPalette::AlternateBase,   panelBg);
+    p.setColor(QPalette::Disabled, QPalette::ToolTipBase,     buttonBg);
+    p.setColor(QPalette::Disabled, QPalette::ToolTipText,     disabledText);
+    p.setColor(QPalette::Disabled, QPalette::Highlight,       selected);
+    p.setColor(QPalette::Disabled, QPalette::Link,            accent);
+    p.setColor(QPalette::Disabled, QPalette::LinkVisited,     accent);
+    p.setColor(QPalette::Disabled, QPalette::Light,           border);
+    p.setColor(QPalette::Disabled, QPalette::Midlight,        border);
+    p.setColor(QPalette::Disabled, QPalette::Dark,            panelBg);
+    p.setColor(QPalette::Disabled, QPalette::Mid,             panelBg);
+    p.setColor(QPalette::Disabled, QPalette::Shadow,          appBg);
     app.setPalette(p);
 
     const auto r = [&wp](const char* role) { return wp.qss(QString::fromLatin1(role)); };

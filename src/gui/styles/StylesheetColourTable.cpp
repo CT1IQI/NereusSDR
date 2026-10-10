@@ -18,6 +18,14 @@
 //                 measured role (#d8a55f) instead of staying kept, as its
 //                 reason text already did (JJ's choice A).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Settings colours by meaning: the PGXL and TGXL warnings
+//                 take the decided warn tone (measured, #d8a55f) and the
+//                 PA Gain info note the secondary text; the NNR
+//                 session chip is a warning badge (badge-warn-bg, no
+//                 edge) instead of an amber offset fill; OPERATE on and
+//                 PS-A checked leave the kept list for the engaged green
+//                 (dsp-on, as Longpath's OPERATE). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -165,7 +173,7 @@ const QVector<ColourRow>& rows()
         { "#66ccff", kText, "accent" },          // MainWindow:13046 TCI "#6cf" clients
         { "#66cce6", kText, "accent" },          // TitleBar:205 route popup
         { "#6699ff", kText, "accent" },          // Hl2IoBoardTab:407,782, OcOutputsHfTab:200 RX
-        { "#80b0d0", kText, "accent" },          // PaSetupPages:296 info banner
+        { "#80b0d0", kText, "text-secondary" },  // PaSetupPages:306 info note
         { "#8aabcf", kText, "accent" },          // AddCustomRadioDialog:794 info
         { "#00d4f8", kBorder, "selected-border" }, // ContainerSettingsDialog:277 OK button
         { "#0f2030", kBg, "badge-info-bg" },     // AudioVaxPage:136 BYO status
@@ -202,11 +210,11 @@ const QVector<ColourRow>& rows()
         // ── Measured and warning ─────────────────────────────────
         { "#2a1a00", kBg, "measured-bg" },       // AudioVaxPage:102,147, AudioAdvancedPage:87
         { "#2a2010", kBg, "measured-bg" },       // SpotHubDialog:500 banner
-        { "#302810", kBg, "measured-bg" },       // NnrControls:243 chip
+        { "#302810", kBg, "badge-warn-bg" },     // NnrControls:243 warning chip (a badge)
         { "#3a2a00", kBg, "measured-bg" },       // TitleBar:852 feature button, NyiOverlay:10
         { "#3a2a10", kBg, "measured-bg" },       // RadioInfoTab:199 banner
         { "#806020", kBorder, "measured-border" }, // TitleBar:852, SpotHubDialog:501
-        { "#806820", kBorder, "measured-border" }, // NnrControls:243
+        { "#806820", kBorder, "badge-warn-bg" }, // NnrControls:243, a badge has no edge
         { "#a07020", kBorder, "measured-border" }, // RadioInfoTab:199
         { "#b87300", kBorder, "measured-border" }, // AudioVaxPage:103,148, AudioAdvancedPage:88
         { "#e8a030", kBorder, "measured" },      // AudioAdvancedPage:94 :hover edge
@@ -227,8 +235,8 @@ const QVector<ColourRow>& rows()
                                                  // AdcOverloadBadge Warn
         { "#ffd700", kBg, "measured" },          // StatusBadge and AdcOverloadBadge rgba(255,215,0,30)
         { "#e6c200", kText, "warn" },            // SpotHubDialog:836-3340 warnings, RadeApplet label
-        { "#e87c1e", kText, "warn" },            // PgxlAdvancedPage:481
-        { "#e8c01e", kText, "warn" },            // Tgxl/PgxlAdvancedPage warnLabel
+        { "#e87c1e", kText, "measured" },        // PgxlAdvancedPage:484 pending warning (D21 warn)
+        { "#e8c01e", kText, "measured" },        // Tgxl/PgxlAdvancedPage warnLabel (D21 warn)
 
         // ── Transmit ─────────────────────────────────────────────
         { "#eecc66", kText, "tx" },              // MainWindow:13053 TCI "#ec6" client holds TX
@@ -281,6 +289,18 @@ const QVector<ColourRow>& rows()
         { "#206030", kBg, "ok-bg" },             // SpotHubDialog:221,2724 toggle on
         { "#305040", kBorder, "ok-border" },     // SpotHubDialog:222,2725 toggle edge
         { "#603020", kBg, "button" },            // SpotHubDialog:223,2726 toggle off
+
+        // ── Engaged (on) ─────────────────────────────────────────
+        // PS-A checked (TxApplet:1057) and OPERATE on (TunerApplet:923,
+        // AmpApplet:643, Rf2ksApplet:611): engaged processing, D11 green.
+        // Longpath's own OPERATE on is dsp-on-bg with the ok edge and the
+        // dsp-on-border hover (Longpath TunerApplet.cpp:574-577); a
+        // checked button with it takes the lit green (componentize(),
+        // D15). The selected tuner antenna shares the literal and is a
+        // selection: its call site writes the glass (TunerApplet:1008).
+        { "#006030", kBg, "dsp-on-bg" },         // OPERATE on, PS-A checked
+        { "#007040", kBg, "dsp-on-border" },     // OPERATE on, hover
+        { "#008040", kBorder, "ok" },            // OPERATE on, PS-A checked edge
     };
     return table;
 }
@@ -293,9 +313,6 @@ const QVector<KeptLiteral>& kept()
         { "#000000", kText, "lit: text on a lit fill (RxApplet:1844 :checked, PureSignalApplet:108)" },
         { "#001a33", kBg, "lit: MON on (TxApplet:770)" },
         { "#3399ff", kBorder, "lit: MON on (TxApplet:771)" },
-        { "#006030", kBg, "lit: OPERATE on (Tuner, Amp, Rf2ks, TxApplet)" },
-        { "#007040", kBg, "lit: OPERATE on, hover (Tuner, Amp, Rf2ksApplet)" },
-        { "#008040", kBorder, "lit: OPERATE on (Tuner, Amp, Rf2ks, TxApplet)" },
         { "#8a6000", kBg, "lit: BYPASS (TunerApplet:929)" },
         { "#9a7000", kBg, "lit: BYPASS hover (TunerApplet:931)" },
         { "#a07000", kBorder, "lit: BYPASS (TunerApplet:929)" },

@@ -31,6 +31,10 @@
 //                (SetupFit::FitRow) and keep their own height, the rest of
 //                the tab going below them. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: "Currently selected" and "Not
+//                detected" are the page's secondary text; the workspace
+//                palette's mid is the panel colour, which hid them. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -90,6 +94,7 @@
 #include "models/RadioModel.h"
 #include "HardwareTransmitGate.h"
 #include "gui/setup/SetupFit.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <initializer_list>
 
@@ -105,6 +110,21 @@
 #include <QVBoxLayout>
 
 namespace NereusSDR {
+
+namespace {
+
+// The status bar's secondary text: palette(mid) as before, or with the
+// workspace preview on the secondary text role (the workspace palette's
+// mid is the panel colour, the same as the bar behind it).
+QString secondaryTextColour()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QStringLiteral("palette(mid)");
+    }
+    return WorkspacePreview::roleColourName("#808080", "text-secondary");
+}
+
+} // namespace
 
 // ── Band table helpers ────────────────────────────────────────────────────────
 
@@ -215,7 +235,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
 
     m_statusLabel = new QLabel(tr("Alex-2 board: Not detected"), statusFrame);
     m_statusLabel->setStyleSheet(
-        QStringLiteral("QLabel { color: palette(mid); }"));
+        QStringLiteral("QLabel { color: %1; }").arg(secondaryTextColour()));
 
     // Right-aligned "Currently selected" label — Phase H Task 5a.
     // Driven from updateActiveLeds() which mirrors setAlex2HPF/LPF
@@ -228,7 +248,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
             .arg(QChar(0x2014), QChar(0x00B7), QChar(0x2014)),
         statusFrame);
     m_selectedLabel->setStyleSheet(
-        QStringLiteral("QLabel { color: palette(mid); font-size: 10px; }"));
+        QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(secondaryTextColour()));
     m_selectedLabel->setToolTip(
         tr("The filters in use, from the panadapter's center frequency."));
 
@@ -517,7 +537,7 @@ void AntennaAlexAlex2Tab::updateBoardCapabilities(bool hasAlex2)
             QStringLiteral("QLabel { background: #666666; border-radius: 5px; }"));
         m_statusLabel->setText(tr("Alex-2 board: Not detected"));
         m_statusLabel->setStyleSheet(
-            QStringLiteral("QLabel { color: palette(mid); }"));
+            QStringLiteral("QLabel { color: %1; }").arg(secondaryTextColour()));
     }
 }
 
