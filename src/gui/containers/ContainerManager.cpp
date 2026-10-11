@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Both looks: with two monitors reporting one serial, a
+//                 window is matched to the one it was on (its saved
+//                 geometry, then its remembered place), not the first.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: a free home that no longer fits
 //                 the pane returns to the nearest place inside it that
 //                 covers no other free container (nearestClearFreeRect),
@@ -2382,7 +2386,7 @@ bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional
     if (screen) {
         // Its monitor is here, and the place is still on it (a monitor
         // known by its serial may have been moved in the arrangement).
-        const std::optional<ScreenInfo> present = m_screens->matching(*screen);
+        const std::optional<ScreenInfo> present = m_screens->matching(*screen, remembered);
         return present && remembered.intersects(present->geometry);
     }
     // An older layout names no monitor: any present screen the rect is on
@@ -2395,7 +2399,7 @@ bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional
 QRect ContainerManager::displacedWindowRect(const QString& id, const QRect& remembered,
                                             const std::optional<SavedScreen>& screen, const QSize& size) const
 {
-    const std::optional<ScreenInfo> own = screen ? m_screens->matching(*screen) : std::nullopt;
+    const std::optional<ScreenInfo> own = screen ? m_screens->matching(*screen, remembered) : std::nullopt;
     const ScreenInfo target = own ? *own : mainWindowScreen();
     QRect wanted;
     if (remembered.isValid() && screen && target.geometry.isValid()) {

@@ -5,6 +5,8 @@
 //                 on, read in one place so tests can stand in for
 //                 monitors that are not there, by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - matching() chooses among several screens with one serial.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QRect>
 #include <QString>
@@ -39,8 +41,11 @@ public:
     virtual QVector<ScreenInfo> screens() const;
     virtual ScreenInfo primary() const;
 
-    // The present screen that matches `saved`, if any.
-    std::optional<ScreenInfo> matching(const SavedScreen& saved) const;
+    // The present screen that matches `saved`, if any. Two monitors of one
+    // model can report one serial, so when several match it is the one
+    // with the saved geometry, else the first that `place` (the window's
+    // remembered rect, when given) is on, else the first.
+    std::optional<ScreenInfo> matching(const SavedScreen& saved, const QRect& place = QRect()) const;
     // The screen holding most of `rect`; none when it is on no screen.
     std::optional<ScreenInfo> screenHolding(const QRect& rect) const;
     // screenHolding(), or the primary screen.

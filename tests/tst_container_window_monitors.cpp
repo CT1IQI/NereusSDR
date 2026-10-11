@@ -9,6 +9,8 @@
 //                 platform has one screen, so every monitor here is a fake
 //                 ScreenSource. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - Two monitors with one serial. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLoggingCategory>
@@ -268,6 +270,57 @@ private slots:
         QVERIFY(rig.show());
         QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
         QCOMPARE(rig.window(QStringLiteral("b")), kAlsoOnB);
+    }
+
+    void amongScreensWithOneSerialTheSavedGeometryThenThePlaceDecides()
+    {
+        const QString serial = QStringLiteral("SN-TWIN");
+        FakeScreens screens;
+        screens.list = {ScreenInfo{QStringLiteral("A"), serial, kScreenARect, kScreenARect},
+                        ScreenInfo{QStringLiteral("B"), serial, kScreenBRect, kScreenBRect}};
+        const auto name = [](const std::optional<ScreenInfo>& screen) { return screen ? screen->name : QString(); };
+        QCOMPARE(name(screens.matching({QStringLiteral("B"), serial, kScreenBRect})), QStringLiteral("B"));
+        QCOMPARE(name(screens.matching({QStringLiteral("A"), serial, kScreenARect})), QStringLiteral("A"));
+        // Neither has the saved geometry: the one the place is on.
+        const SavedScreen elsewhere{QStringLiteral("B"), serial, QRect(2560, 0, 1920, 1080)};
+        QCOMPARE(name(screens.matching(elsewhere, kOnB)), QStringLiteral("B"));
+        // Nothing to choose by: the first, as before.
+        QCOMPARE(name(screens.matching(elsewhere)), QStringLiteral("A"));
+        QCOMPARE(name(screens.matching(elsewhere, QRect(9000, 9000, 400, 300))), QStringLiteral("A"));
+        QVERIFY(!screens.matching({QStringLiteral("C"), QStringLiteral("SN-OTHER"), kScreenBRect}).has_value());
+    }
+
+    // Two monitors of one model can report one serial: the saved geometry,
+    // and then the remembered place, say which of them the window was on.
+    void twoMonitorsWithOneSerialKeepAWindowOnTheSecond_data()
+    {
+        QTest::addColumn<QRect>("savedScreenGeometry");
+        QTest::newRow("its monitor is where it was") << kScreenBRect;
+        QTest::newRow("its monitor has moved in the arrangement") << QRect(2560, 0, 1920, 1080);
+    }
+    void twoMonitorsWithOneSerialKeepAWindowOnTheSecond()
+    {
+        QFETCH(QRect, savedScreenGeometry);
+        const QString serial = QStringLiteral("SN-TWIN");
+        const ScreenInfo first{QStringLiteral("A"), serial, kScreenARect, kScreenARect};
+        const ScreenInfo second{QStringLiteral("B"), serial, kScreenBRect, kScreenBRect};
+        const SavedScreen saved{QStringLiteral("B"), serial, savedScreenGeometry};
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("twins.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("a"), kOnB, saved)}), 0).status,
+                 CommitStatus::Saved);
+        const QByteArray before = ContainerDocumentCodec::encode(store.snapshot());
+        FakeScreens screens;
+        screens.list = {first, second};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
+        QVERIFY(rig.settleCapture());
+        rig.manager->saveState();
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
     }
 
     void screenRemovedAndAddedBackWhileRunning()

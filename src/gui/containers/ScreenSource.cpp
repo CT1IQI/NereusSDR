@@ -2,10 +2,14 @@
 // Modification history (NereusSDR):
 //   2026-10-11 - Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - Among several screens with one serial, the one a window
+//                 was on. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "ScreenSource.h"
 
 #include <QGuiApplication>
 #include <QScreen>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -51,15 +55,31 @@ ScreenInfo ScreenSource::primary() const
     return infoOf(QGuiApplication::primaryScreen());
 }
 
-std::optional<ScreenInfo> ScreenSource::matching(const SavedScreen& saved) const
+std::optional<ScreenInfo> ScreenSource::matching(const SavedScreen& saved, const QRect& place) const
 {
+    QVector<ScreenInfo> matches;
     const QVector<ScreenInfo> present = screens();
     for (const ScreenInfo& screen : present) {
         if (screenMatches(screen, saved)) {
+            matches.append(screen);
+        }
+    }
+    if (matches.isEmpty()) {
+        return std::nullopt;
+    }
+    for (const ScreenInfo& screen : std::as_const(matches)) {
+        if (screen.geometry == saved.geometry) {
             return screen;
         }
     }
-    return std::nullopt;
+    if (place.isValid()) {
+        for (const ScreenInfo& screen : std::as_const(matches)) {
+            if (screen.geometry.intersects(place)) {
+                return screen;
+            }
+        }
+    }
+    return matches.first();
 }
 
 std::optional<ScreenInfo> ScreenSource::screenHolding(const QRect& rect) const
