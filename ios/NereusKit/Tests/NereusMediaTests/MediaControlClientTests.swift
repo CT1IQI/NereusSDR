@@ -1568,9 +1568,52 @@ import Testing
                 == [.contextMismatch: 2, .unknownSections: 1, .truncated: 1])
         #expect(frames() == [1, 2])
 
-        // A new context: the extras of the old one are gone.
-        await rig.deliver(Self.context(id, generation: 2, grant: true))
+        // R-DISP-HOLD: a context for the same picture (the Core renewed it
+        // for a new dBm range and frame rate, and kept what it had measured)
+        // keeps the last extras. (This test held that every context empties
+        // them; that made each new dBm range blank the band's peak hold,
+        // blobs and noise floor.)
+        let last = try #require(extras().last)
+        var renewed = Self.context(id, generation: 2, grant: true)
+        renewed["minDbm"] = -150
+        renewed["maxDbm"] = -30
+        renewed["fps"] = 20
+        renewed["framesPerLine"] = 2
+        await rig.deliver(renewed)
+        #expect(await rig.client.displayExtras(endpointId: 1) == last)
+        // The decoder is renewed all the same: a keyframe is asked for.
+        #expect(rig.recorder.sent("keyframe").last?["contextGeneration"] == .number(2))
+
+        // A new picture (another span): the extras of the old one are gone.
+        var zoomed = Self.context(id, generation: 3, grant: true)
+        zoomed["spanHz"] = 48_000
+        await rig.deliver(zoomed)
         #expect(await rig.client.displayExtras(endpointId: 1) == nil)
+    }
+
+    @Test func onlyADbmRangeFrameRateOrLinePeriodChangeIsTheSamePicture() throws {
+        func context(_ change: (inout [String: LinkJSON]) -> Void) throws -> MediaControlEvent.DisplayContext {
+            var payload = Self.context("c", generation: 2, wideband: true, grant: true)
+            change(&payload)
+            return try #require(MediaControlDecoder.context(payload, wideband: true, grant: true, transmit: false))
+        }
+        let held = try context { $0["contextGeneration"] = 1 }
+        #expect(MediaControlClient.samePicture(held, try context { _ in }))
+        #expect(MediaControlClient.samePicture(held, try context {
+            $0["minDbm"] = -161
+            $0["maxDbm"] = -20
+            $0["fps"] = 15
+            $0["framesPerLine"] = 3
+        }))
+        // Anything that says where a sample lies makes a new picture.
+        let changes: [(String, LinkJSON)] = [
+            ("centreHz", 14_100_010), ("spanHz", 95_000), ("sourceCentreHz", 14_101_000),
+            ("sourceStream", 1), ("traceSamples", 31), ("waterfallSamples", 31), ("grantedFftSize", 8192),
+        ]
+        for (key, value) in changes {
+            let changed = try context { $0[key] = value }
+            #expect(!MediaControlClient.samePicture(held, changed), "\(key)")
+        }
     }
 
     static let extrasForEverySection = DisplayExtrasRequest(

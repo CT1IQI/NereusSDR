@@ -3,6 +3,23 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: the microphone is collected by a real-time thread while
+//               the capture lease is held (MicUplinkCollector);
+//               setMicCollectorInlineForTest, collectMicNowForTest,
+//               pumpMicUplinkForTest, micCollectorThreadRunningForTest.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
+//               clock the receiver audio streams for apps on this computer
+//               stamp and release by, so a test running its source and
+//               devices on one clock runs their jitter hold on it too. No
+//               production caller; production is unchanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: Windows test fix (R-AUD-03): exported from the GUI DLL,
+//               so a signal of it is found from outside the DLL on
+//               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-08: TCI program keys that bring their own audio: the
 //               microphone line carries that audio or silence paced at
 //               48 kHz, never the microphone; a failed capture retries
@@ -108,6 +125,7 @@
 #include "core/session/media/RemoteAudioContext.h"
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/session/media/RemoteSpectrumContext.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/PanStatusText.h"
 #include "gui/RemoteAudioStatus.h"
 #include <QHash>
@@ -119,6 +137,7 @@
 #include <vector>
 
 namespace NereusSDR {
+class AudioEngine;
 class RemoteTciAudioStage;
 class StationClient;
 class RadioModel;
@@ -152,7 +171,7 @@ struct RemoteDisplayTelemetry {
 /// Owns the GUI's media session and one bounded subscription per logical pan.
 /// Layout reparenting does not retire a pan; removing it from the stack does.
 /// Display data never passes through the control/property mirror.
-class RemoteMediaController final : public QObject {
+class NEREUS_GUI_EXPORT RemoteMediaController final : public QObject {
     Q_OBJECT
 public:
     using AllocationClock = std::function<qint64()>;
@@ -505,6 +524,14 @@ public:
     /// as it does itself, so a test can raise a fault a real stream cannot
     /// produce on demand. No production caller.
     void raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault);
+    /// Test only (R-R3-44): the clock the receiver audio streams for apps
+    /// on this computer (requestReceiverAudio) stamp arrivals and release
+    /// by, for streams made after this call. Empty, the default, is the
+    /// receiver's own steady clock. A test whose source and devices run on
+    /// one clock gives it here, so the streams' jitter hold runs on that
+    /// clock as well. It is read on each stream's receive worker, so it
+    /// must be safe to call from any thread. No production caller.
+    void setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock);
     /// Test only: the clock, in ms, that paces a program key's silence and
     /// times its audio hold (the controller's own elapsed clock when unset),
     /// so a test can stall the pump without waiting. No production caller.
@@ -512,10 +539,31 @@ public:
     /// Test only: whether the microphone line holds its capture lease
     /// (2026-10-09). No production caller.
     bool micCaptureLeaseHeldForTest() const;
+    /// Test only (2026-10-10), for every controller in the process: while
+    /// set, the microphone's collector has no thread; the pump collects
+    /// inline before it drains (and collectMicNowForTest collects between
+    /// pumps), so a test that drives the pump with its own microphone and
+    /// clock stays on one thread. Off, the default, is production: the
+    /// collector's real-time thread. No production caller.
+    static void setMicCollectorInlineForTest(bool inlineMode);
+    /// Test only (2026-10-10): one step of the collector, as its thread
+    /// takes every 5 ms; the frames it collected. Does nothing unless the
+    /// collector is inline and the capture lease is held. No production
+    /// caller.
+    int collectMicNowForTest();
+    /// Test only (2026-10-10): one microphone pump, as the pump's timer
+    /// runs it. No production caller.
+    void pumpMicUplinkForTest();
+    /// Test only (2026-10-10): whether the collector's thread is running.
+    bool micCollectorThreadRunningForTest() const;
     /// Test only: the current media peer reports itself closed, as a lost
     /// media connection does, while the control session stays up
     /// (2026-10-09). No production caller.
     void dropMediaPeerForTest();
+    /// Test only (R-DISP-HOLD): runs the planner's tick now, as its 100 ms
+    /// timer does, so a test moves the injected clock and plans without
+    /// waiting on a real timer. No production caller.
+    void planNowForTest();
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX
@@ -656,6 +704,12 @@ private:
     // Task 36: the microphone uplink.
     bool micUplinkWanted() const;
     void reconcileMicUplink();
+    /// 2026-10-10: the microphone's collector thread: started while the
+    /// capture lease is held, joined before the lease or the engine goes.
+    void startMicCollector(AudioEngine* engine);
+    void stopMicCollector();
+    /// Logs, once, what the collector dropped during the key that ends.
+    void reportMicDropped();
     // Fix wave 2 (M8): emits micLineChanged when micLineOpen() moved.
     void noteMicLine();
     /// Sends the whole packets `pending` holds and keeps the rest.

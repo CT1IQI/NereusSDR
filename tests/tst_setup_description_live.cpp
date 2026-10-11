@@ -11,6 +11,8 @@
 // via Anthropic Claude Code.
 // 2026-10-09: two-tone leaves the TX profile watch and is excluded from it.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-10: txReadingsVersion is 4 (the six transmit peak readings).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 
 #include <algorithm>
@@ -2816,9 +2818,10 @@ private slots:
         features.insert("setupDescription", 1);
         LoopbackTransport* app = core.signIn(phone, features);
         QVERIFY(admitted(app));
-        // A9 (iPhone app plan Task 39): 3 adds the stage readings.
+        // A9 (iPhone app plan Task 39): 3 adds the stage readings; 4 the
+        // six peak readings.
         QCOMPARE(capability(app->received(), QStringLiteral("txReadingsVersion")),
-                 std::optional<qint64>(3));
+                 std::optional<qint64>(4));
         const QJsonObject pa = QJsonDocument::fromJson(latest(app->received(),
             QStringLiteral("setup"), QStringLiteral("pa")).toString().toUtf8()).object();
         QVERIFY(!pa.isEmpty());

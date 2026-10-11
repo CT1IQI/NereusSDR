@@ -75,6 +75,11 @@
 //   2026-10-01: Control logging lane: rttMs() and the selected
 //               pair's candidate transports. Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: the audio line's send is AudioSendLane, safe
+//               from any thread (audioRtpSink()); sendRtp() goes through
+//               it, and a failed send is reported by the owner's next
+//               drain. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-01: Mic 48k lane (JJ's ruling: the phone microphone at 48
 //               kbit/s): the microphone line's offer advertises
 //               maxaveragebitrate=48000 (kMicLineMaxAverageBitrate), the
@@ -666,6 +671,79 @@ bool validHeadphonesAudioSsrc(quint32 mainSsrc, const QList<quint32>& receiverSs
         || (headphonesSsrc != mainSsrc && !receiverSsrcs.contains(headphonesSsrc));
 }
 
+// R-AUD-SEND: the audio line's send, from any thread: the Core's audio send
+// thread, and the owner's own sendRtp(). The owner publishes what the checks
+// read (publish(), which holds the lock only to copy), and a send holds the
+// lock throughout, so no call is inside the library once stop() has
+// published the stopped state. One object for the transport's whole life.
+//
+// The library calls made here are safe off the owner's thread
+// (libdatachannel v0.24.5). Track::bufferedAmount() reads an atomic
+// (src/channel.cpp:22, src/impl/channel.hpp:43). Track::maxMessageSize()
+// reads a const weak pointer and the peer connection's const configuration
+// (src/impl/track.cpp:113-119, src/impl/track.hpp:67,
+// src/impl/peerconnection.hpp:117). Track::send() reads an atomic, takes
+// the track's mutex shared, then the SRTP transport's sendMutex
+// (src/impl/track.cpp:170-227, src/impl/dtlssrtptransport.cpp:87-88) and
+// ends in the ICE agent's send (src/impl/icetransport.cpp:287-301), which
+// the library's SCTP threads already call beside the owner's thread for
+// the display channel.
+class AudioSendLane final : public MediaRtpSink {
+public:
+    struct State {
+        bool ready = false;
+        std::shared_ptr<rtc::Track> track;
+        std::shared_ptr<CallbackBridge> bridge;
+        quint32 mainSsrc = 0;
+        QList<quint32> receiverSsrcs;
+        quint32 headphonesSsrc = 0;
+    };
+
+    // Owner's thread. After it returns, no send uses the state it replaced.
+    void publish(State state)
+    {
+        {
+            const std::lock_guard lock(m_mutex);
+            std::swap(m_state, state);
+        }
+        // The replaced track and bridge are let go here, outside the lock.
+    }
+
+    RtpSendResult sendRtp(const QByteArray& packet) override
+    {
+        const std::lock_guard lock(m_mutex);
+        if (!m_state.ready || !m_state.track || !m_state.bridge) {
+            return RtpSendResult::NotReady;
+        }
+        if (packet.size() < IMediaTransport::kMinRawRtpBytes
+            || packet.size() > IMediaTransport::kMaxRawRtpBytes
+            || m_state.track->bufferedAmount() != 0
+            || m_state.track->maxMessageSize() < static_cast<std::size_t>(packet.size())
+            || !isDeclaredAudioSsrc(rtpSsrc(packet), m_state.mainSsrc, m_state.receiverSsrcs,
+                                    m_state.headphonesSsrc)) {
+            return RtpSendResult::Refused;
+        }
+        m_state.bridge->submittedRtpBytes.fetch_add(
+            static_cast<quint64>(packet.size()), std::memory_order_relaxed);
+        try {
+            return m_state.track->send(
+                       reinterpret_cast<const rtc::byte*>(packet.constData()),
+                       static_cast<std::size_t>(packet.size()))
+                ? RtpSendResult::Accepted
+                : RtpSendResult::Refused;
+        } catch (const std::exception& error) {
+            // Reported on the owner's thread, by its next drain, as an
+            // error from one of the library's own threads is.
+            queueEvent(m_state.bridge, CallbackEvent::Kind::Error, error.what());
+            return RtpSendResult::Refused;
+        }
+    }
+
+private:
+    std::mutex m_mutex;
+    State m_state;
+};
+
 // Task 36: 0 (none), or an id that is none of the Core's own streams'.
 bool validMicAudioSsrc(quint32 mainSsrc, const QList<quint32>& receiverSsrcs,
                        quint32 headphonesSsrc, quint32 micSsrc)
@@ -777,6 +855,22 @@ struct LibDataChannelMediaTransport::Private {
     // Task 37: the "tx" channel, null without one.
     std::shared_ptr<rtc::DataChannel> tx;
     std::shared_ptr<rtc::Track> audio;
+    // R-AUD-SEND: the audio line's send for any thread, and what it was
+    // last told (publishAudioSend(), after every change of ready).
+    const std::shared_ptr<AudioSendLane> audioSend = std::make_shared<AudioSendLane>();
+    void publishAudioSend()
+    {
+        AudioSendLane::State state;
+        state.ready = ready;
+        if (ready) {
+            state.track = audio;
+            state.bridge = bridge;
+            state.mainSsrc = localAudioSsrc;
+            state.receiverSsrcs = receiverAudioSsrcs;
+            state.headphonesSsrc = headphonesAudioSsrc;
+        }
+        audioSend->publish(std::move(state));
+    }
     // Task 36: the microphone line (the offerer's receive-only track or the
     // answerer's send-only one), null without one.
     std::shared_ptr<rtc::Track> micAudio;
@@ -1332,6 +1426,8 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
     const bool wasStarted = d->started;
     d->started = false;
     d->ready = false;
+    // R-AUD-SEND: from here no send from another thread reaches the library.
+    d->publishAudioSend();
     d->localAudioSsrc = 0;
     d->receiverAudioSsrcs.clear();
     d->headphonesAudioSsrc = 0;
@@ -1654,27 +1750,14 @@ bool LibDataChannelMediaTransport::iqBusy() const
 
 bool LibDataChannelMediaTransport::sendRtp(const QByteArray& packet)
 {
-    if (!d->ready || !d->audio || packet.size() < kMinRawRtpBytes
-        || packet.size() > kMaxRawRtpBytes || d->audio->bufferedAmount() != 0
-        || d->audio->maxMessageSize() < static_cast<std::size_t>(packet.size())
-        || !isDeclaredAudioSsrc(rtpSsrc(packet), d->localAudioSsrc, d->receiverAudioSsrcs,
-                                d->headphonesAudioSsrc)) {
-        return false;
-    }
-    const std::shared_ptr<CallbackBridge> bridge = d->bridge;
-    if (!bridge) {
-        return false;
-    }
-    bridge->submittedRtpBytes.fetch_add(
-        static_cast<quint64>(packet.size()), std::memory_order_relaxed);
-    try {
-        return d->audio->send(
-            reinterpret_cast<const rtc::byte*>(packet.constData()),
-            static_cast<std::size_t>(packet.size()));
-    } catch (const std::exception& error) {
-        emit errorOccurred(QString::fromUtf8(error.what()));
-        return false;
-    }
+    // R-AUD-SEND: one send path, the one another thread uses. On this
+    // thread the answer stays yes or no, as it always was.
+    return d->audioSend->sendRtp(packet) == MediaRtpSink::RtpSendResult::Accepted;
+}
+
+std::shared_ptr<MediaRtpSink> LibDataChannelMediaTransport::audioRtpSink()
+{
+    return d->audioSend;
 }
 
 bool LibDataChannelMediaTransport::sendMicRtp(const QByteArray& packet)
@@ -1952,6 +2035,7 @@ void LibDataChannelMediaTransport::drainCallbacks()
         && d->audio && d->audio->isOpen();
     if (nowReady && !d->ready) {
         d->ready = true;
+        d->publishAudioSend();
         if (IceDiagnostics::enabled()) {
             IceDiagnostics::logSelectedPair("media", *d->peer);
         }
@@ -1959,8 +2043,9 @@ void LibDataChannelMediaTransport::drainCallbacks()
         if (!isCurrentGeneration()) {
             return;
         }
-    } else if (!nowReady) {
+    } else if (!nowReady && d->ready) {
         d->ready = false;
+        d->publishAudioSend();
     }
 
     for (const rtc::binary& message : displayMessages) {

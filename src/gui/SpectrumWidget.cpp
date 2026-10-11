@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10  J.J. Boyd / KG4VCF. R-DISP-HOLD: setRemoteSpectrumContext
+//                 keeps the painted frame, peak hold, blobs and waterfall
+//                 rows when the context is for the picture already shown.
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF. The GPU dynamic overlay clears and
 //                 uploads every row an earlier frame may have left (a
 //                 created texture, a taller spectrum band) with the band,
@@ -1605,6 +1609,38 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
                                                double sourceCentreHz, double sampleRateHz,
                                                int grantedFftSize)
 {
+    // R-DISP-HOLD: a context for the picture this pan already shows (the
+    // Core renewed it for a new dBm range or frame rate, and kept its
+    // averaged trace) blanks nothing. The codec context is renewed, so
+    // frames of the old one are refused and the pan waits for the new
+    // keyframe with its last frame, peak hold, blobs and waterfall row in
+    // place. The same picture is the same receiver and source geometry, the
+    // same view to the Hz, the same sample counts and the same wide row;
+    // only then are values the pan holds per pixel still the same pixels.
+    const SpectrumEndpointContext& shown = m_remoteCapture.context();
+    const bool samePicture = m_remoteSpectrum && m_remoteCodec.traceSamples != 0
+        && shown.codec.endpointId == context.codec.endpointId
+        && shown.codec.traceSamples == context.codec.traceSamples
+        && shown.codec.waterfallSamples == context.codec.waterfallSamples
+        && shown.codec.wideSamples == context.codec.wideSamples
+        && shown.source == context.source
+        && shown.exactCentreHz == context.exactCentreHz
+        && shown.exactSpanHz == context.exactSpanHz
+        && shown.wideCentreHz == context.wideCentreHz
+        && shown.wideSpanHz == context.wideSpanHz
+        && shown.wideband == context.wideband
+        && m_remoteCapture.sourceCentreHz == sourceCentreHz
+        && m_remoteCapture.sourceSampleRateHz == sampleRateHz
+        && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
+        && qFuzzyCompare(m_centerHz, context.exactCentreHz)
+        && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
+    m_remoteContextKeptPicture = samePicture;
+    if (samePicture) {
+        m_remoteCodec = context.codec;
+        m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
+        m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
+        return;
+    }
     invalidateRemoteSpectrumFrame();
     const double binWidthBefore = binWidthHz();
     // NereusSDR-original remote wiring: a new codec generation retires live
