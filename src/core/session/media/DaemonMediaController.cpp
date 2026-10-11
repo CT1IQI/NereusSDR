@@ -4065,13 +4065,17 @@ void DaemonMediaController::stopReceiverAudioCapture(ReceiverAudioStream& stream
         stream.sending = false;
         return;
     }
-    if (stream.streamIndex >= 0 && stream.sender->isRunning()) {
+    // R-AUD-SEND: stopped first. The sender thread may send a block until
+    // stop() returns, and only then are the next sequence and timestamp
+    // final.
+    const bool wasRunning = stream.sender->isRunning();
+    stream.sender->stop();
+    if (stream.streamIndex >= 0 && wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         const auto index = static_cast<size_t>(stream.streamIndex);
         m_receiverNextSequence[index] = stream.sender->nextSequence();
         m_receiverNextTimestamp[index] = stream.sender->nextTimestamp();
     }
-    stream.sender->stop();
     stream.sending = false;
 }
 
@@ -4425,12 +4429,16 @@ void DaemonMediaController::stopHeadphonesAudioCapture()
     if (!m_headphones.sender) {
         return;
     }
-    if (m_headphones.sender->isRunning()) {
+    // R-AUD-SEND: stopped first. The sender thread may send a block until
+    // stop() returns, and only then are the next sequence and timestamp
+    // final.
+    const bool wasRunning = m_headphones.sender->isRunning();
+    m_headphones.sender->stop();
+    if (wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         m_headphones.nextSequence = m_headphones.sender->nextSequence();
         m_headphones.nextTimestamp = m_headphones.sender->nextTimestamp();
     }
-    m_headphones.sender->stop();
 }
 
 void DaemonMediaController::sendHeadphonesAudioContext(bool enabled,
@@ -6296,10 +6304,9 @@ void DaemonMediaController::reconcileAudio()
         m_audioSender->setOwnerMix(m_ownerMix);
         actualEnabled = m_audioSender->start(m_peer->audioSsrc(), m_audioNextSequence,
                                               m_audioNextTimestamp);
-        if (actualEnabled) {
-            m_audioNextSequence = m_audioSender->nextSequence();
-            m_audioNextTimestamp = m_audioSender->nextTimestamp();
-        }
+        // R-AUD-SEND: the first sequence and timestamp stay as they were
+        // given to start(). Reading them back from the sender here would
+        // race the sender thread, which may already have sent a block.
     }
     // Nothing blocked audio, so a context that is still off means the sender
     // could not start.
@@ -6316,13 +6323,16 @@ void DaemonMediaController::stopAudioCapture()
         return;
     }
     // Sender advances timestamp over every consumed block, including an
-    // encode failure; retaining both fields before stop preserves the next
+    // encode failure; retaining both fields preserves the next
     // audio-context boundary across a pause or reconnect. Stop quiesces the
     // source bridge before the final diagnostics sample, so ingress/drop
     // counters include any admitted DSP callback.
+    // R-AUD-SEND: stopped first. The sender thread may send a block until
+    // stop() returns, and only then are both fields final; stop() keeps
+    // them.
+    m_audioSender->stop();
     m_audioNextSequence = m_audioSender->nextSequence();
     m_audioNextTimestamp = m_audioSender->nextTimestamp();
-    m_audioSender->stop();
     finalizeAudioDiagnostics();
 }
 
