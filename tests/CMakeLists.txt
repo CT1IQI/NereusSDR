@@ -5786,6 +5786,11 @@ nereus_add_test(tst_display_extras
     EXTRA_LABELS session)
 target_compile_definitions(tst_display_extras PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+# R-DISP-HOLD: a display asked for again with only its dBm range changed
+# keeps the Core's averaged trace, peak hold, blobs and waterfall levels.
+nereus_add_test(tst_daemon_display_keep
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -9620,6 +9625,10 @@ nereus_add_test(tst_remote_spectrum_render)
 # Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
 # subscription lifecycle, stale context rejection, and teardown.
 nereus_add_test(tst_remote_media_controller
+    fakes/LoopbackTransport.cpp)
+# R-DISP-HOLD: the window holds the dBm range it asked the Core for, and a
+# context for the same picture blanks nothing.
+nereus_add_test(tst_remote_display_hold
     fakes/LoopbackTransport.cpp)
 # R-R3-21: its real-session cases take about 115 s alone on a quiet Mac
 # (repeatedAudioRestartsBackOff waits out the 1, 2, 4, 4 s retry backoff),

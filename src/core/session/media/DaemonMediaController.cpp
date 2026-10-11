@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: R-DISP-HOLD: an endpoint asked for again keeps its
+//               reduction and, for the same picture, its display extras.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Name the microphone-block wake interval accurately and
 //               report its worker/acquire split. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -514,6 +517,10 @@ struct DaemonMediaController::EndpointEntry {
     // right after the frame it describes.
     DisplayExtrasRequest extrasRequest;
     std::unique_ptr<DisplayExtrasProcessor> extras;
+    // R-DISP-HOLD: `extras` came from the entry this one replaced (the same
+    // endpoint asked for again). Its first context keeps it for the same
+    // picture and starts a new processor for a new one.
+    bool extrasCarried{false};
     QByteArray pendingExtras;
     quint64 pendingExtrasSamples{0};
     // Parity Task 28 (R-R3-49, A11): the transmit display. The window the
@@ -3318,6 +3325,26 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
         return rejectAllocation(control, endpointId, revision,
                                 QStringLiteral("The Core could not set up this receiver's spectrum."));
     }
+    // R-DISP-HOLD: an endpoint asked for again keeps what the Core has
+    // measured for it. Its reduction (the averaged trace and waterfall
+    // planes) goes into the new entry waiting for a context;
+    // SpectrumEndpoint::configure keeps each plane whose picture the new
+    // request leaves unchanged and restarts the others. Its display extras
+    // go with it, taking the new request's settings; the first context
+    // keeps them for the same picture and starts them again for a new one
+    // (configureEndpointFromFrame). A re-request whose only change is the
+    // dBm range, the frame rate or the line period therefore restarts
+    // nothing the client sees.
+    if (replaced.has_value()) {
+        EndpointEntry& current = m_endpoints.at(endpointId);
+        current.endpoint = std::move(replaced->endpoint);
+        current.endpoint.awaitContext();
+        if (current.extras && replaced->extras) {
+            replaced->extras->updateRequest(current.extrasRequest);
+            current.extras = std::move(replaced->extras);
+            current.extrasCarried = true;
+        }
+    }
     // Parity Task 28: an endpoint showing the transmit display keeps its
     // place among the viewers, and its new request moves its view (a pan or
     // zoom on the transmitting pan moves the analyzer when it governs).
@@ -4664,8 +4691,22 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
     entry.pendingExtras.clear();
     entry.pendingExtrasSamples = 0;
     if (entry.extras) {
-        entry.extras->newContext();
+        // R-DISP-HOLD: a context for the same picture (both planes kept
+        // their averaged state) keeps the peak hold and the blobs too. A new
+        // picture starts them again; for an endpoint asked for again that
+        // is a new processor, as before, so its noise floor and waterfall
+        // levels start again with it.
+        const bool samePicture = entry.endpoint.tracePlaneKept()
+            && entry.endpoint.waterfallPlaneKept();
+        if (!samePicture) {
+            if (entry.extrasCarried) {
+                entry.extras = std::make_unique<DisplayExtrasProcessor>(entry.extrasRequest);
+            } else {
+                entry.extras->newContext();
+            }
+        }
     }
+    entry.extrasCarried = false;
     sendContext(entry);
 }
 
