@@ -9,7 +9,8 @@
 // RingAttached; "streaming" builds a clock matcher (48 kHz in and out,
 // 480-frame bursts) in the region and writes 480 stereo frames of a 1 kHz
 // tone at 0.5 every 10 ms, posting the wake after each write.  No
-// scenario but oversize and pcm-record sends a Pcm record.
+// scenario but oversize, pcm-record and pcm-record-on-probe-enable sends
+// a Pcm record.
 //
 // Every Ready reports the configured device's name ("Fake microphone" when
 // the default is configured) at 48000 Hz, 1 channel, latency 1500 us and a
@@ -41,8 +42,21 @@
 //                         A disable answers an AsioCaps record whose driver
 //                         is "Probe off", after which no hit is sent.
 //   version-1             A protocol 1 Hello in a version 1 record header.
-//   pcm-record            Hello; on Open: Opening, Ready, streaming and one
+//   pcm-record            Hello; on Open: Opening, Ready and one valid
+//                         480-frame Pcm record.  No ring is built and no
+//                         wake posted, so the window is never Ready.
+//   pcm-record-on-probe-enable
+//                         As ready; a ProbeEnable (on) is answered with one
 //                         valid 480-frame Pcm record.
+//   crash-on-probe-enable As ready; a ProbeEnable (on) exits with code 3.
+//   input-lost-on-probe-enable
+//                         As ready; a ProbeEnable (on) is answered with
+//                         Failed / input-lost and streaming stops.
+//                         These three let a test fix the order: it turns
+//                         the probe on once it has seen Ready, so the act
+//                         always follows that Ready.  crash-after-ready and
+//                         input-lost act on a clock and suit a test that
+//                         waits for the failure alone.
 //   busy                  Hello; on Open: Opening, then Failed /
 //                         device-in-use.
 //   busy-while-marked     As busy while the file NEREUS_FAKE_CAPTURE_BUSY_FILE
@@ -81,6 +95,9 @@
 //   2026-10-09: native audio plan final fix wave (V-HW-8): the probe
 //               scenario marks a disable.  J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-11: pcm-record builds no ring; the three -on-probe-enable
+//               scenarios.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
