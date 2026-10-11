@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Containers keep the place the operator gave them: one
+//                 remembered rect per container, changed only by an
+//                 operator move (rememberOperatorGeometry) or a document
+//                 commit and the only geometry saveState writes; free
+//                 containers are shown from it once the pane has its size
+//                 (placeFreeContainers). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - applyEdgeStripContentHints and
 //                 scheduleEdgeStripContentHints: a strip's floor follows
 //                 its containers' content minimum at once. J.J. Boyd
@@ -105,6 +112,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerDocument.h"
 
 #include <functional>
+#include <optional>
 
 class QSplitter;
 class QSplitterHandle;
@@ -224,7 +232,30 @@ public:
     void recoverContainer(const QString& id);
 
     // --- Axis-lock repositioning (overlay-docked only) ---
+    // With a workspace store this shows the free containers in a pane of
+    // (hDelta, vDelta), from their remembered places; it never re-bases them.
     void updateDockedPositions(int hDelta, int vDelta);
+
+    // --- The place the operator gave a container ---
+    // Each container has one remembered rect, kept in the document's
+    // `geometry`. It changes only here and through document commits (menu
+    // commands, dialogs); a move the app makes for itself (restore,
+    // clamping, layout, a screen change) never changes it, and saveState()
+    // writes it, never the widget's rect.
+    //
+    // Takes the container's rect as it is now for its remembered place.
+    // Called when the operator finishes a drag or a grip resize that moved
+    // or resized it. For a free container it also records the pane's size,
+    // the baseline its anchor works from. Nothing while geometry capture is
+    // suppressed.
+    void rememberOperatorGeometry(const QString& id);
+    // Shows every free container from its remembered place in the dock
+    // parent's current rect: anchored by its AxisLock for the pane's change
+    // since the place was remembered, then pulled inside the pane. Display
+    // only; safe to call repeatedly. Nothing until the dock parent has a
+    // size of its own (a top-level one always has; a child one from its
+    // first resize, which also places them).
+    void placeFreeContainers();
 
     // --- Panel width (QSplitter state) ---
     void saveSplitterState();
@@ -329,6 +360,19 @@ private:
     bool m_reconciling = false;
     bool m_transmitting = false;
     bool effectiveVisible(const ContainerDocument& document) const;
+    // A child dock parent has no size of its own before its first resize.
+    bool dockParentLaidOut() const;
+    void placeFreeContainersIn(const QSize& pane);
+    // The rect a container has now: its shell's when floating.
+    QRect liveGeometry(const QString& id) const;
+    // Remembered places, by container id. The pane size is the baseline a
+    // free container's anchor works from; absent until the pane has a size.
+    QMap<QString, QRect> m_rememberedGeometry;
+    QMap<QString, QSize> m_rememberedPane;
+    QMap<QString, std::optional<QSize>> m_documentPane;
+    // Each container's rect when its drag or grip resize started.
+    QMap<QString, QRect> m_interactionStart;
+    bool m_dockParentResized = false;
     QString m_storageError;
     QTimer m_geometryCommit;
     bool m_edgeHintsPending = false;

@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
 // Modification history (NereusSDR):
+//   2026-10-11 - geometryPane: the pane size a free container's place was
+//                 seen at, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - The panel-docked edge and the workspace arrangement
 //                 (strip thickness, extents, grid alignment) by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -9,6 +12,7 @@
 #include <QMap>
 #include <QRect>
 #include <QRectF>
+#include <QSize>
 #include <QString>
 #include <QVector>
 #include <optional>
@@ -43,6 +47,11 @@ struct ContainerDocument {
     AxisLock anchor = AxisLock::Left;
     HeaderMode header = HeaderMode::Always;
     QRect geometry;
+    // Free (OverlayDocked) containers only: the size the pane had when the
+    // operator last placed the container, so it comes back where it was
+    // showing. Empty in documents from before 2026-10-11 and until the
+    // operator moves the container.
+    std::optional<QSize> geometryPane;
     bool visible = true;
     bool locked = false;
     bool autoHeight = false;

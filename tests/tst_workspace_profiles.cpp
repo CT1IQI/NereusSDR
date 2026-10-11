@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original workspace preview profile regressions.
 // Modification history (NereusSDR):
+//   2026-10-11 - suppressedMovesAndResizesCommitNothing reports its simulated
+//                 moves as the operator's (rememberOperatorGeometry). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Re-review: a container moved into a strip keeps the
 //                 split, suppressed moves commit nothing, a failed restore
 //                 is logged. J.J. Boyd (KG4VCF), AI-assisted via
@@ -315,6 +318,8 @@ private slots:
         f.manager->setGeometryCaptureSuppressed(true);
         form->move(form->pos() + QPoint(40, 30));
         form->resize(form->size() + QSize(50, 40));
+        // Reported as the operator's, as a drag or grip resize would be.
+        f.manager->rememberOperatorGeometry(QStringLiteral("meters"));
         settle();
         QTest::qWait(350);
         QCOMPARE(f.store.snapshot().revision, revision);
@@ -324,6 +329,7 @@ private slots:
 
         // The same edit unsuppressed is committed, so the test can see one.
         form->resize(form->size() + QSize(50, 40));
+        f.manager->rememberOperatorGeometry(QStringLiteral("meters"));
         QTRY_VERIFY_WITH_TIMEOUT(f.store.snapshot().revision > revision, 2000);
     }
 

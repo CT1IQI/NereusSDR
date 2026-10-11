@@ -1,6 +1,9 @@
 // no-port-check: NereusSDR-original radio-free application quit regressions.
 // Modification history (NereusSDR):
 //   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-11 - A simulated operator move is reported as one
+//                 (rememberOperatorGeometry). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QCloseEvent>
@@ -283,6 +286,8 @@ int runQuitChild(QApplication& application, const QString& scenario)
                     return;
                 }
                 form->move(form->pos() + QPoint(13, 0));
+                // The simulated move is the operator's.
+                manager.rememberOperatorGeometry(ordinary.id);
                 shutdownExpected.containers[1].geometry = form->geometry();
                 ++shutdownExpected.revision;
                 manager.saveState();
@@ -303,6 +308,8 @@ int runQuitChild(QApplication& application, const QString& scenario)
                     return;
                 }
                 form->move(form->pos() + QPoint(13, 0));
+                // The simulated move is the operator's.
+                manager.rememberOperatorGeometry(ordinary.id);
                 shutdownExpected.containers[1].geometry = form->geometry();
                 ++shutdownExpected.revision;
                 manager.saveState();

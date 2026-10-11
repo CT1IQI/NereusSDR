@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - captureLive's note: the snapshot holds remembered places.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Review fixes: settled suppression lift, checked
 //                 restores, Stale reload, validated import; the lift runs on
 //                 the manager. J.J. Boyd (KG4VCF),
@@ -346,7 +348,8 @@ bool WorkspaceProfiles::captureLive(WorkspaceDocument& workspace, QJsonObject& s
         *error = store->loadError();
         return false;
     }
-    // Commit pending geometry first, so the snapshot is what is on screen.
+    // Commit pending operator moves first, so the snapshot holds every
+    // container's remembered place.
     m_manager->saveState();
     workspace = store->snapshot();
     workspace.revision = 0;

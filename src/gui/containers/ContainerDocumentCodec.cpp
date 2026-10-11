@@ -1,11 +1,15 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - geometryPane, written for free containers only and read
+//                 leniently, by J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-07 - The panel-docked edge and the workspace arrangement, each
 //                 written only when not the default by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 #include "ContainerDocumentCodec.h"
 #include "LegacyContainerImporter.h"
 #include "ContainerContentRegistry.h"
+#include "core/LogCategories.h"
 #include <QUuid>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -18,7 +22,8 @@ namespace NereusSDR {
 namespace {
 const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers", "arrangement"};
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
-                                   "geometry", "visible", "locked", "autoHeight", "popOutShell", "config"};
+                                   "geometry", "geometryPane", "visible", "locked", "autoHeight", "popOutShell",
+                                   "config"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
 const QStringList kStripFields{"thickness", "extents"};
 
@@ -211,6 +216,22 @@ bool geometryField(const QJsonObject& object, QRect& out)
     return true;
 }
 
+// [width, height] of the pane a free container's place was seen at.
+bool paneSize(const QJsonValue& value, QSize& out)
+{
+    if (!value.isArray() || value.toArray().size() != 2) {
+        return false;
+    }
+    const QJsonArray array = value.toArray();
+    int width = 0;
+    int height = 0;
+    if (!integer(array[0], width) || !integer(array[1], height) || width <= 0 || height <= 0) {
+        return false;
+    }
+    out = QSize(width, height);
+    return true;
+}
+
 bool nonNegativeInteger(const QJsonValue& value, int& out)
 {
     return integer(value, out) && out >= 0;
@@ -331,6 +352,17 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
         && (!object["edge"].isString() || !edgeFromName(object["edge"].toString(), container.edge))) {
         return false;
     }
+    if (object.contains("geometryPane")) {
+        // Lenient: a value that does not read is dropped for this container
+        // alone, which then takes the pane's size at start as its baseline.
+        QSize pane;
+        if (paneSize(object["geometryPane"], pane)) {
+            container.geometryPane = pane;
+        } else {
+            qCWarning(lcContainer) << "Container" << container.id
+                                   << "has an unreadable geometryPane; it is ignored";
+        }
+    }
     for (const QJsonValue value : object["contents"].toArray()) {
         ContentEntry entry;
         if (!value.isObject() || !decodeEntry(value.toObject(), entry)) {
@@ -385,6 +417,12 @@ QJsonObject encodeContainer(const ContainerDocument& container)
     object["header"] = int(container.header);
     object["geometry"] = QJsonArray{container.geometry.x(), container.geometry.y(),
                                   container.geometry.width(), container.geometry.height()};
+    // Free containers only, and only once the operator has placed one, so
+    // every other document keeps its bytes.
+    if (container.geometryPane && container.dockMode == DockMode::OverlayDocked
+        && container.geometryPane->width() > 0 && container.geometryPane->height() > 0) {
+        object["geometryPane"] = QJsonArray{container.geometryPane->width(), container.geometryPane->height()};
+    }
     object["visible"] = container.visible;
     object["locked"] = container.locked;
     object["autoHeight"] = container.autoHeight;

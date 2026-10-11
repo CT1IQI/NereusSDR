@@ -1,12 +1,16 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - geometryPane round trip, absent and malformed. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Container edge and workspace arrangement round trips for
 //                 the workspace preview by J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
 #include <QtTest>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <limits>
+#include <optional>
 #include "gui/containers/ContainerDocumentCodec.h"
 
 using namespace NereusSDR;
@@ -158,6 +162,69 @@ private slots:
         containers[0] = container;
         root["containers"] = containers;
         QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
+    }
+    void geometryPaneRoundTripsForAFreeContainer()
+    {
+        WorkspaceDocument doc = sample();
+        doc.containers[0].dockMode = DockMode::OverlayDocked;
+        doc.containers[0].geometryPane = QSize(1185, 872);
+        const QByteArray json = ContainerDocumentCodec::encode(doc);
+        const QJsonObject container = QJsonDocument::fromJson(json).object()["containers"].toArray().first().toObject();
+        QCOMPARE(container["geometryPane"].toArray(), (QJsonArray{1185, 872}));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QCOMPARE(decoded.document.containers.first().geometryPane, std::optional<QSize>(QSize(1185, 872)));
+        QVERIFY(!decoded.document.containers.first().extensions.contains("geometryPane"));
+    }
+    void geometryPaneAbsentStaysAbsent()
+    {
+        // A document from before the field: read as empty, written without it.
+        const QByteArray json = ContainerDocumentCodec::encode(sample());
+        QVERIFY(!json.contains("geometryPane"));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QVERIFY(!decoded.document.containers.first().geometryPane.has_value());
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+        // Written for free containers only.
+        WorkspaceDocument floating = sample();
+        floating.containers[0].geometryPane = QSize(1000, 700);
+        QCOMPARE(floating.containers[0].dockMode, DockMode::Floating);
+        QVERIFY(!ContainerDocumentCodec::encode(floating).contains("geometryPane"));
+    }
+    void malformedGeometryPaneIsDroppedForThatContainerOnly_data()
+    {
+        QTest::addColumn<QJsonValue>("value");
+        QTest::newRow("string") << QJsonValue(QStringLiteral("1000x700"));
+        QTest::newRow("three numbers") << QJsonValue(QJsonArray{1000, 700, 1});
+        QTest::newRow("zero width") << QJsonValue(QJsonArray{0, 700});
+        QTest::newRow("fraction") << QJsonValue(QJsonArray{1000.5, 700});
+        QTest::newRow("object") << QJsonValue(QJsonObject{{"w", 1000}});
+    }
+    void malformedGeometryPaneIsDroppedForThatContainerOnly()
+    {
+        QFETCH(QJsonValue, value);
+        WorkspaceDocument doc = sample();
+        doc.containers[0].dockMode = DockMode::OverlayDocked;
+        ContainerDocument other;
+        other.id = QStringLiteral("other");
+        other.dockMode = DockMode::OverlayDocked;
+        other.geometry = QRect(10, 20, 300, 200);
+        other.geometryPane = QSize(900, 600);
+        doc.containers.append(other);
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        first["geometryPane"] = value;
+        containers[0] = first;
+        root["containers"] = containers;
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unreadable geometryPane")));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson());
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QVERIFY(!decoded.document.containers[0].geometryPane.has_value());
+        QVERIFY(!decoded.document.containers[0].extensions.contains("geometryPane"));
+        QCOMPARE(decoded.document.containers[1].geometryPane, std::optional<QSize>(QSize(900, 600)));
     }
     void documentWithoutEdgesStaysByteIdentical()
     {

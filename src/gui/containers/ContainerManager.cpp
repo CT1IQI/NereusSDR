@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Containers keep the place the operator gave them: the
+//                 Move/Resize filter and reconcile no longer change or
+//                 clamp a remembered place, saveState writes remembered
+//                 places only, and free containers are shown from them
+//                 once the pane has its size and whenever it resizes. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - A pop-out shell whose objects are all hidden leaves the
 //                 screen with them in both looks (effectiveVisible). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -179,6 +185,28 @@ MeterWidget* innerMeterWidget(QWidget* content)
     }
     return content->findChild<MeterWidget*>();
 }
+
+// Where a free container remembered at `at` shows once its pane has grown
+// by `grown` since: the axis rule of updateDockedPositions below.
+// From Thetis MeterManager.cs:5812-5865 [v2.10.3.15]
+QPoint anchoredTopLeft(const QPoint& at, AxisLock lock, const QSize& grown)
+{
+    switch (lock) {
+    case AxisLock::Right:
+    case AxisLock::BottomRight:
+    case AxisLock::Bottom:
+        return at + QPoint(grown.width(), grown.height());
+    case AxisLock::BottomLeft:
+    case AxisLock::Left:
+        return at + QPoint(0, grown.height());
+    case AxisLock::TopLeft:
+        return at;
+    case AxisLock::Top:
+    case AxisLock::TopRight:
+        return at + QPoint(grown.width(), 0);
+    }
+    return at;
+}
 } // namespace
 
 ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
@@ -190,6 +218,12 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     m_geometryCommit.setSingleShot(true);
     m_geometryCommit.setInterval(200);
     connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
+    if (m_dockParent) {
+        // Free containers are shown again whenever the pane resizes, and a
+        // child pane has no size of its own before its first resize.
+        m_dockParent->installEventFilter(this);
+        connect(m_dockParent, &QObject::destroyed, this, [this] { m_dockParent = nullptr; });
+    }
     connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *) {
         if (!m_store) {
             return;
@@ -243,6 +277,10 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_geometryCommit.stop();
     m_pendingGeometry.clear();
     m_documentGeometry.clear();
+    m_rememberedGeometry.clear();
+    m_rememberedPane.clear();
+    m_documentPane.clear();
+    m_interactionStart.clear();
     if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
     if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
     if (m_arrange) {
@@ -318,6 +356,12 @@ void ContainerManager::setTransmitting(bool transmitting)
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == m_dockParent && event->type() == QEvent::Resize) {
+        // The pane has its size: free containers are shown from their
+        // remembered places, for display only. Nothing is saved for it.
+        m_dockParentResized = true;
+        placeFreeContainers();
+    }
     if (auto *handle = qobject_cast<QSplitterHandle *>(watched);
         handle && edgeMode() && handle->splitter() != m_splitter &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
@@ -346,17 +390,10 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
     if (m_store && !m_reconciling && !m_geometryCaptureSuppressed && m_storageError.isEmpty()
         && (event->type() == QEvent::Move || event->type() == QEvent::Resize)) {
         if (qobject_cast<ContainerWidget*>(watched) || qobject_cast<FloatingContainer*>(watched)) {
-            ContainerWidget* changed = qobject_cast<ContainerWidget*>(watched);
-            if (!changed) {
-                changed = container(qobject_cast<FloatingContainer*>(watched)->id());
-            }
-            if (changed) {
-                m_pendingGeometry.insert(changed->id());
-                if (changed->isOverlayDocked() && m_dockParent) {
-                    changed->storeLocation();
-                    changed->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
-                }
-            }
+            // A move or resize outside a drag is the app's own (restore,
+            // clamping, layout): no remembered place changes for it. The
+            // capture still runs for what it saves besides places (splitter
+            // sizes, strip thickness and extents, the container flags).
             m_geometryCommit.start();
         }
     }
@@ -409,7 +446,13 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
     }
     m_pendingGeometry.intersect(ids);
     for (const QString& id : m_documentGeometry.keys()) {
-        if (!ids.contains(id)) { m_documentGeometry.remove(id); }
+        if (!ids.contains(id)) {
+            m_documentGeometry.remove(id);
+            m_rememberedGeometry.remove(id);
+            m_rememberedPane.remove(id);
+            m_documentPane.remove(id);
+            m_interactionStart.remove(id);
+        }
     }
     m_panelContainerId = document.mainContainerId;
     for (const auto& d : document.containers) {
@@ -425,6 +468,22 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_pendingGeometry.insert(d.id);
         } else {
             m_pendingGeometry.remove(d.id);
+            // The document's place is the remembered one. A free container's
+            // baseline pane follows the document when its placement changed;
+            // an unrelated commit keeps the baseline already in use.
+            const bool placementChanged = fresh || c->dockMode() != d.dockMode
+                || !m_documentGeometry.contains(d.id) || m_documentGeometry.value(d.id) != d.geometry
+                || m_documentPane.value(d.id) != d.geometryPane;
+            m_rememberedGeometry[d.id] = d.geometry;
+            if (d.dockMode != DockMode::OverlayDocked) {
+                m_rememberedPane.remove(d.id);
+            } else if (placementChanged) {
+                if (d.geometryPane) {
+                    m_rememberedPane[d.id] = *d.geometryPane;
+                } else {
+                    m_rememberedPane.remove(d.id);
+                }
+            }
         }
         if (!c) {
             c = new ContainerWidget(); c->setId(d.id);
@@ -630,13 +689,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
         if (d.dockMode == DockMode::Floating) {
             form->ensureVisiblePosition(m_dockParent);
-        } else if (d.dockMode == DockMode::OverlayDocked && m_dockParent) {
-            c->setGeometry(FloatingContainer::clampedGeometry(
-                c->geometry(), m_dockParent->rect(),
-                c->minimumSizeHint().expandedTo(QSize(260, 24))));
-            c->storeLocation();
-            c->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
         }
+        // A free container is shown by placeFreeContainers() below, from its
+        // remembered place; nothing is clamped into that place here.
         if (d.dockMode == DockMode::Floating) {
             c->show();
             form->setVisible(effectiveVisible(d));
@@ -645,10 +700,12 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         }
         if (fresh) { emit containerAdded(d.id); }
         m_documentGeometry[d.id] = d.geometry;
+        m_documentPane[d.id] = d.geometryPane;
     }
     if (edgeMode()) {
         layoutEdgeStrips(document);
     }
+    placeFreeContainers();
     if (m_splitter) {
         for (auto *handle : m_splitter->findChildren<QSplitterHandle *>()) {
             handle->installEventFilter(this);
@@ -1008,6 +1065,8 @@ void ContainerManager::placeContainerFree(const QString& id)
             : QPoint();
         d.dockMode = DockMode::OverlayDocked;
         d.geometry = QRect(origin, size);
+        // Placed for the pane as it is now.
+        d.geometryPane.reset();
         commitWorkspace(draft, draft.revision);
         return;
     }
@@ -1193,6 +1252,16 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
                 const QSize size = freePlacementSize(id, d);
                 const QRect anchor = m_edgeArea->window()->geometry();
                 d.geometry = QRect(anchor.center() - QPoint(size.width() / 2, size.height() / 2), size);
+            } else if (d.dockMode == DockMode::PanelDocked && mode != DockMode::PanelDocked) {
+                // A docked container's rect is laid out, not remembered: it
+                // leaves the panel at the size it has now, as it always did.
+                if (ContainerWidget* docked = container(id); docked && docked->geometry().isValid()) {
+                    d.geometry = docked->geometry();
+                }
+            }
+            if (d.dockMode != mode) {
+                // Its place is for the pane as it is now.
+                d.geometryPane.reset();
             }
             d.dockMode = mode;
             commitWorkspace(document, document.revision);
@@ -1204,14 +1273,20 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
 
 void ContainerManager::wireContainer(ContainerWidget* container)
 {
-    connect(container, &ContainerWidget::geometryInteractionStarted, this,
-            [this] { m_geometryCommit.stop(); });
+    connect(container, &ContainerWidget::geometryInteractionStarted, this, [this, container] {
+        m_geometryCommit.stop();
+        m_interactionStart[container->id()] = liveGeometry(container->id());
+    });
     connect(container, &ContainerWidget::geometryInteractionFinished, this, [this, container] {
         if (m_store && !m_reconciling) {
-            m_pendingGeometry.insert(container->id());
-            if (container->isOverlayDocked() && m_dockParent) {
-                container->storeLocation();
-                container->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
+            // Only a drag or grip resize that moved or resized the container
+            // is the operator's: a press and release with no move, or a
+            // cancelled drag, re-bases nothing.
+            const QString id = container->id();
+            const bool known = m_interactionStart.contains(id);
+            const QRect start = m_interactionStart.take(id);
+            if (!known || liveGeometry(id) != start) {
+                rememberOperatorGeometry(id);
             }
             m_geometryCommit.start();
         }
@@ -1604,6 +1679,8 @@ void ContainerManager::recoverContainer(const QString& id)
             d.visible=true; d.config["enabled"]=true;
             if(d.dockMode==DockMode::Floating) { d.dockMode=DockMode::OverlayDocked; }
             if(m_dockParent) { const QSize size=d.geometry.isValid()?d.geometry.size():QSize(360,300); d.geometry=QRect(QPoint(qMax(0,(m_dockParent->width()-size.width())/2),qMax(0,(m_dockParent->height()-size.height())/2)),size); }
+            // Centred for the pane as it is now.
+            d.geometryPane.reset();
             commitWorkspace(document,document.revision); return;
         } }
         return;
@@ -1629,8 +1706,101 @@ void ContainerManager::recoverContainer(const QString& id)
     qCDebug(lcContainer) << "Recovered container:" << id;
 }
 
+bool ContainerManager::dockParentLaidOut() const
+{
+    return m_dockParent && (m_dockParent->isWindow() || m_dockParentResized);
+}
+
+QRect ContainerManager::liveGeometry(const QString& id) const
+{
+    ContainerWidget* c = container(id);
+    if (!c) {
+        return {};
+    }
+    FloatingContainer* form = m_floatingForms.value(id);
+    return c->isFloating() && form ? form->geometry() : c->geometry();
+}
+
+void ContainerManager::rememberOperatorGeometry(const QString& id)
+{
+    ContainerWidget* c = container(id);
+    if (!m_store || !c || m_geometryCaptureSuppressed) {
+        return;
+    }
+    const QRect place = liveGeometry(id);
+    m_rememberedGeometry[id] = place;
+    if (c->isOverlayDocked()) {
+        if (dockParentLaidOut()) {
+            m_rememberedPane[id] = m_dockParent->size();
+            c->setDelta(QPoint(m_dockParent->width(), m_dockParent->height()));
+        } else {
+            m_rememberedPane.remove(id);
+        }
+        c->setDockedLocation(place.topLeft());
+        c->setDockedSize(place.size());
+    } else {
+        m_rememberedPane.remove(id);
+    }
+    m_pendingGeometry.insert(id);
+    if (!m_reconciling) {
+        m_geometryCommit.start();
+    }
+}
+
+void ContainerManager::placeFreeContainers()
+{
+    if (m_dockParent) {
+        placeFreeContainersIn(m_dockParent->size());
+    }
+}
+
+void ContainerManager::placeFreeContainersIn(const QSize& pane)
+{
+    if (!m_store || !dockParentLaidOut()) {
+        // Before the pane has a size of its own the containers sit at their
+        // remembered rects, as reconcile left them.
+        return;
+    }
+    // The app's own moves: nothing is captured for them.
+    QScopedValueRollback<bool> guard(m_reconciling, true);
+    for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
+        ContainerWidget* c = it.value();
+        if (!c || !c->isOverlayDocked() || c->parentWidget() != m_dockParent || c->geometryInteractionActive()) {
+            continue;
+        }
+        const QRect place = m_rememberedGeometry.value(it.key());
+        if (!place.isValid()) {
+            continue;
+        }
+        if (!m_rememberedPane.contains(it.key())) {
+            // No pane size came with the place (an older document, a menu
+            // command): it is for the pane as it is now.
+            m_rememberedPane[it.key()] = pane;
+        }
+        const QSize base = m_rememberedPane.value(it.key());
+        // The anchor values the widget carries mirror the remembered place.
+        c->setDockedLocation(place.topLeft());
+        c->setDockedSize(place.size());
+        c->setDelta(QPoint(base.width(), base.height()));
+        QRect shown(anchoredTopLeft(place.topLeft(), c->axisLock(), pane - base), place.size());
+        if (c->autoHeight()) {
+            // Derived from the content on reconcile, not remembered.
+            shown.setHeight(c->height());
+        }
+        shown = FloatingContainer::clampedGeometry(shown, QRect(QPoint(0, 0), pane),
+                                                   c->minimumSizeHint().expandedTo(QSize(260, 24)));
+        if (shown != c->geometry()) {
+            c->setGeometry(shown);
+        }
+    }
+}
+
 void ContainerManager::updateDockedPositions(int hDelta, int vDelta)
 {
+    if (m_store) {
+        placeFreeContainersIn(QSize(hDelta, vDelta));
+        return;
+    }
     // From Thetis MeterManager.cs:5812-5865 — overlay-docked only
     for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
         ContainerWidget* c = it.value();
@@ -1874,6 +2044,7 @@ void ContainerManager::saveState()
         // Publication projects the final captured geometry; rejection restores
         // committed placement rather than preserving the rejected live draft.
         m_geometryCommit.stop();
+        const QSet<QString> moved = m_pendingGeometry;
         m_pendingGeometry.clear();
         WorkspaceDocument document = m_store->snapshot();
         for (auto& d : document.containers) {
@@ -1881,7 +2052,15 @@ void ContainerManager::saveState()
             // Geometry commits retain the committed content verbatim; live readings
             // and stack projection are presentation state, not document edits.
             d.name = c->notes(); d.dockMode = c->dockMode(); d.locked = c->isLocked(); d.autoHeight = c->autoHeight(); d.anchor = c->axisLock();
-            d.geometry = c->isFloating() && m_floatingForms.value(d.id) ? m_floatingForms[d.id]->geometry() : c->geometry();
+            // The remembered place, never the widget's rect: what is shown
+            // may differ for a while (a small pane, a missing screen).
+            d.geometry = m_rememberedGeometry.value(d.id, d.geometry);
+            if (d.dockMode != DockMode::OverlayDocked) {
+                d.geometryPane.reset();
+            } else if (moved.contains(d.id)) {
+                d.geometryPane = m_rememberedPane.contains(d.id)
+                    ? std::optional<QSize>(m_rememberedPane.value(d.id)) : std::nullopt;
+            }
             if (c->rxSource() != d.config.value("rxSource").toInt(1)) { d.config["rxSource"] = c->rxSource(); }
             d.config["enabled"] = c->isContainerEnabled();
             d.config["showOnRx"] = c->showOnRx(); d.config["showOnTx"] = c->showOnTx();

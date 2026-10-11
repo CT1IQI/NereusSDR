@@ -589,6 +589,11 @@ nereus_add_test(tst_container_application_quit)
 # shells an emptied container leaves (offscreen; JJ crash 2026-10-09).
 nereus_add_test(tst_container_popout_removal)
 nereus_add_test(tst_container_position_restore)
+# Containers keep the place the operator gave them: restore before the pane
+# has its size, a small pane, anchoring, operator moves (offscreen).
+nereus_add_test(tst_container_remembered_place)
+# Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
+nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
