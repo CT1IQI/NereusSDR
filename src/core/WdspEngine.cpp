@@ -70,6 +70,12 @@
 //                 channel was created with, not its input rate. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-10 - Every receive channel is given the engine handle its
+//                 DSP > Options apply needs (RxChannel::onModeChanged), at
+//                 creation and at a rebuild; the first channel alone had it,
+//                 so no other receiver ever took a buffer size, filter size
+//                 or filter type. J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.c
@@ -576,6 +582,10 @@ RxChannel* WdspEngine::createRxChannel(int channelId,
         auto channel = std::make_unique<RxChannel>(channelId, inputBufferSize,
                                                    inputSampleRate, m_rxLane, nullptr);
         RxChannel* ptr = channel.get();
+        // Every receive channel, not the first alone: without the handle
+        // RxChannel::onModeChanged returns at once, and the DSP > Options
+        // sizes and filter type never reach that receiver.
+        ptr->setWdspEngine(this);
         ptr->setWdspReady(false);
         {
             std::unique_lock<std::shared_mutex> lock(m_rxChannelsMutex);
@@ -612,6 +622,8 @@ RxChannel* WdspEngine::createRxChannel(int channelId,
     auto channel = std::make_unique<RxChannel>(channelId, inputBufferSize,
                                                inputSampleRate, this);
     RxChannel* ptr = channel.get();
+    // As on the lane path above.
+    ptr->setWdspEngine(this);
 
 #ifdef HAVE_WDSP
     // Push persisted SNB Setup defaults to the RXA channel now that both
@@ -1040,6 +1052,8 @@ qint64 WdspEngine::rebuildRxChannel(int channelId, const ChannelConfig& cfg)
         auto channel = std::make_unique<RxChannel>(channelId, cfg.bufferSize,
                                                    cfg.sampleRate, m_rxLane, nullptr);
         RxChannel* ptr = channel.get();
+        // As createRxChannel: the replacement keeps the handle.
+        ptr->setWdspEngine(this);
         ptr->setWdspReady(false);
         {
             std::unique_lock<std::shared_mutex> lock(m_rxChannelsMutex);
@@ -1110,6 +1124,8 @@ qint64 WdspEngine::rebuildRxChannel(int channelId, const ChannelConfig& cfg)
     auto channel = std::make_unique<RxChannel>(channelId, cfg.bufferSize,
                                                cfg.sampleRate, this);
     RxChannel* ptr = channel.get();
+    // As createRxChannel: the replacement keeps the handle.
+    ptr->setWdspEngine(this);
 
 #ifdef HAVE_WDSP
     // Re-seed SNB defaults (same pattern as createRxChannel).

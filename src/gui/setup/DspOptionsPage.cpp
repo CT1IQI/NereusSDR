@@ -62,6 +62,11 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
 //                the high-resolution box and the time readout. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - A per-mode combo's live apply hands the model the
+//                combo's mode, and the model applies it to every slice in
+//                that mode group; the page asked the first slice's mode
+//                alone. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -372,32 +377,23 @@ void DspOptionsPage::refreshBufferAndTransmitGates()
 //
 // When the combo changes:
 //   1. Persist to AppSettings (always — applies on next mode-switch if not live).
-//   2. Determine whether the combo's mode group matches the current slice mode.
+//   2. Call RadioModel::rebuildDspOptionsForMode(comboMode). The model
+//      matches the combo's mode group against each slice's own mode:
 //      - "Phone" group: USB, LSB, AM, SAM, DSB
 //      - "Cw"    group: CWU, CWL
 //      - "Dig"   group: DIGU, DIGL, SPEC, DRM
 //      - "Fm"    group: FM
-//   3. If mode matches, call RadioModel::rebuildDspOptionsForMode(currentMode)
-//      which triggers RxChannel::onModeChanged() + TxChannel::onModeChanged()
-//      and emits dspChangeMeasured(ms) if a rebuild occurred.
+//   3. For every slice in the group that triggers RxChannel::onModeChanged()
+//      on its receiver, and TxChannel::onModeChanged() when the TX-bound
+//      slice is in it, and emits dspChangeMeasured(ms) if a rebuild occurred.
 //
 // comboMode is the representative DSPMode for the group (e.g. DSPMode::USB for
-// the Phone group). The actual comparison uses modeGroupMatches() below.
+// the Phone group). The comparison is dspOptionsModeGroup (core/RxChannel.h),
+// the mapping RxChannel reads its per-mode keys by, so the gate cannot
+// disagree with the keys applied. The gate sat here until 2026-10-10 and
+// asked the first slice alone, so a second receiver never took an edit.
 //
 // NereusSDR-original — design Section 4B.
-
-namespace {
-
-// Returns true if actualMode belongs to the same DSP-Options mode group as
-// comboMode. Only the group membership matters for the live-apply gate.
-// Uses dspOptionsModeGroup (core/RxChannel.h), the mapping RxChannel reads
-// its per-mode keys by, so the gate cannot disagree with the keys applied.
-bool modeGroupMatches(DSPMode actualMode, DSPMode comboMode)
-{
-    return dspOptionsModeGroup(actualMode) == dspOptionsModeGroup(comboMode);
-}
-
-}  // namespace (anon, Task 4.2 helpers)
 
 void DspOptionsPage::wireComboWithLiveApply(QComboBox* combo,
                                              DSPMode   comboMode,
@@ -408,19 +404,13 @@ void DspOptionsPage::wireComboWithLiveApply(QComboBox* combo,
             // 1. Always persist — applies on next mode-switch if not live.
             AppSettings::instance().setValue(key, v);
 
-            // 2. Live-apply if radio is connected and current mode matches.
+            // 2. Live-apply if radio is connected, to each slice whose
+            //    mode is in the combo's group.
             RadioModel* rm = model();
             if (!rm) {
                 return;
             }
-            const SliceModel* slice = rm->sliceById(0);
-            if (!slice) {
-                return;
-            }
-            const DSPMode currentMode = slice->dspMode();
-            if (modeGroupMatches(currentMode, comboMode)) {
-                rm->rebuildDspOptionsForMode(currentMode);
-            }
+            rm->rebuildDspOptionsForMode(comboMode);
         });
 }
 
