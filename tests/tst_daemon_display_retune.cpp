@@ -720,6 +720,126 @@ private slots:
         QCOMPARE(h.controller.displayExtrasForTest(kEndpoint), settled.extras);
         h.finish();
     }
+
+    // A measurement, with what it found pinned. A source frame waits at its
+    // endpoint for the sender's next tick (every 5 ms), and a retune ends the
+    // old context and drops the frame waiting under the old centre
+    // (DaemonMediaController::reconcileSource). So a move made after a frame
+    // arrived and before the tick that would have sent it costs that frame.
+    // Here every move is made in that gap, the worst case, on a link with no
+    // display budget and on one paced to exactly the pan's admitted charge.
+    void framesLostToAMoveMadeBeforeTheSenderTick_data()
+    {
+        QTest::addColumn<bool>("paced");
+        QTest::addColumn<int>("framesPerMove");
+        QTest::newRow("no budget, a move after every frame") << false << 1;
+        QTest::newRow("no budget, a move after every third frame") << false << 3;
+        QTest::newRow("paced, a move after every frame") << true << 1;
+        QTest::newRow("paced, a move after every third frame") << true << 3;
+    }
+
+    void framesLostToAMoveMadeBeforeTheSenderTick()
+    {
+        QFETCH(bool, paced);
+        QFETCH(int, framesPerMove);
+        Harness h;
+        if (paced) {
+            // The least the Core admits this pan at: its own charge, the
+            // display extras it asks for included.
+            DisplayExtrasRequest extras;
+            QVERIFY(parseDisplayExtrasRequest(
+                subscription(kEndpoint, 0, 14.0e6, 1, kSpanHz), extras));
+            const auto cost = displayCostWithExtras(kPixels, kFps, false, extras.sections());
+            QVERIFY(cost.has_value());
+            QVERIFY(h.server.setDisplayBudgetLimits(
+                {cost->charge.applicationBytesPerSecond,
+                 cost->charge.spectrumSampleUnitsPerSecond, 1}));
+        }
+        QVERIFY(h.start());
+        QCOMPARE(h.server.displayBudgetLimits().has_value(), paced);
+        Settled settled;
+        settle(h, settled);
+        if (QTest::currentTestFailed()) { return; }
+        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        constexpr qint64 kMeasureNs = 2 * kFps * kPeriodNs;
+
+        struct Counted {
+            int published = 0;
+            int delivered = 0;
+            int moves = 0;
+            qint64 longestWaitNs = 0;
+            qint64 waitedNs = 0;
+        };
+        // Runs the calendar for two seconds. With `moving`, the centre moves
+        // straight after every `framesPerMove`th frame is published, before
+        // any sender tick.
+        const auto measure = [&](bool moving) {
+            Counted counted;
+            const qint64 endNs = h.nextFrameNs() + kMeasureNs;
+            qint64 arrivedNs = 0;
+            for (;;) {
+                const qint64 frameNs = kStartNs + h.frame * kPeriodNs;
+                const qint64 tickNs = kStartNs + h.tick * kDisplaySenderIntervalNs;
+                const qint64 next = std::min(frameNs, tickNs);
+                if (next >= endNs) { break; }
+                h.nowNs = next;
+                if (frameNs == next) {
+                    if (h.source->publishFrameForTest(h.key, frameNs,
+                                                      spectrum(kCarrierBin))) {
+                        ++counted.published;
+                        arrivedNs = frameNs;
+                    }
+                    ++h.frame;
+                    if (moving && counted.published % framesPerMove == 0) {
+                        ++counted.moves;
+                        h.radio.requestStreamCentre(h.sliceId, centre + counted.moves * 100.0);
+                    }
+                    continue;
+                }
+                const qsizetype sentBefore = h.mediaTransport->displays.size();
+                h.sendTick();
+                ++h.tick;
+                const QList<QByteArray>& displays = h.mediaTransport->displays;
+                for (qsizetype index = sentBefore; index < displays.size(); ++index) {
+                    const QByteArray& bytes = displays.at(index);
+                    if (bytes.size() < 12 || bytes.startsWith("NSDX")
+                        || qFromBigEndian<quint32>(bytes.constData() + 8) != kEndpoint) {
+                        continue;
+                    }
+                    ++counted.delivered;
+                    const qint64 waitNs = tickNs - arrivedNs;
+                    counted.waitedNs += waitNs;
+                    counted.longestWaitNs = std::max(counted.longestWaitNs, waitNs);
+                }
+            }
+            h.decodeSent();
+            return counted;
+        };
+
+        const Counted still = measure(false);
+        const Counted tuning = measure(true);
+        const auto meanWaitMs = [](const Counted& counted) {
+            return counted.delivered == 0
+                ? 0.0 : counted.waitedNs / 1.0e6 / counted.delivered;
+        };
+        qInfo().noquote() << QStringLiteral(
+            "R-DISP-RETUNE frames lost per move (%1): standing still %2 of %3 frames "
+            "delivered, a frame waiting %4 ms for its tick on average and %5 ms at most; "
+            "with %6 moves, each made before the tick, %7 of %8 delivered (%9 lost)")
+            .arg(QString::fromLatin1(QTest::currentDataTag()))
+            .arg(still.delivered).arg(still.published)
+            .arg(meanWaitMs(still), 0, 'f', 2).arg(still.longestWaitNs / 1.0e6, 0, 'f', 2)
+            .arg(tuning.moves).arg(tuning.delivered).arg(tuning.published)
+            .arg(tuning.published - tuning.delivered);
+        QCOMPARE(still.published, 60);
+        QCOMPARE(still.delivered, still.published);
+        QCOMPARE(tuning.published, 60);
+        QCOMPARE(tuning.moves, 60 / framesPerMove);
+        // Each move cost exactly the frame it found waiting, and no other.
+        QCOMPARE(tuning.delivered, tuning.published - tuning.moves);
+        QCOMPARE(h.controller.activeEndpointCount(), 1);
+        h.finish();
+    }
 };
 
 QTEST_MAIN(TstDaemonDisplayRetune)
