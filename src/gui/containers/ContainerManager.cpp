@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: a free home that no longer fits
+//                 the pane returns to the nearest place inside it that
+//                 covers no other free container (nearestClearFreeRect),
+//                 and steps off the others' top-lefts only when no place is
+//                 clear. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Workspace preview only: a free home is recorded with the
 //                 pane its rect was placed in, and Return restores both, so
 //                 a container comes back where it was showing after the
@@ -485,9 +491,9 @@ bool ContainerManager::returnHome(const QString& id)
                                 place.size());
             if (!QRect(QPoint(0, 0), pane).contains(showing)) {
                 // The spot is no longer inside the pane: the nearest place
-                // that is, off any spot another free container has, placed
-                // for the pane as it is now.
-                place = defaultFreeRect(showing, id);
+                // that is and covers no other free container, placed for
+                // the pane as it is now.
+                place = nearestClearFreeRect(showing, id);
                 placedIn.reset();
             }
         }
@@ -2314,6 +2320,58 @@ QRect ContainerManager::defaultFreeRect(const QRect& wanted, const QString& exce
     }
     const QRect pane = dockParentLaidOut() ? QRect(QPoint(0, 0), m_dockParent->size()) : QRect();
     return cascaded(wanted, pane, taken, kCascadeOffsetPx);
+}
+
+QRect ContainerManager::nearestClearFreeRect(const QRect& wanted, const QString& exceptId) const
+{
+    if (!dockParentLaidOut()) {
+        return defaultFreeRect(wanted, exceptId);
+    }
+    const QRect pane(QPoint(0, 0), m_dockParent->size());
+    const QRect start = FloatingContainer::clampedGeometry(wanted, pane, kPlacementMinimum);
+    QVector<QRect> others;
+    for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
+        const ContainerWidget* c = it.value();
+        if (c && it.key() != exceptId && c->isOverlayDocked() && !c->isHidden()
+            && c->parentWidget() == m_dockParent) {
+            others.append(c->geometry());
+        }
+    }
+    // The least move ends with each coordinate either where it was wanted
+    // (held inside the pane) or flush against a side of the pane or of
+    // another container, so those are the only places to try.
+    QVector<int> lefts{start.x(), pane.left(), pane.right() + 1 - start.width()};
+    QVector<int> tops{start.y(), pane.top(), pane.bottom() + 1 - start.height()};
+    for (const QRect& other : others) {
+        lefts.append(other.left() - start.width());
+        lefts.append(other.right() + 1);
+        tops.append(other.top() - start.height());
+        tops.append(other.bottom() + 1);
+    }
+    std::optional<QRect> best;
+    qint64 bestMoved = 0;
+    for (const int left : lefts) {
+        for (const int top : tops) {
+            const QRect at(QPoint(left, top), start.size());
+            if (!pane.contains(at)) {
+                continue;
+            }
+            const bool covers = std::any_of(others.cbegin(), others.cend(),
+                [&at](const QRect& other) { return other.intersects(at); });
+            if (covers) {
+                continue;
+            }
+            const QPoint moved = at.topLeft() - wanted.topLeft();
+            const qint64 distance = qint64(moved.x()) * moved.x() + qint64(moved.y()) * moved.y();
+            if (!best || distance < bestMoved) {
+                best = at;
+                bestMoved = distance;
+            }
+        }
+    }
+    // Nowhere in the pane is clear: off the others' top-lefts, as any
+    // default placement is.
+    return best ? *best : defaultFreeRect(wanted, exceptId);
 }
 
 bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const

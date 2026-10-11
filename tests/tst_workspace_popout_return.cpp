@@ -10,8 +10,9 @@
 //                 given. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-10-11 - Return after the pane changed size puts a free container
-//                 where it was showing. J.J. Boyd (KG4VCF), AI-assisted
-//                 via Anthropic Claude Code.
+//                 where it was showing, and the fallback place is the
+//                 nearest one clear of every other free container. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QAbstractButton>
 #include <QApplication>
@@ -547,7 +548,11 @@ private slots:
         ReturnFixture f;
         ContainerDocument other = f.container(QStringLiteral("other"), DockMode::OverlayDocked);
         other.geometry = QRect(20, 20, 300, 100);
-        QVERIFY(f.showStripOfThree({f.container(QStringLiteral("free"), DockMode::OverlayDocked), other}));
+        // Anchored to the top left: its rect reads the same in any pane.
+        ContainerDocument free = f.container(QStringLiteral("free"), DockMode::OverlayDocked);
+        free.anchor = AxisLock::TopLeft;
+        other.anchor = AxisLock::TopLeft;
+        QVERIFY(f.showStripOfThree({free, other}));
         QVERIFY(f.popOut(QStringLiteral("free"), QStringLiteral("button")));
         // The pane is now too short for the place it came from.
         f.window.resize(1400, 330);
@@ -567,16 +572,58 @@ private slots:
         }
         QCOMPARE(f.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
         settle();
-        QCOMPARE(f.widget("other")->geometry().topLeft(), nearest.topLeft());
+        QCOMPARE(f.widget("other")->geometry(), nearest);
 
         f.returnByHeader(QStringLiteral("free"));
         const ContainerDocument d = f.document("free");
         QCOMPARE(d.dockMode, DockMode::OverlayDocked);
         QVERIFY(!d.home.has_value());
         const QRect shown = f.widget("free")->geometry();
-        QVERIFY2(pane.contains(shown), qPrintable(QStringLiteral("shown %1,%2 %3x%4 in a pane %5x%6")
-            .arg(shown.x()).arg(shown.y()).arg(shown.width()).arg(shown.height())
-            .arg(pane.width()).arg(pane.height())));
+        const QRect taken = f.widget("other")->geometry();
+        const auto text = [](const QRect& r) {
+            return QStringLiteral("%1,%2 %3x%4").arg(r.x()).arg(r.y()).arg(r.width()).arg(r.height());
+        };
+        QVERIFY2(pane.contains(shown), qPrintable(QStringLiteral("shown %1 in a pane %2").arg(text(shown), text(pane))));
+        QVERIFY2(!shown.intersects(taken),
+                 qPrintable(QStringLiteral("shown %1 covers the other at %2").arg(text(shown), text(taken))));
+        // The least move that clears it: beside it, on the right (there is
+        // no room on its left, above it or below it).
+        QCOMPARE(shown, nearest.translated(nearest.width(), 0));
+        QCOMPARE(d.geometry, shown);
+    }
+
+    void aFreeHomeWithNoClearSpotInThePaneStepsOffTheOtherContainer()
+    {
+        ReturnFixture f;
+        ContainerDocument free = f.container(QStringLiteral("free"), DockMode::OverlayDocked);
+        free.anchor = AxisLock::TopLeft;
+        ContainerDocument other = f.container(QStringLiteral("other"), DockMode::OverlayDocked);
+        other.anchor = AxisLock::TopLeft;
+        QVERIFY(f.showStripOfThree({free, other}));
+        QVERIFY(f.popOut(QStringLiteral("free"), QStringLiteral("button")));
+        f.window.resize(1400, 330);
+        settle();
+        QTest::qWait(kPastCommitDelayMs);
+        settle();
+        const QRect pane(QPoint(0, 0), f.center->size());
+        QVERIFY2(!pane.contains(kFreeRect), "the pane still holds the home rect");
+        // The other free container fills the pane: nowhere is clear of it.
+        WorkspaceDocument draft = f.store.snapshot();
+        for (auto& d : draft.containers) {
+            if (d.id == QStringLiteral("other")) {
+                d.geometry = pane;
+                d.geometryPane.reset();
+            }
+        }
+        QCOMPARE(f.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        settle();
+        QCOMPARE(f.widget("other")->geometry(), pane);
+
+        f.returnByHeader(QStringLiteral("free"));
+        const ContainerDocument d = f.document("free");
+        QCOMPARE(d.dockMode, DockMode::OverlayDocked);
+        const QRect shown = f.widget("free")->geometry();
+        QVERIFY(pane.contains(shown));
         QVERIFY(shown.topLeft() != f.widget("other")->geometry().topLeft());
         QCOMPARE(d.geometry, shown);
     }

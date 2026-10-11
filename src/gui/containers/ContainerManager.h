@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: nearestClearFreeRect, Return's
+//                 fallback place. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: a popped-out container's home is
 //                 recorded with the commit that makes it a window, and
 //                 Return puts it back there (recordHomes, returnHome). A
@@ -417,8 +420,9 @@ private:
     // Workspace preview: Return. Puts a window back at its home: in its
     // strip beside the neighbours it had (after the one before it, else
     // before the one after it, else at the end of that strip), or free at
-    // its rect, moved inside the pane and off other free containers when
-    // the rect no longer fits. With no home it joins the main container's
+    // its rect, moved the least that puts it inside the pane and clear of
+    // every other free container when the rect no longer fits (see
+    // nearestClearFreeRect). With no home it joins the main container's
     // strip. False when the caller's own rule applies (the main container
     // with no home).
     bool returnHome(const QString& id);
@@ -491,6 +495,10 @@ private:
     QRect defaultWindowRect(const QRect& wanted, const QString& exceptId) const;
     // defaultWindowRect for a free container, in the pane's coordinates.
     QRect defaultFreeRect(const QRect& wanted, const QString& exceptId) const;
+    // Return's fallback for a free home that no longer fits: the rect
+    // inside the pane that moves `wanted` least and covers no other
+    // visible free container. When no such rect exists, defaultFreeRect.
+    QRect nearestClearFreeRect(const QRect& wanted, const QString& exceptId) const;
     // True when a floating window can be shown at its remembered place.
     bool windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const;
     // Where a window that cannot be shown at its remembered place goes.
