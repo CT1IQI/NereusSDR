@@ -1591,23 +1591,96 @@ import Testing
         #expect(await rig.client.displayExtras(endpointId: 1) == nil)
     }
 
-    // R-DISP-RETUNE: the picture moved in frequency (the pan was tuned: the
-    // stream centre and the view centre moved together). The noise floor
-    // and the waterfall levels carry on; the peak hold and the blobs, held
-    // per trace sample, are dropped. A new picture still drops everything.
-    @Test func aMovedPictureKeepsTheNoiseFloorAndLevelsAndDropsThePeaks() async throws {
+    /// Every capability with the display extras and the picture a context
+    /// continues (R-DISP-RETUNE).
+    static let withPicture: [String: Int64] = withExtras.merging(["spectrumPictureVersion": 1]) { $1 }
+
+    // R-DISP-RETUNE: the picture rides the minor-11 block on the context's
+    // grant shape, and only a Core that sends its version states it.
+    @Test func thePictureGateNeedsMinor11TheGrantAndTheCoresVersion() {
+        let cases: [(UInt16, [String: Int64], Bool)] = [
+            (11, Self.withPicture, true),
+            (10, Self.withPicture, false),
+            (11, Self.withExtras, false),
+            (11, ["remoteMediaVersion": 1, "spectrumPictureVersion": 1], false),
+            (11, ["remoteMediaVersion": 1, "spectrumGrantVersion": 1, "spectrumPictureVersion": 0], false),
+        ]
+        for (minor, capabilities, open) in cases {
+            let gates = MediaFeatureGates(agreedMinor: minor) { capabilities[$0] ?? 0 }
+            #expect(gates.spectrumPicture == open, "minor \(minor), \(capabilities)")
+        }
+    }
+
+    @Test func theStartDeclaresThePictureOnlyToACoreThatOffersIt() async throws {
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withPicture)
+        _ = try await rig.connectionId
+        #expect(rig.recorder.sent("start").first?["spectrumPictureVersion"] == .number(1))
+        let older = try Rig()
+        await older.open(minor: 11, capabilities: Self.withExtras)
+        _ = try await older.connectionId
+        #expect(older.recorder.sent("start").count == 1)
+        #expect(older.recorder.sent("start").first?["spectrumPictureVersion"] == nil)
+    }
+
+    // R-DISP-RETUNE: a context states its picture exactly when the start
+    // declared it. One that leaves it out, or carries it undeclared, is not
+    // a context of this connection.
+    @Test func aContextStatesItsPictureExactlyWhenTheStartDeclaredIt() throws {
+        func decode(_ payload: [String: LinkJSON], picture: Bool) -> MediaControlEvent.DisplayContext? {
+            MediaControlDecoder.context(payload, wideband: false, grant: true, transmit: false, picture: picture)
+        }
+        var payload = Self.context("c", generation: 5, grant: true)
+        let plain = try #require(decode(payload, picture: false))
+        #expect(plain.pictureGeneration == nil)
+        #expect(decode(payload, picture: true) == nil)
+        payload["pictureGeneration"] = 3
+        #expect(decode(payload, picture: true)?.pictureGeneration == 3)
+        #expect(decode(payload, picture: false) == nil)
+        let refused: [LinkJSON] = [.number(0), .number(-1), .number(1.5), .string("3"), .bool(true),
+                                   .number(4_294_967_296)]
+        for value in refused {
+            payload["pictureGeneration"] = value
+            #expect(decode(payload, picture: true) == nil, "\(value)")
+        }
+    }
+
+    // R-DISP-RETUNE: the Core states the picture a context continues and
+    // that value alone decides what the endpoint keeps. A context of the
+    // picture held, moved (and here three bins narrower as well, which no
+    // rule of the app's own would call a move), keeps the noise floor and
+    // the waterfall levels and drops the peak hold and the blobs, held per
+    // trace sample. One of the picture held with nothing moved keeps all it
+    // holds. One of another picture drops everything, though every number
+    // in it is the one before.
+    @Test func theCoresPictureDecidesWhatAContextKeeps() async throws {
         let vectors = try LinkFixtureLoader.mediaVectors()
         func bytes(_ name: String) throws -> Data {
             try #require(vectors["media-\(name)"]).bytes
         }
         let rig = try Rig()
-        await rig.open(minor: 11, capabilities: Self.withExtras)
+        await rig.open(minor: 11, capabilities: Self.withPicture)
         let id = try await rig.connectionId
         let peer = try rig.peer
         var subscription = Self.subscription(endpointId: 1)
         subscription.extras = Self.extrasForEverySection
         try await rig.client.subscribe(subscription)
+        func context(generation: UInt32, picture: UInt32) -> [String: LinkJSON] {
+            var payload = Self.context(id, generation: generation, grant: true)
+            payload["pictureGeneration"] = .number(Double(picture))
+            return payload
+        }
+        func contexts() -> [MediaControlEvent.DisplayContext] {
+            rig.recorder.events.compactMap { event -> MediaControlEvent.DisplayContext? in
+                if case .context(let context) = event { return context } else { return nil }
+            }
+        }
+        // A context that leaves its picture out is not this connection's.
         await rig.deliver(Self.context(id, generation: 1, grant: true))
+        await rig.recorder.settle { false }
+        #expect(contexts().isEmpty)
+
+        await rig.deliver(context(generation: 1, picture: 1))
         peer.receiveDisplay(try bytes("nsdc1-full"))
         peer.receiveDisplay(try bytes("nsdx1-full"))
         await rig.recorder.settle {
@@ -1619,10 +1692,13 @@ import Testing
         #expect(full.noiseFloorDbm != nil)
         #expect(full.waterfallLevels != nil)
 
-        var tuned = Self.context(id, generation: 2, grant: true)
-        tuned["centreHz"] = 14_101_000
-        tuned["sourceCentreHz"] = 14_101_000
-        await rig.deliver(tuned)
+        var moved = context(generation: 2, picture: 1)
+        moved["centreHz"] = 14_101_000
+        moved["sourceCentreHz"] = 14_101_000
+        moved["spanHz"] = .number(96_000 - 3 * 46.875)
+        await rig.deliver(moved)
+        await rig.recorder.settle { contexts().count == 2 }
+        #expect(contexts().last?.pictureGeneration == 1)
         let carried = try #require(await rig.client.displayExtras(endpointId: 1))
         #expect(carried.noiseFloorDbm == full.noiseFloorDbm)
         #expect(carried.waterfallLevels == full.waterfallLevels)
@@ -1632,106 +1708,102 @@ import Testing
         // The decoder is renewed: a keyframe of the new context is asked for.
         #expect(rig.recorder.sent("keyframe").last?["contextGeneration"] == .number(2))
 
-        // A new picture (another span at the moved centre).
-        var zoomed = tuned
-        zoomed["contextGeneration"] = 3
-        zoomed["spanHz"] = 48_000
-        await rig.deliver(zoomed)
+        var ranged = moved
+        ranged["contextGeneration"] = 3
+        ranged["minDbm"] = -150
+        await rig.deliver(ranged)
+        await rig.recorder.settle { contexts().count == 3 }
+        #expect(contexts().last?.contextGeneration == 3)
+        #expect(await rig.client.displayExtras(endpointId: 1) == carried)
+
+        var restarted = ranged
+        restarted["contextGeneration"] = 4
+        restarted["pictureGeneration"] = 4
+        await rig.deliver(restarted)
+        await rig.recorder.settle { contexts().count == 4 }
+        #expect(contexts().last?.contextGeneration == 4)
         #expect(await rig.client.displayExtras(endpointId: 1) == nil)
     }
 
-    // R-DISP-RETUNE: a moved picture is the held one at another stream
-    // centre, view centre or both, and nothing else.
-    @Test func onlyACentreChangeIsAMovedPicture() throws {
-        func context(_ change: (inout [String: LinkJSON]) -> Void) throws -> MediaControlEvent.DisplayContext {
-            var payload = Self.context("c", generation: 2, wideband: true, grant: true)
-            change(&payload)
-            return try #require(MediaControlDecoder.context(payload, wideband: true, grant: true, transmit: false))
+    // R-DISP-RETUNE: a Core that states no picture is read by the rule
+    // before the moved picture. A context that differs only in its dBm
+    // range keeps the extras (the test above this section); a move, which
+    // that Core may well have carried on, drops them. The app does not
+    // guess.
+    @Test func aCoreThatStatesNoPictureKeepsNothingThroughAMove() async throws {
+        let vectors = try LinkFixtureLoader.mediaVectors()
+        func bytes(_ name: String) throws -> Data {
+            try #require(vectors["media-\(name)"]).bytes
         }
-        let held = try context { $0["contextGeneration"] = 1 }
-        // The same picture is not a moved one.
-        #expect(!MediaControlClient.movedPicture(held, try context { _ in }))
-        #expect(!MediaControlClient.movedPicture(held, try context { $0["minDbm"] = -161 }))
-        let moves: [[(String, LinkJSON)]] = [
-            [("centreHz", .number(held.centreHz + 10))],
-            [("sourceCentreHz", .number(held.sourceCentreHz + 1_000))],
-            [("centreHz", .number(held.centreHz + 1_000)), ("sourceCentreHz", .number(held.sourceCentreHz + 1_000))],
-            [("centreHz", .number(held.centreHz + 10)), ("minDbm", -161), ("fps", 15)],
-        ]
-        for move in moves {
-            let moved = try context { payload in move.forEach { payload[$0.0] = $0.1 } }
-            #expect(MediaControlClient.movedPicture(held, moved), "\(move.map(\.0))")
-            #expect(!MediaControlClient.samePicture(held, moved), "\(move.map(\.0))")
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withExtras)
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        #expect(rig.recorder.sent("start").first?["spectrumPictureVersion"] == nil)
+        var subscription = Self.subscription(endpointId: 1)
+        subscription.extras = Self.extrasForEverySection
+        try await rig.client.subscribe(subscription)
+        await rig.deliver(Self.context(id, generation: 1, grant: true))
+        peer.receiveDisplay(try bytes("nsdc1-full"))
+        peer.receiveDisplay(try bytes("nsdx1-full"))
+        await rig.recorder.settle {
+            rig.recorder.events.contains { if case .displayExtras = $0 { return true } else { return false } }
         }
-        // A centre change with anything else that says where a sample lies
-        // is a new picture.
-        let others: [(String, LinkJSON)] = [
-            ("spanHz", 95_000), ("sourceStream", 1), ("traceSamples", 31), ("waterfallSamples", 31),
-            ("grantedFftSize", 8192),
-        ]
-        for (key, value) in others {
-            let changed = try context {
-                $0["centreHz"] = .number(held.centreHz + 10)
-                $0[key] = value
-            }
-            #expect(!MediaControlClient.movedPicture(held, changed), "\(key)")
-        }
+        let full = try #require(await rig.client.displayExtras(endpointId: 1))
+        #expect(full.noiseFloorDbm != nil)
+
+        // The same picture still keeps what it holds.
+        var ranged = Self.context(id, generation: 2, grant: true)
+        ranged["minDbm"] = -150
+        await rig.deliver(ranged)
+        #expect(await rig.client.displayExtras(endpointId: 1) == full)
+
+        // The pan tuned: the stream centre and the view centre moved together.
+        var tuned = Self.context(id, generation: 3, grant: true)
+        tuned["centreHz"] = 14_101_000
+        tuned["sourceCentreHz"] = 14_101_000
+        await rig.deliver(tuned)
+        #expect(rig.recorder.sent("keyframe").last?["contextGeneration"] == .number(3))
+        #expect(await rig.client.displayExtras(endpointId: 1) == nil)
     }
 
-    // R-DISP-RETUNE: the span a context states is the Core's crop, cut at FFT
-    // bin edges, so it is one bin wider or narrower as the view's alignment
-    // to the bins changes. The contexts here are built with the Core's own
-    // rule (SpectrumReducer::visibleBinRange), so the case is the real one:
-    // a move that is no whole number of bins is still the picture moved, and
-    // a change of span of two bins or more is a new picture.
-    @Test func aCropOneBinWiderOrNarrowerIsStillAMovedPicture() throws {
-        let rate = 192_000.0
-        let fftSize = 4096.0
-        let binHz = rate / fftSize
-        let source = 14_100_000.0
-        // The Core's crop of an asked view: the first and last bin it keeps.
-        func crop(centre: Double, span: Double, source: Double) -> (centreHz: Double, spanHz: Double, bins: Int) {
-            let low = source - rate / 2
-            let first = min(max(((centre - span / 2 - low) / binHz).rounded(.down), 0), fftSize - 1)
-            let last = min(max(((centre + span / 2 - low) / binHz).rounded(.up), 0), fftSize - 1)
-            let count = last - first + 1
-            return (low + (first + last + 1) * binHz / 2, count * binHz, Int(count))
+    // R-DISP-RETUNE: with the picture stated, a context for a revision sent
+    // before the newest is still taken and its frames play, as without it
+    // (aContextForARevisionSentBeforeTheNewestStillPlays).
+    @Test func aContextForAnEarlierRevisionIsTakenWithItsPicture() async throws {
+        let vectors = try LinkFixtureLoader.mediaVectors()
+        let full = try #require(vectors["media-nsdc1-full"]).bytes
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withPicture)
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        func contexts() -> [MediaControlEvent.DisplayContext] {
+            rig.recorder.events.compactMap { event -> MediaControlEvent.DisplayContext? in
+                if case .context(let context) = event { return context } else { return nil }
+            }
         }
-        func context(centre: Double, span: Double, source: Double = 14_100_000,
-                     grant: Bool = true) throws -> (MediaControlEvent.DisplayContext, bins: Int) {
-            let cut = crop(centre: centre, span: span, source: source)
-            var payload = Self.context("c", generation: 2, wideband: true, grant: grant)
-            payload["sourceCentreHz"] = .number(source)
-            payload["centreHz"] = .number(cut.centreHz)
-            payload["spanHz"] = .number(cut.spanHz)
-            let decoded = try #require(MediaControlDecoder.context(payload, wideband: true, grant: grant,
-                                                                   transmit: false))
-            return (decoded, cut.bins)
+        func frames() -> [DisplayFrame] {
+            rig.recorder.events.compactMap { event -> DisplayFrame? in
+                if case .displayFrame(let frame) = event { return frame } else { return nil }
+            }
         }
-        let held = try context(centre: source, span: 96_000)
-        // The view dragged 12 010 Hz, 256.2 bins.
-        let dragged = try context(centre: source + 12_010, span: 96_000)
-        #expect(dragged.bins == held.bins + 1)
-        #expect(dragged.0.spanHz != held.0.spanHz)
-        #expect(MediaControlClient.movedPicture(held.0, dragged.0))
-        #expect(MediaControlClient.movedPicture(dragged.0, held.0))
-        // The receiver retuned 1 010 Hz under the same view, 21.5 bins.
-        let retuned = try context(centre: source, span: 96_000, source: source + 1_010)
-        #expect(retuned.bins == held.bins + 1)
-        #expect(MediaControlClient.movedPicture(held.0, retuned.0))
-        // A real change of span, three bins, at a moved centre.
-        let zoomed = try context(centre: source + 12_010, span: 96_000 - 3 * binHz)
-        #expect(abs(zoomed.bins - dragged.bins) >= 2)
-        #expect(!MediaControlClient.movedPicture(dragged.0, zoomed.0))
-        #expect(!MediaControlClient.movedPicture(held.0, zoomed.0))
-        // Without the FFT size the width of a bin is not known: only an
-        // equal span is the picture moved.
-        let plain = try context(centre: source, span: 96_000, grant: false)
-        let plainDragged = try context(centre: source + 12_010, span: 96_000, grant: false)
-        #expect(!MediaControlClient.movedPicture(plain.0, plainDragged.0))
-        let plainWhole = try context(centre: source + 12_000, span: 96_000, grant: false)
-        #expect(plainWhole.bins == plain.bins)
-        #expect(MediaControlClient.movedPicture(plain.0, plainWhole.0))
+        for revision: UInt32 in 1...3 {
+            try await rig.client.subscribe(Self.subscription(endpointId: 1, revision: revision))
+        }
+        var second = Self.context(id, revision: 2, generation: 1, grant: true)
+        second["pictureGeneration"] = 1
+        await rig.deliver(second)
+        await rig.recorder.settle { contexts().count == 1 }
+        #expect(contexts().map(\.revision) == [2])
+        peer.receiveDisplay(full)
+        await rig.recorder.settle { frames().count == 1 }
+        #expect(frames().map(\.contextGeneration) == [1])
+        var third = Self.context(id, revision: 3, generation: 2, grant: true)
+        third["pictureGeneration"] = 1
+        await rig.deliver(third)
+        await rig.recorder.settle { contexts().count == 2 }
+        #expect(contexts().map(\.revision) == [2, 3])
+        #expect(contexts().map(\.pictureGeneration) == [1, 1])
     }
 
     @Test func onlyADbmRangeFrameRateOrLinePeriodChangeIsTheSamePicture() throws {

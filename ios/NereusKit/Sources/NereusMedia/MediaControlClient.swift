@@ -335,6 +335,9 @@ public actor MediaControlClient {
         /// when it declared none: its subscribes may carry the transmit
         /// window (and at 3 `duplex`), and its contexts carry `transmit`.
         var txDisplayDeclared: Int?
+        /// This connection's `start` declared `spectrumPictureVersion`, so
+        /// its spectrum contexts carry `pictureGeneration`.
+        var spectrumPictureDeclared = false
         /// This connection's `start` declared `txMonitorAudioVersion`, so
         /// it may carry `monitor-audio`.
         var txMonitorDeclared = false
@@ -1004,6 +1007,12 @@ public actor MediaControlClient {
             started.txDisplayDeclared = declared
             payload["txDisplayVersion"] = .number(Double(declared))
         }
+        // R-DISP-RETUNE: a client the Core told spectrumPictureVersion adds
+        // it, and each spectrum context then states the picture it continues.
+        if gates.spectrumPicture {
+            started.spectrumPictureDeclared = true
+            payload["spectrumPictureVersion"] = .number(1)
+        }
         // A client the Core told txMonitorAudioVersion adds it, and may
         // then ask where the transmit monitor goes (`monitor-audio`).
         if gates.txMonitorAudio {
@@ -1273,6 +1282,7 @@ public actor MediaControlClient {
         candidate.audioProfileSent = current.audioProfileSent
         candidate.audioBitrateSent = current.audioBitrateSent
         candidate.txDisplayDeclared = current.txDisplayDeclared
+        candidate.spectrumPictureDeclared = current.spectrumPictureDeclared
         candidate.txMonitorDeclared = current.txMonitorDeclared
         if current.microphoneSsrc != nil {
             candidate.microphoneSsrc = Self.microphoneSsrc(forConnection: id)
@@ -2255,7 +2265,8 @@ public actor MediaControlClient {
               var endpoint = endpoints[UInt32(rawId)],
               let context = MediaControlDecoder.context(payload, wideband: endpoint.widebandNegotiated,
                                                         grant: gates.spectrumGrant,
-                                                        transmit: (media?.txDisplayDeclared ?? 0) >= 1),
+                                                        transmit: (media?.txDisplayDeclared ?? 0) >= 1,
+                                                        picture: media?.spectrumPictureDeclared ?? false),
               Self.sent(context.revision, first: endpoint.firstRevision, latest: endpoint.subscription.revision),
               endpoint.context.map({ held in
                   held.revision == context.revision
@@ -2269,22 +2280,29 @@ public actor MediaControlClient {
         // what it had measured) keeps the last extras. Extras of another
         // picture belong to the context they were decoded against.
         let samePicture = endpoint.context.map { Self.samePicture($0, context) } ?? false
-        // R-DISP-RETUNE: the same picture moved in frequency (a retune moved
-        // the stream centre, a drag moved the view centre, and nothing else
-        // changed). The Core's noise floor and waterfall levels carried on,
-        // so they are kept; the peak hold and the blobs are held per trace
-        // sample, every sample now lies at another frequency, and the Core
-        // emptied them, so they go.
-        let movedPicture = endpoint.context.map { Self.movedPicture($0, context) } ?? false
+        // R-DISP-RETUNE: the Core states the picture a context continues,
+        // and that one value decides. A context of the picture held carried
+        // on at the Core: its noise floor and waterfall levels are kept.
+        // The peak hold and the blobs are held per trace sample, so they are
+        // kept only where every sample still lies where it did (the same
+        // picture); moved, the Core emptied them and they go. A context of
+        // another picture drops everything, whatever its numbers.
+        //
+        // A Core that states no picture (nil here) is read by the rule
+        // before this one: the same picture keeps its extras and anything
+        // else, a move included, drops them. The app does not guess.
+        let carriedOn: Bool? = context.pictureGeneration.map { $0 == endpoint.context?.pictureGeneration }
         endpoint.context = context
         endpoint.decoder = DisplayFrameDecoder()
-        if movedPicture, let held = endpoint.extras {
-            endpoint.extras = DisplayExtras(
-                endpointId: held.endpointId, contextGeneration: held.contextGeneration,
-                encoderSequence: held.encoderSequence, peakBlobs: nil, peakHoldDbm: nil,
-                noiseFloorDbm: held.noiseFloorDbm, waterfallLevels: held.waterfallLevels,
-                noiseFloorFastAttack: held.noiseFloorFastAttack)
-        } else if !samePicture {
+        if carriedOn ?? samePicture {
+            if !samePicture, let held = endpoint.extras {
+                endpoint.extras = DisplayExtras(
+                    endpointId: held.endpointId, contextGeneration: held.contextGeneration,
+                    encoderSequence: held.encoderSequence, peakBlobs: nil, peakHoldDbm: nil,
+                    noiseFloorDbm: held.noiseFloorDbm, waterfallLevels: held.waterfallLevels,
+                    noiseFloorFastAttack: held.noiseFloorFastAttack)
+            }
+        } else {
             endpoint.extras = nil
         }
         endpoints[context.endpointId] = endpoint
@@ -2307,41 +2325,6 @@ public actor MediaControlClient {
             && held.wideSamples == next.wideSamples && held.wideband == next.wideband
             && held.grant?.grantedFftSize == next.grant?.grantedFftSize
             && (held.transmit ?? false) == (next.transmit ?? false)
-    }
-
-    /// R-DISP-RETUNE: whether `next` is the picture `held` shows, moved in
-    /// frequency: the same receiver, sample rate, FFT size, span, sample
-    /// counts and wide state, both receive or both transmit, with the stream
-    /// centre, the view centre or both at another frequency. The Core
-    /// carries its averaged trace on through such a move.
-    ///
-    /// The Core judges the span by what was asked, exactly
-    /// (SpectrumEndpoint.cpp, movedPlanePicture). The span a context states
-    /// is the Core's crop of that, cut at FFT bin edges, and is one bin
-    /// wider or narrower as the view's alignment to the bins changes. This
-    /// app takes a context for any revision it sent and holds only its
-    /// latest subscription, so it has no asked span for a context of an
-    /// earlier revision. It therefore takes two stated spans within one bin
-    /// of each other (the sample rate over the FFT size the Core runs) as
-    /// the same span asked; without a granted FFT size the width of a bin is
-    /// not known and the spans must be equal.
-    static func movedPicture(_ held: MediaControlEvent.DisplayContext,
-                             _ next: MediaControlEvent.DisplayContext) -> Bool {
-        var sameSpanAsked = held.spanHz == next.spanHz
-        if !sameSpanAsked, let fftSize = next.grant?.grantedFftSize, fftSize > 0, next.sampleRateHz > 0 {
-            let binHz = next.sampleRateHz / Double(fftSize)
-            // One bin, with room for the rounding of two products of it.
-            sameSpanAsked = abs(held.spanHz - next.spanHz) <= binHz * 1.000_001
-        }
-        return held.endpointId == next.endpointId && held.sourceStream == next.sourceStream
-            && held.sampleRateHz == next.sampleRateHz
-            && sameSpanAsked && held.wideSpanHz == next.wideSpanHz
-            && held.traceSamples == next.traceSamples && held.waterfallSamples == next.waterfallSamples
-            && held.wideSamples == next.wideSamples && held.wideband == next.wideband
-            && held.grant?.grantedFftSize == next.grant?.grantedFftSize
-            && (held.transmit ?? false) == (next.transmit ?? false)
-            && (held.sourceCentreHz != next.sourceCentreHz || held.centreHz != next.centreHz
-                || held.wideCentreHz != next.wideCentreHz)
     }
 
     private func display(_ datagram: Data, connection id: String) async {
