@@ -9,6 +9,9 @@
 //                 command makes is saved with the place and monitor it was
 //                 given. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - Return after the pane changed size puts a free container
+//                 where it was showing. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include <QtTest>
 #include <QAbstractButton>
 #include <QApplication>
@@ -330,11 +333,12 @@ ContainerHome stripHome(DockEdge edge, const QString& before, const QString& aft
     return home;
 }
 
-ContainerHome freeHome(const QRect& rect)
+ContainerHome freeHome(const QRect& rect, const QSize& pane)
 {
     ContainerHome home;
     home.dockMode = DockMode::OverlayDocked;
     home.geometry = rect;
+    home.geometryPane = pane;
     return home;
 }
 
@@ -415,7 +419,7 @@ private slots:
         QVERIFY(f.popOut(QStringLiteral("free"), how));
         ContainerDocument d = f.document("free");
         QVERIFY(d.home.has_value());
-        QCOMPARE(*d.home, freeHome(kFreeRect));
+        QCOMPARE(*d.home, freeHome(kFreeRect, f.center->size()));
 
         f.returnByHeader(QStringLiteral("free"));
         d = f.document("free");
@@ -429,6 +433,56 @@ private slots:
         settle();
         QCOMPARE(f.document("free").geometry, kFreeRect);
         QCOMPARE(f.widget("free")->geometry(), kFreeRect);
+    }
+
+    // The remembered rect is read against the pane it was placed in. A
+    // container anchored to the bottom (the default anchor) moves down with
+    // a pane that grows, and Return puts it where it was showing.
+    void aFreeContainerReturnsWhereItWasShowingAfterThePaneChangedSize_data()
+    {
+        QTest::addColumn<bool>("beforePopOut");
+        QTest::newRow("resized before the pop out") << true;
+        QTest::newRow("resized while it was out") << false;
+    }
+    void aFreeContainerReturnsWhereItWasShowingAfterThePaneChangedSize()
+    {
+        QFETCH(bool, beforePopOut);
+        constexpr int kTallerPx = 100;
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree({f.container(QStringLiteral("free"), DockMode::OverlayDocked)}));
+        QCOMPARE(f.widget("free")->geometry(), kFreeRect);
+        const QSize paneWas = f.center->size();
+        const auto growWindow = [&f] {
+            f.window.resize(f.window.width(), f.window.height() + kTallerPx);
+            settle();
+            QTest::qWait(kPastCommitDelayMs);
+            settle();
+        };
+        if (beforePopOut) {
+            growWindow();
+        }
+        QVERIFY(f.popOut(QStringLiteral("free"), QStringLiteral("button")));
+        if (!beforePopOut) {
+            growWindow();
+        }
+        const QSize grown = f.center->size() - paneWas;
+        QCOMPARE(grown, QSize(0, kTallerPx));
+        const QRect showing = kFreeRect.translated(0, grown.height());
+
+        f.returnByHeader(QStringLiteral("free"));
+        QVERIFY(f.widget("free")->isOverlayDocked());
+        QCOMPARE(f.widget("free")->geometry(), showing);
+        // The place the operator gave it, with the pane it was given in.
+        ContainerDocument d = f.document("free");
+        QCOMPARE(d.geometry, kFreeRect);
+        QCOMPARE(d.geometryPane, std::optional<QSize>(paneWas));
+        QVERIFY(!d.home.has_value());
+        QTest::qWait(kPastCommitDelayMs);
+        settle();
+        d = f.document("free");
+        QCOMPARE(d.geometry, kFreeRect);
+        QCOMPARE(d.geometryPane, std::optional<QSize>(paneWas));
+        QCOMPARE(f.widget("free")->geometry(), showing);
     }
 
     void aSecondPopOutReplacesTheHome()
@@ -695,7 +749,7 @@ private slots:
         QCOMPARE(d.geometry.topLeft(), shown.topLeft());
         QVERIFY(d.screen.has_value());
         // Its home is still the free place it had.
-        QCOMPARE(*d.home, freeHome(QRect(0, 0, 320, 240)));
+        QCOMPARE(*d.home, freeHome(QRect(0, 0, 320, 240), f.center->size()));
     }
 
     void newWindowsAreSavedWhereTheyWerePut()

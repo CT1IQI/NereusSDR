@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: a free home is recorded with the
+//                 pane its rect was placed in, and Return restores both, so
+//                 a container comes back where it was showing after the
+//                 pane changed size. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the commit that makes a container
 //                 a window records where it came from (recordHomes), and
 //                 Return puts it back there, with fallbacks when the
@@ -441,10 +446,16 @@ void ContainerManager::recordHomes(WorkspaceDocument& saved) const
             home.beforeId = strip.value(at - 1);
             home.afterId = strip.value(at + 1);
         } else {
-            // The place the operator gave it, not where it is shown.
+            // The place the operator gave it, not where it is shown, with
+            // the pane that place is read against.
             home.geometry = m_rememberedGeometry.value(d.id, was->geometry);
             if (!home.geometry.isValid()) {
                 continue;
+            }
+            if (m_rememberedPane.contains(d.id)) {
+                home.geometryPane = m_rememberedPane.value(d.id);
+            } else {
+                home.geometryPane = was->geometryPane;
             }
         }
         d.home = home;
@@ -464,16 +475,25 @@ bool ContainerManager::returnHome(const QString& id)
     }
     const std::optional<ContainerHome> home = self->home;
     if (home && home->dockMode == DockMode::OverlayDocked && home->geometry.isValid()) {
+        // Its rect with the pane that rect was placed in: shown from them,
+        // it is where it was showing, whatever size the pane has now.
         QRect place = home->geometry;
-        if (dockParentLaidOut() && !QRect(QPoint(0, 0), m_dockParent->size()).contains(place)) {
-            // The spot is no longer inside the pane: the nearest place
-            // that is, off any spot another free container has.
-            place = defaultFreeRect(place, id);
+        std::optional<QSize> placedIn = home->geometryPane;
+        if (dockParentLaidOut()) {
+            const QSize pane = m_dockParent->size();
+            const QRect showing(anchoredTopLeft(place.topLeft(), self->anchor, pane - placedIn.value_or(pane)),
+                                place.size());
+            if (!QRect(QPoint(0, 0), pane).contains(showing)) {
+                // The spot is no longer inside the pane: the nearest place
+                // that is, off any spot another free container has, placed
+                // for the pane as it is now.
+                place = defaultFreeRect(showing, id);
+                placedIn.reset();
+            }
         }
         self->dockMode = DockMode::OverlayDocked;
         self->geometry = place;
-        // Placed for the pane as it is now.
-        self->geometryPane.reset();
+        self->geometryPane = placedIn;
         self->screen.reset();
         self->home.reset();
         commitWorkspace(draft, draft.revision);

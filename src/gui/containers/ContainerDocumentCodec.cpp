@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - A free home carries geometryPane, the pane its rect was
+//                 placed in. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - home, written for floating containers only: where a
 //                 popped-out container came from. An unreadable one is
 //                 dropped for that container alone; unknown keys inside it
@@ -37,7 +40,7 @@ const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
                                    "geometry", "geometryPane", "screen", "home", "visible", "locked", "autoHeight", "popOutShell",
                                    "config"};
-const QStringList kHomeFields{"dockMode", "edge", "before", "after", "geometry"};
+const QStringList kHomeFields{"dockMode", "edge", "before", "after", "geometry", "geometryPane"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
 const QStringList kStripFields{"thickness", "extents"};
 
@@ -394,6 +397,13 @@ bool containerHome(const QJsonValue& value, ContainerHome& out)
     if (out.dockMode == DockMode::OverlayDocked && !out.geometry.isValid()) {
         return false;
     }
+    if (object.contains("geometryPane")) {
+        QSize pane;
+        if (!paneSize(object["geometryPane"], pane)) {
+            return false;
+        }
+        out.geometryPane = pane;
+    }
     out.extensions = extensions(object, kHomeFields);
     return true;
 }
@@ -535,6 +545,10 @@ QJsonObject encodeContainer(const ContainerDocument& container)
         } else {
             home["geometry"] = QJsonArray{from.geometry.x(), from.geometry.y(),
                                           from.geometry.width(), from.geometry.height()};
+            // The pane that rect was placed in, when one was known.
+            if (from.geometryPane && from.geometryPane->width() > 0 && from.geometryPane->height() > 0) {
+                home["geometryPane"] = QJsonArray{from.geometryPane->width(), from.geometryPane->height()};
+            }
         }
         object["home"] = home;
     }

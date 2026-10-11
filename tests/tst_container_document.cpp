@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - A free home's geometryPane round trips. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - home round trip (strip and free), absent, unknown keys
 //                 kept, and malformed. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -360,6 +362,19 @@ private slots:
         QVERIFY2(decoded.ok, qPrintable(decoded.error));
         QCOMPARE(decoded.document, doc);
         QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+
+        // With the pane that rect was placed in.
+        doc.containers[0].home->geometryPane = QSize(1100, 760);
+        json = ContainerDocumentCodec::encode(doc);
+        container = QJsonDocument::fromJson(json).object()["containers"].toArray().first().toObject();
+        QCOMPARE(container["home"].toObject(),
+                 (QJsonObject{{"dockMode", 1}, {"geometry", QJsonArray{200, 150, 320, 240}},
+                              {"geometryPane", QJsonArray{1100, 760}}}));
+        decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QVERIFY(!decoded.document.containers.first().home->extensions.contains("geometryPane"));
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
     }
     void homeAbsentStaysAbsentAndIsWrittenOnlyWhileFloating()
     {
@@ -416,6 +431,9 @@ private slots:
             << QJsonValue(QJsonObject{{"dockMode", 1}, {"geometry", QJsonArray{0, 0, 320}}});
         QTest::newRow("free empty geometry")
             << QJsonValue(QJsonObject{{"dockMode", 1}, {"geometry", QJsonArray{0, 0, 0, 0}}});
+        QTest::newRow("free with a pane of one number")
+            << QJsonValue(QJsonObject{{"dockMode", 1}, {"geometry", QJsonArray{0, 0, 320, 240}},
+                                      {"geometryPane", QJsonArray{1100}}});
     }
     void malformedHomeIsDroppedForThatContainerOnly()
     {
