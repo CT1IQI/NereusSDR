@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall no longer draws across
+//                 its ring's seam (the bottom line flashed each new row),
+//                 its glide rests while the waterfall is paused, and a
+//                 ring's worth of rows arriving with no frame drawn sends
+//                 the whole texture. AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF. R-DISP-HOLD: setRemoteSpectrumContext
 //                 keeps the painted frame, peak hold, blobs and waterfall
 //                 rows when the context is for the picture already shown.
@@ -7161,6 +7166,14 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         scanline[x] = dbmToRgb(calibratedPixelsDbm[srcPx]);
     }
 
+#ifdef NEREUS_GPU_SPECTRUM
+    // Rows written since the last GPU frame took the texture's rows, up to
+    // a whole ring; renderGpuFrame() sends the whole ring at that point.
+    if (m_wfRowsSinceUpload < h) {
+        ++m_wfRowsSinceUpload;
+    }
+#endif
+
     traceWaterfallState(calibratedPixelsDbm, scanline, w, now);
 
     // ── Sub-epic E: mirror the just-written row into the history ring ───
@@ -12289,6 +12302,16 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_wfTexFullUpload = true;
         }
 
+        // 2026-10-11 KG4VCF: rows keep arriving while no frame is drawn (a
+        // hidden, covered or minimized window). After a ring's worth of them
+        // or more the write row can stand anywhere, even where the last
+        // frame left it, and the walk below would send only the remainder
+        // and leave the rest of the picture as it was before. Send it all.
+        if (m_wfRowsSinceUpload >= m_wfGpuTexH) {
+            m_wfTexFullUpload = true;
+        }
+        m_wfRowsSinceUpload = 0;
+
         if (m_wfTexFullUpload) {
             QImage rgba = m_waterfall.convertToFormat(QImage::Format_RGBA8888);
             batch->uploadTexture(m_wfGpuTex, QRhiTextureUploadEntry(0, 0,
@@ -12354,12 +12377,23 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
     const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
     const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
-    const float effectiveRow = static_cast<float>(m_wfWriteRow) + (1.0f - pushFrac);
-    float rowOffset = (m_wfGpuTexH > 0)
-        ? effectiveRow / static_cast<float>(m_wfGpuTexH) : 0.0f;
+    // 2026-10-11 KG4VCF: the glide rests while the waterfall is paused. A
+    // paused waterfall shows a fixed set of rows, but every row that arrives
+    // underneath still restarts m_wfLastPushMs, and the glide lifted the
+    // paused picture a row and slid it back each time. AetherSDR holds its
+    // scroll offset at zero while paused as well (SpectrumWidget.cpp
+    // waterfallScrollProgressRows() [@aa9336ae]).
+    const float glideRows = m_wfLive ? 1.0f - pushFrac : 0.0f;
+    // 2026-10-11 KG4VCF: the ring row and the glide go to the shader apart,
+    // with the ring's height. "Both texels hold valid data" above is true of
+    // the top of the picture only: at the bottom the glide wants the row
+    // below the oldest, which the ring does not hold, and the texture's
+    // repeat handed it the newest instead. The shader now holds the sampled
+    // row between the centers of the newest and the oldest (waterfall.frag).
     // Written further down, from the frame plan, only when the waterfall
     // draws (GUI-M1).
-    const float wfUniforms[] = {rowOffset, 0.0f, 0.0f, 0.0f};
+    const float wfUniforms[] = {static_cast<float>(m_wfWriteRow), glideRows,
+                                static_cast<float>(qMax(1, m_wfGpuTexH)), 0.0f};
 
     // ---- Overlay texture (static, only on state change) ----
     {

@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : m_wfRowsSinceUpload, waterfallRectForTest() and
+//                 setWaterfallLiveForTest() for the GPU waterfall's ring
+//                 seam, paused glide and whole-ring upload. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 : R-DISP-HOLD: remoteContextKeptPicture() and
 //                 remoteCodecForTest(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -1072,6 +1076,12 @@ public:
     // native test can tell spectrum rows of a grabbed frame from the
     // frequency scale and waterfall rows below them.
     QRect spectrumRectForTest() const { return spectrumLayout().spectrum; }
+    // The waterfall's rect in the same layout, so a native test can find
+    // the waterfall's first and last rows in a grabbed frame.
+    QRect waterfallRectForTest() const { return spectrumLayout().waterfall; }
+    // Pauses or resumes the waterfall, as scrolling back on the time scale
+    // and its LIVE button do.
+    void setWaterfallLiveForTest(bool live) { setWaterfallLive(live); }
 
     // Which rows of the GPU dynamic overlay texture (device pixels, from
     // the top) renderGpuFrame() clears and uploads. The texture covers the
@@ -3841,6 +3851,9 @@ private:
     int  m_wfGpuTexH{0};
     bool m_wfTexFullUpload{true};
     int  m_wfLastUploadedRow{-1};
+    // Rows pushed since the last GPU frame took the texture's rows, counted
+    // up to the ring's height: at that many the whole ring is sent.
+    int  m_wfRowsSinceUpload{0};
 
     // ---- Overlay GPU resources ----
     QRhiGraphicsPipeline*       m_ovPipeline{nullptr};
