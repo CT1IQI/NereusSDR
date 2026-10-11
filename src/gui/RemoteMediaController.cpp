@@ -178,6 +178,14 @@
 //               chain; presented frames are checked against
 //               acceptedGeneration(). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-11: R-DISP-RETUNE (third wave): the Core states the picture a
+//               context continues. The pan and the mini display decide by
+//               that value alone (their own moved-picture rules, the span
+//               asked and the frame kept by prediction are gone), a Core
+//               that states none is read by the rule before the moved
+//               picture, and a context of the picture shown that answers
+//               an earlier request is taken for drawing only (7b). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-26: iPhone app plan Task 28 (R-IOS-16): the media connection of
 //               a session through the remote access service uses its ICE
 //               settings, and its connection stage the gathering bound
@@ -891,20 +899,6 @@ bool sameOriginalIntent(QJsonObject left, QJsonObject right)
     return left == right;
 }
 
-// R-DISP-RETUNE: whether a mini display asked again shows the picture it
-// already shows or that picture moved in frequency: nothing but the centre
-// and the dBm range (R-DISP-HOLD) differs between the two requests.
-bool miniAskKeepsThePicture(QJsonObject shown, QJsonObject asked)
-{
-    if (shown.isEmpty() || asked.isEmpty()) { return false; }
-    for (const QString& key : {QStringLiteral("centreHz"), QStringLiteral("minDbm"),
-                               QStringLiteral("maxDbm")}) {
-        shown.remove(key);
-        asked.remove(key);
-    }
-    return shown == asked;
-}
-
 bool zeroCharge(const DisplayBudgetCharge& charge)
 {
     return charge.applicationBytesPerSecond == 0
@@ -1019,13 +1013,35 @@ struct RemoteMediaController::Private {
         double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
         QVector<float> lastMiniTrace;
-        // R-DISP-RETUNE: the span asked for the picture this mini display
-        // shows (the request its accepted context answered).
-        double miniShownAskedSpanHz = 0;
-        // R-DISP-RETUNE: this mini display was asked again for the picture it
-        // shows, or for that picture moved in frequency, and kept its painted
-        // frame for the context that answers.
-        bool miniKeptAtAsk = false;
+        // R-DISP-RETUNE: the picture the Core says this binding's accepted
+        // receive context continues (its pictureGeneration). The next
+        // context carries on exactly when it states the same one. None from
+        // a Core that states no picture, and none once the Core has refused
+        // the binding or retired its source.
+        std::optional<quint32> shownPicture;
+        // R-DISP-RETUNE (7b): a context of the picture shown that answers a
+        // request the window has since changed, taken for drawing only. Its
+        // frames are decoded and drawn at the frequencies it states. It is
+        // no accepted answer: `context`, `accepted`, the views asked and
+        // answered and the budget planner's accepted revision and request
+        // stay those of the last accepted context, and the window's newer
+        // request goes out as it always did. Dropped when a context is
+        // accepted, when the binding leaves its stream, and when the Core
+        // refuses the binding or retires its source.
+        struct Drawing {
+            SpectrumEndpointContext context;
+            RemoteSpectrumCapture capture;
+        };
+        std::optional<Drawing> drawing;
+        /// Frames reach the decoder while a context is accepted or one is
+        /// taken for drawing.
+        bool takesFrames() const { return accepted || drawing.has_value(); }
+        /// The generation whose frames are decoded: the one taken for
+        /// drawing while there is one, else the accepted one.
+        quint32 drawnGeneration() const
+        {
+            return drawing ? drawing->context.codec.contextGeneration : acceptedGeneration();
+        }
         // R-R3-21 / R-R3-08: decoded frames waiting for their presentation
         // time, and the rows filling a lost message's gap.
         RemoteDisplayPresenter presenter;
@@ -4982,6 +4998,12 @@ void RemoteMediaController::refreshSubscriptions()
         if (request == binding.observed
             && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
+        // R-DISP-RETUNE (7b): a context taken for drawing only is one of
+        // this stream; its frames keep drawing through an ask on it.
+        if (binding.observedStream != slice->streamIndex()
+            || binding.observedStreamEpoch != slice->streamEpoch()) {
+            binding.drawing.reset();
+        }
         binding.observed = request;
         binding.observedStream = slice->streamIndex();
         binding.observedStreamEpoch = slice->streamEpoch();
@@ -4991,8 +5013,10 @@ void RemoteMediaController::refreshSubscriptions()
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
         binding.rejected = false;
         binding.refusalReason.clear();
-        binding.decoder.reset();
-        binding.presenter.restartChain();
+        if (!binding.drawing) {
+            binding.decoder.reset();
+            binding.presenter.restartChain();
+        }
         // A tune/zoom renews this binding's codec, not its painted history.
         // New/replaced bindings were fully cleared above; rejection and
         // session retirement still clear them through their lifecycle paths.
@@ -5053,17 +5077,19 @@ void RemoteMediaController::refreshLegacyMiniSubscriptions()
         auto& binding = found->second;
         if (binding.observed == desired && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
-        // R-DISP-RETUNE: as in the budget planner, an ask for the picture it
-        // shows or for that picture moved keeps the painted frame, and so
-        // does the ask after it while the first is still unanswered.
-        binding.miniKeptAtAsk = (binding.accepted || binding.miniKeptAtAsk)
+        // R-DISP-RETUNE: as in the budget planner (sendCandidate), where the
+        // Core states the picture an ask leaves the painted frame alone and
+        // the Core's context decides; where it states none the mini display
+        // is blanked at every ask.
+        const bool keepsFrame = d->pictureNegotiated && binding.shownPicture
             && !binding.transmit
             && binding.observedStream == slice->streamIndex()
-            && binding.observedStreamEpoch == slice->streamEpoch()
-            && miniAskKeepsThePicture(binding.observed, desired);
-        if (!binding.miniKeptAtAsk) {
+            && binding.observedStreamEpoch == slice->streamEpoch();
+        if (!keepsFrame) {
             emit miniDisplayUnavailable(sliceId);
             binding.lastMiniTrace.clear();
+            binding.shownPicture.reset();
+            binding.drawing.reset();
         }
         binding.observed = desired;
         binding.observedStream = slice->streamIndex();
@@ -5073,8 +5099,10 @@ void RemoteMediaController::refreshLegacyMiniSubscriptions()
         binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
         binding.rejected = false;
-        binding.decoder.reset();
-        binding.presenter.reset();
+        if (!binding.drawing) {
+            binding.decoder.reset();
+            binding.presenter.reset();
+        }
         QJsonObject wire = desired;
         wire.insert(QStringLiteral("op"), QStringLiteral("subscribe"));
         wire.insert(QStringLiteral("endpointId"), double(found->first));
@@ -5709,30 +5737,35 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         if (found == d->bindings.end() || found->second.pending) { return; }
         Private::Binding& binding = found->second;
         if (binding.isMini()) {
-            // R-DISP-RETUNE: asked again for the picture it shows or for that
-            // picture moved (every tuning step moves a mini display, which is
-            // centred on its slice), the mini display keeps its painted frame
-            // until the keyframe. Frames of the old context are still refused.
+            // R-DISP-RETUNE: where the Core states the picture, an ask
+            // leaves the painted frame alone and the Core's answer decides:
+            // its context continues the picture shown (every tuning step
+            // moves a mini display, which is centred on its slice, and the
+            // Core carries that on), or it does not and the display is
+            // blanked then. Nothing is predicted here; the window used to
+            // compare each ask with the one before it to guess what the
+            // Core would say. Frames of the old context are still refused,
+            // and those of a context taken for drawing keep coming.
             //
-            // A wheel turned faster than the link asks again before the
-            // context of the step before has been accepted (the window
-            // ignores a context whose request has since changed). The frame
-            // was kept at that ask, so it is kept at this one on the same
-            // terms: each ask is compared with the one before it, and the
-            // first that is not a move of the same picture ends the chain.
-            binding.miniKeptAtAsk = (binding.accepted || binding.miniKeptAtAsk)
+            // Where the Core states no picture the mini display is blanked
+            // at every ask, as it was before the moved picture: the window
+            // cannot know what that Core carried on, and does not guess.
+            const bool keepsFrame = d->pictureNegotiated && binding.shownPicture
                 && !binding.transmit && !candidate.unsubscribe && binding.slice
                 && binding.observedStream == binding.slice->streamIndex()
-                && binding.observedStreamEpoch == binding.slice->streamEpoch()
-                && miniAskKeepsThePicture(binding.acceptedRequest, candidate.request);
-            if (!binding.miniKeptAtAsk) {
+                && binding.observedStreamEpoch == binding.slice->streamEpoch();
+            if (!keepsFrame) {
                 emit miniDisplayUnavailable(binding.miniSliceId);
                 binding.lastMiniTrace.clear();
+                binding.shownPicture.reset();
+                binding.drawing.reset();
             }
             binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
-            binding.decoder.reset();
-            binding.presenter.reset();
+            if (!binding.drawing) {
+                binding.decoder.reset();
+                binding.presenter.reset();
+            }
         }
         if (binding.askAgain) {
             binding.askAgain = false;
@@ -6534,6 +6567,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
             binding.contextRevision = 0;
+            binding.drawing.reset();
+            binding.shownPicture.reset();
             binding.decoder.reset();
             binding.presenter.reset();
             if (erase) { d->bindings.erase(found); }
@@ -6558,6 +6593,12 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.refusedIdentity.clear();
             binding.refusalReason.clear();
             if (binding.slice) {
+                // R-DISP-RETUNE (7b): a context taken for drawing only is
+                // one of the stream it was taken on.
+                if (binding.observedStream != binding.slice->streamIndex()
+                    || binding.observedStreamEpoch != binding.slice->streamEpoch()) {
+                    binding.drawing.reset();
+                }
                 binding.observedStream = binding.slice->streamIndex();
                 binding.observedStreamEpoch = binding.slice->streamEpoch();
             }
@@ -6590,6 +6631,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
                 binding.contextRevision = 0;
+                binding.drawing.reset();
+                binding.shownPicture.reset();
                 binding.decoder.reset();
                 binding.presenter.reset();
                 binding.pending.reset();
@@ -6626,6 +6669,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
             binding.contextRevision = 0;
+            binding.drawing.reset();
+            binding.shownPicture.reset();
             binding.decoder.reset();
             binding.presenter.reset();
             d->bindings.erase(found);
@@ -6867,6 +6912,8 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
                                     : reason.left(512));
             qCInfo(lcRemoteMedia).noquote() << "Remote display endpoint rejected:"
                                             << endpointId << reason.left(512);
+            binding.drawing.reset();
+            binding.shownPicture.reset();
             binding.decoder.reset();
             binding.presenter.reset();
             if (binding.isMini()) {
@@ -6886,14 +6933,99 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     const bool widebandRequested = d->client->remoteWidebandAvailable()
         && (budgetMode ? binding.acceptedRequest : binding.observed)
                .value(QStringLiteral("extendedView")).isBool();
-    if (op != QLatin1String("context") || binding.rejected
-        || revision != (budgetMode ? binding.acceptedRevision : binding.revision)) { return; }
+    if (op != QLatin1String("context") || binding.rejected) { return; }
+    // R-DISP-RETUNE (7b): a context that answers a request before the
+    // window's latest is read only where the Core states the picture: it
+    // may be one to draw (takeForDrawing, below). From a Core that states
+    // none it is ignored, as it always was.
+    const bool answersCurrent = revision
+        == (budgetMode ? binding.acceptedRevision : binding.revision);
+    if (!answersCurrent && !d->pictureNegotiated) { return; }
     // The shape the agreed minor selects, with wideband exactly when this
     // subscription negotiated it.
     const std::optional<SpectrumContextMessage> decoded =
         decodeRemoteSpectrumContext(payload, spectrumGrantNegotiated(),
                                     d->txDisplayNegotiated, d->pictureNegotiated);
     if (!decoded || decoded->wideband.has_value() != widebandRequested) { return; }
+    SpectrumEndpointContext context;
+    context.codec.endpointId = endpointId;
+    context.codec.contextGeneration = decoded->contextGeneration;
+    if (decoded->wideband) { context.wideband = *decoded->wideband; }
+    context.exactCentreHz = decoded->centreHz;
+    context.exactSpanHz = decoded->spanHz;
+    context.wideCentreHz = decoded->wideCentreHz;
+    context.wideSpanHz = decoded->wideSpanHz;
+    context.codec.traceSamples = quint16(decoded->traceSamples);
+    context.codec.waterfallSamples = quint16(decoded->waterfallSamples);
+    context.codec.wideSamples = quint16(decoded->wideSamples);
+    context.codec.minDbm = float(decoded->minDbm);
+    context.codec.maxDbm = float(decoded->maxDbm);
+    context.source.streamIndex = decoded->sourceStream;
+    context.targetFps = decoded->fps;
+    context.framesPerLine = decoded->framesPerLine;
+    const double sourceCentre = decoded->sourceCentreHz;
+    const double rate = decoded->sampleRateHz;
+    bool widebandValid = true;
+    if (widebandRequested) {
+        const bool permission = (budgetMode ? binding.acceptedRequest : binding.observed).value(
+            QStringLiteral("extendedView")).toBool();
+        const bool needsWideband = geometryNeedsWideband(
+            context.exactCentreHz, context.exactSpanHz, sourceCentre, rate);
+        widebandValid = context.wideband.active == needsWideband
+            && (!context.wideband.active || permission);
+    }
+    // R-DISP-RETUNE (7b): the window draws what it is sent. A wheel turned
+    // faster than the link answers changes the request before each context
+    // arrives, so no context of the spin answers the request the window
+    // has; ignoring them all left the pan with no frame until the wheel
+    // stopped. A context of this endpoint that continues the picture shown
+    // (the Core says so: its pictureGeneration is the one of the accepted
+    // context) and is newer than the one whose frames are drawn is taken
+    // for drawing. Its frames are drawn at the frequencies it states, in
+    // the pan as it stands (the presenter's capture, R-R3-21).
+    //
+    // Nothing else of the binding moves: the accepted context, `accepted`,
+    // the views asked and answered and the budget planner's accepted
+    // revision and request are as they were, and the newer request goes
+    // out below exactly as before. No keyframe is asked for here: the
+    // first frame of a context is a keyframe, a lost one is asked for when
+    // a frame of the generation is found missing (receiveDisplay), and the
+    // one request each 200 ms is left for the context that is accepted.
+    //
+    // A context of another picture, of a binding on another stream or
+    // epoch, of a transmit display, or of an endpoint being retired is not
+    // taken, and is ignored as it always was.
+    const auto takeForDrawing = [&]() {
+        if (!d->pictureNegotiated || !decoded->pictureGeneration || !binding.shownPicture
+            || *decoded->pictureGeneration != *binding.shownPicture
+            || decoded->transmit.value_or(false) || binding.transmit
+            || binding.retiring || binding.suspending || !binding.slice
+            || (!binding.widget && !binding.isMini())
+            || binding.observedStream != binding.slice->streamIndex()
+            || binding.observedStreamEpoch != binding.slice->streamEpoch()
+            || decoded->sourceStream != binding.observedStream
+            || !widebandValid) { return; }
+        const quint32 drawn = binding.drawing
+            ? binding.drawing->context.codec.contextGeneration
+            : binding.context.codec.contextGeneration;
+        if (!isNewerGeneration(context.codec.contextGeneration, drawn)) { return; }
+        if (binding.isMini()) {
+            const bool wantsTx = d->model && d->model->isTransmitting()
+                && d->model->txBoundSlice() == binding.slice;
+            if (!d->miniWanted.contains(binding.miniSliceId)
+                || binding.slice->sliceIndex() != binding.miniSliceId || wantsTx
+                || decoded->traceSamples <= 0
+                || decoded->traceSamples != decoded->waterfallSamples
+                || decoded->wideSamples != 0) { return; }
+        }
+        binding.drawing = Private::Binding::Drawing{context, {context, sourceCentre, rate}};
+        binding.decoder.reset();
+        binding.presenter.restartChain();
+    };
+    if (!answersCurrent) {
+        takeForDrawing();
+        return;
+    }
     // A gesture/rebind may arrive between the outgoing request and its ACK.
     // Issue the newer request before accepting an old view over that gesture.
     if (binding.slice) {
@@ -6905,38 +7037,24 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             : currentRequest != binding.observed;
         if (requestChanged || binding.observedStream != binding.slice->streamIndex()
             || binding.observedStreamEpoch != binding.slice->streamEpoch()) {
+            // R-DISP-RETUNE (7b): not accepted, and drawn if it continues
+            // the picture shown (never across a stream or epoch change).
+            takeForDrawing();
             refreshSubscriptions();
             return;
         }
     }
-    SpectrumEndpointContext context;
-    context.codec.endpointId = endpointId;
-    context.codec.contextGeneration = decoded->contextGeneration;
-    if (decoded->wideband) { context.wideband = *decoded->wideband; }
-    context.exactCentreHz = decoded->centreHz;
-    context.exactSpanHz = decoded->spanHz;
-    context.wideCentreHz = decoded->wideCentreHz;
-    context.wideSpanHz = decoded->wideSpanHz;
-    const double sourceCentre = decoded->sourceCentreHz;
-    const double rate = decoded->sampleRateHz;
-    if (widebandRequested) {
-        const bool permission = (budgetMode ? binding.acceptedRequest : binding.observed).value(
-            QStringLiteral("extendedView")).toBool();
-        const bool needsWideband = geometryNeedsWideband(
-            context.exactCentreHz, context.exactSpanHz, sourceCentre, rate);
-        if (context.wideband.active != needsWideband
-            || (context.wideband.active && !permission)) { return; }
-    }
+    if (!widebandValid) { return; }
     if (binding.accepted && !isNewerGeneration(context.codec.contextGeneration,
                                   binding.acceptedGeneration())) { return; }
-    context.codec.traceSamples = quint16(decoded->traceSamples);
-    context.codec.waterfallSamples = quint16(decoded->waterfallSamples);
-    context.codec.wideSamples = quint16(decoded->wideSamples);
-    context.codec.minDbm = float(decoded->minDbm);
-    context.codec.maxDbm = float(decoded->maxDbm);
-    context.source.streamIndex = decoded->sourceStream;
-    context.targetFps = decoded->fps;
-    context.framesPerLine = decoded->framesPerLine;
+    // R-DISP-RETUNE: the one comparison. Where the Core states the picture,
+    // this context carries on exactly when its picture is the one shown;
+    // where it states none the window has no word on it and the pan and the
+    // mini display fall back to the rule before the moved picture.
+    const std::optional<bool> coreCarriedOn = d->pictureNegotiated
+        ? std::optional<bool>(binding.shownPicture && decoded->pictureGeneration
+                              && *binding.shownPicture == *decoded->pictureGeneration)
+        : std::nullopt;
     if (binding.isMini()) {
         const QJsonObject target = budgetMode ? binding.acceptedRequest : binding.observed;
         const bool wantsTx = d->model && binding.slice && d->model->isTransmitting()
@@ -6976,35 +7094,20 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             return;
         }
         // R-DISP-RETUNE: the mini display follows the pan's rule. A context
-        // for the picture it shows, or for that picture moved in frequency
-        // (it is centred on the slice, so every tuning step moves it), leaves
-        // the painted frame in place until the keyframe; the Core's averaged
-        // trace carried on. Anything else is a new picture and blanks it.
-        //
-        // The span compared is the one asked for, exactly, as the Core
-        // compares it (SpectrumEndpoint.cpp, movedPlanePicture). The span
-        // answered is the Core's crop, cut at FFT bin edges, and is a bin
-        // wider or narrower as the display moves over the bins.
-        const auto fftOf = [](const std::optional<SpectrumContextGrant>& grant) {
-            return grant ? grant->grantedFftSize : 0;
-        };
-        const SpectrumEndpointContext& shown = binding.context;
-        const bool carriesOn = (binding.accepted || binding.miniKeptAtAsk)
-            && !binding.rejected && !binding.transmit && !wantsTx
-            && shown.codec.endpointId == context.codec.endpointId
-            && shown.codec.traceSamples == context.codec.traceSamples
-            && shown.codec.waterfallSamples == context.codec.waterfallSamples
-            && shown.codec.wideSamples == context.codec.wideSamples
-            && shown.source == context.source
-            && binding.miniShownAskedSpanHz == expectedSpan
-            && binding.capture.sourceSampleRateHz == rate
-            && fftOf(binding.grant) == fftOf(decoded->grant);
+        // the Core says continues the picture shown (it is centred on the
+        // slice, so every tuning step moves it, and the Core carries that
+        // on) leaves the painted frame in place until the keyframe.
+        // Anything else is a new picture and blanks it. From a Core that
+        // states no picture every context is a new picture, as it was
+        // before the moved picture.
+        const bool carriesOn = !binding.rejected && !binding.transmit && !wantsTx
+            && coreCarriedOn.value_or(false);
         if (!carriesOn) {
             emit miniDisplayUnavailable(binding.miniSliceId);
             binding.lastMiniTrace.clear();
         }
-        binding.miniKeptAtAsk = false;
-        binding.miniShownAskedSpanHz = expectedSpan;
+        binding.shownPicture = decoded->pictureGeneration;
+        binding.drawing.reset();
         binding.context = context;
         binding.contextRevision = revision;
         binding.sourceCentreHz = sourceCentre;
@@ -7026,6 +7129,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         // status stay as they were; the transmit context and its frames go
         // to whoever draws the transmit display (Task 29).
         binding.contextRevision = revision;
+        binding.drawing.reset();
         binding.decoder.reset();
         binding.accepted = true;
         binding.rejected = false;
@@ -7065,6 +7169,8 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     binding.contextRevision = revision;
     binding.sourceCentreHz = sourceCentre;
     binding.capture = {context, sourceCentre, rate};
+    binding.shownPicture = decoded->pictureGeneration;
+    binding.drawing.reset();
     {
         // R-DISP-HOLD: the view asked and the view answered, when this
         // context answers the pan's latest ask.
@@ -7102,12 +7208,10 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     // a context of the picture it already shows (a new dBm range or frame
     // rate), and empties it for a new picture.
     const QPointer<SpectrumWidget> contextWidget = binding.widget;
-    // R-DISP-RETUNE: with the span this context's request asked for, by
-    // which a moved picture is judged.
+    // R-DISP-RETUNE: with the Core's word on whether this context continues
+    // the picture shown, where the Core states it.
     contextWidget->setRemoteSpectrumContext(
-        context, sourceCentre, rate, grantedFftSize,
-        (budgetMode ? binding.acceptedRequest : binding.observed)
-            .value(QStringLiteral("spanHz")).toDouble());
+        context, sourceCentre, rate, grantedFftSize, coreCarriedOn);
     if (!self || d->connectionId != connectionId) { return; }
     it = d->bindings.find(endpointId);
     if (it != d->bindings.end() && it->second.contextRevision == acceptedContextRevision
@@ -7159,7 +7263,9 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
 void RemoteMediaController::requestKeyframe(quint32 endpointId)
 {
     auto it = d->bindings.find(endpointId);
-    if (it == d->bindings.end() || !it->second.accepted) { return; }
+    // R-DISP-RETUNE (7b): for the generation whose frames are decoded, the
+    // accepted one or one taken for drawing only.
+    if (it == d->bindings.end() || !it->second.takesFrames()) { return; }
     auto& binding = it->second;
     const qint64 now = d->clock.elapsed();
     if (now - binding.lastKeyframeMs < 200) { return; }
@@ -7167,7 +7273,7 @@ void RemoteMediaController::requestKeyframe(quint32 endpointId)
     ++d->displayCounters.keyframeRequests;
     send({{QStringLiteral("op"), QStringLiteral("keyframe")},
           {QStringLiteral("endpointId"), double(endpointId)},
-          {QStringLiteral("contextGeneration"), double(binding.acceptedGeneration())}});
+          {QStringLiteral("contextGeneration"), double(binding.drawnGeneration())}});
 }
 
 void RemoteMediaController::receiveDisplay(const QByteArray& packet)
@@ -7203,12 +7309,14 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
     const quint32 id = qFromBigEndian<quint32>(packet.constData() + 8);
     const quint32 generation = qFromBigEndian<quint32>(packet.constData() + 12);
     auto it = d->bindings.find(id);
-    if (it == d->bindings.end() || !it->second.accepted
+    // R-DISP-RETUNE (7b): frames of the accepted context, or of a context
+    // taken for drawing only while there is one.
+    if (it == d->bindings.end() || !it->second.takesFrames()
         || (!it->second.widget && !it->second.isMini())
         || !it->second.slice
         || it->second.observedStream != it->second.slice->streamIndex()
         || it->second.observedStreamEpoch != it->second.slice->streamEpoch()
-        || generation != it->second.acceptedGeneration()) { return; }
+        || generation != it->second.drawnGeneration()) { return; }
     if (it->second.isMini()) {
         const auto& mini = it->second;
         const bool budgetMode = d->client->remoteDisplayBudgetLimits().has_value();
@@ -7216,8 +7324,11 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         if (!d->miniWanted.contains(mini.miniSliceId) || wanted.isEmpty()
             || mini.transmit != (d->model->isTransmitting()
                 && d->model->txBoundSlice() == mini.slice)
-            || (budgetMode ? !sameOriginalIntent(wanted, mini.acceptedRequest)
-                           : wanted != mini.observed)) { return; }
+            // A context taken for drawing only answers a request the mini
+            // display has since changed, by its nature.
+            || (!mini.drawing
+                && (budgetMode ? !sameOriginalIntent(wanted, mini.acceptedRequest)
+                               : wanted != mini.observed))) { return; }
     }
     auto& binding = it->second;
     // R-R3-21: this pan's waits between display messages, the last 10 s.
@@ -7269,11 +7380,15 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
             // from the over reaches the presenter.
             return;
         }
-        const SpectrumEndpointContext& context = binding.context;
+        const SpectrumEndpointContext& context =
+            binding.drawing ? binding.drawing->context : binding.context;
         binding.presenter.setRowPeriodNs(context.targetFps > 0 && context.framesPerLine > 0
             ? qint64(context.framesPerLine) * 1'000'000'000LL / context.targetFps : 0);
         const quint64 droppedBefore = binding.presenter.counters().itemsDropped;
-        binding.presenter.push(decoded.frame, binding.capture);
+        // Each frame goes on with where it was captured, so it is drawn
+        // there whatever the pan shows by then (R-R3-21).
+        binding.presenter.push(decoded.frame,
+                               binding.drawing ? binding.drawing->capture : binding.capture);
         d->displayCounters.itemsDropped += binding.presenter.counters().itemsDropped - droppedBefore;
         reconcileClockProbe();
         presentDueDisplay();
@@ -7415,30 +7530,37 @@ void RemoteMediaController::presentDueDisplay()
                 const bool budgetMode = d->client
                     && d->client->remoteDisplayBudgetLimits().has_value();
                 const QJsonObject wanted = d->requestMini(mini.slice);
-                if (!mini.accepted || !mini.slice
+                // R-DISP-RETUNE (7b): the context whose frames are given,
+                // the accepted one or one taken for drawing only. The mini
+                // display is given each frame with the centre and span of
+                // its own context, not those the slice has moved to.
+                const SpectrumEndpointContext& given =
+                    mini.drawing ? mini.drawing->context : mini.context;
+                if (!mini.takesFrames() || !mini.slice
                     || !d->miniWanted.contains(mini.miniSliceId)
                     || wanted.isEmpty() || mini.transmit != currentTx
-                    || (budgetMode ? !sameOriginalIntent(wanted, mini.acceptedRequest)
-                                   : wanted != mini.observed)
+                    || (!mini.drawing
+                        && (budgetMode ? !sameOriginalIntent(wanted, mini.acceptedRequest)
+                                       : wanted != mini.observed))
                     || mini.slice->sliceIndex() != mini.miniSliceId
                     || mini.observedStream != mini.slice->streamIndex()
                     || mini.observedStreamEpoch != mini.slice->streamEpoch()
-                    || item.frame.context.contextGeneration != mini.acceptedGeneration()
-                    || item.centreHz != mini.context.exactCentreHz
-                    || item.spanHz != mini.context.exactSpanHz
-                    || item.frame.waterfallDbm.size() != mini.context.codec.waterfallSamples) {
+                    || item.frame.context.contextGeneration != mini.drawnGeneration()
+                    || item.centreHz != given.exactCentreHz
+                    || item.spanHz != given.exactSpanHz
+                    || item.frame.waterfallDbm.size() != given.codec.waterfallSamples) {
                     continue;
                 }
                 if (item.kind == RemoteDisplayPresenter::Kind::Frame) {
-                    if (item.frame.traceDbm.size() != mini.context.codec.traceSamples) {
+                    if (item.frame.traceDbm.size() != given.codec.traceSamples) {
                         continue;
                     }
                     mini.lastMiniTrace = item.frame.traceDbm;
                 }
                 if (mini.lastMiniTrace.isEmpty()) { continue; }
                 emit miniDisplayFrame(mini.miniSliceId, mini.lastMiniTrace,
-                    item.frame.waterfallDbm, mini.context.exactCentreHz,
-                    mini.context.exactSpanHz, mini.transmit,
+                    item.frame.waterfallDbm, given.exactCentreHz,
+                    given.exactSpanHz, mini.transmit,
                     item.kind == RemoteDisplayPresenter::Kind::Frame
                         ? item.frame.waterfallAdvance : true);
                 if (!self || d->connectionId != connectionId) { return; }
@@ -7495,16 +7617,26 @@ void RemoteMediaController::presentDueDisplay()
                 // Captured before this pan was tuned or renewed: its trace and
                 // waterfall row are drawn at the frequency they were captured
                 // at, so a tune or drag never blanks the trace (R-R3-21).
-                if (widget) {
-                    widget->presentRemoteTraceCaptured(item.frame.traceDbm,
-                                                       item.centreHz, item.spanHz);
-                }
+                const bool presented = widget
+                    && widget->presentRemoteTraceCaptured(item.frame.traceDbm,
+                                                          item.centreHz, item.spanHz);
                 if (item.frame.waterfallAdvance && widget) {
                     if (widget->enqueueRemoteWaterfallRow(item.frame.waterfallDbm,
                                                           item.frame.wideDbm,
                                                           item.capture)) {
                         recordQueuedProvenance();
                     }
+                }
+                // R-DISP-RETUNE (7b): a frame of a context taken for drawing
+                // only is always drawn this way (the pan's own context is
+                // the accepted one), and is a frame drawn.
+                it = d->bindings.find(id);
+                if (presented && it != d->bindings.end() && it->second.drawing
+                    && it->second.drawing->context.codec.contextGeneration
+                        == item.frame.context.contextGeneration) {
+                    ++d->frames;
+                    emit displayFrameReceived(id);
+                    if (!self || d->connectionId != connectionId) { return; }
                 }
                 continue;
             }

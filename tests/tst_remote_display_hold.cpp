@@ -23,6 +23,13 @@
 // and the noise floor carry on; the peak hold and the blobs empty.
 //
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the Core
+//                                    states the picture; what a pan and a
+//                                    mini display draw through a fast spin,
+//                                    over a link that delays the frames as
+//                                    it delays the answers; a Core that
+//                                    states no picture.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE: the moved picture tests.
 //                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
@@ -31,15 +38,19 @@
 
 #include <QtTest>
 
+#include <QApplication>
 #include <QJsonObject>
+#include <QMetaMethod>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtEndian>
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <random>
 
@@ -69,6 +80,14 @@ namespace {
 // The dBm window's headroom and whole-dB rounding, as the rule states them.
 constexpr double kHeadroomDb = 10.0;
 
+// The fast spin tests: the fewest frames of the spin's own contexts that must
+// be drawn, pinned below what was measured. Measured on macOS, three runs:
+// the pan drew 57, 57 and 58 of the 71 frames of the spin's contexts that
+// reached the window in 30 steps; the mini display was given 22, 23 and 27
+// in 16 steps. Before the window drew what it was sent, both were 0.
+constexpr qsizetype kPanSpinFramesDrawnFloor = 40;
+constexpr int kMiniSpinFramesFloor = 12;
+
 class DisplayTransport final : public IMediaTransport {
 public:
     explicit DisplayTransport(QObject* parent) : IMediaTransport(parent) {}
@@ -76,12 +95,51 @@ public:
     void stop() override { active = false; }
     bool acceptDescription(const QString&, const QString&) override { return true; }
     bool acceptCandidate(const QString&, const QString&) override { return true; }
+    // One spectrum frame, by the endpoint and the context generation in its
+    // envelope.
+    struct Frame {
+        quint32 endpoint = 0;
+        quint32 generation = 0;
+    };
+    static std::optional<Frame> frameOf(const QByteArray& packet)
+    {
+        if (packet.size() < 16 || !packet.startsWith("NSDC")) { return std::nullopt; }
+        return Frame{qFromBigEndian<quint32>(packet.constData() + 8),
+                     qFromBigEndian<quint32>(packet.constData() + 12)};
+    }
     bool sendDisplay(const QByteArray& packet) override
     {
         if (!active) { return false; }
+        if (const std::optional<Frame> frame = frameOf(packet)) { sent.append(*frame); }
         // A closed gate loses the packet, as a lossy link does.
-        if (other && gateOpen) { other->deliver(packet); }
+        if (!other || !gateOpen) { return true; }
+        // A link with delay: the packet waits, in order, to be released.
+        if (holding) { held.append(packet); return true; }
+        other->deliver(packet);
         return true;
+    }
+    // Everything held up to now is what the next releaseMarked() delivers.
+    void mark() { marked = held.size(); }
+    // Delivers, in order, what was held when mark() was called; returns the
+    // spectrum frames among it.
+    QList<Frame> releaseMarked()
+    {
+        QList<Frame> delivered;
+        const qsizetype count = std::min(marked, held.size());
+        const QList<QByteArray> due = held.mid(0, count);
+        held.remove(0, count);
+        marked = 0;
+        for (const QByteArray& packet : due) {
+            if (const std::optional<Frame> frame = frameOf(packet)) { delivered.append(*frame); }
+            if (other) { other->deliver(packet); }
+        }
+        return delivered;
+    }
+    QList<Frame> releaseAll()
+    {
+        holding = false;
+        mark();
+        return releaseMarked();
     }
     bool sendRtp(const QByteArray&) override { return active; }
     bool isReady() const override { return active; }
@@ -89,8 +147,27 @@ public:
     void deliver(const QByteArray& packet) { emit displayReceived(packet); }
     bool active = false;
     bool gateOpen = true;
+    bool holding = false;
+    qsizetype marked = 0;
+    QList<QByteArray> held;
+    // Every spectrum frame this end was given to send, held or not.
+    QList<Frame> sent;
     QPointer<DisplayTransport> other;
 };
+
+// The frequency of the strongest signal in a row of samples drawn across
+// centreHz +- spanHz / 2.
+std::optional<double> strongestHz(const QVector<float>& samples, double centreHz, double spanHz)
+{
+    if (samples.isEmpty() || spanHz <= 0.0) { return std::nullopt; }
+    const float top = *std::max_element(samples.cbegin(), samples.cend());
+    double sum = 0.0;
+    int counted = 0;
+    for (int i = 0; i < samples.size(); ++i) {
+        if (samples.at(i) >= top - 0.01f) { sum += i; ++counted; }
+    }
+    return centreHz - spanHz / 2.0 + (sum / counted + 0.5) * spanHz / samples.size();
+}
 
 struct Ask {
     double minDbm = 0.0;
@@ -148,10 +225,18 @@ struct Fixture {
     int stream = -1;
     double centre = 0.0;
     std::minstd_rand noise{20261010U};
+    // A carrier this far from the receiver's centre, when set.
+    std::optional<double> toneOffsetHz;
+    double tonePhase = 0.0;
 
-    explicit Fixture(bool withCore)
+    // statesPicture false: the window declares no spectrumPicture, so the
+    // Core is to it one that states no picture (an older Core).
+    explicit Fixture(bool withCore, bool statesPicture = true)
         : settings(dir.filePath(QStringLiteral("station.settings")))
     {
+        if (!statesPicture) {
+            client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
+        }
         station.setBoardForTest(HPSDRHW::Saturn);
         station.configureStreamPool(5, 5, 192000);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -272,6 +357,15 @@ struct Fixture {
         QVector<float> iq(2048);
         std::uniform_real_distribution<float> sample(-1.0e-3f, 1.0e-3f);
         for (float& value : iq) { value = sample(noise); }
+        if (toneOffsetHz) {
+            const double advance = 2.0 * std::numbers::pi * *toneOffsetHz / 192000.0;
+            for (int n = 0; n < iq.size() / 2; ++n) {
+                iq[2 * n] += float(0.02 * std::cos(tonePhase));
+                iq[2 * n + 1] += float(0.02 * std::sin(tonePhase));
+                tonePhase += advance;
+            }
+            tonePhase = std::fmod(tonePhase, 2.0 * std::numbers::pi);
+        }
         QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
                                   Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
     }
@@ -909,11 +1003,13 @@ private slots:
         QCOMPARE(f.miniAsks(), asked + 1);
         for (int turn = 0; turn < 10; ++turn) { f.feed(); QTest::qWait(10); }
         QVERIFY(unavailable.isEmpty());
-        // Now a new picture is asked: the chain of kept frames ends here.
+        // Now a new picture is asked. The window predicts nothing at the
+        // ask: the mini display is blanked when the Core's context says the
+        // picture is a new one.
         f.widget->setSpectrumDetector(SpectrumDetector::Average);
         f.stationLink->setHoldsOutgoing(false);
         QVERIFY(f.run([&] { f.plan(); return f.miniAsks() >= asked + 2; }));
-        QVERIFY2(!unavailable.isEmpty(),
+        QVERIFY2(f.run([&] { f.plan(); return !unavailable.isEmpty(); }),
                  "a new picture asked while a moved one was awaited did not blank "
                  "the mini display");
         f.finish();
@@ -1041,124 +1137,465 @@ private slots:
         f.finish();
     }
 
-    // R-DISP-RETUNE. A measurement, with what it found pinned: what the
-    // main pan draws while it is moved faster than the link answers (a
-    // tuning wheel with the pan following its receiver). Thirty steps, each
-    // made before the Core's context for the step before it has arrived.
-    // The window ignores a context whose request has since changed
-    // (RemoteMediaController::onMediaControl), so it accepts none of them;
-    // the Core has moved on to each new context and the window, still on
-    // the old one, can draw none of its frames.
+    // R-DISP-RETUNE (third wave). What the main pan draws while it is moved
+    // faster than the link answers (a tuning wheel with the pan following
+    // its receiver): thirty steps of 1 kHz, each made before the Core's
+    // context for the step before it has arrived.
+    //
+    // The link delays the Core's frames as it delays its answers: a frame
+    // the Core sent before it heard a step reaches the window after the
+    // context of the step before, as it does over a real link. (With the
+    // frames undelayed the Core is always one context ahead of the window
+    // and no frame can ever be one of a context the window knows.)
+    //
+    // The Core states the picture: every context of the spin continues the
+    // picture the pan shows, so the window takes each for drawing though its
+    // request has since changed, and draws its frames at the frequencies
+    // they were captured at. The carrier in them stays at its frequency on
+    // the moving pan. None of that is an accepted answer: the pan's own
+    // context is the one from before the spin until the wheel stops, and
+    // the window asks once a step, as it did.
+    //
+    // The Core states no picture: the window can draw none of them (the rule
+    // before this one) and the context that ends the spin is a new picture.
+    //
+    // Every step a new picture (the width changes with it): none of those
+    // contexts continues the picture shown, and none is drawn.
+    void whatAPanDrawsWhileItIsMovedFasterThanTheLinkAnswers_data()
+    {
+        QTest::addColumn<bool>("statesPicture");
+        QTest::addColumn<bool>("newPictureEachStep");
+        QTest::newRow("the Core states the picture") << true << false;
+        QTest::newRow("the Core states no picture") << false << false;
+        QTest::newRow("every step is a new picture") << true << true;
+    }
+
     void whatAPanDrawsWhileItIsMovedFasterThanTheLinkAnswers()
     {
-        Fixture f(/*withCore=*/true);
+        QFETCH(bool, statesPicture);
+        QFETCH(bool, newPictureEachStep);
+        Fixture f(/*withCore=*/true, statesPicture);
+        f.toneOffsetHz = 20000.0;
         QVERIFY(f.start());
+        QCOMPARE(f.client.capabilities().spectrumPictureVersion, statesPicture ? 1 : 0);
         QSignalSpy frames(f.widget, &SpectrumWidget::spectrumFrameRendered);
+        QSignalSpy drawn(f.window.get(), &RemoteMediaController::displayFrameReceived);
         QVERIFY(f.run([&] { return f.contextFollowsLastAsk() && frames.size() >= 30; }));
+        const auto carrierHz = [&f] {
+            return strongestHz(f.widget->renderedPixels(), f.widget->centerFrequency(),
+                               f.widget->bandwidth());
+        };
+        const std::optional<double> carrierAtStart = carrierHz();
+        QVERIFY(carrierAtStart);
         const double startCentre = f.widget->centerFrequency();
-        // 500 Hz a step: 15 kHz in all, well inside what the receiver covers.
-        constexpr double kStepHz = 500.0;
+        const double width = f.widget->bandwidth();
+        const double pixelHz = width / f.widget->renderedPixels().size();
+        QVERIFY2(std::abs(std::abs(*carrierAtStart - f.centre) - 20000.0) <= 2.0 * pixelHz,
+                 qPrintable(QStringLiteral("the carrier is drawn %1 Hz from the receiver's "
+                                           "centre").arg(*carrierAtStart - f.centre)));
+        // Toward the carrier, so it stays in the pan.
+        const double direction = *carrierAtStart >= startCentre ? 1.0 : -1.0;
+        constexpr double kStepHz = 1000.0;
         constexpr int kSteps = 30;
 
-        quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
-        const quint32 generationBefore = generation;
-        const QVector<float> traceBefore = f.widget->renderedPixels();
-        QVERIFY(!traceBefore.isEmpty());
-        const qsizetype framesBefore = frames.size();
+        const quint32 generationBefore = f.widget->remoteCodecForTest().contextGeneration;
         const int askedBefore = f.panAsks();
+        const qsizetype sentBefore = f.coreMedia->sent.size();
+        const qsizetype drawnBefore = drawn.size();
         int contextsAccepted = 0;
-        int stepsWithAFrame = 0;
         int stepsBlank = 0;
-        qsizetype framesAfterFirstAsk = -1;
+        int stepsWithAFrame = 0;
+        qsizetype deliveredOfTheOldContext = 0;
+        qsizetype deliveredOfTheSpin = 0;
+        double worstCarrierPixels = 0.0;
 
-        // What the Core answers waits on the link from each ask on.
-        f.onPanAsk = [&f] { f.stationLink->setHoldsOutgoing(true); };
+        // The link from here on: what the Core answers waits from each ask,
+        // and so do its frames.
+        f.coreMedia->holding = true;
+        f.onPanAsk = [&f] {
+            f.stationLink->setHoldsOutgoing(true);
+            f.coreMedia->mark();
+        };
         for (int step = 1; step <= kSteps; ++step) {
-            const qsizetype framesAtStep = frames.size();
-            f.widget->setDisplayWindowPreservingHistory(startCentre + step * kStepHz,
-                                                        f.widget->bandwidth());
-            // The answer to the step before arrives now, after this step.
+            const double stepWidth = newPictureEachStep && step % 2 == 1 ? width - 600.0 : width;
+            f.widget->setDisplayWindowPreservingHistory(
+                startCentre + direction * step * kStepHz, stepWidth);
+            // The answer to the step before arrives now, after this step,
+            // and the window asks for this one.
             f.stationLink->setHoldsOutgoing(false);
-            for (int turn = 0; turn < 6; ++turn) {
-                f.feed();
-                f.plan();
-                QTest::qWait(5);
-                const quint32 current = f.widget->remoteCodecForTest().contextGeneration;
-                if (current != generation) {
-                    generation = current;
-                    ++contextsAccepted;
+            QVERIFY2(f.run([&] { f.plan(); return f.panAsks() >= askedBefore + step; }, 10'000),
+                     qPrintable(QStringLiteral("step %1 was not asked").arg(step)));
+            // Then the frames the Core sent before it heard of this step.
+            const qsizetype drawnAtStep = drawn.size();
+            for (const DisplayTransport::Frame& frame : f.coreMedia->releaseMarked()) {
+                if (frame.generation == generationBefore) {
+                    ++deliveredOfTheOldContext;
+                } else {
+                    ++deliveredOfTheSpin;
                 }
             }
-            if (frames.size() != framesAtStep) { ++stepsWithAFrame; }
-            if (f.widget->renderedPixels().isEmpty()) { ++stepsBlank; }
-            if (step == 1) { framesAfterFirstAsk = frames.size(); }
+            for (int turn = 0; turn < 8; ++turn) { f.feed(); QTest::qWait(10); }
+            if (drawn.size() != drawnAtStep) { ++stepsWithAFrame; }
+            if (f.widget->remoteCodecForTest().contextGeneration != generationBefore) {
+                ++contextsAccepted;
+            }
+            const std::optional<double> carrier = carrierHz();
+            if (!carrier) {
+                ++stepsBlank;
+            } else {
+                worstCarrierPixels = std::max(worstCarrierPixels,
+                    std::abs(*carrier - *carrierAtStart)
+                        / (f.widget->bandwidth() / f.widget->renderedPixels().size()));
+            }
         }
         const int asksInSpin = f.panAsks() - askedBefore;
-        const qsizetype framesInSpin = frames.size() - framesBefore;
-        const qsizetype framesAfterStepOne = frames.size() - framesAfterFirstAsk;
-        const double pannedHz = f.widget->centerFrequency() - startCentre;
-        // What is on screen: the trace that was there, drawn that many
-        // pixels to the left (the pan moved up), or something else.
-        const QVector<float> traceAfter = f.widget->renderedPixels();
-        const int pixels = int(traceBefore.size());
-        const int expectedShift = int(std::lround(pannedHz / f.widget->bandwidth() * pixels));
-        int bestShift = 0;
-        double bestDifference = std::numeric_limits<double>::max();
-        if (traceAfter.size() == traceBefore.size()) {
-            for (int shift = -pixels / 2; shift <= pixels / 2; ++shift) {
-                double sum = 0.0;
-                int counted = 0;
-                for (int pixel = 0; pixel < pixels; ++pixel) {
-                    const int from = pixel + shift;
-                    if (from < 0 || from >= pixels) { continue; }
-                    sum += std::abs(traceAfter.at(pixel) - traceBefore.at(from));
-                    ++counted;
-                }
-                if (counted > 0 && sum / counted < bestDifference) {
-                    bestDifference = sum / counted;
-                    bestShift = shift;
-                }
-            }
+        const qsizetype drawnInSpin = drawn.size() - drawnBefore;
+        qsizetype sentInSpin = 0;
+        for (qsizetype i = sentBefore; i < f.coreMedia->sent.size(); ++i) {
+            if (f.coreMedia->sent.at(i).generation != generationBefore) { ++sentInSpin; }
         }
+        // Frames of the context from before the spin are drawn as they were
+        // before it; what is drawn beyond them is of the spin's contexts.
+        const qsizetype drawnOfTheSpin = std::max<qsizetype>(0, drawnInSpin - deliveredOfTheOldContext);
 
         // The wheel stops: the last answer arrives and the pan catches up.
         f.onPanAsk = nullptr;
         f.stationLink->setHoldsOutgoing(false);
-        QElapsedTimer caughtUp;
-        caughtUp.start();
+        f.coreMedia->releaseAll();
         const qsizetype framesAtStop = frames.size();
         QVERIFY(f.run([&] {
             f.plan();
             return f.widget->remoteCodecForTest().contextGeneration != generationBefore
                 && f.contextFollowsLastAsk() && frames.size() > framesAtStop;
         }));
-        const qint64 caughtUpMs = caughtUp.elapsed();
+        const SpectrumWidget::RemoteContextPicture ending = f.widget->remoteContextPicture();
         qInfo().noquote() << QStringLiteral(
-            "R-DISP-RETUNE fast spin: %1 steps of %2 Hz, %3 asks, %4 contexts accepted, "
-            "%5 frames drawn during the spin (%6 after the first step), %7 steps drew a "
-            "frame, %8 steps showed a blank pan; on screen the trace from before the "
-            "spin drawn %9 pixels along (%13 dB mean difference, %14 pixels wide, the "
-            "pan having moved %10 Hz, %15 pixels); first new frame %11 ms after the "
-            "last step, as a %12 picture")
+            "R-DISP-RETUNE fast spin (%1): %2 steps of %3 Hz, %4 asks, %5 contexts accepted "
+            "during the spin; the Core sent %6 frames of the spin's contexts, %7 reached the "
+            "window before the wheel stopped and at least %8 were drawn (%9 frames drawn in "
+            "all, %10 delivered of the context from before the spin); %11 steps drew a frame, "
+            "%12 steps showed a blank pan; the carrier was drawn at most %13 pixels from its "
+            "frequency; the pan ended on a %14 picture")
+            .arg(QString::fromUtf8(QTest::currentDataTag()))
             .arg(kSteps).arg(kStepHz).arg(asksInSpin).arg(contextsAccepted)
-            .arg(framesInSpin).arg(framesAfterStepOne).arg(stepsWithAFrame).arg(stepsBlank)
-            .arg(bestShift)
-            .arg(pannedHz).arg(caughtUpMs)
-            .arg(f.widget->remoteContextPicture() == SpectrumWidget::RemoteContextPicture::Moved
-                     ? QStringLiteral("moved")
-                     : f.widget->remoteContextPicture()
-                               == SpectrumWidget::RemoteContextPicture::Same
-                           ? QStringLiteral("same") : QStringLiteral("new"))
-            .arg(bestDifference, 0, 'f', 3).arg(pixels).arg(expectedShift);
+            .arg(sentInSpin).arg(deliveredOfTheSpin).arg(drawnOfTheSpin).arg(drawnInSpin)
+            .arg(deliveredOfTheOldContext).arg(stepsWithAFrame).arg(stepsBlank)
+            .arg(worstCarrierPixels, 0, 'f', 2)
+            .arg(ending == SpectrumWidget::RemoteContextPicture::Moved ? QStringLiteral("moved")
+                 : ending == SpectrumWidget::RemoteContextPicture::Same ? QStringLiteral("same")
+                 : QStringLiteral("new"));
         QCOMPARE(asksInSpin, kSteps);
         QCOMPARE(contextsAccepted, 0);
-        QCOMPARE(framesAfterStepOne, 0);
         QCOMPARE(stepsBlank, 0);
-        QCOMPARE(f.widget->remoteContextPicture(),
-                 SpectrumWidget::RemoteContextPicture::Moved);
+        QVERIFY2(worstCarrierPixels <= 2.0,
+                 qPrintable(QStringLiteral("the carrier was drawn %1 pixels from its frequency")
+                                .arg(worstCarrierPixels, 0, 'f', 2)));
+        if (statesPicture && !newPictureEachStep) {
+            QVERIFY2(drawnOfTheSpin >= kPanSpinFramesDrawnFloor,
+                     qPrintable(QStringLiteral("%1 frames of the spin's contexts were drawn of "
+                                               "%2 that reached the window")
+                                    .arg(drawnOfTheSpin).arg(deliveredOfTheSpin)));
+            QVERIFY2(stepsWithAFrame >= kSteps - 1,
+                     qPrintable(QStringLiteral("%1 of %2 steps drew a frame")
+                                    .arg(stepsWithAFrame).arg(kSteps)));
+            QCOMPARE(ending, SpectrumWidget::RemoteContextPicture::Moved);
+        } else {
+            QVERIFY2(drawnInSpin <= deliveredOfTheOldContext,
+                     qPrintable(QStringLiteral("%1 frames were drawn and %2 were of the "
+                                               "context the pan had")
+                                    .arg(drawnInSpin).arg(deliveredOfTheOldContext)));
+            QCOMPARE(ending, SpectrumWidget::RemoteContextPicture::New);
+        }
+        f.finish();
+    }
+
+    // R-DISP-RETUNE (third wave). The same for the mini display, which is
+    // centred on its slice: sixteen tuning steps of 500 Hz, each made before
+    // the context for the step before it has arrived, over the link that
+    // delays frames as it delays answers.
+    //
+    // The Core states the picture: the mini display is never blanked, and it
+    // is given the frames of each context at that context's own centre and
+    // span, the carrier in them at its frequency. The Core states no
+    // picture: it is blanked at every ask and given no frame until the
+    // wheel stops.
+    void whatAMiniDisplayIsGivenWhileItsSliceIsTunedFasterThanTheLinkAnswers_data()
+    {
+        QTest::addColumn<bool>("statesPicture");
+        QTest::newRow("the Core states the picture") << true;
+        QTest::newRow("the Core states no picture") << false;
+    }
+
+    void whatAMiniDisplayIsGivenWhileItsSliceIsTunedFasterThanTheLinkAnswers()
+    {
+        QFETCH(bool, statesPicture);
+        Fixture f(/*withCore=*/true, statesPicture);
+        f.toneOffsetHz = 6000.0;
+        QVERIFY(f.start());
+        QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        f.window->setMiniDisplaySlices({f.sliceId});
+        QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 30; }));
+        SliceModel* const slice = f.remote.sliceById(f.sliceId);
+        QVERIFY(slice);
+        const double start = slice->frequency();
+        const auto carrierOf = [](const QList<QVariant>& frame) {
+            return strongestHz(frame.at(1).value<QVector<float>>(), frame.at(3).toDouble(),
+                               frame.at(4).toDouble());
+        };
+        const auto sampleHzOf = [](const QList<QVariant>& frame) {
+            return frame.at(4).toDouble() / frame.at(1).value<QVector<float>>().size();
+        };
+        const std::optional<double> carrierAtStart = carrierOf(miniFrames.last());
+        QVERIFY(carrierAtStart);
+        QVERIFY2(std::abs(std::abs(*carrierAtStart - f.centre) - 6000.0)
+                     <= 2.0 * sampleHzOf(miniFrames.last()),
+                 qPrintable(QStringLiteral("the carrier is drawn %1 Hz from the receiver's "
+                                           "centre").arg(*carrierAtStart - f.centre)));
+        const double direction = *carrierAtStart >= start ? 1.0 : -1.0;
+        const double centreBefore = miniFrames.last().at(3).toDouble();
+        constexpr double kStepHz = 500.0;
+        constexpr int kSteps = 16;
+        // The Core's crop is cut at bin edges: a centre is a step's to within
+        // a bin.
+        constexpr double kBinToleranceHz = 50.0;
+
+        unavailable.clear();
+        const int askedBefore = f.miniAsks();
+        const qsizetype sentBefore = f.coreMedia->sent.size();
+        int framesAtAnEarlierStep = 0;
+        int framesElsewhere = 0;
+        int stepsWithAFrame = 0;
+        double worstCarrierSamples = 0.0;
+        f.coreMedia->holding = true;
+        f.onMiniAsk = [&f] {
+            f.stationLink->setHoldsOutgoing(true);
+            f.coreMedia->mark();
+        };
+        for (int step = 1; step <= kSteps; ++step) {
+            slice->setFrequency(start + direction * step * kStepHz);
+            f.stationLink->setHoldsOutgoing(false);
+            QVERIFY2(f.run([&] { f.plan(); return f.miniAsks() >= askedBefore + step; }, 10'000),
+                     qPrintable(QStringLiteral("step %1 was not asked").arg(step)));
+            const qsizetype framesAtStep = miniFrames.size();
+            f.coreMedia->releaseMarked();
+            for (int turn = 0; turn < 8; ++turn) { f.feed(); QTest::qWait(10); }
+            if (miniFrames.size() != framesAtStep) { ++stepsWithAFrame; }
+            for (qsizetype i = framesAtStep; i < miniFrames.size(); ++i) {
+                const QList<QVariant>& frame = miniFrames.at(i);
+                // Its own frequencies: the centre of a step asked before
+                // this one, never the centre the slice now has.
+                const double stepsAlong =
+                    (frame.at(3).toDouble() - centreBefore) / (direction * kStepHz);
+                const double nearest = std::round(stepsAlong);
+                if (nearest >= 1.0 && nearest <= double(step - 1)
+                    && std::abs(stepsAlong - nearest) * kStepHz <= kBinToleranceHz) {
+                    ++framesAtAnEarlierStep;
+                } else {
+                    ++framesElsewhere;
+                }
+                if (const std::optional<double> carrier = carrierOf(frame)) {
+                    worstCarrierSamples = std::max(worstCarrierSamples,
+                        std::abs(*carrier - *carrierAtStart) / sampleHzOf(frame));
+                }
+            }
+        }
+        const int asksInSpin = f.miniAsks() - askedBefore;
+        const qsizetype blankedInSpin = unavailable.size();
+        qsizetype sentInSpin = 0;
+        for (qsizetype i = sentBefore; i < f.coreMedia->sent.size(); ++i) { ++sentInSpin; }
+
+        // The wheel stops.
+        f.onMiniAsk = nullptr;
+        f.stationLink->setHoldsOutgoing(false);
+        f.coreMedia->releaseAll();
+        const double last = start + direction * kSteps * kStepHz;
+        QVERIFY(f.run([&] {
+            f.plan();
+            return !miniFrames.isEmpty()
+                && std::abs(miniFrames.last().at(3).toDouble() - last) <= kBinToleranceHz;
+        }));
+        qInfo().noquote() << QStringLiteral(
+            "R-DISP-RETUNE fast spin, mini display (%1): %2 steps of %3 Hz, %4 asks, blanked "
+            "%5 times; given %6 frames at the centre of an earlier step and %7 elsewhere, of "
+            "%8 frames the Core sent for both displays in the spin; %9 steps gave a frame; "
+            "the carrier at most %10 samples from its frequency")
+            .arg(QString::fromUtf8(QTest::currentDataTag()))
+            .arg(kSteps).arg(kStepHz).arg(asksInSpin).arg(blankedInSpin)
+            .arg(framesAtAnEarlierStep).arg(framesElsewhere).arg(sentInSpin)
+            .arg(stepsWithAFrame).arg(worstCarrierSamples, 0, 'f', 2);
+        QCOMPARE(asksInSpin, kSteps);
+        QCOMPARE(framesElsewhere, 0);
+        if (statesPicture) {
+            QCOMPARE(blankedInSpin, 0);
+            QVERIFY2(framesAtAnEarlierStep >= kMiniSpinFramesFloor,
+                     qPrintable(QStringLiteral("%1 frames were given in the spin")
+                                    .arg(framesAtAnEarlierStep)));
+            QVERIFY2(stepsWithAFrame >= kSteps - 2,
+                     qPrintable(QStringLiteral("%1 of %2 steps gave a frame")
+                                    .arg(stepsWithAFrame).arg(kSteps)));
+            QVERIFY2(worstCarrierSamples <= 2.0,
+                     qPrintable(QStringLiteral("the carrier was %1 samples from its frequency")
+                                    .arg(worstCarrierSamples, 0, 'f', 2)));
+            QVERIFY2(unavailable.isEmpty(), "the mini display was blanked when the wheel stopped");
+        } else {
+            QVERIFY2(blankedInSpin >= kSteps,
+                     qPrintable(QStringLiteral("the mini display was blanked %1 times in %2 asks")
+                                    .arg(blankedInSpin).arg(kSteps)));
+            QCOMPARE(framesAtAnEarlierStep, 0);
+        }
+        f.finish();
+    }
+
+    // R-DISP-RETUNE (third wave). A Core that states no picture: the pan
+    // keeps the rule it had before the moved picture. A context that differs
+    // only in its dBm range is the picture shown; a drag, which that Core
+    // may well have carried on, is a new picture. The window does not guess.
+    void aPanOfACoreThatStatesNoPictureKeepsOnlyTheSamePicture()
+    {
+        Fixture f(/*withCore=*/true, /*statesPicture=*/false);
+        QVERIFY(f.start());
+        QSignalSpy frames(f.widget, &SpectrumWidget::spectrumFrameRendered);
+        QVERIFY(f.run([&] { return f.contextFollowsLastAsk() && frames.size() >= 30; }));
+        QCOMPARE(f.client.capabilities().spectrumPictureVersion, 0);
+
+        quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
+        int asked = f.panAsks();
+        f.widget->setDbmRange(f.widget->refLevel() - f.widget->dynamicRange() - 15.0f,
+                              f.widget->refLevel() - 15.0f);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.panAsks() > asked && f.contextFollowsLastAsk()
+                && f.widget->remoteCodecForTest().contextGeneration != generation;
+        }));
+        QCOMPARE(f.widget->remoteContextPicture(), SpectrumWidget::RemoteContextPicture::Same);
+
+        // 12 kHz is a whole number of bins at every FFT size in use, so the
+        // Core answers with the span it answered before.
+        generation = f.widget->remoteCodecForTest().contextGeneration;
+        asked = f.panAsks();
+        const double spanBefore = f.widget->bandwidth();
+        f.widget->setDisplayWindowPreservingHistory(f.widget->centerFrequency() + 12000.0,
+                                                    f.widget->bandwidth());
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.panAsks() > asked
+                && f.widget->remoteCodecForTest().contextGeneration != generation
+                && f.widget->remoteCodecForTest().traceSamples != 0
+                && f.contextFollowsLastAsk();
+        }));
+        QCOMPARE(f.widget->bandwidth(), spanBefore);
+        QCOMPARE(f.widget->remoteContextPicture(), SpectrumWidget::RemoteContextPicture::New);
+        f.finish();
+    }
+
+    // R-DISP-RETUNE (third wave). A Core that states no picture: the mini
+    // display is blanked by a tuning step, as it was before the moved
+    // picture, and shows the frames of the new centre when they come.
+    void aMiniDisplayOfACoreThatStatesNoPictureIsBlankedByATuningStep()
+    {
+        Fixture f(/*withCore=*/true, /*statesPicture=*/false);
+        QVERIFY(f.start());
+        QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        f.window->setMiniDisplaySlices({f.sliceId});
+        QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
+        const double shownCentre = miniFrames.last().at(3).toDouble();
+        const int miniAsked = f.miniAsks();
+        unavailable.clear();
+
+        SliceModel* const slice = f.remote.sliceById(f.sliceId);
+        QVERIFY(slice);
+        slice->setFrequency(slice->frequency() + 3000.0);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.miniAsks() > miniAsked && !miniFrames.isEmpty()
+                && miniFrames.last().at(3).toDouble() != shownCentre;
+        }));
+        QVERIFY2(!unavailable.isEmpty(),
+                 "a tuning step did not blank the mini display of a Core that states no "
+                 "picture");
         f.finish();
     }
 };
 
-QTEST_MAIN(TstRemoteDisplayHold)
+namespace {
+
+// The R-DISP-RETUNE functions: what a pan and a mini display keep, draw and
+// are given when the picture moves. NEREUS_DISPLAY_HOLD_GROUP=retune runs
+// exactly these; =rest runs every other test function (R-DISP-HOLD); unset
+// runs everything. The two are separate ctest entries, as the remote media
+// controller's audio functions are, so neither carries the other's time
+// against the 120 s limit: together they take about 130 s on a quiet Mac. A
+// name here that is not a test function stops the run, so a rename cannot
+// quietly drop a test from both entries.
+const QStringList kRetuneFunctions{
+    QStringLiteral("aMovedPictureCarriesOnAndEmptiesOnlyThePeakHold"),
+    QStringLiteral("theMiniDisplayKeepsItsFrameThroughATuningStep"),
+    QStringLiteral("theMiniDisplayKeepsItsFrameThroughStepsFasterThanTheLink"),
+    QStringLiteral("theMiniDisplayKeepsItsFrameWhenTheCropChangesByABin"),
+    QStringLiteral("aPanDraggedByAFractionOfABinIsAMovedPicture"),
+    QStringLiteral("whatAPanDrawsWhileItIsMovedFasterThanTheLinkAnswers"),
+    QStringLiteral("whatAMiniDisplayIsGivenWhileItsSliceIsTunedFasterThanTheLinkAnswers"),
+    QStringLiteral("aPanOfACoreThatStatesNoPictureKeepsOnlyTheSamePicture"),
+    QStringLiteral("aMiniDisplayOfACoreThatStatesNoPictureIsBlankedByATuningStep"),
+};
+
+// The test functions QtTest would run: private slots with no arguments,
+// other than the four fixtures and the _data functions.
+QStringList testFunctions(const QMetaObject* meta)
+{
+    QStringList names;
+    for (int i = meta->methodOffset(); i < meta->methodCount(); ++i) {
+        const QMetaMethod method = meta->method(i);
+        const QString name = QString::fromLatin1(method.name());
+        if (method.methodType() != QMetaMethod::Slot
+            || method.access() != QMetaMethod::Private || method.parameterCount() != 0
+            || name.endsWith(QStringLiteral("_data"))
+            || name == QStringLiteral("initTestCase") || name == QStringLiteral("cleanupTestCase")
+            || name == QStringLiteral("init") || name == QStringLiteral("cleanup")) {
+            continue;
+        }
+        names.append(name);
+    }
+    return names;
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstRemoteDisplayHold test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    QStringList arguments = app.arguments();
+    const QString group = qEnvironmentVariable("NEREUS_DISPLAY_HOLD_GROUP");
+    // A run that names its own functions (or options) runs as asked.
+    if (!group.isEmpty() && arguments.size() == 1) {
+        const QStringList all = testFunctions(test.metaObject());
+        for (const QString& name : kRetuneFunctions) {
+            if (!all.contains(name)) {
+                qCritical("kRetuneFunctions names %s, which is not a test function",
+                          qPrintable(name));
+                return 1;
+            }
+        }
+        if (group == QStringLiteral("retune")) {
+            arguments += kRetuneFunctions;
+        } else if (group == QStringLiteral("rest")) {
+            for (const QString& name : all) {
+                if (!kRetuneFunctions.contains(name)) {
+                    arguments += name;
+                }
+            }
+        } else {
+            qCritical("NEREUS_DISPLAY_HOLD_GROUP must be retune or rest, not %s",
+                      qPrintable(group));
+            return 1;
+        }
+    }
+    return QTest::qExec(&test, arguments);
+}
+
 #include "tst_remote_display_hold.moc"

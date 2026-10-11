@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : R-DISP-RETUNE (third wave): setRemoteSpectrumContext takes
+//                 the Core's word on whether a context continues the picture
+//                 shown (coreCarriedOn) in place of the span asked. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 : R-DISP-RETUNE: RemoteContextPicture and
 //                 remoteContextPicture(): a context for the picture moved
 //                 in frequency is told apart from a new picture. J.J. Boyd
@@ -508,15 +512,19 @@ public:
     /// normalise shift follow it, and the context's frame rate (the rate the
     /// Core actually sends, after the display budget) times the peak hold,
     /// blob and noise-floor decay.
-    /// R-DISP-RETUNE: `askedSpanHz` is the span of the request this context
-    /// answers. A moved picture is judged by it, as the Core judges it: the
-    /// span the Core answers with is its crop, cut at FFT bin edges, and is
-    /// a bin wider or narrower as the view's alignment to the bins changes.
-    /// A caller that names none (0) is taken to have asked for the span it
-    /// was answered with.
+    /// R-DISP-RETUNE: `coreCarriedOn` is the Core's own word on whether
+    /// this context continues the picture the pan shows (its
+    /// `pictureGeneration` is the one of the context shown), and it alone
+    /// decides: true is the picture shown, moved or not; false is a new
+    /// picture whatever its numbers. The pan compares no spans or centres
+    /// to tell a move from a new picture. Without it (a Core that states no
+    /// picture) the rule is the one before the moved picture: a context
+    /// that differs only in its dBm range or frame rate is the picture
+    /// shown and anything else is a new one.
     void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                   double sourceCentreHz, double sampleRateHz,
-                                  int grantedFftSize = 0, double askedSpanHz = 0.0);
+                                  int grantedFftSize = 0,
+                                  std::optional<bool> coreCarriedOn = std::nullopt);
     /// R-DISP-HOLD: whether the last context was for the picture the pan
     /// already showed (same receiver and source geometry, same view, same
     /// sample counts and wide row), so the pan kept its last frame, peak
@@ -530,12 +538,11 @@ public:
     enum class RemoteContextPicture {
         /// Anything else: the pan starts again, as it always did.
         New,
-        /// The same receiver, sample rate, FFT size, sample counts, span
-        /// asked and wide state, with the stream centre, the view centre or
-        /// both moved (a retune or a pan drag). The span is the one asked
-        /// for, compared exactly, which is the Core's own rule
-        /// (SpectrumEndpoint.cpp, movedPlanePicture); the span answered is
-        /// not compared. The Core's averaged trace carried
+        /// The Core says this context continues the picture shown, and
+        /// something the pan holds per pixel changed with it (a retune or a
+        /// pan drag moved the stream centre, the view centre or both). Only
+        /// a Core that states the picture can say so; the pan derives no
+        /// move of its own. The Core's averaged trace carried
         /// on, so the drawn trace stays, at the frequency it was captured
         /// at, until the keyframe; the waterfall history and its queued rows
         /// keep their frequencies; the noise floor estimate is untouched.
@@ -3076,9 +3083,6 @@ private:
     NereusSDR::RemoteSpectrumCapture m_pendingRemoteCapture;
     double m_remoteExactCentreHz{0.0};
     double m_remoteExactSpanHz{0.0};
-    // R-DISP-RETUNE: the span asked for the picture the pan shows
-    // (setRemoteSpectrumContext).
-    double m_remoteAskedSpanHz{0.0};
     // Parity Task 17: the Core's granted FFT size and frame rate for this
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};

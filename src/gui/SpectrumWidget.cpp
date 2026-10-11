@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
+//                 word (coreCarriedOn) decides whether a context continues
+//                 the picture shown; the pan's own moved-picture rule and
+//                 the span asked are gone. AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE: setRemoteSpectrumContext
 //                 tells a picture moved in frequency (a retune, a pan drag)
 //                 from a new picture. AI-assisted via Anthropic Claude Code.
@@ -1577,7 +1582,6 @@ void SpectrumWidget::clearRemoteSpectrum()
     m_remoteWidebandAdcRateHz = 0.0;
     m_remoteFftSize = 0;
     m_remoteFps = 0;
-    m_remoteAskedSpanHz = 0.0;
     recomputeExtendedMode();
     m_dss.clear();
     m_dssFoldCount = 0;
@@ -1598,7 +1602,8 @@ void SpectrumWidget::clearRemoteSpectrum()
 
 void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                                double sourceCentreHz, double sampleRateHz,
-                                               int grantedFftSize, double askedSpanHz)
+                                               int grantedFftSize,
+                                               std::optional<bool> coreCarriedOn)
 {
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
@@ -1608,8 +1613,13 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // place. The same picture is the same receiver and source geometry, the
     // same view to the Hz, the same sample counts and the same wide row;
     // only then are values the pan holds per pixel still the same pixels.
+    //
+    // R-DISP-RETUNE: and, where the Core states the picture, one the Core
+    // carried on. A context that matches in every number and starts a new
+    // picture at the Core (its source restarted, say) is a new picture.
     const SpectrumEndpointContext& shown = m_remoteCapture.context();
     const bool samePicture = m_remoteSpectrum && m_remoteCodec.traceSamples != 0
+        && coreCarriedOn.value_or(true)
         && shown.codec.endpointId == context.codec.endpointId
         && shown.codec.traceSamples == context.codec.traceSamples
         && shown.codec.waterfallSamples == context.codec.waterfallSamples
@@ -1625,36 +1635,18 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
         && qFuzzyCompare(m_centerHz, context.exactCentreHz)
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
-    // R-DISP-RETUNE: the same shape in another place. A retune moves the
-    // stream centre under the pan, a pan drag moves the view centre; the
-    // Core's averaged trace carried on through either, so this is not a new
-    // picture. The pan's own window is not compared: it may already stand at
-    // the new centre (the operator moved it) or still at the old one (the
-    // Core moved the stream).
-    //
-    // The span compared is the one asked for, exactly, as the Core compares
-    // it (SpectrumEndpoint.cpp, movedPlanePicture). The span answered is the
-    // Core's crop, cut at FFT bin edges (SpectrumReducer::visibleBinRange):
-    // it is a bin wider or narrower as the view's alignment to the bins
-    // changes, so two contexts of one picture moved do not agree on it.
-    const double askedSpan = askedSpanHz > 0.0 ? askedSpanHz : context.exactSpanHz;
-    const double shownAskedSpan = m_remoteAskedSpanHz;
-    m_remoteAskedSpanHz = askedSpan;
-    const bool movedPicture = !samePicture && m_remoteSpectrum
-        && m_remoteCodec.traceSamples != 0
-        && shown.codec.endpointId == context.codec.endpointId
-        && shown.codec.traceSamples == context.codec.traceSamples
-        && shown.codec.waterfallSamples == context.codec.waterfallSamples
-        && shown.codec.wideSamples == context.codec.wideSamples
-        && shown.source == context.source
-        && shownAskedSpan == askedSpan
-        && shown.wideSpanHz == context.wideSpanHz
-        && shown.wideband == context.wideband
-        && m_remoteCapture.sourceSampleRateHz == sampleRateHz
-        && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
-        && (shown.exactCentreHz != context.exactCentreHz
-            || shown.wideCentreHz != context.wideCentreHz
-            || m_remoteCapture.sourceCentreHz != sourceCentreHz);
+    // R-DISP-RETUNE: the picture shown, carried on at the Core, with
+    // something the pan holds per pixel changed: a retune moved the stream
+    // centre under the pan, or a drag moved the view centre. The Core's
+    // word decides this and nothing of the pan's does. The pan used to
+    // derive a move from the span it had asked for, the window from the
+    // spans of its requests and the phone from the span answered to within
+    // a bin; three derivations of a rule that is the Core's
+    // (SpectrumEndpoint.cpp, movedPlanePicture), each of which could
+    // disagree with it. Without the Core's word there is no moved picture.
+    const bool movedPicture = !samePicture && coreCarriedOn.value_or(false)
+        && m_remoteSpectrum
+        && shown.codec.endpointId == context.codec.endpointId;
     m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
         : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
     if (samePicture) {
