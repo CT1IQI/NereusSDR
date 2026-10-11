@@ -2310,7 +2310,38 @@ void DaemonMediaController::syncAudioRoutes()
         Q_UNUSED(sliceId);
         apply(stream.route, stream.sender != nullptr && m_receiverAudioNegotiated);
     }
-    apply(m_headphones.route, m_headphones.sender != nullptr && m_headphonesMixNegotiated);
+    const bool headphonesOpen = m_headphones.sender != nullptr && m_headphonesMixNegotiated;
+    apply(m_headphones.route, headphonesOpen);
+
+    // A transport with no audio send for another thread
+    // (IMediaTransport::audioRtpSink() is null by default) takes nothing:
+    // its peer's sink answers "not ready" for ever. Say so once for each
+    // connection that would otherwise carry a stream now.
+    bool anyOpen = m_audioSender != nullptr || headphonesOpen;
+    for (const auto& [sliceId, stream] : m_receiverStreams) {
+        Q_UNUSED(sliceId);
+        anyOpen = anyOpen || (stream.sender != nullptr && m_receiverAudioNegotiated);
+    }
+    const auto warnIfNoSink = [this](const MediaPeer* peer) {
+        if (peer->transportHasAudioRtpSink()) {
+            return;
+        }
+        const QString connectionId = peer->connectionId();
+        if (m_noAudioSinkWarned.contains(connectionId)) {
+            return;
+        }
+        m_noAudioSinkWarned.insert(connectionId);
+        qCWarning(lcDaemonMedia).noquote()
+            << QStringLiteral("receive audio cannot be sent on media connection %1: its "
+                              "transport has no audio send for the sender thread")
+                   .arg(connectionId.left(64));
+    };
+    if (anyOpen && peerUp) {
+        warnIfNoSink(m_peer.get());
+        if (copying) {
+            warnIfNoSink(m_replacement.get());
+        }
+    }
 }
 
 std::optional<IceConfiguration> DaemonMediaController::mediaIceConfiguration()
@@ -6613,6 +6644,7 @@ void DaemonMediaController::clearSession()
     MediaPeer* const peer = m_peer.release();
     // R-AUD-SEND: the peer leaves every route before it stops.
     syncAudioRoutes();
+    m_noAudioSinkWarned.clear();
     if (peer) {
         peer->disconnect(this);
         peer->stop();

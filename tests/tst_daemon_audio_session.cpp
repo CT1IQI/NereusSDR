@@ -43,11 +43,17 @@ public:
     bool acceptCandidate(const QString&, const QString&) override { return true; }
     bool sendDisplay(const QByteArray&) override { return readyState; }
     bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
-    std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override
+    {
+        return giveAudioSink ? rtpSink : nullptr;
+    }
     bool isReady() const override { return readyState; }
     void becomeReady() { readyState = true; emit ready(); }
 
     bool started{false};
+    // False: a transport with no audio send for another thread, as the
+    // interface's default is.
+    bool giveAudioSink{true};
     // R-AUD-SEND: the Core sends audio from its sender thread, through the
     // sink; what the sink took is read under its lock.
     const std::shared_ptr<Test::RecordingRtpSink> rtpSink{
@@ -113,6 +119,7 @@ struct Harness {
     QPointer<FakeTransport> mediaTransport;
     DaemonMediaController controller;
     AudioEngine* engine{nullptr};
+    bool transportsGiveAudioSink{true};
     int sliceA{-1};
     int sliceB{-1};
 
@@ -122,6 +129,7 @@ struct Harness {
         , controller(&server, &radio, nullptr,
                      [this](QObject* parent) -> IMediaTransport* {
                          mediaTransport = new FakeTransport(parent);
+                         mediaTransport->giveAudioSink = transportsGiveAudioSink;
                          return mediaTransport;
                      })
     {
@@ -342,6 +350,37 @@ private slots:
                  rejected.sender.lastEmittedSequence);
         QCOMPARE(stopped.sender.lastEmittedTimestamp,
                  rejected.sender.lastEmittedTimestamp);
+    }
+
+    // R-AUD-SEND: a transport with no audio send for the sender thread.
+    // Audio then goes nowhere, and the Core says so: once for the
+    // connection, however often its routes are brought up to date after.
+    void aTransportWithNoAudioSinkIsWarnedAboutOnce()
+    {
+        const QRegularExpression warning(
+            QStringLiteral("receive audio cannot be sent on media connection %1")
+                .arg(QLatin1String(kConnectionId)));
+        Harness h;
+        h.transportsGiveAudioSink = false;
+        h.establishAndReady();
+        QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+        // The one line, which must come; any further one fails the test.
+        QTest::ignoreMessage(QtWarningMsg, warning);
+        QTest::failOnWarning(warning);
+        QVERIFY(h.client.sendMediaControl(audioControl(1, true), h.client.sessionEpoch()));
+        QTRY_VERIFY(h.controller.audioDiagnostics().activeContext);
+        // Off and on again: the routes are brought up to date each time.
+        QVERIFY(h.client.sendMediaControl(audioControl(2, false), h.client.sessionEpoch()));
+        QTRY_VERIFY(latestAudioContext(controls).value(QStringLiteral("revision")).toInteger() == 2);
+        QVERIFY(h.client.sendMediaControl(audioControl(3, true), h.client.sessionEpoch()));
+        QTRY_VERIFY(latestAudioContext(controls).value(QStringLiteral("revision")).toInteger() == 3);
+        // Nothing is sent, and nothing is counted against the transport.
+        h.feedMixed(DaemonAudioSource::kBlockFrames);
+        QTRY_VERIFY(h.controller.audioDiagnostics().sender.encodedPackets == std::uint64_t{1});
+        const auto diagnostics = h.controller.audioDiagnostics();
+        QCOMPARE(diagnostics.sendAttempts, std::uint64_t{0});
+        QCOMPARE(diagnostics.sendRejected, std::uint64_t{0});
+        QVERIFY(h.mediaTransport->rtpPackets.isEmpty());
     }
 
     // R-AUD-SEND: a ready transport that will not take a packet. That is a

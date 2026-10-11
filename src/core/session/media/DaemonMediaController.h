@@ -885,6 +885,9 @@ private:
     void detachAudioSender(DaemonAudioSender* sender,
                            const std::shared_ptr<AudioSendRoute>& route);
     void syncAudioRoutes();
+    // The media connections already warned about for having no audio send
+    // off the transport's own thread: said once for each, not at every sync.
+    QSet<QString> m_noAudioSinkWarned;
     std::shared_ptr<AudioSendRoute> m_audioRoute{std::make_shared<AudioSendRoute>()};
     DaemonAudioSendThread m_sendThread;
     // What the current peer's start negotiated, which a replacement keeps.

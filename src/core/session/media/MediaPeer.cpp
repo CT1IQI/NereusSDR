@@ -195,6 +195,8 @@ private:
 struct MediaPeer::Private {
     TransportFactory factory;
     const std::shared_ptr<MediaPeerRtpSink> rtpSink = std::make_shared<MediaPeerRtpSink>();
+    // Whether the started transport gave rtpSink somewhere to send.
+    bool transportHasAudioRtpSink = false;
     // Task 28: the session's ICE settings through the service.
     std::optional<IceConfiguration> ice;
     QPointer<IMediaTransport> transport;
@@ -288,7 +290,9 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     d->ready = false;
     d->started = true;
     // R-AUD-SEND: this start's checks, for a send from another thread.
-    d->rtpSink->publish({transport->audioRtpSink(), d->audioSsrc, d->receiverAudioSsrcs,
+    const std::shared_ptr<MediaRtpSink> transportSink = transport->audioRtpSink();
+    d->transportHasAudioRtpSink = transportSink != nullptr;
+    d->rtpSink->publish({transportSink, d->audioSsrc, d->receiverAudioSsrcs,
                          d->headphonesAudioSsrc});
 
     QPointer<MediaPeer> self(this);
@@ -577,6 +581,7 @@ void MediaPeer::stopInternal(bool notify)
     d->ready = false;
     // R-AUD-SEND: no send from another thread passes this peer from here.
     d->rtpSink->publish({});
+    d->transportHasAudioRtpSink = false;
     d->remoteDescriptionAccepted = false;
     d->remoteCandidateControls = 0;
     d->localCandidateControls = 0;
@@ -735,6 +740,11 @@ bool MediaPeer::sendRtp(const QByteArray& packet)
 std::shared_ptr<MediaRtpSink> MediaPeer::audioRtpSink() const
 {
     return d->rtpSink;
+}
+
+bool MediaPeer::transportHasAudioRtpSink() const
+{
+    return d->transportHasAudioRtpSink;
 }
 
 bool MediaPeer::sendMicRtp(const QByteArray& packet)
