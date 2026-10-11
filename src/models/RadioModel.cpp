@@ -11393,17 +11393,35 @@ void RadioModel::activateBoundSliceChannels()
 // is changed. `loadNr3Model` is the one station-wide step in the block
 // (RNNRloadModel is global, not per channel): connectToRadio passes true,
 // as before; activateSliceChannel passes false and leaves the loaded model
-// as it is.
-void RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, bool loadNr3Model)
+// as it is. `applyNrSelection` pushes the active NR slot inside the block,
+// where connectToRadio has always done it; activateSliceChannel passes
+// false because it pushes the slot itself, last, just before the channel
+// starts, so the slot is pushed once either way.
+//
+// Returns false when the slice, the channel or this model went away during
+// the push: a channel setter or a slice setter reached from here can emit,
+// and a handler can remove the slice or replace the channel. Nothing is
+// touched after that, and the caller must not touch them either. These
+// are the checks activateSliceChannel made after each of its own pushes.
+bool RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, bool loadNr3Model,
+                                         bool applyNrSelection)
 {
     if (!slice || !rxCh) {
-        return;
+        return false;
     }
+    const QPointer<RadioModel> self(this);
+    const QPointer<SliceModel> target(slice);
+    const QPointer<RxChannel> channel(rxCh);
+    const auto alive = [&] { return self && target && channel; };
     rxCh->setMode(slice->dspMode());
+    if (!alive()) { return false; }
     rxCh->setFilterFreqs(slice->filterLow(),
                          slice->filterHigh());
+    if (!alive()) { return false; }
     rxCh->setAgcMode(slice->agcMode());
+    if (!alive()) { return false; }
     rxCh->setAgcTop(slice->rfGain());
+    if (!alive()) { return false; }
     // AGC advanced — push slice state to WDSP (Stage 2)
     rxCh->setAgcThreshold(slice->agcThreshold());
     rxCh->setAgcHang(slice->agcHang());
@@ -11509,15 +11527,26 @@ void RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, boo
             if (!m_dspAssets->applyNr3Model(&nr3Reason)) {
                 qCWarning(lcDsp) << "NR3 model not loaded:" << nr3Reason;
             }
+            if (!alive()) { return false; }
         }
 
         // Push the active NR slot last — parameters must be set before
         // run-flag so WDSP gets valid defaults on first enable.
         // From Thetis console.cs:43297 SelectNR pattern [v2.10.3.13]
-        applyNnrStateToChannel(slice, rxCh);
+        if (applyNrSelection) {
+            // applyNnrStateToChannel calls slice setters, which emit.
+            applyNnrStateToChannel(slice, rxCh);
+            if (!alive()) { return false; }
+        }
     }
 
     rxCh->setSnbEnabled(slice->snbEnabled());
+    // ANF had a live push only (the anfEnabledChanged handler in
+    // wireSliceSignals) and was in no initial push, so a restored ANF
+    // showed on and was off in the DSP, on slice A too (2026-10-11). The
+    // setter is cached and the channel starts with ANF off, so this does
+    // nothing for a slice whose ANF is off.
+    rxCh->setAnfEnabled(slice->anfEnabled());
     // APF sub-parameter defaults — From Thetis radio.cs:1986,1948,1967,1929
     // These are set-and-forget on channel creation; run flag follows slice.
     // selection=3 (bi-quad), bw=600Hz, gain=1.0, freq=600.0Hz
@@ -11554,6 +11583,7 @@ void RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, boo
     // m_afGain regardless, but seeding it first means the channel
     // never runs even one block at WDSP's default gain1=4.0.
     rxCh->setAfGain(slice->afGain() / 100.0);
+    return alive();
 }
 
 void RadioModel::activateSliceChannel(SliceModel* slice)
@@ -11580,31 +11610,33 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
         // Already live. Leave it alone: connectToRadio's WDSP-init lambda
         // gives Slice A's channel the full state push (NR, SNB, APF, squelch,
         // audio panel, the lot) and then activates it, and re-running the
-        // subset below on top of that would be a downgrade dressed as a
-        // refresh.
+        // push below on top of a running channel is not needed: every
+        // setting has a live per-slice push once the channel is up.
         return;
     }
 
-    // The demodulation-critical subset. Everything here decides whether the
-    // audio coming out of fexchange2 is the right signal at all; the rest of
-    // the per-slice DSP surface (NR, SNB, APF, squelch, binaural, pan, and the
-    // NB1 / NB2 / SNB detailed tuning) still follows the active slice and
-    // lands in a later sub-epic. Note this is the INITIAL seed only: once a
-    // channel is up, every one of those settings has a live per-slice push in
-    // wireSliceSignals that resolves rxChannel(slice->sliceIndex()), so
-    // operator changes reach the right slice either way.
+    // The slice's whole DSP state: what decides whether the audio coming
+    // out of fexchange2 is the right signal at all (mode, filter, AGC mode,
+    // RF gain, AF gain) and the rest of the per-slice surface (AGC detail,
+    // NB1 / NB2 / SNB tuning, NR, SNB, ANF, APF, squelch, binaural, pan).
+    // Note this is the INITIAL seed only: once a channel is up, every one
+    // of those settings has a live per-slice push in wireSliceSignals that
+    // resolves rxChannel(slice->sliceIndex()), so operator changes reach
+    // the right slice either way.
     const int targetId = slice->sliceIndex();
     const auto current = [&] {
         return self && target && ch && self->sliceById(targetId) == target.data();
     };
     // 2026-10-11: the whole of the slice's state, the same pushes in the
     // same order as slice A gets at connect (pushSliceStateToChannel), not
-    // the subset above. It opens with what used to be pushed here one by
-    // one (mode, filter, AGC mode, RF gain) and ends with the AF gain seed:
-    // WDSP initialises panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and
-    // setActive re-pushes m_afGain anyway, but seeding first means the
-    // default never reaches the mixer.
-    pushSliceStateToChannel(slice, ch, false);
+    // the five that were pushed here before. It opens with those (mode,
+    // filter, AGC mode, RF gain), each still checked for the slice and the
+    // channel having gone away, and ends with the AF gain seed: WDSP
+    // initializes panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and setActive
+    // re-pushes m_afGain anyway, but seeding first means the default never
+    // reaches the mixer. The active NR slot is not pushed in there
+    // (applyNrSelection false): it goes last, below, as it always has.
+    if (!pushSliceStateToChannel(slice, ch, false, false)) { return; }
     if (!current()) { return; }
     // The offset the allocator resolved for this slice, plus RIT and DIG.
     // bindSliceToStream pushes it too, but a reconnect re-opens the channel
@@ -18521,10 +18553,15 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             // Channel zero belongs to the primary slice even when recovery
             // preserves another receiver as the operator's active selection.
             SliceModel* const primarySlice = sliceById(0);
+            // False when the slice or the channel went away during the
+            // push; neither pointer is used again then.
+            bool pushed = true;
             if (primarySlice) {
-                pushSliceStateToChannel(primarySlice, rxCh, true);
+                pushed = pushSliceStateToChannel(primarySlice, rxCh, true, true);
             }
-            rxCh->setActive(primarySlice && primarySlice->streamIndex() >= 0);
+            if (pushed) {
+                rxCh->setActive(primarySlice && primarySlice->streamIndex() >= 0);
+            }
         }
 
         // ── Phase 3F Sub-Epic I: open the WDSP RX channel pool ─────────────

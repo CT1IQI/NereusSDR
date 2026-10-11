@@ -19,10 +19,15 @@
 
 #include <QtTest/QtTest>
 
+#include <QDir>
+#include <QStandardPaths>
+
 #include <QTemporaryDir>
 
 #include "core/AppSettings.h"
 #include "core/DspControlThread.h"
+#include "core/HpsdrModel.h"
+#include "core/daemon/DaemonAgcSource.h"
 #include "core/RadioConnection.h"
 #include "core/RxChannel.h"
 #include "core/SampleRateCatalog.h"
@@ -202,6 +207,87 @@ private slots:
                  QStringLiteral("False"));
     }
 
+    // The AUTO tick writes the threshold twice a second. Its own writes
+    // must schedule no save and must not turn AUTO off: only what the
+    // operator changes is saved.
+    void theAutoTicksOwnThresholdUpdateSchedulesNoSave()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        qRegisterMetaType<QVector<float>>();
+        qRegisterMetaType<MediaSourceKey>();
+        RadioModel radio;
+        SilentRadioConnection conn;
+        radio.injectConnectionForTest(&conn);
+        DetachConnection detach{&radio};
+        radio.setBoardForTest(HPSDRHW::Saturn);
+        radio.configureStreamPool(5, 5, 192000);
+        radio.setConnectionStateForTest(ConnectionState::Connected);
+
+        radio.addSlice(QStringLiteral("tick-pan-a"));
+        SliceModel* b = radio.sliceById(radio.addSlice(QStringLiteral("tick-pan-b")));
+        QVERIFY(b);
+        QVERIFY(b->streamIndex() >= 0);
+        // The station's AGC source measures each stream's noise floor.
+        DaemonAgcSource source(&radio);
+        QTRY_COMPARE(source.activeStreamCount(), 2);
+
+        // A noise floor for B's own stream (the tick skips a slice without
+        // one). Fixed broad-band pseudo-noise, as tst_daemon_agc_source.
+        QVector<float> noise;
+        noise.reserve(4096 * 2);
+        quint32 state = 0x4d595df4U;
+        for (int i = 0; i < 4096 * 2; ++i) {
+            state = state * 1664525U + 1013904223U;
+            noise.append((static_cast<float>((state >> 8) & 0xffffU) / 32767.5f - 1.0f) * 0.20f);
+        }
+        for (int frame = 0; frame < 90 && !b->stationAutoAgcNoiseFloorValid(); ++frame) {
+            QVERIFY(QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                              Q_ARG(int, b->streamIndex()),
+                                              Q_ARG(QVector<float>, noise)));
+            QTest::qWait(35);
+        }
+        QVERIFY(b->stationAutoAgcNoiseFloorValid());
+
+        // A threshold the tick will certainly move, then AUTO on, and all
+        // of that written.
+        b->setAgcThreshold(-42);
+        b->setAutoAgcEnabled(true);
+        radio.flushPendingSettingsSave();
+        QString thresholdKey;
+        for (const QString& k : AppSettings::instance().allKeys()) {
+            if (k.startsWith(QStringLiteral("Slice1/Band")) && k.endsWith(QStringLiteral("/AgcThreshold"))) {
+                thresholdKey = k;
+            }
+        }
+        QVERIFY(!thresholdKey.isEmpty());
+        QCOMPARE(AppSettings::instance().value(thresholdKey).toInt(), -42);
+
+        radio.runAutoAgcTickForTest();
+        QVERIFY(b->agcThreshold() != -42);   // the tick did write
+        QVERIFY(b->autoAgcEnabled());        // and it is not a manual change
+
+        // Longer than the 500 ms save timer: nothing was scheduled, so
+        // what is saved is still what the operator set.
+        QTest::qWait(900);
+        QCOMPARE(AppSettings::instance().value(thresholdKey).toInt(), -42);
+        QCOMPARE(AppSettings::instance().value(sliceKey(1, "AgcAutoEnabled")).toString(),
+                 QStringLiteral("True"));
+    }
+
+    // The settings these tests write are the test sandbox's (Qt's test
+    // mode, set up by TestSandboxInit), never the operator's.
+    void theSettingsFileIsTheSandboxsNotTheOperators()
+    {
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        const QString path = AppSettings::instance().filePath();
+        const QString home = QDir::homePath();
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/.config/NereusSDR")), qPrintable(path));
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/Library/Preferences/NereusSDR")),
+                 qPrintable(path));
+    }
+
     // ── A restored slice runs on what it shows ──────────────────────────
 
     // Slice B is restored while it has no WDSP channel (as the Core's
@@ -225,6 +311,7 @@ private slots:
             saved.setAgcMaxGain(88);
             saved.setNbMode(NbMode::NB);
             saved.setSnbEnabled(true);
+            saved.setAnfEnabled(true);
             saved.setMuted(true);
             saved.setBinauralEnabled(true);
             saved.setApfEnabled(true);
@@ -274,6 +361,9 @@ private slots:
         QCOMPARE(ch->agcMaxGain(), sliceB->agcMaxGain());
         QCOMPARE(ch->nbMode(), NbMode::NB);
         QVERIFY(ch->snbEnabled());
+        // ANF had a live push only, so a restored ANF never reached a
+        // channel, slice A's included.
+        QVERIFY(ch->captureState().anfEnabled);
         QVERIFY(ch->muted());
         QVERIFY(ch->binauralEnabled());
         QVERIFY(ch->apfEnabled());

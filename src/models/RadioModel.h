@@ -2288,7 +2288,12 @@ public:
     /// and RF gain. The block connectToRadio ran for slice A alone;
     /// activateSliceChannel runs it for every slice. `loadNr3Model` also
     /// loads the station's NR3 model (connectToRadio only).
-    void pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, bool loadNr3Model);
+    /// `applyNrSelection` pushes the active NR slot inside the block
+    /// (connectToRadio); activateSliceChannel pushes it itself, last.
+    /// False when the slice, the channel or this model went away during
+    /// the push: the caller must not use them again.
+    [[nodiscard]] bool pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh,
+                                               bool loadNr3Model, bool applyNrSelection);
 
     /// Stop a slice's WDSP channel running. The channel object stays open for
     /// whichever slice takes the id next. Thetis's disable half:
