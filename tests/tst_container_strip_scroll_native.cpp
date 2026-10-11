@@ -4,6 +4,10 @@
 //                 way shows no black band over its meters on the composited
 //                 window by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The window is shortened until the stack overflows it: under
+//                 Fusion with the look off the stack fits 520 px whole
+//                 (Linux CI). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //
 // Native only: QWidget::grab() renders a QRhiWidget through Qt's readback,
 // not through the window server, so an offscreen or grabbed image cannot
@@ -44,6 +48,14 @@ constexpr int kCompositeSettleMs = 120;
 // A row is black when nearly all of it is darker than this.
 constexpr int kBlackLuma = 10;
 constexpr double kBlackRowShare = 0.95;
+// The scroll steps below go to fixed offsets up to 31, so the stack must
+// overflow its viewport by more than that.
+constexpr int kLeastScrollRange = 32;
+// How long a layout gets to show the overflow, and how the window is
+// shortened where the stack fits it whole.
+constexpr int kOverflowWaitMs = 1000;
+constexpr int kShortenStep = 40;
+constexpr int kShortestWindow = 200;
 
 QImage ownWindowCapture(QWidget& window)
 {
@@ -178,7 +190,22 @@ private slots:
         root.resize(360, 520);
         root.show();
         QVERIFY(QTest::qWaitForWindowExposed(&root));
-        QTRY_VERIFY_WITH_TIMEOUT(scroll->verticalScrollBar()->maximum() > 0, kFrameTimeoutMs);
+        // The stack must overflow its viewport by at least the largest fixed
+        // offset below. How tall the stack is follows the platform's style
+        // and fonts and the look's entry headers: with the look off under
+        // Fusion (Linux) it fits a 520 px window whole and nothing scrolls,
+        // so the window is shortened until it does.
+        QScrollBar* range = scroll->verticalScrollBar();
+        (void)QTest::qWaitFor([range] { return range->maximum() >= kLeastScrollRange; }, kOverflowWaitMs);
+        while (range->maximum() < kLeastScrollRange && root.height() - kShortenStep >= kShortestWindow) {
+            root.resize(root.width(), root.height() - kShortenStep);
+            (void)QTest::qWaitFor([range] { return range->maximum() >= kLeastScrollRange; }, kOverflowWaitMs / 4);
+        }
+        const QString overflow = QStringLiteral("window %1 x %2, viewport %3 px high, stack %4 px high, scroll range %5")
+            .arg(root.width()).arg(root.height()).arg(scroll->viewport()->height())
+            .arg(scroll->widget() != nullptr ? scroll->widget()->height() : -1).arg(range->maximum());
+        qInfo().noquote() << QTest::currentDataTag() << overflow;
+        QVERIFY2(range->maximum() >= kLeastScrollRange, qPrintable(overflow));
         QTest::qWait(kCompositeSettleMs);
         if (ownWindowCapture(root).isNull()) {
             QSKIP("A capture of the test's own window is unavailable (screen recording not granted).");

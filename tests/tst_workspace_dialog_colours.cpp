@@ -17,6 +17,9 @@
 //                 Claude Code.
 //   2026-10-10 - The unstyled slider's groove is JJ's D29 track.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The unstyled slider is never thinner than the decided
+//                 handle: Fusion's 15 px slider (Linux) grows to it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -186,8 +189,16 @@ private slots:
             s->setValue(60);
         }
         WorkspacePreview::themeSubtree(&host);
-        QCOMPARE(laidOut(*h), sizeH);
-        QCOMPARE(laidOut(*v), sizeV);
+        // Its length, and across it today's thickness, never thinner than
+        // the decided handle (kSliderHandleSpanPx, or the handle is cut
+        // off). The macOS style's slider is thicker than the handle and
+        // keeps its size exactly; Fusion's horizontal one (15 px, Linux)
+        // grows to the handle.
+        const int span = Workspace::Components::kSliderHandleSpanPx;
+        qInfo() << "style" << QApplication::style()->name() << "unstyled slider today" << sizeH << sizeV
+                << "in the look" << laidOut(*h) << laidOut(*v);
+        QCOMPARE(laidOut(*h), QSize(sizeH.width(), qMax(sizeH.height(), span)));
+        QCOMPARE(laidOut(*v), QSize(qMax(sizeV.width(), span), sizeV.height()));
         const QString sheet = h->styleSheet();
         QVERIFY2(sheet.contains(QStringLiteral("QSlider::handle:horizontal")), qPrintable(sheet));
         // A second pass changes nothing.

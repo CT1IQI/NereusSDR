@@ -13,6 +13,11 @@
 //                 before it leaves Arrange. The timer that closes a menu
 //                 left open ends with its lookup. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Each case marks the audio first-run notice done: on
+//                 Linux it opened over the window and took Escape. An
+//                 Escape that does not leave Arrange names the focus and
+//                 the active window. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QComboBox>
@@ -37,6 +42,7 @@
 
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"
+#include "fakes/MainWindowTestSettings.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/MainWindow.h"
 #include "gui/containers/ArrangeHoldFilter.h"
@@ -250,6 +256,10 @@ private slots:
     void init()
     {
         QVERIFY(RemoteWindowHarness::clearIsolatedProfile());
+        // No audio first-run dialog: on Linux the VAX first-run dialog opens
+        // over the window and is the active window, and Escape with a
+        // dialog active is the dialog's, not Arrange's.
+        Test::markAudioFirstRunDone();
         WorkspacePreview::setEnabledForTest(true);
     }
     void cleanupTestCase()
@@ -808,8 +818,15 @@ private slots:
         escape();
         QVERIFY(!rail->isOpen());
         QVERIFY(w.manager->arrangeMode());
+        const auto named = [](const QWidget* widget) {
+            return widget == nullptr ? QStringLiteral("(none)")
+                : QString::fromLatin1(widget->metaObject()->className()) + QLatin1Char('#') + widget->objectName();
+        };
+        const QString state = QStringLiteral("focus %1, active window %2, popup %3, modal %4")
+            .arg(named(QApplication::focusWidget()), named(QApplication::activeWindow()),
+                 named(QApplication::activePopupWidget()), named(QApplication::activeModalWidget()));
         escape();
-        QVERIFY(!w.manager->arrangeMode());
+        QVERIFY2(!w.manager->arrangeMode(), qPrintable(state));
     }
 
     void theLookOffWindowHasNoFilterAndShiftChangesNothing()

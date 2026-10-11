@@ -22,6 +22,9 @@
 
 #include <QtTest>
 #include <QAccessible>
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformaccessibility.h>
+#include <qpa/qplatformintegration.h>
 #include <QPushButton>
 #include <QTableView>
 
@@ -102,6 +105,21 @@ int walkThenExpireChildren(QTableView* view)
     return int(ids.size());
 }
 
+// Turns the platform's accessibility on or off. Qt 6.11's
+// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
+// activation observers and leaves QAccessible::isActive() false, so there
+// the platform's own switch is set, as Qt's tests do.
+void setAccessibilityActive(bool active)
+{
+    QAccessible::setActive(active);
+    if (QAccessible::isActive() == active) {
+        return;
+    }
+    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
+        platform->setActive(active);
+    }
+}
+
 } // namespace
 
 class TestSpotListAccessibility : public QObject {
@@ -110,7 +128,7 @@ class TestSpotListAccessibility : public QObject {
 private slots:
     void initTestCase()
     {
-        QAccessible::setActive(true);
+        setAccessibilityActive(true);
         QVERIFY2(QAccessible::isActive(),
                  "accessibility must be active so item views send table model changes");
         setQtCocoaAccessibleTableCacheRepairForcedForTest(true);
@@ -119,7 +137,7 @@ private slots:
     void cleanupTestCase()
     {
         setQtCocoaAccessibleTableCacheRepairForcedForTest(false);
-        QAccessible::setActive(false);
+        setAccessibilityActive(false);
     }
 
     // The crash in the field: a spot arrives after the bridge expired rows.

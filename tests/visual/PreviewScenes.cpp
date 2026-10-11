@@ -190,6 +190,9 @@
 //                 header's pin clicked. Both floating scenes record
 //                 stays_on_top. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - A scrolled Setup scene whose page fits says so in the
+//                 context (nothingToScroll) as well as failing. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -8456,6 +8459,7 @@ void captureSetupScrollSteps(SceneContext& ctx, SetupDialog* d, const QString& n
         }
         ctx.failure = QStringLiteral("%1: %2 overflowing scroll areas, expected 1 (%3)")
                           .arg(where).arg(areas.size()).arg(names.join(QStringLiteral(", ")));
+        ctx.nothingToScroll = areas.isEmpty();
         return;
     }
     QScrollArea* area = areas.first();

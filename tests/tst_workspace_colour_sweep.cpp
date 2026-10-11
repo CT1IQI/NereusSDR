@@ -45,6 +45,13 @@
 //   2026-10-10 - Merging the two: nothing is stopped for JJ, so the
 //                 stopped list is empty (a zero-length std::array). J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Linux: text is drawn with grey antialiasing whatever the
+//                 system's fontconfig says (a config that asks for
+//                 subpixel rendering gave every glyph red and blue edges,
+//                 which are no colour of the app). A scrolled scene whose
+//                 page fits with this platform's fonts is logged, not
+//                 failed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -58,6 +65,7 @@
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QStyleFactory>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QVBoxLayout>
 
@@ -823,6 +831,13 @@ private slots:
             ctx.size = QSize(1512, 869);
             ctx.dpr = 1.0;
             s.run(ctx);
+            if (ctx.nothingToScroll) {
+                // The page fits with this platform's fonts, so its own
+                // scene (not --scrolled) has grabbed the whole of it.
+                qInfo().noquote() << "nothing to scroll, covered by the page's own scene:" << s.name
+                                  << ctx.failure;
+                continue;
+            }
             if (!ctx.failure.isEmpty()) {
                 failed << QStringLiteral("%1: %2").arg(s.name, ctx.failure);
                 continue;
@@ -1025,6 +1040,52 @@ private slots:
         QVERIFY2(findings.isEmpty(), qPrintable(describe(findings)));
     }
 };
+
+#ifdef Q_OS_LINUX
+namespace {
+
+// Subpixel (LCD) text rendering paints each glyph edge in red and blue
+// steps, hundreds of colours that belong to the panel's stripe order and
+// not to the app. Where the system's fontconfig asks for it (the Ubuntu
+// CI runner does; Debian and the Mac's offscreen platform do not), every
+// widget with text was reported. This run reads the system's
+// configuration and then turns subpixel rendering off for every font, so
+// text is the grey blend between its colour and the surface under it,
+// which is what the palette rule checks. Set before QApplication reads
+// the fonts. The file lives for the run.
+struct GreyTextAntialiasing {
+    QTemporaryDir dir;
+    GreyTextAntialiasing()
+    {
+        if (!dir.isValid()) {
+            return;
+        }
+        const QString system = (qEnvironmentVariableIsSet("FONTCONFIG_FILE")
+                                    ? qEnvironmentVariable("FONTCONFIG_FILE")
+                                    : QStringLiteral("/etc/fonts/fonts.conf")).toHtmlEscaped();
+        QFile conf(dir.filePath(QStringLiteral("fonts.conf")));
+        if (!conf.open(QIODevice::WriteOnly)) {
+            return;
+        }
+        conf.write("<?xml version=\"1.0\"?>\n"
+                   "<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n"
+                   "<fontconfig>\n"
+                   "  <include ignore_missing=\"yes\">" + system.toUtf8() + "</include>\n"
+                   "  <match target=\"pattern\">\n"
+                   "    <edit name=\"rgba\" mode=\"assign\"><const>none</const></edit>\n"
+                   "  </match>\n"
+                   "  <match target=\"font\">\n"
+                   "    <edit name=\"rgba\" mode=\"assign\"><const>none</const></edit>\n"
+                   "  </match>\n"
+                   "</fontconfig>\n");
+        conf.close();
+        qputenv("FONTCONFIG_FILE", conf.fileName().toLocal8Bit());
+    }
+};
+const GreyTextAntialiasing greyTextAntialiasing;
+
+} // namespace
+#endif
 
 QTEST_MAIN(TstWorkspaceColourSweep)
 #include "tst_workspace_colour_sweep.moc"

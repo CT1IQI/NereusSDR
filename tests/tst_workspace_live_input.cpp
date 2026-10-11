@@ -58,6 +58,11 @@
 //   2026-10-11 - The profile rail's delays are ProfileRailDock's own
 //                 constants. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - Without native child views (Linux) a click is routed by
+//                 Qt inside the one window: hitFor() answers for both, and
+//                 the native overlay check is skipped where no meter asks
+//                 for a native window. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
@@ -81,6 +86,7 @@
 #include <memory>
 #include <optional>
 #include "TestFunctionGroups.h"
+#include "fakes/MainWindowTestSettings.h"
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"
 #include "gui/MainWindow.h"
@@ -94,6 +100,7 @@
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/containers/WorkspaceHeader.h"
+#include "gui/meters/MeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/WorkspaceProfiles.h"
 #include "gui/widgets/ProfileRail.h"
@@ -359,6 +366,25 @@ public:
     explicit NativeMouse(QWidget* topLevel) : m_topLevel(topLevel) {}
 
     QWidget* targetAt(const QPoint& global) const { return nativeTarget(m_topLevel, global); }
+
+    // Where a press at `global` lands, for a check that it lands on `wanted`.
+    // With native child views (macOS) that is the view AppKit picks, as
+    // targetAt(), and nothing else is accepted. Where `wanted` has no native
+    // view below the window (Linux: MeterWidget and SpectrumWidget ask for a
+    // native window on macOS and Windows only, so the whole window is one
+    // native view) the press goes to the window and Qt routes it with
+    // QWidget::childAt, which skips a widget that is transparent for the
+    // mouse; that widget is the answer there.
+    QWidget* hitFor(const QWidget* wanted, const QPoint& global) const
+    {
+        QWidget* view = targetAt(global);
+        const QWidget* wantedView = wanted->internalWinId() != 0 ? wanted : wanted->nativeParentWidget();
+        if (view != m_topLevel || wantedView != m_topLevel) {
+            return view;
+        }
+        QWidget* child = view->childAt(view->mapFromGlobal(global));
+        return child != nullptr ? child : view;
+    }
 
     void press(const QPoint& global)
     {
@@ -912,6 +938,10 @@ private slots:
         WorkspacePreview::setEnabledForTest(true);
         AppSettings::setProfileOverride(QStringLiteral("workspace-live-input-%1").arg(QCoreApplication::applicationPid()));
         AppSettings::instance().clear();
+        // No audio first-run dialog: on Linux the VAX first-run dialog opens
+        // over the window and takes the activation the profile rail's
+        // keyboard cases give the main window.
+        Test::markAudioFirstRunDone();
         QVERIFY(AppSettings::instance().save());
         RadioDiscovery discovery;
         discovery.holdOffScans(std::chrono::minutes(5));
@@ -933,7 +963,22 @@ private slots:
         QVERIFY(f.build());
         QVERIFY(f.enterArrange());
         // The premise: the container is a native child view, as JJ's log shows
-        // ("ContainerWidgetClassWindow must be a top level window").
+        // ("ContainerWidgetClassWindow must be a top level window"). That is
+        // so where the meter and spectrum leaves ask for a native window
+        // (macOS, Windows; MeterWidget.cpp, SpectrumWidget.cpp). Elsewhere
+        // the window is one native view, Qt routes every click itself and
+        // honours WA_TransparentForMouseEvents, and there is no native
+        // overlay to check.
+        bool nativeLeaf = false;
+        for (const MeterWidget* meter : f.window->findChildren<MeterWidget*>()) {
+            nativeLeaf = nativeLeaf || meter->testAttribute(Qt::WA_NativeWindow);
+        }
+        if (!nativeLeaf) {
+            QVERIFY2(f.mainContainer()->internalWinId() == 0,
+                     "the container is a native view with no native meter under it");
+            QSKIP("No native child views on this platform: the meters ask for no native window, "
+                  "so the main window is one native view and Qt routes clicks itself.");
+        }
         QVERIFY(f.mainContainer()->internalWinId() != 0);
         QStringList blocking;
         for (QWidget* widget : f.window->findChildren<QWidget*>()) {
@@ -955,7 +1000,7 @@ private slots:
         QVERIFY(header && header->isVisible());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(header->optionsButton());
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         MenuProbe probe;
@@ -979,7 +1024,7 @@ private slots:
         QVERIFY(header->isVisible());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(header->optionsButton());
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         MenuProbe probe;
@@ -1001,7 +1046,7 @@ private slots:
         QVERIFY(grip);
         NativeMouse mouse(f.window.get());
         const QPoint from = centreOf(grip);
-        QWidget* hit = mouse.targetAt(from);
+        QWidget* hit = mouse.hitFor(header, from);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the press lands on ") + f.describe(hit)));
         EdgeDockArea* area = f.manager->edgeDockArea();
@@ -1033,7 +1078,7 @@ private slots:
         QVERIFY(grip);
         NativeMouse mouse(f.window.get());
         const QPoint from = centreOf(grip);
-        QWidget* hit = mouse.targetAt(from);
+        QWidget* hit = mouse.hitFor(header, from);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the press lands on ") + f.describe(hit)));
         // The press and the move past the drag distance reach the header and
@@ -1146,7 +1191,7 @@ private slots:
         WorkspaceEntryHeader* entry = f.entryHeader(f.rxEntryId);
         QVERIFY(entry);
         f.reveal(entry);
-        QWidget* entryView = mouse.targetAt(centreOf(entry));
+        QWidget* entryView = mouse.hitFor(entry, centreOf(entry));
         QVERIFY2(entryView == entry || entry->isAncestorOf(entryView),
                  qPrintable(QStringLiteral("the entry header is under ") + f.describe(entryView)));
         QCOMPARE(entry->cursor().shape(), Qt::OpenHandCursor);
@@ -1179,7 +1224,7 @@ private slots:
         QVERIFY(popOut->isEnabled());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(popOut);
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
@@ -1275,7 +1320,7 @@ private slots:
         QVERIFY(popOut->isEnabled());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(popOut);
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
@@ -1346,7 +1391,7 @@ private slots:
         QVERIFY(header && header->isVisible());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(header->popOutButton());
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
@@ -1481,8 +1526,11 @@ private slots:
         QVERIFY2(globalRect(targetButton) == seen,
                  qPrintable(QStringLiteral("the button moved under the pointer from %1 to %2")
                                 .arg(describeRect(seen), describeRect(globalRect(targetButton)))));
-        QWidget* hit = mouse.targetAt(to);
-        QVERIFY2(hit == dock->popover(), qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
+        // The popover's own native view where it has one (macOS); where the
+        // window is one native view, a widget inside the popover.
+        QWidget* hit = mouse.hitFor(dock->popover(), to);
+        QVERIFY2(hit == dock->popover() || (dock->popover()->internalWinId() == 0 && dock->popover()->isAncestorOf(hit)),
+                 qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(to);
         settle();
         QVERIFY2(modals.seen.isEmpty(), qPrintable(QStringLiteral("the click opened ") + modals.seen.join(", ")));
@@ -1529,7 +1577,7 @@ private slots:
         QVERIFY(view && view->isVisible());
         NativeMouse mouse(f.window.get());
         const QPoint at = centreOf(hide);
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
@@ -1629,7 +1677,7 @@ private slots:
         QVERIFY(f.document(f.mainId)->visible);
 
         const QPoint at = centreOf(hide);
-        QWidget* hit = mouse.targetAt(at);
+        QWidget* hit = mouse.hitFor(header, at);
         QVERIFY2(hit == header || header->isAncestorOf(hit),
                  qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
         mouse.click(at);
@@ -1684,7 +1732,7 @@ private slots:
             QCOMPARE(hide->objectName(), QStringLiteral("workspaceEntryHide"));
             QVERIFY(hide->isEnabled());
             const QPoint at = centreOf(hide);
-            QWidget* hit = mouse.targetAt(at);
+            QWidget* hit = mouse.hitFor(header, at);
             QVERIFY2(hit == header || header->isAncestorOf(hit),
                      qPrintable(QStringLiteral("the click lands on ") + f.describe(hit)));
             mouse.click(at);

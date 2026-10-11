@@ -29,6 +29,9 @@
 
 #include <QtTest>
 #include <QAccessible>
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformaccessibility.h>
+#include <qpa/qplatformintegration.h>
 #include <QComboBox>
 #include <QListWidget>
 #include <QTableView>
@@ -103,6 +106,21 @@ FreeDVStation makeStation(const QString& sid, const QString& callsign, int snr)
     return s;
 }
 
+// Turns the platform's accessibility on or off. Qt 6.11's
+// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
+// activation observers and leaves QAccessible::isActive() false, so there
+// the platform's own switch is set, as Qt's tests do.
+void setAccessibilityActive(bool active)
+{
+    QAccessible::setActive(active);
+    if (QAccessible::isActive() == active) {
+        return;
+    }
+    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
+        platform->setActive(active);
+    }
+}
+
 } // namespace
 
 class TestQtCocoaAccessibleTableCache : public QObject {
@@ -111,7 +129,7 @@ class TestQtCocoaAccessibleTableCache : public QObject {
 private slots:
     void initTestCase()
     {
-        QAccessible::setActive(true);
+        setAccessibilityActive(true);
         QVERIFY2(QAccessible::isActive(),
                  "accessibility must be active so item views send table model changes");
     }
@@ -120,7 +138,7 @@ private slots:
 
     void cleanup() { setQtCocoaAccessibleTableCacheRepairForcedForTest(false); }
 
-    void cleanupTestCase() { QAccessible::setActive(false); }
+    void cleanupTestCase() { setAccessibilityActive(false); }
 
     void tableWidgetInsertRemoveAndResize()
     {

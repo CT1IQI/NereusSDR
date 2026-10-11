@@ -16,6 +16,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - fedReadings for the sidecar. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - nothingToScroll, set with the failure of a scrolled
+//                 scene whose page fits. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -78,6 +81,12 @@ struct SceneContext {
     // Readings fed to Longpath instruments through the display-only seam.
     QJsonArray fedReadings;
     QString failure;     // non-empty: the scene could not run; exit non-zero
+    // Set with `failure` by a --scrolled scene whose page has nothing to
+    // scroll: the fonts of this platform let the whole page fit, so the
+    // page's own scene already shows all of it. The preview tool still
+    // fails on it (the scene list is for the Mac's fonts); a run that only
+    // reads the grabs can tell this from a scene that could not run.
+    bool nothingToScroll{false};
     // Called with the window or dialog right before it is grabbed (the
     // workspace look re-runs its scoped stylesheet pass here). Empty for
     // the retained baseline, which then captures exactly as before.
