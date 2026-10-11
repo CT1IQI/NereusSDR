@@ -54,6 +54,9 @@
 //   2026-10-10 - installLiveTheming() also installs the look's style
 //                 object. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - kThemedIslandProperty: the slice flag takes the look
+//                 under the skipped SpectrumWidget. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -76,6 +79,12 @@ inline constexpr auto kOriginalQssProperty = "_nereusWorkspaceOriginalQss";
 inline constexpr auto kThemedQssProperty = "_nereusWorkspaceThemedQss";
 // Set to true on a widget to keep the scoped pass out of its subtree.
 inline constexpr auto kSkipProperty = "nereusWorkspaceSkip";
+// Set to true by the owner on a widget that takes the look although an
+// ancestor is skipped (the slice flag, its floating buttons and its folded
+// frequency label, all children of the skipped SpectrumWidget; JJ,
+// 2026-10-11). The live pass themes it and what it holds; a skipped class
+// or kSkipProperty inside it is still left alone.
+inline constexpr auto kThemedIslandProperty = "nereusWorkspaceThemedIsland";
 // Set to true by the owner on a slider whose filled side carries meaning
 // (the PC and RADIO speaker volume, JJ's D24): the workspace look keeps
 // the filled side from the minimum to the handle, today's colour through
@@ -101,9 +110,9 @@ inline constexpr auto kChoiceProperty = "nereusWorkspaceChoice";
 // Rewrites every stylesheet under `root` (root included) from its
 // retained original. The first time a widget is seen, or when its
 // stylesheet changed since the last pass, the current stylesheet is
-// kept as the original. Skips the slice flag (VfoWidget and its helper
-// widgets), SpectrumWidget's subtree, colour pickers that show a user
-// colour, and anything carrying kSkipProperty. Does nothing when the
+// kept as the original. Skips the slice flag's S-meter bar (VfoLevelBar),
+// SpectrumWidget's subtree, color pickers that show a user color, and
+// anything carrying kSkipProperty. Does nothing when the
 // switch is off.
 void themeSubtree(QWidget* root);
 

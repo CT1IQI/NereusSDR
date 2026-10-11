@@ -40,6 +40,9 @@
 //                 decided warn (measured, #d8a55f; settled 2026-10-10,
 //                 listed to JJ for veto). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - The slice flag takes the look (JJ, 2026-10-11): its control
+//                 colors are rows; only its lit and data colors stay kept.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "StylesheetColourTable.h"
@@ -131,6 +134,18 @@ const QVector<ColourRow>& rows()
         { "#334455", kText, "border" },          // AboutDialog:195,302,342,405 QFrame line colour
         { "#59616a", kBorder, "border-muted" },  // CoresSetupPage:129 tab
         { "#4a5a6a", kBg, "border-muted" },      // MasterOutputWidget:104 disabled handle
+
+        // ── The slice flag's controls (JJ, 2026-10-11) ───────────
+        { "#6888a0", kText, "text-secondary" },  // VfoWidget tab labels, TX and SPLIT badge text;
+                                                 // VfoStyles kTabLblNormal
+        { "#141e32", kBg, "button" },            // VfoWidget kFloatingBtn rgba(20,30,50,230): lock,
+                                                 // close, record, play, the folded frequency label
+        { "#283750", kBg, "button-hover" },      // VfoWidget kFloatingBtn :hover rgba(40,55,80,240)
+        { "#506482", kBorder, "border" },        // VfoWidget kFloatingBtn rgba(80,100,130,180)
+        { "#cc2020", kBg, "danger-bg" },         // VfoWidget kFloatingBtnClose :hover
+                                                 // rgba(204,32,32,220)
+        { "#ffc040", kText, "measured" },        // VfoWidget TX badge, in use by the radio
+        { "#d09020", kBorder, "measured-border" }, // VfoWidget TX badge, in use by the radio
 
         // ── Disabled ─────────────────────────────────────────────
         { "#303850", kBg, "disabled-bg" },       // ConnectionPanel:513, AddCustomRadioDialog:137
@@ -383,7 +398,8 @@ const QVector<KeptLiteral>& kept()
         { "#4488ff", kAny, "lit: :checked text (RxApplet:691), the same value unchecked at :712, "
                            "and a spot colour default (SpotHubDialog:1107)" },
         { "#66aaff", kText, "on/off pair: hover of the RxApplet:712 text (RxApplet:715)" },
-        { "#6a3030", kBg, "lit: flag :checked (VfoWidget:853,2698)" },
+        { "#6a3030", kBg, "lit: a :checked fill (ConnectionPanel); the flag's TX badge takes danger-bg "
+                          "at its call site" },
         { "#2a2a1a", kBg, "lit: flag :checked (VfoWidget:786)" },
         { "#ffcc44", kText, "lit: flag :checked (VfoWidget:786)" },
         { "#ffffff", kAny, "text on a filled or lit state; upstream keeps white rowless "
@@ -500,19 +516,13 @@ const QVector<KeptLiteral>& kept()
         { "rgba(255,255,255,80)", kAny, "white wash (VfoWidget:1300)" },
 
         // ── The slice flag (VfoWidget, VfoStyles) ────────────────
-        // Skipped by design (design-facts B11); listed so the decision is
-        // explicit when a flag sheet reaches a popup the flag opens.
-        { "#6888a0", kAny, "slice flag (VfoStyles:50, VfoWidget)" },
-        { "#ffc040", kAny, "slice flag (VfoWidget:2691)" },
-        { "#d09020", kAny, "slice flag (VfoWidget:2690)" },
-        { "rgba(20,30,50,230)", kAny, "slice flag (VfoWidget:3202,3211)" },
-        { "rgba(40,55,80,240)", kAny, "slice flag (VfoWidget:3206)" },
-        { "rgba(80,100,130,180)", kAny, "slice flag (VfoWidget:3202,3211)" },
-        { "rgba(204,32,32,220)", kAny, "slice flag (VfoWidget:3215)" },
-        { "rgba(255,100,100,80)", kAny, "slice flag (VfoWidget:3336)" },
-        { "rgba(255,100,100,120)", kAny, "slice flag (VfoWidget:3338)" },
-        { "#505050", kAny, "slice flag (VfoWidget:1091)" },
-        { "#e0e040", kAny, "slice flag (VfoWidget:1127)" },
+        // The flag takes the look (JJ, 2026-10-11): its control colors are
+        // rows above ("The slice flag's controls"). What stays is a state or
+        // data color.
+        { "rgba(255,100,100,80)", kBg, "lit: the flag's lock button, locked (VfoWidget applyLockedState)" },
+        { "rgba(255,100,100,120)", kBg, "lit: the locked lock button's hover (VfoWidget applyLockedState)" },
+        { "#505050", kAny, "RADE status row, no sync or no reading: data (VfoWidget RADE row, rich text)" },
+        { "#e0e040", kAny, "RADE status row, marginal copy: data (VfoWidget RADE row, rich text)" },
     };
     return list;
 }

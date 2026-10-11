@@ -127,20 +127,15 @@ const QSet<QString>& workspaceValues()
 }
 
 // Class names whose subtree the scoped pass leaves alone.
-//  - The slice flag and its helpers (design-facts B11): VfoWidget,
-//    VfoLevelBar, ScrollableLabel, the VfoModeContainers widgets and
-//    VaxChannelSelector (which copies VfoStyles' mode-button look).
-//  - SpectrumWidget: plot colours, filter overlays and the flag's
-//    floating buttons live there; its chrome is themed at call sites.
+//  - VfoLevelBar: the slice flag's S-meter bar, a data surface. The flag
+//    itself and its other helpers take the look (JJ, 2026-10-11; before
+//    that the whole flag was left out, design-facts B11).
+//  - SpectrumWidget: plot colors and filter overlays live there; its
+//    chrome is themed at call sites. The flag and its floating buttons
+//    are its children and opt in with kThemedIslandProperty.
 //  - Colour pickers whose stylesheet shows a user-chosen colour.
 constexpr const char* kSkippedClasses[] = {
-    "NereusSDR::VfoWidget",
     "NereusSDR::VfoLevelBar",
-    "NereusSDR::ScrollableLabel",
-    "NereusSDR::FmOptContainer",
-    "NereusSDR::DigOffsetContainer",
-    "NereusSDR::RttyMarkShiftContainer",
-    "NereusSDR::VaxChannelSelector",
     "NereusSDR::SpectrumWidget",
     "NereusSDR::ColorSwatchButton",
     "NereusSDR::GradientPickerWidget",
@@ -178,12 +173,17 @@ bool skipped(const QWidget* w)
 
 // True when `w` or an ancestor in its own window is skipped. The walk
 // stops at the window: a menu or popup a skipped widget opens is a
-// surface of its own.
+// surface of its own. It also stops at a widget carrying
+// kThemedIslandProperty: that widget and what it holds take the look
+// whatever is above it.
 bool skippedInWindow(const QWidget* w)
 {
     for (const QWidget* p = w; p != nullptr; p = p->parentWidget()) {
         if (skipped(p)) {
             return true;
+        }
+        if (p->property(kThemedIslandProperty).toBool()) {
+            break;
         }
         if (p->isWindow()) {
             break;

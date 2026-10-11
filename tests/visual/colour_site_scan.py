@@ -66,9 +66,10 @@ EXCLUDED_FILES = {
     "ModMonitorApplet": "data: modulation scope",
     "BandwidthFilterPane": "data: filter plot",
     "EqApplet": "data: EQ curves",
-    # Out of scope by JJ's standing decision: the receiver flag.
-    "VfoWidget": "out of scope: the slice flag keeps its design language",
-    "VfoStyles": "out of scope: the slice flag keeps its design language",
+    # The receiver flag's controls take the look through the live pass
+    # (JJ, 2026-10-11); what is painted or written as rich text is data.
+    "VfoWidget": "data: the flag's painted panel edge, slice colors and RADE row (controls are themed)",
+    "VfoStyles": "data: the flag's painted color constants (its sheets are themed)",
 }
 
 HEX = r"#[0-9A-Fa-f]{3,8}"

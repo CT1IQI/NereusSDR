@@ -46,11 +46,8 @@ namespace {
 
 // The classes the scoped pass leaves alone (WorkspacePreview.cpp).
 constexpr const char* kSkipped[] = {
-    "NereusSDR::VfoWidget",          "NereusSDR::VfoLevelBar",
-    "NereusSDR::ScrollableLabel",    "NereusSDR::FmOptContainer",
-    "NereusSDR::DigOffsetContainer", "NereusSDR::RttyMarkShiftContainer",
-    "NereusSDR::VaxChannelSelector", "NereusSDR::SpectrumWidget",
-    "NereusSDR::ColorSwatchButton",  "NereusSDR::GradientPickerWidget",
+    "NereusSDR::VfoLevelBar",       "NereusSDR::SpectrumWidget",
+    "NereusSDR::ColorSwatchButton", "NereusSDR::GradientPickerWidget",
 };
 
 bool skippedWidget(const QWidget* w)

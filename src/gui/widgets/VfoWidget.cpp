@@ -164,6 +164,14 @@
 //                 source: https://github.com/ten9876/AetherSDR. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The flag takes the workspace look when it is on (JJ,
+//                 2026-10-11): the flag, its floating buttons and its
+//                 folded frequency label opt in to the live pass
+//                 (WorkspacePreview::kThemedIslandProperty), and the
+//                 painted panel takes the panel role at today's alpha.
+//                 Nothing changes with the look off. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 //=================================================================
@@ -425,6 +433,7 @@ warren@wpratt.com
 #include "core/accessories/AlexController.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
@@ -701,6 +710,9 @@ VfoWidget::VfoWidget(QWidget* parent)
     setAttribute(Qt::WA_TranslucentBackground);
     setAutoFillBackground(false);
     setMouseTracking(true);
+    // The workspace look reaches the flag although its parent, the
+    // SpectrumWidget, is left out of the pass (JJ, 2026-10-11).
+    setProperty(WorkspacePreview::kThemedIslandProperty, true);
 
     buildUI();
 }
@@ -860,7 +872,10 @@ void VfoWidget::buildHeaderRow()
     m_txAntBtn = new QPushButton(QStringLiteral("ANT1"), this);
     m_txAntBtn->setObjectName(QStringLiteral("m_txAntBtn"));
     m_txAntBtn->setStyleSheet(vfoFlatBtnStyle() +
-        QStringLiteral("QPushButton { color: #ff4444; }"));
+        // The TX antenna's red is a transmit color: the look's transmit
+        // tone when the look is on, #ff4444 as written otherwise.
+        QStringLiteral("QPushButton { color: %1; }")
+            .arg(WorkspacePreview::statusColourName("#ff4444", "danger")));
     m_txAntBtn->setFixedHeight(18);
     // NereusSDR native — no single Thetis TX-antenna tooltip (TX ant is configured
     // via Alex board setup in Setup dialog, not via a main-window toggle)
@@ -908,7 +923,11 @@ void VfoWidget::buildHeaderRow()
     m_txBadge->setStyleSheet(
         QStringLiteral("QPushButton { background: #1a2a3a; border: 1px solid #304050;"
                         "border-radius: 3px; color: #6888a0; font-size: 10px; font-weight: bold; }"
-                        "QPushButton:checked { background: #6a3030; border-color: #ff4444; color: #ff8080; }"));
+                        "QPushButton:checked { background: %2; border-color: %1; color: #ff8080; }")
+            // The lit TX badge is a transmit state: the look's transmit tone
+            // on its danger fill when the look is on, today's reds otherwise.
+            .arg(WorkspacePreview::statusColourName("#ff4444", "danger"),
+                 WorkspacePreview::roleColourName("#6a3030", "danger-bg")));
     // NereusSDR native — Thetis has no per-slice TX badge (it uses chkMOX for TX state)
     m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
     hdr->addWidget(m_txBadge);
@@ -2758,7 +2777,11 @@ void VfoWidget::setInUseByRadio(bool inUse)
         m_txBadge->setStyleSheet(
             QStringLiteral("QPushButton { background: #1a2a3a; border: 1px solid #304050;"
                            "border-radius: 3px; color: #6888a0; font-size: 10px; font-weight: bold; }"
-                           "QPushButton:checked { background: #6a3030; border-color: #ff4444; color: #ff8080; }"));
+                           "QPushButton:checked { background: %2; border-color: %1; color: #ff8080; }")
+            // The lit TX badge is a transmit state: the look's transmit tone
+            // on its danger fill when the look is on, today's reds otherwise.
+            .arg(WorkspacePreview::statusColourName("#ff4444", "danger"),
+                 WorkspacePreview::roleColourName("#6a3030", "danger-bg")));
         m_txBadge->setToolTip(QStringLiteral("Indicates this slice is the TX slice"));
         m_txBadge->setAccessibleDescription(QString());
     }
@@ -3302,6 +3325,9 @@ void VfoWidget::buildFloatingButtons()
     auto makeBtn = [&](const QString& text, const char* style) -> QPushButton* {
         auto* btn = new QPushButton(text, parent);
         btn->setFixedSize(20, 20);
+        // A sibling of the flag on the SpectrumWidget: it takes the look
+        // with the flag.
+        btn->setProperty(WorkspacePreview::kThemedIslandProperty, true);
         btn->setStyleSheet(style);
         btn->show();
         return btn;
@@ -3392,6 +3418,7 @@ void VfoWidget::buildFloatingButtons()
     // ── Collapsed-mode frequency label (child of parent like close/lock) ───
     m_collapsedFreqLabel = new QLabel(parent);
     m_collapsedFreqLabel->setObjectName(QStringLiteral("VfoFlagCollapsedFrequency"));
+    m_collapsedFreqLabel->setProperty(WorkspacePreview::kThemedIslandProperty, true);
     m_collapsedFreqLabel->setStyleSheet(QStringLiteral(
         "QLabel { background: rgba(20,30,50,230); border: 1px solid rgba(80,100,130,180);"
         " border-radius: 3px; color: #00e5ff; font-size: 14px; font-weight: bold;"
@@ -3847,7 +3874,9 @@ void VfoWidget::paintEvent(QPaintEvent* event)
 
     // Dark panel background — from AetherSDR VfoWidget::paintEvent
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x0a, 0x0a, 0x14, 230));
+    // With the workspace look on, the panel role at the same alpha, so
+    // the flag stays as translucent over the spectrum as it is today.
+    p.setBrush(WorkspacePreview::roleColour(QColor(0x0a, 0x0a, 0x14, 230), "panel"));
     p.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 4, 4);
 
     // Subtle border

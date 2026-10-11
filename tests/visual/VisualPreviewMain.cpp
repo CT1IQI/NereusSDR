@@ -318,7 +318,8 @@ QJsonObject lookCoverageJson()
              "bottom status bar content (also at startup)",
              "pan toolbar flyouts (also when built)"})},
         {QStringLiteral("not_migrated"), arr({
-             "slice flag (VfoWidget, VfoStyles helpers) and slice colours: excluded",
+             "slice flag: its S-meter bar, frequency digits, slice letter and slice colors: excluded "
+             "(its controls take the look since 2026-10-11)",
              "spectrum and waterfall plot colours, filter overlays, band-plan strip: excluded",
              "meter face artwork and user meter colours: excluded (their surrounds change)",
              "EQ/CFC graph band colours: excluded",

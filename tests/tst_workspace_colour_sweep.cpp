@@ -636,22 +636,11 @@ QString describe(const QVector<Finding>& findings)
 }
 
 // Why a toggled applet button's colours are not the palette's to judge,
-// or empty: the slice flag keeps its colours by the table's slice-flag
-// rows (StylesheetColourTable.cpp, "The slice flag"), and a slice tab is
-// that slice's identity colour (RxApplet.cpp:1838-1844), which the
-// controller exempted.
+// or empty: a slice tab is that slice's identity color
+// (RxApplet.cpp:1838-1844), which the controller exempted. The slice flag
+// is judged like any applet since it takes the look (JJ, 2026-10-11).
 QString exemptReason(QWidget* w)
 {
-    // The flag's floating buttons sit beside it, parented to its parent
-    // (VfoWidget.cpp:3302-3334), and carry the "VfoFlag" object name.
-    if (w->objectName().startsWith(QLatin1String("VfoFlag"))) {
-        return QStringLiteral("slice flag (kept by the table's slice-flag rows)");
-    }
-    for (QWidget* p = w->parentWidget(); p != nullptr; p = p->parentWidget()) {
-        if (qobject_cast<NereusSDR::VfoWidget*>(p) != nullptr) {
-            return QStringLiteral("slice flag (kept by the table's slice-flag rows)");
-        }
-    }
     const QString sheet = w->styleSheet();
     for (int i = 0; i < 8; ++i) {
         if (sheet.contains(QStringLiteral("color: %1;").arg(NereusSDR::VfoWidget::sliceColor(i).name()))) {

@@ -7694,6 +7694,10 @@ nereus_add_test(tst_vfo_widget_tx_badge_click)
 # Source: AetherSDR src/gui/VfoWidget.cpp [@3a1f59ea] (fold); NereusSDR-original
 # (zoom row placement).
 nereus_add_test(tst_vfo_flag_fold)
+# The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
+# buttons and floating buttons carry the pass's sheets with the look on and
+# are untouched with it off.
+nereus_add_test(tst_vfo_widget_workspace_look)
 nereus_add_test(tst_spectrum_zoom_row_placement)
 
 # Phase 3F Sub-Epic F Task 1: P2 composeCmdGeneral writes packetbuf[23]

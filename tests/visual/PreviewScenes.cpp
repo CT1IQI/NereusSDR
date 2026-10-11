@@ -193,6 +193,9 @@
 //   2026-10-11 - A scrolled Setup scene whose page fits says so in the
 //                 context (nothingToScroll) as well as failing. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - flag-tab--* scenes: each tab of the open slice flag, in
+//                 today's look and the workspace look. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -7054,6 +7057,37 @@ void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
     }
 }
 
+// The open flag with one of its tabs showing (0 audio, 1 DSP, 2 mode,
+// 3 X/RIT, 4 VAX), opened by a click on the tab as a user opens it.
+void sceneFlagTab(SceneContext& ctx, const QString& name, int tab)
+{
+    runWindowScene(ctx, defaultPoses(), 0, {}, [tab](SceneContext& c) {
+        VfoWidget* flag = flagA(c);
+        if (flag == nullptr) {
+            c.failure = QStringLiteral("no flag on %1").arg(panIdAt(0));
+            return;
+        }
+        QList<QPushButton*> tabs;
+        for (QPushButton* b : flag->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (b->isCheckable() && b->toolTip().startsWith(QLatin1String("Show/hide"))) {
+                tabs.append(b);
+            }
+        }
+        if (tab < 0 || tab >= tabs.size()) {
+            c.failure = QStringLiteral("no flag tab %1").arg(tab);
+            return;
+        }
+        tabs.at(tab)->click();
+        pump(kFinalSettleMs);
+        c.notes.append(QJsonObject{{QStringLiteral("flag_tab"), tab},
+                                   {QStringLiteral("flag_size"),
+                                    QStringLiteral("%1x%2").arg(flag->width()).arg(flag->height())}});
+    });
+    if (ctx.failure.isEmpty()) {
+        captureWindow(ctx, name);
+    }
+}
+
 // ---- a strip container scrolled over its meters -------------------------------
 
 // JJ's left strip: the RX applet with GPU meters below it, in one stack.
@@ -7335,6 +7369,18 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) {
         sceneFlagFoldTwoBand(ctx, QStringLiteral("flag-fold--two-band-look"));
     }, true});
+    // Each tab of the open flag, in today's look and the workspace look:
+    // the tab opened by a click on its tab, nothing else touched.
+    for (const bool look : {false, true}) {
+        static const char* const kFlagTabs[] = {"audio", "dsp", "mode", "xrit", "vax"};
+        for (int tab = 0; tab < 5; ++tab) {
+            const QString name = QStringLiteral("flag-tab--%1%2")
+                .arg(QLatin1String(kFlagTabs[tab]), look ? QStringLiteral("-look") : QString());
+            scenes.append({name, QStringLiteral("1"), false, [name, tab](SceneContext& ctx) {
+                sceneFlagTab(ctx, name, tab);
+            }, look});
+        }
+    }
     // Four folded flags: A right of its marker (LSB), B left of its marker
     // (DIGU), C as the TX slice (the flag's display setter only), D locked
     // (the flag's display setter only). Crops of each at the crop profile.
