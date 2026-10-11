@@ -701,6 +701,30 @@ private slots:
         noDspCore.assignments = {{ThreadRole::RxWorker, 0, 4}};
         QVERIFY(receiverSharesDisplayCores(noDspCore, 0));
         QVERIFY(receiverSharesDisplayCores(PlacementPlan{}, 0)); // not placed
+        // 2026-10-10: spectrum threads may use every signal processing
+        // core. Under raised threads they take only the time those leave,
+        // so a raised receiver's load is still not the display's to
+        // relieve; where the system refused the priority it is.
+        PlacementPlan roaming = placed;
+        roaming.assignments = {{ThreadRole::RxWorker, 0, 4, {}, true},
+                               {ThreadRole::DspThread, -1, 5, {}, true},
+                               {ThreadRole::ConnectionThread, -1, 5, {}, true},
+                               {ThreadRole::RxWorker, 1, 6, {}, true},
+                               {ThreadRole::RxWorker, 2, -1, {6, 7}, true},
+                               {ThreadRole::SpectrumThread, 0, -1, {4, 5, 6, 7}}};
+        QVERIFY(roaming.carriesSpectrum(4));
+        QVERIFY(!roaming.carriesSpectrum(0));
+        QVERIFY(!receiverSharesDisplayCores(roaming, 0));
+        QVERIFY(!receiverSharesDisplayCores(roaming, 1));
+        QVERIFY(!receiverSharesDisplayCores(roaming, 2)); // shares fast cores, raised
+        QVERIFY(receiverSharesDisplayCores(roaming, 3));  // on the housekeeping cores
+        PlacementPlan refused = roaming;
+        for (RoleAssignment& a : refused.assignments) {
+            a.raised = false;
+        }
+        QVERIFY(receiverSharesDisplayCores(refused, 0));
+        QVERIFY(receiverSharesDisplayCores(refused, 1));
+        QVERIFY(receiverSharesDisplayCores(refused, 2));
 
         const auto inputs = [](const PlacementPlan& plan, QList<int> slices) {
             DisplayLoadInputs in;

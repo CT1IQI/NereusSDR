@@ -29,8 +29,9 @@ struct DisplayLoadInputs {
     QList<Receiver> receivers;
     /// All cores (the telemetry value).
     std::optional<double> systemCpuPercent;
-    /// The housekeeping cores only, where spectrum, encoding, Opus and
-    /// sending run while thread placement is active.
+    /// The housekeeping cores only, where encoding, Opus and sending run
+    /// while thread placement is active (and spectrum, unless placement
+    /// lets it use the signal processing cores).
     std::optional<double> housekeepingCpuPercent;
     /// How long ago the host sample behind both CPU values began, in
     /// milliseconds (SharedHostSampler::cpuSampleBeganMsAgo). Absent with
@@ -45,9 +46,11 @@ struct DisplayLoadInputs {
 
 /// True when lowering spectrum can relieve this receiver's processing:
 /// its WDSP worker or the DSP thread shares cores with spectrum and
-/// networking. A receiver whose worker and DSP thread both have cores of
-/// their own is not slowed by display work, so its load is not the
-/// display's to relieve.
+/// networking, on the housekeeping cores, or on signal processing cores a
+/// spectrum thread may use while the thread itself is not raised above it
+/// (the system refused the priority). A receiver whose worker and DSP
+/// thread both run raised on signal processing cores is not slowed by
+/// display work, so its load is not the display's to relieve.
 bool receiverSharesDisplayCores(const PlacementPlan& placement, int sliceId);
 
 /// The governor reading for these inputs. Receivers that did no work

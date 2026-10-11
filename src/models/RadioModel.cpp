@@ -19914,14 +19914,28 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // connect thread missed packet wake-ups long enough to drop frames.
     // Bumped to USER_INTERACTIVE so it sits in the same scheduling
     // class as the audio + GUI threads.
-    // R-R3-41: nereusd's placement keeps networking on the housekeeping
-    // cores and skips the nice call there.
+    // R-R3-41: nereusd's placement owns this thread's core and priority
+    // and skips the nice call there. 2026-10-10: it shares the DSP
+    // thread's fast core, at raised priority; on a slow core it could not
+    // keep up with four receivers at 1.536 MHz and the kernel dropped the
+    // radio's packets.
     connect(m_connThread, &QThread::started, m_connection,
             []() {
-                if (!NereusSDR::ThreadPlacement::managesThreadPriority()) {
-                    NereusSDR::elevateLatencyCriticalThreadPriority();
+                if (NereusSDR::ThreadPlacement::managesThreadPriority()) {
+                    NereusSDR::ThreadPlacement::instance().registerCurrentThread(
+                        NereusSDR::ThreadRole::ConnectionThread);
+                    return;
                 }
+                NereusSDR::elevateLatencyCriticalThreadPriority();
             });
+    // finished() is emitted on the thread itself, so a direct connection
+    // forgets it before its ID can be reused.
+    connect(m_connThread, &QThread::finished, m_connThread,
+            []() {
+                if (NereusSDR::ThreadPlacement::managesThreadPriority()) {
+                    NereusSDR::ThreadPlacement::instance().deregisterCurrentThread();
+                }
+            }, Qt::DirectConnection);
 
     m_connThread->start();
 

@@ -13,8 +13,24 @@ namespace NereusSDR {
 
 bool receiverSharesDisplayCores(const PlacementPlan& placement, int sliceId)
 {
-    return !placement.active || placement.cpuFor(ThreadRole::RxWorker, sliceId) < 0
-        || placement.cpuFor(ThreadRole::DspThread) < 0;
+    if (!placement.active) {
+        return true;
+    }
+    const auto slowedByDisplay = [&placement](ThreadRole role, int channel) {
+        const QList<int> cores = placement.coresFor(role, channel);
+        if (cores.isEmpty()) {
+            return true; // on the housekeeping cores
+        }
+        // A spectrum thread on a raised thread's core takes only the time
+        // that thread leaves.
+        if (placement.raisedFor(role, channel)) {
+            return false;
+        }
+        return std::any_of(cores.cbegin(), cores.cend(),
+                           [&placement](int cpu) { return placement.carriesSpectrum(cpu); });
+    };
+    return slowedByDisplay(ThreadRole::RxWorker, sliceId)
+        || slowedByDisplay(ThreadRole::DspThread, -1);
 }
 
 DisplayLoadReading displayLoadReadingFrom(const DisplayLoadInputs& inputs, qint64 nowMs,
