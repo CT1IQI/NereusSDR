@@ -38,6 +38,16 @@ public:
         return true;
     }
 
+    // Control thread, only while stopped: the producer reads it.
+    bool setBlockWake(std::shared_ptr<DaemonAudioBlockWake> wake)
+    {
+        if (m_running.load(std::memory_order_acquire)) {
+            return false;
+        }
+        m_blockWake = std::move(wake);
+        return true;
+    }
+
     // Threading contract. consume() runs on the one DSP thread that drains
     // MasterMixer (its producers are serialised on that thread), so the
     // assembly state below is producer-owned and needs no lock. The control
@@ -273,6 +283,8 @@ private:
             m_pendingValid = false;
         }
         pushLocked(m_assemblingSlot, m_assemblingFirstFrame, capturedNs);
+        lock.unlock();
+        wakeConsumer();
     }
 
     // Producer thread only.
@@ -285,6 +297,18 @@ private:
         }
         pushLocked(m_pendingSlot, m_pendingFirstFrame, m_pendingCapturedNs);
         m_pendingValid = false;
+        lock.unlock();
+        wakeConsumer();
+    }
+
+    // Producer thread only, after the bridge lock is let go: the consumer's
+    // thread wakes now, not at its next tick (R-AUD-SEND). One atomic
+    // exchange and at most one semaphore release; see DaemonAudioBlockWake.
+    void wakeConsumer() noexcept
+    {
+        if (m_blockWake) {
+            m_blockWake->notify();
+        }
     }
 
     void pushLocked(int slot, quint64 firstFrame, qint64 capturedNs) noexcept
@@ -359,6 +383,8 @@ private:
 
     // Written only while stopped (setCaptureClock); read by consume().
     DaemonAudioSource::CaptureClock m_captureClock;
+    // Written only while stopped (setBlockWake); read by the producer.
+    std::shared_ptr<DaemonAudioBlockWake> m_blockWake;
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_discontinuity{false};
     std::atomic<std::uint64_t> m_contentionRetries{0};
@@ -479,6 +505,11 @@ void DaemonAudioSource::stop()
 bool DaemonAudioSource::setCaptureClock(CaptureClock clock)
 {
     return m_bridge->setCaptureClock(std::move(clock));
+}
+
+bool DaemonAudioSource::setBlockWake(std::shared_ptr<DaemonAudioBlockWake> wake)
+{
+    return m_bridge->setBlockWake(std::move(wake));
 }
 
 bool DaemonAudioSource::isRunning() const noexcept

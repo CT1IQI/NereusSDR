@@ -1323,6 +1323,7 @@ set(CORE_SOURCES
     # R3 bounded bridge from the AudioEngine master mix to daemon media.
     src/core/session/media/DaemonAudioSource.cpp
     src/core/session/media/DaemonAudioSender.cpp
+    src/core/session/media/DaemonAudioSendThread.cpp
     # R-R3-23: the audio-context wire codec Core and GUI share (minor 7 and 8).
     src/core/session/media/RemoteAudioContext.cpp
     src/core/session/media/RemoteIqCodec.cpp

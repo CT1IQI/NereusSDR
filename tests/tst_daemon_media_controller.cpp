@@ -34,6 +34,7 @@
 
 #include <QtTest>
 
+#include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/SliceOwnership.h"
@@ -200,14 +201,8 @@ public:
         displays.append(std::exchange(heldDisplay, {}));
         emit displayWritable();
     }
-    bool sendRtp(const QByteArray& packet) override
-    {
-        ++rtpAttempts;
-        if (readyState) { rtpPackets.append(packet); }
-        const auto callback = onRtpSend;
-        if (callback) { callback(packet); }
-        return readyState;
-    }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     bool losslessAudioNegotiated() const override { return losslessNegotiated; }
     std::optional<MediaIcePath> selectedPath() const override { return path; }
@@ -219,16 +214,19 @@ public:
     std::optional<qint64> rtt;
 
     bool started{false};
-    bool readyState{false};
+    // R-AUD-SEND: the Core sends audio from its sender thread, through the
+    // sink; what the sink took is read under its lock.
+    const std::shared_ptr<Test::RecordingRtpSink> rtpSink{
+        std::make_shared<Test::RecordingRtpSink>()};
+    std::atomic<bool>& readyState{rtpSink->ready};
+    Test::SharedPacketList& rtpPackets{rtpSink->packets};
     // Whether the (simulated) answer kept the L16 rtpmap; the real library's
     // answer does (tst_media_transport answerKeepsTheLosslessRtpMap).
     bool losslessNegotiated{false};
     StartOptions startOptions{Role::Answerer, 0};
     QList<QByteArray> displays;
-    QList<QByteArray> rtpPackets;
-    int rtpAttempts{0};
+    std::atomic<int>& rtpAttempts{rtpSink->attempts};
     std::function<bool()> onDisplaySend;
-    std::function<void(const QByteArray&)> onRtpSend;
     qsizetype sctpWindowBytes{0};
     qsizetype unacknowledgedBytes{0};
     QByteArray heldDisplay;
@@ -753,7 +751,8 @@ private slots:
     void olderAppGetsTheWholeProgramAndNoHeadphonesMix();
     void headphonesMixRunsWhileAReceiverIsOnTheHeadphones();
     void headphonesMixFollowsTheProfileAndTheRadio();
-    void headphoneRateSwitchDefersAnExecutingSender();
+    void headphoneRateSwitchRetiresASenderTheThreadIsDraining();
+    void audioLeavesOnTheSenderThreadWhileTheControllersThreadIsHeld();
     void radioDropKeepsTheHeadphonesReasonWhenNothingIsRouted();
     void radioDropTellsAnAppWaitingOnMediaThatTheRadioIsGone();
     void aBoundControllerServesItsOwnSessionAndHearsItsOwnMix();
@@ -6689,10 +6688,18 @@ void TstDaemonMediaController::headphonesMixFollowsTheProfileAndTheRadio()
     QCOMPARE(headphonesContextsIn(controls).size(), 5);
 }
 
-// A synchronous RTP recipient may ask for a new main rate while the
-// headphones sender is still emitting. Retirement must leave it alive
-// until that emission and its drain have returned.
-void TstDaemonMediaController::headphoneRateSwitchDefersAnExecutingSender()
+// R-AUD-SEND: a new main rate retires the headphones sender while the
+// sender thread is inside that sender's drain. (Before the sender thread,
+// this test had a synchronous RTP recipient ask for the rate inside the old
+// sender's packetReady emission, on the controller's thread, and proved the
+// sender outlived that emission. No send runs on the controller's thread
+// any more, so the case that exists is this one.) The controller waits for
+// the send under way; the old sender is stopped, sends nothing after that,
+// and is left alive until the event loop reclaims it; and the new sender
+// carries the sequence and the RTP time on from the last packet that went.
+// (That stop() waits for one block and no more is proved with a fixed
+// interleaving in tst_daemon_audio_send_thread.)
+void TstDaemonMediaController::headphoneRateSwitchRetiresASenderTheThreadIsDraining()
 {
     Harness h;
     h.controller.setAudioTargetBitrate(24000);
@@ -6719,64 +6726,192 @@ void TstDaemonMediaController::headphoneRateSwitchDefersAnExecutingSender()
     QPointer<DaemonAudioSender> sender = activeSender();
     QVERIFY(sender);
     const quint32 ssrc = h.mediaTransport->startOptions.headphonesAudioSsrc;
+    const auto sent = [&] { return packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc); };
     feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
-    sender->drain();
-    const auto firstPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
-    QCOMPARE(firstPackets.size(), 1);
+    QTRY_COMPARE(sent().size(), 1);
+
+    // Each rate switch: two blocks queued and the sender thread held inside
+    // the first one's send when the new rate arrives on the controller's
+    // thread. The controller then waits for that send wherever it first
+    // needs what the send holds, so a helper lets each held send go until
+    // the controller is through.
+    const std::shared_ptr<Test::RecordingRtpSink> sink = h.mediaTransport->rtpSink;
     quint32 revision = 0;
-    bool aliveInCallback = false;
-    bool stoppedInCallback = false;
-    const auto switchDuringSend = [&](int bitrate) {
-        h.mediaTransport->onRtpSend = [&, bitrate](const QByteArray&) {
-            h.mediaTransport->onRtpSend = {};
-            QJsonObject control = audioControl(++revision, false, QStringLiteral("opus"));
-            control.insert(QStringLiteral("opusBitrate"), bitrate);
-            emit h.server.mediaControlReceived(control, h.client.sessionEpoch());
-            aliveInCallback = !sender.isNull();
-            stoppedInCallback = sender && !sender->isRunning();
-        };
+    const auto switchDuringDrain = [&](int bitrate) -> bool {
+        QSemaphore entered;
+        QSemaphore gate;
+        std::atomic<bool> held{true};
+        std::atomic<bool> arriving{false};
+        std::atomic<bool> ownerThrough{false};
+        sink->setHook([&](const QByteArray& packet) {
+            if (held.load() && packet.size() >= 12 && rtpSsrcOf(packet) == ssrc) {
+                entered.release();
+                gate.acquire();
+            }
+        });
+        feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+        feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
+        const bool insideASend = entered.tryAcquire(1, 20'000);
+        std::thread releaser([&] {
+            while (!arriving.load()) {
+                std::this_thread::yield();
+            }
+            gate.release(1);
+            while (!ownerThrough.load()) {
+                if (entered.tryAcquire(1)) {
+                    gate.release(1);
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        });
+        QJsonObject control = audioControl(++revision, false, QStringLiteral("opus"));
+        control.insert(QStringLiteral("opusBitrate"), bitrate);
+        arriving.store(true);
+        emit h.server.mediaControlReceived(control, h.client.sessionEpoch());
+        ownerThrough.store(true);
+        releaser.join();
+        held.store(false);
+        gate.release(100);
+        sink->setHook({});
+        return insideASend;
     };
-    // The real sender's direct packetReady path proves the lifetime rule
-    // before draining again. On the broken baseline, fail here rather than
-    // deliberately returning from drain into freed encoder state.
-    switchDuringSend(48000);
-    sender->packetReady(firstPackets.constFirst());
-    QVERIFY2(aliveInCallback, "Headphone rate replacement deleted its emitting sender synchronously");
-    QVERIFY(stoppedInCallback);
+
+    qsizetype before = sent().size();
+    QVERIFY(switchDuringDrain(48000));
+    // The block whose send was under way went; the one queued behind it
+    // went only if its send began before the sender was stopped.
+    qsizetype after = sent().size();
+    QVERIFY(after >= before + 1 && after <= before + 2);
+    // Stopped, and alive until the event loop reclaims it.
     QVERIFY(sender);
+    QVERIFY(!sender->isRunning());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(sender.isNull());
+    QCOMPARE(sent().size(), after);
     sender = activeSender();
     QVERIFY(sender && sender->encoderProfile());
     QCOMPARE(sender->encoderProfile()->targetBitrate, 48000);
-    h.mediaTransport->rtpPackets.clear();
 
-    // Now exercise actual drain with two queued blocks. Only its first
-    // packet escapes; retirement drops the old queue and preserves RTP time.
-    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
-    feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
-    aliveInCallback = stoppedInCallback = false;
-    switchDuringSend(24000);
-    sender->drain();
-    QVERIFY(aliveInCallback && stoppedInCallback);
+    before = after;
+    QVERIFY(switchDuringDrain(24000));
+    after = sent().size();
+    QVERIFY(after >= before + 1 && after <= before + 2);
+    const QByteArray lastOld = sent().constLast();
     QVERIFY(sender);
-    const auto switchedPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
-    QCOMPARE(switchedPackets.size(), 1);
-    const QByteArray lastOld = switchedPackets.constLast();
+    QVERIFY(!sender->isRunning());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(sender.isNull());
     sender = activeSender();
     QVERIFY(sender && sender->encoderProfile());
     QCOMPARE(sender->encoderProfile()->targetBitrate, 24000);
+
+    // The new sender carries on from the last packet that went: the next
+    // sequence number, and RTP time one block on. Nothing of the old
+    // sender's queue comes after it.
     feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
-    sender->drain();
-    const auto resumedPackets = packetsWithSsrc(h.mediaTransport->rtpPackets, ssrc);
-    QCOMPARE(resumedPackets.size(), 2);
-    const QByteArray next = resumedPackets.constLast();
+    QTRY_COMPARE(sent().size(), after + 1);
+    const QByteArray next = sent().constLast();
     QCOMPARE(qFromBigEndian<quint16>(next.constData() + 2),
              quint16(qFromBigEndian<quint16>(lastOld.constData() + 2) + 1));
     QCOMPARE(qFromBigEndian<quint32>(next.constData() + 4),
              qFromBigEndian<quint32>(lastOld.constData() + 4) + DaemonAudioSource::kBlockFrames);
+    h.finish();
+}
+
+// R-AUD-SEND: the Core's receive audio never leaves on the controller's
+// thread. While this thread is held (it waits for the feeder and runs no
+// event loop) twelve blocks, three capture rings' worth, are each sent,
+// in order and with none dropped; every packet came from the sender
+// thread, named for what it is and never this one; and the diagnostics the
+// controller reads from that thread add up.
+void TstDaemonMediaController::audioLeavesOnTheSenderThreadWhileTheControllersThreadIsHeld()
+{
+    OpusAudioEncoder encoder;
+    if (!encoder.isReady()) {
+        QSKIP("Opus encoder is unavailable in this build");
+    }
+    constexpr int kBlocks = 12;
+    Harness h;
+    AudioEngine* const engine = h.radio.audioEngine();
+    engine->masterMixForTest().setRampFrames(1);
+    engine->masterMixForTest().setSlewUpFrames(0);
+    engine->setSliceStreaming(h.sliceId, true);
+    engine->setSliceStreaming(h.spareSliceId, true);
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    QVERIFY(h.client.sendMediaControl(profileStart(), h.client.sessionEpoch()));
+    QTRY_VERIFY(h.mediaTransport);
+    h.mediaTransport->becomeReady();
+    QVERIFY(h.client.sendMediaControl(audioControl(1, true, QStringLiteral("opus")),
+                                      h.client.sessionEpoch()));
+    QTRY_COMPARE(audioContextsIn(controls).size(), 1);
+    const std::optional<RemoteAudioContextMessage> context =
+        decodeRemoteAudioContext(audioContextsIn(controls).constLast(), true, true);
+    QVERIFY(context.has_value());
+    QVERIFY(h.controller.audioDiagnostics().activeContext);
+
+    const std::shared_ptr<Test::RecordingRtpSink> sink = h.mediaTransport->rtpSink;
+    std::mutex nameMutex;
+    QByteArray senderThreadName;
+    sink->setHook([&](const QByteArray&) {
+        char name[64] = {};
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        pthread_getname_np(pthread_self(), name, sizeof(name));
+#endif
+        const std::lock_guard<std::mutex> lock(nameMutex);
+        senderThreadName = name;
+    });
+    std::atomic<bool> keptUp{true};
+    std::thread feeder([&] {
+        for (int block = 0; block < kBlocks; ++block) {
+            feedAudioBlock(h);
+            // Until this block has been sent: a condition the controller's
+            // thread cannot bring about while it is held in join() below.
+            QDeadlineTimer deadline(2'000);
+            while (keptUp.load() && sink->packets.size() < block + 1) {
+                if (deadline.hasExpired()) {
+                    keptUp.store(false);
+                }
+                std::this_thread::yield();
+            }
+        }
+    });
+    feeder.join();
+    sink->setHook({});
+
+    QVERIFY2(keptUp.load(), "audio waited for the controller's thread");
+    const QList<QByteArray> packets = h.mediaTransport->rtpPackets;
+    QCOMPARE(packets.size(), kBlocks);
+    for (int index = 0; index < kBlocks; ++index) {
+        QCOMPARE(rtpSsrcOf(packets.at(index)), context->ssrc);
+        QCOMPARE(rtpSequence(packets.at(index)),
+                 static_cast<quint16>(context->firstSequence + index));
+        QCOMPARE(rtpTimestamp(packets.at(index)),
+                 context->firstTimestamp + quint32(index) * DaemonAudioSource::kBlockFrames);
+    }
+    const QList<std::thread::id> threads = sink->threads();
+    QCOMPARE(threads.size(), kBlocks);
+    for (const std::thread::id id : threads) {
+        QVERIFY(id != std::this_thread::get_id());
+        QCOMPARE(id, threads.constFirst());
+    }
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+    {
+        const std::lock_guard<std::mutex> lock(nameMutex);
+        QCOMPARE(senderThreadName, QByteArray("NereusAudioTx"));
+    }
+#endif
+    const DaemonAudioDiagnostics diagnostics = h.controller.audioDiagnostics();
+    QCOMPARE(diagnostics.sender.source.ringFullDrops, std::uint64_t{0});
+    QCOMPARE(diagnostics.sender.source.sourceDropEvents, std::uint64_t{0});
+    QCOMPARE(diagnostics.sender.consumedBlocks, std::uint64_t{kBlocks});
+    QCOMPARE(diagnostics.sender.encodedPackets, std::uint64_t{kBlocks});
+    QCOMPARE(diagnostics.sendAttempts, std::uint64_t{kBlocks});
+    QCOMPARE(diagnostics.sendAccepted, std::uint64_t{kBlocks});
+    QCOMPARE(diagnostics.sendRejected, std::uint64_t{0});
+    QCOMPARE(diagnostics.sendInFlight, std::uint64_t{0});
+    QCOMPARE(diagnostics.sendUnresolvedAtRetirement, std::uint64_t{0});
     h.finish();
 }
 

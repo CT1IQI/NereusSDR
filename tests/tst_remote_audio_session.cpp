@@ -310,7 +310,14 @@ private slots:
         QCOMPARE(h.client.capabilities().mediaTunnelVersion, 1);
         QCOMPARE(h.client.capabilities().miniDisplayVersion, 1);
         QCOMPARE(h.client.capabilities().remoteIqVersion, 1);
-        QTRY_VERIFY2_WITH_TIMEOUT(!latestAudioContext(controls).isEmpty(),
+        // The first enabled context, as the other tests here wait for. The
+        // window asks for audio as soon as its own end of the media link is
+        // ready; when the Core's end is ready a moment later, the Core
+        // answers that request with a disabled context (media-not-ready)
+        // and sends the enabled one when its end is up. Waiting for any
+        // context took whichever had arrived.
+        QTRY_VERIFY2_WITH_TIMEOUT(latestAudioContext(controls)
+                                      .value(QStringLiteral("enabled")).toBool(),
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
         QVERIFY(onlyExpectedAudioControls(coreControls, modernStartWithoutConnection(false)));
