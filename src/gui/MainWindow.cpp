@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the window owns the filter that
+//                 arranges while Shift is held and leaves Arrange on Escape
+//                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: added copies of the SIGNAL
 //                 STRENGTH dial are registered as container content.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1014,6 +1018,7 @@ warren@wpratt.com
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/QssTranslator.h"
 #include "gui/styles/WorkspacePalette.h"
+#include "containers/ArrangeHoldFilter.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/instruments/LongpathContent.h"
 #include "gui/instruments/SMeterDialContent.h"
@@ -7448,6 +7453,10 @@ void MainWindow::buildUI()
         // Workspace preview: the header source menu enables the open slices.
         m_containerManager->setSliceAvailability(
             [this](int sliceId) { return m_radioModel && m_radioModel->sliceById(sliceId) != nullptr; });
+        // Workspace preview: holding Shift alone arranges while it is held,
+        // and Escape leaves Arrange. One filter for this window's containers.
+        auto* arrangeHold = new ArrangeHoldFilter(m_containerManager, this);
+        arrangeHold->setObjectName(QStringLiteral("workspaceArrangeHold"));
     }
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);

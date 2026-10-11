@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: arranging is the switch or the
+//                 Shift hold (setArrangeHeld, arranging); containers, entry
+//                 headers and the edge bands follow arranging(), and
+//                 containerDragActive and containerDragFinished report a
+//                 header drag or grip resize. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: a header is Shown or Hidden. A
 //                 container saved with Reveal loads, runs and commits as
 //                 Hidden there (hideRevealHeaders). J.J. Boyd (KG4VCF),
@@ -529,7 +535,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_edgeDragId.clear();
             if (m_edgeArea) {
                 m_edgeArea->clearDropPreview();
-                m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+                m_edgeArea->setTargetBandsVisible(arranging());
             }
         }
     }
@@ -667,14 +673,17 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                     m_edgeArea->clearDropPreview();
                 }
             });
-            connect(c, &ContainerWidget::edgeDragFinished, this,
-                    [this, id = d.id](const QPoint& global) { finishEdgeDrag(id, global); });
+            connect(c, &ContainerWidget::edgeDragFinished, this, [this, id = d.id](const QPoint& global) {
+                finishEdgeDrag(id, global);
+                emit containerDragFinished();
+            });
             connect(c, &ContainerWidget::edgeDragCancelled, this, [this] {
                 m_edgeDragId.clear();
                 if (m_edgeArea) {
                     m_edgeArea->clearDropPreview();
-                    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+                    m_edgeArea->setTargetBandsVisible(arranging());
                 }
+                emit containerDragFinished();
             });
         }
         auto* host = contentHost(d.id);
@@ -802,7 +811,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         // Workspace preview: entry headers follow the container's header mode
         // and the app-level Arrange (both inert with the switch off).
         host->setContainerHeaderMode(d.header);
-        host->setArrangeActive(m_arrangeMode);
+        host->setArrangeActive(arranging());
         host->reconcile(d);
         if (d.autoHeight && d.dockMode != DockMode::PanelDocked) {
             QWidget *target = d.dockMode == DockMode::Floating ? static_cast<QWidget *>(form) : c;
@@ -858,6 +867,27 @@ void ContainerManager::setArrangeMode(bool on)
     }
     // Arrange is runtime only, never saved.
     m_arrangeMode = on;
+    applyArranging();
+    emit arrangeModeChanged(on);
+}
+
+void ContainerManager::setArrangeHeld(bool held)
+{
+    if (m_arrangeHeld == held) {
+        return;
+    }
+    // The Shift hold: independent of the switch, and never saved.
+    m_arrangeHeld = held;
+    applyArranging();
+}
+
+void ContainerManager::applyArranging()
+{
+    const bool on = arranging();
+    if (m_arrangingApplied == on) {
+        return;
+    }
+    m_arrangingApplied = on;
     for (auto it = m_containers.cbegin(); it != m_containers.cend(); ++it) {
         if (!it.value()) {
             continue;
@@ -871,7 +901,16 @@ void ContainerManager::setArrangeMode(bool on)
     if (edgeMode()) {
         m_edgeArea->setTargetBandsVisible(on || !m_edgeDragId.isEmpty());
     }
-    emit arrangeModeChanged(on);
+}
+
+bool ContainerManager::containerDragActive() const
+{
+    if (!m_edgeDragId.isEmpty()) {
+        return true;
+    }
+    return std::any_of(m_containers.cbegin(), m_containers.cend(), [](ContainerWidget* c) {
+        return c && (c->geometryInteractionActive() || c->edgeDragActive());
+    });
 }
 
 // ---- Workspace preview: four-edge strips ----------------------------------
@@ -1227,7 +1266,7 @@ void ContainerManager::clearDropPreviewForTest()
         return;
     }
     m_edgeArea->clearDropPreview();
-    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+    m_edgeArea->setTargetBandsVisible(arranging());
 }
 
 void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos)
@@ -1238,7 +1277,7 @@ void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos
     const auto target = m_edgeArea->dropTargetAt(globalPos);
     m_edgeDragId.clear();
     m_edgeArea->clearDropPreview();
-    m_edgeArea->setTargetBandsVisible(m_arrangeMode);
+    m_edgeArea->setTargetBandsVisible(arranging());
     if (target.valid) {
         moveContainerToEdge(id, target.edge, target.index);
         return;
@@ -1305,7 +1344,7 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
     c->setFollowsSelectedRx(follows);
     c->setSourceMenuRx(menuRx);
     c->setWorkspaceSource(source, colour);
-    c->setArrangeActive(m_arrangeMode);
+    c->setArrangeActive(arranging());
 }
 void ContainerManager::setSliceAvailability(std::function<bool(int sliceId)> available)
 {
@@ -1404,6 +1443,7 @@ void ContainerManager::wireContainer(ContainerWidget* container)
             }
             m_geometryCommit.start();
         }
+        emit containerDragFinished();
     });
     connect(container, &QObject::destroyed, this, [this, id=container->id()] { m_containers.remove(id); });
     connect(container, &ContainerWidget::floatRequested, this, [this, container]() {

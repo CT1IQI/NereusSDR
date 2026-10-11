@@ -608,6 +608,8 @@ nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
 nereus_add_test(tst_container_chrome NATIVE_WINDOW)
 nereus_add_test(tst_workspace_header_modes)
 nereus_add_test(tst_workspace_edge_strips)
+# Holding Shift alone arranges, Escape leaves Arrange; the look-off window has neither (offscreen).
+nereus_add_test(tst_workspace_arrange_hold fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_workspace_live_input)
 # Each case builds a MainWindow; 43 cases ran past the 120 s limit under
 # load. Four entries of the same binary (the limit is not raised; groups in

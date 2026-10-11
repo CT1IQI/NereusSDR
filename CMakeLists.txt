@@ -1851,6 +1851,8 @@ set(GUI_SOURCES
     src/gui/containers/ContainerContentRegistry.cpp
     src/gui/containers/ContainerArrangeController.h
     src/gui/containers/ContainerArrangeController.cpp
+    src/gui/containers/ArrangeHoldFilter.h
+    src/gui/containers/ArrangeHoldFilter.cpp
     src/gui/containers/ContainerEditSession.h
     src/gui/containers/ContainerEditSession.cpp
     src/gui/containers/OwnedMenu.h

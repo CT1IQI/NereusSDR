@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: setArrangeHeld, arrangeHeld,
+//                 arranging, containerDragActive and containerDragFinished
+//                 for the Shift hold. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: no Reveal header mode
 //                 (revealApplies, hideRevealHeaders). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -179,6 +183,14 @@ public:
     // Runtime only, never saved; locks still hold.
     void setArrangeMode(bool on);
     bool arrangeMode() const { return m_arrangeMode; }
+    // The Shift hold (ArrangeHoldFilter): arranges while it is held, apart
+    // from the switch. arrangeModeChanged reports the switch only.
+    void setArrangeHeld(bool held);
+    bool arrangeHeld() const { return m_arrangeHeld; }
+    // What containers, entry headers and the edge bands are told.
+    bool arranging() const { return m_arrangeMode || m_arrangeHeld; }
+    // True while any header drag or grip resize is in progress.
+    bool containerDragActive() const;
     QString storageError() const { return m_storageError; }
     bool isReconciling() const { return m_reconciling; }
     // Workspace profiles: while suppressed, no geometry is captured into
@@ -358,6 +370,8 @@ signals:
     void previewPresentationRequested(MeterWidget* meter, const QJsonObject& context);
     void workspaceError(const QString& error);
     void arrangeModeChanged(bool on);
+    // A header drag or grip resize ended, kept or cancelled.
+    void containerDragFinished();
     void gridAlignmentChanged(bool on);
 
 protected:
@@ -393,6 +407,10 @@ private:
     DockMode m_edgeDragMode = DockMode::PanelDocked;
     void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
     bool m_arrangeMode = false;
+    bool m_arrangeHeld = false;
+    // The arranging() last pushed to the containers.
+    bool m_arrangingApplied = false;
+    void applyArranging();
     bool m_geometryCaptureSuppressed = false;
     ContainerArrangeController* m_arrange = nullptr;
     QPointer<MeterPoller> m_previewPoller;
