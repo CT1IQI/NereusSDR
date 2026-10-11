@@ -7,9 +7,16 @@
 //
 // WDSP opens each receive channel with a DSP buffer of 4096 samples at
 // 48,000 (cmaster.c:72-86 [v2.10.3.15]), 85 ms of signal per block. Thetis
-// forces the configured size (64 by default, radio.cs:521-522) into every
-// receiver once the channels exist (console.cs:2681-2692 SyncDSP) and sets
-// each receiver from its own mode after that (console.cs:38975-38984).
+// forces the configured size into every receiver once the channels exist
+// (console.cs:2681-2692 SyncDSP) and sets each receiver from its own mode
+// after that (console.cs:38975-38984).
+//
+// The values a receiver gets with nothing saved are NereusSDR's own: a block
+// of 64 and Low Latency. Thetis's receiver objects start there too
+// (radio.cs:521-522, 559-560), but its Setup form then starts every mode at
+// 1024 and Linear Phase and sends those to the receivers (setup.cs:304-326,
+// console.cs:39273-39281 [v2.10.3.15]), so a stock Thetis receiver does not
+// run them.
 //
 // NereusSDR applied the sizes only when a slice's mode changed, and only to
 // the first receiver: the others never had the engine handle the apply
@@ -85,8 +92,8 @@ private slots:
         QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kCwBlock);
     }
 
-    // With nothing saved, the default of 64 (RxChannel::onModeChanged; From
-    // Thetis radio.cs:521-522 [v2.10.3.15]), not the 4096 it was opened with.
+    // With nothing saved, NereusSDR's default of 64 (RxChannel::onModeChanged),
+    // not the 4096 it was opened with.
     void a_receiver_starts_with_the_default_block_size()
     {
         RadioModel model;
@@ -148,9 +155,9 @@ private slots:
 
     // The filter type goes with the block size. WDSP opens a channel linear
     // phase (RXA.c create_nbp, mp 0); with nothing saved a receiver starts
-    // Low Latency, as every Thetis receiver does (radio.cs:559-560, forced
-    // in by SyncAll, radio.cs:384-388 [v2.10.3.15]). Before this the first
-    // receiver took it at its first mode change and the others never did.
+    // Low Latency, NereusSDR's default (RxChannel::onModeChanged). Before
+    // this the first receiver took it at its first mode change and the
+    // others never did.
     void a_receiver_starts_with_the_default_filter_type()
     {
         RadioModel model;
