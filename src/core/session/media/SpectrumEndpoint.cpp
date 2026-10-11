@@ -37,6 +37,11 @@ bool finite(double value)
     return std::isfinite(value);
 }
 
+// A span that is a whole number of bins computes a hair to either side of
+// it. This much of a bin, far under any step a control makes, reads such a
+// span as the whole number it is.
+constexpr double kWholeBinSlack = 1.0e-6;
+
 bool validPlane(const SpectrumPlaneRequest& plane)
 {
     return static_cast<int>(plane.detector) >= static_cast<int>(SpectrumDetectorMode::Peak)
@@ -223,7 +228,20 @@ int SpectrumEndpoint::grantedPixels(const SpectrumEndpointRequest& request, int 
     if (count <= 0) {
         return 0;
     }
-    return std::min({request.pixels, count, kMaxPixels});
+    // R-DISP-RETUNE: the bins a crop touches depend on where it lies over
+    // them. The reducer takes the floor at the low edge and the ceiling at
+    // the high one, so a span of n bins touches ceil(n) + 1 of them with
+    // its low edge on a bin edge and one more anywhere else. A grant that
+    // followed that would change as a tuning step moved the crop a fraction
+    // of a bin, and a changed sample count is a new picture: the display
+    // would blank where it only moved. So a crop limited by its bins is
+    // granted the count it has at every alignment, and the reducer lays the
+    // bins it touches over that many samples. A crop that runs past the
+    // source's edge has fewer bins still, and is granted those.
+    const double spanBins = request.spanHz * fftBins / sourceSampleRateHz;
+    const int everyAlignment = static_cast<int>(std::clamp(
+        std::ceil(spanBins - kWholeBinSlack) + 1.0, 1.0, static_cast<double>(kMaxPixels)));
+    return std::min({request.pixels, count, everyAlignment, kMaxPixels});
 }
 
 bool SpectrumEndpoint::validSourceContext(const SpectrumEndpointSourceContext& sourceContext)

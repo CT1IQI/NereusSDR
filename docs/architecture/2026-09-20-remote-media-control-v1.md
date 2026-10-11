@@ -306,7 +306,13 @@ changes to satisfy another's request. When the last neighbour leaves, an
 endpoint held to a neighbour's size is granted its own. The engine runs at
 the highest frame rate its endpoints ask for, and each endpoint keeps its own
 cadence, so a rate change alone renews no endpoint. Pixels are granted as
-min(requested, visible source bins, 4096). Incompatible window choices are
+min(requested, visible source bins, 4096). The visible source bins are those
+the crop holds wherever it lies over them: a span of n bins touches
+ceil(n) + 1 with its low edge on a bin edge and one more anywhere else, and
+is granted ceil(n) + 1, so a tune that moves the crop a fraction of a bin
+changes no sample count and the picture moves instead of starting again
+(R-DISP-RETUNE). A crop that runs past the source's edge is granted the bins
+it has there. Incompatible window choices are
 refused. A global
 window change unsubscribes all old-window endpoints before requesting any
 replacement, so shared sources can adopt the new window.

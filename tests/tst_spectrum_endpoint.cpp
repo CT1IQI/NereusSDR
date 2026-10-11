@@ -346,11 +346,65 @@ private slots:
         const int coveredBins = qRound(context.exactSpanHz
                                        / (source.sampleRateHz / source.fftBins));
         QVERIFY(coveredBins > 0);
-        QCOMPARE(context.codec.traceSamples, static_cast<quint16>(coveredBins));
-        QCOMPARE(context.codec.waterfallSamples, static_cast<quint16>(coveredBins));
+        // One bin of span touches two bins with its low edge on a bin edge
+        // and three anywhere else, as here. It is granted the two it has at
+        // every alignment (R-DISP-RETUNE).
+        QCOMPARE(coveredBins, 3);
+        QCOMPARE(context.codec.traceSamples, quint16(2));
+        QCOMPARE(context.codec.waterfallSamples, quint16(2));
         const std::optional<DisplayCodecFrame> output = endpoint.consume(frame(source, 1'000'000'000));
         QVERIFY(output.has_value());
-        QCOMPARE(output->traceDbm.size(), coveredBins);
+        QCOMPARE(output->traceDbm.size(), 2);
+    }
+
+    // R-DISP-RETUNE: a crop of fewer bins than the points asked is granted
+    // its bins. The bins a crop touches are one more at some alignments
+    // than at others, and the points granted are the same at every one, so
+    // a tuning step moves the picture and never starts a new one. This is
+    // the mini display's 20 kHz beside a pan whose FFT it shares.
+    void aCropOfFewerBinsThanItsPointsKeepsItsPointCountAsItMoves()
+    {
+        SpectrumEndpointSourceContext source = sourceContext();
+        source.fftBins = 8192;
+        const double binHz = source.sampleRateHz / source.fftBins;
+        SpectrumEndpointRequest req = request();
+        req.spanHz = 20'000.0; // 853.33 bins
+        req.pixels = 1024;
+
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        const int points = endpoint.context().codec.traceSamples;
+        QVERIFY2(points > 800 && points < req.pixels, qPrintable(QString::number(points)));
+        qint64 at = 1'000'000'000;
+        QVERIFY(endpoint.consume(frame(source, at)).has_value());
+
+        QSet<int> binsTouched;
+        SpectrumEndpointRequest next = req;
+        for (int step = 0; step < 16; ++step) {
+            next.centreHz += 3'005.0; // no whole number of bins
+            ++source.contextGeneration;
+            endpoint.awaitContext();
+            QVERIFY(endpoint.configure(next, source));
+            const int touched = qRound(endpoint.context().exactSpanHz / binHz);
+            binsTouched.insert(touched);
+            const QByteArray where = QStringLiteral("step %1, %2 bins touched")
+                                         .arg(step).arg(touched).toUtf8();
+            QVERIFY2(endpoint.context().codec.traceSamples == points, where.constData());
+            QVERIFY2(endpoint.context().codec.waterfallSamples == points, where.constData());
+            QVERIFY2(SpectrumEndpoint::grantedPixels(next, source.fftBins, source.centreHz,
+                                                     source.sampleRateHz, false) == points,
+                     where.constData());
+            QVERIFY2(endpoint.picture() == SpectrumPictureKind::Moved, where.constData());
+            // Never more points than bins.
+            QVERIFY2(points <= touched, where.constData());
+            at += 40'000'000;
+            const std::optional<DisplayCodecFrame> output = endpoint.consume(frame(source, at));
+            QVERIFY2(output.has_value(), where.constData());
+            QVERIFY2(output->traceDbm.size() == points, where.constData());
+        }
+        // The case under test did happen: the crop touched a bin more at
+        // some alignments than at others.
+        QCOMPARE(binsTouched.size(), 2);
     }
 
     void outOfRangeAndStaleSourceNeverYieldPriorFrame()

@@ -57,6 +57,7 @@
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/ClarityController.h"
+#include "core/ControlRanges.h"
 #include "core/HpsdrModel.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
@@ -1020,8 +1021,29 @@ private slots:
     // it over them, so the Core's crop is a bin wider at one step and a bin
     // narrower at another. It asked for the same 20 kHz each time: the same
     // picture moved, and it keeps its painted frame.
+    void theMiniDisplayKeepsItsFrameWhenTheCropChangesByABin_data()
+    {
+        QTest::addColumn<QString>("panHzPerBin");
+        // The pan at its stored size, on the receiver's wide engine. The
+        // mini display has the fine engine to itself, at the size it asks,
+        // and its 20 kHz holds more bins than its 1 024 points.
+        QTest::newRow("moreBinsThanPoints") << QString();
+        // The pan on the fine engine at 8 192, which the mini display then
+        // shares. Its 20 kHz is 853.33 bins there, fewer than the points it
+        // asks for, so its points are its bins: the same at every step,
+        // though the bins its crop touches are not.
+        QTest::newRow("fewerBinsThanPoints") << QStringLiteral("23.4375");
+    }
+
     void theMiniDisplayKeepsItsFrameWhenTheCropChangesByABin()
     {
+        QFETCH(QString, panHzPerBin);
+        constexpr int kMiniPointsAsked = 1024;
+        const QString hzPerBinKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        const auto restore = qScopeGuard([&] { AppSettings::instance().remove(hzPerBinKey); });
+        if (!panHzPerBin.isEmpty()) {
+            AppSettings::instance().setValue(hzPerBinKey, panHzPerBin);
+        }
         Fixture f(/*withCore=*/true);
         QVERIFY(f.start());
         QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
@@ -1029,6 +1051,11 @@ private slots:
         f.window->setMiniDisplaySlices({f.sliceId});
         QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
         unavailable.clear();
+        // The row is the case it names.
+        const qsizetype points = miniFrames.last().at(1).value<QVector<float>>().size();
+        QVERIFY2(panHzPerBin.isEmpty() ? points == kMiniPointsAsked
+                                       : points > 0 && points < kMiniPointsAsked,
+                 qPrintable(QString::number(points)));
         SliceModel* const slice = f.remote.sliceById(f.sliceId);
         QVERIFY(slice);
 
@@ -1058,6 +1085,7 @@ private slots:
                      qPrintable(QStringLiteral("step %1 blanked the mini display (its span "
                                                "changed by, in Hz: %2)")
                                     .arg(step).arg(seen.join(QStringLiteral(", ")))));
+            QCOMPARE(miniFrames.last().at(1).value<QVector<float>>().size(), points);
         }
         // The case under test did happen: the Core's bin count changed.
         QVERIFY2(changedByOneBin >= 1, qPrintable(seen.join(QStringLiteral(", "))));

@@ -142,6 +142,10 @@ public:
     /// of `fftBins` bins: min(requested, visible bins, kMaxPixels), or
     /// min(requested, kMaxPixels) for an active extended view, whose ADC
     /// wings own every pixel. Zero means the crop covers no source bin.
+    /// The visible bins are those the span holds wherever it lies over them
+    /// (ceil(span in bins) + 1), not the one more it touches at most
+    /// alignments, so the count is the same before and after a tune that
+    /// moves the crop a fraction of a bin (R-DISP-RETUNE).
     static int grantedPixels(const SpectrumEndpointRequest& request, int fftBins,
                              double sourceCentreHz, double sourceSampleRateHz,
                              bool extendedView);
