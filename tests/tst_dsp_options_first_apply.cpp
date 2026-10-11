@@ -3,6 +3,7 @@
 //
 // Every receive channel takes the DSP > Options buffer size of its slice's
 // mode before it runs a block, and again whenever that slice's mode changes.
+// The filter size and filter type of that mode go with it.
 //
 // WDSP opens each receive channel with a DSP buffer of 4096 samples at
 // 48,000 (cmaster.c:72-86 [v2.10.3.15]), 85 ms of signal per block. Thetis
@@ -143,6 +144,50 @@ private slots:
         QVERIFY(engine->rxChannel(a) != nullptr);
         QVERIFY(engine->rxChannel(4) != nullptr);
         QCOMPARE(engine->rxChannel(4)->dspBlockSize(), kOpenedBlock);
+    }
+
+    // The filter type goes with the block size. WDSP opens a channel linear
+    // phase (RXA.c create_nbp, mp 0); with nothing saved a receiver starts
+    // Low Latency, as every Thetis receiver does (radio.cs:559-560, forced
+    // in by SyncAll, radio.cs:384-388 [v2.10.3.15]). Before this the first
+    // receiver took it at its first mode change and the others never did.
+    void a_receiver_starts_with_the_default_filter_type()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        const int b = model.addSlice();
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
+
+        QVERIFY(!engine->rxChannel(a)->filterTypeLinearPhase());
+        QVERIFY(!engine->rxChannel(b)->filterTypeLinearPhase());
+        // A channel no slice uses is left as it was opened.
+        QVERIFY(engine->rxChannel(4)->filterTypeLinearPhase());
+    }
+
+    // Each receiver takes the type saved for its own slice's mode.
+    void each_receiver_starts_with_its_modes_filter_type()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("DspOptionsFilterTypeCwRx"), QStringLiteral("Linear Phase"));
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setDspMode(DSPMode::USB);
+        const int b = model.addSlice();
+        model.sliceById(b)->setDspMode(DSPMode::CWU);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
+
+        QVERIFY(!engine->rxChannel(a)->filterTypeLinearPhase());
+        QVERIFY(engine->rxChannel(b)->filterTypeLinearPhase());
     }
 
     // A mode change reaches a receiver other than the first. The slice's

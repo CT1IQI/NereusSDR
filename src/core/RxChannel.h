@@ -67,6 +67,9 @@
 //                 AF level, a departure from Thetis radio.cs, which sets AF
 //                 as SetRXAPanelGain1. By J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-11 - filterTypeLinearPhase(): the filter type the channel
+//                 holds, for tst_dsp_options_first_apply. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1012,6 +1015,7 @@ public:
     // Idempotent: a no-op when the new value matches the cached current value.
     void setFilterSizeSamples(int nc);
     void setFilterTypeLinearPhase(bool linearPhase);
+    bool filterTypeLinearPhase() const { return m_filterType == 1; }
 
     // ── DSP block size (live-apply via WDSP SetDSPBuffsize) ─────────────────
     //
