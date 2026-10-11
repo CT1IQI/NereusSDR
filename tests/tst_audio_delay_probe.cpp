@@ -14,6 +14,12 @@
 // Modification history (NereusSDR):
 //   2026-10-08: native audio plan Task 1 (V-HW-8). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-11: a newly started scripted helper gets 30 s for its hello
+//               and for the first wait after its start
+//               (kFakeCaptureChildStartMs, fakes/FakeCaptureChild.h),
+//               so a busy computer cannot fail a case that is not about
+//               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -82,11 +88,17 @@ std::vector<float> buffer(int frames, Background&& background, int pulseAt, floa
     return out;
 }
 
+// What a newly started scripted helper is allowed before its start counts
+// as failed: the hello deadline, and each first wait after a start
+// (fakes/FakeCaptureChild.h).
+constexpr int kHelperStartMs = NereusSDR::Test::kFakeCaptureChildStartMs;
+
 CaptureSupervisor::Options fakeOptions(const QString& scenario)
 {
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), scenario};
+    options.helloTimeoutMs = kHelperStartMs;   // 3000 in production
     return options;
 }
 
@@ -502,7 +514,8 @@ private slots:
         auto h = makeHarness();
         QCOMPARE(h->engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         h->engine->setDelayProbeEnabled(true);
-        QVERIFY(waitForCapture(h->engine, CaptureSupervisor::Status::State::Ready, 5000));
+        QVERIFY(waitForCapture(h->engine, CaptureSupervisor::Status::State::Ready,
+                               kHelperStartMs));
         QVERIFY(h->engine->captureHelperProcessIdForTest() > 0);
         // The fake helper exits if ProbeEnable comes before its Ready; its
         // hits reach the engine.

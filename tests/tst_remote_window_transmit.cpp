@@ -100,6 +100,12 @@
 //   2026-10-02: provide a real test-only TX channel for the pre-carrier
 //               tune-ended cases and verify gate cleanup. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-11: a newly started scripted helper gets 30 s for its hello
+//               and for the first wait after its start
+//               (kFakeCaptureChildStartMs, fakes/FakeCaptureChild.h),
+//               so a busy computer cannot fail a case that is not about
+//               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -1354,6 +1360,7 @@ private slots:
         CaptureSupervisor::Options options;
         options.program = QCoreApplication::applicationFilePath();
         options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+        options.helloTimeoutMs = Test::kFakeCaptureChildStartMs;   // 3000 in production
         engine->setCaptureSupervisorOptionsForTest(options);
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
         DaemonMediaController daemonMedia(&h.server, &h.station);
@@ -1367,7 +1374,8 @@ private slots:
         QVERIFY(gauge);
         h.connectSession();
         QTRY_VERIFY(remoteMedia.micLineOpen());
-        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f,
+                                 Test::kFakeCaptureChildStartMs);
         QTRY_VERIFY(gauge->value() > -30.0);
         QVERIFY(!remoteMedia.micUplinkRunning());
         QCOMPARE(remoteMedia.micPacketsSent(), quint64(0));
@@ -1393,7 +1401,8 @@ private slots:
         h.remote.transmitModel().setMicSource(MicSource::Vax);
         QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         h.remote.transmitModel().setMicSource(MicSource::Pc);
-        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f,   // a new helper
+                                 Test::kFakeCaptureChildStartMs);
 
         // Follow the accepted radio-source control path in both directions.
         h.client.requestMicSource(MicSource::Radio);
@@ -1403,7 +1412,8 @@ private slots:
         h.client.requestMicSource(MicSource::Pc);
         QTRY_COMPARE(h.client.remoteTransmit()->acceptedMicSource(), RemoteMicSource::ClientAudio);
         QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
-        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f,   // a new helper
+                                 Test::kFakeCaptureChildStartMs);
         QTRY_VERIFY(gauge->value() > -30.0);
         QVERIFY(!remoteMedia.micUplinkRunning());
         QCOMPARE(remoteMedia.micPacketsSent(), stopped);
@@ -1415,7 +1425,8 @@ private slots:
         testMic.release();
         QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         h.remote.transmitModel().setMicSource(MicSource::Pc);
-        QTRY_VERIFY(engine->pcMicInputLevel() > 0.1f);
+        QTRY_VERIFY_WITH_TIMEOUT(engine->pcMicInputLevel() > 0.1f,   // a new helper
+                                 Test::kFakeCaptureChildStartMs);
         h.client.disconnectFromStation(QStringLiteral("test complete"));
         QTRY_COMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Closed);
         QCOMPARE(engine->pcMicInputLevel(), 0.0f);
