@@ -1,7 +1,7 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
-//   2026-10-11 - header loads as Shown (0) or Hidden (2); a saved 1 loads
-//                 as Hidden and is written back as 2. J.J. Boyd (KG4VCF),
+//   2026-10-11 - header loads and saves as Shown (0), Reveal (1) or Hidden
+//                 (2); anything else is rejected. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - locked is written only when true, and a document without
 //                 the key loads unlocked. J.J. Boyd (KG4VCF), AI-assisted
@@ -118,7 +118,7 @@ private slots:
         QVERIFY2(decoded.ok, qPrintable(decoded.error));
         QCOMPARE(decoded.document, doc);
     }
-    void headerLoadsAsShownOrHidden_data()
+    void headerLoadsAndSavesItsThreeValues_data()
     {
         QTest::addColumn<int>("saved");
         QTest::addColumn<bool>("loads");
@@ -126,12 +126,13 @@ private slots:
         QTest::addColumn<int>("writtenBack");
         QTest::newRow("0 is shown") << 0 << true << HeaderMode::Shown << 0;
         QTest::newRow("2 is hidden") << 2 << true << HeaderMode::Hidden << 2;
-        // 1 was the hover mode; it loads hidden and is never written again.
-        QTest::newRow("1 loads hidden") << 1 << true << HeaderMode::Hidden << 2;
+        // The codec does not know the look: the look-off hover mode
+        // survives a load and a save. The manager hides it with the look on.
+        QTest::newRow("1 is reveal") << 1 << true << HeaderMode::Reveal << 1;
         QTest::newRow("3 is rejected") << 3 << false << HeaderMode::Shown << 0;
         QTest::newRow("-1 is rejected") << -1 << false << HeaderMode::Shown << 0;
     }
-    void headerLoadsAsShownOrHidden()
+    void headerLoadsAndSavesItsThreeValues()
     {
         QFETCH(int, saved);
         QFETCH(bool, loads);
@@ -158,16 +159,17 @@ private slots:
         expected.containers[0].header = header;
         QCOMPARE(decoded.document, expected);
     }
-    void theRemovedHoverHeaderValueIsNotAValidDocument()
+    void onlyTheThreeHeaderValuesAreAValidDocument()
     {
-        // 1 can only come from an old file, where decode maps it; a document
-        // in memory never holds it.
         WorkspaceDocument doc = sample();
-        doc.containers[0].header = static_cast<HeaderMode>(1);
+        for (HeaderMode mode : {HeaderMode::Shown, HeaderMode::Reveal, HeaderMode::Hidden}) {
+            doc.containers[0].header = mode;
+            QVERIFY(ContainerDocumentCodec::validate(doc).isEmpty());
+        }
+        doc.containers[0].header = static_cast<HeaderMode>(3);
         QVERIFY(!ContainerDocumentCodec::validate(doc).isEmpty());
-        doc.containers[0].header = HeaderMode::Shown;
-        QVERIFY(ContainerDocumentCodec::validate(doc).isEmpty());
         QCOMPARE(int(HeaderMode::Shown), 0);
+        QCOMPARE(int(HeaderMode::Reveal), 1);
         QCOMPARE(int(HeaderMode::Hidden), 2);
     }
     void freeCanvasKeepsPrecisePlacementAndLegacyRecord()

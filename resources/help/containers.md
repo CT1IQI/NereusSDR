@@ -38,9 +38,9 @@ draft intact, so correct the storage problem before applying again.
 
 ## Headers, locks and sources
 
-Headers can be **Always visible** or **Hidden**.
-Header space stays reserved. Hold **Shift** to recover hidden controls, then change
-the Header setting. **Lock** prevents
+Headers can be **Always visible**, **Reveal on hover / focus**, or **Hidden**.
+Header space stays reserved. Hold **Shift** or use **Reveal controls** in the context
+menu to recover hidden controls, then change the Header setting. **Lock** prevents
 arrangement, floating/docking and resizing; it does not disable the object's normal
 radio controls. Auto height follows the stack's actual minimum heights.
 **Minimizes** and **Hide when RX unused** are unavailable; their saved values

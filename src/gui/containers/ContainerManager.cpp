@@ -7,8 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-11 - A header is Shown or Hidden (comment only here). J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: a header is Shown or Hidden. A
+//                 container saved with Reveal loads, runs and commits as
+//                 Hidden there (hideRevealHeaders). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the look has no Lock setting. A
 //                 container loads, runs and commits unlocked there
 //                 (lockApplies, clearLocks), and a strip divider beside a
@@ -371,6 +373,9 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
     if (!lockApplies()) {
         clearLocks(saved);
     }
+    if (!revealApplies()) {
+        hideRevealHeaders(saved);
+    }
     const CommitResult result = m_store->commit(saved, expectedRevision);
     if (result.status != CommitStatus::Saved) { m_storageError = result.error; emit workspaceError(result.error); }
     else { m_storageError.clear(); }
@@ -388,6 +393,21 @@ bool ContainerManager::clearLocks(WorkspaceDocument& document)
         container.locked = false;
     }
     return cleared;
+}
+bool ContainerManager::revealApplies()
+{
+    return !WorkspacePreview::enabled();
+}
+bool ContainerManager::hideRevealHeaders(WorkspaceDocument& document)
+{
+    bool changed = false;
+    for (auto& container : document.containers) {
+        if (container.header == HeaderMode::Reveal) {
+            container.header = HeaderMode::Hidden;
+            changed = true;
+        }
+    }
+    return changed;
 }
 bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
 {
@@ -476,12 +496,15 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
     if (!m_store || !m_registry || m_reconciling) { return; }
     // Refuse draft/preview state. Dependent controllers commit through the store.
     if (document != m_store->snapshot()) { return; }
-    if (!lockApplies()) {
-        // A document saved locked (by an older build, or seeded from the
-        // look-off workspace) is saved unlocked before anything is shown.
-        // That commit reconciles the unlocked document, so this call is done.
+    if (!lockApplies() || !revealApplies()) {
+        // A document saved locked, or with a Reveal header (by an older
+        // build, or seeded from the look-off workspace), is saved unlocked
+        // and with that header Hidden before anything is shown. That commit
+        // reconciles the corrected document, so this call is done.
         WorkspaceDocument unlocked = document;
-        if (clearLocks(unlocked)
+        const bool cleared = !lockApplies() && clearLocks(unlocked);
+        const bool hidden = !revealApplies() && hideRevealHeaders(unlocked);
+        if ((cleared || hidden)
             && m_store->commit(unlocked, unlocked.revision).status == CommitStatus::Saved) {
             return;
         }
@@ -887,7 +910,7 @@ void ContainerManager::applyEdgeStripContentHints(bool sideStripsOnly)
     }
     const DockEdge edges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
     // What each strip's containers need across it. The header counts only
-    // where it takes room (Shown); Hidden reserves none.
+    // where it takes room (Shown); Reveal and Hidden reserve none.
     for (DockEdge edge : edges) {
         if (sideStripsOnly && EdgeDockStrip::orientationFor(edge) != Qt::Vertical) {
             // An end strip's preferred height follows its own signal

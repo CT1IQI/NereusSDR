@@ -177,9 +177,10 @@
 //                 arrange-on mixes a kept and a hidden header and notes each
 //                 eye button's rect, mixed-container-reveal is
 //                 mixed-container-hidden; header-reveal-idle,
-//                 header-reveal-shown, clean-spectrum-reveal and
-//                 baseline-header-reveal are gone. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//                 header-reveal-shown and clean-spectrum-reveal are gone.
+//                 The look-off scenes, baseline-header-reveal among them,
+//                 are unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -1421,7 +1422,7 @@ void sceneHeaderMode(SceneContext& ctx, HeaderMode mode, const QString& name)
             c.failure = QStringLiteral("no Main Panel container");
             return;
         }
-        // The context menu's Header > Always visible / Hidden path.
+        // The context menu's Header > Always / Reveal / Hidden path.
         emit panel->headerModeRequested(mode);
     });
     if (ctx.failure.isEmpty()) {
@@ -7175,6 +7176,10 @@ QVector<Scene> fixedScenes()
     scenes.append({QStringLiteral("baseline-header-always"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         sceneHeaderMode(ctx, HeaderMode::Shown, QStringLiteral("baseline-header-always"));
+    }});
+    scenes.append({QStringLiteral("baseline-header-reveal"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneHeaderMode(ctx, HeaderMode::Reveal, QStringLiteral("baseline-header-reveal"));
     }});
     scenes.append({QStringLiteral("baseline-header-hidden"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {

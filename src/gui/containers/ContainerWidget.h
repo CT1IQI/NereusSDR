@@ -11,8 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-11 - A header is shown or hidden: the Reveal constants, timers,
-//                 fade, shadow, recoverChrome and the preview seam are gone.
+//   2026-10-11 - Workspace preview only: a header is shown or hidden. The
+//                 look's hover timers, fade, focus rule and preview seam
+//                 are gone; the overlay opacity and shadow stay for Arrange.
+//                 With the look off the three header modes are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: lockRequested is gone with the
 //                 Options menu's Lock item. J.J. Boyd (KG4VCF), AI-assisted
@@ -196,6 +198,7 @@ mw0lge@grange-lane.co.uk
 
 class QLabel;
 class QPushButton;
+class QGraphicsOpacityEffect;
 class QMenu;
 
 namespace NereusSDR {
@@ -295,10 +298,15 @@ public:
     void setHeaderMode(HeaderMode mode);
     HeaderMode headerMode() const { return m_headerMode; }
     bool chromeVisible() const;
+    void recoverChrome();
     bool isTitleBarVisible() const { return m_titleBarVisible; }
     void setTitleBarVisible(bool visible);
 
     // --- Workspace preview header (WorkspacePreview::enabled() only) ---
+    // A hidden header drawn over the content while arranging: its opacity
+    // and the depth of the shadow under it.
+    static constexpr double kOverlayOpacity = 0.96;
+    static constexpr int kOverlayShadowPx = 6;
     static constexpr int kArrangeEdgePx = 4;
     // The header extent the layout reserves: the legacy 22 px slot with
     // the preview off; with it on, 18 px when the header is shown (and
@@ -526,6 +534,8 @@ private:
     HeaderMode m_headerMode{HeaderMode::Shown};
     bool m_structuredChrome{false};
     bool m_popOutShell{false};
+    bool m_hoverChrome{false};
+    bool m_recoverChrome{false};
     bool m_shiftChrome{false};
     QWidget* m_titleBar{nullptr};
     QWidget* m_contentHolder{nullptr};
@@ -539,11 +549,12 @@ private:
 
     // --- Workspace preview header ---
     WorkspaceGroupHeader* m_groupHeader{nullptr};
+    QWidget* m_overlayShadow{nullptr};
     QWidget* m_arrangeFrame{nullptr};
     QWidget* m_edgeRight{nullptr};
     QWidget* m_edgeBottom{nullptr};
+    QGraphicsOpacityEffect* m_headerOpacity{nullptr};
     bool m_arrangeActive{false};
-    bool m_workspaceMenuOpen{false};
     bool m_followsSelectedRx{false};
     int m_sourceMenuRx{0};
     std::function<bool(int)> m_sliceAvailable;

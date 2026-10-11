@@ -7,12 +7,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-11 - A header is shown or hidden. The hover choice (Reveal) and
-//                 its timers, fade, shadow and focus rules are gone, and so
-//                 is "Reveal controls". Workspace preview: the header's eye
-//                 button and the body menu's "Keep Header Showing" switch
-//                 it; Arrange draws a hidden header over the content.
-//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: a header is shown or hidden. The
+//                 header's eye button and the body menu's "Keep Header
+//                 Showing" switch it, Arrange draws a hidden header over
+//                 the content, and the look's hover timers, fade and focus
+//                 rule, its Header submenus and "Reveal controls" are gone.
+//                 With the look off the three header modes, their menus and
+//                 "Reveal controls" are unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the Options menu has no Lock item,
 //                 the header no padlock, and nothing in the look's chrome
 //                 or menu is disabled for Lock. J.J. Boyd (KG4VCF),
@@ -177,6 +179,7 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QStringList>
 #include <QCursor>
+#include <QGraphicsOpacityEffect>
 #include <QPainter>
 #include <QResizeEvent>
 #include <algorithm>
@@ -185,11 +188,34 @@ namespace NereusSDR {
 
 namespace {
 
+// Workspace preview: the shadow under an overlay header,
+// rgba(0,0,0,110) fading to transparent over kOverlayShadowPx.
+constexpr int kOverlayShadowAlpha = 110;
 // Workspace preview: Arrange's dashed outline, the accent at 60 %.
 constexpr int kArrangeOutlineAlpha = 153;
 // The legacy default content background; in the preview the glass plate
 // shows through instead.
 constexpr QRgb kLegacyContentBackground = 0xff0f0f1a;
+
+class OverlayShadow final : public QWidget {
+public:
+    explicit OverlayShadow(QWidget* parent) : QWidget(parent)
+    {
+        // Native on macOS like every sibling here: it must pass clicks
+        // through as a view, not only as a widget.
+        WorkspacePreview::passInputThrough(this);
+        hide();
+    }
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        QLinearGradient g(0, 0, 0, height());
+        g.setColorAt(0.0, QColor(0, 0, 0, kOverlayShadowAlpha));
+        g.setColorAt(1.0, QColor(0, 0, 0, 0));
+        p.fillRect(rect(), g);
+    }
+};
 
 class ArrangeOutline final : public QWidget {
 public:
@@ -446,6 +472,14 @@ void ContainerWidget::buildWorkspaceHeader()
         }
     });
 
+    // A hidden header drawn for Arrange is an overlay: slightly see-through,
+    // with a shadow under it. Neither is animated.
+    m_headerOpacity = new QGraphicsOpacityEffect(m_groupHeader);
+    m_headerOpacity->setOpacity(kOverlayOpacity);
+    m_headerOpacity->setEnabled(false);
+    m_groupHeader->setGraphicsEffect(m_headerOpacity);
+
+    m_overlayShadow = new OverlayShadow(this);
     m_arrangeFrame = new ArrangeOutline(this);
     m_edgeRight = new QWidget(this);
     m_edgeRight->setObjectName(QStringLiteral("containerResizeEdgeRight"));
@@ -477,6 +511,9 @@ void ContainerWidget::setArrangeActive(bool active)
     }
     m_arrangeActive = active;
     // Leaving Arrange restores each container's own choice.
+    if (!active) {
+        m_recoverChrome = false;
+    }
     updateChrome();
 }
 
@@ -510,7 +547,9 @@ void ContainerWidget::updateWorkspaceChrome()
     } else if (!inLayout && placedInLayout) {
         box->removeWidget(m_groupHeader);
     }
+    m_headerOpacity->setEnabled(!inLayout);
     m_groupHeader->setVisible(inLayout || overlayShown);
+    m_overlayShadow->setVisible(overlayShown);
     m_groupHeader->setKeepShown(m_headerMode == HeaderMode::Shown);
     m_groupHeader->setArrangeAccent(m_arrangeActive);
     m_groupHeader->setFloating(isFloating());
@@ -552,6 +591,7 @@ void ContainerWidget::placeWorkspaceOverlays()
             : 0;
         host->setTopOverlayInset(reach);
     }
+    place(m_overlayShadow, QRect(0, WorkspaceGroupHeader::kHeight, width(), kOverlayShadowPx));
     place(m_arrangeFrame, rect());
     place(m_edgeRight, QRect(width() - kArrangeEdgePx, 0, kArrangeEdgePx, height()));
     place(m_edgeBottom, QRect(0, height() - kArrangeEdgePx, width(), kArrangeEdgePx));
@@ -614,14 +654,8 @@ void ContainerWidget::showWorkspaceOptions()
     OwnedMenu owned(this);
     QMenu& menu = owned.menu();
     populateWorkspaceMenu(menu);
-    m_workspaceMenuOpen = true;
     QPushButton* button = m_groupHeader->optionsButton();
-    const QPointer<ContainerWidget> self(this);
     menu.exec(button->mapToGlobal(QPoint(0, button->height())));
-    if (!self) {
-        return;
-    }
-    m_workspaceMenuOpen = false;
 }
 
 void ContainerWidget::setSliceAvailability(std::function<bool(int sliceId)> available)
@@ -660,14 +694,8 @@ void ContainerWidget::showSourceMenu()
     OwnedMenu owned(this);
     QMenu& menu = owned.menu();
     populateSourceMenu(menu);
-    m_workspaceMenuOpen = true;
     QWidget* chip = m_groupHeader->sourceChip();
-    const QPointer<ContainerWidget> self(this);
     menu.exec(chip->mapToGlobal(QPoint(0, chip->height())));
-    if (!self) {
-        return;
-    }
-    m_workspaceMenuOpen = false;
 }
 
 // Nereus-origin reserved chrome: visibility never changes the content viewport.
@@ -690,6 +718,7 @@ void ContainerWidget::setHeaderMode(HeaderMode mode)
         connect(qApp, &QApplication::focusChanged, this,
                 [this](QWidget *, QWidget *) { updateChrome(); });
     }
+    if(m_headerMode!=mode) {m_recoverChrome=false;}
     m_headerMode = mode;
     m_titleBarVisible = mode != HeaderMode::Hidden;
     updateChrome();
@@ -698,6 +727,11 @@ bool ContainerWidget::chromeVisible() const
 {
     // Workspace preview: the group header is the chrome.
     return m_groupHeader ? m_groupHeader->isVisible() : m_titleBar->isVisible();
+}
+void ContainerWidget::recoverChrome()
+{
+    m_recoverChrome = true;
+    updateChrome();
 }
 void ContainerWidget::updateChrome()
 {
@@ -708,8 +742,12 @@ void ContainerWidget::updateChrome()
         updateWorkspaceChrome();
         return;
     }
+    QWidget *focused = QApplication::focusWidget();
+    const bool focus = focused && (focused == this || isAncestorOf(focused));
     const bool shift = m_shiftChrome || (QApplication::keyboardModifiers() & Qt::ShiftModifier);
-    const bool visible = m_headerMode == HeaderMode::Shown || shift;
+    const bool visible = m_headerMode == HeaderMode::Shown ||
+                         (m_headerMode == HeaderMode::Reveal && (m_hoverChrome || focus)) ||
+                         m_recoverChrome || shift;
     m_titleBar->setVisible(visible);
     m_resizeGrip->setVisible(visible && !m_locked && !m_autoHeight && !isPanelDocked());
     m_resizeGrip->move(width() - 12, height() - 12);
@@ -743,11 +781,13 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
         keep->setCheckable(true);
         keep->setChecked(m_headerMode == HeaderMode::Shown);
     } else {
+        menu.addAction(tr("Reveal controls"), this, &ContainerWidget::recoverChrome);
         auto *header = menu.addMenu(tr("Header"));
-        for (auto mode : {HeaderMode::Shown, HeaderMode::Hidden}) {
-            auto *action = header->addAction(mode == HeaderMode::Shown
-                                                 ? tr("Always visible")
-                                                 : tr("Hidden (hold Shift to recover)"));
+        for (auto mode : {HeaderMode::Shown, HeaderMode::Reveal, HeaderMode::Hidden}) {
+            auto *action =
+                header->addAction(mode == HeaderMode::Shown    ? tr("Always visible")
+                                  : mode == HeaderMode::Reveal ? tr("Reveal on hover/focus")
+                                                               : tr("Hidden (hold Shift to recover)"));
             action->setCheckable(true);
             action->setChecked(mode == m_headerMode);
             connect(action, &QAction::triggered, this,
@@ -763,13 +803,7 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
     if (auto *host = qobject_cast<ContainerContentHost *>(m_content)) {
         host->addContentsMenu(menu);
     }
-    m_workspaceMenuOpen = true;
-    const QPointer<ContainerWidget> self(this);
     menu.exec(event->globalPos());
-    if (!self) {
-        return;
-    }
-    m_workspaceMenuOpen = false;
 }
 
 void ContainerWidget::setContentMinimumWidth(int width)
@@ -1142,6 +1176,10 @@ int ContainerWidget::roundToNearestTen(int value)
 void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_structuredChrome) {
+        if (!m_groupHeader) {
+            m_hoverChrome = true;
+            updateChrome();
+        }
         if (m_dragging) {
             updateDrag(event->globalPosition().toPoint());
         }
@@ -1192,6 +1230,8 @@ void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 void ContainerWidget::leaveEvent(QEvent* event)
 {
     if (m_structuredChrome) {
+        m_hoverChrome = false;
+        if(!m_dragging && !m_resizing) {m_recoverChrome = false;}
         updateChrome();
         QWidget::leaveEvent(event);
         return;
@@ -1234,6 +1274,10 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
         }
         if (auto *widget = qobject_cast<QWidget *>(watched);
             widget && (widget == this || isAncestorOf(widget))) {
+            if (event->type() == QEvent::Enter || event->type() == QEvent::MouseMove) {
+                m_hoverChrome = true;
+                updateChrome();
+            }
             if (event->type() == QEvent::Resize) {
                 updateChrome();
             }

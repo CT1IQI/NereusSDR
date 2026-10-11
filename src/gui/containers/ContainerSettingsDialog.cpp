@@ -8,9 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-11 - The header choice is Shown or Hidden; the hover choice is
-//                 gone. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
-//                 Code.
+//   2026-10-11 - Workspace preview only: the header choice is shown or
+//                 hidden, without the hover choice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: no Lock checkbox. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Duplicate always gives a shown, floating copy next to the
@@ -1110,7 +1110,12 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         m_hideTitleCheck->hide();
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
         m_headerCombo=new QComboBox(bar); m_headerCombo->setObjectName("containerHeader");
-        m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
+        if (WorkspacePreview::enabled()) {
+            // Workspace preview: a header is shown or hidden.
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
+        } else {
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
+        }
         m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
         m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
         auto* canvasActions=new QHBoxLayout;outer->addLayout(canvasActions);
@@ -2142,7 +2147,11 @@ void ContainerSettingsDialog::loadCurrentDraft()
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
-        if(m_headerCombo) {m_headerCombo->setCurrentIndex(m_headerCombo->findData(int(c.header)));}
+        if(m_headerCombo) {
+            // Workspace preview: there is no Reveal item; it reads as Hidden.
+            const int headerIndex=m_headerCombo->findData(int(c.header));
+            m_headerCombo->setCurrentIndex(headerIndex>=0 ? headerIndex : m_headerCombo->findData(int(HeaderMode::Hidden)));
+        }
         if(m_layoutCombo) {m_layoutCombo->setCurrentIndex(m_layoutCombo->findData(int(c.layout)));}
         if(m_anchorCombo) {m_anchorCombo->setCurrentIndex(m_anchorCombo->findData(int(c.anchor)));}
         if(m_placementCombo) {m_placementCombo->setCurrentIndex(m_placementCombo->findData(int(c.dockMode)));}

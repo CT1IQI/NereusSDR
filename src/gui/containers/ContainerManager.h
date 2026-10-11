@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: no Reveal header mode
+//                 (revealApplies, hideRevealHeaders). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: no Lock setting (lockApplies,
 //                 clearLocks); edgeHandleTouchesLockedContainer is gone.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -374,6 +377,12 @@ private:
     static bool lockApplies();
     // Unlocks every container; true when one was locked.
     static bool clearLocks(WorkspaceDocument& document);
+    // The one place that decides whether the Reveal header mode exists: it
+    // does with the workspace look off, and not with it on. There a header
+    // is Shown or Hidden.
+    static bool revealApplies();
+    // Makes every Reveal header Hidden; true when one was Reveal.
+    static bool hideRevealHeaders(WorkspaceDocument& document);
     void finishEdgeDrag(const QString& id, const QPoint& globalPos);
     // Size for a strip container leaving its strip: its width, its
     // content's height.

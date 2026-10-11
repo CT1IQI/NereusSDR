@@ -11,10 +11,18 @@
 //                 without Header or Reveal controls, and Arrange drawing
 //                 every header without a commit. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - With the look off the three header modes are unchanged:
+//                 hover and focus show a Reveal header, the menu and the
+//                 settings combo offer it, and a saved Reveal stays saved.
+//                 With the look on a saved Reveal is saved once as Hidden
+//                 and the combo has two choices. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
 #include <QContextMenuEvent>
+#include <QGraphicsEffect>
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -24,7 +32,9 @@
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/WorkspaceHeader.h"
@@ -145,7 +155,7 @@ const QString kTipWhenHidden = QStringLiteral("Keep this header showing");
 class TstWorkspaceHeaderModes : public QObject {
     Q_OBJECT
 private slots:
-    void initTestCase() { WorkspacePreview::setEnabledForTest(true); }
+    void init() { WorkspacePreview::setEnabledForTest(true); }
     void cleanupTestCase() { WorkspacePreview::setEnabledForTest(false); }
 
     void hiddenHeaderTakesNoRoomAndHoverShowsNothing()
@@ -205,6 +215,10 @@ private slots:
         settle();
         QVERIFY(c->chromeVisible());
         QCOMPARE(c->headerExtent(), 0);
+        // As an overlay it is slightly see-through, with a shadow under it.
+        auto* overlayOpacity = qobject_cast<QGraphicsOpacityEffect*>(c->workspaceHeader()->graphicsEffect());
+        QVERIFY(overlayOpacity && overlayOpacity->isEnabled());
+        QCOMPARE(overlayOpacity->opacity(), ContainerWidget::kOverlayOpacity);
         QCOMPARE(c->workspaceHeader()->geometry(), QRect(0, 0, c->width(), WorkspaceGroupHeader::kHeight));
         QCOMPARE(content.mapTo(c, QPoint()), idle);
         QCOMPARE(content.size(), idleSize);
@@ -531,6 +545,172 @@ private slots:
         QCOMPARE(started.count(), 1);
         QTest::mouseRelease(header, Qt::LeftButton, {}, grab);
         content.setParent(nullptr);
+    }
+
+    // A look-on document that holds the look-off hover mode (an older
+    // build's, or seeded from the look-off workspace) is saved once as
+    // Hidden, and no commit puts it back.
+    void aSavedRevealHeaderIsSavedOnceAsHiddenWithTheLookOn()
+    {
+        WorkspaceFixture f;
+        WorkspaceDocument d = f.store.snapshot();
+        d.mainContainerId = "a";
+        d.containers = {f.container("a", HeaderMode::Reveal, 20), f.container("b", HeaderMode::Shown, 420)};
+        // Straight into the store, as a load would find it.
+        QCOMPARE(f.store.commit(d, d.revision).status, CommitStatus::Saved);
+        settle();
+        const quint64 revision = f.store.snapshot().revision;
+        QCOMPARE(f.store.snapshot().containers[0].header, HeaderMode::Hidden);
+        QCOMPARE(f.store.snapshot().containers[1].header, HeaderMode::Shown);
+        QCOMPARE(f.manager.container("a")->headerMode(), HeaderMode::Hidden);
+        f.manager.reconcileWorkspace(f.store.snapshot());
+        settle();
+        QCOMPARE(f.store.snapshot().revision, revision);
+
+        WorkspaceDocument draft = f.store.snapshot();
+        draft.containers[1].header = HeaderMode::Reveal;
+        QCOMPARE(f.manager.commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        settle();
+        QCOMPARE(f.store.snapshot().containers[1].header, HeaderMode::Hidden);
+
+        // Container Settings offers the two choices.
+        ContainerSettingsDialog dialog(f.manager.container("a"), nullptr, &f.manager);
+        dialog.show();
+        settle();
+        auto* combo = dialog.findChild<QComboBox*>("containerHeader");
+        QVERIFY(combo);
+        QCOMPARE(combo->count(), 2);
+        QCOMPARE(combo->findData(int(HeaderMode::Reveal)), -1);
+        QCOMPARE(combo->currentData().toInt(), int(HeaderMode::Hidden));
+        dialog.reject();
+    }
+
+    // ---- look off: the three header modes are as they were ---------------
+
+    void lookOffHoverAndFocusShowARevealHeader()
+    {
+        WorkspacePreview::setEnabledForTest(false);
+        WorkspaceFixture f;
+        f.dock.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&f.dock));
+        WorkspaceDocument d = f.store.snapshot();
+        d.mainContainerId = "a";
+        d.containers = {f.container("a", HeaderMode::Reveal, 20), f.container("b", HeaderMode::Hidden, 420)};
+        QCOMPARE(f.manager.commitWorkspace(d, d.revision).status, CommitStatus::Saved);
+        settle();
+        ContainerWidget* a = f.manager.container("a");
+        ContainerWidget* b = f.manager.container("b");
+        QVERIFY(a && b);
+        QVERIFY(!a->workspaceHeader());
+        QCOMPARE(a->headerMode(), HeaderMode::Reveal);
+        // Start with the pointer away and focus outside both containers.
+        QEvent away(QEvent::Leave);
+        if (QWidget* focused = QApplication::focusWidget()) {
+            focused->clearFocus();
+        }
+        QApplication::sendEvent(a, &away);
+        settle();
+        QVERIFY(!a->chromeVisible());
+        QVERIFY(!b->chromeVisible());
+
+        // The pointer over the container shows its header; leaving hides it.
+        hover(a, QPoint(40, 60));
+        QVERIFY(a->chromeVisible());
+        QEvent leave(QEvent::Leave);
+        QApplication::sendEvent(a, &leave);
+        QVERIFY(!a->chromeVisible());
+        // Hidden does not answer the pointer.
+        hover(b, QPoint(40, 60));
+        QVERIFY(!b->chromeVisible());
+        QApplication::sendEvent(b, &leave);
+
+        // Keyboard focus inside the container shows it too.
+        f.dock.activateWindow();
+        a->setFocusPolicy(Qt::StrongFocus);
+        a->setFocus(Qt::TabFocusReason);
+        settle();
+        QCOMPARE(QApplication::focusWidget(), a);
+        QVERIFY(a->chromeVisible());
+        a->clearFocus();
+        settle();
+        QApplication::sendEvent(a, &leave);
+        QVERIFY(!a->chromeVisible());
+
+        // "Reveal controls" recovers a hidden header until the pointer leaves.
+        QStringList body;
+        QVERIFY(withMenu([&] { openBodyMenu(b); }, [&](QMenu* menu) {
+            body = actionTexts(menu);
+            if (QAction* reveal = actionNamed(menu, QStringLiteral("Reveal controls"))) {
+                reveal->trigger();
+            }
+        }));
+        QVERIFY2(body.contains(QStringLiteral("Reveal controls")), qPrintable(body.join('|')));
+        QVERIFY2(body.contains(QStringLiteral("Header")), qPrintable(body.join('|')));
+        QVERIFY2(!body.contains(kKeepHeaderShowing), qPrintable(body.join('|')));
+        QVERIFY(b->chromeVisible());
+        QApplication::sendEvent(b, &leave);
+        QVERIFY(!b->chromeVisible());
+
+        // The Header submenu has the three modes, the current one checked.
+        QStringList modes;
+        QString checked;
+        QVERIFY(withMenu([&] { openBodyMenu(a); }, [&](QMenu* menu) {
+            if (QAction* header = actionNamed(menu, QStringLiteral("Header")); header && header->menu()) {
+                modes = actionTexts(header->menu());
+                for (const QAction* action : header->menu()->actions()) {
+                    if (action->isChecked()) {
+                        checked = action->text();
+                    }
+                }
+            }
+        }));
+        QCOMPARE(modes, QStringList({QStringLiteral("Always visible"), QStringLiteral("Reveal on hover/focus"),
+                                     QStringLiteral("Hidden (hold Shift to recover)")}));
+        QCOMPARE(checked, QStringLiteral("Reveal on hover/focus"));
+    }
+
+    void lookOffASavedRevealHeaderStaysSavedAndTheComboHasThreeChoices()
+    {
+        WorkspacePreview::setEnabledForTest(false);
+        WorkspaceFixture f;
+        WorkspaceDocument d = f.store.snapshot();
+        d.mainContainerId = "a";
+        d.containers = {f.container("a", HeaderMode::Reveal, 20), f.container("b", HeaderMode::Shown, 420)};
+        QCOMPARE(f.store.commit(d, d.revision).status, CommitStatus::Saved);
+        settle();
+        const quint64 revision = f.store.snapshot().revision;
+        f.manager.reconcileWorkspace(f.store.snapshot());
+        settle();
+        // Loaded as saved: nothing was committed for it.
+        QCOMPARE(f.store.snapshot().revision, revision);
+        QCOMPARE(f.store.snapshot().containers[0].header, HeaderMode::Reveal);
+        QCOMPARE(f.manager.container("a")->headerMode(), HeaderMode::Reveal);
+
+        // It round-trips through settings as "header": 1.
+        ContainerWorkspaceStore reread(f.settings);
+        QCOMPARE(reread.snapshot(), f.store.snapshot());
+        const QByteArray saved = ContainerDocumentCodec::encode(reread.snapshot());
+        QVERIFY2(saved.contains("\"header\":1"), saved.constData());
+
+        // A commit keeps it.
+        WorkspaceDocument draft = f.store.snapshot();
+        draft.containers[1].header = HeaderMode::Reveal;
+        QCOMPARE(f.manager.commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        settle();
+        QCOMPARE(f.store.snapshot().containers[1].header, HeaderMode::Reveal);
+
+        ContainerSettingsDialog dialog(f.manager.container("a"), nullptr, &f.manager);
+        dialog.show();
+        settle();
+        auto* combo = dialog.findChild<QComboBox*>("containerHeader");
+        QVERIFY(combo);
+        QCOMPARE(combo->count(), 3);
+        QCOMPARE(combo->itemText(0), QStringLiteral("Always visible"));
+        QCOMPARE(combo->itemText(1), QStringLiteral("Reveal on hover / focus"));
+        QCOMPARE(combo->itemData(1).toInt(), int(HeaderMode::Reveal));
+        QCOMPARE(combo->itemData(2).toInt(), int(HeaderMode::Hidden));
+        QCOMPARE(combo->currentData().toInt(), int(HeaderMode::Reveal));
+        dialog.reject();
     }
 };
 
