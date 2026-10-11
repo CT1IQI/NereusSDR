@@ -7,6 +7,9 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): a start may declare
+//               spectrumPictureVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-01: TX diagnostics lane: unkeyEventLines, one line for each
 //               placed microphone underrun, the first radio ran dry and
 //               each catch-up burst. J.J. Boyd (KG4VCF), AI-assisted via
@@ -848,6 +851,9 @@ private:
     // Parity Task 28: this session's start declared txDisplayVersion.
     bool m_txDisplayNegotiated{false};
     bool m_miniDisplayNegotiated{false};
+    // R-DISP-RETUNE: this session's start declared spectrumPictureVersion,
+    // so each of its spectrum contexts carries pictureGeneration.
+    bool m_spectrumPictureNegotiated{false};
     // Parity Task 31: the version it declared (3 and above: `duplex`), and
     // the device whose DUP this controller last told RadioModel is on.
     quint32 m_txDisplayDeclared{0};

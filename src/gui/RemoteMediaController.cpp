@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): the media start declares
+//               spectrumPictureVersion to a Core that offers it, and each
+//               context is then read with its pictureGeneration. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE: a context for a picture moved in frequency
 //               (a retune, a pan drag) keeps the noise floor's received
 //               state, and the mini display keeps its painted frame
@@ -1069,6 +1073,9 @@ struct RemoteMediaController::Private {
     QSet<int> miniWanted;
     // Parity Task 28: this media start declared txDisplayVersion.
     bool txDisplayNegotiated = false;
+    // R-DISP-RETUNE: this media start declared spectrumPictureVersion, so
+    // each spectrum context states the picture its frames continue.
+    bool pictureNegotiated = false;
     // Parity Task 31: this media start declared txDisplayVersion 3, and the
     // window's DUP as MoxDisplayController applies it.
     bool displayDuplexNegotiated = false;
@@ -4627,6 +4634,13 @@ void RemoteMediaController::start()
     if (d->client && d->client->capabilities().miniDisplayVersion >= 1) {
         startControl.insert(QStringLiteral("miniDisplayVersion"), 1);
     }
+    // R-DISP-RETUNE: likewise the picture each context continues, only to
+    // a Core that states it (the value rides on the grant report's shape).
+    d->pictureNegotiated = d->client && spectrumGrantNegotiated()
+        && d->client->capabilities().spectrumPictureVersion >= 1;
+    if (d->pictureNegotiated) {
+        startControl.insert(QStringLiteral("spectrumPictureVersion"), 1);
+    }
     // Parity Task 32 (R-IOS-13, R-R3-49): likewise the transmit monitor,
     // only to a Core that sends it.
     d->txMonitorNegotiated = d->client && d->client->capabilities().txMonitorAudioVersion >= 1;
@@ -6878,7 +6892,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     // subscription negotiated it.
     const std::optional<SpectrumContextMessage> decoded =
         decodeRemoteSpectrumContext(payload, spectrumGrantNegotiated(),
-                                    d->txDisplayNegotiated);
+                                    d->txDisplayNegotiated, d->pictureNegotiated);
     if (!decoded || decoded->wideband.has_value() != widebandRequested) { return; }
     // A gesture/rebind may arrive between the outgoing request and its ACK.
     // Issue the newer request before accepting an old view over that gesture.

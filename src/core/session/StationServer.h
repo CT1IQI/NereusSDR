@@ -181,6 +181,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureAvailable.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: the direct media ladder: the Core's STUN server for media
 //               (setMediaStun, mediaStunUrls) and the direct-only replace
 //               (mediaDirectVersion). J.J. Boyd (KG4VCF), AI-assisted via
@@ -1266,6 +1268,10 @@ public:
     int txDisplayVersion() const;
     bool txDisplayAvailable(quint64 epoch) const;
     bool miniDisplayAvailable(quint64 epoch) const;
+    // R-DISP-RETUNE: that session's peer agreed minor 11, declared
+    // spectrumPicture 1 in its hello and was told spectrumPictureVersion, so
+    // its media start may declare it.
+    bool spectrumPictureAvailable(quint64 epoch) const;
     // R-IOS-16 (iPhone app plan Task 28 fix wave, the safety review's
     // Important 5): controlChannelVersion. 1 when the Core has a bound
     // certificate, so it can answer an introduction through the remote

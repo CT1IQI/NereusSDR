@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): a peer whose start declared
+//               spectrumPictureVersion is told, in each spectrum context,
+//               which picture its frames continue. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE: a retune relabels the running spectrum
 //               source and each pan on it keeps what it has averaged; a
 //               picture moved in frequency keeps its noise floor and
@@ -1910,6 +1914,21 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
             return false;
         }
     }
+    // R-DISP-RETUNE: spectrumPictureVersion, from a peer the Core told
+    // spectrumPictureVersion 1 (its hello declared spectrumPicture at minor
+    // 11, media on); only then does a context carry pictureGeneration.
+    const bool declaresSpectrumPicture =
+        control.contains(QStringLiteral("spectrumPictureVersion"));
+    if (declaresSpectrumPicture) {
+        legacyShape.remove(QStringLiteral("spectrumPictureVersion"));
+        quint32 version = 0;
+        if (!m_server || !m_server->spectrumPictureAvailable(m_epoch)
+            || !exactUnsigned(control.value(QStringLiteral("spectrumPictureVersion")),
+                              version, /*nonzero=*/true)
+            || version != 1) {
+            return false;
+        }
+    }
     if (!exactKeys(legacyShape, {"op", "connectionId"})
         || !canonicalConnectionId(control.value(QStringLiteral("connectionId")))) {
         return false;
@@ -1983,6 +2002,7 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     refreshTxMonitor();
     m_txDisplayNegotiated = declaresTxDisplay;
     m_miniDisplayNegotiated = declaresMiniDisplay;
+    m_spectrumPictureNegotiated = declaresSpectrumPicture;
     // Task 29: what a replacement of this peer keeps.
     m_startOfferedLossless = offerLossless;
     m_startMicLine = declaresRemoteTx;
@@ -4808,6 +4828,13 @@ void DaemonMediaController::sendContext(EndpointEntry& entry)
     if (m_txDisplayNegotiated) {
         contextMessage.transmit = false;
     }
+    // R-DISP-RETUNE: a peer that declared spectrumPictureVersion is told
+    // which picture these frames continue, from the endpoint's own record
+    // of when it last started its planes; every other peer's context is
+    // unchanged.
+    if (m_spectrumPictureNegotiated) {
+        contextMessage.pictureGeneration = entry.endpoint.pictureGeneration();
+    }
     // A minor-8 peer receives exactly the context it already parses.
     const QJsonObject message = encodeRemoteSpectrumContext(
         contextMessage, m_server && m_server->spectrumGrantAvailable(m_epoch));
@@ -5576,6 +5603,13 @@ void DaemonMediaController::reconcileTransmitDisplay()
         if (entry.txContextSent && shape == entry.txSentShape) { continue; }
         const quint32 generation = nextContextGeneration();
         message->insert(QStringLiteral("contextGeneration"), static_cast<qint64>(generation));
+        // R-DISP-RETUNE: the transmit display is the transmit analyzer's,
+        // not the endpoint's receive planes (dropped at the rise). Each of
+        // its contexts is stated as a picture of its own.
+        if (m_spectrumPictureNegotiated) {
+            message->insert(QStringLiteral("pictureGeneration"),
+                            static_cast<qint64>(generation));
+        }
         const int samples = message->value(QStringLiteral("traceSamples")).toInt();
         entry.txSentShape = shape;
         entry.txCodec = DisplayCodecContext{};
@@ -6558,6 +6592,7 @@ void DaemonMediaController::clearSession()
     // Parity Task 28: the next peer declares its own.
     m_txDisplayNegotiated = false;
     m_miniDisplayNegotiated = false;
+    m_spectrumPictureNegotiated = false;
 }
 
 void DaemonMediaController::retirePeerKeepingSession()

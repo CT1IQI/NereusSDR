@@ -17,12 +17,17 @@
 // nothing here waits for a frame and nothing is proved by a wait.
 //
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  Third wave: the Core states the picture
+//                                    each context continues, only to a
+//                                    client that declared the value.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
 // =================================================================
 
 #include <QtTest>
 
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
 #include <QSignalSpy>
@@ -250,7 +255,29 @@ struct Harness {
         nowNs = kStartNs;
     }
 
-    bool start()
+    // `declarePicture`: the media start declares spectrumPictureVersion, as
+    // a client that takes the Core's picture value does (third wave).
+    bool start(bool declarePicture = false)
+    {
+        if (!connectSession()) { return false; }
+        QJsonObject startControl{{QStringLiteral("op"), QStringLiteral("start")},
+                                 {QStringLiteral("connectionId"),
+                                  QLatin1String(kConnectionId)}};
+        if (declarePicture) {
+            startControl.insert(QStringLiteral("spectrumPictureVersion"), 1);
+        }
+        if (!client.sendMediaControl(startControl, client.sessionEpoch())) {
+            return false;
+        }
+        if (!QTest::qWaitFor([this] { return !mediaTransport.isNull(); }, 10'000)) {
+            return false;
+        }
+        mediaTransport->becomeReady();
+        return true;
+    }
+
+    // The station session, up to media being available; no media start.
+    bool connectSession()
     {
         // The sender timer is run by hand: production keeps starting it, so
         // a long interval leaves its timeout slot to the test alone.
@@ -272,16 +299,6 @@ struct Harness {
             }, 10'000)) {
             return false;
         }
-        if (!client.sendMediaControl({{QStringLiteral("op"), QStringLiteral("start")},
-                                      {QStringLiteral("connectionId"),
-                                       QLatin1String(kConnectionId)}},
-                                     client.sessionEpoch())) {
-            return false;
-        }
-        if (!QTest::qWaitFor([this] { return !mediaTransport.isNull(); }, 10'000)) {
-            return false;
-        }
-        mediaTransport->becomeReady();
         return true;
     }
 
@@ -290,6 +307,11 @@ struct Harness {
         return client.sendMediaControl(
             subscription(endpointId, sliceId, centreHz, revision, spanHz),
             client.sessionEpoch());
+    }
+
+    bool askFor(const QJsonObject& request)
+    {
+        return client.sendMediaControl(request, client.sessionEpoch());
     }
 
     // The source the Core made for the pans, once its engine has taken its
@@ -416,6 +438,22 @@ QJsonObject lastMessage(const QSignalSpy& messages, const QString& op, quint32 e
     return {};
 }
 
+// Every message of one kind the client was sent for an endpoint, in order.
+QList<QJsonObject> allMessages(const QSignalSpy& messages, const QString& op,
+                               quint32 endpointId)
+{
+    QList<QJsonObject> found;
+    for (const QList<QVariant>& entry : messages) {
+        const QJsonObject message = entry.at(0).toJsonObject();
+        if (message.value(QStringLiteral("op")) == op
+            && static_cast<quint32>(message.value(QStringLiteral("endpointId")).toInteger())
+                == endpointId) {
+            found.append(message);
+        }
+    }
+    return found;
+}
+
 // What a settled picture looked like just before something moved.
 struct Settled {
     quint32 generation = 0;
@@ -504,6 +542,69 @@ private:
         QVERIFY(std::abs(moved.firstExtras->waterfallLevelsDbm->second - settled.levels.second)
                 <= 1.0f);
         QCOMPARE(h.controller.displayExtrasForTest(kEndpoint), settled.extras);
+    }
+
+    // Third wave: one pan taken through every kind of context the Core
+    // sends, by a client that did or did not declare the picture value.
+    // The contexts it was sent, in order: a first one, the same picture (a
+    // new dBm range), that picture moved by a re-ask and by a retune, a new
+    // picture (another span), a new picture (the trace now holds its
+    // maximum), that held maximum moved, and its dBm range alone.
+    static void everyKindOfContext(bool declare, QList<QJsonObject>& contexts)
+    {
+        Harness h;
+        QVERIFY(h.start(declare));
+        QCOMPARE(h.client.capabilities().spectrumPictureVersion, 1);
+        QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        const auto bins = [] { return spectrum(kCarrierBin); };
+        QVERIFY(h.ask(kEndpoint, centre, 1));
+        QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+        QVERIFY(h.findSource());
+        QVERIFY(h.runUntilContexts(kEndpoint, 1, bins));
+
+        QJsonObject request = subscription(kEndpoint, h.sliceId, centre, 2, kSpanHz);
+        request.insert(QStringLiteral("minDbm"), -170.0);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 2, bins));
+
+        const double moved = centre + 8 * kBinHz;
+        request.insert(QStringLiteral("centreHz"), moved);
+        request.insert(QStringLiteral("revision"), 3);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 3, bins));
+
+        QVERIFY(h.radio.requestStreamCentre(h.sliceId, centre + 256 * kBinHz));
+        QVERIFY(h.runUntilContexts(kEndpoint, 4, bins));
+
+        request.insert(QStringLiteral("spanHz"), kSpanHz / 2.0);
+        request.insert(QStringLiteral("revision"), 4);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 5, bins));
+
+        request.insert(QStringLiteral("trace"),
+                       QJsonObject{{QStringLiteral("detector"), 0},
+                                   {QStringLiteral("averageMode"), -1},
+                                   {QStringLiteral("averageAlpha"), 0.0}});
+        request.insert(QStringLiteral("revision"), 5);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 6, bins));
+
+        request.insert(QStringLiteral("centreHz"), moved + 8 * kBinHz);
+        request.insert(QStringLiteral("revision"), 6);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 7, bins));
+
+        request.insert(QStringLiteral("maxDbm"), -10.0);
+        request.insert(QStringLiteral("revision"), 7);
+        QVERIFY(h.askFor(request));
+        QVERIFY(h.runUntilContexts(kEndpoint, 8, bins));
+
+        QCOMPARE(h.refused, 0);
+        QVERIFY(lastMessage(controls, QStringLiteral("rejected"), kEndpoint).isEmpty());
+        QTRY_COMPARE(allMessages(controls, QStringLiteral("context"), kEndpoint).size(), 8);
+        contexts = allMessages(controls, QStringLiteral("context"), kEndpoint);
+        h.finish();
     }
 
 private slots:
@@ -655,6 +756,97 @@ private slots:
                  qPrintable(QStringLiteral("a new span's first trace is %1 dB under the settled "
                                            "one").arg(fell)));
         h.finish();
+    }
+
+    // Third wave: the Core states which picture each context continues, to a
+    // client that declared the value, and sends every other client exactly
+    // the context it parses today.
+    void theCoreStatesThePictureOnlyToAClientThatDeclaredIt()
+    {
+        QList<QJsonObject> plain;
+        everyKindOfContext(false, plain);
+        if (QTest::currentTestFailed()) { return; }
+        QList<QJsonObject> stated;
+        everyKindOfContext(true, stated);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(plain.size(), 8);
+        QCOMPARE(stated.size(), 8);
+        const QString key = QStringLiteral("pictureGeneration");
+        QList<quint32> generation;
+        QList<quint32> picture;
+        for (int index = 0; index < 8; ++index) {
+            // Today's context: the 19 keys and the five of the grant report.
+            QCOMPARE(plain.at(index).size(), 24);
+            QVERIFY(!plain.at(index).contains(key));
+            QCOMPARE(stated.at(index).size(), 25);
+            QVERIFY(stated.at(index).value(key).isDouble());
+            // And the same bytes as the declared one without its one field.
+            QJsonObject stripped = stated.at(index);
+            stripped.remove(key);
+            QCOMPARE(QJsonDocument(plain.at(index)).toJson(QJsonDocument::Compact),
+                     QJsonDocument(stripped).toJson(QJsonDocument::Compact));
+            generation.append(static_cast<quint32>(
+                stated.at(index).value(QStringLiteral("contextGeneration")).toInteger()));
+            picture.append(static_cast<quint32>(stated.at(index).value(key).toInteger()));
+            if (index > 0) { QVERIFY(generation.at(index) != generation.at(index - 1)); }
+        }
+        // A first context starts a picture.
+        QCOMPARE(picture.at(0), generation.at(0));
+        // The same picture, and that picture moved twice: still the first.
+        QCOMPARE(picture.at(1), generation.at(0));
+        QCOMPARE(picture.at(2), generation.at(0));
+        QCOMPARE(picture.at(3), generation.at(0));
+        // Another span: a new picture.
+        QCOMPARE(picture.at(4), generation.at(4));
+        // Another averaging mode: a new picture.
+        QCOMPARE(picture.at(5), generation.at(5));
+        // A held maximum moved: a new picture.
+        QCOMPARE(picture.at(6), generation.at(6));
+        // Its dBm range alone: the same picture.
+        QCOMPARE(picture.at(7), generation.at(6));
+    }
+
+    // Third wave: the start's declaration is taken only at version 1 and
+    // only from a client the Core told the capability, which is one whose
+    // hello declared the feature.
+    void aStartMayDeclareThePictureOnlyAsTheCoreOffersIt()
+    {
+        const auto startWith = [](Harness& h, const QJsonValue& version) {
+            QJsonObject control{{QStringLiteral("op"), QStringLiteral("start")},
+                                {QStringLiteral("connectionId"), QLatin1String(kConnectionId)}};
+            if (!version.isUndefined()) {
+                control.insert(QStringLiteral("spectrumPictureVersion"), version);
+            }
+            return h.client.sendMediaControl(control, h.client.sessionEpoch());
+        };
+        {
+            Harness h;
+            QVERIFY(h.connectSession());
+            QCOMPARE(h.client.capabilities().spectrumPictureVersion, 1);
+            for (const QJsonValue& bad : {QJsonValue(2), QJsonValue(0), QJsonValue(true),
+                                          QJsonValue(QStringLiteral("1")), QJsonValue(1.5)}) {
+                QVERIFY(startWith(h, bad));
+                QTest::qWait(50);
+                QVERIFY(h.mediaTransport.isNull());
+            }
+            QVERIFY(startWith(h, 1));
+            QTRY_VERIFY(!h.mediaTransport.isNull());
+            h.finish();
+        }
+        {
+            // A client that did not declare the feature in its hello: it is
+            // told no capability, and its start may not declare the value.
+            Harness h;
+            h.client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
+            QVERIFY(h.connectSession());
+            QCOMPARE(h.client.capabilities().spectrumPictureVersion, 0);
+            QVERIFY(startWith(h, 1));
+            QTest::qWait(50);
+            QVERIFY(h.mediaTransport.isNull());
+            QVERIFY(startWith(h, QJsonValue(QJsonValue::Undefined)));
+            QTRY_VERIFY(!h.mediaTransport.isNull());
+            h.finish();
+        }
     }
 
     // The operator tunes: the receiver's centre moves once every frame

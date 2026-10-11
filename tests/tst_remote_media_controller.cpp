@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): tests that
+//                                    send contexts by hand stand for a Core
+//                                    that states no picture.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-10: the microphone's collector: a pump stalled for 150 ms of
 //               the microphone's clock sends all of it afterwards; the
 //               collector's thread runs exactly while the capture lease
@@ -5195,6 +5199,9 @@ private slots:
         remote.setClarityEnabled(true);
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy; StationClient client(&remote, &proxy); PanadapterStack stack;
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         for (int n=0; n<4; ++n) {
             const QString id = QStringLiteral("pan-%1").arg(n);
             auto* pan=stack.addPanadapter(id); pan->setActiveSliceIndex(sliceIds[n]);
@@ -5305,6 +5312,9 @@ private slots:
         PanClarityRegistry registry(&remote);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -5648,6 +5658,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -5901,6 +5914,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -6119,6 +6135,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -6229,6 +6248,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -6765,6 +6787,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
@@ -6971,6 +6996,9 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
         applet->setActiveSliceIndex(stationSlice->sliceIndex());
