@@ -15,6 +15,9 @@
 
 #include <QtTest/QtTest>
 
+#include <QDir>
+#include <QStandardPaths>
+
 #include <QFile>
 #include <QSignalSpy>
 
@@ -43,7 +46,22 @@ private slots:
     void init()
     {
         AppSettings::instance().clear();
+        // The backup too: with only the file gone, the read in
+        // savedDouble recovers the last run's value from it.
         QFile::remove(AppSettings::instance().filePath());
+        QFile::remove(AppSettings::instance().filePath() + QStringLiteral(".bak"));
+    }
+
+    // The settings these tests write are the test sandbox's (Qt's test
+    // mode, set up by TestSandboxInit), never the operator's.
+    void theSettingsFileIsTheSandboxsNotTheOperators()
+    {
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        const QString path = AppSettings::instance().filePath();
+        const QString home = QDir::homePath();
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/.config/NereusSDR")), qPrintable(path));
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/Library/Preferences/NereusSDR")),
+                 qPrintable(path));
     }
 
     void cleanup() { AppSettings::instance().clear(); }

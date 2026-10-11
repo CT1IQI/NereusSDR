@@ -22,6 +22,11 @@
 
 #include <QtTest/QtTest>
 
+#include <QDir>
+#include <QStandardPaths>
+
+#include <cmath>
+
 #include <QMap>
 
 #include "core/AppSettings.h"
@@ -224,6 +229,119 @@ private slots:
         restored.setSliceIndex(0);
         restored.restoreFromSettings(Band::Band20m);
         QCOMPARE(restored.fmTxMode(), FmTxMode::Simplex);
+    }
+
+    // ── A stored value is not trusted ───────────────────────────────────
+
+    // The file can hold anything: a hand edit, another build's value, a
+    // damaged write. Several of these go straight to WDSP, so a value that
+    // is not a finite number leaves the default and a number outside the
+    // control's range is held to the nearest end of it.
+    void aStoredValueIsHeldToItsControlsRange_data()
+    {
+        QTest::addColumn<QByteArray>("property");
+        QTest::addColumn<QString>("key");
+        QTest::addColumn<double>("low");
+        QTest::addColumn<double>("high");
+
+        const auto row = [](const char* property, const char* key, double low, double high) {
+            QTest::newRow(property) << QByteArray(property) << QString::fromLatin1(key) << low << high;
+        };
+        row("audioPan",       "AudioPan",       -1.0,     1.0);
+        row("ssqlThresh",     "SsqlThresh",     0.0,      100.0);
+        row("amsqThresh",     "AmsqThresh",     -160.0,   0.0);
+        row("fmsqThresh",     "FmsqThresh",     -160.0,   0.0);
+        row("apfTuneHz",      "ApfTuneHz",      -500.0,   500.0);
+        row("fmCtcssMode",    "FmCtcssMode",    0.0,      3.0);
+        row("fmCtcssValueHz", "FmCtcssValueHz", 67.0,     254.1);
+        row("fmOffsetHz",     "FmOffsetHz",     0.0,      10000000.0);
+        row("diglOffsetHz",   "DiglOffsetHz",   -10000.0, 10000.0);
+        row("diguOffsetHz",   "DiguOffsetHz",   -10000.0, 10000.0);
+        row("rttyMarkHz",     "RttyMarkHz",     1000.0,   3500.0);
+        row("rttyShiftHz",    "RttyShiftHz",    50.0,     1000.0);
+        row("autoAgcOffset",  "AgcAutoOffset",  -60.0,    60.0);
+    }
+
+    void aStoredValueIsHeldToItsControlsRange()
+    {
+        QFETCH(QByteArray, property);
+        QFETCH(QString, key);
+        QFETCH(double, low);
+        QFETCH(double, high);
+
+        const SliceModel pristine;
+        const double defaultValue = pristine.property(property.constData()).toDouble();
+        const auto restoredWith = [&](const QString& stored) {
+            AppSettings::instance().clear();
+            AppSettings::instance().setValue(QStringLiteral("Slice0/") + key, stored);
+            SliceModel restored;
+            restored.setSliceIndex(0);
+            restored.restoreFromSettings(Band::Band20m);
+            return restored.property(property.constData()).toDouble();
+        };
+
+        // Not a finite number: the default stays.
+        const QStringList notNumbers{QStringLiteral("nan"), QStringLiteral("inf"),
+                                     QStringLiteral("-inf"), QStringLiteral("abc"),
+                                     QString()};
+        for (const QString& stored : notNumbers) {
+            const double got = restoredWith(stored);
+            QVERIFY2(std::isfinite(got), qPrintable(stored));
+            QVERIFY2(qFuzzyIsNull(got - defaultValue), qPrintable(stored));
+        }
+
+        // Out of range: held to the nearest end.
+        const double tooHigh = restoredWith(QStringLiteral("999999999"));
+        QVERIFY(std::isfinite(tooHigh));
+        QVERIFY2(qFuzzyIsNull(tooHigh - high), qPrintable(QString::number(tooHigh)));
+        const double tooLow = restoredWith(QStringLiteral("-999999999"));
+        QVERIFY(std::isfinite(tooLow));
+        QVERIFY2(qFuzzyIsNull(tooLow - low), qPrintable(QString::number(tooLow)));
+    }
+
+    // The older per-band AUTO offset is checked the same way as the
+    // slice's own key.
+    void aPerBandAutoAgcOffsetIsHeldToItsRangeToo()
+    {
+        SliceModel saved;
+        saved.setSliceIndex(0);
+        saved.saveToSettings(Band::Band20m);
+        QString bandKey;
+        for (const QString& k : AppSettings::instance().allKeys()) {
+            if (k.startsWith(QStringLiteral("Slice0/Band")) && k.endsWith(QStringLiteral("/AgcThreshold"))) {
+                bandKey = k.left(k.lastIndexOf(QLatin1Char('/'))) + QStringLiteral("/AgcAutoOffset");
+            }
+        }
+        QVERIFY(!bandKey.isEmpty());
+        AppSettings::instance().remove(QStringLiteral("Slice0/AgcAutoOffset"));
+
+        const SliceModel pristine;
+        AppSettings::instance().setValue(bandKey, QStringLiteral("nan"));
+        {
+            SliceModel restored;
+            restored.setSliceIndex(0);
+            restored.restoreFromSettings(Band::Band20m);
+            QCOMPARE(restored.autoAgcOffset(), pristine.autoAgcOffset());
+        }
+        AppSettings::instance().setValue(bandKey, QStringLiteral("500"));
+        {
+            SliceModel restored;
+            restored.setSliceIndex(0);
+            restored.restoreFromSettings(Band::Band20m);
+            QCOMPARE(restored.autoAgcOffset(), 60.0);
+        }
+    }
+
+    // The settings these tests write are the test sandbox's (Qt's test
+    // mode, set up by TestSandboxInit), never the operator's.
+    void theSettingsFileIsTheSandboxsNotTheOperators()
+    {
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        const QString path = AppSettings::instance().filePath();
+        const QString home = QDir::homePath();
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/.config/NereusSDR")), qPrintable(path));
+        QVERIFY2(!path.startsWith(home + QStringLiteral("/Library/Preferences/NereusSDR")),
+                 qPrintable(path));
     }
 
     // ── AGC-T AUTO: per receiver ────────────────────────────────────────
