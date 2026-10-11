@@ -2269,9 +2269,22 @@ public actor MediaControlClient {
         // what it had measured) keeps the last extras. Extras of another
         // picture belong to the context they were decoded against.
         let samePicture = endpoint.context.map { Self.samePicture($0, context) } ?? false
+        // R-DISP-RETUNE: the same picture moved in frequency (a retune moved
+        // the stream centre, a drag moved the view centre, and nothing else
+        // changed). The Core's noise floor and waterfall levels carried on,
+        // so they are kept; the peak hold and the blobs are held per trace
+        // sample, every sample now lies at another frequency, and the Core
+        // emptied them, so they go.
+        let movedPicture = endpoint.context.map { Self.movedPicture($0, context) } ?? false
         endpoint.context = context
         endpoint.decoder = DisplayFrameDecoder()
-        if !samePicture {
+        if movedPicture, let held = endpoint.extras {
+            endpoint.extras = DisplayExtras(
+                endpointId: held.endpointId, contextGeneration: held.contextGeneration,
+                encoderSequence: held.encoderSequence, peakBlobs: nil, peakHoldDbm: nil,
+                noiseFloorDbm: held.noiseFloorDbm, waterfallLevels: held.waterfallLevels,
+                noiseFloorFastAttack: held.noiseFloorFastAttack)
+        } else if !samePicture {
             endpoint.extras = nil
         }
         endpoints[context.endpointId] = endpoint
@@ -2294,6 +2307,24 @@ public actor MediaControlClient {
             && held.wideSamples == next.wideSamples && held.wideband == next.wideband
             && held.grant?.grantedFftSize == next.grant?.grantedFftSize
             && (held.transmit ?? false) == (next.transmit ?? false)
+    }
+
+    /// R-DISP-RETUNE: whether `next` is the picture `held` shows, moved in
+    /// frequency: the same receiver, sample rate, FFT size, span, sample
+    /// counts and wide state, both receive or both transmit, with the stream
+    /// centre, the view centre or both at another frequency. The Core
+    /// carries its averaged trace on through such a move.
+    static func movedPicture(_ held: MediaControlEvent.DisplayContext,
+                             _ next: MediaControlEvent.DisplayContext) -> Bool {
+        held.endpointId == next.endpointId && held.sourceStream == next.sourceStream
+            && held.sampleRateHz == next.sampleRateHz
+            && held.spanHz == next.spanHz && held.wideSpanHz == next.wideSpanHz
+            && held.traceSamples == next.traceSamples && held.waterfallSamples == next.waterfallSamples
+            && held.wideSamples == next.wideSamples && held.wideband == next.wideband
+            && held.grant?.grantedFftSize == next.grant?.grantedFftSize
+            && (held.transmit ?? false) == (next.transmit ?? false)
+            && (held.sourceCentreHz != next.sourceCentreHz || held.centreHz != next.centreHz
+                || held.wideCentreHz != next.wideCentreHz)
     }
 
     private func display(_ datagram: Data, connection id: String) async {

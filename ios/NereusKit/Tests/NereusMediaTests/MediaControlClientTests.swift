@@ -1591,6 +1591,93 @@ import Testing
         #expect(await rig.client.displayExtras(endpointId: 1) == nil)
     }
 
+    // R-DISP-RETUNE: the picture moved in frequency (the pan was tuned: the
+    // stream centre and the view centre moved together). The noise floor
+    // and the waterfall levels carry on; the peak hold and the blobs, held
+    // per trace sample, are dropped. A new picture still drops everything.
+    @Test func aMovedPictureKeepsTheNoiseFloorAndLevelsAndDropsThePeaks() async throws {
+        let vectors = try LinkFixtureLoader.mediaVectors()
+        func bytes(_ name: String) throws -> Data {
+            try #require(vectors["media-\(name)"]).bytes
+        }
+        let rig = try Rig()
+        await rig.open(minor: 11, capabilities: Self.withExtras)
+        let id = try await rig.connectionId
+        let peer = try rig.peer
+        var subscription = Self.subscription(endpointId: 1)
+        subscription.extras = Self.extrasForEverySection
+        try await rig.client.subscribe(subscription)
+        await rig.deliver(Self.context(id, generation: 1, grant: true))
+        peer.receiveDisplay(try bytes("nsdc1-full"))
+        peer.receiveDisplay(try bytes("nsdx1-full"))
+        await rig.recorder.settle {
+            rig.recorder.events.contains { if case .displayExtras = $0 { return true } else { return false } }
+        }
+        let full = try #require(await rig.client.displayExtras(endpointId: 1))
+        #expect(full.peakBlobs != nil)
+        #expect(full.peakHoldDbm != nil)
+        #expect(full.noiseFloorDbm != nil)
+        #expect(full.waterfallLevels != nil)
+
+        var tuned = Self.context(id, generation: 2, grant: true)
+        tuned["centreHz"] = 14_101_000
+        tuned["sourceCentreHz"] = 14_101_000
+        await rig.deliver(tuned)
+        let carried = try #require(await rig.client.displayExtras(endpointId: 1))
+        #expect(carried.noiseFloorDbm == full.noiseFloorDbm)
+        #expect(carried.waterfallLevels == full.waterfallLevels)
+        #expect(carried.noiseFloorFastAttack == full.noiseFloorFastAttack)
+        #expect(carried.peakBlobs == nil)
+        #expect(carried.peakHoldDbm == nil)
+        // The decoder is renewed: a keyframe of the new context is asked for.
+        #expect(rig.recorder.sent("keyframe").last?["contextGeneration"] == .number(2))
+
+        // A new picture (another span at the moved centre).
+        var zoomed = tuned
+        zoomed["contextGeneration"] = 3
+        zoomed["spanHz"] = 48_000
+        await rig.deliver(zoomed)
+        #expect(await rig.client.displayExtras(endpointId: 1) == nil)
+    }
+
+    // R-DISP-RETUNE: a moved picture is the held one at another stream
+    // centre, view centre or both, and nothing else.
+    @Test func onlyACentreChangeIsAMovedPicture() throws {
+        func context(_ change: (inout [String: LinkJSON]) -> Void) throws -> MediaControlEvent.DisplayContext {
+            var payload = Self.context("c", generation: 2, wideband: true, grant: true)
+            change(&payload)
+            return try #require(MediaControlDecoder.context(payload, wideband: true, grant: true, transmit: false))
+        }
+        let held = try context { $0["contextGeneration"] = 1 }
+        // The same picture is not a moved one.
+        #expect(!MediaControlClient.movedPicture(held, try context { _ in }))
+        #expect(!MediaControlClient.movedPicture(held, try context { $0["minDbm"] = -161 }))
+        let moves: [[(String, LinkJSON)]] = [
+            [("centreHz", .number(held.centreHz + 10))],
+            [("sourceCentreHz", .number(held.sourceCentreHz + 1_000))],
+            [("centreHz", .number(held.centreHz + 1_000)), ("sourceCentreHz", .number(held.sourceCentreHz + 1_000))],
+            [("centreHz", .number(held.centreHz + 10)), ("minDbm", -161), ("fps", 15)],
+        ]
+        for move in moves {
+            let moved = try context { payload in move.forEach { payload[$0.0] = $0.1 } }
+            #expect(MediaControlClient.movedPicture(held, moved), "\(move.map(\.0))")
+            #expect(!MediaControlClient.samePicture(held, moved), "\(move.map(\.0))")
+        }
+        // A centre change with anything else that says where a sample lies
+        // is a new picture.
+        let others: [(String, LinkJSON)] = [
+            ("spanHz", 95_000), ("sourceStream", 1), ("traceSamples", 31), ("waterfallSamples", 31),
+            ("grantedFftSize", 8192),
+        ]
+        for (key, value) in others {
+            let changed = try context {
+                $0["centreHz"] = .number(held.centreHz + 10)
+                $0[key] = value
+            }
+            #expect(!MediaControlClient.movedPicture(held, changed), "\(key)")
+        }
+    }
+
     @Test func onlyADbmRangeFrameRateOrLinePeriodChangeIsTheSamePicture() throws {
         func context(_ change: (inout [String: LinkJSON]) -> Void) throws -> MediaControlEvent.DisplayContext {
             var payload = Self.context("c", generation: 2, wideband: true, grant: true)
