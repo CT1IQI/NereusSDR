@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: Apply commits through the
+//                 container manager, so a placement chosen here records or
+//                 clears the container's home as Pop Out and Return do.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the header choice is shown or
 //                 hidden, without the hover choice. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -370,7 +374,19 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     setSizeGripEnabled(true);
 
     if (m_manager && m_manager->workspaceStore()) {
-        m_editSession=std::make_unique<ContainerEditSession>(*m_manager->workspaceStore());
+        // Workspace preview: Apply commits through the manager, as the
+        // arrange controller does, so a placement chosen here records or
+        // clears the container's home. With the look off the session
+        // commits to the store, as it always has.
+        ContainerEditSession::Commit commit;
+        if (WorkspacePreview::enabled()) {
+            commit = [manager = m_manager](const WorkspaceDocument& document, quint64 expectedRevision) {
+                return manager ? manager->commitWorkspace(document, expectedRevision)
+                               : CommitResult{CommitStatus::Invalid, expectedRevision,
+                                              QStringLiteral("No container manager")};
+            };
+        }
+        m_editSession=std::make_unique<ContainerEditSession>(*m_manager->workspaceStore(), std::move(commit));
         m_selectedId=m_container ? m_container->id() : m_editSession->draft().mainContainerId;
     }
     buildLayout();

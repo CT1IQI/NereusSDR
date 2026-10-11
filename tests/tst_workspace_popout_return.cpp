@@ -10,12 +10,16 @@
 //                 given. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-10-11 - Return after the pane changed size puts a free container
-//                 where it was showing, and the fallback place is the
-//                 nearest one clear of every other free container. J.J.
+//                 where it was showing; the fallback place is the nearest
+//                 one clear of every other free container; and a
+//                 placement chosen in Container Settings records and
+//                 clears the home as Pop Out and Return do. The timer
+//                 that closes a menu left open ends with its lookup. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QAbstractButton>
 #include <QApplication>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QMainWindow>
 #include <QMenu>
@@ -28,6 +32,7 @@
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
@@ -119,8 +124,10 @@ MenuReading readMenu(Open open, const QString& choose = QString(), const QString
             chosen->trigger();
         }
     });
-    // Never leave a menu open under a failed lookup.
-    QTimer::singleShot(3000, [] {
+    // Never leave a menu open under a failed lookup. The timer goes with
+    // this call, so it cannot close a later case's menu.
+    QObject untilMenuClosed;
+    QTimer::singleShot(3000, &untilMenuClosed, [] {
         if (QWidget* popup = QApplication::activePopupWidget()) {
             popup->close();
         }
@@ -626,6 +633,40 @@ private slots:
         QVERIFY(pane.contains(shown));
         QVERIFY(shown.topLeft() != f.widget("other")->geometry().topLeft());
         QCOMPARE(d.geometry, shown);
+    }
+
+    // Finding its way through the manager, a placement chosen in Container
+    // Settings is a pop-out or a return like any other.
+    void placementChosenInContainerSettingsRecordsAndClearsTheHome()
+    {
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree());
+        const auto choose = [&f](DockMode mode) {
+            ContainerSettingsDialog dialog(f.widget("second"), nullptr, f.manager.get());
+            auto* placement = dialog.findChild<QComboBox*>(QStringLiteral("containerPlacement"));
+            if (placement == nullptr) {
+                return false;
+            }
+            placement->setCurrentIndex(placement->findData(int(mode)));
+            return dialog.applyDraft().status == CommitStatus::Saved;
+        };
+        QVERIFY(choose(DockMode::Floating));
+        settle();
+        ContainerDocument d = f.document("second");
+        QCOMPARE(d.dockMode, DockMode::Floating);
+        QVERIFY(d.home.has_value());
+        QCOMPARE(*d.home, stripHome(DockEdge::Right, QStringLiteral("first"), QStringLiteral("third")));
+
+        QVERIFY(choose(DockMode::OverlayDocked));
+        settle();
+        d = f.document("second");
+        QCOMPARE(d.dockMode, DockMode::OverlayDocked);
+        QVERIFY(!d.home.has_value());
+        // Popped out again, the old strip is not its home: it has the free
+        // place it was popped out of, or none when that place had no rect.
+        QVERIFY(f.popOut(QStringLiteral("second"), QStringLiteral("button")));
+        d = f.document("second");
+        QVERIFY(!d.home.has_value() || d.home->dockMode == DockMode::OverlayDocked);
     }
 
     void aWindowWithNoHomeReturnsToTheMainStrip()

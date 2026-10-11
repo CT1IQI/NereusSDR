@@ -8,6 +8,11 @@
 //                 container's menus tick Arrange Workspace from the switch,
 //                 not the hold. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - A pointer move without Shift ends a hold whose release
+//                 was not seen, and Escape closes an open profile rail
+//                 before it leaves Arrange. The timer that closes a menu
+//                 left open ends with its lookup. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QComboBox>
@@ -43,6 +48,7 @@
 #include "gui/containers/WorkspaceHeader.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/widgets/ProfileRailDock.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::RemoteWindowHarness;
@@ -406,8 +412,8 @@ private slots:
         QVERIFY(!f.manager.arranging());
     }
 
-    // Shift alone types nothing, so a hold arranges with a text field
-    // focused; typing a capital is another key and does not.
+    // Shift in a text field is for typing: a hold does not begin while one
+    // has keyboard focus, whatever kind of field it is.
     void aHoldDoesNotBeginInATextField_data()
     {
         QTest::addColumn<QString>("kind");
@@ -499,8 +505,10 @@ private slots:
                 }
                 menu->close();
             });
-            // Never leave a menu open under a failed lookup.
-            QTimer::singleShot(3000, [] {
+            // Never leave a menu open under a failed lookup. The timer
+            // goes with this call, so it cannot close a later case's menu.
+            QObject untilMenuClosed;
+            QTimer::singleShot(3000, &untilMenuClosed, [] {
                 if (QWidget* popup = QApplication::activePopupWidget()) {
                     popup->close();
                 }
@@ -582,6 +590,28 @@ private slots:
         QVERIFY(f.manager.arranging());
         f.shiftUp();
         QVERIFY(!f.manager.arranging());
+    }
+
+    // Shift let go where the filter saw no key release (another window had
+    // the keyboard): the next pointer move says it is up.
+    void shiftLetGoUnseenEndsTheHoldAtTheNextPointerMove()
+    {
+        HoldFixture f;
+        QVERIFY(f.show());
+        QVERIFY(f.hold());
+        const QPoint at = f.probe->mapToGlobal(QPoint(5, 5));
+        // A move with Shift still down changes nothing.
+        mouse(QEvent::MouseMove, f.probe, at, Qt::NoButton, Qt::NoButton, Qt::ShiftModifier);
+        QVERIFY(f.manager.arrangeHeld());
+        mouse(QEvent::MouseMove, f.probe, at + QPoint(2, 0), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(!f.manager.arrangeHeld());
+        QVERIFY(!f.manager.arranging());
+        // And a press of Shift still pending is called off the same way.
+        f.shiftDown();
+        QVERIFY(f.filter->holdPendingForTest());
+        mouse(QEvent::MouseMove, f.probe, at, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QVERIFY(!f.filter->holdPendingForTest());
+        QVERIFY(f.nothingArranges());
     }
 
     void losingTheApplicationEndsTheHold()
@@ -753,6 +783,33 @@ private slots:
         QKeyEvent up(QEvent::KeyRelease, Qt::Key_Shift, Qt::NoModifier);
         QApplication::sendEvent(w.window.get(), &up);
         QVERIFY(!w.manager->arranging());
+    }
+
+    // The profile rail is no popup, so the hold filter cannot see that it
+    // is open. Escape closes the rail first; Arrange stays on until the
+    // next Escape.
+    void escapeClosesAnOpenProfileRailBeforeItLeavesArrange()
+    {
+        LookWindow w(true);
+        QVERIFY(w.manager);
+        auto* rail = w.window->findChild<ProfileRailDock*>();
+        QVERIFY(rail);
+        w.manager->setArrangeMode(true);
+        settle();
+        rail->open(true);
+        QVERIFY(rail->isOpen());
+        QVERIFY(QApplication::activePopupWidget() == nullptr);
+        const auto escape = [&w] {
+            QWidget* focus = QApplication::focusWidget();
+            QKeyEvent event(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(focus != nullptr ? focus : static_cast<QWidget*>(w.window.get()), &event);
+            settle();
+        };
+        escape();
+        QVERIFY(!rail->isOpen());
+        QVERIFY(w.manager->arrangeMode());
+        escape();
+        QVERIFY(!w.manager->arrangeMode());
     }
 
     void theLookOffWindowHasNoFilterAndShiftChangesNothing()

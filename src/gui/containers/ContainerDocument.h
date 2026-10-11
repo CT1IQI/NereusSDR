@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
 // Modification history (NereusSDR):
+//   2026-10-11 - SavedScreen::extensions: unknown keys inside "screen" are
+//                 kept. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - ContainerHome::geometryPane: the pane a free home's rect
 //                 was placed in, so Return reads it against that pane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -55,6 +58,9 @@ struct SavedScreen {
     QString name;
     QString serial;
     QRect geometry;
+    // Keys this build does not know, kept on rewrite. They play no part in
+    // matching a screen.
+    QJsonObject extensions;
     bool operator==(const SavedScreen&) const = default;
 };
 

@@ -9,9 +9,10 @@
 //                 platform has one screen, so every monitor here is a fake
 //                 ScreenSource. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
-//   2026-10-11 - Two monitors with one serial, and a window the system
-//                 moved, which an unrelated save leaves alone. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Two monitors with one serial; a window whose header is
+//                 off its screen; and a window the system moved, which an
+//                 unrelated save leaves alone. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLoggingCategory>
@@ -321,6 +322,49 @@ private slots:
         QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
         QVERIFY(rig.settleCapture());
         rig.manager->saveState();
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+    }
+
+    // A window whose header cannot be reached is not at home, however much
+    // of the rest of it is on a screen: it is shown on the screen, and its
+    // place is kept.
+    void aWindowWhoseHeaderIsOffTheScreenIsShownOnItAndKeepsItsPlace_data()
+    {
+        QTest::addColumn<bool>("namesItsScreen");
+        QTest::newRow("saved with its monitor") << true;
+        QTest::newRow("an older layout with no monitor") << false;
+    }
+    void aWindowWhoseHeaderIsOffTheScreenIsShownOnItAndKeepsItsPlace()
+    {
+        QFETCH(bool, namesItsScreen);
+        // Saved on a 2560 x 1440 monitor that now runs at 1920 x 1080: the
+        // top 5 px of the window are all that is left on it.
+        const QString serial = QStringLiteral("SN-A");
+        const SavedScreen saved{QStringLiteral("A"), serial, QRect(0, 0, 2560, 1440)};
+        const ScreenInfo present{QStringLiteral("A"), serial, kScreenARect, kScreenARect};
+        const QRect place(500, 1075, 400, 300);
+        QVERIFY(place.intersects(kScreenARect));
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("header.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("a"), place,
+                                                           namesItsScreen ? std::optional<SavedScreen>(saved)
+                                                                          : std::nullopt)}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        const QByteArray before = ContainerDocumentCodec::encode(store.snapshot());
+        FakeScreens screens;
+        screens.list = {present};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        const QRect shown = rig.window(QStringLiteral("a"));
+        qInfo() << "header off the screen, shown at:" << shown;
+        QVERIFY2(kScreenARect.contains(shown), "shown wholly on the screen");
+        QVERIFY(rig.settleCapture());
+        rig.manager->saveState();
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, place);
         QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
     }
 

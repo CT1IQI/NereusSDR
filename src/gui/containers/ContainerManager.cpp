@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Both looks: a window is at home only where its header can
+//                 be reached (headerReachable); one whose rect touches its
+//                 screen with the header off it, as after a drop in
+//                 resolution, is shown on the screen and keeps its saved
+//                 place. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Both looks: reconcile puts a window at its document
 //                 place and size only when the commit changed that place
 //                 or its monitor (or the place differs from the remembered
@@ -289,6 +295,12 @@ constexpr QSize kPlacementMinimum(260, 24);
 // The size a container with no size of its own is placed at.
 constexpr QSize kPlacementFallbackSize(360, 300);
 constexpr int kMaxCascadeSteps = 256;
+// How much of a window's header has to be on a screen for the window to
+// count as shown there: a piece wide enough to take hold of, and at least
+// half the header's height (a header across the seam between two screens
+// has that on one of them). NereusSDR-original values.
+constexpr int kHeaderReachWidthPx = 48;
+constexpr int kHeaderReachHeightPx = ContainerWidget::kTitleBarHeight / 2;
 
 // `wanted`, held inside `bounds` (when there are any), then moved down and
 // right by `step` until its top-left is none of `taken`. A step that would
@@ -2408,13 +2420,26 @@ bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional
         // Its monitor is here, and the place is still on it (a monitor
         // known by its serial may have been moved in the arrangement).
         const std::optional<ScreenInfo> present = m_screens->matching(*screen, remembered);
-        return present && remembered.intersects(present->geometry);
+        return present && remembered.intersects(present->geometry) && headerReachable(remembered);
     }
     // An older layout names no monitor: any present screen the rect is on
     // will do. A rect at the origin is the place a window never given one
     // lands at, where the main window hides it (see
     // FloatingContainer::ensureVisiblePosition); it was never a chosen place.
-    return remembered.topLeft() != QPoint(0, 0) && m_screens->onAnyScreen(remembered);
+    return remembered.topLeft() != QPoint(0, 0) && m_screens->onAnyScreen(remembered)
+        && headerReachable(remembered);
+}
+
+bool ContainerManager::headerReachable(const QRect& remembered) const
+{
+    // The window's own header is the top strip of its rect.
+    const QRect header(remembered.topLeft(), QSize(remembered.width(), ContainerWidget::kTitleBarHeight));
+    const int wide = qMin(kHeaderReachWidthPx, header.width());
+    const QVector<ScreenInfo> present = m_screens->screens();
+    return std::any_of(present.cbegin(), present.cend(), [&header, wide](const ScreenInfo& screen) {
+        const QRect shared = screen.geometry.intersected(header);
+        return shared.width() >= wide && shared.height() >= kHeaderReachHeightPx;
+    });
 }
 
 QRect ContainerManager::displacedWindowRect(const QString& id, const QRect& remembered,

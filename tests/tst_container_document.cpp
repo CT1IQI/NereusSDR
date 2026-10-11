@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - Unknown keys inside screen are kept. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - A free home's geometryPane round trips. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - home round trip (strip and free), absent, unknown keys
@@ -26,6 +28,7 @@
 #include <limits>
 #include <optional>
 #include "gui/containers/ContainerDocumentCodec.h"
+#include "gui/containers/ScreenSource.h"
 
 using namespace NereusSDR;
 
@@ -497,6 +500,36 @@ private slots:
         QVERIFY(!ContainerDocumentCodec::encode(docked).contains("\"screen\""));
         docked.containers[0].popOutShell = true;
         QVERIFY(ContainerDocumentCodec::encode(docked).contains("\"screen\""));
+    }
+    void unknownKeysInsideScreenSurviveALoadAndSave()
+    {
+        WorkspaceDocument doc = sample();
+        doc.containers[0].screen = SavedScreen{QStringLiteral("A"), QStringLiteral("SN-7"), QRect(0, 0, 1920, 1080)};
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        QJsonObject screen = first["screen"].toObject();
+        screen["futureScale"] = 2;
+        screen["futureNote"] = QJsonObject{{"a", true}};
+        first["screen"] = screen;
+        containers[0] = first;
+        root["containers"] = containers;
+        const DocumentResult decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson());
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QVERIFY(decoded.document.containers[0].screen.has_value());
+        QCOMPARE(decoded.document.containers[0].screen->extensions,
+                 (QJsonObject{{"futureScale", 2}, {"futureNote", QJsonObject{{"a", true}}}}));
+        // The unknown keys play no part in matching the monitor.
+        QVERIFY(screenMatches(ScreenInfo{QStringLiteral("A"), QStringLiteral("SN-7"), QRect(0, 0, 1920, 1080),
+                                         QRect(0, 0, 1920, 1080)},
+                              *decoded.document.containers[0].screen));
+        const QJsonObject again = QJsonDocument::fromJson(ContainerDocumentCodec::encode(decoded.document))
+                                      .object()["containers"].toArray().first().toObject()["screen"].toObject();
+        QCOMPARE(again, screen);
+        // A known key hidden among the unknown ones is not a valid document.
+        WorkspaceDocument bad = doc;
+        bad.containers[0].screen->extensions["serial"] = QStringLiteral("SN-8");
+        QVERIFY(!ContainerDocumentCodec::validate(bad).isEmpty());
     }
     void malformedScreenIsDroppedForThatContainerOnly_data()
     {

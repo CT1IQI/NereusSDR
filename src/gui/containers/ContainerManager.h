@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - headerReachable: a window is at home only where its
+//                 header is on a screen. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-11 - m_documentScreen: reconcile moves a window only when a
 //                 commit changed its place or monitor. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -502,8 +505,13 @@ private:
     // inside the pane that moves `wanted` least and covers no other
     // visible free container. When no such rect exists, defaultFreeRect.
     QRect nearestClearFreeRect(const QRect& wanted, const QString& exceptId) const;
-    // True when a floating window can be shown at its remembered place.
+    // True when a floating window can be shown at its remembered place:
+    // its monitor is here (or, with none saved, the place is on a screen)
+    // and its header can be reached there.
     bool windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const;
+    // True when enough of the header of a window at `remembered` is on a
+    // present screen to take hold of.
+    bool headerReachable(const QRect& remembered) const;
     // Where a window that cannot be shown at its remembered place goes.
     QRect displacedWindowRect(const QString& id, const QRect& remembered,
                               const std::optional<SavedScreen>& screen, const QSize& size) const;

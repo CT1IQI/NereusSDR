@@ -33,7 +33,7 @@ bool screenMatches(const ScreenInfo& screen, const SavedScreen& saved)
 
 SavedScreen savedScreenOf(const ScreenInfo& screen)
 {
-    return {screen.name, screen.serial, screen.geometry};
+    return {screen.name, screen.serial, screen.geometry, QJsonObject{}};
 }
 
 ScreenSource::~ScreenSource() = default;

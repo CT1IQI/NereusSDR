@@ -6,6 +6,9 @@
 //   2026-10-11 - The hold does not begin while a text field has keyboard
 //                 focus. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - A pointer move without Shift ends a hold whose key
+//                 release was not seen. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include "ArrangeHoldFilter.h"
 
 #include "ContainerManager.h"
@@ -100,9 +103,15 @@ bool ArrangeHoldFilter::eventFilter(QObject* watched, QEvent* event)
         otherInput(mouse->modifiers());
         return false;
     }
-    case QEvent::MouseMove:
-        m_buttonsDown = static_cast<QMouseEvent*>(event)->buttons();
+    case QEvent::MouseMove: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        m_buttonsDown = mouse->buttons();
+        if (m_shiftDown && !mouse->modifiers().testFlag(Qt::ShiftModifier)) {
+            // Shift was let go where this filter could not see it.
+            shiftReleased();
+        }
         return false;
+    }
     case QEvent::MouseButtonRelease:
         m_buttonsDown = static_cast<QMouseEvent*>(event)->buttons();
         if (m_endAfterDrag && m_buttonsDown == Qt::NoButton) {

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the Options menu of a window says
+//                 Return, as its body menu and header do. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the body menu starts with Pop Out
 //                 (Return on a window); a window's header shows the pin,
 //                 and the pin and the Options menu's Pin on Top report the
@@ -644,12 +647,12 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
         pin->setChecked(m_pinOnTop);
     }
     const QString floatText = isFloating()
-        ? (m_popOutShell ? tr("Return All Objects") : tr("Dock")) : tr("Pop Out");
+        ? (m_popOutShell ? tr("Return All Objects") : tr("Return")) : tr("Pop Out");
     menu.addAction(floatText, this, [this] { m_btnFloat->click(); });
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addSeparator();
     // Docks in the strip for that edge; Place Free puts the container over
-    // the spectrum, which a drop never does.
+    // the spectrum, as a drop there does while arranging.
     auto* edge = menu.addMenu(tr("Move to Edge"));
     const std::pair<DockEdge, QString> edges[] = {{DockEdge::Left, tr("Left")},
                                                   {DockEdge::Right, tr("Right")},

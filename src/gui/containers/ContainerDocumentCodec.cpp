@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - Unknown keys inside screen are kept, as they are inside
+//                 home. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - A free home carries geometryPane, the pane its rect was
 //                 placed in. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -40,6 +43,7 @@ const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
                                    "geometry", "geometryPane", "screen", "home", "visible", "locked", "autoHeight", "popOutShell",
                                    "config"};
+const QStringList kScreenFields{"name", "serial", "geometry"};
 const QStringList kHomeFields{"dockMode", "edge", "before", "after", "geometry", "geometryPane"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
 const QStringList kStripFields{"thickness", "extents"};
@@ -263,7 +267,7 @@ bool savedScreen(const QJsonValue& value, SavedScreen& out)
     if (!geometryField(object, geometry) || !geometry.isValid()) {
         return false;
     }
-    out = {object["name"].toString(), object["serial"].toString(), geometry};
+    out = {object["name"].toString(), object["serial"].toString(), geometry, extensions(object, kScreenFields)};
     return true;
 }
 
@@ -529,9 +533,11 @@ QJsonObject encodeContainer(const ContainerDocument& container)
     // Windows only, and only once the operator has placed one.
     if (container.screen && (container.dockMode == DockMode::Floating || container.popOutShell)) {
         const QRect& on = container.screen->geometry;
-        object["screen"] = QJsonObject{{"name", container.screen->name},
-                                       {"serial", container.screen->serial},
-                                       {"geometry", QJsonArray{on.x(), on.y(), on.width(), on.height()}}};
+        QJsonObject screen = container.screen->extensions;
+        screen["name"] = container.screen->name;
+        screen["serial"] = container.screen->serial;
+        screen["geometry"] = QJsonArray{on.x(), on.y(), on.width(), on.height()};
+        object["screen"] = screen;
     }
     // Only while it floats: where Return puts it back.
     if (container.home && container.dockMode == DockMode::Floating) {
@@ -650,6 +656,9 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
         }
         if (collides(container.extensions, kContainerFields)) {
             return QStringLiteral("Container extensions collide with known fields: %1").arg(container.id);
+        }
+        if (container.screen && collides(container.screen->extensions, kScreenFields)) {
+            return QStringLiteral("Screen extensions collide with known fields: %1").arg(container.id);
         }
         if (container.home && collides(container.home->extensions, kHomeFields)) {
             return QStringLiteral("Home extensions collide with known fields: %1").arg(container.id);

@@ -237,15 +237,18 @@ code saves (corrected 2026-10-11; see "Built"):
   With the look off it is read and written as before.
 * New, `"geometryPane": [w, h]`: for a free container, the size the spectrum
   pane had when the operator last placed it, so it comes back where it was
-  showing. Written only once the operator has moved that container.
+  showing. Written once the operator has moved that container, and by Return
+  for a container whose home carried one (see `"home"`).
 * New, `"screen": {"name", "serial", "geometry": [x, y, w, h]}`: the monitor
   a floating or popped-out window is on, with that monitor's geometry at
   save, so a different monitor in the same place is not mistaken for it.
-  Written only for a window.
-* New, `"home": {"dockMode", "edge", "before", "after", "geometry"}`: where a
-  popped-out container came from (its strip and the neighbours on each side,
-  or its free rectangle). Written only while the container is a window, with
-  the look on. Unknown keys inside `"home"` are kept on rewrite.
+  Written only for a window. Unknown keys inside `"screen"` are kept on
+  rewrite.
+* New, `"home": {"dockMode", "edge", "before", "after", "geometry",
+  "geometryPane"}`: where a popped-out container came from (its strip and the
+  neighbours on each side, or its free rectangle with the pane size that
+  rectangle was placed in). Written only while the container is a window,
+  with the look on. Unknown keys inside `"home"` are kept on rewrite.
 * `"pinOnTop"`, inside the container's existing `config`: with the look on
   it is saved as soon as the pin or the menu item changes it.
 
@@ -319,6 +322,18 @@ Saved fields:
   name and geometry when the serial is empty.
 * A popped-out container saves `home`, with an open set of extra keys that
   are kept on rewrite.
+* A free home saves `geometryPane` beside its `geometry` (review fix,
+  2026-10-11): the size the pane had when the rectangle was placed. A free
+  container's rectangle is read against that pane, so without it Return put
+  a container anchored to the bottom or the right off by however much the
+  pane had changed size. Return writes the rectangle and that pane size back
+  to the container; when the place no longer fits the pane, it writes the
+  new place with no pane size, which means the pane as it is now. A home
+  saved before this fix has none and is read against the pane as it is at
+  Return, as it was.
+* `screen` keeps unknown keys on rewrite, as `home` does (review fix,
+  2026-10-11). They play no part in matching a monitor, and a window the
+  operator moves to another monitor saves a new record without them.
 
 Headers:
 
@@ -363,6 +378,13 @@ Pop out, pin and return:
   share.
 * Pin on Top is saved as soon as it changes, with the look on. Before, it
   was written at the next save and could be undone by a layout pass.
+* When a free home no longer fits the pane, Return takes the place inside
+  the pane that moves the home rectangle least and covers no other free
+  container. Only when no place in the pane is clear does it step off the
+  others' top-left corners, as a default placement does (review fix,
+  2026-10-11).
+* A placement chosen in Container Settings records and clears `home` as
+  Pop Out and Return do, with the look on (review fix, 2026-10-11).
 
 Lock:
 
@@ -378,6 +400,14 @@ Startup:
   while the window lays out.
 * A change of screen resolution or arrangement with no monitor added or
   removed does not re-place windows.
+* Review fixes, 2026-10-11, with the look on and off. Of two monitors that
+  report one serial, a window's is the one with the saved geometry, else
+  the one its remembered place is on. A window is at its place only when at
+  least 48 px of its header's width and half its height are on a screen;
+  otherwise it is shown on the screen and keeps its saved place. A save
+  that does not change a window's place or monitor leaves the window where
+  it is, so a window the system moved with no drag does not jump back; that
+  move is still not remembered.
 
 Evidence is in the capture run and gallery of 2026-10-11 (real renders at
 both profiles; they replace the mock-ups below as evidence). Still owed:
