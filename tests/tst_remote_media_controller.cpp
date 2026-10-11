@@ -10170,6 +10170,12 @@ private slots:
         for (const bool locked : {false, true}) {
             QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioStatus().qualityReason,
                 std::optional<RemoteAudioQualityReason>(RemoteAudioQualityReason::NetworkTooSlow), 12000);
+            // As above: the request for Opus that follows the verdict crosses
+            // the loopback session, and a loaded machine may deliver it a
+            // moment later. Counted before it arrived, it took the place the
+            // retry's request is read from below.
+            QTRY_COMPARE_WITH_TIMEOUT(requestedProfiles(coreControls).constLast(),
+                                      QStringLiteral("opus"), 5000);
             ControlsLock::setLocked(locked);
             QCOMPARE(quality->currentData().toInt(), int(RemoteAudioQualityChoice::Lossless));
             const int requestsBeforeRetry = int(requestedProfiles(coreControls).size());
