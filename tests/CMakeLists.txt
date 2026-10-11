@@ -1299,6 +1299,7 @@ nereus_add_test(tst_slice_persistence_per_band)
 nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
 nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
 nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
+nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)

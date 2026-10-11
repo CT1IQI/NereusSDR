@@ -1712,6 +1712,8 @@ set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
+    src/gui/SessionEndSave.cpp
+    src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
     src/gui/HostingSliceActions.cpp
