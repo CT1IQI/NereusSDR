@@ -172,6 +172,12 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-11 - Both looks: a deleted container drops only its own
+//                 registration. One removed and added again under the same
+//                 id before the deferred delete ran took the new container
+//                 out of the manager, so shutdown never released its
+//                 content and the host then read the deleted registry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1865,7 +1871,13 @@ void ContainerManager::wireContainer(ContainerWidget* container)
         }
         emit containerDragFinished();
     });
-    connect(container, &QObject::destroyed, this, [this, id=container->id()] { m_containers.remove(id); });
+    // A removed container is deleted later; by then the same id may name
+    // a new container (removed and added again in one turn of the event
+    // loop), which stays registered: dropped here, it was never released
+    // at shutdown and its content host read the deleted registry.
+    connect(container, &QObject::destroyed, this, [this, id=container->id(), container] {
+        if (m_containers.value(id) == container) { m_containers.remove(id); }
+    });
     connect(container, &ContainerWidget::floatRequested, this, [this, container]() {
         floatContainer(container->id());
     });
