@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 A nested AI1 is run-only and leaves the outer change applied.
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11 One serial device under two spellings is one assignment.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include "CatFixtureHarness.h"
 #include "CatSerialTestDevice.h"
@@ -260,6 +262,36 @@ private slots:
         QVERIFY(!service.applyGlobalConfig(global)); global.pttSerialDevice = "test-owned-exclusive";
         QVERIFY(service.applyGlobalConfig(global)); first.serialDevice = global.pttSerialDevice;
         QVERIFY(!service.applyChannelConfig(2, first));
+    }
+    void sameDeviceSpelledDifferentlyRejected() {
+        RadioModel model; CatService& service = *model.catService();
+        CatEndpointConfig first; first.serialEnabled = true; first.serialDevice = "test-owned-shared";
+        QVERIFY(service.applyChannelConfig(1, first));
+        // A second spelling of the same device is the same assignment.
+        QStringList spellings{" test-owned-shared "};
+#ifdef Q_OS_WIN
+        first.serialDevice = "COM250"; QVERIFY(service.applyChannelConfig(1, first));
+        spellings = QStringList{"com250", "\\\\.\\COM250", " COM250 "};
+#endif
+        for (const QString& spelling : spellings) {
+            CatEndpointConfig second = first; second.serialDevice = spelling;
+            QVERIFY2(!service.applyChannelConfig(2, second), qPrintable(spelling));
+            CatGlobalConfig global = service.globalConfig(); global.pttEnabled = true; global.pttUseCts = true;
+            global.pttDeviceSource = "Physical"; global.pttSerialDevice = spelling;
+            QVERIFY2(!service.applyGlobalConfig(global), qPrintable(spelling));
+        }
+    }
+    void restoredDeviceSpelledDifferentlyCannotOpenTwice() {
+        AppSettings& store = AppSettings::instance();
+        store.setValue("Cat/Channels/1/SerialEnabled", "True"); store.setValue("Cat/Channels/1/SerialDevice", "test-owned-duplicate");
+        store.setValue("Cat/Ptt/Enabled", "True"); store.setValue("Cat/Ptt/DeviceSource", "Physical");
+        store.setValue("Cat/Ptt/UseCts", "True"); store.setValue("Cat/Ptt/SerialDevice", " test-owned-duplicate ");
+        RadioModel model; CatService& service = *model.catService();
+        const auto device = std::make_shared<CatSerialTestDevice>();
+        QVERIFY(service.setSerialTransportFactoryForTest([device] { return std::make_shared<CatSerialTransport>(device); }));
+        service.startConfigured(); QCOMPARE(device->opens, 0);
+        QVERIFY(service.channelState(1).contains("exclusive physical PTT"));
+        QVERIFY(service.pttState().contains("already assigned to CAT"));
     }
     void restoredDuplicateAssignmentsCannotOpenTwice() {
         for (int channel = 1; channel <= 2; ++channel) {

@@ -2,6 +2,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-06 Default ports for all four channels. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-11 One serial device under two spellings. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QTcpServer>
@@ -218,6 +220,18 @@ private slots:
         config.serialParity = "None"; config.rigctldEnabled = true; QVERIFY(!CatSettings::validate(config));
         config.rigctldPort = 5555; QVERIFY(CatSettings::validate(config));
         config.tcpBindAddress = "invalid-address"; QVERIFY(!CatSettings::validate(config));
+    }
+    void serialDeviceNamesCompareAsTheSystemDoes() {
+        // Windows: one device whatever the case, with or without the \\.\ prefix.
+        QVERIFY(CatSettings::sameSerialDevice("COM10", "com10", true));
+        QVERIFY(CatSettings::sameSerialDevice("\\\\.\\COM10", "COM10", true));
+        QVERIFY(CatSettings::sameSerialDevice("\\\\.\\com10", " COM10 ", true));
+        QVERIFY(!CatSettings::sameSerialDevice("COM1", "COM10", true));
+        QCOMPARE(CatSettings::serialDeviceKey("\\\\.\\com10", true), QString("COM10"));
+        // Elsewhere a device path is case-sensitive; only surrounding space is dropped.
+        QVERIFY(!CatSettings::sameSerialDevice("/dev/ttyUSB0", "/dev/ttyusb0", false));
+        QVERIFY(CatSettings::sameSerialDevice("/dev/ttyUSB0 ", "/dev/ttyUSB0", false));
+        QCOMPARE(CatSettings::serialDeviceKey("\\\\.\\com10", false), QString("\\\\.\\com10"));
     }
 };
 QTEST_GUILESS_MAIN(TstCatSettings)
