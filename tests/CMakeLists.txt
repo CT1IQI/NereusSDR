@@ -9932,9 +9932,11 @@ endif()
 # reached one row past the oldest, and the repeat gave it the newest: the
 # bottom line of the waterfall flashed each new row as it arrived. A paused
 # waterfall ran the same glide and jumped a row whenever one arrived
-# underneath. Grabs real GPU frames just after a row and after its glide,
-# so it needs a native window and carries the `gpu` label; skips where no
-# QRhi comes up. NereusSDR-original.
+# underneath. Also holds the glide at set points and measures the four-row
+# blend: the grain of noise rows stays level through the glide, and one
+# bright row lands on the lines around it in the blend's shares. Grabs real
+# GPU frames, so it needs a native window and carries the `gpu` label; skips
+# where no QRhi comes up. NereusSDR-original.
 if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_waterfall_ring_seam NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()

@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall blends four rows as it
+//                 glides (waterfall.frag, ported from AetherSDR) where it
+//                 mixed two, so its grain no longer pulses once per row;
+//                 the glide can be held at a set point for a native test.
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall no longer draws across
 //                 its ring's seam (the bottom line flashed each new row),
 //                 its glide rests while the waterfall is paused, and a
@@ -12383,13 +12388,25 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // paused picture a row and slid it back each time. AetherSDR holds its
     // scroll offset at zero while paused as well (SpectrumWidget.cpp
     // waterfallScrollProgressRows() [@aa9336ae]).
-    const float glideRows = m_wfLive ? 1.0f - pushFrac : 0.0f;
+    const float clockGlideRows = m_wfLive ? 1.0f - pushFrac : 0.0f;
+    // A native test may hold the glide at a point of its choosing.
+    const float glideRows = (m_wfGlideRowsForTest >= 0.0f) ? m_wfGlideRowsForTest
+                                                           : clockGlideRows;
     // 2026-10-11 KG4VCF: the ring row and the glide go to the shader apart,
     // with the ring's height. "Both texels hold valid data" above is true of
     // the top of the picture only: at the bottom the glide wants the row
     // below the oldest, which the ring does not hold, and the texture's
-    // repeat handed it the newest instead. The shader now holds the sampled
-    // row between the centers of the newest and the oldest (waterfall.frag).
+    // repeat handed it the newest instead. The shader now holds every row it
+    // samples to the rows the ring has (waterfall.frag).
+    //
+    // 2026-10-11 KG4VCF: "the bilinear sampler produces a clean gradient"
+    // above was the cause of a shimmer: a two-row mix is sharp when a row
+    // has just settled and a 50/50 blur half way to the next, so the grain
+    // of a noisy waterfall pulsed once per row, by 29% where a row is one
+    // screen pixel tall. The shader now blends four rows with cubic
+    // B-spline weights, ported from AetherSDR texturedquad.frag
+    // [@a9a83e66], whose softness is close to the same at every point of
+    // the glide. The lag and the clock above are unchanged.
     // Written further down, from the frame plan, only when the waterfall
     // draws (GUI-M1).
     const float wfUniforms[] = {static_cast<float>(m_wfWriteRow), glideRows,

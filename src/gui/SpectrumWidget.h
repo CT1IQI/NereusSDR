@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : setWaterfallGlideForTest(), so a native test can hold
+//                 the GPU waterfall's glide at a set point between two
+//                 rows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 : m_wfRowsSinceUpload, waterfallRectForTest() and
 //                 setWaterfallLiveForTest() for the GPU waterfall's ring
 //                 seam, paused glide and whole-ring upload. J.J. Boyd
@@ -1082,6 +1086,11 @@ public:
     // Pauses or resumes the waterfall, as scrolling back on the time scale
     // and its LIVE button do.
     void setWaterfallLiveForTest(bool live) { setWaterfallLive(live); }
+    // Holds the GPU waterfall's glide at `rows` (0 = at rest on the newest
+    // row, 1 = a whole row short of it) in place of the clock, so a native
+    // test can draw a frame at a chosen point between two rows. A negative
+    // value hands the glide back to the clock.
+    void setWaterfallGlideForTest(float rows) { m_wfGlideRowsForTest = rows; }
 
     // Which rows of the GPU dynamic overlay texture (device pixels, from
     // the top) renderGpuFrame() clears and uploads. The texture covers the
@@ -3085,6 +3094,8 @@ private:
     quint64 m_remoteRowsPushed{0};
     QVector<float> m_lastRemoteRowPushed;
     bool m_waterfallTickerPausedForTest{false};
+    // setWaterfallGlideForTest(): negative leaves the glide to the clock.
+    float m_wfGlideRowsForTest{-1.0f};
     void onWaterfallTick();
     void drainRemoteWaterfallRows();
     QVector<float> reprojectedToView(const QVector<float>& pixelsDbm,

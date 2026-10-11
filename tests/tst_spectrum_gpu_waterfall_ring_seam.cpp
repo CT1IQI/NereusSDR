@@ -24,11 +24,23 @@
 // it sent only the remainder and left the rest of the picture as it was
 // before.
 //
+// The glide had one more fault, the one JJ saw first, on Windows: the whole
+// waterfall shimmered as it scrolled. A two-row linear mix is sharp when a
+// row has just settled and a 50/50 blur half way to the next, so the grain
+// of a noisy waterfall went sharp, soft, sharp once per row: down to 71% of
+// full where a row is one screen pixel tall, and 9% up and down where it is
+// two. The waterfall now blends four rows with cubic B-spline weights, as
+// AetherSDR's does, whose softness is close to the same at every point of
+// the glide. The last two cases hold the glide at set points and measure
+// both: the grain of noise rows through the glide, and the share of one
+// bright row on each screen line around it.
+//
 // Needs a real QRhi: the offscreen platform gives the widget no GPU backend,
 // so renderGpuFrame() never runs there. Registered NATIVE_WINDOW with the
 // extra `gpu` label; it skips where no QRhi comes up.
 
 #include <QImage>
+#include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTest>
 #include <QVector>
@@ -67,6 +79,21 @@ constexpr double kAbsent = 0.03;
 // The dark and bright rows must differ by at least this much (summed over
 // red, green and blue, 0..765) for a share to mean anything.
 constexpr double kMinContrast = 90.0;
+
+// The glide is held at kGlideSteps + 1 evenly spaced points from 0 to 1.
+constexpr int kGlideSteps = 16;
+// The grain of noise rows may differ by this ratio at most between any two
+// points of the glide. The four-row blend moves it 4% where a row is one
+// screen pixel tall and under 1% where it is two; the two-row linear mix
+// moved it 41% and 9%.
+constexpr double kGrainBand = 1.06;
+// Noise rows must show at least this much grain (standard deviation of red
+// plus green plus blue, 0..765) for its ratio to mean anything.
+constexpr double kMinGrain = 40.0;
+// A screen line's share of one bright row may differ from the blend's
+// weight by this much: eight-bit color and the frame's rounding.
+constexpr double kShareTolerance = 0.02;
+constexpr quint32 kNoiseSeed = 20261011;
 
 // Where the waterfall lies in a grabbed frame, in device pixels.
 struct WaterfallArea {
@@ -138,6 +165,74 @@ void pushRowsDrawn(SpectrumWidget& w, int count, float dbm)
         static_cast<void>(w.grabFramebuffer());
         count -= rows;
     }
+}
+
+// Rows of noise: every pixel its own level between the dark and the bright
+// row, from a fixed seed. Drawn every half ring, as pushRowsDrawn() does.
+void pushNoiseRowsDrawn(SpectrumWidget& w, int count, QRandomGenerator& rng)
+{
+    const int chunk = qMax(1, w.waterfallHeightForTest() / 2);
+    const double span = static_cast<double>(kBrightDbm - kDarkDbm);
+    for (int i = 0; i < count; ++i) {
+        QVector<float> row(kRowPixels);
+        for (float& level : row) {
+            level = kDarkDbm + static_cast<float>(rng.bounded(span));
+        }
+        w.pushWaterfallRowForTest(row);
+        if (i % chunk == chunk - 1) {
+            static_cast<void>(w.grabFramebuffer());
+        }
+    }
+}
+
+// The grain of the waterfall in a grabbed frame: the standard deviation of
+// red plus green plus blue over the sampled columns, clear of both edges.
+double grainOf(const QImage& rgb, const WaterfallArea& area)
+{
+    const int margin = 6 * area.rowsPerLine();
+    double sum = 0.0;
+    double sumSquares = 0.0;
+    qint64 count = 0;
+    for (int y = area.top + margin; y <= area.bottom - margin; ++y) {
+        const QRgb* line = reinterpret_cast<const QRgb*>(rgb.constScanLine(y));
+        for (int x = area.left; x < area.right; ++x) {
+            const double level = qRed(line[x]) + qGreen(line[x]) + qBlue(line[x]);
+            sum += level;
+            sumSquares += level * level;
+            ++count;
+        }
+    }
+    if (count == 0) {
+        return 0.0;
+    }
+    const double mean = sum / count;
+    return std::sqrt(qMax(0.0, sumSquares / count - mean * mean));
+}
+
+// The share of waterfall row `row` (0 is the newest) that the four-row
+// blend puts on device row `deviceRow` of the waterfall (0 is its first),
+// with `devicePerRow` device rows to a waterfall row and the glide at
+// `glide` rows. Cubic B-spline weights, worked here from their definition
+// and not taken from the shader. Away from the ring's two ends, where the
+// shader holds its rows.
+double blendShare(int row, int deviceRow, int devicePerRow, double glide)
+{
+    const double position = (deviceRow + 0.5) / devicePerRow + glide - 0.5;
+    const double base = std::floor(position);
+    const double f = position - base;
+    const double weights[] = {
+        (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0,
+        (3.0 * f * f * f - 6.0 * f * f + 4.0) / 6.0,
+        (-3.0 * f * f * f + 3.0 * f * f + 3.0 * f + 1.0) / 6.0,
+        f * f * f / 6.0,
+    };
+    double share = 0.0;
+    for (int tap = 0; tap < 4; ++tap) {
+        if (static_cast<int>(base) - 1 + tap == row) {
+            share += weights[tap];
+        }
+    }
+    return share;
 }
 
 }  // namespace
@@ -410,6 +505,116 @@ private slots:
         qInfo().noquote() << where;
         // Its eight rows start lines / 2 rows down.
         QVERIFY2(std::abs(center - (lines / 2 + kBlockRows / 2.0)) < 1.0, qPrintable(where));
+    }
+
+    // A noisy waterfall keeps its grain through the glide: no sharper when
+    // a row has just settled than half way to the next.
+    void grain_holdsThroughTheGlide()
+    {
+        SpectrumWidget w;
+        QSignalSpy submitted(&w, &QRhiWidget::frameSubmitted);
+        QString why;
+        const Stage stage = start(w, submitted, &why);
+        if (stage == Stage::NoGpu) {
+            QSKIP("no QRhi on this platform; the GPU frame path did not run");
+        }
+        QVERIFY2(stage == Stage::Ready, qPrintable(why));
+
+        QRandomGenerator rng(kNoiseSeed);
+        const int lines = w.waterfallHeightForTest();
+        pushNoiseRowsDrawn(w, lines + 8, rng);
+
+        double lowest = 0.0;
+        double highest = 0.0;
+        double lowestAt = 0.0;
+        double highestAt = 0.0;
+        double dpr = 1.0;
+        for (int step = 0; step <= kGlideSteps; ++step) {
+            const double glide = static_cast<double>(step) / kGlideSteps;
+            w.setWaterfallGlideForTest(static_cast<float>(glide));
+            const QImage frame = w.grabFramebuffer();
+            QVERIFY2(!frame.isNull(), "the framebuffer grab came back empty");
+            const QImage rgb = frame.convertToFormat(QImage::Format_RGB32);
+            const WaterfallArea area = waterfallArea(w, rgb);
+            dpr = area.dpr;
+            const double grain = grainOf(rgb, area);
+            if (step == 0 || grain < lowest) {
+                lowest = grain;
+                lowestAt = glide;
+            }
+            if (step == 0 || grain > highest) {
+                highest = grain;
+                highestAt = glide;
+            }
+        }
+        const QString swing = QStringLiteral(
+            "the grain runs from %1 (glide %2) to %3 (glide %4), a ratio of %5, "
+            "at %6 screen pixels to a row")
+            .arg(lowest, 0, 'f', 2).arg(lowestAt, 0, 'f', 3)
+            .arg(highest, 0, 'f', 2).arg(highestAt, 0, 'f', 3)
+            .arg(lowest > 0.0 ? highest / lowest : 0.0, 0, 'f', 3).arg(dpr, 0, 'f', 2);
+        qInfo().noquote() << swing;
+        QVERIFY2(lowest >= kMinGrain, qPrintable(swing));
+        QVERIFY2(highest / lowest <= kGrainBand, qPrintable(swing));
+    }
+
+    // One bright row lands on the screen lines around it in the shares the
+    // four-row blend gives: at rest, two thirds on its own line and a sixth
+    // on the line above and the line below where a row is one screen pixel.
+    void oneRow_spreadsAsTheFourRowBlend()
+    {
+        SpectrumWidget w;
+        QSignalSpy submitted(&w, &QRhiWidget::frameSubmitted);
+        QString why;
+        const Stage stage = start(w, submitted, &why);
+        if (stage == Stage::NoGpu) {
+            QSKIP("no QRhi on this platform; the GPU frame path did not run");
+        }
+        QVERIFY2(stage == Stage::Ready, qPrintable(why));
+
+        // One bright row about half way down, and a bright block as the
+        // newest rows to read full brightness from.
+        const int lines = w.waterfallHeightForTest();
+        pushRowsDrawn(w, lines + 4, kDarkDbm);
+        pushRows(w, 1, kBrightDbm);
+        pushRowsDrawn(w, lines / 2, kDarkDbm);
+        pushRows(w, kBlockRows, kBrightDbm);
+        const int brightRow = kBlockRows + lines / 2;
+
+        const double glides[] = {0.0, 0.25, 0.5, 0.75};
+        for (const double glide : glides) {
+            w.setWaterfallGlideForTest(static_cast<float>(glide));
+            const QImage frame = w.grabFramebuffer();
+            QVERIFY2(!frame.isNull(), "the framebuffer grab came back empty");
+            const QImage rgb = frame.convertToFormat(QImage::Format_RGB32);
+            const WaterfallArea area = waterfallArea(w, rgb);
+            const int perRow = area.rowsPerLine();
+            // Lines 3 to 5 lie inside the block wherever the glide stands;
+            // three quarters of the way down nothing is bright.
+            const double bright = linesLevel(rgb, area, 3, 5);
+            const double dark = linesLevel(rgb, area, lines * 3 / 4, lines * 3 / 4 + 7);
+            const QString levels = QStringLiteral("dark %1, bright %2")
+                                       .arg(dark, 0, 'f', 1).arg(bright, 0, 'f', 1);
+            QVERIFY2(bright - dark >= kMinContrast, qPrintable(levels));
+
+            double worst = 0.0;
+            QString shown;
+            const int firstDeviceRow = (brightRow - 3) * perRow;
+            const int lastDeviceRow = (brightRow + 4) * perRow - 1;
+            for (int deviceRow = firstDeviceRow; deviceRow <= lastDeviceRow; ++deviceRow) {
+                const double share =
+                    (rowLevel(rgb, area, area.top + deviceRow) - dark) / (bright - dark);
+                const double wanted = blendShare(brightRow, deviceRow, perRow, glide);
+                worst = qMax(worst, std::abs(share - wanted));
+                shown += QStringLiteral(" %1/%2").arg(share, 0, 'f', 3).arg(wanted, 0, 'f', 3);
+            }
+            const QString text = QStringLiteral(
+                "glide %1, %2 screen pixels to a row, share shown/wanted on the lines "
+                "around the row:%3")
+                .arg(glide, 0, 'f', 2).arg(area.dpr, 0, 'f', 2).arg(shown);
+            qInfo().noquote() << text;
+            QVERIFY2(worst <= kShareTolerance, qPrintable(text));
+        }
     }
 };
 
