@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - m_documentScreen: reconcile moves a window only when a
+//                 commit changed its place or monitor. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: nearestClearFreeRect, Return's
 //                 fallback place. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -506,8 +509,9 @@ private:
                               const std::optional<SavedScreen>& screen, const QSize& size) const;
     // Shows a window at its remembered place when it is home; otherwise
     // where displacedWindowRect says, unless it is already shown away
-    // from its place on a present screen. `fromDocument`: the document
-    // was just applied, so a window that is home is put at its place.
+    // from its place on a present screen. `fromDocument`: a commit just
+    // placed the window, so one that is home is put at its place; false
+    // for a commit that left its place and monitor as they were.
     void placeFloatingWindow(const QString& id, const QRect& remembered,
                              const std::optional<SavedScreen>& screen, FloatingContainer* form,
                              bool fromDocument);
@@ -519,6 +523,8 @@ private:
     ScreenSource* m_screens{nullptr};
     // The monitor each floating window's remembered place was chosen on.
     QMap<QString, std::optional<SavedScreen>> m_rememberedScreen;
+    // Each window's monitor in the document last reconciled.
+    QMap<QString, std::optional<SavedScreen>> m_documentScreen;
     // Floating windows shown away from their remembered place.
     QSet<QString> m_displaced;
     QString m_storageError;

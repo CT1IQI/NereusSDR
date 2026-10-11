@@ -7,6 +7,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Both looks: reconcile puts a window at its document
+//                 place and size only when the commit changed that place
+//                 or its monitor (or the place differs from the remembered
+//                 one). A window the system moved with no drag is left
+//                 where it is by a commit of something else; that move is
+//                 still not remembered or saved. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Both looks: with two monitors reporting one serial, a
 //                 window is matched to the one it was on (its saved
 //                 geometry, then its remembered place), not the first.
@@ -367,6 +374,7 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_rememberedGeometry.clear();
     m_rememberedPane.clear();
     m_documentPane.clear();
+    m_documentScreen.clear();
     m_interactionStart.clear();
     m_provisionalPane.clear();
     m_rememberedScreen.clear();
@@ -718,6 +726,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_rememberedGeometry.remove(id);
             m_rememberedPane.remove(id);
             m_documentPane.remove(id);
+            m_documentScreen.remove(id);
             m_interactionStart.remove(id);
             m_provisionalPane.remove(id);
             m_rememberedScreen.remove(id);
@@ -734,6 +743,15 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         const bool preserveGeometry = c && m_storageError.isEmpty() && c->dockMode() == d.dockMode
             && (m_pendingGeometry.contains(d.id) || c->geometryInteractionActive())
             && m_documentGeometry.contains(d.id) && m_documentGeometry.value(d.id) == d.geometry;
+        // A window is put at its document place only when this commit
+        // places it: the document's place or monitor changed, or the place
+        // differs from the one remembered since (an operator move that was
+        // not saved). A commit of something else leaves a window where it
+        // is, so one the system moved with no drag does not jump back.
+        const bool windowPlaced = fresh || c->dockMode() != d.dockMode
+            || !m_documentGeometry.contains(d.id) || m_documentGeometry.value(d.id) != d.geometry
+            || m_documentScreen.value(d.id) != d.screen
+            || m_rememberedGeometry.value(d.id, d.geometry) != d.geometry;
         if (preserveGeometry) {
             m_pendingGeometry.insert(d.id);
         } else {
@@ -912,7 +930,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             // height is known; a free or docked container takes its rect.
             if (d.geometry.isValid()) {
                 if (d.dockMode == DockMode::Floating) {
-                    form->resize(d.geometry.size());
+                    if (windowPlaced) {
+                        form->resize(d.geometry.size());
+                    }
                 } else {
                     c->setGeometry(d.geometry);
                 }
@@ -1004,7 +1024,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (d.dockMode == DockMode::Floating && !preserveGeometry) {
             // At its remembered place when its monitor is here; otherwise on
             // the main window's screen, and nothing is remembered for that.
-            placeFloatingWindow(d.id, d.geometry, d.screen, form, true);
+            placeFloatingWindow(d.id, d.geometry, d.screen, form, windowPlaced);
         }
         // A free container is shown by placeFreeContainers() below, from its
         // remembered place; nothing is clamped into that place here.
@@ -1017,6 +1037,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (fresh) { emit containerAdded(d.id); }
         m_documentGeometry[d.id] = d.geometry;
         m_documentPane[d.id] = d.geometryPane;
+        m_documentScreen[d.id] = d.screen;
     }
     if (edgeMode()) {
         layoutEdgeStrips(document);

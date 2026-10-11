@@ -9,8 +9,9 @@
 //                 platform has one screen, so every monitor here is a fake
 //                 ScreenSource. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
-//   2026-10-11 - Two monitors with one serial. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Two monitors with one serial, and a window the system
+//                 moved, which an unrelated save leaves alone. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLoggingCategory>
@@ -321,6 +322,48 @@ private slots:
         QVERIFY(rig.settleCapture());
         rig.manager->saveState();
         QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+    }
+
+    // The system can move a window with no drag (a snap, a display
+    // rearranged). That is not remembered, and a save of something else
+    // does not put the window back mid-session.
+    void aWindowTheSystemMovedStaysThroughAnUnrelatedSave()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("system-move.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("a"), kOnB, savedScreenOf(screenB()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {screenA(), screenB()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
+
+        const QRect moved(2300, 500, 500, 350);
+        rig.manager->container(QStringLiteral("a"))->window()->setGeometry(moved);
+        QCOMPARE(rig.window(QStringLiteral("a")), moved);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, kOnB);
+
+        // Something else is saved.
+        WorkspaceDocument draft = store.snapshot();
+        draft.containers[0].config[QStringLiteral("showOnTx")] = false;
+        QCOMPARE(rig.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        QCOMPARE(rig.window(QStringLiteral("a")), moved);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(rig.window(QStringLiteral("a")), moved);
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, kOnB);
+        QCOMPARE(stored(store, QStringLiteral("a")).screen, std::optional<SavedScreen>(savedScreenOf(screenB())));
+
+        // A save that places the window does move it.
+        draft = store.snapshot();
+        draft.containers[0].geometry = kAlsoOnB;
+        QCOMPARE(rig.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        QCOMPARE(rig.window(QStringLiteral("a")), kAlsoOnB);
     }
 
     void screenRemovedAndAddedBackWhileRunning()
