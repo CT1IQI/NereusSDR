@@ -3783,6 +3783,13 @@ target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TES
 # side by side again.
 nereus_add_test(tst_setup_pages_fit_window)
 target_compile_definitions(tst_setup_pages_fit_window PRIVATE NEREUS_BUILD_TESTS)
+# The matrix is four rows (today and workspace look, 900 x 650 and 820 x 600)
+# since the workspace look doubled it. It took 81.82 s passing and ran past
+# the 120 s default on a loaded Linux runner while still making progress, so
+# it was not a hang; 300 s leaves margin.
+if(TEST tst_setup_pages_fit_window)
+    set_tests_properties(tst_setup_pages_fit_window PROPERTIES TIMEOUT 300)
+endif()
 
 # R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
 # Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old
