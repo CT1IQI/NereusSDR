@@ -290,6 +290,38 @@ private slots:
         thread.remove(&sender);
     }
 
+    // The thread wakes at the block, not at its tick. The tick is set far
+    // beyond anything this test waits for, so the one way a queued block
+    // can reach the sink within the bound is the capture bridge's wake.
+    void aQueuedBlockWakesTheThreadWithoutItsTick()
+    {
+        constexpr int kTickMs = 60'000;
+        static_assert(kUpperBoundMs * 3 <= kTickMs);
+        Harness h;
+        PacketLog log;
+        DaemonAudioSender sender(h.engine);
+        DaemonAudioSendThread thread;
+        thread.setTickMsForTest(kTickMs);
+        sender.setPacketSink(log.sink());
+        QVERIFY(sender.setBlockWake(thread.wake()));
+        thread.add(&sender);
+        QVERIFY(sender.start(kSsrc, 1, 0));
+        // The pass add() itself asks for is over: the thread now waits for
+        // a block or for its tick, a minute away.
+        QDeadlineTimer firstPass(kUpperBoundMs);
+        while (thread.passes() == 0 && !firstPass.hasExpired()) {
+            std::this_thread::yield();
+        }
+        QCOMPARE(thread.passes(), quint64{1});
+        QCOMPARE(log.count(), 0);
+
+        h.feed(DaemonAudioSource::kBlockFrames);
+        QVERIFY2(log.waitForCount(1), "the queued block did not wake the sender thread");
+        QCOMPARE(log.count(), 1);
+        sender.stop();
+        thread.remove(&sender);
+    }
+
     // stop() while the thread is inside a drain: it waits for the block
     // under way and no more (two further blocks are queued), nothing is
     // delivered after it returns, and the next sequence and timestamp are
