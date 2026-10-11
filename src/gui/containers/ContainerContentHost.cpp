@@ -9,6 +9,7 @@
 //                 (OwnedMenu.h): an entry action that removes the container
 //                 while its menu is open no longer frees a menu on the
 //                 stack. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-09 - Workspace preview only: an overlaid entry header sits below
 //                 the container's overlaid group header (Arrange in Reveal
 //                 and Hidden), which covered the first entry header's
