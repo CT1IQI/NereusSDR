@@ -16,6 +16,10 @@
 //                 clears the home as Pop Out and Return do. The timer
 //                 that closes a menu left open ends with its lookup. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A window's resize corner sits exactly in its corner and
+//                 its edge zones draw nothing over the outline; a window
+//                 whose height follows its content has no corner. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QAbstractButton>
 #include <QApplication>
@@ -862,6 +866,105 @@ private slots:
         QVERIFY(db.screen.has_value());
         // Created as windows: nowhere to go back to but the main strip.
         QVERIFY(!da.home.has_value());
+    }
+    // A window's resize corner and edges draw as a free container's do.
+    // The window's own background reached the two 4 px edge zones, which
+    // then covered the dashed outline, the end of the header and the
+    // content along the right and bottom.
+    void aWindowsResizeCornerAndEdgesDrawLikeAFreeContainers()
+    {
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree({f.container(QStringLiteral("window"), DockMode::Floating),
+                                    f.container(QStringLiteral("free"), DockMode::OverlayDocked)}));
+        ContainerWidget* c = f.widget("window");
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        QVERIFY(grip);
+        const auto corner = [c] {
+            return QRect(c->width() - WorkspaceCornerGrip::kSize, c->height() - WorkspaceCornerGrip::kSize,
+                         WorkspaceCornerGrip::kSize, WorkspaceCornerGrip::kSize);
+        };
+        // Pixels in `rect` of `widget` that differ from `background`.
+        const auto drawn = [](QWidget* widget, const QRect& rect, QRgb background) {
+            const QImage image = widget->grab(rect).toImage().convertToFormat(QImage::Format_ARGB32);
+            int count = 0;
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    count += image.pixel(x, y) != background ? 1 : 0;
+                }
+            }
+            return count;
+        };
+        const auto backgroundOf = [](QWidget* widget) {
+            // Well inside the corner's side of the content, off every mark.
+            return widget->grab(QRect(widget->width() - 30, widget->height() - 30, 1, 1)).toImage()
+                .convertToFormat(QImage::Format_ARGB32).pixel(0, 0);
+        };
+
+        // Arrange off: the corner shows on a window, exactly in the corner,
+        // and its dots are drawn.
+        QVERIFY(grip->isVisible());
+        QCOMPARE(grip->geometry(), corner());
+        const int dotsOff = drawn(c, corner(), backgroundOf(c));
+        QVERIFY2(dotsOff > 0, "the corner draws nothing");
+
+        // It follows the window's size.
+        f.shell("window")->resize(f.shell("window")->size() + QSize(47, 61));
+        settle();
+        QCOMPARE(c->size(), f.shell("window")->size());
+        QCOMPARE(grip->geometry(), corner());
+
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(grip->isVisible());
+        QCOMPARE(grip->geometry(), corner());
+        QVERIFY(drawn(c, corner(), backgroundOf(c)) >= dotsOff);
+        // The dashed outline shows along the right and bottom, under the
+        // edge zones, as on the free container.
+        ContainerWidget* free = f.widget("free");
+        for (ContainerWidget* each : {c, free}) {
+            const QRgb background = backgroundOf(each);
+            const int inset = WorkspaceCornerGrip::kSize + 8;
+            const QRect rightColumn(each->width() - 1, 40, 1, each->height() - 40 - inset);
+            const QRect bottomRow(8, each->height() - 1, each->width() - 8 - inset, 1);
+            QVERIFY2(drawn(each, rightColumn, background) > rightColumn.height() / 4,
+                     qPrintable(each->id() + QStringLiteral(": no outline along the right")));
+            QVERIFY2(drawn(each, bottomRow, background) > bottomRow.width() / 4,
+                     qPrintable(each->id() + QStringLiteral(": no outline along the bottom")));
+            // The edge zones draw nothing of their own: the three columns
+            // inside the outline are the content's.
+            const QRect insideRight(each->width() - ContainerWidget::kArrangeEdgePx, 40,
+                                    ContainerWidget::kArrangeEdgePx - 2, each->height() - 40 - inset);
+            QCOMPARE(drawn(each, insideRight, background), 0);
+        }
+        // The header reaches the window's right edge under the edge zone.
+        QCOMPARE(f.header("window")->geometry().right(), c->rect().right());
+        f.manager->setArrangeMode(false);
+        settle();
+    }
+
+    // A container whose height follows its content has no corner and no
+    // bottom edge, in a window too: its height is not the user's to set.
+    // Popping one object out of a container makes such a window.
+    void anAutoHeightWindowHasNoResizeCorner()
+    {
+        ReturnFixture f;
+        ContainerDocument window = f.container(QStringLiteral("window"), DockMode::Floating);
+        window.autoHeight = true;
+        QVERIFY(f.showStripOfThree({window}));
+        ContainerWidget* c = f.widget("window");
+        QVERIFY(c->autoHeight());
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        auto* right = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeRight"));
+        auto* bottom = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeBottom"));
+        QVERIFY(grip && right && bottom);
+        QVERIFY(!grip->isVisible());
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(!grip->isVisible());
+        QVERIFY(!bottom->isVisible());
+        QVERIFY(right->isVisible());
+        f.manager->setArrangeMode(false);
+        settle();
     }
 };
 

@@ -125,6 +125,10 @@
 //   2026-10-11 - Arrange's dashed outline is masked to its 1 px frame:
 //                 unmasked, on Windows it hid the native meters under it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The two resize edge zones draw nothing in a window
+//                 either: the window's background made each an opaque 4 px
+//                 strip over the outline and the end of the header.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -540,6 +544,11 @@ void ContainerWidget::buildWorkspaceHeader()
     m_edgeBottom->setObjectName(QStringLiteral("containerResizeEdgeBottom"));
     m_edgeBottom->setCursor(Qt::SizeVerCursor);
     for (QWidget* edge : {m_edgeRight, m_edgeBottom}) {
+        // Nothing is drawn on a resize edge. The window a container floats
+        // in gives every widget in it its background (FloatingContainer's
+        // selector-less sheet): without this each edge was an opaque 4 px
+        // strip over the outline, the end of the header and the content.
+        edge->setStyleSheet(QStringLiteral("background: transparent;"));
         edge->hide();
         edge->installEventFilter(this);
     }
