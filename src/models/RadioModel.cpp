@@ -17,6 +17,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: the slice A state push at connect is
+//                lifted into pushSliceStateToChannel and run for every
+//                slice when its channel is switched on, so a restored
+//                slice B to D runs on what it shows. Existing pushes only;
+//                no DSP value or default changed. NereusSDR-original
+//                structure; the lifted lines keep their cites. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Settings restore: every save wireSliceSignals schedules
 //                names the slice that changed, not the active slice.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -11366,6 +11373,185 @@ void RadioModel::activateBoundSliceChannels()
     }
 }
 
+// A slice's whole state, pushed to its WDSP channel before the channel is
+// switched on.
+//
+// This is the block connectToRadio ran for slice A alone, lifted unchanged
+// (settings restore audit 2026-10-11, gap 4). Every other slice got only
+// the demodulation-critical subset in activateSliceChannel: mode, filter,
+// AGC mode, RF gain, AF gain. A slice restored from settings before its
+// channel exists gets no live push (the handlers in wireSliceSignals find
+// no channel and do nothing), so slices B to D showed their restored AGC
+// threshold, NB, NR tuning, SNB, APF, squelch, mute, pan and BIN while
+// their DSP ran on WDSP's defaults.
+//
+// Calls the existing per-setting pushes only; no value, scale or default
+// is changed. `loadNr3Model` is the one station-wide step in the block
+// (RNNRloadModel is global, not per channel): connectToRadio passes true,
+// as before; activateSliceChannel passes false and leaves the loaded model
+// as it is.
+void RadioModel::pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, bool loadNr3Model)
+{
+    if (!slice || !rxCh) {
+        return;
+    }
+    rxCh->setMode(slice->dspMode());
+    rxCh->setFilterFreqs(slice->filterLow(),
+                         slice->filterHigh());
+    rxCh->setAgcMode(slice->agcMode());
+    rxCh->setAgcTop(slice->rfGain());
+    // AGC advanced — push slice state to WDSP (Stage 2)
+    rxCh->setAgcThreshold(slice->agcThreshold());
+    rxCh->setAgcHang(slice->agcHang());
+    rxCh->setAgcSlope(slice->agcSlope());
+    rxCh->setAgcAttack(slice->agcAttack());
+    rxCh->setAgcDecay(slice->agcDecay());
+    rxCh->setAgcHangThreshold(slice->agcHangThreshold());
+    rxCh->setAgcFixedGain(slice->agcFixedGain());
+    rxCh->setAgcMaxGain(slice->agcMaxGain());
+    // NB mode is per-band, and so is the detailed tuning beside
+    // it. The tuning pass-through was removed 2026-04-22 in favour
+    // of NbFamily seeding from radio-global AppSettings, but the
+    // Setup page that live-pushed those globals wrote channel 0
+    // unconditionally, so a second receiver could never be tuned.
+    // Restored per slice by the Sub-Epic J follow-up.
+    //
+    // Seeding here matters as much as the live pushes: a slice
+    // restored from settings before its channel exists gets no
+    // live push (the connect resolves no channel and no-ops), so
+    // without this the channel would run on NbFamily's ctor
+    // defaults while the model reported the operator's values.
+    rxCh->setNbMode(slice->nbMode());
+    // From Thetis setup.cs:8606 [v2.10.3.15] for the 0.165 scale.
+    rxCh->setNbThreshold(0.165 * static_cast<double>(slice->nb1Threshold()));
+    rxCh->setNbTransitionMs(slice->nb1TransitionMs());
+    rxCh->setNbLeadMs(slice->nb1LeadMs());
+    rxCh->setNbLagMs(slice->nb1LagMs());
+    rxCh->setNb2Mode(slice->nb2Mode());
+    rxCh->setSnbK1(slice->snbK1());
+    rxCh->setSnbK2(slice->snbK2());
+    rxCh->setSnbOutputBandwidthHz(slice->snbOutputBandwidthHz());
+
+    // Sub-epic C-1 Task 19: push full NR config to the active slice's
+    // RxChannel on radio connect.
+    // Thetis console.cs:43297 SelectNR pattern [v2.10.3.13] — push
+    // tuning structs first, then the active slot last so WDSP has
+    // valid parameters before the run-flag is set.
+    {
+        RxChannel::Nr1Tuning n1;
+        n1.taps     = slice->nr1Taps();
+        n1.delay    = slice->nr1Delay();
+        n1.gain     = slice->nr1Gain();
+        n1.leakage  = slice->nr1Leakage();
+        n1.position = slice->nr1Position();
+        rxCh->setAnrTuning(n1);
+
+        RxChannel::Nr2Tuning n2;
+        n2.gainMethod  = slice->nr2GainMethod();
+        n2.npeMethod   = slice->nr2NpeMethod();
+        // trainT1/trainT2 are not in Nr2Tuning struct — applied via
+        // per-knob setters below (they call SetRXAEMNRtrainZetaThresh/
+        // SetRXAEMNRtrainT2 which have no struct-level path).
+        n2.aeFilter    = slice->nr2AeFilter();
+        n2.position    = slice->nr2Position();
+        n2.post2Run    = slice->nr2Post2Run();
+        n2.post2Level  = slice->nr2Post2Level();
+        n2.post2Factor = slice->nr2Post2Factor();
+        n2.post2Rate   = slice->nr2Post2Rate();
+        n2.post2Taper  = slice->nr2Post2Taper();
+        rxCh->setEmnrTuning(n2);
+        // Push trainT1/trainT2 separately (not in Nr2Tuning struct)
+        rxCh->setEmnrTrainT1(slice->nr2TrainT1());
+        rxCh->setEmnrTrainT2(slice->nr2TrainT2());
+
+        RxChannel::Nr3Tuning n3;
+        n3.position       = slice->nr3Position();
+        n3.useDefaultGain = slice->nr3UseDefaultGain();
+        rxCh->setRnnrTuning(n3);
+
+        RxChannel::Nr4Tuning n4;
+        n4.reductionAmount     = slice->nr4Reduction();
+        n4.smoothingFactor     = slice->nr4Smoothing();
+        n4.whiteningFactor     = slice->nr4Whitening();
+        n4.noiseRescale        = slice->nr4Rescale();
+        n4.postFilterThreshold = slice->nr4PostThresh();
+        n4.algo                = slice->nr4Algo();
+        rxCh->setSbnrTuning(n4);
+
+#ifdef HAVE_DFNR
+        rxCh->setDfnrAttenLimit(static_cast<float>(slice->dfnrAttenLimit()));
+        rxCh->setDfnrPostFilterBeta(static_cast<float>(slice->dfnrPostFilterBeta()));
+#endif
+#ifdef HAVE_MNR
+        // SliceModel already stores mnrStrength as 0.0–1.0
+        // (matches MacNRFilter::setStrength expected range).
+        // The Setup/popup slider does the ×100 / ÷100 UI↔model
+        // conversion; the model→filter path is 1:1.
+        rxCh->setMnrStrength(static_cast<float>(slice->mnrStrength()));
+        rxCh->setMnrOversub(static_cast<float>(slice->mnrOversub()));
+        rxCh->setMnrFloor(static_cast<float>(slice->mnrFloor()));
+        rxCh->setMnrAlpha(static_cast<float>(slice->mnrAlpha()));
+        rxCh->setMnrBias(static_cast<float>(slice->mnrBias()));
+        rxCh->setMnrGsmooth(static_cast<float>(slice->mnrGsmooth()));
+#endif
+
+        // NR3 model — global (RNNRloadModel), not per-channel.
+        // From Thetis wdsp/rnnr.c:161-176 [v2.10.3.13]
+        // R-R3-21: the Core's chosen NR3 asset, resolved to a
+        // file that passed the trial load (bundled large model
+        // by default). Nr3ModelPath is no longer read here.
+        if (loadNr3Model) {
+            QString nr3Reason;
+            if (!m_dspAssets->applyNr3Model(&nr3Reason)) {
+                qCWarning(lcDsp) << "NR3 model not loaded:" << nr3Reason;
+            }
+        }
+
+        // Push the active NR slot last — parameters must be set before
+        // run-flag so WDSP gets valid defaults on first enable.
+        // From Thetis console.cs:43297 SelectNR pattern [v2.10.3.13]
+        applyNnrStateToChannel(slice, rxCh);
+    }
+
+    rxCh->setSnbEnabled(slice->snbEnabled());
+    // APF sub-parameter defaults — From Thetis radio.cs:1986,1948,1967,1929
+    // These are set-and-forget on channel creation; run flag follows slice.
+    // selection=3 (bi-quad), bw=600Hz, gain=1.0, freq=600.0Hz
+    rxCh->setApfSelection(3);       // radio.cs:1986 _rx_apf_type = 3 (bi-quad)
+    rxCh->setApfBandwidth(600.0);   // radio.cs:1948 rx_apf_bw = 600.0 Hz
+    rxCh->setApfGain(1.0);          // radio.cs:1967 rx_apf_gain = 1.0
+    rxCh->setApfFreq(600.0);        // radio.cs:1929 rx_apf_freq = 600.0 Hz
+    // The slice's APF tune offset on top of the 600 Hz above. It was never
+    // saved before 2026-10-11, so it was always 0 here and the line above
+    // was the whole of it; a restored offset has to reach the channel the
+    // way the apfTuneHzChanged handler sends it.
+    // From Thetis setup.cs:17071 - freq = CWPitch + tuneOffset
+    rxCh->setApfFreq(static_cast<double>(kApfCwPitchHz) + static_cast<double>(slice->apfTuneHz()));
+    rxCh->setApfEnabled(slice->apfEnabled());
+    // Squelch initial push — From Thetis radio.cs:1185,1164,1274,1293,1312
+    rxCh->setSsqlEnabled(slice->ssqlEnabled());
+    // Model stores 0–100 (slider units); WDSP expects 0.0–1.0 linear.
+    rxCh->setSsqlThresh(std::clamp(slice->ssqlThresh() / 100.0, 0.0, 1.0));
+    rxCh->setAmsqEnabled(slice->amsqEnabled());
+    rxCh->setAmsqThresh(slice->amsqThresh());
+    rxCh->setFmsqEnabled(slice->fmsqEnabled());
+    rxCh->setFmsqThresh(slice->fmsqThresh());
+    // Audio panel initial push
+    // Mute: From Thetis dsp.cs:393-394 — panel runs by default (unmuted)
+    // Pan: From Thetis radio.cs:1386 — pan = 0.5f (center); NereusSDR 0.0 center
+    // Binaural: From Thetis radio.cs:1145 — bin_on = false (dual-mono)
+    rxCh->setMuted(slice->muted());
+    rxCh->setAudioPan(slice->audioPan());
+    rxCh->setBinauralEnabled(slice->binauralEnabled());
+    // AF Gain: route the slice slider through the WDSP RX panel
+    // (SetRXAPanelGain1) — Thetis radio.cs:1077-1107 [v2.10.3.14]
+    // RXOutputGain pattern — instead of multiplying it onto the
+    // post-DSP master mix.  setActive(true) below will re-push
+    // m_afGain regardless, but seeding it first means the channel
+    // never runs even one block at WDSP's default gain1=4.0.
+    rxCh->setAfGain(slice->afGain() / 100.0);
+}
+
 void RadioModel::activateSliceChannel(SliceModel* slice)
 {
     const QPointer<RadioModel> self(this);
@@ -11407,19 +11593,14 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     const auto current = [&] {
         return self && target && ch && self->sliceById(targetId) == target.data();
     };
-    ch->setMode(slice->dspMode());
-    if (!current()) { return; }
-    ch->setFilterFreqs(slice->filterLow(), slice->filterHigh());
-    if (!current()) { return; }
-    ch->setAgcMode(slice->agcMode());
-    if (!current()) { return; }
-    ch->setAgcTop(slice->rfGain());
-    if (!current()) { return; }
-    // Seed AF gain before the channel runs a single block: WDSP initialises
-    // panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and setActive re-pushes
-    // m_afGain anyway, but seeding first means the default never reaches the
-    // mixer. Same reasoning as the Slice A block in connectToRadio.
-    ch->setAfGain(slice->afGain() / 100.0);
+    // 2026-10-11: the whole of the slice's state, the same pushes in the
+    // same order as slice A gets at connect (pushSliceStateToChannel), not
+    // the subset above. It opens with what used to be pushed here one by
+    // one (mode, filter, AGC mode, RF gain) and ends with the AF gain seed:
+    // WDSP initialises panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and
+    // setActive re-pushes m_afGain anyway, but seeding first means the
+    // default never reaches the mixer.
+    pushSliceStateToChannel(slice, ch, false);
     if (!current()) { return; }
     // The offset the allocator resolved for this slice, plus RIT and DIG.
     // bindSliceToStream pushes it too, but a reconnect re-opens the channel
@@ -18311,155 +18492,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             // preserves another receiver as the operator's active selection.
             SliceModel* const primarySlice = sliceById(0);
             if (primarySlice) {
-                rxCh->setMode(primarySlice->dspMode());
-                rxCh->setFilterFreqs(primarySlice->filterLow(),
-                                     primarySlice->filterHigh());
-                rxCh->setAgcMode(primarySlice->agcMode());
-                rxCh->setAgcTop(primarySlice->rfGain());
-                // AGC advanced — push slice state to WDSP (Stage 2)
-                rxCh->setAgcThreshold(primarySlice->agcThreshold());
-                rxCh->setAgcHang(primarySlice->agcHang());
-                rxCh->setAgcSlope(primarySlice->agcSlope());
-                rxCh->setAgcAttack(primarySlice->agcAttack());
-                rxCh->setAgcDecay(primarySlice->agcDecay());
-                rxCh->setAgcHangThreshold(primarySlice->agcHangThreshold());
-                rxCh->setAgcFixedGain(primarySlice->agcFixedGain());
-                rxCh->setAgcMaxGain(primarySlice->agcMaxGain());
-                // NB mode is per-band, and so is the detailed tuning beside
-                // it. The tuning pass-through was removed 2026-04-22 in favour
-                // of NbFamily seeding from radio-global AppSettings, but the
-                // Setup page that live-pushed those globals wrote channel 0
-                // unconditionally, so a second receiver could never be tuned.
-                // Restored per slice by the Sub-Epic J follow-up.
-                //
-                // Seeding here matters as much as the live pushes: a slice
-                // restored from settings before its channel exists gets no
-                // live push (the connect resolves no channel and no-ops), so
-                // without this the channel would run on NbFamily's ctor
-                // defaults while the model reported the operator's values.
-                rxCh->setNbMode(primarySlice->nbMode());
-                // From Thetis setup.cs:8606 [v2.10.3.15] for the 0.165 scale.
-                rxCh->setNbThreshold(0.165 * static_cast<double>(primarySlice->nb1Threshold()));
-                rxCh->setNbTransitionMs(primarySlice->nb1TransitionMs());
-                rxCh->setNbLeadMs(primarySlice->nb1LeadMs());
-                rxCh->setNbLagMs(primarySlice->nb1LagMs());
-                rxCh->setNb2Mode(primarySlice->nb2Mode());
-                rxCh->setSnbK1(primarySlice->snbK1());
-                rxCh->setSnbK2(primarySlice->snbK2());
-                rxCh->setSnbOutputBandwidthHz(primarySlice->snbOutputBandwidthHz());
-
-                // Sub-epic C-1 Task 19: push full NR config to the active slice's
-                // RxChannel on radio connect.
-                // Thetis console.cs:43297 SelectNR pattern [v2.10.3.13] — push
-                // tuning structs first, then the active slot last so WDSP has
-                // valid parameters before the run-flag is set.
-                {
-                    RxChannel::Nr1Tuning n1;
-                    n1.taps     = primarySlice->nr1Taps();
-                    n1.delay    = primarySlice->nr1Delay();
-                    n1.gain     = primarySlice->nr1Gain();
-                    n1.leakage  = primarySlice->nr1Leakage();
-                    n1.position = primarySlice->nr1Position();
-                    rxCh->setAnrTuning(n1);
-
-                    RxChannel::Nr2Tuning n2;
-                    n2.gainMethod  = primarySlice->nr2GainMethod();
-                    n2.npeMethod   = primarySlice->nr2NpeMethod();
-                    // trainT1/trainT2 are not in Nr2Tuning struct — applied via
-                    // per-knob setters below (they call SetRXAEMNRtrainZetaThresh/
-                    // SetRXAEMNRtrainT2 which have no struct-level path).
-                    n2.aeFilter    = primarySlice->nr2AeFilter();
-                    n2.position    = primarySlice->nr2Position();
-                    n2.post2Run    = primarySlice->nr2Post2Run();
-                    n2.post2Level  = primarySlice->nr2Post2Level();
-                    n2.post2Factor = primarySlice->nr2Post2Factor();
-                    n2.post2Rate   = primarySlice->nr2Post2Rate();
-                    n2.post2Taper  = primarySlice->nr2Post2Taper();
-                    rxCh->setEmnrTuning(n2);
-                    // Push trainT1/trainT2 separately (not in Nr2Tuning struct)
-                    rxCh->setEmnrTrainT1(primarySlice->nr2TrainT1());
-                    rxCh->setEmnrTrainT2(primarySlice->nr2TrainT2());
-
-                    RxChannel::Nr3Tuning n3;
-                    n3.position       = primarySlice->nr3Position();
-                    n3.useDefaultGain = primarySlice->nr3UseDefaultGain();
-                    rxCh->setRnnrTuning(n3);
-
-                    RxChannel::Nr4Tuning n4;
-                    n4.reductionAmount     = primarySlice->nr4Reduction();
-                    n4.smoothingFactor     = primarySlice->nr4Smoothing();
-                    n4.whiteningFactor     = primarySlice->nr4Whitening();
-                    n4.noiseRescale        = primarySlice->nr4Rescale();
-                    n4.postFilterThreshold = primarySlice->nr4PostThresh();
-                    n4.algo                = primarySlice->nr4Algo();
-                    rxCh->setSbnrTuning(n4);
-
-#ifdef HAVE_DFNR
-                    rxCh->setDfnrAttenLimit(static_cast<float>(primarySlice->dfnrAttenLimit()));
-                    rxCh->setDfnrPostFilterBeta(static_cast<float>(primarySlice->dfnrPostFilterBeta()));
-#endif
-#ifdef HAVE_MNR
-                    // SliceModel already stores mnrStrength as 0.0–1.0
-                    // (matches MacNRFilter::setStrength expected range).
-                    // The Setup/popup slider does the ×100 / ÷100 UI↔model
-                    // conversion; the model→filter path is 1:1.
-                    rxCh->setMnrStrength(static_cast<float>(primarySlice->mnrStrength()));
-                    rxCh->setMnrOversub(static_cast<float>(primarySlice->mnrOversub()));
-                    rxCh->setMnrFloor(static_cast<float>(primarySlice->mnrFloor()));
-                    rxCh->setMnrAlpha(static_cast<float>(primarySlice->mnrAlpha()));
-                    rxCh->setMnrBias(static_cast<float>(primarySlice->mnrBias()));
-                    rxCh->setMnrGsmooth(static_cast<float>(primarySlice->mnrGsmooth()));
-#endif
-
-                    // NR3 model — global (RNNRloadModel), not per-channel.
-                    // From Thetis wdsp/rnnr.c:161-176 [v2.10.3.13]
-                    // R-R3-21: the Core's chosen NR3 asset, resolved to a
-                    // file that passed the trial load (bundled large model
-                    // by default). Nr3ModelPath is no longer read here.
-                    {
-                        QString nr3Reason;
-                        if (!m_dspAssets->applyNr3Model(&nr3Reason)) {
-                            qCWarning(lcDsp) << "NR3 model not loaded:" << nr3Reason;
-                        }
-                    }
-
-                    // Push the active NR slot last — parameters must be set before
-                    // run-flag so WDSP gets valid defaults on first enable.
-                    // From Thetis console.cs:43297 SelectNR pattern [v2.10.3.13]
-                    applyNnrStateToChannel(primarySlice, rxCh);
-                }
-
-                rxCh->setSnbEnabled(primarySlice->snbEnabled());
-                // APF sub-parameter defaults — From Thetis radio.cs:1986,1948,1967,1929
-                // These are set-and-forget on channel creation; run flag follows slice.
-                // selection=3 (bi-quad), bw=600Hz, gain=1.0, freq=600.0Hz
-                rxCh->setApfSelection(3);       // radio.cs:1986 _rx_apf_type = 3 (bi-quad)
-                rxCh->setApfBandwidth(600.0);   // radio.cs:1948 rx_apf_bw = 600.0 Hz
-                rxCh->setApfGain(1.0);          // radio.cs:1967 rx_apf_gain = 1.0
-                rxCh->setApfFreq(600.0);        // radio.cs:1929 rx_apf_freq = 600.0 Hz
-                rxCh->setApfEnabled(primarySlice->apfEnabled());
-                // Squelch initial push — From Thetis radio.cs:1185,1164,1274,1293,1312
-                rxCh->setSsqlEnabled(primarySlice->ssqlEnabled());
-                // Model stores 0–100 (slider units); WDSP expects 0.0–1.0 linear.
-                rxCh->setSsqlThresh(std::clamp(primarySlice->ssqlThresh() / 100.0, 0.0, 1.0));
-                rxCh->setAmsqEnabled(primarySlice->amsqEnabled());
-                rxCh->setAmsqThresh(primarySlice->amsqThresh());
-                rxCh->setFmsqEnabled(primarySlice->fmsqEnabled());
-                rxCh->setFmsqThresh(primarySlice->fmsqThresh());
-                // Audio panel initial push
-                // Mute: From Thetis dsp.cs:393-394 — panel runs by default (unmuted)
-                // Pan: From Thetis radio.cs:1386 — pan = 0.5f (center); NereusSDR 0.0 center
-                // Binaural: From Thetis radio.cs:1145 — bin_on = false (dual-mono)
-                rxCh->setMuted(primarySlice->muted());
-                rxCh->setAudioPan(primarySlice->audioPan());
-                rxCh->setBinauralEnabled(primarySlice->binauralEnabled());
-                // AF Gain: route the slice slider through the WDSP RX panel
-                // (SetRXAPanelGain1) — Thetis radio.cs:1077-1107 [v2.10.3.14]
-                // RXOutputGain pattern — instead of multiplying it onto the
-                // post-DSP master mix.  setActive(true) below will re-push
-                // m_afGain regardless, but seeding it first means the channel
-                // never runs even one block at WDSP's default gain1=4.0.
-                rxCh->setAfGain(primarySlice->afGain() / 100.0);
+                pushSliceStateToChannel(primarySlice, rxCh, true);
             }
             rxCh->setActive(primarySlice && primarySlice->streamIndex() >= 0);
         }

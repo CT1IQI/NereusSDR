@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: pushSliceStateToChannel, the slice A
+//                state push run for every slice. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -2275,6 +2278,14 @@ public:
     /// Mirrors Thetis's receiver-enable order: push the DSPRX state, then
     /// SetChannelState(ch, 1, 0) (console.cs:37359-37361 [v2.10.3.15]).
     void activateSliceChannel(SliceModel* slice);
+
+    /// Push a slice's whole state to its WDSP channel: AGC and its advanced
+    /// values, NB and its tuning, the NR tuning and selection, SNB, APF,
+    /// squelch, mute, pan, BIN and AF gain, after mode, filter, AGC mode
+    /// and RF gain. The block connectToRadio ran for slice A alone;
+    /// activateSliceChannel runs it for every slice. `loadNr3Model` also
+    /// loads the station's NR3 model (connectToRadio only).
+    void pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh, bool loadNr3Model);
 
     /// Stop a slice's WDSP channel running. The channel object stays open for
     /// whichever slice takes the id next. Thetis's disable half:
