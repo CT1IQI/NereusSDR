@@ -7493,6 +7493,10 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
+# The bar gauge's scale numbers at the 96 dpi text size (7 points = 9 px):
+# drawn whole with a clear row under them, the gauge 30 px tall where the
+# scale font is 7 px (the Mac) and taller only where it is larger.
+nereus_add_test(tst_hgauge_scale_text)
 nereus_add_test(tst_rf2ks_applet_context_menu)
 nereus_add_test(tst_rfkit_page_master_gate)
 # Rotor control plan Task 7: CAT & Network > Rotor. A remote window lists

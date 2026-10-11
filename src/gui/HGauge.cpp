@@ -1,14 +1,28 @@
 // src/gui/HGauge.cpp
 #include "HGauge.h"
 #include "StyleConstants.h"
+#include <QEvent>
+#include <QFontMetrics>
 #include <QPainter>
 #include <QPaintEvent>
 
 namespace NereusSDR {
 
+namespace {
+
+// The gauge's rows, top down: the bar, one clear row, the scale numbers.
+// With a 7 px scale font this is the 30 px gauge the app has always drawn.
+constexpr int kBaseHeight = 30;
+constexpr int kBarHeight = 12;
+constexpr int kBarTop = (kBaseHeight - kBarHeight) / 2;
+constexpr int kScaleTop = kBarTop + kBarHeight + 1;
+constexpr int kScalePointSize = 7;
+
+} // namespace
+
 HGauge::HGauge(QWidget* parent) : QWidget(parent)
 {
-    setFixedHeight(30);
+    setFixedHeight(heightForScale());
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
@@ -35,7 +49,53 @@ void HGauge::setPeakValue(double val) {
     m_peak = val;
     update();
 }
-void HGauge::setTickLabels(const QStringList& labels) { m_tickLabels = labels; update(); }
+void HGauge::setTickLabels(const QStringList& labels)
+{
+    m_tickLabels = labels;
+    updateFixedHeight();
+    update();
+}
+void HGauge::setScaleFontPixelSize(int pixelSize)
+{
+    m_scaleFontPixelSize = pixelSize;
+    updateFixedHeight();
+    update();
+}
+
+QFont HGauge::scaleFont(const QString& family) const
+{
+    QFont f(family, kScalePointSize);
+    if (m_scaleFontPixelSize > 0) {
+        f.setPixelSize(m_scaleFontPixelSize);
+    }
+    return f;
+}
+
+int HGauge::heightForScale() const
+{
+    if (m_tickLabels.isEmpty()) { return kBaseHeight; }
+    // The numbers are drawn from kScaleTop with their baseline one ascent
+    // below it. Digits end on the row above the baseline, so a widget that
+    // ends with the baseline row shows them whole with one clear row under
+    // them. 7 points is 7 px on the Mac (ascent 7, so 30 px, as before) and
+    // 9 px at 96 dpi (ascent 10 in Segoe UI, so 33 px); at a fixed 30 px
+    // the larger font lost its bottom two rows.
+    const QFontMetrics fm(scaleFont(font().family()), this);
+    return qMax(kBaseHeight, kScaleTop + fm.ascent() + 1);
+}
+
+void HGauge::updateFixedHeight()
+{
+    setFixedHeight(heightForScale());
+}
+
+void HGauge::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::FontChange) {
+        updateFixedHeight();
+    }
+}
 void HGauge::setUnavailable(bool unavailable)
 {
     if (m_unavailable == unavailable) { return; }
@@ -65,9 +125,8 @@ void HGauge::paintEvent(QPaintEvent*)
     }
 
     const int w = width();
-    const int h = height();
-    const int barH = 12;
-    const int barY = (h - barH) / 2;
+    const int barH = kBarHeight;
+    const int barY = kBarTop;
     const int barX = 2;
     const int barW = w - 4;
 
@@ -133,7 +192,8 @@ void HGauge::paintEvent(QPaintEvent*)
 
     // Tick labels along bottom
     if (!m_tickLabels.isEmpty()) {
-        p.setFont(QFont(p.font().family(), 7));
+        p.setFont(scaleFont(p.font().family()));
+        const int scaleH = height() - kScaleTop;
         const int n = m_tickLabels.size();
         for (int i = 0; i < n; ++i) {
             double frac = static_cast<double>(i) / (n - 1);
@@ -143,7 +203,7 @@ void HGauge::paintEvent(QPaintEvent*)
             if (val >= m_redStart) { col = QColor(Style::kGaugeDanger); }
             else if (val >= m_yellowStart) { col = QColor(Style::kGaugeWarning); }
             p.setPen(col);
-            p.drawText(QRect(x - 20, barY + barH + 1, 40, 10),
+            p.drawText(QRect(x - 20, kScaleTop, 40, scaleH),
                        Qt::AlignHCenter | Qt::AlignTop, m_tickLabels[i]);
         }
     }
