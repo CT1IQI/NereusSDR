@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original CAT station admission/lifecycle.
 // Independently implemented from the approved Nereus settings schema; no upstream serialization logic.
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-11 One serial device under two spellings compares equal.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "CatConfiguration.h"
 #include <QList>
@@ -18,6 +20,14 @@ public:
     CatGlobalConfig global() const;
     bool setGlobal(CatGlobalConfig, std::function<bool()> current = {});
     static bool validateGlobal(const CatGlobalConfig&);
+#ifdef Q_OS_WIN
+    static constexpr bool kWindowsSerialNames = true;
+#else
+    static constexpr bool kWindowsSerialNames = false;
+#endif
+    // What a serial device name is compared by, so one device is never assigned twice.
+    static QString serialDeviceKey(const QString& name, bool windowsNames = kWindowsSerialNames);
+    static bool sameSerialDevice(const QString& a, const QString& b, bool windowsNames = kWindowsSerialNames);
 private:
     struct WriteState { quint64 revision{0}; std::optional<CatGlobalConfig> desired; };
     std::shared_ptr<WriteState> m_writeState{std::make_shared<WriteState>()};
