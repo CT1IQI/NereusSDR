@@ -78,13 +78,15 @@ QStringList eatenAmpersands(const QWidget* root)
     return faults;
 }
 
+// The cables' render ends ("CABLE-x Input", isInput false): the end VAX
+// writes to, and the only end the dialog suggests a binding for.
 QVector<DetectedCable> twoNewCables()
 {
     QVector<DetectedCable> v;
     v.push_back({VirtualCableProduct::VbCableC,
-                 QStringLiteral("CABLE-C Input (VB-Audio Virtual Cable)"), true, 0});
+                 QStringLiteral("CABLE-C Input (VB-Audio Virtual Cable)"), false, 0});
     v.push_back({VirtualCableProduct::VbCableD,
-                 QStringLiteral("CABLE-D Input (VB-Audio Virtual Cable)"), true, 0});
+                 QStringLiteral("CABLE-D Input (VB-Audio Virtual Cable)"), false, 0});
     return v;
 }
 
