@@ -2190,24 +2190,41 @@ bool DaemonMediaController::radioIdleForReplace() const
 
 void DaemonMediaController::AudioSendRoute::deliver(const QByteArray& packet)
 {
-    const std::lock_guard<std::mutex> lock(mutex);
-    if (!current) {
+    // One consistent copy of where this packet goes, taken under the lock;
+    // the sends themselves run without it. The controller's thread
+    // therefore never waits for a send here (syncAudioRoutes(), close()):
+    // the only wait it has on a send under way is the sender's own stop(),
+    // which the drain gives way to after one block.
+    std::shared_ptr<MediaRtpSink> to;
+    std::shared_ptr<MediaRtpSink> copyTo;
+    QHash<quint32, quint32> ssrcRewrite;
+    QList<quint32> copyFrom;
+    QList<quint32> copyToSsrcs;
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        to = current;
+        copyTo = replacement;
+        ssrcRewrite = rewrite;
+        copyFrom = replacementFrom;
+        copyToSsrcs = replacementTo;
+    }
+    if (!to) {
         return;
     }
     // A sender started before a replacement stamps the peer it started
     // with; the current peer sends and accepts only its own SSRCs.
-    const QByteArray out = rewriteRtpSsrc(packet, rewrite);
+    const QByteArray out = rewriteRtpSsrc(packet, ssrcRewrite);
     attempts.fetch_add(1, std::memory_order_acq_rel);
-    if (current->sendRtp(out)) {
+    if (to->sendRtp(out)) {
         accepted.fetch_add(1, std::memory_order_acq_rel);
     } else {
         rejected.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (replacement && out.size() >= 12) {
+    if (copyTo && out.size() >= 12) {
         const quint32 ssrc = qFromBigEndian<quint32>(out.constData() + 8);
-        const qsizetype index = ssrc != 0 ? replacementFrom.indexOf(ssrc) : -1;
-        if (index >= 0 && replacementTo.value(index) != 0) {
-            replacement->sendRtp(rewriteRtpSsrc(out, {{ssrc, replacementTo.value(index)}}));
+        const qsizetype index = ssrc != 0 ? copyFrom.indexOf(ssrc) : -1;
+        if (index >= 0 && copyToSsrcs.value(index) != 0) {
+            copyTo->sendRtp(rewriteRtpSsrc(out, {{ssrc, copyToSsrcs.value(index)}}));
         }
     }
 }
@@ -4092,11 +4109,11 @@ void DaemonMediaController::stopReceiverAudioCapture(ReceiverAudioStream& stream
         stream.sending = false;
         return;
     }
-    // R-AUD-SEND: stopped first. The sender thread may send a block until
-    // stop() returns, and only then are the next sequence and timestamp
-    // final.
-    const bool wasRunning = stream.sender->isRunning();
-    stream.sender->stop();
+    // R-AUD-SEND: stopped first, and stop() is this thread's first touch of
+    // the sender: it is the one call a drain under way gives way to, so the
+    // sender thread sends the block it is on and no more. Only then are the
+    // next sequence and timestamp final.
+    const bool wasRunning = stream.sender->stop();
     if (stream.streamIndex >= 0 && wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         const auto index = static_cast<size_t>(stream.streamIndex);
@@ -4456,11 +4473,11 @@ void DaemonMediaController::stopHeadphonesAudioCapture()
     if (!m_headphones.sender) {
         return;
     }
-    // R-AUD-SEND: stopped first. The sender thread may send a block until
-    // stop() returns, and only then are the next sequence and timestamp
-    // final.
-    const bool wasRunning = m_headphones.sender->isRunning();
-    m_headphones.sender->stop();
+    // R-AUD-SEND: stopped first, and stop() is this thread's first touch of
+    // the sender: it is the one call a drain under way gives way to, so the
+    // sender thread sends the block it is on and no more. Only then are the
+    // next sequence and timestamp final.
+    const bool wasRunning = m_headphones.sender->stop();
     if (wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         m_headphones.nextSequence = m_headphones.sender->nextSequence();

@@ -540,9 +540,10 @@ public:
     /// R-AUD-SEND: one sender's way out. Public only so its test can drive
     /// it; see m_audioRoute below for the contract.
     struct AudioSendRoute {
-        /// Guards every member but the counters. Taken by deliver() for the
-        /// whole of a packet's sends, and by the controller's thread only to
-        /// copy new values in (never while it holds another lock).
+        /// Guards every member but the counters. Taken by deliver() only to
+        /// copy out where one packet goes, never across a send, and by the
+        /// controller's thread only to copy new values in (never while it
+        /// holds another lock). So neither thread waits here for a send.
         std::mutex mutex;
         std::shared_ptr<MediaRtpSink> current;
         QHash<quint32, quint32> rewrite;
@@ -552,7 +553,7 @@ public:
         QList<quint32> replacementFrom;
         QList<quint32> replacementTo;
         /// Sends to the current peer since resetCounters(): written by
-        /// deliver() with the lock held, read without it. attempts is
+        /// deliver() on the sender thread, read without the lock. attempts is
         /// raised before the transport is asked and one of the others after
         /// it answers, so a reader takes accepted and rejected first.
         std::atomic<std::uint64_t> attempts{0};
@@ -863,9 +864,11 @@ private:
     // whenever any of it changes (syncAudioRoutes): the current peer's sink
     // and SSRC rewrite, and while a replacement is ready its sink and SSRC
     // mapping. deliver() never calls back into this controller. A packet in
-    // delivery holds the lock, so a sink taken out of the route is never
-    // used again once the sync that took it out returns; a sink is valid
-    // for as long as the route holds it and refuses after its peer stopped.
+    // delivery holds its own reference to the sinks it copied out, not the
+    // lock, so a sync never waits for a send: the one packet under way may
+    // still go to a sink the sync just took out. A sink is valid for as long
+    // as anything holds it and answers "not ready" once its peer stopped.
+    // What ends a sender's sends for certain is its stop().
     void attachAudioSender(DaemonAudioSender* sender,
                            const std::shared_ptr<AudioSendRoute>& route);
     /// Stops `sender`, closes `route` and takes the sender from the thread:

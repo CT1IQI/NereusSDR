@@ -140,7 +140,13 @@ public:
     /// iPhone app Task 76: the mixes from one owner mix of AudioEngine
     /// (DaemonAudioSource::setOwnerMix). Refused while running.
     bool setOwnerMix(int slot);
-    void stop();
+    /// Ends the capture epoch. Returns whether the sender was running, read
+    /// under the same lock that stops it: an owner that needs to know asks
+    /// here, not isRunning() first. isRunning() and the other read-outs take
+    /// the mutex without telling a drain an owner is waiting, so a drain
+    /// under way could send every block it has queued before such a call
+    /// got in; stop() waits for one block at most.
+    bool stop();
     bool isRunning() const noexcept;
 
     /// R-AUD-SEND: where each packet goes, called on the draining thread

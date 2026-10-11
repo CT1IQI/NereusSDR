@@ -97,8 +97,9 @@ bool DaemonAudioSender::start(quint32 ssrc, quint16 firstSequence,
     return true;
 }
 
-void DaemonAudioSender::stop()
+bool DaemonAudioSender::stop()
 {
+    bool wasRunning = false;
     {
         // A drain under way sees the waiting owner and gives the mutex up
         // after the block it is on. From here no packet of this epoch
@@ -106,6 +107,7 @@ void DaemonAudioSender::stop()
         m_ownerWaiting.fetch_add(1, std::memory_order_acq_rel);
         const std::lock_guard<std::mutex> lock(m_mutex);
         m_ownerWaiting.fetch_sub(1, std::memory_order_acq_rel);
+        wasRunning = runningLocked();
         ++m_lifecycleGeneration;
         m_running = false;
         m_ssrc = 0;
@@ -116,6 +118,7 @@ void DaemonAudioSender::stop()
     if (m_source) {
         m_source->stop();
     }
+    return wasRunning;
 }
 
 bool DaemonAudioSender::isRunning() const noexcept
