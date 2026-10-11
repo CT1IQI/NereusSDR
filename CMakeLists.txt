@@ -3522,6 +3522,27 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             RENAME audio.conf
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
+    # Network receive buffer limit (the maintainer's ruling, 2026-10-11: the
+    # Core's installer raises it). The radio socket asks for
+    # RadioConnection::kRadioSocketReceiveBufferBytes (4 MB) and Linux grants
+    # at most net.core.rmem_max, 212992 bytes on the Rock 5C as found. One
+    # sysctl.d file, in the vendor directory so a package owns it and removing
+    # the package takes it away, sets that one limit to what the Core asks
+    # for; its name sorts ahead of an administrator's files so theirs win.
+    # /usr/lib/sysctl.d is where systemd-sysctl reads vendor files on every
+    # layout, so it is not taken from the install prefix. The helper beside
+    # it applies the limit at install, only ever upward: the .deb postinst
+    # and the Rock and Pi stage installers run it.
+    install(FILES packaging/nereusd-receive-buffer.conf
+            DESTINATION "/usr/lib/sysctl.d"
+            RENAME 10-nereusd.conf
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    install(PROGRAMS packaging/nereusd-raise-receive-buffer-limit.sh
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
+            RENAME raise-receive-buffer-limit
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
     # Source-stage installers for both ARM stations use the same bounded
     # artifact cleanup. Ship the helper with every daemon stage so a fresh
     # install does not depend on a separately provisioned maintenance file.

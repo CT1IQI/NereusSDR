@@ -183,6 +183,10 @@
 //   2026-10-10 - applySocketBufferSizes logs the receive buffer the
 //                system gave. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11 - That line gives the buffer in the terms it was asked (Linux
+//                reports it doubled) and says when the system cut the request
+//                short and what limit did it. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
 //                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-14 - HL2 I2C response subframes no longer update physical PTT;
@@ -931,15 +935,31 @@ void P1RadioConnection::applySocketBufferSizes()
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0x400000));  // 4 MB requested; kernel may cap
-    // What the system gave. Linux caps the request at net.core.rmem_max and
-    // reports the size doubled: at the stock 212,992 that is 425,984 bytes,
-    // 9 ms of three wide receivers on the Rock 5C (2026-10-10), where one
-    // 14 ms stall of the connection thread then lost packets.
-    qCInfo(lcConnection) << "P1: socket receive buffer"
-                         << m_socket->socketOption(
-                                QAbstractSocket::ReceiveBufferSizeSocketOption).toInt()
-                         << "bytes (4194304 asked for)";
+                              QVariant(kRadioSocketReceiveBufferBytes));  // 4 MB requested; kernel may cap
+    // What the system gave, in the terms it was asked. Linux caps the
+    // request at net.core.rmem_max and reports the size doubled: at the
+    // stock 212,992 a socket reports 425,984 bytes, 9 ms of three wide
+    // receivers on the Rock 5C (2026-10-10), where one 14 ms stall of the
+    // connection thread then lost packets. A request cut short is said in
+    // so many words, so it can be read in the log without knowing that.
+    const int granted = grantedReceiveBufferBytes(
+        m_socket->socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption).toInt());
+    if (granted >= kRadioSocketReceiveBufferBytes) {
+        qCInfo(lcConnection) << "P1: radio socket receive buffer" << granted
+                             << "bytes, all that was asked for";
+    } else {
+#ifdef Q_OS_LINUX
+        qCInfo(lcConnection) << "P1: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for. The system's limit, net.core.rmem_max, holds it there;"
+                                " the Core's packages and install scripts raise that limit"
+                                " (/usr/lib/sysctl.d/10-nereusd.conf).";
+#else
+        qCInfo(lcConnection) << "P1: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for; the system's own limit holds it there.";
+#endif
+    }
 }
 
 // ---------------------------------------------------------------------------

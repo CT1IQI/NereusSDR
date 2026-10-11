@@ -120,6 +120,46 @@ Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
   was refused" and runs its signal processing at nice -10. To check a
   kernel: `zcat /proc/config.gz | grep RT_GROUP_SCHED`.
 
+#### The system setting the Core's installer changes
+
+Installing the Core changes one system-wide Linux setting and no other:
+`net.core.rmem_max`, the largest receive buffer a program may ask for on a
+network socket.
+
+- **What it is for.** The Core asks for a 4 MB receive buffer (4194304
+  bytes) on the socket its radio sends to, so the system holds the radio's
+  packets while the Core is briefly held up. Linux grants at most
+  `net.core.rmem_max`. On the maintainer's Rock 5C that limit was 212992
+  bytes as found, a twentieth of what the Core asks for: 6 to 9 ms of
+  packets with three or four wide receivers open. A longer hold-up lost
+  packets, and the receivers lost samples (measured 2026-10-10).
+- **What is installed.** The `nereusd` `.deb` packages ship
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which sets the limit to 4194304 at
+  every system start, and they apply it when the package is installed. The
+  station images get it from the package, and the Pi 4 and Rock install
+  scripts install and apply the same file. The installer prints what it
+  changed. The setting is a ceiling, not a size any socket is given: a
+  program that does not ask keeps the system's default size.
+- **A limit is never lowered.** The install step leaves a limit already at
+  or above 4194304 as it is. At system start, a sysctl file whose name sorts
+  after the Core's and sets this limit wins over it, whether its value is
+  higher or lower; an administrator's own files (numbered 60 to 90 by
+  systemd's convention) do.
+- **To undo it.** Remove the `nereusd` package, or delete the file; the
+  system then starts with its own limit again. To keep the system's own
+  limit with the package installed, link `/etc/sysctl.d/10-nereusd.conf` to
+  `/dev/null`. To put the Rock's old limit back at once:
+  `sudo sysctl -w net.core.rmem_max=212992`.
+- **To check it.** When the Core connects to a radio its log says
+  `radio socket receive buffer 4194304 bytes, all that was asked for`, or
+  how many bytes it was given of the 4194304 asked for.
+
+The desktop packages do not change this setting. A Core installed from
+source with `cmake --install build --component nereusd` gets the file too.
+It takes effect at the next system start, or at once with
+`sudo /usr/local/libexec/nereusd/raise-receive-buffer-limit /usr/lib/sysctl.d/10-nereusd.conf`
+(under the install prefix; `/usr/local` unless you chose another).
+
 ### Take the console with you
 
 The native **iPhone and iPad app** provides live spectrum and waterfall,

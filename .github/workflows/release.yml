@@ -456,6 +456,8 @@ jobs:
           grep -q 'systemd/system/nereusd.service$' package-contents.txt
           grep -q 'systemd/system/nereusd.service.d/audio.conf$' package-contents.txt
           grep -q 'usr/share/nereusd/nereusd.conf.sample$' package-contents.txt
+          grep -q 'usr/lib/sysctl.d/10-nereusd.conf$' package-contents.txt
+          grep -q 'usr/libexec/nereusd/raise-receive-buffer-limit$' package-contents.txt
           dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
       - name: Upload Debian package
         uses: actions/upload-artifact@v4

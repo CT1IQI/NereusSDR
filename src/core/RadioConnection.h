@@ -23,6 +23,11 @@
 //   2026-10-06: Issue #351: inPlaceRecoveryMs, how long a lost link keeps
 //               trying to come back on the same connection. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: kRadioSocketReceiveBufferBytes names the receive buffer both
+//               protocols ask for, and grantedReceiveBufferBytes reads what
+//               the system gave, so the connect log can say when a request
+//               was cut short. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -155,6 +160,28 @@ public:
 
     // Factory — creates the appropriate subclass based on RadioInfo::protocol.
     static std::unique_ptr<RadioConnection> create(const RadioInfo& info);
+
+    /// The receive buffer both protocols ask for on the socket the radio
+    /// sends to (applySocketBufferSizes in P1RadioConnection.cpp and
+    /// P2RadioConnection.cpp): 4 MB, raised from Thetis's 0xfa000 after the
+    /// 2026-05-26 bench. The system may grant less. On Linux the limit is
+    /// net.core.rmem_max, and the Core's packages and install scripts raise
+    /// it to this figure (packaging/nereusd-receive-buffer.conf, which
+    /// tests/release/test_core_receive_buffer_limit.py holds to it).
+    static constexpr int kRadioSocketReceiveBufferBytes = 0x400000;
+    /// The receive buffer the system granted, from the size a socket
+    /// reports. Linux doubles a request to leave room for its own
+    /// bookkeeping and reports the doubled figure (socket(7), SO_RCVBUF), so
+    /// there a full grant of N reads 2N and a request held at
+    /// net.core.rmem_max reads twice that limit.
+    static constexpr int grantedReceiveBufferBytes(int reportedBytes) noexcept
+    {
+#ifdef Q_OS_LINUX
+        return reportedBytes / 2;
+#else
+        return reportedBytes;
+#endif
+    }
 
     // State (atomic for cross-thread reads from main thread)
     ConnectionState state() const { return m_state.load(); }
