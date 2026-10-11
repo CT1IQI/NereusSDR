@@ -242,12 +242,17 @@ literals the scoped pass met and left alone.
 
 ### Proposed header scenes
 
-`header-always`, `header-reveal-idle`, `header-reveal-shown`,
-`header-hidden` and `arrange-on` pose the two-band data with the workspace
-preview switch on (the binary sets it for these scenes) and show the
-proposed compact container headers: the Main Panel in Always, Reveal (idle,
-then revealed through `ContainerWidget::setHeaderRevealedForPreview`),
-Hidden, and Always with Arrange on (`ContainerManager::setArrangeMode`).
+`header-shown`, `header-hidden` and `arrange-on` pose the two-band data
+with the workspace preview switch on (the binary sets it for these scenes)
+and show the proposed compact container headers. A header is shown or
+hidden; there is no hover mode. `header-shown` has the Main Panel's header
+shown, with the eye button open, left of Pop out. `header-hidden` has it
+hidden: no header is drawn and none takes room. `arrange-on` turns Arrange
+on (`ContainerManager::setArrangeMode`) over a mix: the Main Panel keeps
+its header (open eye) and a "Meters" container in the top strip hides its
+own (crossed-out eye), which Arrange draws over the top of its content.
+Each sidecar's notes give every drawn eye button's rect in window logical
+px and its state.
 At the crop profile each adds a `panel-top` crop, the Main Panel's top
 120 logical px, and its @3x enlargement. Their sidecars have
 `provenance: proposed` and a `proposed_values` block with the sizes and
@@ -263,11 +268,11 @@ the central workspace (`src/gui/containers/EdgeDockStrip`), free over the
 spectrum and floating in their own window. The scenes add containers
 from existing content types: "Meters" (the S-Meter preset and the
 Power/SWR face), "Band" (the band and mode button boxes, one row each)
-and "Levels" (two bar meters). Every container's header is Always,
-except in `edge-all-four-clean`, where it is Reveal with the pointer away,
+and "Levels" (two bar meters). Every container's header is shown,
+except in `edge-all-four-clean`, where every header is hidden,
 so no header shows or takes room. `free-container` uses Options > Place
-Free, moves the container to the lower right of the 20 m waterfall and
-shows the header in Reveal, shown; `floating-container` also writes the
+Free and moves the container to the lower right of the 20 m waterfall,
+its header shown; `floating-container` also writes the
 floating window as `floating-container--floating`; the drag previews turn
 Arrange on and call `ContainerManager::showDropPreviewForTest`. At the
 crop profile each adds `strip-left`, `strip-top` and `strip-bottom` crops
@@ -291,10 +296,10 @@ at `mac-1512x869@2` and `laptop-1280x800@1`
 `mixed-container` adds a "Station" container in the left strip that
 mixes Longpath instruments with Thetis meter faces, all on slice A:
 frequency, filter passband, `meter.sMeter`, Longpath needle,
-`meter.crossNeedle` and Longpath bar, headers Always. The Main Panel's
+`meter.crossNeedle` and Longpath bar, headers shown. The Main Panel's
 "SIGNAL STRENGTH" dial (`applet:s_meter`) is a singleton the Main Panel
 holds, so the Station container uses the `meter.sMeter` face instead.
-`mixed-container-reveal` is the same with every header Reveal. After the
+`mixed-container-hidden` is the same with every header hidden. After the
 data is fed, each needle gets one reading through
 `MeterPoller::readingUpdated` and each filter pane one trace refresh from
 the fed pan. The sidecars carry a `regions` array (each entry's rect and
@@ -309,7 +314,7 @@ station: slice A 7.185 LSB on 40 m, slice B 14.225 USB on 20 m. A profile
 holds container arrangement only, so each sidecar's `slices` array shows
 the same slice states in all four.
 
-- `profile-ssb`: Main Panel right, Station container left, headers Reveal.
+- `profile-ssb`: Main Panel right, Station container left, headers hidden.
 - `profile-dx`: Main Panel right, Longpath frequency A and B left, Longpath
   signal needles A and B top, headers Always with source chips. Needle B
   stays offline: the meter poller has no slice B reading in the preview, and the scene does not fake one.

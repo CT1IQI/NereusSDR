@@ -9,11 +9,11 @@
 //
 // At rest only the active profile's badge shows, as one checked pill,
 // at a fixed spot just left of the centre title (kTitleGap). Hovering
-// it (after the Reveal delay), clicking it or giving it Tab focus fans
+// it (after kShowDelayMs), clicking it or giving it Tab focus fans
 // out the full rail (every badge plus the dashed +) as an overlay
 // popover that opens leftward: its right edge lines up with the
 // collapsed badge's right edge, so it never covers the title, and it
-// never reflows the bar. The popover closes kRevealHideMs after the
+// never reflows the bar. The popover closes kHideDelayMs after the
 // pointer leaves, on Escape, or right after a profile is picked.
 // "The pointer leaves" is read from the cursor position against the
 // badge and the popover, not from Enter/Leave: on macOS each badge is its
@@ -36,6 +36,9 @@
 //                 (kPointerSampleMs), with the nereus.gui.profilerail
 //                 debug category, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - kShowDelayMs and kHideDelayMs live here: the container
+//                 headers they were shared with no longer open on hover.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QPointer>
@@ -62,6 +65,10 @@ public:
     // While open, how often the cursor position is sampled against the
     // badge and the popover, ms.
     static constexpr int kPointerSampleMs = 50;
+    // Hover on the badge opens the rail after kShowDelayMs; the pointer
+    // leaving closes it after kHideDelayMs.
+    static constexpr int kShowDelayMs = 120;
+    static constexpr int kHideDelayMs = 600;
 
     // `anchor` is the centre title label (a child of `parent`, the title
     // bar). `overlayParent` is the main window: the popover is its child

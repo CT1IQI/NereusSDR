@@ -45,6 +45,11 @@
 //   2026-10-11 - The padlock and setLocked are gone: the workspace look has
 //                 no Lock setting. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - The group header carries an eye button left of Pop out:
+//                 open while the header is kept shown, crossed out while it
+//                 hides when not arranging. Drawn in code so it takes the
+//                 header's glyph colours. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -52,6 +57,7 @@
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspaceStyle.h"
 
+#include <QAbstractButton>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -109,6 +115,80 @@ QPushButton* makeButton(const QString& glyph, int w, int h, const QString& tip, 
     b->setStyleSheet(headerButtonCss());
     return b;
 }
+
+// The eye: a lens outline with a pupil, and crossed out with a stroke when
+// the header is not kept shown. Drawn in code, not from an SVG, so it takes
+// the same colours as the glyph buttons beside it (headerButtonCss): the
+// scale text colour, the primary text colour on the hover plate, and the
+// inactive colour when disabled. The geometry is in a 16 x 14 box and is
+// scaled to the button.
+constexpr double kEyeBoxWidth = 16.0;
+constexpr double kEyeBoxHeight = 14.0;
+constexpr double kEyeHalfWidth = 5.5;
+constexpr double kEyeLidRise = 5.0;      // control point offset of each lid
+constexpr double kEyePupilRadius = 1.8;
+constexpr double kEyeStroke = 1.25;
+constexpr double kEyeSlashStroke = 1.4;
+constexpr double kEyeSlashGap = 2.6;     // the cleared band the slash sits in
+constexpr double kEyeSlashReach = 4.5;   // from the centre, on each axis
+
+class WorkspaceEyeButton final : public QAbstractButton {
+public:
+    explicit WorkspaceEyeButton(QWidget* parent) : QAbstractButton(parent)
+    {
+        setCheckable(true);
+        setAttribute(Qt::WA_Hover, true);
+    }
+    QSize sizeHint() const override { return size(); }
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const bool hovered = isEnabled() && underMouse();
+        if (hovered) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(Workspace::role("button-hover", Workspace::kButtonHover)));
+            p.drawRoundedRect(rect(), Workspace::kGlassChipRadius, Workspace::kGlassChipRadius);
+        }
+        const QColor colour(!isEnabled() ? Workspace::role("text-inactive", Workspace::kTextInactive)
+                            : hovered    ? Workspace::role("text", Workspace::kTextPrimary)
+                                         : Workspace::role("text-scale", Workspace::kTextScale));
+        p.scale(width() / kEyeBoxWidth, height() / kEyeBoxHeight);
+        const QPointF c(kEyeBoxWidth / 2.0, kEyeBoxHeight / 2.0);
+        QPainterPath lens;
+        lens.moveTo(c.x() - kEyeHalfWidth, c.y());
+        lens.quadTo(c.x(), c.y() - kEyeLidRise, c.x() + kEyeHalfWidth, c.y());
+        lens.quadTo(c.x(), c.y() + kEyeLidRise, c.x() - kEyeHalfWidth, c.y());
+        // Top left to bottom right, so it never echoes the pop-out arrow
+        // beside it.
+        const QPointF slashFrom(c.x() - kEyeSlashReach, c.y() - kEyeSlashReach);
+        const QPointF slashTo(c.x() + kEyeSlashReach, c.y() + kEyeSlashReach);
+        if (!isChecked()) {
+            // Clear a band along the slash so it reads as a stroke across
+            // the eye, not as part of it.
+            QPainterPath band;
+            band.moveTo(slashFrom);
+            band.lineTo(slashTo);
+            QPainterPathStroker stroker;
+            stroker.setWidth(kEyeSlashGap);
+            QPainterPath all;
+            all.addRect(QRectF(0, 0, kEyeBoxWidth, kEyeBoxHeight));
+            p.setClipPath(all.subtracted(stroker.createStroke(band)));
+        }
+        p.setPen(QPen(colour, kEyeStroke, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(lens);
+        p.setPen(Qt::NoPen);
+        p.setBrush(colour);
+        p.drawEllipse(c, kEyePupilRadius, kEyePupilRadius);
+        if (!isChecked()) {
+            p.setClipping(false);
+            p.setPen(QPen(colour, kEyeSlashStroke, Qt::SolidLine, Qt::RoundCap));
+            p.drawLine(slashFrom, slashTo);
+        }
+    }
+};
 
 QLabel* makeGrip(int px, const char* colour, const char* hover, int w, int h, QWidget* parent)
 {
@@ -263,6 +343,19 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
 
     row->addStretch(1);
 
+    // The eye, left of Pop out, at the size of the glyph buttons. It shows
+    // the saved choice: a click asks for the other one and the owner sets
+    // the button from what was saved.
+    m_keepShown = new WorkspaceEyeButton(this);
+    m_keepShown->setObjectName(QStringLiteral("workspaceKeepShown"));
+    m_keepShown->setFixedSize(kGroupButtonWidth, kGroupButtonHeight);
+    m_keepShown->setCursor(Qt::PointingHandCursor);
+    m_keepShown->setFocusPolicy(Qt::TabFocus);
+    connect(m_keepShown, &QAbstractButton::clicked, this, &WorkspaceGroupHeader::keepShownToggled);
+    row->addWidget(m_keepShown);
+    m_keepShown->setChecked(true);
+    setKeepShown(true);
+
     m_popOut = makeButton(QStringLiteral("↗"), kGroupButtonWidth, kGroupButtonHeight,
                           tr("Pop out"), this);
     m_popOut->setObjectName(QStringLiteral("workspacePopOut"));
@@ -323,6 +416,15 @@ void WorkspaceGroupHeader::setArrangeAccent(bool on)
     applyStyle();
 }
 QWidget* WorkspaceGroupHeader::grip() const { return m_grip; }
+void WorkspaceGroupHeader::setKeepShown(bool keepShown)
+{
+    m_keepShown->setChecked(keepShown);
+    // The tooltip says what a click will do.
+    m_keepShown->setToolTip(keepShown ? tr("Hide this header when not arranging")
+                                      : tr("Keep this header showing"));
+    m_keepShown->update();
+}
+bool WorkspaceGroupHeader::keepShown() const { return m_keepShown->isChecked(); }
 
 // ---- WorkspaceEntryHeader ---------------------------------------------------
 

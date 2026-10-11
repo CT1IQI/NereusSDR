@@ -23,6 +23,10 @@
 //                 of the badge (the Core readout) and moves right instead.
 //                 By J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-11 - The show and hide delays and the shadow depth are the
+//                 rail's own; the container headers no longer open on
+//                 hover. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/widgets/ProfileRailDock.h"
@@ -56,11 +60,7 @@ namespace NereusSDR {
 
 namespace {
 
-// The Reveal timings of the container headers (Task 3), so the rail and
-// the headers answer the pointer alike.
-constexpr int kShowDelayMs = ContainerWidget::kRevealDelayMs;
-constexpr int kHideDelayMs = ContainerWidget::kRevealHideMs;
-constexpr int kShadowPx = ContainerWidget::kRevealShadowPx;
+constexpr int kShadowPx = 6;
 constexpr int kShadowAlpha = 150;
 // Width for a badge's letter: the letter plus the pill's 11 px side
 // padding and 1 px border on each side, rounded up as the rail does.

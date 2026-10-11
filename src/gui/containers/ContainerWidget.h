@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - A header is shown or hidden: the Reveal constants, timers,
+//                 fade, shadow, recoverChrome and the preview seam are gone.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: lockRequested is gone with the
 //                 Options menu's Lock item. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -193,8 +196,6 @@ mw0lge@grange-lane.co.uk
 
 class QLabel;
 class QPushButton;
-class QGraphicsOpacityEffect;
-class QPropertyAnimation;
 class QMenu;
 
 namespace NereusSDR {
@@ -294,31 +295,20 @@ public:
     void setHeaderMode(HeaderMode mode);
     HeaderMode headerMode() const { return m_headerMode; }
     bool chromeVisible() const;
-    void recoverChrome();
     bool isTitleBarVisible() const { return m_titleBarVisible; }
     void setTitleBarVisible(bool visible);
 
     // --- Workspace preview header (WorkspacePreview::enabled() only) ---
-    // The Reveal band: the top strip whose hover reveals the header.
-    static constexpr int kRevealBand = 18;
-    static constexpr int kRevealDelayMs = 120;
-    static constexpr int kRevealFadeMs = 90;
-    static constexpr int kRevealHideMs = 600;
-    static constexpr double kRevealOpacity = 0.96;
-    static constexpr int kRevealShadowPx = 6;
     static constexpr int kArrangeEdgePx = 4;
     // The header extent the layout reserves: the legacy 22 px slot with
-    // the preview off; with it on, 18 px in Always (and while minimised)
-    // and 0 in Reveal and Hidden.
+    // the preview off; with it on, 18 px when the header is shown (and
+    // while minimised) and 0 when it is hidden. A hidden header drawn
+    // while arranging lies over the content and reserves nothing.
     int headerExtent() const;
     // App-level Arrange (ContainerManager::setArrangeMode): every header
     // shows, the outline and the inside resize handles appear. Not saved.
     void setArrangeActive(bool active);
     bool arrangeActive() const { return m_arrangeActive; }
-    // Test and preview seam: shows (or hides) the Reveal header at once,
-    // without the hover delay or the fade, and holds it there.
-    void setHeaderRevealedForPreview(bool revealed);
-    bool headerRevealed() const { return m_headerRevealed; }
     // The title the group header shows (a single-content container passes
     // its entry's name) and its source chip ("RX A"); empty hides the chip.
     void setWorkspaceTitle(const QString& title);
@@ -466,9 +456,6 @@ private:
     void updateWorkspaceChrome();
     void buildWorkspaceHeader();
     void placeWorkspaceOverlays();
-    void trackRevealBand(const QPoint& globalPos);
-    void setHeaderRevealed(bool revealed, bool animate);
-    bool headerHasFocus() const;
     void showWorkspaceOptions();
     void showSourceMenu();
     void populateWorkspaceMenu(QMenu& menu);
@@ -536,11 +523,9 @@ private:
 
     // --- UI elements ---
     QWidget* m_headerSlot{nullptr};
-    HeaderMode m_headerMode{HeaderMode::Always};
+    HeaderMode m_headerMode{HeaderMode::Shown};
     bool m_structuredChrome{false};
     bool m_popOutShell{false};
-    bool m_hoverChrome{false};
-    bool m_recoverChrome{false};
     bool m_shiftChrome{false};
     QWidget* m_titleBar{nullptr};
     QWidget* m_contentHolder{nullptr};
@@ -554,18 +539,10 @@ private:
 
     // --- Workspace preview header ---
     WorkspaceGroupHeader* m_groupHeader{nullptr};
-    QWidget* m_revealShadow{nullptr};
     QWidget* m_arrangeFrame{nullptr};
     QWidget* m_edgeRight{nullptr};
     QWidget* m_edgeBottom{nullptr};
-    QGraphicsOpacityEffect* m_headerOpacity{nullptr};
-    QPropertyAnimation* m_revealFade{nullptr};
-    QTimer m_revealDelay;
-    QTimer m_revealHide;
     bool m_arrangeActive{false};
-    bool m_headerRevealed{false};
-    bool m_revealHeld{false};
-    bool m_keyboardFocus{false};
     bool m_workspaceMenuOpen{false};
     bool m_followsSelectedRx{false};
     int m_sourceMenuRx{0};

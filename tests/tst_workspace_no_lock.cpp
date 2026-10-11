@@ -52,7 +52,7 @@ ContainerDocument container(ContainerContentRegistry& registry, const QString& i
     result.layout = ContentLayout::VerticalStack;
     result.dockMode = DockMode::PanelDocked;
     result.edge = edge;
-    result.header = HeaderMode::Always;
+    result.header = HeaderMode::Shown;
     result.locked = locked;
     ContentEntry entry = registry.makeEntry(QStringLiteral("meter.signalMaxBin"));
     entry.id = id + QStringLiteral("-meter");

@@ -55,12 +55,18 @@
 //   2026-10-11 - The padlock and setLocked are gone: the workspace look has
 //                 no Lock setting. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - The group header carries an eye button left of Pop out:
+//                 open while the header is kept shown, crossed out while it
+//                 hides when not arranging. Drawn in code so it takes the
+//                 header's glyph colours. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
 #include <QString>
 #include <QWidget>
 
+class QAbstractButton;
 class QLabel;
 class QPushButton;
 
@@ -120,7 +126,15 @@ public:
     void setArrangeAccent(bool on);
     bool arrangeAccent() const { return m_arrange; }
 
+    // The eye shows the container's choice: open when the header is kept
+    // shown, crossed out when it hides when not arranging. The owner sets
+    // it from the saved choice; a click only asks (keepShownToggled).
+    void setKeepShown(bool keepShown);
+    bool keepShown() const;
+
     QWidget* grip() const;
+    // The eye button, left of Pop out.
+    QAbstractButton* keepShownButton() const { return m_keepShown; }
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
     // The hide button, last and rightmost.
@@ -128,6 +142,8 @@ public:
     WorkspaceSourceChip* sourceChip() const { return m_chip; }
 
 signals:
+    // A click on the eye: the choice the operator asks for.
+    void keepShownToggled(bool keepShown);
     void popOutClicked();
     void optionsClicked();
     void sourceClicked();
@@ -139,6 +155,7 @@ private:
     QLabel* m_grip{nullptr};
     QLabel* m_title{nullptr};
     WorkspaceSourceChip* m_chip{nullptr};
+    QAbstractButton* m_keepShown{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
     QPushButton* m_hide{nullptr};

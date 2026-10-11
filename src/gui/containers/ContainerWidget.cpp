@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - A header is shown or hidden. The hover choice (Reveal) and
+//                 its timers, fade, shadow and focus rules are gone, and so
+//                 is "Reveal controls". Workspace preview: the header's eye
+//                 button and the body menu's "Keep Header Showing" switch
+//                 it; Arrange draws a hidden header over the content.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the Options menu has no Lock item,
 //                 the header no padlock, and nothing in the look's chrome
 //                 or menu is disabled for Lock. J.J. Boyd (KG4VCF),
@@ -171,9 +177,7 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QStringList>
 #include <QCursor>
-#include <QGraphicsOpacityEffect>
 #include <QPainter>
-#include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <algorithm>
 
@@ -181,34 +185,11 @@ namespace NereusSDR {
 
 namespace {
 
-// Workspace preview: the shadow under a revealed overlay header,
-// rgba(0,0,0,110) fading to transparent over kRevealShadowPx.
-constexpr int kRevealShadowAlpha = 110;
 // Workspace preview: Arrange's dashed outline, the accent at 60 %.
 constexpr int kArrangeOutlineAlpha = 153;
 // The legacy default content background; in the preview the glass plate
 // shows through instead.
 constexpr QRgb kLegacyContentBackground = 0xff0f0f1a;
-
-class RevealShadow final : public QWidget {
-public:
-    explicit RevealShadow(QWidget* parent) : QWidget(parent)
-    {
-        // Native on macOS like every sibling here: it must pass clicks
-        // through as a view, not only as a widget.
-        WorkspacePreview::passInputThrough(this);
-        hide();
-    }
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        QLinearGradient g(0, 0, 0, height());
-        g.setColorAt(0.0, QColor(0, 0, 0, kRevealShadowAlpha));
-        g.setColorAt(1.0, QColor(0, 0, 0, 0));
-        p.fillRect(rect(), g);
-    }
-};
 
 class ArrangeOutline final : public QWidget {
 public:
@@ -454,15 +435,17 @@ void ContainerWidget::buildWorkspaceHeader()
     // The hide button: the same as the menu's "Hide container".
     connect(m_groupHeader, &WorkspaceGroupHeader::hideClicked, this,
             &ContainerWidget::hideContainerRequested);
+    // The eye: the same choice as the body menu's "Keep Header Showing".
+    // The button shows the committed mode, so a commit that is refused
+    // leaves it as it was.
+    connect(m_groupHeader, &WorkspaceGroupHeader::keepShownToggled, this, [this](bool keepShown) {
+        const QPointer<ContainerWidget> self(this);
+        emit headerModeRequested(keepShown ? HeaderMode::Shown : HeaderMode::Hidden);
+        if (self && m_groupHeader) {
+            m_groupHeader->setKeepShown(m_headerMode == HeaderMode::Shown);
+        }
+    });
 
-    m_headerOpacity = new QGraphicsOpacityEffect(m_groupHeader);
-    m_headerOpacity->setOpacity(kRevealOpacity);
-    m_headerOpacity->setEnabled(false);
-    m_groupHeader->setGraphicsEffect(m_headerOpacity);
-    m_revealFade = new QPropertyAnimation(m_headerOpacity, "opacity", this);
-    m_revealFade->setDuration(kRevealFadeMs);
-
-    m_revealShadow = new RevealShadow(this);
     m_arrangeFrame = new ArrangeOutline(this);
     m_edgeRight = new QWidget(this);
     m_edgeRight->setObjectName(QStringLiteral("containerResizeEdgeRight"));
@@ -474,24 +457,6 @@ void ContainerWidget::buildWorkspaceHeader()
         edge->hide();
         edge->installEventFilter(this);
     }
-
-    m_revealDelay.setSingleShot(true);
-    m_revealDelay.setInterval(kRevealDelayMs);
-    connect(&m_revealDelay, &QTimer::timeout, this, [this] {
-        if (m_headerMode == HeaderMode::Reveal) {
-            setHeaderRevealed(true, true);
-        }
-    });
-    m_revealHide.setSingleShot(true);
-    m_revealHide.setInterval(kRevealHideMs);
-    connect(&m_revealHide, &QTimer::timeout, this, [this] {
-        // A menu of the header, keyboard focus in it, or the preview seam
-        // keeps it up.
-        if (m_workspaceMenuOpen || m_revealHeld || headerHasFocus()) {
-            return;
-        }
-        setHeaderRevealed(false, false);
-    });
 }
 
 int ContainerWidget::headerExtent() const
@@ -502,7 +467,7 @@ int ContainerWidget::headerExtent() const
     if (!m_structuredChrome) {
         return 0;
     }
-    return (m_headerMode == HeaderMode::Always || m_minimised) ? WorkspaceGroupHeader::kHeight : 0;
+    return (m_headerMode == HeaderMode::Shown || m_minimised) ? WorkspaceGroupHeader::kHeight : 0;
 }
 
 void ContainerWidget::setArrangeActive(bool active)
@@ -511,19 +476,8 @@ void ContainerWidget::setArrangeActive(bool active)
         return;
     }
     m_arrangeActive = active;
-    if (!active) {
-        // Leaving Arrange restores each mode; a held edit is cancelled.
-        m_recoverChrome = false;
-    }
+    // Leaving Arrange restores each container's own choice.
     updateChrome();
-}
-
-void ContainerWidget::setHeaderRevealedForPreview(bool revealed)
-{
-    m_revealHeld = revealed;
-    m_revealDelay.stop();
-    m_revealHide.stop();
-    setHeaderRevealed(revealed, false);
 }
 
 void ContainerWidget::setWorkspaceTitle(const QString& title)
@@ -540,74 +494,15 @@ void ContainerWidget::setWorkspaceSource(const QString& text, const QColor& colo
     }
 }
 
-bool ContainerWidget::headerHasFocus() const
-{
-    // Keyboard focus only: Tab onto the container, or into the header. A
-    // click on the container's body is not a reveal.
-    QWidget* focused = QApplication::focusWidget();
-    return focused != nullptr
-        && ((focused == this && m_keyboardFocus)
-            || (m_groupHeader != nullptr && m_groupHeader->isAncestorOf(focused)));
-}
-
-void ContainerWidget::setHeaderRevealed(bool revealed, bool animate)
-{
-    if (!m_groupHeader) {
-        return;
-    }
-    if (m_headerRevealed != revealed) {
-        m_headerRevealed = revealed;
-        m_revealFade->stop();
-        if (revealed && animate) {
-            m_headerOpacity->setOpacity(0.0);
-            m_revealFade->setStartValue(0.0);
-            m_revealFade->setEndValue(kRevealOpacity);
-            m_revealFade->start();
-        } else {
-            m_headerOpacity->setOpacity(kRevealOpacity);
-        }
-    }
-    updateWorkspaceChrome();
-}
-
-void ContainerWidget::trackRevealBand(const QPoint& globalPos)
-{
-    if (!m_groupHeader || !m_structuredChrome || m_headerMode != HeaderMode::Reveal) {
-        m_revealDelay.stop();
-        m_revealHide.stop();
-        return;
-    }
-    const QPoint local = mapFromGlobal(globalPos);
-    const bool inBand = isVisible() && rect().contains(local) && local.y() < kRevealBand;
-    if (inBand) {
-        m_revealHide.stop();
-        if (!m_headerRevealed && !m_revealDelay.isActive()) {
-            m_revealDelay.start();
-        }
-        return;
-    }
-    m_revealDelay.stop();
-    if (m_headerRevealed && !m_revealHeld && !m_revealHide.isActive()) {
-        m_revealHide.start();
-    }
-}
-
 void ContainerWidget::updateWorkspaceChrome()
 {
     m_titleBar->setVisible(false);
-    // Keyboard focus on the container (or in its header) reveals at once.
-    if (m_headerMode == HeaderMode::Reveal && !m_headerRevealed && headerHasFocus()) {
-        setHeaderRevealed(true, true);
-        return;
-    }
-    if (m_headerMode == HeaderMode::Reveal && m_headerRevealed && !headerHasFocus()
-        && !m_revealHeld && !m_revealHide.isActive() && !m_revealDelay.isActive()) {
-        trackRevealBand(QCursor::pos());
-    }
-    const bool inLayout = m_headerMode == HeaderMode::Always || m_minimised;
-    const bool overlayShown = !inLayout
-        && (m_arrangeActive || m_recoverChrome
-            || (m_headerMode == HeaderMode::Reveal && m_headerRevealed));
+    // A header is drawn when it is kept shown, when the container is
+    // minimised, or while arranging. A hidden header drawn for Arrange lies
+    // over the top of the content: it takes no layout room, so nothing
+    // shifts.
+    const bool inLayout = m_headerMode == HeaderMode::Shown || m_minimised;
+    const bool overlayShown = !inLayout && m_arrangeActive;
     auto* box = static_cast<QVBoxLayout*>(layout());
     const bool placedInLayout = box->indexOf(m_groupHeader) >= 0;
     if (inLayout && !placedInLayout) {
@@ -615,12 +510,8 @@ void ContainerWidget::updateWorkspaceChrome()
     } else if (!inLayout && placedInLayout) {
         box->removeWidget(m_groupHeader);
     }
-    m_headerOpacity->setEnabled(!inLayout);
-    if (m_revealFade->state() != QAbstractAnimation::Running) {
-        m_headerOpacity->setOpacity(kRevealOpacity);
-    }
     m_groupHeader->setVisible(inLayout || overlayShown);
-    m_revealShadow->setVisible(overlayShown);
+    m_groupHeader->setKeepShown(m_headerMode == HeaderMode::Shown);
     m_groupHeader->setArrangeAccent(m_arrangeActive);
     m_groupHeader->setFloating(isFloating());
 
@@ -661,7 +552,6 @@ void ContainerWidget::placeWorkspaceOverlays()
             : 0;
         host->setTopOverlayInset(reach);
     }
-    place(m_revealShadow, QRect(0, WorkspaceGroupHeader::kHeight, width(), kRevealShadowPx));
     place(m_arrangeFrame, rect());
     place(m_edgeRight, QRect(width() - kArrangeEdgePx, 0, kArrangeEdgePx, height()));
     place(m_edgeBottom, QRect(0, height() - kArrangeEdgePx, width(), kArrangeEdgePx));
@@ -693,15 +583,6 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
     menu.addAction(floatText, this, [this] { m_btnFloat->click(); });
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addSeparator();
-    auto* header = menu.addMenu(tr("Header"));
-    for (auto mode : {HeaderMode::Always, HeaderMode::Reveal, HeaderMode::Hidden}) {
-        auto* action = header->addAction(mode == HeaderMode::Always   ? tr("Always")
-                                         : mode == HeaderMode::Reveal ? tr("Reveal")
-                                                                      : tr("Hidden"));
-        action->setCheckable(true);
-        action->setChecked(mode == m_headerMode);
-        connect(action, &QAction::triggered, this, [this, mode] { emit headerModeRequested(mode); });
-    }
     // Docks in the strip for that edge; Place Free puts the container over
     // the spectrum, which a drop never does.
     auto* edge = menu.addMenu(tr("Move to Edge"));
@@ -741,7 +622,6 @@ void ContainerWidget::showWorkspaceOptions()
         return;
     }
     m_workspaceMenuOpen = false;
-    trackRevealBand(QCursor::pos());
 }
 
 void ContainerWidget::setSliceAvailability(std::function<bool(int sliceId)> available)
@@ -788,7 +668,6 @@ void ContainerWidget::showSourceMenu()
         return;
     }
     m_workspaceMenuOpen = false;
-    trackRevealBand(QCursor::pos());
 }
 
 // Nereus-origin reserved chrome: visibility never changes the content viewport.
@@ -811,13 +690,6 @@ void ContainerWidget::setHeaderMode(HeaderMode mode)
         connect(qApp, &QApplication::focusChanged, this,
                 [this](QWidget *, QWidget *) { updateChrome(); });
     }
-    if(m_headerMode!=mode) {m_recoverChrome=false;}
-    if (m_groupHeader && m_headerMode != mode) {
-        m_revealHeld = false;
-        m_revealDelay.stop();
-        m_revealHide.stop();
-        m_headerRevealed = false;
-    }
     m_headerMode = mode;
     m_titleBarVisible = mode != HeaderMode::Hidden;
     updateChrome();
@@ -826,11 +698,6 @@ bool ContainerWidget::chromeVisible() const
 {
     // Workspace preview: the group header is the chrome.
     return m_groupHeader ? m_groupHeader->isVisible() : m_titleBar->isVisible();
-}
-void ContainerWidget::recoverChrome()
-{
-    m_recoverChrome = true;
-    updateChrome();
 }
 void ContainerWidget::updateChrome()
 {
@@ -841,12 +708,8 @@ void ContainerWidget::updateChrome()
         updateWorkspaceChrome();
         return;
     }
-    QWidget *focused = QApplication::focusWidget();
-    const bool focus = focused && (focused == this || isAncestorOf(focused));
     const bool shift = m_shiftChrome || (QApplication::keyboardModifiers() & Qt::ShiftModifier);
-    const bool visible = m_headerMode == HeaderMode::Always ||
-                         (m_headerMode == HeaderMode::Reveal && (m_hoverChrome || focus)) ||
-                         m_recoverChrome || shift;
+    const bool visible = m_headerMode == HeaderMode::Shown || shift;
     m_titleBar->setVisible(visible);
     m_resizeGrip->setVisible(visible && !m_locked && !m_autoHeight && !isPanelDocked());
     m_resizeGrip->move(width() - 12, height() - 12);
@@ -872,19 +735,24 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
                                     [this] { emit returnContainerRequested(); });
         back->setEnabled(!m_locked);
     }
-    menu.addAction(tr("Reveal controls"), this, &ContainerWidget::recoverChrome);
-    auto *header = menu.addMenu(tr("Header"));
-    for (auto mode : {HeaderMode::Always, HeaderMode::Reveal, HeaderMode::Hidden}) {
-        const QString hiddenLabel = m_groupHeader ? tr("Hidden (Arrange or Reveal controls recovers it)")
-                                                  : tr("Hidden (hold Shift to recover)");
-        auto *action =
-            header->addAction(mode == HeaderMode::Always   ? tr("Always visible")
-                              : mode == HeaderMode::Reveal ? tr("Reveal on hover/focus")
-                                                           : hiddenLabel);
-        action->setCheckable(true);
-        action->setChecked(mode == m_headerMode);
-        connect(action, &QAction::triggered, this,
-                [this, mode] { emit headerModeRequested(mode); });
+    if (m_groupHeader) {
+        // Workspace preview: the same toggle as the header's eye button.
+        auto *keep = menu.addAction(tr("Keep Header Showing"), this, [this](bool checked) {
+            emit headerModeRequested(checked ? HeaderMode::Shown : HeaderMode::Hidden);
+        });
+        keep->setCheckable(true);
+        keep->setChecked(m_headerMode == HeaderMode::Shown);
+    } else {
+        auto *header = menu.addMenu(tr("Header"));
+        for (auto mode : {HeaderMode::Shown, HeaderMode::Hidden}) {
+            auto *action = header->addAction(mode == HeaderMode::Shown
+                                                 ? tr("Always visible")
+                                                 : tr("Hidden (hold Shift to recover)"));
+            action->setCheckable(true);
+            action->setChecked(mode == m_headerMode);
+            connect(action, &QAction::triggered, this,
+                    [this, mode] { emit headerModeRequested(mode); });
+        }
     }
     if (m_groupHeader) {
         auto *arrange = menu.addAction(tr("Arrange Workspace"), this,
@@ -1274,12 +1142,6 @@ int ContainerWidget::roundToNearestTen(int value)
 void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_structuredChrome) {
-        if (m_groupHeader) {
-            trackRevealBand(event->globalPosition().toPoint());
-        } else {
-            m_hoverChrome = true;
-            updateChrome();
-        }
         if (m_dragging) {
             updateDrag(event->globalPosition().toPoint());
         }
@@ -1330,11 +1192,6 @@ void ContainerWidget::mouseMoveEvent(QMouseEvent* event)
 void ContainerWidget::leaveEvent(QEvent* event)
 {
     if (m_structuredChrome) {
-        m_hoverChrome = false;
-        if (m_groupHeader) {
-            trackRevealBand(QCursor::pos());
-        }
-        if(!m_dragging && !m_resizing) {m_recoverChrome = false;}
         updateChrome();
         QWidget::leaveEvent(event);
         return;
@@ -1361,25 +1218,9 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
         }
         return true;
     }
-    if (m_structuredChrome && m_groupHeader) {
-        // Workspace preview: only the top band reveals the header; Shift
-        // does not (Hidden recovers through the menu and Arrange).
-        if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut) {
-            if (watched == this) {
-                const auto reason = static_cast<QFocusEvent*>(event)->reason();
-                m_keyboardFocus = event->type() == QEvent::FocusIn
-                    && (reason == Qt::TabFocusReason || reason == Qt::BacktabFocusReason
-                        || reason == Qt::ShortcutFocusReason);
-            }
-            QTimer::singleShot(0, this, &ContainerWidget::updateChrome);
-        }
-        if (event->type() == QEvent::MouseMove) {
-            if (auto *widget = qobject_cast<QWidget *>(watched);
-                widget && (widget == this || isAncestorOf(widget))) {
-                trackRevealBand(static_cast<QMouseEvent *>(event)->globalPosition().toPoint());
-            }
-        }
-    } else if (m_structuredChrome) {
+    // Workspace preview: nothing here shows a hidden header; the eye
+    // button, the body menu and Arrange do.
+    if (m_structuredChrome && !m_groupHeader) {
         if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
             auto *key = static_cast<QKeyEvent *>(event);
             if (key->key() == Qt::Key_Shift) {
@@ -1393,10 +1234,6 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
         }
         if (auto *widget = qobject_cast<QWidget *>(watched);
             widget && (widget == this || isAncestorOf(widget))) {
-            if (event->type() == QEvent::Enter || event->type() == QEvent::MouseMove) {
-                m_hoverChrome = true;
-                updateChrome();
-            }
             if (event->type() == QEvent::Resize) {
                 updateChrome();
             }

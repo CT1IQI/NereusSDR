@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - header loads as Shown (0) or Hidden (2); a saved 1 loads
+//                 as Hidden and is written back as 2. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - locked is written only when true, and a document without
 //                 the key loads unlocked. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -114,6 +117,58 @@ private slots:
         decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson(QJsonDocument::Compact));
         QVERIFY2(decoded.ok, qPrintable(decoded.error));
         QCOMPARE(decoded.document, doc);
+    }
+    void headerLoadsAsShownOrHidden_data()
+    {
+        QTest::addColumn<int>("saved");
+        QTest::addColumn<bool>("loads");
+        QTest::addColumn<HeaderMode>("header");
+        QTest::addColumn<int>("writtenBack");
+        QTest::newRow("0 is shown") << 0 << true << HeaderMode::Shown << 0;
+        QTest::newRow("2 is hidden") << 2 << true << HeaderMode::Hidden << 2;
+        // 1 was the hover mode; it loads hidden and is never written again.
+        QTest::newRow("1 loads hidden") << 1 << true << HeaderMode::Hidden << 2;
+        QTest::newRow("3 is rejected") << 3 << false << HeaderMode::Shown << 0;
+        QTest::newRow("-1 is rejected") << -1 << false << HeaderMode::Shown << 0;
+    }
+    void headerLoadsAsShownOrHidden()
+    {
+        QFETCH(int, saved);
+        QFETCH(bool, loads);
+        QFETCH(HeaderMode, header);
+        QFETCH(int, writtenBack);
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(sample())).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        first["header"] = saved;
+        containers[0] = first;
+        root["containers"] = containers;
+        const DocumentResult decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        QCOMPARE(decoded.ok, loads);
+        if (!loads) {
+            QVERIFY(!decoded.error.isEmpty());
+            return;
+        }
+        QCOMPARE(decoded.document.containers[0].header, header);
+        const QJsonObject written = QJsonDocument::fromJson(ContainerDocumentCodec::encode(decoded.document))
+                                        .object()["containers"].toArray().first().toObject();
+        QCOMPARE(written["header"].toInt(-1), writtenBack);
+        // The other container values are untouched by the header read.
+        WorkspaceDocument expected = sample();
+        expected.containers[0].header = header;
+        QCOMPARE(decoded.document, expected);
+    }
+    void theRemovedHoverHeaderValueIsNotAValidDocument()
+    {
+        // 1 can only come from an old file, where decode maps it; a document
+        // in memory never holds it.
+        WorkspaceDocument doc = sample();
+        doc.containers[0].header = static_cast<HeaderMode>(1);
+        QVERIFY(!ContainerDocumentCodec::validate(doc).isEmpty());
+        doc.containers[0].header = HeaderMode::Shown;
+        QVERIFY(ContainerDocumentCodec::validate(doc).isEmpty());
+        QCOMPARE(int(HeaderMode::Shown), 0);
+        QCOMPARE(int(HeaderMode::Hidden), 2);
     }
     void freeCanvasKeepsPrecisePlacementAndLegacyRecord()
     {

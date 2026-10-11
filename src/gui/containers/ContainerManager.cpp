@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - A header is Shown or Hidden (comment only here). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the look has no Lock setting. A
 //                 container loads, runs and commits unlocked there
 //                 (lockApplies, clearLocks), and a strip divider beside a
@@ -885,7 +887,7 @@ void ContainerManager::applyEdgeStripContentHints(bool sideStripsOnly)
     }
     const DockEdge edges[] = {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom};
     // What each strip's containers need across it. The header counts only
-    // where it takes room (Always); Reveal and Hidden reserve none.
+    // where it takes room (Shown); Hidden reserves none.
     for (DockEdge edge : edges) {
         if (sideStripsOnly && EdgeDockStrip::orientationFor(edge) != Qt::Vertical) {
             // An end strip's preferred height follows its own signal

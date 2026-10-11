@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - header is Shown (0) or Hidden (2); a saved 1 (the removed
+//                 hover mode) loads as Hidden and is never written. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - locked is written only when true; a document without the
 //                 key loads unlocked, as before. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -374,6 +377,12 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
         || !object["contents"].isArray()) {
         return false;
     }
+    // 1 was the hover mode (Reveal). It was hidden most of the time, so it
+    // loads as Hidden; encode writes 2.
+    constexpr int kSavedRevealHeader = 1;
+    if (int(container.header) == kSavedRevealHeader) {
+        container.header = HeaderMode::Hidden;
+    }
     if (object.contains("edge")
         && (!object["edge"].isString() || !edgeFromName(object["edge"].toString(), container.edge))) {
         return false;
@@ -566,7 +575,7 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
         if (int(container.layout) < 0 || int(container.layout) > int(ContentLayout::FreeCanvas)
             || int(container.dockMode) < 0 || int(container.dockMode) > int(DockMode::Floating)
             || int(container.anchor) < 0 || int(container.anchor) > int(AxisLock::BottomLeft)
-            || int(container.header) < 0 || int(container.header) > int(HeaderMode::Hidden)
+            || (container.header != HeaderMode::Shown && container.header != HeaderMode::Hidden)
             || int(container.edge) < 0 || int(container.edge) > int(DockEdge::Bottom)) {
             return QStringLiteral("Invalid layout mode in container %1").arg(container.id);
         }

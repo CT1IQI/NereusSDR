@@ -10,6 +10,9 @@
 //   2026-10-07 - DockEdge for the workspace preview's four-edge strips
 //                 (NereusSDR-original) by J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - HeaderMode is two values, Shown and Hidden; the hover mode
+//                 (Reveal) is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -67,7 +70,10 @@ enum class DockMode {
     Floating        // Separate window
 };
 
-enum class HeaderMode { Always, Reveal, Hidden };
+// A container's header is shown or hidden. The saved integers are the ones
+// the three-way mode used: 1 was Reveal (hover), which the codec reads as
+// Hidden and never writes.
+enum class HeaderMode { Shown = 0, Hidden = 2 };
 enum class ContentLayout { LegacyCanvas = 0, VerticalStack = 1, FreeCanvas = 2 };
 // Workspace preview: the strip a PanelDocked container sits in. Saved by
 // name ("Left", "Top", "Bottom"); Right is the default and is not written.

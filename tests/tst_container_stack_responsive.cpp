@@ -66,7 +66,7 @@ struct StackFixture {
         container.name = "Synthetic offline Slice A stack";
         container.layout = ContentLayout::VerticalStack;
         container.dockMode = DockMode::Floating;
-        container.header = HeaderMode::Always;
+        container.header = HeaderMode::Shown;
         container.geometry = QRect(40, 40, 640, 450);
         container.autoHeight = autoHeight;
         const QStringList variants{"signalMaxBin", "comp", "eq", "leveler", "cfc",

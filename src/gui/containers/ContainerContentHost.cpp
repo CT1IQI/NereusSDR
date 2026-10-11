@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-11 - The container header mode is Shown or Hidden. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: the entry header's options menu
 //                 lives on the heap under the host too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1024,10 +1026,10 @@ WorkspaceEntryHeader *ContainerContentHost::entryHeader(const QString &entryId) 
 }
 int ContainerContentHost::entryHeaderReserve() const
 {
-    // Workspace preview, Always: a multi-content stack keeps a 16 px slot
-    // above each entry. Other modes show the headers over the content.
+    // Workspace preview, header shown: a multi-content stack keeps a 16 px
+    // slot above each entry. Hidden shows the headers over the content.
     const bool reserve = WorkspacePreview::enabled() && m_document.layout == ContentLayout::VerticalStack
-        && m_document.contents.size() > 1 && m_containerHeaderMode == HeaderMode::Always;
+        && m_document.contents.size() > 1 && m_containerHeaderMode == HeaderMode::Shown;
     return reserve ? WorkspaceEntryHeader::kHeight : 0;
 }
 QString ContainerContentHost::entryTitle(const ContentEntry &entry) const
@@ -1051,7 +1053,7 @@ void ContainerContentHost::updateEntryHeaders()
     // second bar. Free canvas leaves carry their own headers.
     const bool shown = m_materialized && m_document.layout != ContentLayout::FreeCanvas
         && m_document.contents.size() > 1
-        && (m_containerHeaderMode == HeaderMode::Always || m_arrangeActive);
+        && (m_containerHeaderMode == HeaderMode::Shown || m_arrangeActive);
     const bool reserve = shown && entryHeaderReserve() > 0;
     const QMargins margins = m_layout->contentsMargins();
     QSet<QString> live;

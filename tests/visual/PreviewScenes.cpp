@@ -173,6 +173,13 @@
 //                 lower edge at laptop-1280x800@1. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================
+//   2026-10-11 - Headers are shown or hidden: header-always is header-shown,
+//                 arrange-on mixes a kept and a hidden header and notes each
+//                 eye button's rect, mixed-container-reveal is
+//                 mixed-container-hidden; header-reveal-idle,
+//                 header-reveal-shown, clean-spectrum-reveal and
+//                 baseline-header-reveal are gone. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -1414,7 +1421,7 @@ void sceneHeaderMode(SceneContext& ctx, HeaderMode mode, const QString& name)
             c.failure = QStringLiteral("no Main Panel container");
             return;
         }
-        // The context menu's Header > Always / Reveal / Hidden path.
+        // The context menu's Header > Always visible / Hidden path.
         emit panel->headerModeRequested(mode);
     });
     if (ctx.failure.isEmpty()) {
@@ -1453,16 +1460,17 @@ QJsonObject proposedHeaderValues()
         {QStringLiteral("title"), QStringLiteral("capsFont 9 px DemiBold #828288")},
         {QStringLiteral("source_chip"), QStringLiteral(
             "mono 9 px slice colour on #16161c, 1 px slice colour at 60%, radius 4, height 13")},
-        {QStringLiteral("buttons"), QStringLiteral("16x14, glyph #7e7e85, hover #26262b radius 7: pop out, options")},
+        {QStringLiteral("buttons"), QStringLiteral(
+            "16x14, glyph #7e7e85, hover #26262b radius 7: eye (drawn, open when kept shown, crossed out "
+            "when hidden), pop out, options, hide")},
         {QStringLiteral("plate"), QStringLiteral("glassPanelFill #17171b..#0e0e10, 1 px #1f1f23, radius 10")},
         {QStringLiteral("entry_header_height_px"), WorkspaceEntryHeader::kHeight},
         {QStringLiteral("entry_header"), QStringLiteral(
             "transparent, bottom hairline #1f1f23, grip 10 px #58585e (hover #a6a6ac), "
             "title capsFont 9 #7e7e85, options 14x12")},
         {QStringLiteral("content_left_gutter_px"), 0},
-        {QStringLiteral("reveal"), QStringLiteral(
-            "zero extent; after 120 ms in the top 18 px band or keyboard focus; fade 0 to 0.96 in 90 ms; "
-            "6 px shadow rgba(0,0,0,110) to transparent; hides 600 ms after leaving the band")},
+        {QStringLiteral("hidden"), QStringLiteral(
+            "zero extent; drawn over the top of the content only while arranging")},
         {QStringLiteral("arrange"), QStringLiteral(
             "header bottom border #4a7ba8; 1 px dashed #4a7ba8 at 60% outline; 12x12 dot corner #7e7e85; "
             "4 px inside edge zones; Ctrl+Shift+A; not saved")},
@@ -1470,21 +1478,26 @@ QJsonObject proposedHeaderValues()
 }
 
 // One proposed header scene: the two-band data with the workspace look,
-// the Main Panel in `mode`, then `pose` (after the data is fed).
+// the Main Panel in `mode`, `arrange` (before the data is fed), then `pose`
+// (after it).
 void sceneProposedHeader(SceneContext& ctx, HeaderMode mode, const QString& name,
-                         const std::function<void(SceneContext&, ContainerWidget*)>& pose = {})
+                         const std::function<void(SceneContext&, ContainerWidget*)>& pose = {},
+                         const std::function<void(SceneContext&)>& arrange = {})
 {
     ctx.provenance = QStringLiteral("proposed");
     ctx.proposedValues = proposedHeaderValues();
     ctx.extraCrops = addPanelTopCrop;
-    runWindowScene(ctx, twoBandPoses(), 0, [mode](SceneContext& c) {
+    runWindowScene(ctx, twoBandPoses(), 0, [mode, arrange](SceneContext& c) {
         ContainerWidget* panel = mainPanel(c);
         if (panel == nullptr) {
             c.failure = QStringLiteral("no Main Panel container");
             return;
         }
-        // The options menu's Header > Always / Reveal / Hidden path.
+        // The eye button's and the body menu's Keep Header Showing path.
         emit panel->headerModeRequested(mode);
+        if (arrange) {
+            arrange(c);
+        }
     }, [pose](SceneContext& c) {
         if (pose) {
             pose(c, mainPanel(c));
@@ -1498,6 +1511,22 @@ void sceneProposedHeader(SceneContext& ctx, HeaderMode mode, const QString& name
                              .arg(panel->headerExtent())
                              .arg(panel->chromeVisible() ? QStringLiteral("yes") : QStringLiteral("no"))
                              .arg(panel->arrangeActive() ? QStringLiteral("on") : QStringLiteral("off")));
+    }
+    // Where each drawn header's eye button is, in window logical px.
+    if (auto* manager = ctx.window->findChild<ContainerManager*>()) {
+        for (ContainerWidget* container : manager->allContainers()) {
+            WorkspaceGroupHeader* header = container->workspaceHeader();
+            if (header == nullptr || !header->isVisible() || !ctx.window->isAncestorOf(header)) {
+                continue;
+            }
+            QAbstractButton* eye = header->keepShownButton();
+            const QPoint at = eye->mapTo(ctx.window, QPoint(0, 0));
+            ctx.notes.append(QStringLiteral("eye button of \"%1\": %2,%3 %4x%5, %6")
+                                 .arg(header->title())
+                                 .arg(at.x()).arg(at.y()).arg(eye->width()).arg(eye->height())
+                                 .arg(header->keepShown() ? QStringLiteral("open (header kept shown)")
+                                                          : QStringLiteral("crossed out (header hidden)")));
+        }
     }
     captureWindow(ctx, name);
 }
@@ -1553,7 +1582,7 @@ ContainerDocument makeSceneContainer(ContainerManager* manager, const QString& n
     d.layout = layout;
     d.dockMode = DockMode::PanelDocked;
     d.edge = edge;
-    d.header = HeaderMode::Always;
+    d.header = HeaderMode::Shown;
     for (const EdgeEntry& e : entries) {
         ContentEntry entry = manager->contentRegistry()->makeEntry(e.typeId);
         entry.id = d.id + QStringLiteral("-") + slug(e.typeId);
@@ -1724,12 +1753,12 @@ void noteStrips(SceneContext& ctx)
 }
 
 // One proposed edge scene: the two-band data with the workspace look, every
-// container's header in `header` (Always unless a scene says otherwise),
+// container's header in `header` (Shown unless a scene says otherwise),
 // `arrange` before the data and `pose` after.
 void sceneProposedEdges(SceneContext& ctx, const QString& name,
                         const std::function<void(SceneContext&)>& arrange,
                         const std::function<void(SceneContext&)>& pose = {},
-                        HeaderMode header = HeaderMode::Always)
+                        HeaderMode header = HeaderMode::Shown)
 {
     ctx.provenance = QStringLiteral("proposed");
     ctx.proposedValues = proposedEdgeValues();
@@ -2374,8 +2403,8 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded,
     profiles->setClock(&profileClock);
     const WorkspaceDocument base = manager->workspaceStore()->snapshot();
 
-    // SSB: Main Panel right, the Station mixed container left, Reveal.
-    if (!commitArrangement(ctx, base, HeaderMode::Reveal, [](WorkspaceDocument& d, ContainerManager* m) {
+    // SSB: Main Panel right, the Station mixed container left, headers hidden.
+    if (!commitArrangement(ctx, base, HeaderMode::Hidden, [](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             d.containers.append(makeSceneContainer(m, QStringLiteral("Station"), DockEdge::Left,
                                                    ContentLayout::VerticalStack, stationEntries()));
@@ -2393,7 +2422,7 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded,
     seeded.filterHosts[SceneProfile::Ssb] = {QStringLiteral("preview-station")};
     seeded.description[SceneProfile::Ssb] = QStringLiteral(
         "Main Panel right; Station (Longpath frequency, filter, needle and bar with Thetis "
-        "S-Meter and cross needle, slice A) left; every header Reveal");
+        "S-Meter and cross needle, slice A) left; every header Hidden");
 
     const auto create = [&](SceneProfile p, HeaderMode header,
                             const std::function<void(WorkspaceDocument&, ContainerManager*)>& edit) {
@@ -2414,7 +2443,7 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded,
     // source chips; signal needles for A and B on top; Always.
     const QString dxSignal = dxSignalType.isEmpty() ? QString::fromLatin1(LongpathContent::kNeedleType)
                                                     : dxSignalType;
-    if (!create(SceneProfile::Dx, HeaderMode::Always, [dxSignal](WorkspaceDocument& d, ContainerManager* m) {
+    if (!create(SceneProfile::Dx, HeaderMode::Shown, [dxSignal](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             const QString freq = QString::fromLatin1(LongpathContent::kFrequencyType);
             const QString needle = dxSignal;
@@ -2442,7 +2471,7 @@ bool seedProfiles(SceneContext& ctx, SceneProfile show, SeededProfiles& seeded,
     }
 
     // Contest: all four strips, dense, Always.
-    if (!create(SceneProfile::Contest, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+    if (!create(SceneProfile::Contest, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             d.containers.append(makeSceneContainer(m, QStringLiteral("Meters"), DockEdge::Top,
                                                    ContentLayout::FreeCanvas, metersEntries()));
@@ -3033,17 +3062,15 @@ QLabel* addNotImplementedPlate(SceneContext& ctx, QWidget* near, const QString& 
 }
 
 // clean-spectrum: one pan, no docked containers, one free container with
-// a Longpath frequency and needle for slice A, header Reveal idle.
-// clean-spectrum-reveal (`revealed`): the same with that header shown, as
-// when the pointer has rested in the container's top band.
-void sceneCleanSpectrum(SceneContext& ctx, bool revealed)
+// a Longpath frequency and needle for slice A, header hidden.
+void sceneCleanSpectrum(SceneContext& ctx)
 {
     ctx.provenance = provProposed();
     ctx.proposedValues = proposedEdgeValues();
     ctx.extraCrops = addAllStripCrops;
     const QString id = QStringLiteral("preview-instruments");
     runWindowScene(ctx, defaultPoses(), 0, [id](SceneContext& c) {
-        if (!commitScene(c, HeaderMode::Reveal, [](WorkspaceDocument& d, ContainerManager* m) {
+        if (!commitScene(c, HeaderMode::Hidden, [](WorkspaceDocument& d, ContainerManager* m) {
                 for (ContainerDocument& cd : d.containers) {
                     if (cd.id == d.mainContainerId) {
                         cd.visible = false;
@@ -3086,31 +3113,20 @@ void sceneCleanSpectrum(SceneContext& ctx, bool revealed)
         if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
             c.failure = QStringLiteral("could not move the Instruments container");
         }
-    }, [id, revealed](SceneContext& c) {
+    }, [id](SceneContext& c) {
         // MeterPoller polls Longpath instruments on their own; with no
         // radio the needle gets slice A's reading through the poller's
         // signal, as it would live.
         auto* manager = c.window->findChild<ContainerManager*>();
         feedSliceInstruments(c, manager->contentHost(id));
-        if (revealed) {
-            ContainerWidget* box = manager->container(id);
-            if (box == nullptr) {
-                c.failure = QStringLiteral("the Instruments container is gone");
-                return;
-            }
-            // The pointer has been in the top band for 120 ms.
-            box->setHeaderRevealedForPreview(true);
-            c.notes.append(QStringLiteral("Instruments: ContainerWidget::setHeaderRevealedForPreview(true)"));
-        }
         pump(kFinalSettleMs);
     });
     if (!ctx.failure.isEmpty()) {
         return;
     }
-    ctx.notes.append(QStringLiteral("Main Panel hidden (visible false); Instruments: Place Free, Header Reveal, "
-                                    "%1").arg(revealed ? QStringLiteral("header shown") : QStringLiteral("pointer away")));
+    ctx.notes.append(QStringLiteral("Main Panel hidden (visible false); Instruments: Place Free, Header Hidden"));
     noteStrips(ctx);
-    captureWindow(ctx, revealed ? QStringLiteral("clean-spectrum-reveal") : QStringLiteral("clean-spectrum"));
+    captureWindow(ctx, QStringLiteral("clean-spectrum"));
     annotateSlices(ctx);
 }
 
@@ -3224,7 +3240,7 @@ void sceneCwDigital(SceneContext& ctx)
         if (!registerPreviewApplets(c)) {
             return;
         }
-        if (!commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+        if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
                 placeMain(d, DockEdge::Left);
                 takeFromMain(d, {QStringLiteral("applet:PHCW")});
                 d.containers.append(makeSceneContainer(
@@ -3395,7 +3411,7 @@ void sceneTxProcessing(SceneContext& ctx)
         if (!registerPreviewApplets(c)) {
             return;
         }
-        if (!commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+        if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
                 placeMain(d, DockEdge::Left);
                 takeFromMain(d, {QStringLiteral("applet:TX"), QStringLiteral("applet:pure_signal"),
                                  QStringLiteral("applet:mod_monitor")});
@@ -3528,7 +3544,7 @@ void sceneEditDialog(SceneContext& ctx, const QString& name,
     const QString id = QStringLiteral("preview-station");
     auto dialog = std::make_shared<QPointer<ContainerSettingsDialog>>();
     runWindowScene(ctx, twoBandPoses(), 0, [](SceneContext& c) {
-        commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+        commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             d.containers.append(onSlice(makeSceneContainer(m, QStringLiteral("Station"), DockEdge::Left,
                                                            ContentLayout::VerticalStack, stationEntries()), 1));
@@ -3859,7 +3875,7 @@ void sceneDialTwoBand(SceneContext& ctx, const QString& name)
 // Station (as mixed-container) with a dial after the Thetis S-meter bar.
 void sceneDialMixed(SceneContext& ctx)
 {
-    sceneDialWindow(ctx, QStringLiteral("dial-addable--mixed"), HeaderMode::Always,
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--mixed"), HeaderMode::Shown,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         QVector<EdgeEntry> entries = stationEntries();
@@ -3887,7 +3903,7 @@ void sceneDialNarrow(SceneContext& ctx)
 // Dials for RX A and RX B on top while slice A transmits (display-only).
 void sceneDialTx(SceneContext& ctx, const QString& name)
 {
-    sceneDialWindow(ctx, name, HeaderMode::Always,
+    sceneDialWindow(ctx, name, HeaderMode::Shown,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
@@ -3930,7 +3946,7 @@ constexpr auto kAmpReturnLossDb = "-20";
 // watts, as the Main Panel's dial.
 void sceneDialAmp(SceneContext& ctx)
 {
-    sceneDialWindow(ctx, QStringLiteral("dial-addable--amp"), HeaderMode::Always,
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--amp"), HeaderMode::Shown,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
@@ -3959,7 +3975,7 @@ void sceneDialAmp(SceneContext& ctx)
 // Main Panel's dial); "Own face" has VU Amber picked from its own menu.
 void sceneDialFace(SceneContext& ctx)
 {
-    sceneDialWindow(ctx, QStringLiteral("dial-addable--face"), HeaderMode::Always,
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--face"), HeaderMode::Shown,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
@@ -4002,7 +4018,7 @@ void sceneDialFace(SceneContext& ctx)
 // station has not opened.
 void sceneDialClosed(SceneContext& ctx)
 {
-    sceneDialWindow(ctx, QStringLiteral("dial-addable--closed"), HeaderMode::Always,
+    sceneDialWindow(ctx, QStringLiteral("dial-addable--closed"), HeaderMode::Shown,
                     [](WorkspaceDocument& d, ContainerManager* m) {
         placeMain(d, DockEdge::Right);
         const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
@@ -4059,7 +4075,7 @@ void sceneFourRxLook(SceneContext& ctx)
     ctx.proposedValues = proposedEdgeValues();
     ctx.extraCrops = addAllStripCrops;
     runWindowScene(ctx, fourRxPoses(), 2, [](SceneContext& c) {
-        commitScene(c, HeaderMode::Always, [](WorkspaceDocument& d, ContainerManager* m) {
+        commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
             placeMain(d, DockEdge::Right);
             const QString freq = QString::fromLatin1(LongpathContent::kFrequencyType);
             const QString bar = QString::fromLatin1(LongpathContent::kBarType);
@@ -7158,11 +7174,7 @@ QVector<Scene> fixedScenes()
 
     scenes.append({QStringLiteral("baseline-header-always"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        sceneHeaderMode(ctx, HeaderMode::Always, QStringLiteral("baseline-header-always"));
-    }});
-    scenes.append({QStringLiteral("baseline-header-reveal"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-        sceneHeaderMode(ctx, HeaderMode::Reveal, QStringLiteral("baseline-header-reveal"));
+        sceneHeaderMode(ctx, HeaderMode::Shown, QStringLiteral("baseline-header-always"));
     }});
     scenes.append({QStringLiteral("baseline-header-hidden"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
@@ -7199,24 +7211,9 @@ QVector<Scene> fixedScenes()
     }});
 
     // ---- proposed workspace headers (workspace preview switch on) ----
-    scenes.append({QStringLiteral("header-always"), QStringLiteral("2v"), false,
+    scenes.append({QStringLiteral("header-shown"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        sceneProposedHeader(ctx, HeaderMode::Always, QStringLiteral("header-always"));
-    }, true});
-    scenes.append({QStringLiteral("header-reveal-idle"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-        sceneProposedHeader(ctx, HeaderMode::Reveal, QStringLiteral("header-reveal-idle"));
-    }, true});
-    scenes.append({QStringLiteral("header-reveal-shown"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-        sceneProposedHeader(ctx, HeaderMode::Reveal, QStringLiteral("header-reveal-shown"),
-                            [](SceneContext& c, ContainerWidget* panel) {
-            if (panel != nullptr) {
-                // The pointer has been in the top band for 120 ms.
-                panel->setHeaderRevealedForPreview(true);
-                c.notes.append(QStringLiteral("ContainerWidget::setHeaderRevealedForPreview(true)"));
-            }
-        });
+        sceneProposedHeader(ctx, HeaderMode::Shown, QStringLiteral("header-shown"));
     }, true});
     scenes.append({QStringLiteral("header-hidden"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
@@ -7224,12 +7221,25 @@ QVector<Scene> fixedScenes()
     }, true});
     scenes.append({QStringLiteral("arrange-on"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        sceneProposedHeader(ctx, HeaderMode::Always, QStringLiteral("arrange-on"),
+        // The Main Panel keeps its header (open eye); a Meters container
+        // in the top strip hides its own (crossed-out eye), so Arrange
+        // draws that one over the top of its content.
+        sceneProposedHeader(ctx, HeaderMode::Shown, QStringLiteral("arrange-on"),
                             [](SceneContext& c, ContainerWidget*) {
             if (auto* manager = c.window->findChild<ContainerManager*>()) {
                 manager->setArrangeMode(true);
                 c.notes.append(QStringLiteral("ContainerManager::setArrangeMode(true)"));
             }
+        }, [](SceneContext& c) {
+            const QString id = addMetersContainer(c, DockEdge::Top);
+            auto* manager = c.window->findChild<ContainerManager*>();
+            ContainerWidget* meters = id.isEmpty() ? nullptr : manager->container(id);
+            if (meters == nullptr) {
+                c.failure = QStringLiteral("the Meters container was not created");
+                return;
+            }
+            emit meters->headerModeRequested(HeaderMode::Hidden);
+            c.notes.append(QStringLiteral("Main Panel: header shown; Meters (top strip): header hidden"));
         });
     }, true});
 
@@ -7262,14 +7272,14 @@ QVector<Scene> fixedScenes()
     }, true});
     scenes.append({QStringLiteral("edge-all-four-clean"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        // edge-all-four with every container's header Reveal, idle: no
-        // group or entry header shows and none takes room.
+        // edge-all-four with every container's header hidden: no group or
+        // entry header shows and none takes room.
         sceneProposedEdges(ctx, QStringLiteral("edge-all-four-clean"), [](SceneContext& c) {
             addMetersContainer(c, DockEdge::Top);
             addBandContainer(c, DockEdge::Bottom);
             addLevelsContainer(c, DockEdge::Left);
-            c.notes.append(QStringLiteral("every container: Header Reveal, pointer away"));
-        }, {}, HeaderMode::Reveal);
+            c.notes.append(QStringLiteral("every container: Header Hidden"));
+        }, {}, HeaderMode::Hidden);
     }, true});
     // ---- folded receiver flags (Task 26) ----
     // edge-all-four's short pans with both flags folded; the zoom row sits
@@ -7323,12 +7333,12 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
     scenes.append({QStringLiteral("mixed-container"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        sceneMixedContainer(ctx, QStringLiteral("mixed-container"), HeaderMode::Always);
+        sceneMixedContainer(ctx, QStringLiteral("mixed-container"), HeaderMode::Shown);
     }, true});
-    scenes.append({QStringLiteral("mixed-container-reveal"), QStringLiteral("2v"), false,
+    scenes.append({QStringLiteral("mixed-container-hidden"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
-        // mixed-container with every header Reveal, pointer away.
-        sceneMixedContainer(ctx, QStringLiteral("mixed-container-reveal"), HeaderMode::Reveal);
+        // mixed-container with every header hidden.
+        sceneMixedContainer(ctx, QStringLiteral("mixed-container-hidden"), HeaderMode::Hidden);
     }, true});
     // ---- workspace profiles (switch on) ----
     scenes.append({QStringLiteral("profile-ssb"), QStringLiteral("2v"), false,
@@ -7493,12 +7503,7 @@ QVector<Scene> fixedScenes()
                 c.failure = QStringLiteral("the Levels container was not created");
                 return;
             }
-            emit levels->headerModeRequested(HeaderMode::Reveal);
-            pump(kSettleMs);
-            // The pointer has been in the top band for 120 ms.
-            levels->setHeaderRevealedForPreview(true);
-            c.notes.append(QStringLiteral("Levels: Place Free, Header Reveal, "
-                                          "ContainerWidget::setHeaderRevealedForPreview(true)"));
+            c.notes.append(QStringLiteral("Levels: Place Free, header shown"));
         });
     }, true});
     scenes.append({QStringLiteral("floating-container"), QStringLiteral("2v"), false,
@@ -7559,9 +7564,7 @@ QVector<Scene> fixedScenes()
 
     // ---- coverage scenes (switch on) ----
     scenes.append({QStringLiteral("clean-spectrum"), QStringLiteral("1"), false,
-                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx, false); }, true});
-    scenes.append({QStringLiteral("clean-spectrum-reveal"), QStringLiteral("1"), false,
-                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx, true); }, true});
+                   [](SceneContext& ctx) { sceneCleanSpectrum(ctx); }, true});
     scenes.append({QStringLiteral("cw-digital"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneCwDigital(ctx); }, true});
     scenes.append({QStringLiteral("tx-processing"), QStringLiteral("2v"), false,

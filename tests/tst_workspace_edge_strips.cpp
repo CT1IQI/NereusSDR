@@ -18,6 +18,9 @@
 //                 is unlocked, its strip handles resize and Move to Edge
 //                 moves it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - Headers are shown or hidden: a hidden header in a strip
+//                 shows only while arranging. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -84,7 +87,7 @@ struct EdgeFixture {
         result.layout = ContentLayout::VerticalStack;
         result.dockMode = DockMode::PanelDocked;
         result.edge = edge;
-        result.header = HeaderMode::Always;
+        result.header = HeaderMode::Shown;
         ContentEntry entry = registry.makeEntry(QStringLiteral("meter.signalMaxBin"));
         entry.id = id + QStringLiteral("-meter");
         entry.context["sliceId"] = 0;
@@ -381,7 +384,7 @@ private slots:
     void endStripDefaultShowsTallestContainerWhole()
     {
         constexpr int kPadding = 2 * EdgeDockStrip::kPaddingPx;
-        for (HeaderMode header : {HeaderMode::Always, HeaderMode::Reveal, HeaderMode::Hidden}) {
+        for (HeaderMode header : {HeaderMode::Shown, HeaderMode::Hidden}) {
             EdgeFixture f;
             QVERIFY(f.commit({f.tallContainer("top", DockEdge::Top, header),
                               f.container("main", DockEdge::Right)}));
@@ -389,8 +392,8 @@ private slots:
             ContainerWidget* top = f.manager->container("top");
             const int content = f.manager->contentHost("top")->preferredContentHeight();
             const int headerExtent = top->headerExtent();
-            // Reveal and Hidden reserve no header room.
-            QCOMPARE(headerExtent, header == HeaderMode::Always ? WorkspaceGroupHeader::kHeight : 0);
+            // A hidden header reserves no room.
+            QCOMPARE(headerExtent, header == HeaderMode::Shown ? WorkspaceGroupHeader::kHeight : 0);
             QVERIFY2(content + headerExtent + kPadding > EdgeDockStrip::kEndThicknessPx,
                      qPrintable(QString::number(content)));
             EdgeDockStrip* strip = f.area->strip(DockEdge::Top);
@@ -510,50 +513,44 @@ private slots:
         QCOMPARE(f.document("a")->dockMode, DockMode::PanelDocked);
     }
 
-    void revealAndHiddenRecoverInsideStrips()
+    void hiddenHeadersShowOnlyWhileArrangingInsideStrips()
     {
         EdgeFixture f;
-        QVERIFY(f.commit({f.tallContainer("r", DockEdge::Top, HeaderMode::Reveal),
-                          f.tallContainer("h", DockEdge::Top, HeaderMode::Hidden),
+        QVERIFY(f.commit({f.tallContainer("h", DockEdge::Top, HeaderMode::Hidden),
                           f.tallContainer("arr", DockEdge::Top, HeaderMode::Hidden),
                           f.container("main", DockEdge::Right)}));
         f.show();
         const int thickness = f.area->strip(DockEdge::Top)->height();
-        ContainerWidget* r = f.manager->container("r");
         ContainerWidget* h = f.manager->container("h");
         ContainerWidget* arr = f.manager->container("arr");
-        for (ContainerWidget* c : {r, h, arr}) {
+        for (ContainerWidget* c : {h, arr}) {
             QCOMPARE(c->headerExtent(), 0);
             QVERIFY(!c->chromeVisible());
         }
-        const QPoint contentTop = r->contentHolder()->mapTo(r, QPoint());
+        const QPoint contentTop = h->contentHolder()->mapTo(h, QPoint());
 
-        // Reveal: 120 ms in the top band shows the header over the content.
+        // Hovering the top of a hidden header shows nothing.
         const auto hover = [](QWidget* target, const QPoint& position) {
             QMouseEvent event(QEvent::MouseMove, position, target->mapToGlobal(position),
                               Qt::NoButton, Qt::NoButton, Qt::NoModifier);
             QApplication::sendEvent(target, &event);
         };
-        hover(r, QPoint(40, 6));
-        QTRY_VERIFY_WITH_TIMEOUT(r->chromeVisible(), 1000);
-        QCOMPARE(r->contentHolder()->mapTo(r, QPoint()), contentTop);
-        QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
-        hover(r, QPoint(40, r->height() - 6));
-        QTRY_VERIFY_WITH_TIMEOUT(!r->chromeVisible(), 2000);
-
-        // Hidden: the context menu's Reveal controls recovers it.
-        h->recoverChrome();
-        settle();
-        QVERIFY(h->chromeVisible());
+        hover(h, QPoint(40, 6));
+        QTest::qWait(400);
+        QVERIFY(!h->chromeVisible());
         QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
 
-        // Hidden: Arrange recovers it, and turning Arrange off hides it.
+        // Arrange draws them over the content, and turning Arrange off
+        // hides them; the strip never changes thickness.
         f.manager->setArrangeMode(true);
         settle();
+        QVERIFY(h->chromeVisible());
         QVERIFY(arr->chromeVisible());
+        QCOMPARE(h->contentHolder()->mapTo(h, QPoint()), contentTop);
         QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
         f.manager->setArrangeMode(false);
         settle();
+        QVERIFY(!h->chromeVisible());
         QVERIFY(!arr->chromeVisible());
         QCOMPARE(f.area->strip(DockEdge::Top)->height(), thickness);
     }

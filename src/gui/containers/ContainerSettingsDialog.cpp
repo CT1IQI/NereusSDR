@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - The header choice is Shown or Hidden; the hover choice is
+//                 gone. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-11 - Workspace preview only: no Lock checkbox. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Duplicate always gives a shown, floating copy next to the
@@ -1107,7 +1110,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         m_hideTitleCheck->hide();
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
         m_headerCombo=new QComboBox(bar); m_headerCombo->setObjectName("containerHeader");
-        m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Always)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
+        m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
         m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
         m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
         auto* canvasActions=new QHBoxLayout;outer->addLayout(canvasActions);
@@ -2189,7 +2192,7 @@ void ContainerSettingsDialog::saveCurrentDraft()
             if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
             if (m_hideTitleCheck) {
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
-                else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Always;}
+                else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Shown;}
             }
             if (m_minimisesCheck && m_minimisesCheck->isEnabled()) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }

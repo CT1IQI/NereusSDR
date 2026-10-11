@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original native grips, reserved chrome and ownership regressions.
 // Modification history (NereusSDR):
+//   2026-10-11 - Headers are Shown or Hidden: the hover and focus cases and
+//                 recoverChrome are replaced by holding Shift. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Verify overlay anchoring with final pane dimensions by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 - Check the Linux compositing window for embedded QRhi meters
@@ -78,7 +81,7 @@ class TstContainerChrome : public QObject
         ContainerWidget c;
         QPushButton content("An ordinary control");
         c.setContent(&content);
-        c.setHeaderMode(HeaderMode::Reveal);
+        c.setHeaderMode(HeaderMode::Shown);
         c.setDockMode(DockMode::OverlayDocked);
         c.resize(420, 260);
         c.show();
@@ -110,7 +113,9 @@ class TstContainerChrome : public QObject
         c.setHeaderMode(HeaderMode::Hidden);
         QVERIFY(!c.chromeVisible());
         c.setLocked(true);
-        c.recoverChrome();
+        // Holding Shift recovers a hidden header.
+        QTest::keyPress(&c, Qt::Key_Shift);
+        QCoreApplication::processEvents();
         QVERIFY(c.chromeVisible());
         QCOMPARE(content.mapTo(&c, QPoint()), position);
         QSignalSpy settings(&c, &ContainerWidget::settingsRequested);
@@ -122,16 +127,13 @@ class TstContainerChrome : public QObject
         QCOMPARE(settings.count(), 1);
         auto* resizeGrip=c.findChild<QWidget*>("containerResizeGrip");QVERIFY(resizeGrip);QVERIFY(!resizeGrip->isVisible());
         const QSize lockedSize=c.size();QTest::mousePress(resizeGrip,Qt::LeftButton);QTest::mouseMove(resizeGrip,QPoint(80,80));QTest::mouseRelease(resizeGrip,Qt::LeftButton);QCOMPARE(c.size(),lockedSize);
-        c.setHeaderMode(HeaderMode::Hidden);
-        QTest::keyPress(&c, Qt::Key_Shift);
-        QCoreApplication::processEvents();
-        QVERIFY(c.chromeVisible());
         QTest::keyRelease(&c, Qt::Key_Shift);
-        c.setHeaderMode(HeaderMode::Always);
-        QVERIFY(c.chromeVisible());
-        c.setHeaderMode(HeaderMode::Reveal);
+        QCoreApplication::processEvents();
+        // Focus inside a hidden header's container shows nothing.
         content.setFocus();
         QCoreApplication::processEvents();
+        QVERIFY(!c.chromeVisible());
+        c.setHeaderMode(HeaderMode::Shown);
         QVERIFY(c.chromeVisible());
         // Detach a borrowed stack fixture before its owner's QWidget teardown.
         content.setParent(nullptr);
@@ -270,7 +272,7 @@ class TstContainerChrome : public QObject
         QTest::mouseClick(&borrowed, Qt::LeftButton);
         QCOMPARE(clicks, 3);
         d = store.snapshot();
-        d.containers[0].header = HeaderMode::Reveal;
+        d.containers[0].header = HeaderMode::Shown;
         QCOMPARE(manager.commitWorkspace(d, d.revision).status, CommitStatus::Saved);
         auto* c = manager.container("main");
         QApplication::setActiveWindow(&window);
@@ -278,7 +280,7 @@ class TstContainerChrome : public QObject
         QTRY_VERIFY(borrowed.hasFocus());
         QTRY_VERIFY(c->chromeVisible());
         const QPoint body = host->mapTo(c, QPoint());
-        capture(&window, "07-reveal-focus");
+        capture(&window, "07-shown-focus");
         d = store.snapshot();
         d.containers[0].header = HeaderMode::Hidden;
         d.containers[0].locked = true;
@@ -286,7 +288,9 @@ class TstContainerChrome : public QObject
         QVERIFY(!c->chromeVisible());
         QCOMPARE(host->mapTo(c, QPoint()), body);
         capture(&window, "08-hidden");
-        c->recoverChrome();
+        // Holding Shift recovers a hidden header.
+        QTest::keyPress(c, Qt::Key_Shift);
+        QCoreApplication::processEvents();
         QVERIFY(c->chromeVisible());
         const auto recoveredViewport = host->mapTo(c, QPoint());
         d = store.snapshot();
@@ -295,6 +299,8 @@ class TstContainerChrome : public QObject
         QVERIFY(c->chromeVisible());
         QCOMPARE(host->mapTo(c, QPoint()), recoveredViewport);
         capture(&window, "09-hidden-recovery");
+        QTest::keyRelease(c, Qt::Key_Shift);
+        QCoreApplication::processEvents();
         d = store.snapshot();
         d.containers[0].locked = false;
         ContainerDocument legacy;

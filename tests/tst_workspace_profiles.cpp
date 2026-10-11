@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original workspace preview profile regressions.
 // Modification history (NereusSDR):
+//   2026-10-11 - Headers are Shown or Hidden; the fixtures that used the
+//                 hover mode use Hidden. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - suppressedMovesAndResizesCommitNothing reports its simulated
 //                 moves as the operator's (rememberOperatorGeometry). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -142,8 +145,8 @@ struct ProfilesFixture {
     // Arrangement A: main on the right, meters on the left.
     bool commitA()
     {
-        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal),
-                       container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal)});
+        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Hidden),
+                       container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Hidden)});
     }
 
     // Arrangement B: main on the right, meters on top, headers always,
@@ -152,8 +155,8 @@ struct ProfilesFixture {
     {
         ContainerDocument extra = container(QStringLiteral("band"), DockEdge::Bottom, HeaderMode::Hidden);
         extra.visible = false;
-        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                       container(QStringLiteral("meters"), DockEdge::Top, HeaderMode::Always), extra});
+        return commit({container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                       container(QStringLiteral("meters"), DockEdge::Top, HeaderMode::Shown), extra});
     }
 };
 
@@ -223,9 +226,9 @@ private slots:
         // Two left containers; one profile drags the strip and its split,
         // the other has neither saved.
         ProfilesFixture f;
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
-                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always)}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Shown)}));
         EdgeDockStrip* left = f.area->strip(DockEdge::Left);
         const int defaultThickness = f.area->thickness(DockEdge::Left);
         QVERIFY(!f.area->hasThickness(DockEdge::Left));
@@ -277,10 +280,10 @@ private slots:
         // A dragged split survives a container moved into its strip; only
         // the newcomer takes a default share.
         ProfilesFixture f;
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
-                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always),
-                          f.container(QStringLiteral("three"), DockEdge::Right, HeaderMode::Always)}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(QStringLiteral("three"), DockEdge::Right, HeaderMode::Shown)}));
         EdgeDockStrip* left = f.area->strip(DockEdge::Left);
         const QList<int> before = left->extents();
         QCOMPARE(before.size(), 2);
@@ -305,10 +308,10 @@ private slots:
     void suppressedMovesAndResizesCommitNothing()
     {
         ProfilesFixture f;
-        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal);
+        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Hidden);
         floating.dockMode = DockMode::Floating;
         floating.geometry = QRect(100, 100, 300, 200);
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal), floating}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Hidden), floating}));
         QWidget* form = f.manager->container(QStringLiteral("meters"))->window();
         QVERIFY(form && form != &f.window);
         const quint64 revision = f.store.snapshot().revision;
@@ -394,8 +397,8 @@ private slots:
         QCOMPARE(f.store.workspaceKey(), QStringLiteral("ContainerWorkspacePreview"));
         // A shipped workspace on disk, as a normal launch saved it.
         WorkspaceDocument shipped;
-        shipped.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                              f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Always)};
+        shipped.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                              f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Shown)};
         shipped.mainContainerId = QStringLiteral("main");
         shipped.revision = 7;
         f.settings.setValue(QStringLiteral("ContainerWorkspace"),
@@ -507,7 +510,7 @@ private slots:
         QVERIFY(meters);
         emit meters->edgeDragStarted();
         QVERIFY(f.area->targetBandsVisible());
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal)}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Hidden)}));
         QVERIFY(!f.area->targetBandsVisible());
 
         // Dragged, then floated: the drag ends too.
@@ -515,10 +518,10 @@ private slots:
         meters = f.manager->container(QStringLiteral("meters"));
         emit meters->edgeDragStarted();
         QVERIFY(f.area->targetBandsVisible());
-        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Reveal);
+        ContainerDocument floating = f.container(QStringLiteral("meters"), DockEdge::Left, HeaderMode::Hidden);
         floating.dockMode = DockMode::Floating;
         floating.geometry = QRect(100, 100, 300, 200);
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Reveal), floating}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Hidden), floating}));
         QVERIFY(!f.area->targetBandsVisible());
         // A late release from the old drag does nothing.
         emit meters->edgeDragFinished(f.area->mapToGlobal(QPoint(2, 100)));
@@ -528,19 +531,19 @@ private slots:
     void hiddenStripDropsDeletedIds()
     {
         ProfilesFixture f;
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always),
-                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always)}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                          f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Shown)}));
         f.manager->saveState();
         QVERIFY(f.store.snapshot().arrangement.strips.value(DockEdge::Left).extents.contains(QStringLiteral("two")));
 
         // Hide the left strip's containers, then delete one of them.
-        ContainerDocument one = f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Always);
+        ContainerDocument one = f.container(QStringLiteral("one"), DockEdge::Left, HeaderMode::Shown);
         one.visible = false;
-        ContainerDocument two = f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Always);
+        ContainerDocument two = f.container(QStringLiteral("two"), DockEdge::Left, HeaderMode::Shown);
         two.visible = false;
         WorkspaceDocument document = f.store.snapshot();
-        document.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always), one, two};
+        document.containers = {f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown), one, two};
         QVERIFY(f.manager->commitWorkspace(document, document.revision).status == CommitStatus::Saved);
         settle();
         QVERIFY(!f.area->strip(DockEdge::Left)->isVisible());
@@ -602,10 +605,10 @@ private slots:
     {
         ProfilesFixture f;
         const QString longName = QStringLiteral("a-container-with-a-rather-long-name");
-        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Always),
-                          f.container(longName + QStringLiteral("-one"), DockEdge::Left, HeaderMode::Always),
-                          f.container(longName + QStringLiteral("-two"), DockEdge::Left, HeaderMode::Always),
-                          f.container(longName + QStringLiteral("-three"), DockEdge::Top, HeaderMode::Always)}));
+        QVERIFY(f.commit({f.container(QStringLiteral("main"), DockEdge::Right, HeaderMode::Shown),
+                          f.container(longName + QStringLiteral("-one"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(longName + QStringLiteral("-two"), DockEdge::Left, HeaderMode::Shown),
+                          f.container(longName + QStringLiteral("-three"), DockEdge::Top, HeaderMode::Shown)}));
         WorkspaceProfiles profiles(f.settings, f.manager.get());
         QVERIFY(profiles.load().ok());
         const QString first = profiles.activeId();

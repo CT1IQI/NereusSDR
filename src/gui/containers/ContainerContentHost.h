@@ -1,6 +1,8 @@
 #pragma once
 // no-port-check: NereusSDR-original committed mixed-content projection.
 // Modification history (NereusSDR):
+//   2026-10-11 - The container header mode is Shown or Hidden. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: setTopOverlayInset keeps overlaid
 //                 entry headers below the container's overlaid group
 //                 header. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -116,7 +118,7 @@ private:
     int verticalBarExtent() const;
     void applyPreviewRightMargin();
     QHash<QString, QPointer<WorkspaceEntryHeader>> m_entryHeaders;
-    HeaderMode m_containerHeaderMode = HeaderMode::Always;
+    HeaderMode m_containerHeaderMode = HeaderMode::Shown;
     bool m_arrangeActive = false;
     int m_topOverlayInset = 0;
     QPointer<ContainerArrangeController> m_arrange;

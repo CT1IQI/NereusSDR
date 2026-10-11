@@ -37,6 +37,9 @@
 #   2026-10-08 - Integration: setup-look-* dropped (the Setup section uses
 #                look-dialog-setup-*), clean-spectrum-reveal placed.
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-11 - Scene names follow the two header choices (header-shown,
+#                mixed-container-hidden; the reveal scenes are gone).
+#                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #   2026-10-08 - Tall extra images held to 1000 px in Fit; "no longer
 #                produced" counts as a verify failure; dialog-only scenes
 #                say which profiles dialogs are captured at; status table
@@ -317,8 +320,8 @@ SECTIONS = [
      ["profile-contest", "edge-all-four"], ["mixed-container"]),
     ("clean", "Clean spectrum workspace",
      "Minimal visible container chrome while retaining access to operating controls and arrangement.",
-     ["clean-spectrum", "clean-spectrum-reveal", "edge-all-four-clean"],
-     ["header-reveal-idle", "mixed-container-reveal", "profile-ft8"]),
+     ["clean-spectrum", "edge-all-four-clean"],
+     ["header-hidden", "mixed-container-hidden", "profile-ft8"]),
     ("cw-digital", "CW and digital arrangements",
      "Relevant PhoneCw, Cwx, Dvk, Digital, or other existing content selected from the inventory; label "
      "availability accurately.",
@@ -330,11 +333,11 @@ SECTIONS = [
     ("mixed", "Mixed container composition",
      "Longpath frequency/filter/instruments alongside Thetis meter faces and native controls; show group "
      "and individual content headers.",
-     ["mixed-container", "mixed-container-reveal", "instruments-sheet"], ["profile-dx"]),
+     ["mixed-container", "mixed-container-hidden", "instruments-sheet"], ["profile-dx"]),
     ("placement", "Placement states",
-     "All four edge layouts, free placement, floating windows, and meaningful differences between Always, "
-     "Reveal, Hidden, and Arrange.",
-     ["header-always", "header-reveal-idle", "header-reveal-shown", "header-hidden", "arrange-on",
+     "All four edge layouts, free placement, floating windows, and meaningful differences between a "
+     "shown header, a hidden one, and Arrange.",
+     ["header-shown", "header-hidden", "arrange-on",
       "edge-right", "edge-left", "edge-top-bottom", "free-container", "floating-container",
       "drag-preview-left", "drag-preview-between"], ["edge-all-four", "edge-all-four-clean"]),
     ("editing", "Widget and container editing",
@@ -354,7 +357,7 @@ SECTIONS = [
 # Scenes planned for this review that may not be captured yet: a tile says so.
 PLANNED = {
     "clean-spectrum": "One pan, 20 m data, no docked containers, one free container (Frequency and needle), "
-                      "Reveal idle: the headerless operating view.",
+                      "header hidden: the headerless operating view.",
     "cw-digital": "Slice A 14.030 CW, slice B 7.074 DIGU; PhoneCw on its CW page, Cwx, Dvk and Digital "
                   "(exists in code, not wired) or a plate saying why one is not available.",
     "tx-processing": "The look in transmit: TxApplet with its profile selector, EqApplet (exists in code, not "
@@ -380,21 +383,21 @@ STILLS = "not verifiable from stills"
 # (element, status, what it is, scenes, still-verifiable)
 STATUS_ROWS = [
     ("Compact group header (18 px)", STATUS_BUILT,
-     "Grip, title, source chip, lock, pop-out and options inside one header; replaces the 22 px title bar.",
-     "header-always, arrange-on", True),
-    ("Reveal overlay", STATUS_BUILT,
-     "Header overlays the content on demand; reserves no height.", "header-reveal-idle, header-reveal-shown",
-     True),
-    ("Hidden", STATUS_BUILT, "No header; recovered from the context menu or Arrange.", "header-hidden", True),
+     "Grip, title, source chip, eye, pop-out, options and hide inside one header; replaces the 22 px "
+     "title bar.",
+     "header-shown, arrange-on", True),
+    ("Hidden", STATUS_BUILT,
+     "No header; the eye button, Keep Header Showing in the right-click menu, or Arrange brings it back.",
+     "header-hidden, arrange-on", True),
     ("Arrange mode", STATUS_BUILT,
      "Containers > Arrange Workspace (Ctrl+Shift+A): every header, accent outline, dot corners, strip "
      "target bands. Runtime only, never saved.", "arrange-on, drag-preview-left", True),
     ("Entry headers (16 px)", STATUS_BUILT,
      "One per entry in a multi-content stack; a single-content container uses the group header title.",
-     "mixed-container, header-always", True),
+     "mixed-container, header-shown", True),
     ("Inside handles", STATUS_BUILT,
      "The grip sits in the header and the dot corner inside the bounds; the external 20 px gutter is gone.",
-     "header-always, arrange-on", True),
+     "header-shown, arrange-on", True),
     ("Left edge strip", STATUS_BUILT, "Containers docked on the left edge of the workspace.", "edge-left", True),
     ("Right edge strip", STATUS_BUILT,
      "Today's right panel position as a strip. The Main Panel keeps its 306 px, inside a 318 px strip and a "
@@ -453,9 +456,6 @@ STATUS_ROWS = [
      "mixed-container", True),
     ("Noise floor and RADE SNR readings for instruments", STATUS_NONE,
      "No producer exists; an instrument bound to them shows offline.", "", True),
-    ("Reveal timing", STATUS_BUILT,
-     "120 ms hover delay in the top 18 px band, 90 ms fade, hides 600 ms after the pointer leaves; Tab focus "
-     "reveals. Unit tested.", "header-reveal-idle, header-reveal-shown", False),
     ("Drag commit and cancel", STATUS_BUILT,
      "Commit on a valid release, Escape or an invalid release restores, release outside the window floats. "
      "Unit tested.", "drag-preview-left, drag-preview-between", False),

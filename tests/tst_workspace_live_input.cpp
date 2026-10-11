@@ -55,6 +55,9 @@
 // button never sees what JJ sees. nativeTarget() reproduces the AppKit rule
 // over the real widget tree, and every event below goes, through
 // QWindowSystemInterface, to the native window AppKit would pick.
+//   2026-10-11 - The profile rail's delays are ProfileRailDock's own
+//                 constants. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include <QtTest>
 #include <QAction>
 #include <QApplication>
@@ -883,12 +886,12 @@ struct LiveFixture {
     }
 
     // Glides from `from` onto the collapsed badge and waits for the rail to
-    // fan out (the Reveal delay).
+    // fan out (the show delay).
     bool hoverOpen(CocoaPointer& pointer, ProfileRailDock* dock, const QPoint& from)
     {
         const QPoint onBadge = centreOf(dock->collapsedBadge());
         pointer.glide(from, onBadge, 4, 40);
-        return QTest::qWaitFor([dock] { return dock->isOpen(); }, ContainerWidget::kRevealDelayMs + 500);
+        return QTest::qWaitFor([dock] { return dock->isOpen(); }, ProfileRailDock::kShowDelayMs + 500);
     }
 
     QString describe(QWidget* widget) const
@@ -1452,7 +1455,7 @@ private slots:
             // Picking the new profile made it active and closed the rail.
             QVERIFY(!dock->isOpen());
             pointer.glide(plus, rest, 3, 60);
-            QTest::qWait(ContainerWidget::kRevealHideMs + 100);
+            QTest::qWait(ProfileRailDock::kHideDelayMs + 100);
             QVERIFY(!dock->isOpen());
         }
         const QStringList ids = profiles->ids();
@@ -1976,7 +1979,7 @@ private slots:
             settle();
             dropped.clearUnderMouse();
             dropped.deliverLeave(dock->popover());
-            QTest::qWait(ContainerWidget::kRevealHideMs + 300);
+            QTest::qWait(ProfileRailDock::kHideDelayMs + 300);
             QVERIFY2(dock->isOpen(), "the rail closed with the cursor on the other profile");
         }
         mouse.click(to);
@@ -2016,10 +2019,10 @@ private slots:
             QuietCursor::setPos(outside);
             left.start();
             QVERIFY(dock->isOpen());
-            QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ContainerWidget::kRevealHideMs + 400);
+            QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ProfileRailDock::kHideDelayMs + 400);
             // The hide delay, less the sampling interval and this check's
             // own granularity.
-            QVERIFY2(left.elapsed() >= ContainerWidget::kRevealHideMs - ProfileRailDock::kPointerSampleMs,
+            QVERIFY2(left.elapsed() >= ProfileRailDock::kHideDelayMs - ProfileRailDock::kPointerSampleMs,
                      qPrintable(QStringLiteral("closed %1 ms after the cursor left").arg(left.elapsed())));
         }
 
@@ -2027,7 +2030,7 @@ private slots:
         badge->setFocus(Qt::TabFocusReason);
         settle();
         QVERIFY(dock->isOpen());
-        QTest::qWait(ContainerWidget::kRevealHideMs + 300);
+        QTest::qWait(ProfileRailDock::kHideDelayMs + 300);
         QVERIFY2(dock->isOpen(), "a rail opened from the keyboard closed with the cursor elsewhere");
     }
 
@@ -2097,7 +2100,7 @@ private slots:
         const QPoint outside(popover.left() - 40, popover.bottom() + 60);
         pointer.glide(centreOf(badge), outside, 6, 120);
         QVERIFY(dock->isOpen());
-        QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ContainerWidget::kRevealHideMs + 400);
+        QTRY_VERIFY_WITH_TIMEOUT(!dock->isOpen(), ProfileRailDock::kHideDelayMs + 400);
 
         QVERIFY(f.hoverOpen(pointer, dock, outside));
         QTest::keyClick(f.window.get(), Qt::Key_Escape);
@@ -2105,7 +2108,7 @@ private slots:
         QVERIFY(!dock->isOpen());
 
         pointer.glide(centreOf(badge), outside, 4, 40);
-        QTest::qWait(ContainerWidget::kRevealHideMs + 100);
+        QTest::qWait(ProfileRailDock::kHideDelayMs + 100);
         f.window->activateWindow();
         badge->setFocus(Qt::TabFocusReason);
         settle();

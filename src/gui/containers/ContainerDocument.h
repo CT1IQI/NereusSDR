@@ -1,6 +1,8 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
 // Modification history (NereusSDR):
+//   2026-10-11 - header is Shown or Hidden. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-11 - SavedScreen and ContainerDocument::screen: the monitor a
 //                 floating or popped-out window was placed on, by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -58,7 +60,7 @@ struct ContainerDocument {
     // The strip a PanelDocked container sits in (workspace preview).
     DockEdge edge = DockEdge::Right;
     AxisLock anchor = AxisLock::Left;
-    HeaderMode header = HeaderMode::Always;
+    HeaderMode header = HeaderMode::Shown;
     QRect geometry;
     // Free (OverlayDocked) containers only: the size the pane had when the
     // operator last placed the container, so it comes back where it was

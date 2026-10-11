@@ -23,6 +23,9 @@
 //                 Advanced disabled for an unavailable declared type, named
 //                 reading ids. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The source chip case no longer calls the removed header
+//                 preview seam; its header is shown. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -1014,7 +1017,6 @@ private slots:
         // A click on the chip opens the menu.
         dock.show();
         QVERIFY(QTest::qWaitForWindowExposed(&dock));
-        widget->setHeaderRevealedForPreview(true);
         settle();
         WorkspaceSourceChip* chip = widget->workspaceHeader()->sourceChip();
         QVERIFY(chip && chip->isVisible());
