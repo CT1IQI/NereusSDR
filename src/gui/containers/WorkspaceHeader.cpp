@@ -50,16 +50,23 @@
 //                 hides when not arranging. Drawn in code so it takes the
 //                 header's glyph colours. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - A floating container's group header carries a pin button
+//                 left of the return arrow: the app's pin art when the
+//                 window is not kept on top, the pinned art when it is,
+//                 in the header's glyph colours. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
 
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspaceStyle.h"
+#include "gui/widgets/AppIcon.h"
 
 #include <QAbstractButton>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -187,6 +194,69 @@ protected:
             p.setPen(QPen(colour, kEyeSlashStroke, Qt::SolidLine, Qt::RoundCap));
             p.drawLine(slashFrom, slashTo);
         }
+    }
+};
+
+// The pin: the app's own pin and pinned art (AppIcon), drawn as a
+// silhouette in the colours of the glyph buttons beside it. AppIcon gives
+// the art in its own colours and cannot tint it, so the art's shape is
+// taken from its alpha and filled here: the scale text colour, the primary
+// text colour on the hover plate, the inactive colour when disabled.
+const QString kPinArt = QStringLiteral("pin");
+const QString kPinnedArt = QStringLiteral("pinned");
+
+// The pin's outline is taken this many times larger than it is shown.
+constexpr int kPinOversample = 4;
+// A pixel of the larger outline counts as pin at this alpha or more.
+constexpr int kPinCoverCut = 128;
+
+class WorkspacePinButton final : public QAbstractButton {
+public:
+    explicit WorkspacePinButton(QWidget* parent) : QAbstractButton(parent)
+    {
+        setCheckable(true);
+        setAttribute(Qt::WA_Hover, true);
+    }
+    QSize sizeHint() const override { return size(); }
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        const bool hovered = isEnabled() && underMouse();
+        if (hovered) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(Workspace::role("button-hover", Workspace::kButtonHover)));
+            p.drawRoundedRect(rect(), Workspace::kGlassChipRadius, Workspace::kGlassChipRadius);
+        }
+        const QColor colour(!isEnabled() ? Workspace::role("text-inactive", Workspace::kTextInactive)
+                            : hovered    ? Workspace::role("text", Workspace::kTextPrimary)
+                                         : Workspace::role("text-scale", Workspace::kTextScale));
+        const int px = WorkspaceGroupHeader::kHeaderPinIconPx;
+        const qreal dpr = devicePixelRatioF();
+        // The art is a shaded, full-colour pushpin. Its outline is taken
+        // larger than shown and cut at half cover, which drops the soft
+        // ground shadow and the faint edges, then filled with the header's
+        // glyph colour and brought down to size, so the pin has the weight
+        // and colour of the glyphs beside it.
+        const QPixmap art =
+            AppIcon::pixmap(isChecked() ? kPinnedArt : kPinArt, px * kPinOversample, dpr);
+        if (art.isNull()) {
+            return;
+        }
+        QImage shape = art.toImage().convertToFormat(QImage::Format_ARGB32);
+        const QRgb solid = colour.rgb();
+        for (int y = 0; y < shape.height(); ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(shape.scanLine(y));
+            for (int x = 0; x < shape.width(); ++x) {
+                line[x] = qAlpha(line[x]) >= kPinCoverCut ? solid : qRgba(0, 0, 0, 0);
+            }
+        }
+        const int target = qRound(px * dpr);
+        shape = shape.scaled(target, target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        shape.setDevicePixelRatio(dpr);
+        p.drawImage(QPointF((width() - px) / 2.0, (height() - px) / 2.0), shape);
     }
 };
 
@@ -356,6 +426,18 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
     m_keepShown->setChecked(true);
     setKeepShown(true);
 
+    // The pin, left of the return arrow, only while the container floats.
+    // It shows the container's state: a click asks and the owner sets it.
+    m_pin = new WorkspacePinButton(this);
+    m_pin->setObjectName(QStringLiteral("workspacePin"));
+    m_pin->setFixedSize(kGroupButtonWidth, kGroupButtonHeight);
+    m_pin->setCursor(Qt::PointingHandCursor);
+    m_pin->setFocusPolicy(Qt::TabFocus);
+    connect(m_pin, &QAbstractButton::clicked, this, &WorkspaceGroupHeader::pinToggled);
+    row->addWidget(m_pin);
+    m_pin->hide();
+    setPinned(false);
+
     m_popOut = makeButton(QStringLiteral("↗"), kGroupButtonWidth, kGroupButtonHeight,
                           tr("Pop out"), this);
     m_popOut->setObjectName(QStringLiteral("workspacePopOut"));
@@ -406,7 +488,18 @@ void WorkspaceGroupHeader::setFloating(bool floating)
 {
     m_popOut->setText(floating ? QStringLiteral("↙") : QStringLiteral("↗"));
     m_popOut->setToolTip(floating ? tr("Return") : tr("Pop out"));
+    m_pin->setVisible(floating);
 }
+void WorkspaceGroupHeader::setPinned(bool pinned)
+{
+    m_pin->setChecked(pinned);
+    // The art by name, for the icon property the app's icons carry.
+    AppIcon::apply(m_pin, pinned ? kPinnedArt : kPinArt, kHeaderPinIconPx);
+    // The tooltip says what a click will do.
+    m_pin->setToolTip(pinned ? tr("Stop keeping this window on top") : tr("Keep this window on top"));
+    m_pin->update();
+}
+bool WorkspaceGroupHeader::pinned() const { return m_pin->isChecked(); }
 void WorkspaceGroupHeader::setArrangeAccent(bool on)
 {
     if (m_arrange == on) {

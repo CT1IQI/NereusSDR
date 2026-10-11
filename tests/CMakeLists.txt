@@ -615,6 +615,8 @@ nereus_add_test(tst_workspace_arrange_drag)
 # The same rule between native windows: a free container dragged out of the main window, a window dragged onto an edge.
 # Needs real windows and the desktop; run by hand with JJ's OK only.
 nereus_add_test(tst_workspace_arrange_drag_native NATIVE_WINDOW)
+# Workspace look: Pop Out in the body menu, the pin on a window's header, and Return to where a container came from (offscreen).
+nereus_add_test(tst_workspace_popout_return)
 nereus_add_test(tst_workspace_live_input)
 # Each case builds a MainWindow; 43 cases ran past the 120 s limit under
 # load. Four entries of the same binary (the limit is not raised; groups in

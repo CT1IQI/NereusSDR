@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the body menu starts with Pop Out
+//                 (Return on a window); a window's header shows the pin,
+//                 and the pin and the Options menu's Pin on Top report the
+//                 choice so it is saved. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: while arranging, a free or
 //                 floating container's header drag reports through the
 //                 edge drag signals as a strip container's does, follows
@@ -477,6 +482,9 @@ void ContainerWidget::buildWorkspaceHeader()
     // The hide button: the same as the menu's "Hide container".
     connect(m_groupHeader, &WorkspaceGroupHeader::hideClicked, this,
             &ContainerWidget::hideContainerRequested);
+    // The pin: the same as the Options menu's "Pin on Top".
+    connect(m_groupHeader, &WorkspaceGroupHeader::pinToggled, this,
+            &ContainerWidget::requestPinOnTop);
     // The eye: the same choice as the body menu's "Keep Header Showing".
     // The button shows the committed mode, so a commit that is refused
     // leaves it as it was.
@@ -569,6 +577,7 @@ void ContainerWidget::updateWorkspaceChrome()
     m_groupHeader->setKeepShown(m_headerMode == HeaderMode::Shown);
     m_groupHeader->setArrangeAccent(m_arrangeActive);
     m_groupHeader->setFloating(isFloating());
+    m_groupHeader->setPinned(m_pinOnTop);
 
     const bool resizable = m_arrangeActive && !isPanelDocked();
     // A frameless floating window keeps its resize corner, inside its bounds.
@@ -630,7 +639,7 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
                        [this] { cycleAxisLock(false); });
     }
     if (isFloating()) {
-        auto* pin = menu.addAction(tr("Pin on Top"), this, [this] { setPinOnTop(!m_pinOnTop); });
+        auto* pin = menu.addAction(tr("Pin on Top"), this, [this] { requestPinOnTop(!m_pinOnTop); });
         pin->setCheckable(true);
         pin->setChecked(m_pinOnTop);
     }
@@ -783,6 +792,11 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
     // container, and its shell, while the menu is open (OwnedMenu.h).
     OwnedMenu owned(this);
     QMenu& menu = owned.menu();
+    if (m_groupHeader && !m_popOutShell) {
+        // Workspace preview: what the header's pop-out button does. A
+        // pop-out shell has its own return item below.
+        menu.addAction(isFloating() ? tr("Return") : tr("Pop Out"), this, [this] { m_btnFloat->click(); });
+    }
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addAction(tr("Hide container (retain placement)"), this,
                    [this] { emit hideContainerRequested(); });
@@ -1029,7 +1043,19 @@ void ContainerWidget::setPinOnTop(bool pin)
     // From Thetis ucMeter.cs:974-978
     m_pinOnTop = pin;
     AppIcon::apply(m_btnPin, pin ? QStringLiteral("pinned") : QStringLiteral("pin"), kPinIconPx);
+    if (m_groupHeader) {
+        m_groupHeader->setPinned(pin);
+    }
     setTopMost();
+}
+
+void ContainerWidget::requestPinOnTop(bool pin)
+{
+    const QPointer<ContainerWidget> self(this);
+    setPinOnTop(pin);
+    if (self) {
+        emit pinOnTopRequested(pin);
+    }
 }
 
 void ContainerWidget::setTopMost()

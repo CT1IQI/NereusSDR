@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - home, written for floating containers only: where a
+//                 popped-out container came from. An unreadable one is
+//                 dropped for that container alone; unknown keys inside it
+//                 are kept. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - locked is written only when true; a document without the
 //                 key loads unlocked, as before. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -30,8 +35,9 @@ namespace NereusSDR {
 namespace {
 const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers", "arrangement"};
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
-                                   "geometry", "geometryPane", "screen", "visible", "locked", "autoHeight", "popOutShell",
+                                   "geometry", "geometryPane", "screen", "home", "visible", "locked", "autoHeight", "popOutShell",
                                    "config"};
+const QStringList kHomeFields{"dockMode", "edge", "before", "after", "geometry"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
 const QStringList kStripFields{"thickness", "extents"};
 
@@ -363,6 +369,35 @@ bool decodeEntry(const QJsonObject& object, ContentEntry& entry)
     return true;
 }
 
+// Where a popped-out container came from. A strip home names its edge; a
+// free home has a rect with a size.
+bool containerHome(const QJsonValue& value, ContainerHome& out)
+{
+    if (!value.isObject()) {
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    int mode = -1;
+    if (!integer(object["dockMode"], mode)
+        || (mode != int(DockMode::PanelDocked) && mode != int(DockMode::OverlayDocked))) {
+        return false;
+    }
+    out.dockMode = static_cast<DockMode>(mode);
+    if (object.contains("edge")
+        && (!object["edge"].isString() || !edgeFromName(object["edge"].toString(), out.edge))) {
+        return false;
+    }
+    if (!stringField(object, "before", out.beforeId) || !stringField(object, "after", out.afterId)
+        || !geometryField(object, out.geometry)) {
+        return false;
+    }
+    if (out.dockMode == DockMode::OverlayDocked && !out.geometry.isValid()) {
+        return false;
+    }
+    out.extensions = extensions(object, kHomeFields);
+    return true;
+}
+
 bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
 {
     if (!stringField(object, "id", container.id) || !stringField(object, "name", container.name)
@@ -397,6 +432,17 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
         } else {
             qCWarning(lcContainer) << "Container" << container.id
                                    << "has an unreadable screen; it is ignored";
+        }
+    }
+    if (object.contains("home")) {
+        // Lenient: without it Return docks the container at the default
+        // place, and nothing else is lost.
+        ContainerHome home;
+        if (containerHome(object["home"], home)) {
+            container.home = home;
+        } else {
+            qCWarning(lcContainer) << "Container" << container.id
+                                   << "has an unreadable home; it is ignored";
         }
     }
     if (object.contains("geometryPane")) {
@@ -476,6 +522,21 @@ QJsonObject encodeContainer(const ContainerDocument& container)
         object["screen"] = QJsonObject{{"name", container.screen->name},
                                        {"serial", container.screen->serial},
                                        {"geometry", QJsonArray{on.x(), on.y(), on.width(), on.height()}}};
+    }
+    // Only while it floats: where Return puts it back.
+    if (container.home && container.dockMode == DockMode::Floating) {
+        const ContainerHome& from = *container.home;
+        QJsonObject home = from.extensions;
+        home["dockMode"] = int(from.dockMode);
+        if (from.dockMode == DockMode::PanelDocked) {
+            home["edge"] = edgeName(from.edge);
+            home["before"] = from.beforeId;
+            home["after"] = from.afterId;
+        } else {
+            home["geometry"] = QJsonArray{from.geometry.x(), from.geometry.y(),
+                                          from.geometry.width(), from.geometry.height()};
+        }
+        object["home"] = home;
     }
     object["visible"] = container.visible;
     // Only when set: the workspace look has no Lock setting and writes none.
@@ -575,6 +636,9 @@ QString ContainerDocumentCodec::validate(const WorkspaceDocument& document)
         }
         if (collides(container.extensions, kContainerFields)) {
             return QStringLiteral("Container extensions collide with known fields: %1").arg(container.id);
+        }
+        if (container.home && collides(container.home->extensions, kHomeFields)) {
+            return QStringLiteral("Home extensions collide with known fields: %1").arg(container.id);
         }
         for (const ContentEntry& entry : container.contents) {
             if (entry.id.trimmed().isEmpty() || contentIds.contains(entry.id)) {

@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: pinOnTopRequested, from the
+//                 header's pin and the Options menu. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: a header is shown or hidden. The
 //                 look's hover timers, fade, focus rule and preview seam
 //                 are gone; the overlay opacity and shadow stay for Arrange.
@@ -415,6 +418,10 @@ signals:
     void returnContainerRequested();
     void hideContainerRequested();
     void headerModeRequested(HeaderMode mode);
+    // Workspace preview: the operator asked for the window to be kept on
+    // top, or not, from the header's pin or the Options menu. The widget
+    // has already taken the state; the owner saves it.
+    void pinOnTopRequested(bool pin);
     // Workspace preview: the options menu's Arrange workspace.
     void arrangeWorkspaceRequested(bool active);
     // Workspace preview: a source menu choice, kActiveSliceSource or 1..4.
@@ -481,6 +488,7 @@ private:
     void placeWorkspaceOverlays();
     void showWorkspaceOptions();
     void showSourceMenu();
+    void requestPinOnTop(bool pin);
     void populateWorkspaceMenu(QMenu& menu);
     void buildUI();
     void updateTitleBar();

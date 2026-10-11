@@ -7,6 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the commit that makes a container
+//                 a window records where it came from (recordHomes), and
+//                 Return puts it back there, with fallbacks when the
+//                 neighbours, the strip or the free spot are gone
+//                 (returnHome). The pin's choice is committed at once. In
+//                 both looks a window made by an operator command (Pop
+//                 Out, a drop outside the main window, a new or duplicated
+//                 container) is saved with the place and monitor it was
+//                 given. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Workspace preview only: while arranging, one drop rule
 //                 for every container (finishArrangeDrop). A header drag of
 //                 a strip, free, floating or pop-out container docks in an
@@ -392,11 +402,119 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
     if (!revealApplies()) {
         hideRevealHeaders(saved);
     }
+    recordHomes(saved);
     const CommitResult result = m_store->commit(saved, expectedRevision);
     if (result.status != CommitStatus::Saved) { m_storageError = result.error; emit workspaceError(result.error); }
     else { m_storageError.clear(); }
     return result;
 }
+void ContainerManager::recordHomes(WorkspaceDocument& saved) const
+{
+    const WorkspaceDocument before = m_store->snapshot();
+    for (auto& d : saved.containers) {
+        if (d.dockMode != DockMode::Floating) {
+            // Only a window has a place to go back to.
+            d.home.reset();
+            continue;
+        }
+        if (d.home || d.popOutShell || !WorkspacePreview::enabled()) {
+            continue;
+        }
+        const auto was = std::find_if(before.containers.cbegin(), before.containers.cend(),
+            [&d](const ContainerDocument& value) { return value.id == d.id; });
+        if (was == before.containers.cend() || was->dockMode == DockMode::Floating) {
+            // Created as a window, or already one.
+            continue;
+        }
+        ContainerHome home;
+        home.dockMode = was->dockMode;
+        if (was->dockMode == DockMode::PanelDocked) {
+            home.edge = was->edge;
+            // Its neighbours in the strip: document order is strip order.
+            QStringList strip;
+            for (const auto& other : before.containers) {
+                if (other.dockMode == DockMode::PanelDocked && other.edge == was->edge) {
+                    strip.append(other.id);
+                }
+            }
+            const int at = strip.indexOf(d.id);
+            home.beforeId = strip.value(at - 1);
+            home.afterId = strip.value(at + 1);
+        } else {
+            // The place the operator gave it, not where it is shown.
+            home.geometry = m_rememberedGeometry.value(d.id, was->geometry);
+            if (!home.geometry.isValid()) {
+                continue;
+            }
+        }
+        d.home = home;
+    }
+}
+
+bool ContainerManager::returnHome(const QString& id)
+{
+    if (!m_store || m_reconciling) {
+        return true;
+    }
+    WorkspaceDocument draft = m_store->snapshot();
+    const auto self = std::find_if(draft.containers.begin(), draft.containers.end(),
+        [&id](const ContainerDocument& value) { return value.id == id; });
+    if (self == draft.containers.end() || self->dockMode != DockMode::Floating) {
+        return true;
+    }
+    const std::optional<ContainerHome> home = self->home;
+    if (home && home->dockMode == DockMode::OverlayDocked && home->geometry.isValid()) {
+        QRect place = home->geometry;
+        if (dockParentLaidOut() && !QRect(QPoint(0, 0), m_dockParent->size()).contains(place)) {
+            // The spot is no longer inside the pane: the nearest place
+            // that is, off any spot another free container has.
+            place = defaultFreeRect(place, id);
+        }
+        self->dockMode = DockMode::OverlayDocked;
+        self->geometry = place;
+        // Placed for the pane as it is now.
+        self->geometryPane.reset();
+        self->screen.reset();
+        self->home.reset();
+        commitWorkspace(draft, draft.revision);
+        return true;
+    }
+    if (!home && id == draft.mainContainerId) {
+        return false;
+    }
+    // Its own strip; with no home, the main container's.
+    DockEdge edge = DockEdge::Right;
+    if (home) {
+        edge = home->edge;
+    } else {
+        for (const auto& d : draft.containers) {
+            if (d.id == draft.mainContainerId && d.dockMode == DockMode::PanelDocked) {
+                edge = d.edge;
+            }
+        }
+    }
+    QStringList strip;
+    for (const auto& d : draft.containers) {
+        if (d.id != id && d.dockMode == DockMode::PanelDocked && d.edge == edge) {
+            strip.append(d.id);
+        }
+    }
+    // After the neighbour it had before it; else before the one it had
+    // after it; else at the end. An empty strip opens again with it.
+    int index = -1;
+    if (home) {
+        const int before = home->beforeId.isEmpty() ? -1 : strip.indexOf(home->beforeId);
+        const int after = home->afterId.isEmpty() ? -1 : strip.indexOf(home->afterId);
+        if (before >= 0) {
+            index = before + 1;
+        } else if (after >= 0) {
+            index = after;
+        }
+    }
+    moveContainerToEdge(id, edge, index);
+    return true;
+}
+
 bool ContainerManager::lockApplies()
 {
     return !WorkspacePreview::enabled();
@@ -640,6 +758,24 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             });
             connect(c, &ContainerWidget::hideContainerRequested, this,
                     [this, id = d.id] { setContainerVisible(id, false); });
+            // Workspace preview: the header's pin and the menu's Pin on
+            // Top. Saved at once, so no later reconcile undoes the choice.
+            connect(c, &ContainerWidget::pinOnTopRequested, this, [this, id = d.id](bool pin) {
+                auto draft = m_store->snapshot();
+                bool saved = pin;
+                for (auto& value : draft.containers) {
+                    if (value.id == id) {
+                        saved = value.config.value("pinOnTop").toBool(false);
+                        value.config["pinOnTop"] = pin;
+                    }
+                }
+                if (saved != pin && commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+                    // Refused: the window shows what is saved.
+                    if (ContainerWidget* view = container(id)) {
+                        view->setPinOnTop(saved);
+                    }
+                }
+            });
             connect(c, &ContainerWidget::headerModeRequested, this,
                     [this, id = d.id](HeaderMode mode) {
                         auto draft = m_store->snapshot();
@@ -1320,8 +1456,10 @@ void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos
         const QSize size = freePlacementSize(id, d);
         d.dockMode = DockMode::Floating;
         d.geometry = QRect(globalPos - QPoint(size.width() / 2, WorkspaceGroupHeader::kHeight / 2), size);
-        d.screen.reset();
-        commitWorkspace(draft, draft.revision);
+        d.screen = screenForNewWindow(d.geometry);
+        if (commitWorkspace(draft, draft.revision).status == CommitStatus::Saved) {
+            keepNewWindowPlace(id);
+        }
         return;
     }
 }
@@ -1597,9 +1735,16 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
                 // Its place is for the pane as it is now.
                 d.geometryPane.reset();
                 d.screen.reset();
+                if (mode == DockMode::Floating) {
+                    // The place it is given now is its remembered place.
+                    d.screen = screenForNewWindow(d.geometry);
+                }
             }
+            const bool becomesWindow = mode == DockMode::Floating && d.dockMode != mode;
             d.dockMode = mode;
-            commitWorkspace(document, document.revision);
+            if (commitWorkspace(document, document.revision).status == CommitStatus::Saved && becomesWindow) {
+                keepNewWindowPlace(id);
+            }
             return true;
         }
     }
@@ -1828,7 +1973,7 @@ void ContainerManager::showDuplicate(ContainerDocument& copy, const ContainerDoc
     // Beside the original, and off any spot another container already has
     // (a second copy of the same original would land on the first).
     copy.geometry = defaultWindowRect(anchor.translated(kDuplicateOffsetPx, kDuplicateOffsetPx));
-    copy.screen.reset();
+    copy.screen = screenForNewWindow(copy.geometry);
 }
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
@@ -1840,6 +1985,11 @@ ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
         document.containers.append(d);
         if (document.mainContainerId.isEmpty()) { document.mainContainerId = d.id; }
         if (commitWorkspace(document, document.revision).status != CommitStatus::Saved) { return nullptr; }
+        if (mode == DockMode::Floating) {
+            // A new window has no place of its own: the one it is given is
+            // saved, so the next start puts it there again.
+            keepNewWindowPlace(d.id);
+        }
         return container(d.id);
     }
     // From Thetis MeterManager.cs:5613-5673
@@ -1927,6 +2077,10 @@ void ContainerManager::floatContainer(const QString& id)
 void ContainerManager::dockContainer(const QString& id)
 {
     if (!m_containers.contains(id) || !m_floatingForms.contains(id)) {
+        return;
+    }
+    if (m_store && WorkspacePreview::enabled() && returnHome(id)) {
+        // Workspace preview: back where it was popped out of.
         return;
     }
     // Return to previous dock mode
@@ -2073,6 +2227,27 @@ int ContainerManager::availableHeightFor(const QWidget* target) const
 {
     const QRect onScreen(target->mapToGlobal(QPoint(0, 0)), target->size());
     return m_screens->screenFor(onScreen).available.height();
+}
+
+std::optional<SavedScreen> ContainerManager::screenForNewWindow(const QRect& geometry) const
+{
+    if (!windowIsHome(geometry, std::nullopt)) {
+        return std::nullopt;
+    }
+    const std::optional<ScreenInfo> on = m_screens->screenHolding(geometry);
+    return on ? std::optional<SavedScreen>(savedScreenOf(*on)) : std::nullopt;
+}
+
+void ContainerManager::keepNewWindowPlace(const QString& id)
+{
+    const ContainerWidget* c = container(id);
+    if (!m_store || m_reconciling || !c || !c->isFloating() || !m_displaced.contains(id)) {
+        return;
+    }
+    // Its document place could not be used, so the app chose one. The
+    // operator asked for this window: that place is its own from now on.
+    rememberOperatorGeometry(id);
+    saveState();
 }
 
 QRect ContainerManager::defaultWindowRect(const QRect& wanted) const

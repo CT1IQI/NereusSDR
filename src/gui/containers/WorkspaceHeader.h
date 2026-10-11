@@ -60,6 +60,11 @@
 //                 hides when not arranging. Drawn in code so it takes the
 //                 header's glyph colours. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - A floating container's group header carries a pin button
+//                 left of the return arrow: the app's pin art when the
+//                 window is not kept on top, the pinned art when it is,
+//                 in the header's glyph colours. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -112,6 +117,8 @@ class WorkspaceGroupHeader final : public QWidget {
     Q_OBJECT
 public:
     static constexpr int kHeight = 18;
+    // The pin art's size inside its 16 x 14 header button.
+    static constexpr int kHeaderPinIconPx = 14;
 
     explicit WorkspaceGroupHeader(QWidget* parent = nullptr);
 
@@ -120,8 +127,14 @@ public:
     // Empty text hides the chip.
     void setSource(const QString& text, const QColor& colour);
     QString sourceText() const;
-    // ↗ (pop out) while docked, ↙ (return) while floating.
+    // ↗ (pop out) while docked, ↙ (return) while floating. The pin shows
+    // only while floating.
     void setFloating(bool floating);
+    // The pin shows whether the window is kept above other windows: the
+    // `pin` art when it is not, `pinned` when it is. The owner sets it from
+    // the container's state; a click only asks (pinToggled).
+    void setPinned(bool pinned);
+    bool pinned() const;
     // Arrange: the bottom border becomes the accent.
     void setArrangeAccent(bool on);
     bool arrangeAccent() const { return m_arrange; }
@@ -135,6 +148,8 @@ public:
     QWidget* grip() const;
     // The eye button, left of Pop out.
     QAbstractButton* keepShownButton() const { return m_keepShown; }
+    // The pin button, left of the return arrow; hidden unless floating.
+    QAbstractButton* pinButton() const { return m_pin; }
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
     // The hide button, last and rightmost.
@@ -144,6 +159,8 @@ public:
 signals:
     // A click on the eye: the choice the operator asks for.
     void keepShownToggled(bool keepShown);
+    // A click on the pin: keep the window on top, or stop.
+    void pinToggled(bool pinned);
     void popOutClicked();
     void optionsClicked();
     void sourceClicked();
@@ -156,6 +173,7 @@ private:
     QLabel* m_title{nullptr};
     WorkspaceSourceChip* m_chip{nullptr};
     QAbstractButton* m_keepShown{nullptr};
+    QAbstractButton* m_pin{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
     QPushButton* m_hide{nullptr};

@@ -9,6 +9,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: a popped-out container's home is
+//                 recorded with the commit that makes it a window, and
+//                 Return puts it back there (recordHomes, returnHome). A
+//                 window made by an operator command is saved with the
+//                 place and monitor it was given (screenForNewWindow).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: setArrangeHeld, arrangeHeld,
 //                 arranging, containerDragActive and containerDragFinished
 //                 for the Shift hold. J.J. Boyd (KG4VCF), AI-assisted via
@@ -294,6 +300,12 @@ public:
     // kCascadeOffsetPx as many times as needed until no visible free or
     // floating container has the same top-left.
     QRect defaultWindowRect(const QRect& wanted) const;
+    // The monitor a window an operator command places at `geometry` is
+    // saved with, so it comes back there on the next start. None when the
+    // rect could not be shown where it is (on no screen, or at the origin
+    // where the main window hides it): the window is then given a place
+    // when it is shown.
+    std::optional<SavedScreen> screenForNewWindow(const QRect& geometry) const;
     // Test seam: the screens every placement here consults (the
     // application's own when null). Not owned.
     void setScreenSourceForTest(ScreenSource* source);
@@ -397,6 +409,23 @@ private:
     static bool revealApplies();
     // Makes every Reveal header Hidden; true when one was Reveal.
     static bool hideRevealHeaders(WorkspaceDocument& document);
+    // Workspace preview: every commit passes here. A container that
+    // becomes a window takes its home from the document as it was (its
+    // strip and neighbours there, or its free rect); one that is no longer
+    // a window has none.
+    void recordHomes(WorkspaceDocument& saved) const;
+    // Workspace preview: Return. Puts a window back at its home: in its
+    // strip beside the neighbours it had (after the one before it, else
+    // before the one after it, else at the end of that strip), or free at
+    // its rect, moved inside the pane and off other free containers when
+    // the rect no longer fits. With no home it joins the main container's
+    // strip. False when the caller's own rule applies (the main container
+    // with no home).
+    bool returnHome(const QString& id);
+    // A window an operator command just made: when it could not be shown
+    // at its document place, the place the app gave it is remembered and
+    // saved, so the next start does not place it afresh.
+    void keepNewWindowPlace(const QString& id);
     void finishEdgeDrag(const QString& id, const QPoint& globalPos);
     // Workspace preview, arranging: the one drop rule for a strip, free,
     // floating or pop-out container, by where the pointer is at release.

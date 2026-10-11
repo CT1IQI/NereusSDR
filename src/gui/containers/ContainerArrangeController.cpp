@@ -11,6 +11,8 @@
 //                 ContainerManager::defaultWindowRect, so two shells never
 //                 open on one spot. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - A pop-out shell is saved with the monitor its place is on.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "ContainerManager.h"
@@ -372,6 +374,10 @@ ArrangeResult ContainerArrangeController::popOut(const QString& id)
     // container already has it.
     constexpr QRect kPopOutShellRect(140, 140, 360, 300);
     shell.geometry = m_manager ? m_manager->defaultWindowRect(kPopOutShellRect) : kPopOutShellRect;
+    if (m_manager) {
+        // Saved with its monitor, so the next start puts it there again.
+        shell.screen = m_manager->screenForNewWindow(shell.geometry);
+    }
     d.containers[source].contents.removeAt(index);
     d.containers.append(shell);
     return commit(d);

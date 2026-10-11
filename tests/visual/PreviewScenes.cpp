@@ -186,6 +186,10 @@
 //                 the main window while arranging, with the landing box
 //                 shown. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - floating-container-pinned: the floating window with its
+//                 header's pin clicked. Both floating scenes record
+//                 stays_on_top. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -7528,39 +7532,61 @@ QVector<Scene> fixedScenes()
             c.notes.append(QStringLiteral("Levels: Place Free, header shown"));
         });
     }, true});
-    scenes.append({QStringLiteral("floating-container"), QStringLiteral("2v"), false,
-                   [](SceneContext& ctx) {
-        sceneProposedEdges(ctx, QStringLiteral("floating-container"), [](SceneContext& c) {
-            const QString id = addLevelsContainer(c, DockEdge::Left);
-            if (id.isEmpty()) {
+    // floating-container shows the window as it is popped out, its pin off;
+    // floating-container-pinned clicks the header's pin first.
+    const auto floatingScene = [](const QString& name, bool pinned) {
+        return [name, pinned](SceneContext& ctx) {
+            sceneProposedEdges(ctx, name, [pinned](SceneContext& c) {
+                const QString id = addLevelsContainer(c, DockEdge::Left);
+                if (id.isEmpty()) {
+                    return;
+                }
+                auto* manager = c.window->findChild<ContainerManager*>();
+                manager->floatContainer(id);
+                if (!pinned) {
+                    return;
+                }
+                ContainerWidget* levels = manager->container(id);
+                auto* pin = levels != nullptr
+                    ? levels->findChild<QAbstractButton*>(QStringLiteral("workspacePin")) : nullptr;
+                if (pin == nullptr) {
+                    c.failure = QStringLiteral("the floating Levels header has no pin");
+                    return;
+                }
+                pin->click();
+                c.notes.append(QStringLiteral("Levels: the header's pin clicked, window kept on top"));
+            });
+            if (!ctx.failure.isEmpty()) {
                 return;
             }
-            c.window->findChild<ContainerManager*>()->floatContainer(id);
-        });
-        if (!ctx.failure.isEmpty()) {
-            return;
-        }
-        auto* floating = visibleTopLevel<FloatingContainer>();
-        if (floating == nullptr) {
-            ctx.failure = QStringLiteral("the Levels container did not float");
-            return;
-        }
-        if (ctx.beforeGrab) {
-            ctx.beforeGrab(floating);
-            pump(kFinalSettleMs);
-        }
-        CapturedImage img;
-        img.name = QStringLiteral("floating-container--floating");
-        img.kind = QStringLiteral("floating");
-        img.image = grabWidget(floating);
-        img.logicalSize = floating->size();
-        img.dpr = img.image.devicePixelRatio();
-        img.extra[QStringLiteral("window_title")] = floating->windowTitle();
-        img.extra[QStringLiteral("frameless")] =
-            floating->windowFlags().testFlag(Qt::FramelessWindowHint);
-        attachRegions(img, floating);
-        ctx.images.append(img);
-    }, true});
+            auto* floating = visibleTopLevel<FloatingContainer>();
+            if (floating == nullptr) {
+                ctx.failure = QStringLiteral("the Levels container did not float");
+                return;
+            }
+            if (ctx.beforeGrab) {
+                ctx.beforeGrab(floating);
+                pump(kFinalSettleMs);
+            }
+            CapturedImage img;
+            img.name = name + QStringLiteral("--floating");
+            img.kind = QStringLiteral("floating");
+            img.image = grabWidget(floating);
+            img.logicalSize = floating->size();
+            img.dpr = img.image.devicePixelRatio();
+            img.extra[QStringLiteral("window_title")] = floating->windowTitle();
+            img.extra[QStringLiteral("frameless")] =
+                floating->windowFlags().testFlag(Qt::FramelessWindowHint);
+            img.extra[QStringLiteral("stays_on_top")] =
+                floating->windowFlags().testFlag(Qt::WindowStaysOnTopHint);
+            attachRegions(img, floating);
+            ctx.images.append(img);
+        };
+    };
+    scenes.append({QStringLiteral("floating-container"), QStringLiteral("2v"), false,
+                   floatingScene(QStringLiteral("floating-container"), false), true});
+    scenes.append({QStringLiteral("floating-container-pinned"), QStringLiteral("2v"), false,
+                   floatingScene(QStringLiteral("floating-container-pinned"), true), true});
     scenes.append({QStringLiteral("drag-preview-left"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) {
         sceneProposedEdges(ctx, QStringLiteral("drag-preview-left"), {}, [](SceneContext& c) {

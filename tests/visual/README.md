@@ -261,7 +261,8 @@ colours the scene shows.
 ### Proposed four-edge workspace scenes
 
 `edge-right`, `edge-left`, `edge-top-bottom`, `edge-all-four`,
-`edge-all-four-clean`, `free-container`, `floating-container`, `drag-preview-left` and
+`edge-all-four-clean`, `free-container`, `floating-container`,
+`floating-container-pinned`, `drag-preview-left` and
 `drag-preview-between` pose the two-band data with the workspace preview
 switch on and show containers docked in the strips on all four edges of
 the central workspace (`src/gui/containers/EdgeDockStrip`), free over the
@@ -273,7 +274,10 @@ except in `edge-all-four-clean`, where every header is hidden,
 so no header shows or takes room. `free-container` uses Options > Place
 Free and moves the container to the lower right of the 20 m waterfall,
 its header shown; `floating-container` also writes the
-floating window as `floating-container--floating`; the drag previews turn
+floating window as `floating-container--floating`, its header's pin off
+beside the return arrow; `floating-container-pinned` clicks that pin first
+and writes `floating-container-pinned--floating` (the sidecar's
+`stays_on_top` is true); the drag previews turn
 Arrange on and call `ContainerManager::showDropPreviewForTest`. At the
 crop profile each adds `strip-left`, `strip-top` and `strip-bottom` crops
 for the strips in use. Their sidecars have `provenance: proposed` and a
@@ -497,6 +501,6 @@ non-zero on any difference. What makes it repeatable:
 - The tool shows the current app, plus the proposed workspace look in the
   `look-*` scenes, the proposed headers in the `header-*` and
   `arrange-on` scenes and the four-edge workspace in the `edge-*`,
-  `free-container`, `floating-container` and `drag-preview-*` scenes and the
+  `free-container`, `floating-container*` and `drag-preview-*` scenes and the
   Longpath instruments in `instruments-sheet` and `mixed-container*` and the
   workspace profiles in the `profile-*` scenes. Other proposed designs are added as new scenes.

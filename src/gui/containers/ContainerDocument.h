@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
 // Modification history (NereusSDR):
+//   2026-10-11 - ContainerHome and ContainerDocument::home: where a
+//                 popped-out container came from, so Return puts it back.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - header is Shown or Hidden. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
 //   2026-10-11 - SavedScreen and ContainerDocument::screen: the monitor a
@@ -52,6 +55,18 @@ struct SavedScreen {
     bool operator==(const SavedScreen&) const = default;
 };
 
+// Where a popped-out container came from (workspace look): the strip and
+// its neighbours there, as ReturnLocation does for entries, or its free
+// rect over the pane. Held only while the container floats.
+struct ContainerHome {
+    DockMode dockMode = DockMode::PanelDocked;
+    DockEdge edge = DockEdge::Right;
+    QString beforeId, afterId;
+    QRect geometry;
+    QJsonObject extensions;
+    bool operator==(const ContainerHome&) const = default;
+};
+
 struct ContainerDocument {
     QString id, name;
     QVector<ContentEntry> contents;
@@ -71,6 +86,10 @@ struct ContainerDocument {
     // chosen on. Empty in documents from before 2026-10-11 and until the
     // operator moves the window.
     std::optional<SavedScreen> screen;
+    // Floating containers only (workspace look): the place the container
+    // was popped out of. Empty for a container created as a window and in
+    // documents from before 2026-10-11.
+    std::optional<ContainerHome> home;
     bool visible = true;
     bool locked = false;
     bool autoHeight = false;
