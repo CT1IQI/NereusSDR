@@ -35,6 +35,12 @@
 //                 planted row of columns leaves the page's spare height
 //                 to the page.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A sideways scroll names the widget that is too wide and
+//                 the widths around it. The OC matrix row may sit side by
+//                 side at 820 x 600 where the fonts leave it room (the
+//                 workspace look on Linux), so that row is required to
+//                 show, stacked or not.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <algorithm>
 
@@ -436,6 +442,46 @@ QStringList cellFaults(QWidget* leaf)
     return faults;
 }
 
+// What makes a scroll area's content wider than its viewport: the chain of
+// shown widgets under it whose least width is more than `available`, widest
+// first at each level, as "Class#name (least width)". Names the widget to
+// look at when a page scrolls sideways on a platform nobody is sitting at.
+QString widerThan(const QWidget* widget, int available)
+{
+    const auto least = [](const QWidget* w) {
+        return std::max(w->minimumSizeHint().width(), w->minimumWidth());
+    };
+    QStringList chain;
+    for (const QWidget* at = widget; at != nullptr;) {
+        chain << QStringLiteral("%1#%2 (%3 px)")
+                     .arg(QString::fromLatin1(at->metaObject()->className()), at->objectName())
+                     .arg(least(at));
+        const QWidget* widest = nullptr;
+        for (const QWidget* child : at->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (!child->isHidden() && !child->isWindow() && least(child) > available
+                && (widest == nullptr || least(child) > least(widest))) {
+                widest = child;
+            }
+        }
+        at = widest;
+    }
+    return chain.join(QStringLiteral(" > "));
+}
+
+// The least width the layout a widget sits in keeps for it, or -1 when it
+// is in no layout. Less than the widget's own hint means the layout holds
+// a size it read before the hint grew.
+int keptWidth(const QWidget* widget)
+{
+    const QWidget* parent = widget->parentWidget();
+    QLayout* layout = parent != nullptr ? parent->layout() : nullptr;
+    if (layout == nullptr) {
+        return -1;
+    }
+    const int index = layout->indexOf(widget);
+    return index >= 0 ? layout->itemAt(index)->minimumSize().width() : -1;
+}
+
 // Scroll faults of one shown page or tab: a scroll area that scrolls
 // sideways, or a tab strip inside a scroll area that scrolls.
 QStringList scrollFaults(QWidget* leaf, QStringList* sideways)
@@ -461,7 +507,16 @@ QStringList scrollFaults(QWidget* leaf, QStringList* sideways)
             }
             continue;
         }
-        faults << QStringLiteral("scroll area holding %1 scrolls sideways by %2 px").arg(who).arg(range);
+        faults << QStringLiteral("scroll area holding %1 scrolls sideways by %2 px").arg(who).arg(range)
+                      + (area->widget() != nullptr
+                             ? QStringLiteral(": a %1 px viewport (area hint %3 px, content hint %4 px, "
+                                              "least width its layout keeps for it %5 px) holds %2")
+                                   .arg(area->viewport()->width())
+                                   .arg(widerThan(area->widget(), area->viewport()->width()))
+                                   .arg(area->sizeHint().width())
+                                   .arg(area->widget()->sizeHint().width())
+                                   .arg(keptWidth(area))
+                             : QString());
     }
     for (QTabBar* bar : leaf->findChildren<QTabBar*>()) {
         if (!bar->isVisible() || !onShownStackPage(bar, leaf)) {
@@ -939,11 +994,20 @@ private slots:
         const bool antenna = std::any_of(stackedNarrow.begin(), stackedNarrow.end(), [](const QString& r) {
             return r.contains(QStringLiteral("Antenna / ALEX"));
         });
-        const bool oc = std::any_of(stackedNarrow.begin(), stackedNarrow.end(), [](const QString& r) {
-            return r.contains(QStringLiteral("OC Outputs"));
-        });
         QVERIFY2(antenna, "no Antenna / ALEX row stacked at 820 x 600");
-        QVERIFY2(oc, "no OC Outputs row stacked at 820 x 600");
+        // The two OC matrices are 558 px side by side whatever the font
+        // (their columns are fixed widths), and the tab at 820 px is within
+        // a few pixels of that: 557 px in today's look and 571 px in the
+        // workspace look with the Linux CI fonts, more or less with others.
+        // So the row stacks where it must and sits side by side where it
+        // fits (every_page_fits proves it fits); it has to be one of them.
+        const auto isOc = [](const QString& r) { return r.contains(QStringLiteral("OC Outputs")); };
+        const QStringList sideBySideNarrow = narrow.sideBySide + narrowHl2.sideBySide;
+        const bool ocStacked = std::any_of(stackedNarrow.begin(), stackedNarrow.end(), isOc);
+        const bool ocSideBySide = std::any_of(sideBySideNarrow.begin(), sideBySideNarrow.end(), isOc);
+        qInfo().noquote() << "OC Outputs rows at 820 x 600:"
+                          << (ocStacked ? "stacked" : ocSideBySide ? "side by side" : "none shown");
+        QVERIFY2(ocStacked || ocSideBySide, "no OC Outputs row shown at 820 x 600");
     }
 
     void rowThatFitsWithoutABarIsSideBySide_data()

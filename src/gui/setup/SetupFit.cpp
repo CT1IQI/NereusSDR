@@ -18,6 +18,11 @@
 //                                    longer makes the row take the page's
 //                                    spare height. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  showWhole: the area is at least as
+//                                    large as its content, past the 24
+//                                    lines QScrollArea::sizeHint() stops
+//                                    at. AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "SetupFit.h"
@@ -417,10 +422,68 @@ QScrollArea* scrollingTab(QWidget* content)
     return area;
 }
 
+namespace {
+
+// Keeps a scroll area at least as large as its content asks for.
+// QScrollArea::sizeHint() stops at 36 by 24 font heights, so the size
+// policy alone leaves a taller matrix with a scroll bar of its own, and
+// that bar's width then makes it scroll sideways too (seen in the
+// workspace look with the Linux fonts, where 13 rows of check boxes are
+// taller than 24 lines of text). The content's layout request is the
+// moment its needs change. Owned by the area (Qt parent).
+class WholeContent : public QObject
+{
+public:
+    explicit WholeContent(QScrollArea* area)
+        : QObject(area)
+        , m_area(area)
+    {
+        if (QWidget* content = area->widget()) {
+            content->installEventFilter(this);
+        }
+        area->installEventFilter(this);
+        fit();
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        const QEvent::Type type = event->type();
+        if (watched == m_area->widget()) {
+            if (type == QEvent::LayoutRequest || type == QEvent::Polish) {
+                fit();
+            }
+        } else if (watched == m_area && (type == QEvent::Show || type == QEvent::StyleChange)) {
+            fit();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    void fit()
+    {
+        const QWidget* content = m_area->widget();
+        if (content == nullptr) {
+            return;
+        }
+        const int frame = 2 * m_area->frameWidth();
+        const QSize needed = content->sizeHint().expandedTo(content->minimumSizeHint())
+                             + QSize(frame, frame);
+        if (needed.isValid() && m_area->minimumSize() != needed) {
+            m_area->setMinimumSize(needed);
+        }
+    }
+
+    QScrollArea* m_area;
+};
+
+} // namespace
+
 void showWhole(QScrollArea* area)
 {
     area->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
     area->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
+    new WholeContent(area); // owned by area (Qt parent)
 }
 
 SidewaysFrame::SidewaysFrame(QWidget* parent)
