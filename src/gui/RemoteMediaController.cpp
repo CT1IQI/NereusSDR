@@ -1,5 +1,15 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-10: R-DISP-HOLD: a pan and the mini display hold the dBm
+//               range they asked the Core for while the scale and the
+//               waterfall levels lie inside it with no edge more than two
+//               headrooms out, and otherwise ask for what is needed plus
+//               a headroom, on whole dB (heldDbmWindow). A request for
+//               the view the Core last answered carries the view first
+//               asked for, so an unchanged view stays the same picture.
+//               The noise floor's received state is kept across a context
+//               for the same picture. planNowForTest. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: Bench fix (a Windows window on a remote Core lost
 //               microphone audio on every key): the microphone is
 //               collected by a real-time thread (MicUplinkCollector)
@@ -530,12 +540,15 @@ struct RequestInputs {
     bool coreWaterfallLevels = false;
 };
 
-// Parity Task 17 follow-up (R-R3-01, R-R3-04): the headroom a waterfall
-// level set at run time (waterfall AGC, noise-floor AGC, Clarity) is given
-// in the dBm window, and twice it the slack the window keeps before it
-// narrows. Those levels move a little every line; the window follows them
-// only when they leave it or it is far wider than they need, so the Core
-// is not asked again at every line.
+// R-DISP-HOLD (was Parity Task 17 follow-up, R-R3-01, R-R3-04): the headroom
+// the dBm window keeps beyond what the pan needs, on each side, and twice it
+// the slack the window keeps before it narrows. The pan's scale (the grid
+// follower moves it 2 dB at a time) and the waterfall levels set at run time
+// (waterfall AGC, noise-floor AGC, Clarity, which move a little every line)
+// both move without the operator; the window follows them only when they
+// leave it or it is far wider than they need, so the Core is not asked again
+// for the same picture. The cost is 256 codec steps over a range 20 dB wider:
+// a 96 dB scale is coded in 0.45 dB steps instead of 0.38.
 constexpr double kRuntimeLevelHeadroomDb = 10.0;
 
 // How far below the pan's floor (or the stored low level, when lower) a
@@ -561,45 +574,6 @@ bool runtimeWaterfallLevels(const SpectrumWidget* widget)
         || widget->waterfallNFAGCEnabled();
 }
 
-// The waterfall levels the dBm window must hold: the stored levels while
-// they are what colours the waterfall; otherwise the levels in force now
-// (wfActiveLow/HighThreshold, which AGC and Clarity set) with headroom,
-// kept from `held` while they still fit it.
-// `panLowDbm` is the pan's own floor in the frame's values (liveDbmWindow).
-DbmWindow waterfallLevelsWindow(const SpectrumWidget* widget,
-                                const std::optional<DbmWindow>& held, double panLowDbm)
-{
-    const DbmWindow stored{double(widget->wfLowThreshold()), double(widget->wfHighThreshold())};
-    if (!runtimeWaterfallLevels(widget)) {
-        return stored;
-    }
-    // Core automatic levels and Clarity's floor come from the source
-    // before codec clamping. Only a local AGC following transported rows
-    // needs the reach cap to prevent clamped-floor feedback.
-    const auto coreLevels = widget->coreWaterfallLevelsInUse()
-        ? widget->coreWaterfallLevels() : std::nullopt;
-    double activeLow = coreLevels ? double(coreLevels->first)
-                                  : double(widget->wfActiveLowThreshold());
-    if (!coreLevels && !widget->clarityActive()) {
-        const double reach = std::floor(std::min(panLowDbm, stored.minDbm)
-                                        - kRuntimeLowLevelReachDb);
-        activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
-    }
-    const double high = coreLevels ? double(coreLevels->second)
-                                  : double(widget->wfActiveHighThreshold());
-    const double activeHigh = std::max(high, activeLow);
-    if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
-        return held.value_or(stored);
-    }
-    if (held && activeLow >= held->minDbm && activeHigh <= held->maxDbm
-        && held->minDbm >= activeLow - 2.0 * kRuntimeLevelHeadroomDb
-        && held->maxDbm <= activeHigh + 2.0 * kRuntimeLevelHeadroomDb) {
-        return *held;
-    }
-    return {std::floor(activeLow - kRuntimeLevelHeadroomDb),
-            std::ceil(activeHigh + kRuntimeLevelHeadroomDb)};
-}
-
 // The pan's own floor, in the frame's un-normalised values.
 double panLowDbm(const SpectrumWidget* widget, double binWidthHz)
 {
@@ -607,25 +581,111 @@ double panLowDbm(const SpectrumWidget* widget, double binWidthHz)
         - double(widget->dynamicRange());
 }
 
-DbmWindow liveDbmWindow(const SpectrumWidget* widget, double binWidthHz,
-                        const DbmWindow& levels)
+// The waterfall levels the dBm window must hold: the stored levels while
+// they are what colours the waterfall; otherwise the levels in force now
+// (wfActiveLow/HighThreshold, which AGC and Clarity set). Empty when the
+// levels in force are not finite.
+// `panLow` is the pan's own floor in the frame's values (panLowDbm).
+std::optional<DbmWindow> neededWaterfallLevels(const SpectrumWidget* widget, double panLow)
+{
+    const DbmWindow stored{double(widget->wfLowThreshold()), double(widget->wfHighThreshold())};
+    if (!runtimeWaterfallLevels(widget)) {
+        return stored;
+    }
+    // Core automatic levels and Clarity's floor come from the source
+    // before codec clamping. Only a local AGC following transported rows
+    // needs the reach cap to prevent clamped-floor feedback. The cap is on
+    // the window's edge, so the level it allows stands one headroom above
+    // the reach.
+    const auto coreLevels = widget->coreWaterfallLevelsInUse()
+        ? widget->coreWaterfallLevels() : std::nullopt;
+    double activeLow = coreLevels ? double(coreLevels->first)
+                                  : double(widget->wfActiveLowThreshold());
+    if (!coreLevels && !widget->clarityActive()) {
+        const double reach = std::floor(std::min(panLow, stored.minDbm)
+                                        - kRuntimeLowLevelReachDb);
+        activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
+    }
+    const double high = coreLevels ? double(coreLevels->second)
+                                  : double(widget->wfActiveHighThreshold());
+    const double activeHigh = std::max(high, activeLow);
+    if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
+        return std::nullopt;
+    }
+    return DbmWindow{activeLow, activeHigh};
+}
+
+// R-DISP-HOLD: what the pan needs coded now: its own dBm range (the grid's
+// top down by its dynamic range, less the normalise shift) joined with the
+// waterfall levels in force, inside the link's limits. The waterfall's
+// levels colour the frame's values directly, so no colour may clip at the
+// window's edge. Empty when the pan's range is not finite, or when its
+// run-time levels are not: the held window then stays.
+std::optional<DbmWindow> neededDbmWindow(const SpectrumWidget* widget, double binWidthHz)
 {
     const double shift = normalizeShiftDb(widget->normalizeActive(), binWidthHz);
     const double panHigh = double(widget->refLevel()) - shift;
     const double panLow = panLowDbm(widget, binWidthHz);
-    // Parity Task 17 follow-up: the waterfall's levels colour the frame's
-    // values directly, so the window holds the levels in force (the run-time
-    // ones with waterfall AGC or Clarity), and no colour clips at its edge.
-    double low = std::min(panLow, levels.minDbm);
-    double high = std::max(panHigh, levels.maxDbm);
+    const std::optional<DbmWindow> levels = neededWaterfallLevels(widget, panLow);
+    if (!levels) {
+        return std::nullopt;
+    }
+    double low = std::min(panLow, levels->minDbm);
+    double high = std::max(panHigh, levels->maxDbm);
+    if (!std::isfinite(low) || !std::isfinite(high)) {
+        return std::nullopt;
+    }
+    low = std::clamp(low, kMinDbmLimit, kMaxDbmLimit - 1.0);
+    high = std::clamp(high, low + 1.0, kMaxDbmLimit);
+    return DbmWindow{low, high};
+}
+
+// The window a pan with nothing held and nothing finite to need asks for:
+// its own range with the stored waterfall levels, or the link's default.
+DbmWindow fallbackDbmWindow(const SpectrumWidget* widget, double binWidthHz)
+{
+    const double shift = normalizeShiftDb(widget->normalizeActive(), binWidthHz);
+    double low = std::min(panLowDbm(widget, binWidthHz), double(widget->wfLowThreshold()));
+    double high = std::max(double(widget->refLevel()) - shift,
+                           double(widget->wfHighThreshold()));
     if (!std::isfinite(low) || !std::isfinite(high)) {
         return {};
     }
     low = std::clamp(low, kMinDbmLimit, kMaxDbmLimit - 1.0);
     high = std::clamp(high, low + 1.0, kMaxDbmLimit);
-    // Whole tenths of a dB: a window that differs by less than that paints
-    // the same, and must not ask the Core again.
-    return {std::floor(low * 10.0) / 10.0, std::ceil(high * 10.0) / 10.0};
+    return {low, high};
+}
+
+// R-DISP-HOLD: the one hold rule for the dBm window a pan asks the Core
+// for. The held window stays while what the pan needs lies inside it and
+// neither held edge is more than twice the headroom outside what it needs.
+// Otherwise the window is what the pan needs widened by the headroom on
+// each side, its edges on whole dB, inside the link's limits. A pan with
+// nothing held takes that at once.
+//
+// The window cannot walk or alternate: a new window stands at least one
+// headroom outside the need on each side and less than a headroom and one
+// dB (the rounding), so the need has to travel a headroom less one dB at
+// one edge before the rule asks again.
+DbmWindow widenedDbmWindow(const DbmWindow& needed)
+{
+    return {std::max(std::floor(needed.minDbm - kRuntimeLevelHeadroomDb), kMinDbmLimit),
+            std::min(std::ceil(needed.maxDbm + kRuntimeLevelHeadroomDb), kMaxDbmLimit)};
+}
+
+DbmWindow heldDbmWindow(const SpectrumWidget* widget, double binWidthHz,
+                        const std::optional<DbmWindow>& held)
+{
+    const std::optional<DbmWindow> needed = neededDbmWindow(widget, binWidthHz);
+    if (!needed) {
+        return held ? *held : widenedDbmWindow(fallbackDbmWindow(widget, binWidthHz));
+    }
+    if (held && needed->minDbm >= held->minDbm && needed->maxDbm <= held->maxDbm
+        && held->minDbm >= needed->minDbm - 2.0 * kRuntimeLevelHeadroomDb
+        && held->maxDbm <= needed->maxDbm + 2.0 * kRuntimeLevelHeadroomDb) {
+        return *held;
+    }
+    return widenedDbmWindow(*needed);
 }
 
 int requestedFps()
@@ -705,9 +765,7 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
         ? dssMaxRowSpanFactor(dssShapeForAngle(0)) : 0.0;
     const double binWidthHz = double(slice->sampleRateHz()) / size;
     const DbmWindow dbm = inputs.dbmWindow.value_or(
-        liveDbmWindow(widget, binWidthHz,
-                      waterfallLevelsWindow(widget, std::nullopt,
-                                            panLowDbm(widget, binWidthHz))));
+        heldDbmWindow(widget, binWidthHz, std::nullopt));
     QJsonObject request{{QStringLiteral("sliceId"), slice->sliceIndex()},
             {QStringLiteral("tier"), size > baseSize ? QStringLiteral("fine") : QStringLiteral("wide")},
             {QStringLiteral("fftSize"), size}, {QStringLiteral("windowType"), window},
@@ -918,6 +976,17 @@ struct RemoteMediaController::Private {
         bool askAgain = false;
         QJsonObject askedAgain;
         double sourceCentreHz = 0;
+        /// R-DISP-HOLD: the view this pan asked for and the bin-aligned view
+        /// the Core answered it with (zero until a receive context answers
+        /// the pan's latest ask). While the pan still shows the answered
+        /// view, a new ask (a new dBm range, say) carries the asked one
+        /// again, so the Core aligns it to the same bins: asking for the
+        /// answered view moved the upper edge out by one bin at every ask,
+        /// and made each ask a new picture.
+        double viewAskedCentreHz = 0;
+        double viewAskedSpanHz = 0;
+        double viewAnsweredCentreHz = 0;
+        double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
         QVector<float> lastMiniTrace;
         // R-R3-21 / R-R3-08: decoded frames waiting for their presentation
@@ -1058,15 +1127,20 @@ struct RemoteMediaController::Private {
     // Parity Task 17 (R-R3-01, R-R3-04): each pan's dBm window, settled
     // once it has held for a frame period so a drag of the dBm strip asks
     // the Core again when it stops, not at every step.
+    // R-DISP-HOLD: `settled` is the held window (heldDbmWindow), the one the
+    // pan's requests carry; `live` is what the hold rule gives now, which
+    // differs from it only once the pan needs a range the held one does not
+    // cover or is far narrower than.
     struct DbmWindowState {
         DbmWindow settled;
         DbmWindow live;
         qint64 liveSinceMs = 0;
-        // Parity Task 17 follow-up: the waterfall levels the window holds
-        // (waterfallLevelsWindow), kept while the run-time levels fit.
-        DbmWindow levels;
     };
     QHash<const SpectrumWidget*, DbmWindowState> dbmWindows;
+    // R-DISP-HOLD: the mini display's held window, by slice. It follows the
+    // same hold rule; it has no drag to wait out, so it is taken at once.
+    // Forgotten when the slice's mini display is no longer wanted.
+    mutable QHash<int, DbmWindow> miniDbmWindows;
 
     /// The request this window would send for the pan now: requestFor with
     /// the pan's settled dBm window and, for a Core at spectrumGrantVersion
@@ -1087,7 +1161,23 @@ struct RemoteMediaController::Private {
         }
         inputs.duplex = displayDuplexNegotiated && displayDuplex;
         inputs.coreWaterfallLevels = coreWaterfallLevelsAvailable();
-        return requestFor(widget, slice, client && client->remoteWidebandAvailable(), inputs);
+        QJsonObject built = requestFor(widget, slice,
+                                       client && client->remoteWidebandAvailable(), inputs);
+        if (built.isEmpty() || !widget) { return built; }
+        // R-DISP-HOLD: a pan still showing the view the Core answered asks
+        // for the view it asked before (see Binding::viewAskedCentreHz).
+        for (const auto& entry : bindings) {
+            const Binding& binding = entry.second;
+            if (binding.widget != widget || binding.isMini()) { continue; }
+            if (binding.viewAskedSpanHz > 0.0
+                && qFuzzyCompare(widget->centerFrequency(), binding.viewAnsweredCentreHz)
+                && qFuzzyCompare(widget->bandwidth(), binding.viewAnsweredSpanHz)) {
+                built.insert(QStringLiteral("centreHz"), binding.viewAskedCentreHz);
+                built.insert(QStringLiteral("spanHz"), binding.viewAskedSpanHz);
+            }
+            break;
+        }
+        return built;
     }
 
     /// JJ's ruling of 2026-09-28: the Core computes a pan's waterfall AGC
@@ -1123,11 +1213,16 @@ struct RemoteMediaController::Private {
             int(WindowFunction::Count) - 1);
         SpectrumWidget* source = miniSettingsWidget(stack, slice->sliceIndex());
         const double binWidthHz = double(slice->sampleRateHz()) / size;
-        const DbmWindow dbm = source
-            ? liveDbmWindow(source, binWidthHz,
-                waterfallLevelsWindow(source, std::nullopt,
-                    panLowDbm(source, binWidthHz)))
-            : DbmWindow{-140.0, -40.0};
+        DbmWindow dbm{-140.0, -40.0};
+        if (source) {
+            const auto held = miniDbmWindows.constFind(slice->sliceIndex());
+            dbm = heldDbmWindow(source, binWidthHz,
+                                held == miniDbmWindows.cend()
+                                    ? std::nullopt : std::optional<DbmWindow>(*held));
+            miniDbmWindows.insert(slice->sliceIndex(), dbm);
+        } else {
+            miniDbmWindows.remove(slice->sliceIndex());
+        }
         QJsonObject request{{QStringLiteral("sliceId"), slice->sliceIndex()},
             {QStringLiteral("tier"), size > base ? QStringLiteral("fine")
                                                   : QStringLiteral("wide")},
@@ -1158,13 +1253,18 @@ struct RemoteMediaController::Private {
         return request;
     }
 
-    /// Parity Task 17: brings each pan's dBm window up to date. A pan seen
-    /// for the first time takes its window at once; a changed window is
-    /// taken once it has held for a frame period of the pan's rate (the
-    /// planner's tick, kPlannerIntervalMs, is longer, so a range change
-    /// asks the Core again at most once a tick and a drag once it stops).
+    /// Parity Task 17, R-DISP-HOLD: brings each pan's dBm window up to date.
+    /// A pan seen for the first time takes its window (what it needs plus
+    /// headroom) at once. After that the held window stays while the hold
+    /// rule keeps it (heldDbmWindow); a window the rule replaces is taken
+    /// once it has held for a frame period of the pan's rate (the planner's
+    /// tick, kPlannerIntervalMs, is longer, so a range change asks the Core
+    /// again at most once a tick and a drag once it stops).
     void settleDbmWindows(qint64 now)
     {
+        for (auto it = miniDbmWindows.begin(); it != miniDbmWindows.end();) {
+            it = miniWanted.contains(it.key()) ? std::next(it) : miniDbmWindows.erase(it);
+        }
         if (!stack || !model) { return; }
         QSet<const SpectrumWidget*> seen;
         for (PanadapterApplet* applet : stack->allApplets()) {
@@ -1177,18 +1277,15 @@ struct RemoteMediaController::Private {
             seen.insert(widget);
             auto found = dbmWindows.find(widget);
             const double binWidthHz = double(slice->sampleRateHz()) / size;
-            const DbmWindow levels = waterfallLevelsWindow(
-                widget,
+            const DbmWindow live = heldDbmWindow(
+                widget, binWidthHz,
                 found == dbmWindows.end() ? std::nullopt
-                                          : std::optional<DbmWindow>(found->levels),
-                panLowDbm(widget, binWidthHz));
-            const DbmWindow live = liveDbmWindow(widget, binWidthHz, levels);
+                                          : std::optional<DbmWindow>(found->settled));
             if (found == dbmWindows.end()) {
-                dbmWindows.insert(widget, {live, live, now, levels});
+                dbmWindows.insert(widget, {live, live, now});
                 continue;
             }
             DbmWindowState& state = *found;
-            state.levels = levels;
             if (live != state.live) {
                 state.live = live;
                 state.liveSinceMs = now;
@@ -2913,6 +3010,11 @@ void RemoteMediaController::dropMediaPeerForTest()
     if (d->peer) {
         emit d->peer->closed();
     }
+}
+
+void RemoteMediaController::planNowForTest()
+{
+    refreshSubscriptions();
 }
 
 void RemoteMediaController::queueProgramSilence(qint64 nowMs)
@@ -6852,11 +6954,26 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     binding.contextRevision = revision;
     binding.sourceCentreHz = sourceCentre;
     binding.capture = {context, sourceCentre, rate};
+    {
+        // R-DISP-HOLD: the view asked and the view answered, when this
+        // context answers the pan's latest ask.
+        const QJsonObject& asked = budgetMode ? binding.acceptedRequest : binding.observed;
+        const bool answersLatest = revision
+            == (budgetMode ? binding.acceptedRevision : binding.revision);
+        const double askedSpan = asked.value(QStringLiteral("spanHz")).toDouble();
+        if (answersLatest && askedSpan > 0.0 && context.exactSpanHz > 0.0) {
+            binding.viewAskedCentreHz = asked.value(QStringLiteral("centreHz")).toDouble();
+            binding.viewAskedSpanHz = askedSpan;
+            binding.viewAnsweredCentreHz = context.exactCentreHz;
+            binding.viewAnsweredSpanHz = context.exactSpanHz;
+        } else {
+            binding.viewAskedSpanHz = 0.0;
+        }
+    }
     binding.decoder.reset();
     binding.presenter.restartChain();
     binding.accepted = true;
     binding.rejected = false;
-    binding.receivedNoiseFloor = false;
     binding.receivedFrameTimesMs.clear();
     const QPointer<RemoteMediaController> self(this);
     const QString connectionId = d->connectionId;
@@ -6868,8 +6985,20 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     const int grantedFftSize = decoded->grant ? decoded->grant->grantedFftSize
         : (budgetMode ? binding.acceptedRequest : binding.observed)
               .value(QStringLiteral("fftSize")).toInt();
-    binding.widget->setRemoteSpectrumContext(context, sourceCentre, rate, grantedFftSize);
+    // R-DISP-HOLD: the decoder and the presenter's chain are renewed for
+    // every context and a keyframe is asked for below. What the pan has
+    // drawn and measured is the widget's to keep or empty: it keeps it for
+    // a context of the picture it already shows (a new dBm range or frame
+    // rate), and empties it for a new picture.
+    const QPointer<SpectrumWidget> contextWidget = binding.widget;
+    contextWidget->setRemoteSpectrumContext(context, sourceCentre, rate, grantedFftSize);
     if (!self || d->connectionId != connectionId) { return; }
+    it = d->bindings.find(endpointId);
+    if (it != d->bindings.end() && it->second.contextRevision == acceptedContextRevision
+        && !(contextWidget && contextWidget->remoteContextKeptPicture())) {
+        // The Core's noise floor for a new picture has not arrived.
+        it->second.receivedNoiseFloor = false;
+    }
     // Show or clear this pan's grant line now rather than on the next refresh.
     refreshPanGrantStatus(panId);
     if (!self || d->connectionId != connectionId) { return; }

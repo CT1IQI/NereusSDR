@@ -650,6 +650,248 @@ private slots:
         // DDC-only 3D history, whose DDC noise floor is -120 dB plus scalar.
         QVERIFY(*std::max_element(output->wideDbm.cbegin(), output->wideDbm.cend()) < -100.0f);
     }
+
+    // R-DISP-HOLD: a second configure that changes only the dBm range is the
+    // same picture. The averaged trace is in linear power per output pixel
+    // and does not depend on the range it is coded in, so it carries on. The
+    // context, the sequence and the pacing still restart.
+    void aDbmRangeChangeKeepsTheAveragedPlanes()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        std::optional<DisplayCodecFrame> output;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            output = endpoint.consume(input);
+            QVERIFY(output.has_value());
+        }
+        const QVector<float> convergedTrace = output->traceDbm;
+        const QVector<float> convergedWaterfall = output->waterfallDbm;
+        QVERIFY(allNear(convergedTrace, -120.0f));
+        QVERIFY(allNear(convergedWaterfall, -120.0f));
+        QVERIFY(output->encoderSequence > 0);
+
+        SpectrumEndpointRequest moved = req;
+        moved.minDbm = -150.0f;
+        moved.maxDbm = -20.0f;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(moved, source));
+        QCOMPARE(endpoint.context().codec.minDbm, -150.0f);
+        QCOMPARE(endpoint.context().codec.maxDbm, -20.0f);
+        QCOMPARE(endpoint.context().codec.contextGeneration, source.contextGeneration);
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(1.0e-12f);
+        output = endpoint.consume(input);
+        QVERIFY(output.has_value());
+        // The context is new: its sequence and its waterfall pacing restart.
+        QCOMPARE(output->encoderSequence, quint32(0));
+        QVERIFY(output->waterfallAdvance);
+        // One codec step of the new range.
+        const float step = (moved.maxDbm - moved.minDbm) / 255.0f;
+        QCOMPARE(output->traceDbm.size(), convergedTrace.size());
+        for (int index = 0; index < convergedTrace.size(); ++index) {
+            QVERIFY2(std::abs(output->traceDbm.at(index) - convergedTrace.at(index)) <= step,
+                     qPrintable(QStringLiteral("trace pixel %1 restarted at %2 dBm")
+                                    .arg(index).arg(output->traceDbm.at(index))));
+            QVERIFY2(std::abs(output->waterfallDbm.at(index) - convergedWaterfall.at(index))
+                         <= step,
+                     qPrintable(QStringLiteral("waterfall pixel %1 restarted at %2 dBm")
+                                    .arg(index).arg(output->waterfallDbm.at(index))));
+        }
+    }
+
+    // R-DISP-HOLD: frame rate, frames per line and the averaging constant
+    // that follows the frame rate may differ in the same picture. The state
+    // is kept and the next frame is averaged with the new constant.
+    void aFrameRateChangeKeepsTheStateAndTakesTheNewConstant()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            QVERIFY(endpoint.consume(input).has_value());
+        }
+
+        SpectrumEndpointRequest slower = req;
+        slower.targetFps = 15;
+        slower.framesPerLine = 1;
+        slower.trace.averageAlpha = 0.9;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(slower, source));
+        QCOMPARE(endpoint.context().targetFps, 15);
+        QCOMPARE(endpoint.context().framesPerLine, 1);
+        DaemonSpectrumFrame louder = frame(source, at);
+        louder.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> output = endpoint.consume(louder);
+        QVERIFY(output.has_value());
+        // Recursive log averaging: 0.9 * -120 + 0.1 * -100.
+        QVERIFY2(std::abs(output->traceDbm[32] - (-118.0f)) < 0.01f,
+                 qPrintable(QString::number(output->traceDbm[32])));
+    }
+
+    void aNewPictureStillRestartsTheAveragedPlanes_data()
+    {
+        QTest::addColumn<QString>("change");
+        QTest::newRow("span") << QStringLiteral("span");
+        QTest::newRow("centre") << QStringLiteral("centre");
+        QTest::newRow("pixel count") << QStringLiteral("pixels");
+        QTest::newRow("averaging mode") << QStringLiteral("averageMode");
+        QTest::newRow("detector") << QStringLiteral("detector");
+        QTest::newRow("source generation") << QStringLiteral("sourceGeneration");
+        QTest::newRow("after reset") << QStringLiteral("reset");
+    }
+
+    // R-DISP-HOLD: whatever makes the picture a different one restarts the
+    // averaging exactly as a first configure does.
+    void aNewPictureStillRestartsTheAveragedPlanes()
+    {
+        QFETCH(QString, change);
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 1;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            QVERIFY(endpoint.consume(input).has_value());
+        }
+
+        SpectrumEndpointRequest next = req;
+        ++source.contextGeneration;
+        if (change == QLatin1String("span")) {
+            next.spanHz = 48'000.0;
+        } else if (change == QLatin1String("centre")) {
+            next.centreHz += 12'000.0;
+        } else if (change == QLatin1String("pixels")) {
+            next.pixels = 48;
+        } else if (change == QLatin1String("averageMode")) {
+            next.trace.averageMode = 1;
+            next.waterfall.averageMode = 3;
+        } else if (change == QLatin1String("detector")) {
+            next.trace.detector = SpectrumDetectorMode::Average;
+            next.waterfall.detector = SpectrumDetectorMode::Peak;
+        } else if (change == QLatin1String("sourceGeneration")) {
+            ++source.sourceGeneration;
+        } else {
+            endpoint.reset();
+        }
+        QVERIFY(endpoint.configure(next, source));
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> restarted = endpoint.consume(input);
+        QVERIFY(restarted.has_value());
+
+        SpectrumEndpoint fresh;
+        QVERIFY(fresh.configure(next, source));
+        const std::optional<DisplayCodecFrame> expected = fresh.consume(input);
+        QVERIFY(expected.has_value());
+        QCOMPARE(restarted->traceDbm, expected->traceDbm);
+        QCOMPARE(restarted->waterfallDbm, expected->waterfallDbm);
+    }
+
+    // R-DISP-HOLD: the two planes are judged apart. A changed waterfall
+    // averaging mode restarts the waterfall plane and leaves the trace plane.
+    void aChangedPlaneRestartsAloneAndTheOtherPlaneIsKept()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            QVERIFY(endpoint.consume(input).has_value());
+        }
+        SpectrumEndpointRequest next = req;
+        next.waterfall.averageMode = 1;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(next, source));
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> output = endpoint.consume(input);
+        QVERIFY(output.has_value());
+
+        SpectrumEndpoint fresh;
+        QVERIFY(fresh.configure(next, source));
+        const std::optional<DisplayCodecFrame> expected = fresh.consume(input);
+        QVERIFY(expected.has_value());
+        // Kept trace: 0.5 * -120 + 0.5 * -100. Restarted waterfall: as fresh.
+        QVERIFY2(std::abs(output->traceDbm[32] - (-110.0f)) < 0.01f,
+                 qPrintable(QString::number(output->traceDbm[32])));
+        QCOMPARE(output->waterfallDbm, expected->waterfallDbm);
+    }
+
+    // R-DISP-HOLD: the extended (ADC wings) planes follow the same rule.
+    void anExtendedDbmRangeChangeKeepsTheAveragedPlanes()
+    {
+        SpectrumEndpointSourceContext source = extendedSourceContext();
+        SpectrumEndpointRequest req = extendedRequest();
+        req.centreHz = 1'500'000.0;
+        req.spanHz = 500'000.0;
+        req.trace.averageMode = 1;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        std::optional<DisplayCodecFrame> output;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            output = endpoint.consume(frame(source, at), 0.0,
+                                      widebandAtDisplayLevel(source, -40.0f));
+            QVERIFY(output.has_value());
+        }
+        const float converged = output->traceDbm[50];
+
+        SpectrumEndpointRequest moved = req;
+        moved.minDbm = -150.0f;
+        moved.maxDbm = -20.0f;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(moved, source));
+        output = endpoint.consume(frame(source, at), 0.0,
+                                  widebandAtDisplayLevel(source, -100.0f));
+        QVERIFY(output.has_value());
+        // Kept: half way in linear power from the -40 dBm state towards
+        // -100 dBm is 3 dB down. Restarted, it would read -100 dBm.
+        QVERIFY2(std::abs(output->traceDbm[50] - (converged - 3.01f)) < 0.05f,
+                 qPrintable(QStringLiteral("%1 after %2").arg(output->traceDbm[50])
+                                .arg(converged)));
+
+        // A changed ADC source is a new picture.
+        ++source.contextGeneration;
+        ++source.wideband.sourceGeneration;
+        QVERIFY(endpoint.configure(moved, source));
+        const WidebandSpectrumFrame quiet = widebandAtDisplayLevel(source, -100.0f);
+        const auto restarted = endpoint.consume(frame(source, at), 0.0, quiet);
+        SpectrumEndpoint fresh;
+        QVERIFY(fresh.configure(moved, source));
+        const auto expected = fresh.consume(frame(source, at), 0.0, quiet);
+        QVERIFY(restarted.has_value());
+        QVERIFY(expected.has_value());
+        QCOMPARE(restarted->traceDbm, expected->traceDbm);
+    }
 };
 
 QTEST_MAIN(TstSpectrumEndpoint)

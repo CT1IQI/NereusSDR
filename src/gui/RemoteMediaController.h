@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: the microphone is collected by a real-time thread while
 //               the capture lease is held (MicUplinkCollector);
 //               setMicCollectorInlineForTest, collectMicNowForTest,
@@ -558,6 +560,10 @@ public:
     /// media connection does, while the control session stays up
     /// (2026-10-09). No production caller.
     void dropMediaPeerForTest();
+    /// Test only (R-DISP-HOLD): runs the planner's tick now, as its 100 ms
+    /// timer does, so a test moves the injected clock and plans without
+    /// waiting on a real timer. No production caller.
+    void planNowForTest();
     /// iPhone app plan Task 29 fix wave (review Important 1): media follows
     /// every move of the session. A move marks a replacement pending; it
     /// starts as soon as it can (the media connection ready, unkeyed, VOX

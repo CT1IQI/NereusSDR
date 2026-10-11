@@ -793,6 +793,78 @@ private slots:
         QVERIFY(station.peakBlobs().blobs().isEmpty());
     }
 
+    // R-DISP-HOLD: the same picture asked again keeps what its changed
+    // settings do not invalidate.
+    void aChangedRequestKeepsTheStateItsSettingsDoNotInvalidate()
+    {
+        DisplayExtrasRequest request;
+        request.peakBlobs = DisplayExtrasRequest::PeakBlobs{};
+        request.activePeakHold = DisplayExtrasRequest::ActivePeakHold{true, 2000, 6.0};
+        request.noiseFloor = DisplayExtrasRequest::NoiseFloor{true, 0.0, false};
+        request.waterfallLevels = DisplayExtrasRequest::WaterfallLevels{
+            WaterfallLevelMode::Agc, -122.0, -62.0, 0};
+        DisplayExtrasProcessor station(request);
+        DisplayCodecFrame frame;
+        frame.context = {1, 1, -180.0f, 0.0f, 8, 8, 0};
+        frame.traceDbm = {-120, -120, -40, -120, -120, -120, -120, -120};
+        frame.waterfallDbm = frame.traceDbm;
+        frame.waterfallAdvance = true;
+        DisplayExtrasInputs inputs;
+        inputs.fps = 30;
+        // Past the 500 ms display delay, so the blobs and the hold are shown.
+        for (int index = 0; index < 60; ++index) {
+            inputs.nowMs = index * 33;
+            station.process(frame, inputs);
+        }
+        QCOMPARE(station.activePeakHold().size(), 8);
+        QVERIFY(station.activePeakHold().active());
+        QVERIFY(!station.peakBlobs().blobs().isEmpty());
+        const float floorBefore = station.noiseFloor().lerpAverage();
+        const std::pair<float, float> levelsBefore = station.waterfallLevels();
+        QVERIFY(levelsBefore != std::make_pair(-122.0f, -62.0f));
+
+        // Settings of the same state: all of it stays.
+        DisplayExtrasRequest settings = request;
+        settings.peakBlobs->holdMs = 900;
+        settings.activePeakHold->fallDbPerSec = 12.0;
+        settings.noiseFloor->shiftDb = 3.0;
+        settings.waterfallLevels->lowDbm = -130.0;
+        settings.calibrationOffsetDb = 1.0;
+        station.updateRequest(settings);
+        QCOMPARE(station.request(), settings);
+        QCOMPARE(station.activePeakHold().size(), 8);
+        QVERIFY(station.activePeakHold().active());
+        QVERIFY(!station.peakBlobs().blobs().isEmpty());
+        QCOMPARE(station.noiseFloor().lerpAverage(), floorBefore);
+        QCOMPARE(station.waterfallLevels(), levelsBefore);
+
+        // A different blob count starts the blobs again and nothing else.
+        DisplayExtrasRequest fewer = settings;
+        fewer.peakBlobs->count = 1;
+        station.updateRequest(fewer);
+        QVERIFY(station.peakBlobs().blobs().isEmpty());
+        QCOMPARE(station.activePeakHold().size(), 8);
+        QCOMPARE(station.waterfallLevels(), levelsBefore);
+
+        // A different levels mode starts the levels again from those asked.
+        DisplayExtrasRequest mode = fewer;
+        mode.waterfallLevels->mode = WaterfallLevelMode::Clarity;
+        station.updateRequest(mode);
+        QCOMPARE(station.waterfallLevels(), std::make_pair(-130.0f, -62.0f));
+        QVERIFY(station.clarity() != nullptr);
+        QCOMPARE(station.activePeakHold().size(), 8);
+        mode.waterfallLevels->mode = WaterfallLevelMode::Manual;
+        station.updateRequest(mode);
+        QVERIFY(station.clarity() == nullptr);
+
+        // The hold switched off empties its row.
+        DisplayExtrasRequest off = mode;
+        off.activePeakHold->enabled = false;
+        station.updateRequest(off);
+        QCOMPARE(station.activePeakHold().size(), 0);
+        QCOMPARE(station.noiseFloor().lerpAverage(), floorBefore);
+    }
+
     // ── The datagram ────────────────────────────────────────────────────
 
     void everySectionRoundTrips()
