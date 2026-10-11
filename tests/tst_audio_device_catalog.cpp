@@ -19,6 +19,10 @@
 //               from the catalogue and end it themselves, in place of
 //               upper bounds on the wall clock. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-11: hasListed() and firstListed() (R-AUD-03) in the two start
+//               cases: true inside a start that got its list, false after
+//               one that gave up until the list is in. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -347,7 +351,13 @@ private slots:
     {
         CatalogRig rig;
         QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
+        QSignalSpy firstListed(rig.catalog.get(), &IAudioDeviceCatalog::firstListed);
+        // Nothing is listed before start().
+        QVERIFY(!rig.catalog->hasListed());
         rig.catalog->start();
+        // The first list came inside start()'s wait: listed, said once.
+        QVERIFY(rig.catalog->hasListed());
+        QCOMPARE(firstListed.count(), 1);
         QCOMPARE(rig.engine->enumerateCalls(), 1);
         QVERIFY(rig.engine->hasNoticeSink());
         QCOMPARE(rig.catalog->backends(), QList<AudioBackendId>{AudioBackendId::CoreAudio});
@@ -374,9 +384,17 @@ private slots:
         // The queued copy of the first list does not signal again.
         QTest::qWait(50);
         QCOMPARE(changed.count(), 1);
+        QCOMPARE(firstListed.count(), 1);
 
         rig.catalog->stop();
         QVERIFY(!rig.engine->hasNoticeSink());
+        // A stopped catalog has listed nothing; the next start says so
+        // again when its own first list is in.
+        QVERIFY(!rig.catalog->hasListed());
+        rig.catalog->start();
+        QVERIFY(rig.catalog->hasListed());
+        QCOMPARE(firstListed.count(), 2);
+        rig.catalog->stop();
     }
 
     void addedDeviceShowsWithinDebounce()
@@ -593,6 +611,7 @@ private slots:
         CatalogRig rig;
         rig.engine->holdEnumerate();
         QSignalSpy changed(rig.catalog.get(), &IAudioDeviceCatalog::devicesChanged);
+        QSignalSpy firstListed(rig.catalog.get(), &IAudioDeviceCatalog::firstListed);
         QTest::ignoreMessage(QtWarningMsg,
                              QRegularExpression(QStringLiteral("Audio device list took longer than 3000 ms; continuing without it; waiting on CoreAudio")));
         QElapsedTimer clock;
@@ -602,10 +621,16 @@ private slots:
         QVERIFY2(elapsed >= AudioDeviceCatalog::kStartWaitMs - 50, qPrintable(QString::number(elapsed)));
         QVERIFY2(elapsed < AudioDeviceCatalog::kStartWaitMs + 1000, qPrintable(QString::number(elapsed)));
         QVERIFY(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output).isEmpty());
+        // R-AUD-03: the empty list is not a list. A reader that would save
+        // what it reads is told so, and told when the list is in.
+        QVERIFY(!rig.catalog->hasListed());
+        QCOMPARE(firstListed.count(), 0);
         rig.engine->releaseEnumerate();
         QTRY_COMPARE_WITH_TIMEOUT(changed.count(), 1, 3000);
         QVERIFY(hasDevice(rig.catalog->devices(AudioBackendId::CoreAudio, AudioDeviceDirection::Output),
                           QStringLiteral("spk")));
+        QVERIFY(rig.catalog->hasListed());
+        QCOMPARE(firstListed.count(), 1);
     }
 
     void stopGivesUpOnHungBackend()

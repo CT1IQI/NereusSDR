@@ -33,6 +33,10 @@
 //                text) and the product captions the secondary text, not
 //                the selection blue. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - the "new cables" notice's badge names the system it runs
+//                on (systemBadgeText); it said WINDOWS on every system.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 #include "VaxFirstRunDialog.h"
@@ -542,6 +546,7 @@ QWidget* VaxFirstRunDialog::buildHeaderBar()
     layout->addStretch();
 
     auto* badge = new QLabel(platformBadgeText(), header);
+    badge->setObjectName(QStringLiteral("platformBadge"));
     const QString badgeColor = platformBadgeColor();
     badge->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; background: %2; border: 1px solid %1;"
@@ -1259,13 +1264,30 @@ void VaxFirstRunDialog::onGotIt()
     accept();
 }
 
+QString VaxFirstRunDialog::systemBadgeText(SoundSystemLine::System system)
+{
+    switch (system) {
+        case SoundSystemLine::System::Mac:
+            return QStringLiteral("MACOS");
+        case SoundSystemLine::System::Linux:
+            return QStringLiteral("LINUX");
+        case SoundSystemLine::System::Windows:
+            break;
+    }
+    return QStringLiteral("WINDOWS");
+}
+
 QString VaxFirstRunDialog::platformBadgeText() const
 {
     switch (m_scenario) {
         case FirstRunScenario::WindowsCablesFound:
         case FirstRunScenario::WindowsNoCables:
-        case FirstRunScenario::RescanNewCables:
             return QStringLiteral("WINDOWS");
+        case FirstRunScenario::RescanNewCables:
+            // The notice opens on every system (the Digital modes page's
+            // Rescan offers a new third-party cable on a Mac or on Linux
+            // as on Windows), so it names the one it runs on.
+            return systemBadgeText(SoundSystemLine::thisSystem());
         case FirstRunScenario::MacNative:
             return QStringLiteral("MACOS");
         case FirstRunScenario::LinuxNative:

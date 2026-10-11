@@ -277,6 +277,9 @@ class MeterWidget;
 class MeterPoller;
 class TitleBar;
 class VaxFirstRunDialog;
+enum class FirstRunScenario;
+struct DetectedCable;
+class AudioEngine;
 class PsForm;
 class DiversityDialog;
 // Remote-daemon R2 Task 20 fix round 2: createSetupDialog() returns this,
@@ -1314,6 +1317,9 @@ private:
     // audio/LastDetectedCables fingerprint and pops the
     // VaxFirstRunDialog in the appropriate scenario.
     void checkVaxFirstRun();
+    // Opens the dialog that check asked for (VaxFirstRunCheck::dialogWanted).
+    void showVaxFirstRunDialog(AudioEngine* vaxEngine, FirstRunScenario scenario,
+                               const QVector<DetectedCable>& payload);
 
     // Remote-daemon R2 Task 20. MUST be declared before m_radioModel: the
     // initializer list reads it to pick the model's Role, and a member

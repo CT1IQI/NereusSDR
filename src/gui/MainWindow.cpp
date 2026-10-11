@@ -1129,6 +1129,7 @@ warren@wpratt.com
 #include "models/PureSignalSettings.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "TitleBar.h"
+#include "VaxFirstRunCheck.h"
 #include "VaxFirstRunDialog.h"
 #if defined(Q_OS_LINUX)
 #  include "VaxLinuxFirstRunDialog.h"
@@ -1269,32 +1270,6 @@ void initializeOwnedPanView(SpectrumWidget* spectrum, double frequencyHz)
         }
         spectrum->updateVfoPositions();
     }
-}
-
-// First-run/rescan wants the "relevant" virtual cables for the current
-// platform — 3rd-party cables on Windows (BYO), our own NereusSdrVax
-// entries on Mac/Linux (native HAL plugin / pipe-source). Centralising
-// the platform split here keeps checkVaxFirstRun() focused on
-// scenario-selection + dialog wiring.
-// R-AUD-03 (native audio plan Task 18): from the engine's device
-// catalogue when it has one, else a PortAudio scan.
-QVector<DetectedCable> detectedForFirstRun(AudioEngine* engine)
-{
-    IAudioDeviceCatalog* catalogue = engine != nullptr ? engine->catalogue() : nullptr;
-    const QVector<DetectedCable> all = catalogue != nullptr
-        ? VirtualCableDetector::detect(*catalogue)
-        : VirtualCableDetector::scan();
-#if defined(Q_OS_WIN)
-    return VirtualCableDetector::filterThirdParty(all);
-#else
-    QVector<DetectedCable> out;
-    for (const auto& c : all) {
-        if (c.product == VirtualCableProduct::NereusSdrVax) {
-            out.push_back(c);
-        }
-    }
-    return out;
-#endif
 }
 
 // Local tooltips of the Tools menu's two developer test entries. Defined
@@ -5389,6 +5364,7 @@ void MainWindow::wireAutoAgcVisuals(RadioModel* model, SliceModel* slice,
     connect(slice, &SliceModel::stationAutoAgcNoiseFloorChanged, flag, refresh);
     connect(model, &RadioModel::connectionStateChanged, flag, refresh);
     connect(model, &RadioModel::activeSliceChanged, flag, refresh);
+    if (applet) { connect(applet, &RxApplet::sliceChanged, flag, refresh); }
     refresh();
 }
 
@@ -5409,7 +5385,9 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
         flag->updateAgcAutoVisuals(slice->autoAgcEnabled(), floor,
                                    slice->autoAgcOffset(), valid);
     }
-    if (applet && model->activeSlice() == slice) {
+    // The slice the applet shows, which is the window's receive slice and
+    // not always the model's active one.
+    if (applet && applet->slice() == slice) {
         applet->updateAgcAutoVisuals(slice->autoAgcEnabled(), floor,
                                        slice->autoAgcOffset(), valid);
     }
@@ -14801,12 +14779,9 @@ void MainWindow::wireSliceToSpectrum()
         refreshAutoAgcVisuals(m_radioModel, slice,
                     m_vfoWidgetsBySlice.value(slice->sliceIndex()), m_rxApplet);
 
-        // AUTO button toggle → SliceModel
-        connect(m_rxApplet, &RxApplet::autoAgcToggled, this, [this](bool enabled) {
-            if (SliceModel* active = activeSliceForWindow()) {
-                active->setAutoAgcEnabled(enabled);
-            }
-        });
+        // AUTO button toggle → SliceModel: the applet writes the slice it
+        // shows (RxApplet's AUTO click), so it is not routed through the
+        // window's active slice here.
 
         // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
         connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
@@ -18068,6 +18043,11 @@ void MainWindow::tryAutoReconnect()
 // every launch regardless of whether the dialog shows, so uninstall +
 // reinstall of the same cable doesn't flag it as "new" forever.
 //
+// R-AUD-03 (2026-10-11): the deciding half is VaxFirstRunCheck now, which
+// waits for the device catalog's first list before it reads or saves
+// anything and opens the "new cables" notice only when it has a cable end
+// to offer. showVaxFirstRunDialog() below is the dialog wiring.
+//
 // NereusSDR-original; no Thetis equivalent.
 void MainWindow::checkVaxFirstRun()
 {
@@ -18077,58 +18057,31 @@ void MainWindow::checkVaxFirstRun()
     // the cable fingerprint and audio/Vax<ch>/DeviceName are this
     // computer's settings, never the Core's, so a later local window reads
     // what the operator answered here.
-    auto& s = AppSettings::instance();
-    const bool firstRunDone =
-        (s.value(QStringLiteral("audio/FirstRunComplete"),
-                 QStringLiteral("False")).toString() == QStringLiteral("True"));
-
-    // Platform-specific scan — see detectedForFirstRun() in the anonymous
-    // namespace at the top of this file for the platform split rationale.
+    //
     // This computer's VAX outputs, live in a remote window too (R-R3-44).
     AudioEngine* const vaxEngine = m_radioModel->localAudioDevices();
-    const QVector<DetectedCable> detected = detectedForFirstRun(vaxEngine);
 
-    // Always refresh the stored fingerprint so a cable being removed +
-    // later reinstalled doesn't permanently re-flag itself as "new".
-    const QString newCsv = VirtualCableDetector::fingerprintCsv(detected);
-    const QString lastCsv = s.value(QStringLiteral("audio/LastDetectedCables"),
-                                    QString()).toString();
-    // R-AUD-03: the names came from the catalogue or, without one, from the
-    // older PortAudio scan; a fingerprint is compared only with one from
-    // the same list, so an upgrade raises no false "new cable" notice.
-    const QString lastSource =
-        s.value(QStringLiteral("audio/LastDetectedCablesSource"), QString()).toString();
-    const QString source = VirtualCableDetector::fingerprintSource(
-        vaxEngine != nullptr && vaxEngine->catalogue() != nullptr);
-    s.setValue(QStringLiteral("audio/LastDetectedCables"), newCsv);
-    s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
-    s.save();
+    // R-AUD-03: the scan, the fingerprint and the choice of dialog are
+    // VaxFirstRunCheck's (the platform split that was detectedForFirstRun()
+    // here went with them). It reads the device list, so it runs when that
+    // list is in: at once as a rule, later on a system slow to list.
+    auto* check = new VaxFirstRunCheck(
+        vaxEngine != nullptr ? vaxEngine->catalogue() : nullptr, this);
+    const QPointer<AudioEngine> engine(vaxEngine);
+    connect(check, &VaxFirstRunCheck::dialogWanted, this,
+            [this, engine](FirstRunScenario scenario, const QVector<DetectedCable>& cables) {
+                showVaxFirstRunDialog(engine.data(), scenario, cables);
+            });
+    connect(check, &VaxFirstRunCheck::finished, check, &QObject::deleteLater);
+    check->run();
+}
 
-    FirstRunScenario scenario;
-    QVector<DetectedCable> payload;
-
-    if (!firstRunDone) {
-#if defined(Q_OS_WIN)
-        scenario = detected.isEmpty() ? FirstRunScenario::WindowsNoCables
-                                       : FirstRunScenario::WindowsCablesFound;
-#elif defined(Q_OS_MAC)
-        scenario = FirstRunScenario::MacNative;
-#else
-        scenario = FirstRunScenario::LinuxNative;
-#endif
-        payload = detected;
-    } else {
-        // First-run already complete — only pop the dialog if NEW cables
-        // have appeared since the last launch.
-        const auto fresh =
-            VirtualCableDetector::newCablesSince(detected, lastCsv, lastSource, source);
-        if (fresh.isEmpty()) {
-            return;
-        }
-        scenario = FirstRunScenario::RescanNewCables;
-        payload = fresh;
-    }
-
+// The dialog checkVaxFirstRun()'s check asked for: the first-run dialog for
+// this system, or the "new cables" notice with the cables that are new.
+// vaxEngine is this computer's audio engine, as checkVaxFirstRun() read it.
+void MainWindow::showVaxFirstRunDialog(AudioEngine* vaxEngine, FirstRunScenario scenario,
+                                       const QVector<DetectedCable>& payload)
+{
     auto* dlg = new VaxFirstRunDialog(scenario, payload, this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     // R-AUD-03 / R-AUD-06: the lists follow the catalogue while it is open,

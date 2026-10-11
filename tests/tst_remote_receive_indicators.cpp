@@ -77,6 +77,7 @@ private slots:
         QVERIFY(secondLabel->text().contains("-87"));
         QCOMPARE(appletLabel->text(), firstLabel->text());
         radio.applyStationActiveSlice(23);
+        applet.setSlice(second);  // as the window does for its receive slice
         QCOMPARE(appletLabel->text(), secondLabel->text());
         first->setStationAutoAgcNoiseFloor(-109.0, true, 1);
         QVERIFY(firstLabel->text().contains("-109"));
@@ -88,6 +89,54 @@ private slots:
         QCOMPARE(firstLabel->text(), appletLabel->text());
         QCOMPARE(secondLabel->text(), appletLabel->text());
         radio.setNoiseFloorTracker(nullptr);
+    }
+
+    // The applet shows the slice this window receives, which is not always
+    // the model's active slice (a remote window that controls Slice B while
+    // the Core's active slice is A). AUTO on the applet acts on the slice
+    // the applet shows, and lights from that slice.
+    void appletAutoActsOnTheSliceItShows()
+    {
+        RadioModel radio(RadioModel::Role::Remote);
+        radio.setStationConnectionState(ConnectionState::Connected);
+        radio.addSliceWithStationId(0);
+        radio.addSliceWithStationId(1);
+        auto* sliceA = radio.sliceById(0);
+        auto* sliceB = radio.sliceById(1);
+        QVERIFY(sliceA && sliceB);
+        sliceB->setStationAutoAgcNoiseFloor(-98.0, true, 1);
+        radio.applyStationActiveSlice(0);
+        RxApplet applet(sliceB, &radio);
+        VfoWidget flagA, flagB;
+        MainWindow::wireAutoAgcVisuals(&radio, sliceA, &flagA, &applet);
+        MainWindow::wireAutoAgcVisuals(&radio, sliceB, &flagB, &applet);
+        QPushButton* autoButton = nullptr;
+        for (auto* button : applet.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("AUTO")) { autoButton = button; }
+        }
+        QVERIFY(autoButton);
+
+        autoButton->click();
+        QVERIFY(sliceB->autoAgcEnabled());
+        QVERIFY(!sliceA->autoAgcEnabled());
+        QLabel* appletFloor = floorLabel(applet);
+        QVERIFY(appletFloor);
+        QVERIFY(!appletFloor->isHidden());
+        QVERIFY(appletFloor->text().contains(QStringLiteral("-98")));
+
+        autoButton->click();
+        QVERIFY(!sliceB->autoAgcEnabled());
+        QVERIFY(appletFloor->isHidden());
+
+        // Slice A's AUTO, turned on from its flag, is not the applet's.
+        sliceA->setAutoAgcEnabled(true);
+        QVERIFY(appletFloor->isHidden());
+
+        // Shown on the applet once the applet shows Slice A.
+        applet.setSlice(sliceA);
+        QVERIFY(!appletFloor->isHidden());
+        applet.setSlice(sliceB);
+        QVERIFY(appletFloor->isHidden());
     }
 
     void unavailableCoreFilterDialogDoesNotPresentRetainedState()

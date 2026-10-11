@@ -1373,6 +1373,9 @@ nereus_add_test(tst_about_dialog)
 # ── Phase 3O Sub-Phase 11 Task 11a: VaxFirstRunDialog ────────────────────
 nereus_add_test(tst_vax_first_run_dialog)
 
+# ── R-AUD-03: the launch check behind that dialog and the "new cables" notice
+nereus_add_test(tst_vax_first_run_check)
+
 # ── Phase 3O VAX routing ──────────────────────────────────────────────────
 nereus_add_test(tst_slice_model_vax)
 

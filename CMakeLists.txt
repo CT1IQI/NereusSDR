@@ -1823,6 +1823,7 @@ set(GUI_SOURCES
     src/gui/SupportDialog.cpp
     src/gui/AboutDialog.cpp
     src/gui/VaxFirstRunDialog.cpp
+    src/gui/VaxFirstRunCheck.cpp
     src/gui/SpectrumWidget.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp

@@ -259,3 +259,14 @@ QVector<DetectedCable> VirtualCableDetector::newCablesSince(const QVector<Detect
     }
     return diffNewCables(current, lastCsv);
 }
+
+QVector<DetectedCable> VirtualCableDetector::bindableEnds(const QVector<DetectedCable>& cables)
+{
+    QVector<DetectedCable> out;
+    for (const DetectedCable& c : filterThirdParty(cables)) {
+        if (!c.isInput) {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
