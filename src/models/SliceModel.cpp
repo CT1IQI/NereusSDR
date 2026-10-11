@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-11 - Settings restore: AGC-T AUTO and its offset are saved per
+//              slice (per receiver), with the older per-band keys read as
+//              a fallback. NereusSDR-original. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 // 2026-10-11 - Settings restore: saveToSettings and restoreFromSettings
 //              carry the audio pan, BIN, squelch, APF, FM, DIG offset and
 //              RTTY values, per slice. They were never saved.
@@ -2851,8 +2855,16 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(bp + QStringLiteral("AgcSlope"),     m_agcSlope);
     s.setValue(bp + QStringLiteral("AgcAttack"),    m_agcAttack);
     s.setValue(bp + QStringLiteral("AgcDecay"),     m_agcDecay);
-    s.setValue(bp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False"));
-    s.setValue(bp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset);
+    // AGC-T AUTO and its offset are the receiver's, not the band's (the
+    // maintainer's ruling 2026-10-11): Slice<N>/AgcAutoEnabled and
+    // Slice<N>/AgcAutoOffset, no band part. Thetis keeps one switch and one
+    // offset per receiver as well.
+    // From Thetis console.cs:45992-46033 [v2.10.3.15] (AutoAGCRX1/RX2) and
+    // setup.cs:21995-22026 [v2.10.3.15] (chkAutoAGCRX1/RX2, udRX1/RX2AutoAGCOffset).
+    // The per-band keys an older build wrote are read once as a fallback
+    // (restoreFromSettings) and no longer written.
+    s.setValue(sp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(sp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset);
     s.setValue(bp + QStringLiteral("AgcFixedGain"), m_agcFixedGain);
     s.setValue(bp + QStringLiteral("AgcHangThreshold"), m_agcHangThreshold);
     s.setValue(bp + QStringLiteral("AgcMaxGain"),   m_agcMaxGain);
@@ -3025,10 +3037,20 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("AgcDecay"))) {
         setAgcDecay(s.value(bp + QStringLiteral("AgcDecay")).toInt());
     }
-    if (s.contains(bp + QStringLiteral("AgcAutoEnabled"))) {
+    // AGC-T AUTO and its offset: the slice's own keys (per receiver, the
+    // maintainer's ruling 2026-10-11). A file from an older build has them
+    // under the band instead; that value is read when the slice has none,
+    // and the next save writes the slice's key, so nobody's saved state is
+    // lost. Still after AgcThreshold above: RadioModel turns AUTO off on a
+    // manual threshold change, and the restored threshold is not one.
+    if (s.contains(sp + QStringLiteral("AgcAutoEnabled"))) {
+        setAutoAgcEnabled(s.value(sp + QStringLiteral("AgcAutoEnabled")).toString() == QLatin1String("True"));
+    } else if (s.contains(bp + QStringLiteral("AgcAutoEnabled"))) {
         setAutoAgcEnabled(s.value(bp + QStringLiteral("AgcAutoEnabled")).toString() == QLatin1String("True"));
     }
-    if (s.contains(bp + QStringLiteral("AgcAutoOffset"))) {
+    if (s.contains(sp + QStringLiteral("AgcAutoOffset"))) {
+        setAutoAgcOffset(s.value(sp + QStringLiteral("AgcAutoOffset")).toDouble());
+    } else if (s.contains(bp + QStringLiteral("AgcAutoOffset"))) {
         setAutoAgcOffset(s.value(bp + QStringLiteral("AgcAutoOffset")).toDouble());
     }
     if (s.contains(bp + QStringLiteral("AgcFixedGain"))) {

@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: a change of AGC-T AUTO or its offset
+//                schedules a save for its slice. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Settings restore: the FM, DIG offset and RTTY values
 //                schedule a save for their slice (they had no save
 //                trigger). NereusSDR-original. J.J. Boyd (KG4VCF),
@@ -23468,6 +23471,13 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     connect(slice, &SliceModel::diguOffsetHzChanged,   this, [this, slice]() { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::rttyMarkHzChanged,     this, [this, slice]() { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::rttyShiftHzChanged,    this, [this, slice]() { scheduleSettingsSave(slice); });
+    // AGC-T AUTO and its offset. Nothing scheduled a save for either, so
+    // AUTO switched on and the app closed wrote nothing unless another
+    // control was moved afterwards. The AUTO tick's own threshold writes
+    // still schedule nothing: updateAutoAgc sets m_syncingAgc, and the
+    // agcThresholdChanged handler above returns on it before its save.
+    connect(slice, &SliceModel::autoAgcEnabledChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::autoAgcOffsetChanged,  this, [this, slice]() { scheduleSettingsSave(slice); });
 
     // XIT stored for 3M-1 (TX phase) to consume on keydown. No RX effect in 3G-10.
 
