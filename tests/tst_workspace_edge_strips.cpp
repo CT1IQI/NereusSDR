@@ -21,6 +21,10 @@
 //   2026-10-11 - Headers are shown or hidden: a hidden header in a strip
 //                 shows only while arranging. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - The drop overlay and the Arrange outline are masked to the
+//                 pixels they draw, so neither covers a native surface on
+//                 Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -623,6 +627,170 @@ private slots:
         QVERIFY(!f.area->dropPreviewVisible());
         f.manager->setArrangeMode(false);
         QVERIFY(!f.area->targetBandsVisible());
+    }
+
+    // The see-through overlays cover only the pixels they draw. Beside a
+    // native surface (the spectrum, a meter) Qt gives each of them a native
+    // window, and on Windows that window is not blended with the surface
+    // under it: an overlay over the whole pane blanked the spectrum for all
+    // of Arrange.
+    void dropOverlayCoversOnlyItsBandsAndPreview()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("main", DockEdge::Right), f.container("b", DockEdge::Right)}));
+        f.show();
+        auto* overlay = f.area->findChild<QWidget*>(QStringLiteral("edgeDropOverlay"));
+        QVERIFY(overlay);
+        QVERIFY(!overlay->isVisible());
+        const auto bands = [&f] {
+            QRegion region;
+            for (DockEdge edge : {DockEdge::Left, DockEdge::Right, DockEdge::Top, DockEdge::Bottom}) {
+                region += f.area->targetBandRect(edge);
+            }
+            return region;
+        };
+        const auto paneCenter = [&f] { return f.center->mapTo(f.area, f.center->rect().center()); };
+
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(overlay->isVisible());
+        QCOMPARE(overlay->geometry(), f.area->rect());
+        QCOMPARE(overlay->mask(), bands());
+        QVERIFY(!overlay->mask().contains(paneCenter()));
+        // Every container's inside is clear of it too.
+        for (const char* id : {"main", "b"}) {
+            ContainerWidget* c = f.manager->container(id);
+            QVERIFY(!overlay->mask().contains(c->mapTo(f.area, c->rect().center())));
+        }
+
+        // The mask follows the area's size.
+        f.window.resize(1000, 700);
+        settle();
+        QCOMPARE(overlay->geometry(), f.area->rect());
+        QCOMPARE(overlay->mask(), bands());
+        QVERIFY(overlay->mask().contains(QPoint(f.area->width() - 1, f.area->height() - 1)));
+        QVERIFY(!overlay->mask().contains(paneCenter()));
+
+        // With a preview: the bands and the preview's rectangle, no more.
+        f.manager->showDropPreviewForTest(DockEdge::Right, 1);
+        settle();
+        const QRect preview = f.area->dropPreviewRect();
+        QVERIFY(preview.isValid());
+        QCOMPARE(overlay->mask(), bands() + preview);
+        QVERIFY(!overlay->mask().contains(paneCenter()));
+        f.manager->showDropPreviewForTest(DockEdge::Left, 0);
+        settle();
+        QVERIFY(f.area->dropPreviewRect() != preview);
+        QCOMPARE(overlay->mask(), bands() + f.area->dropPreviewRect());
+        f.manager->clearDropPreviewForTest();
+        settle();
+        QCOMPARE(overlay->mask(), bands());
+
+        // Everything it draws lies inside the mask: painted without the
+        // mask, no pixel outside it is touched.
+        f.manager->showDropPreviewForTest(DockEdge::Right, 1);
+        settle();
+        const QRegion shown = overlay->mask();
+        QImage image(overlay->size(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        overlay->clearMask();
+        overlay->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+        overlay->setMask(shown);
+        int inside = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                if (qAlpha(image.pixel(x, y)) == 0) {
+                    continue;
+                }
+                QVERIFY2(shown.contains(QPoint(x, y)),
+                         qPrintable(QStringLiteral("drawn outside the mask at %1,%2").arg(x).arg(y)));
+                ++inside;
+            }
+        }
+        QVERIFY(inside > 0);
+        f.manager->clearDropPreviewForTest();
+
+        // Nothing to draw: hidden, not a full-size see-through window.
+        f.manager->setArrangeMode(false);
+        settle();
+        QVERIFY(!overlay->isVisible());
+
+        // A drag outside Arrange shows the same bands and preview.
+        f.manager->showDropPreviewForTest(DockEdge::Right, 1);
+        settle();
+        QVERIFY(overlay->isVisible());
+        QCOMPARE(overlay->mask(), bands() + f.area->dropPreviewRect());
+        QVERIFY(!overlay->mask().contains(paneCenter()));
+        f.manager->clearDropPreviewForTest();
+        settle();
+        QVERIFY(!overlay->isVisible());
+    }
+
+    void arrangeOutlineCoversOnlyItsFrame()
+    {
+        EdgeFixture f;
+        QVERIFY(f.commit({f.container("main", DockEdge::Right), f.container("b", DockEdge::Right)}));
+        f.show();
+        ContainerWidget* c = f.manager->container("main");
+        auto* outline = c->findChild<QWidget*>(QStringLiteral("containerArrangeOutline"));
+        QVERIFY(outline);
+        QVERIFY(!outline->isVisible());
+        const auto frame = [](const QRect& r) {
+            // 1 px at the left and top, 2 px at the right and bottom: on a
+            // 2x screen the pen along the far edges reaches half a pixel in.
+            return QRegion(r).subtracted(QRegion(r.adjusted(1, 1, -2, -2)));
+        };
+
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(outline->isVisible());
+        QCOMPARE(outline->geometry(), c->rect());
+        QCOMPARE(outline->mask(), frame(outline->rect()));
+        QVERIFY(!outline->mask().contains(outline->rect().center()));
+        QVERIFY(outline->mask().contains(QPoint(0, 0)));
+        QVERIFY(outline->mask().contains(outline->rect().bottomRight()));
+        QVERIFY(!outline->mask().contains(QPoint(1, 1)));
+        QVERIFY(!outline->mask().contains(outline->rect().bottomRight() - QPoint(2, 2)));
+
+        // The frame follows the container's size.
+        const QSize before = outline->size();
+        f.area->setThickness(DockEdge::Right, f.area->strip(DockEdge::Right)->width() + 60);
+        settle();
+        QVERIFY(outline->size() != before);
+        QCOMPARE(outline->geometry(), c->rect());
+        QCOMPARE(outline->mask(), frame(outline->rect()));
+
+        // Everything it draws lies inside the frame.
+        QImage image(outline->size(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        const QRegion shown = outline->mask();
+        outline->clearMask();
+        outline->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+        outline->setMask(shown);
+        int inside = 0;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                if (qAlpha(image.pixel(x, y)) == 0) {
+                    continue;
+                }
+                QVERIFY2(shown.contains(QPoint(x, y)),
+                         qPrintable(QStringLiteral("drawn outside the frame at %1,%2").arg(x).arg(y)));
+                ++inside;
+            }
+        }
+        QVERIFY(inside > 0);
+
+        // The resize corner and edges stay above the outline.
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        QVERIFY(grip);
+        const QObjectList& siblings = c->children();
+        if (grip->isVisible()) {
+            QVERIFY(siblings.indexOf(grip) > siblings.indexOf(outline));
+        }
+
+        f.manager->setArrangeMode(false);
+        settle();
+        QVERIFY(!outline->isVisible());
     }
 
     void dropTargetsResolveEdgesStripsAndDetach()

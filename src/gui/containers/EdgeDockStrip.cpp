@@ -106,6 +106,10 @@
 //                 takes the 5 px grab area Qt gives today's 3 px splitter
 //                 handle. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The drop overlay is masked to its bands and preview and
+//                 hidden with nothing to draw: unmasked, on Windows it
+//                 blanked the spectrum for all of Arrange. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "EdgeDockStrip.h"
@@ -470,11 +474,39 @@ public:
     bool preview{false};
     QRect previewRect;
 
+    // The pixels paintEvent draws: the four bands and the preview's
+    // rectangle.
+    QRegion drawnRegion() const
+    {
+        QRegion region;
+        if (bands) {
+            for (DockEdge edge : kEdges) {
+                region += m_area->targetBandRect(edge);
+            }
+        }
+        if (preview && previewRect.isValid()) {
+            region += previewRect;
+        }
+        return region & m_area->rect();
+    }
+
+    // The overlay covers only what it draws. Next to a native surface
+    // (SpectrumWidget and MeterWidget are WA_NativeWindow) Qt makes this
+    // widget a native window too, and on Windows a child window is not
+    // blended with the swapchain of the sibling under it: all of its
+    // rectangle shows the window's backing store, which holds no spectrum.
+    // Unmasked, the overlay blanked the whole pane for all of Arrange.
     void sync()
     {
         setGeometry(m_area->rect());
-        setVisible(bands || preview);
+        const QRegion region = drawnRegion();
+        // An empty mask means no mask at all, so with nothing to draw the
+        // overlay is hidden.
+        setVisible(!region.isEmpty());
         if (isVisible()) {
+            if (mask() != region) {
+                setMask(region);
+            }
             raise();
         }
         update();

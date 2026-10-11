@@ -122,6 +122,9 @@
 //                 Settings preview paints through the same path (workspace
 //                 preview only). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - Arrange's dashed outline is masked to its 1 px frame:
+//                 unmasked, on Windows it hid the native meters under it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -239,6 +242,8 @@ protected:
 };
 
 class ArrangeOutline final : public QWidget {
+    static constexpr int kFrameNearPx = 1;
+    static constexpr int kFrameFarPx = 2;
 public:
     explicit ArrangeOutline(QWidget* parent) : QWidget(parent)
     {
@@ -248,9 +253,29 @@ public:
         // A window a container floats in gives every widget in it its
         // background, and this one lies over the header and the content.
         setStyleSheet(QStringLiteral("background: transparent;"));
+        setObjectName(QStringLiteral("containerArrangeOutline"));
         hide();
     }
 protected:
+    // Only the frame the outline draws belongs to it. Over a native meter
+    // Qt makes this widget a native window, and on Windows a child window
+    // is not blended with the swapchain of the sibling under it: unmasked,
+    // its inside showed the window's backing store in place of the meter.
+    // The frame is 1 px at the left and top and 2 px at the right and
+    // bottom: on a 2x screen the 1 px pen along x = width - 1 and
+    // y = height - 1 is two device pixels centered on that line, so it
+    // reaches half a pixel further in.
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QWidget::resizeEvent(event);
+        const QRegion frame = QRegion(rect()).subtracted(
+            QRegion(rect().adjusted(kFrameNearPx, kFrameNearPx, -kFrameFarPx, -kFrameFarPx)));
+        if (frame.isEmpty()) {
+            clearMask();
+        } else if (mask() != frame) {
+            setMask(frame);
+        }
+    }
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
