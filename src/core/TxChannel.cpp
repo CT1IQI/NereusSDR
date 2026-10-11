@@ -387,6 +387,11 @@ warren@wpratt.com
 //                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
 //                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 — The channel tells nereusd's thread placement when it is
+//                 up only so VOX can hear the microphone, on VOX on and
+//                 on each unkey with VOX on, so the receivers keep their
+//                 fast cores between transmissions. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Publish VOX callback targets atomically, suppress retired
 //                 snapshots and defer lane publication until open. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
@@ -1625,6 +1630,12 @@ void TxChannel::applyRunningOnLane(bool on, int cfirRun, quint64 sequence)
                 // Drop CFIR after channel drain so no residual samples process
                 // through it on the next RX→TX engagement (P2 will re-arm above).
                 SetTXACFIRRun(m_channelId, 0);
+            } else {
+                // The channel stays up so VOX can hear the microphone, with
+                // nothing on the air: nereusd gives the receivers their fast
+                // cores back until the next key.
+                ThreadPlacement::instance().setTransmitUse(m_channelId,
+                                                           TransmitUse::Listening);
             }
         }
     }
@@ -1710,9 +1721,11 @@ void TxChannel::applyVoxListeningOnLane(bool on, int cfirRun)
         if (!actualRunning) {
             SetTXACFIRRun(m_channelId, cfirRun);
             SetChannelState(m_channelId, 1, 0);
-            // R-R3-41: VOX listening keeps the transmit worker busy too.
-            ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
-                                                         m_channelId, true);
+            // R-R3-41: VOX listening keeps the transmit worker busy too,
+            // but it is not transmitting: nereusd seats it after the
+            // receivers.
+            ThreadPlacement::instance().setTransmitUse(m_channelId,
+                                                       TransmitUse::Listening);
         }
     } else {
         // Leaving vox-listening AND MOX is also off: drop the WDSP

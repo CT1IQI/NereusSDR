@@ -468,6 +468,108 @@ private slots:
         QVERIFY(!plan.raisedFor(ThreadRole::RxWorker, 1));
     }
 
+    // VOX on, nothing on the air: the transmit channel runs so VOX can hear
+    // the microphone, and it takes no core from a receiver. With four wide
+    // receivers the transmit worker shares the later receivers' cores like
+    // a receiver without one, and the pump and the I/Q sender run with
+    // everything else.
+    void voxListeningTakesNoCoreFromAReceiver()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        PlacementDemand d = demand({0, 1, 2, 3}, true, true, true);
+        d.txListening = true;
+        d.txIqSender = true;
+        d.connectionThread = true;
+        d.spectrumThreads = {0, 1};
+        const PlacementPlan plan = planThreadPlacement(f.read(), d);
+        QVERIFY(plan.active);
+        QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 0), 4);
+        QCOMPARE(plan.cpuFor(ThreadRole::DspThread), 5);
+        QCOMPARE(plan.cpuFor(ThreadRole::ConnectionThread), 5);
+        QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 1), 6);
+        QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 2), 7);
+        QCOMPARE(plan.coresFor(ThreadRole::RxWorker, 3), (QList<int>{6, 7}));
+        QVERIFY(plan.raisedFor(ThreadRole::RxWorker, 3));
+        QCOMPARE(plan.cpuFor(ThreadRole::TxWorker, 5), -1);
+        QCOMPARE(plan.coresFor(ThreadRole::TxWorker, 5), (QList<int>{6, 7}));
+        QVERIFY(plan.raisedFor(ThreadRole::TxWorker, 5));
+        QVERIFY(plan.coresFor(ThreadRole::TxWorkerThread).isEmpty());
+        QVERIFY(!plan.raisedFor(ThreadRole::TxWorkerThread));
+        QVERIFY(plan.coresFor(ThreadRole::TxIqSender).isEmpty());
+        QVERIFY(!plan.raisedFor(ThreadRole::TxIqSender));
+        for (int bucket : {0, 1}) {
+            QCOMPARE(plan.coresFor(ThreadRole::SpectrumThread, bucket),
+                     (QList<int>{4, 5, 6, 7}));
+        }
+
+        // The same receivers keyed (G-06): the transmit roles go first.
+        d.txListening = false;
+        const PlacementPlan keyed = planThreadPlacement(f.read(), d);
+        QCOMPARE(keyed.cpuFor(ThreadRole::TxWorker, 5), 6);
+        QCOMPARE(keyed.cpuFor(ThreadRole::TxWorkerThread), 7);
+        QVERIFY(keyed.coresFor(ThreadRole::RxWorker, 1).isEmpty());
+    }
+
+    // VOX on with cores to spare: the transmit roles take the ones the
+    // receivers leave, in their usual order, each raised on its own.
+    void voxListeningTakesTheCoresReceiversLeave()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        const CpuTopology rk = f.read();
+        PlacementDemand one = demand({0}, true, true, true);
+        one.txListening = true;
+        one.txIqSender = true;
+        const PlacementPlan onePlan = planThreadPlacement(rk, one);
+        QCOMPARE(onePlan.cpuFor(ThreadRole::RxWorker, 0), 4);
+        QCOMPARE(onePlan.cpuFor(ThreadRole::DspThread), 5);
+        QCOMPARE(onePlan.cpuFor(ThreadRole::TxWorker, 5), 6);
+        QCOMPARE(onePlan.cpuFor(ThreadRole::TxWorkerThread), 7);
+        QVERIFY(onePlan.raisedFor(ThreadRole::TxWorker, 5));
+        QVERIFY(onePlan.coresFor(ThreadRole::TxIqSender).isEmpty());
+
+        PlacementDemand two = demand({0, 1}, true, true, true);
+        two.txListening = true;
+        const PlacementPlan twoPlan = planThreadPlacement(rk, two);
+        QCOMPARE(twoPlan.cpuFor(ThreadRole::RxWorker, 1), 6);
+        QCOMPARE(twoPlan.cpuFor(ThreadRole::TxWorker, 5), 7);
+        QVERIFY(twoPlan.raisedFor(ThreadRole::TxWorker, 5));
+        QVERIFY(twoPlan.coresFor(ThreadRole::TxWorkerThread).isEmpty());
+        QVERIFY(!twoPlan.raisedFor(ThreadRole::TxWorkerThread));
+
+        // Eight equal cores reserve six: receivers first, then transmit.
+        SysfsFixture equal;
+        equal.online("0-7");
+        PlacementDemand three = demand({0, 1, 2}, true, true, true);
+        three.txListening = true;
+        three.txIqSender = true;
+        const PlacementPlan equalPlan = planThreadPlacement(equal.read(), three);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::RxWorker, 0), 7);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::DspThread), 6);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::RxWorker, 1), 5);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::RxWorker, 2), 4);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::TxWorker, 5), 3);
+        QCOMPARE(equalPlan.cpuFor(ThreadRole::TxWorkerThread), 2);
+        // Equal cores: one left without a core runs with everything else,
+        // which costs it nothing but the priority.
+        QVERIFY(equalPlan.coresFor(ThreadRole::TxIqSender).isEmpty());
+    }
+
+    // A transmit worker that is not running is not in the plan, listening
+    // or not.
+    void voxListeningNeedsARunningTransmitChannel()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        PlacementDemand d = demand({0, 1, 2}, true);
+        d.txListening = true;
+        const PlacementPlan plan = planThreadPlacement(f.read(), d);
+        QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 1), 6);
+        QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 2), 7);
+        QVERIFY(plan.coresFor(ThreadRole::TxWorker, 5).isEmpty());
+    }
+
     // One slice keyed: its receiver stops. The DSP and connection threads
     // share the first core, both raised, and the transmit roles keep theirs
     // (G-06).
@@ -645,6 +747,84 @@ private slots:
         }
         QCOMPARE(lastCpus(calls, 300), QList<int>{5});
         QCOMPARE(lastNice(calls, 300), kDspNice);
+    }
+
+    // VOX on with three receivers on the Rock: the receivers keep 4, 6 and
+    // 7 through every receive period, the transmit worker shares 6 and 7,
+    // and the transmit roles take 6 and 7 only while keyed.
+    void voxListeningHoldsNoCoreBetweenTransmissions()
+    {
+        SysfsFixture f;
+        layOutRk3588s(f);
+        QList<Call> calls;
+        qint64 current = 1;
+        ThreadPlacement placement;
+        placement.start(f.read(), demand({0, 1, 2}, true),
+                        std::make_unique<RecordingApi>(&calls, &current), true);
+        current = 300;
+        placement.registerCurrentThread(ThreadRole::ConnectionThread);
+        current = 200;
+        placement.registerCurrentThread(ThreadRole::DspThread);
+        for (int channel = 0; channel < 3; ++channel) {
+            current = 101 + channel;
+            placement.onWdspThreadStarted(kWdspThreadRxMain, channel);
+            placement.setChannelActive(ThreadRole::RxWorker, channel, true);
+        }
+        current = 105;
+        placement.onWdspThreadStarted(kWdspThreadTxMain, 5);
+        current = 301;
+        placement.registerCurrentThread(ThreadRole::TxWorkerThread);
+        const QList<int> hk{0, 1, 2, 3};
+
+        const auto expectListening = [&]() {
+            QCOMPARE(lastCpus(calls, 101), QList<int>{4});
+            QCOMPARE(lastCpus(calls, 102), QList<int>{6});
+            QCOMPARE(lastCpus(calls, 103), QList<int>{7});
+            QCOMPARE(lastNice(calls, 102), kDspNice);
+            QCOMPARE(lastCpus(calls, 105), (QList<int>{6, 7}));
+            QCOMPARE(lastNice(calls, 105), kDspNice);
+            QCOMPARE(lastCpus(calls, 301), hk);
+            QCOMPARE(niceOf(calls, 301), 0);
+            QCOMPARE(lastCpus(calls, 200), QList<int>{5});
+            QCOMPARE(lastCpus(calls, 300), QList<int>{5});
+        };
+        placement.setTransmitUse(5, TransmitUse::Listening);
+        expectListening();
+        QVERIFY(placement.currentPlan().raisedFor(ThreadRole::TxWorker, 5));
+
+        // Keyed with the receivers still running (G-06).
+        placement.setTransmitUse(5, TransmitUse::Transmitting);
+        QCOMPARE(lastCpus(calls, 105), QList<int>{6});
+        QCOMPARE(lastNice(calls, 105), kDspNice);
+        QCOMPARE(lastCpus(calls, 301), QList<int>{7});
+        QCOMPARE(lastNice(calls, 301), kDspNice);
+        QCOMPARE(lastCpus(calls, 102), hk);
+        QCOMPARE(lastNice(calls, 102), 0);
+        QCOMPARE(lastCpus(calls, 103), hk);
+
+        // Unkeyed with VOX still on: the receivers have their cores back.
+        placement.setTransmitUse(5, TransmitUse::Listening);
+        expectListening();
+
+        // A channel reported running the older way is transmitting.
+        placement.setChannelActive(ThreadRole::TxWorker, 5, true);
+        QCOMPARE(lastCpus(calls, 105), QList<int>{6});
+        QCOMPARE(lastCpus(calls, 102), hk);
+
+        // VOX off: the transmit worker runs with everything else.
+        placement.setTransmitUse(5, TransmitUse::Stopped);
+        QCOMPARE(lastCpus(calls, 105), hk);
+        QCOMPARE(lastNice(calls, 105), 0);
+        QCOMPARE(lastCpus(calls, 102), QList<int>{6});
+        QCOMPARE(lastCpus(calls, 103), QList<int>{7});
+        QVERIFY(placement.currentPlan().coresFor(ThreadRole::TxWorker, 5).isEmpty());
+
+        // Asked again for what it has, nothing moves and the plan stands.
+        const quint64 revision = placement.planRevision();
+        const int moves = affinityCalls(calls);
+        placement.setTransmitUse(5, TransmitUse::Stopped);
+        QCOMPARE(placement.planRevision(), revision);
+        QCOMPARE(affinityCalls(calls), moves);
     }
 
     // Where the system refuses raised priority, the plan in force says so:

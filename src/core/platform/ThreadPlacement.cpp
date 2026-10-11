@@ -32,6 +32,10 @@
 //               (see ThreadPlacement.h; measured on the Rock 5C, numbers
 //               at planThreadPlacement). J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-11: a transmit channel listening for VOX is seated after the
+//               receive workers (setTransmitUse); as if keyed it held two
+//               fast cores for as long as VOX was on. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/platform/ThreadPlacement.h"
@@ -524,17 +528,36 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     } else if (demand.connectionThread) {
         order.append({ThreadRole::ConnectionThread, -1, -1});
     }
-    if (demand.txWorker) {
-        order.append({ThreadRole::TxWorker, -1, -1});
-    }
-    if (demand.txWorkerThread) {
-        order.append({ThreadRole::TxWorkerThread, -1, -1});
-    }
-    if (demand.txIqSender) {
-        order.append({ThreadRole::TxIqSender, -1, -1});
+    // G-06 is for transmitting. With VOX on the transmit channel runs
+    // through every receive period so VOX can hear the microphone, with
+    // nothing on the air, and its roles come after every receive worker.
+    // Seated as if keyed, they kept two fast cores for as long as VOX was
+    // on: on the Rock on 2026-10-11, VOX on and one receiver, the transmit
+    // worker held core 6 and the pump core 7 between transmissions, and
+    // each receiver after the first would have run on the slow cores,
+    // where a wide one does not fit. Listening is not light work for the
+    // worker: 456 ms of a fast core each second in 1,170 runs, against
+    // 483 ms keyed. The pump took 33 ms.
+    const bool listening = demand.txWorker && demand.txListening;
+    const auto appendTransmitRoles = [&order, &demand]() {
+        if (demand.txWorker) {
+            order.append({ThreadRole::TxWorker, -1, -1});
+        }
+        if (demand.txWorkerThread) {
+            order.append({ThreadRole::TxWorkerThread, -1, -1});
+        }
+        if (demand.txIqSender) {
+            order.append({ThreadRole::TxIqSender, -1, -1});
+        }
+    };
+    if (!listening) {
+        appendTransmitRoles();
     }
     for (int i = 1; i < rx.size(); ++i) {
         order.append({ThreadRole::RxWorker, rx.at(i), -1});
+    }
+    if (listening) {
+        appendTransmitRoles();
     }
     int next = 0;
     for (RoleAssignment& a : order) {
@@ -554,6 +577,13 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // Never the first receiver's core or the one the DSP and connection
     // threads share. Where every core is equally fast the housekeeping
     // cores cost it nothing but the priority, so it stays there.
+    //
+    // A transmit worker listening for VOX and left without a core shares
+    // those cores the same way, for the same reason: at twice the time a
+    // slow core would not carry it, and VOX would hear the microphone
+    // late. Not measured with a receiver on those cores. The pump and the
+    // I/Q sender are light and run with everything else, as they do while
+    // the transmit channel is off.
     const int firstRx = rx.isEmpty() ? -1 : rx.first();
     QList<int> laterReceiverCores;
     if (slowRunsHousekeeping) {
@@ -565,7 +595,9 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
         std::sort(laterReceiverCores.begin(), laterReceiverCores.end());
     }
     for (RoleAssignment& a : order) {
-        if (a.role == ThreadRole::RxWorker && a.cpu < 0) {
+        const bool sharesWithReceivers = a.role == ThreadRole::RxWorker
+            || (listening && a.role == ThreadRole::TxWorker);
+        if (sharesWithReceivers && a.cpu < 0) {
             a.shared = laterReceiverCores;
         }
         // Minor 2: raised only on signal processing cores. On the
@@ -948,9 +980,12 @@ PlacementDemand ThreadPlacement::demandLocked() const
             demand.rxChannels.append(it.key());
         }
     }
+    bool keyed = false;
     for (auto it = m_activeTx.cbegin(); it != m_activeTx.cend(); ++it) {
         demand.txWorker = demand.txWorker || it.value();
+        keyed = keyed || (it.value() && !m_listeningTx.value(it.key(), false));
     }
+    demand.txListening = demand.txWorker && !keyed;
     for (const Registered& t : m_threads) {
         demand.dspThread = demand.dspThread || t.role == ThreadRole::DspThread;
         demand.txWorkerThread = demand.txWorkerThread
@@ -1094,12 +1129,33 @@ void ThreadPlacement::setChannelActive(ThreadRole role, int channel, bool active
     if (!isActive() || !isChannelRole(role)) {
         return;
     }
+    if (role == ThreadRole::TxWorker) {
+        setTransmitUse(channel, active ? TransmitUse::Transmitting : TransmitUse::Stopped);
+        return;
+    }
     QMutexLocker lock(&m_mutex);
-    QMap<int, bool>& states = role == ThreadRole::TxWorker ? m_activeTx : m_activeRx;
+    QMap<int, bool>& states = m_activeRx;
     if (states.value(channel, false) == active && states.contains(channel)) {
         return;
     }
     states.insert(channel, active);
+    applyLocked();
+}
+
+void ThreadPlacement::setTransmitUse(int channel, TransmitUse use)
+{
+    if (!isActive()) {
+        return;
+    }
+    const bool active = use != TransmitUse::Stopped;
+    const bool listening = use == TransmitUse::Listening;
+    QMutexLocker lock(&m_mutex);
+    if (m_activeTx.contains(channel) && m_activeTx.value(channel) == active
+        && m_listeningTx.value(channel, false) == listening) {
+        return;
+    }
+    m_activeTx.insert(channel, active);
+    m_listeningTx.insert(channel, listening);
     applyLocked();
 }
 
@@ -1116,6 +1172,7 @@ void ThreadPlacement::forgetChannel(int channel)
                     m_threads.end());
     m_activeRx.remove(channel);
     m_activeTx.remove(channel);
+    m_listeningTx.remove(channel);
     applyLocked();
 }
 

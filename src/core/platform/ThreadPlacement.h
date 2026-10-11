@@ -47,6 +47,12 @@
 //               worker left without a core shares the later receivers'
 //               fast cores instead of the slow ones. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-11: TransmitUse and setTransmitUse(): a transmit channel
+//               that is up only so VOX can hear the microphone comes
+//               after every receive worker. Seated as if keyed, its
+//               worker and pump held two of the Rock's four fast cores
+//               for as long as VOX was on. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -107,6 +113,9 @@ struct PlacementDemand {
     QList<int> rxChannels;        ///< active receive channels
     bool dspThread{false};
     bool txWorker{false};         ///< transmit channel active
+    /// The transmit channel runs only so VOX can hear the microphone, and
+    /// nothing is on the air. Read only with txWorker.
+    bool txListening{false};
     bool txWorkerThread{false};   ///< transmit pump running while transmitting
     bool txIqSender{false};       ///< transmit I/Q sender running while transmitting
     QList<int> radeDecoders;      ///< running RADE decoder threads, by channel, placed in this order
@@ -166,6 +175,11 @@ struct PlacementPlan {
 /// transmit I/Q sender, then the other active receive workers (G-06). Each
 /// runs at raised priority on its core.
 ///
+/// That order is for transmitting. A transmit channel that runs only so
+/// VOX can hear the microphone (txListening) puts nothing on the air, and
+/// with VOX on it runs through every receive period: its three roles come
+/// after every receive worker and take the cores those leave.
+///
 /// The radio connection thread shares the DSP thread's core, raised like
 /// it. It has the one hard deadline in the Core: the radio's packets wait
 /// in a socket buffer that holds a few milliseconds of wide receivers, and
@@ -181,7 +195,9 @@ struct PlacementPlan {
 /// like them: a slower core costs a wide receiver more than twice the
 /// time. With no such core (transmit holding them, or too few), or where
 /// every core is equally fast, it runs on the housekeeping cores at normal
-/// priority, like any other role without a core.
+/// priority, like any other role without a core. A transmit worker
+/// listening for VOX and left without a core shares the same cores the
+/// same way: it does as much work listening as transmitting.
 ///
 /// Spectrum threads own no core. Where slower cores run everything else,
 /// they may use every signal processing core, at normal priority, so they
@@ -204,6 +220,13 @@ struct PlacementPlan {
 /// live load.
 PlacementPlan planThreadPlacement(const CpuTopology& topology,
                                   const PlacementDemand& demand);
+
+/// What a transmit channel is doing, for ThreadPlacement::setTransmitUse().
+enum class TransmitUse {
+    Stopped,       ///< the channel is off
+    Listening,     ///< running only so VOX can hear the microphone
+    Transmitting,  ///< keyed
+};
 
 /// The operating-system calls placement makes, behind an interface so tests
 /// can record them.
@@ -282,8 +305,13 @@ public:
     void deregisterCurrentThread();
 
     /// A channel started or stopped (RxWorker or TxWorker). Kept whether or
-    /// not its worker has registered yet.
+    /// not its worker has registered yet. A transmit channel reported here
+    /// as started is taken to be transmitting.
     void setChannelActive(ThreadRole role, int channel, bool active);
+
+    /// A transmit channel stopped, started to listen for VOX, or keyed.
+    /// Kept whether or not its worker has registered yet.
+    void setTransmitUse(int channel, TransmitUse use);
 
     /// A WDSP channel closed: forget its threads (their IDs can be reused)
     /// and its active state.
@@ -350,6 +378,7 @@ private:
     QList<Registered> m_threads;
     QMap<int, bool> m_activeRx;   // channel -> active
     QMap<int, bool> m_activeTx;   // channel -> active
+    QMap<int, bool> m_listeningTx;  // channel -> active only to listen for VOX
 };
 
 /// nereusd's startup call, on the main thread before any other thread
