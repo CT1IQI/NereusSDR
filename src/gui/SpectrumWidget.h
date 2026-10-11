@@ -508,9 +508,15 @@ public:
     /// normalise shift follow it, and the context's frame rate (the rate the
     /// Core actually sends, after the display budget) times the peak hold,
     /// blob and noise-floor decay.
+    /// R-DISP-RETUNE: `askedSpanHz` is the span of the request this context
+    /// answers. A moved picture is judged by it, as the Core judges it: the
+    /// span the Core answers with is its crop, cut at FFT bin edges, and is
+    /// a bin wider or narrower as the view's alignment to the bins changes.
+    /// A caller that names none (0) is taken to have asked for the span it
+    /// was answered with.
     void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                   double sourceCentreHz, double sampleRateHz,
-                                  int grantedFftSize = 0);
+                                  int grantedFftSize = 0, double askedSpanHz = 0.0);
     /// R-DISP-HOLD: whether the last context was for the picture the pan
     /// already showed (same receiver and source geometry, same view, same
     /// sample counts and wide row), so the pan kept its last frame, peak
@@ -524,9 +530,12 @@ public:
     enum class RemoteContextPicture {
         /// Anything else: the pan starts again, as it always did.
         New,
-        /// The same receiver, sample rate, FFT size, sample counts, span and
-        /// wide state, with the stream centre, the view centre or both
-        /// moved (a retune or a pan drag). The Core's averaged trace carried
+        /// The same receiver, sample rate, FFT size, sample counts, span
+        /// asked and wide state, with the stream centre, the view centre or
+        /// both moved (a retune or a pan drag). The span is the one asked
+        /// for, compared exactly, which is the Core's own rule
+        /// (SpectrumEndpoint.cpp, movedPlanePicture); the span answered is
+        /// not compared. The Core's averaged trace carried
         /// on, so the drawn trace stays, at the frequency it was captured
         /// at, until the keyframe; the waterfall history and its queued rows
         /// keep their frequencies; the noise floor estimate is untouched.
@@ -3067,6 +3076,9 @@ private:
     NereusSDR::RemoteSpectrumCapture m_pendingRemoteCapture;
     double m_remoteExactCentreHz{0.0};
     double m_remoteExactSpanHz{0.0};
+    // R-DISP-RETUNE: the span asked for the picture the pan shows
+    // (setRemoteSpectrumContext).
+    double m_remoteAskedSpanHz{0.0};
     // Parity Task 17: the Core's granted FFT size and frame rate for this
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};

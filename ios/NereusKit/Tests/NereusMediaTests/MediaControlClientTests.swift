@@ -1678,6 +1678,62 @@ import Testing
         }
     }
 
+    // R-DISP-RETUNE: the span a context states is the Core's crop, cut at FFT
+    // bin edges, so it is one bin wider or narrower as the view's alignment
+    // to the bins changes. The contexts here are built with the Core's own
+    // rule (SpectrumReducer::visibleBinRange), so the case is the real one:
+    // a move that is no whole number of bins is still the picture moved, and
+    // a change of span of two bins or more is a new picture.
+    @Test func aCropOneBinWiderOrNarrowerIsStillAMovedPicture() throws {
+        let rate = 192_000.0
+        let fftSize = 4096.0
+        let binHz = rate / fftSize
+        let source = 14_100_000.0
+        // The Core's crop of an asked view: the first and last bin it keeps.
+        func crop(centre: Double, span: Double, source: Double) -> (centreHz: Double, spanHz: Double, bins: Int) {
+            let low = source - rate / 2
+            let first = min(max(((centre - span / 2 - low) / binHz).rounded(.down), 0), fftSize - 1)
+            let last = min(max(((centre + span / 2 - low) / binHz).rounded(.up), 0), fftSize - 1)
+            let count = last - first + 1
+            return (low + (first + last + 1) * binHz / 2, count * binHz, Int(count))
+        }
+        func context(centre: Double, span: Double, source: Double = 14_100_000,
+                     grant: Bool = true) throws -> (MediaControlEvent.DisplayContext, bins: Int) {
+            let cut = crop(centre: centre, span: span, source: source)
+            var payload = Self.context("c", generation: 2, wideband: true, grant: grant)
+            payload["sourceCentreHz"] = .number(source)
+            payload["centreHz"] = .number(cut.centreHz)
+            payload["spanHz"] = .number(cut.spanHz)
+            let decoded = try #require(MediaControlDecoder.context(payload, wideband: true, grant: grant,
+                                                                   transmit: false))
+            return (decoded, cut.bins)
+        }
+        let held = try context(centre: source, span: 96_000)
+        // The view dragged 12 010 Hz, 256.2 bins.
+        let dragged = try context(centre: source + 12_010, span: 96_000)
+        #expect(dragged.bins == held.bins + 1)
+        #expect(dragged.0.spanHz != held.0.spanHz)
+        #expect(MediaControlClient.movedPicture(held.0, dragged.0))
+        #expect(MediaControlClient.movedPicture(dragged.0, held.0))
+        // The receiver retuned 1 010 Hz under the same view, 21.5 bins.
+        let retuned = try context(centre: source, span: 96_000, source: source + 1_010)
+        #expect(retuned.bins == held.bins + 1)
+        #expect(MediaControlClient.movedPicture(held.0, retuned.0))
+        // A real change of span, three bins, at a moved centre.
+        let zoomed = try context(centre: source + 12_010, span: 96_000 - 3 * binHz)
+        #expect(abs(zoomed.bins - dragged.bins) >= 2)
+        #expect(!MediaControlClient.movedPicture(dragged.0, zoomed.0))
+        #expect(!MediaControlClient.movedPicture(held.0, zoomed.0))
+        // Without the FFT size the width of a bin is not known: only an
+        // equal span is the picture moved.
+        let plain = try context(centre: source, span: 96_000, grant: false)
+        let plainDragged = try context(centre: source + 12_010, span: 96_000, grant: false)
+        #expect(!MediaControlClient.movedPicture(plain.0, plainDragged.0))
+        let plainWhole = try context(centre: source + 12_000, span: 96_000, grant: false)
+        #expect(plainWhole.bins == plain.bins)
+        #expect(MediaControlClient.movedPicture(plain.0, plainWhole.0))
+    }
+
     @Test func onlyADbmRangeFrameRateOrLinePeriodChangeIsTheSamePicture() throws {
         func context(_ change: (inout [String: LinkJSON]) -> Void) throws -> MediaControlEvent.DisplayContext {
             var payload = Self.context("c", generation: 2, wideband: true, grant: true)

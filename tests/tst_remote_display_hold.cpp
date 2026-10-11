@@ -915,6 +915,128 @@ private slots:
                  "the mini display");
         f.finish();
     }
+
+    // R-DISP-RETUNE. The mini display's 20 kHz is no whole number of FFT
+    // bins, and a tuning step that is no whole number of bins either moves
+    // it over them, so the Core's crop is a bin wider at one step and a bin
+    // narrower at another. It asked for the same 20 kHz each time: the same
+    // picture moved, and it keeps its painted frame.
+    void theMiniDisplayKeepsItsFrameWhenTheCropChangesByABin()
+    {
+        Fixture f(/*withCore=*/true);
+        QVERIFY(f.start());
+        QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        f.window->setMiniDisplaySlices({f.sliceId});
+        QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
+        unavailable.clear();
+        SliceModel* const slice = f.remote.sliceById(f.sliceId);
+        QVERIFY(slice);
+
+        int changedByOneBin = 0;
+        QStringList seen;
+        for (int step = 0; step < 8; ++step) {
+            const double spanBefore = miniFrames.last().at(4).toDouble();
+            const int asked = f.miniAsks();
+            // 3 005 Hz is no whole number of bins at any FFT size in use.
+            const double target = slice->frequency() + 3005.0;
+            slice->setFrequency(target);
+            QVERIFY(f.run([&] {
+                f.plan();
+                return f.miniAsks() > asked && !miniFrames.isEmpty()
+                    && std::abs(miniFrames.last().at(3).toDouble() - target) < 50.0;
+            }));
+            const double change = miniFrames.last().at(4).toDouble() - spanBefore;
+            seen.append(QString::number(change, 'f', 4));
+            if (change != 0.0) {
+                // One bin: the receiver's sample rate over a power of two.
+                const double sizes = std::log2(192000.0 / std::abs(change));
+                QVERIFY2(std::abs(sizes - std::round(sizes)) < 1.0e-9,
+                         qPrintable(seen.join(QStringLiteral(", "))));
+                ++changedByOneBin;
+            }
+            QVERIFY2(unavailable.isEmpty(),
+                     qPrintable(QStringLiteral("step %1 blanked the mini display (its span "
+                                               "changed by, in Hz: %2)")
+                                    .arg(step).arg(seen.join(QStringLiteral(", ")))));
+        }
+        // The case under test did happen: the Core's bin count changed.
+        QVERIFY2(changedByOneBin >= 1, qPrintable(seen.join(QStringLiteral(", "))));
+        f.finish();
+    }
+
+    // R-DISP-RETUNE. The operator drags the pan as a hand does: by an amount
+    // that is no whole number of FFT bins, keeping the width the pan has.
+    // The Core's crop is cut at bin edges, so the span it answers with
+    // changes by a bin as the view's alignment to the bins changes. That is
+    // still the same picture moved: the Core carried its averaged trace on,
+    // and the window says so. A change of width is a new picture.
+    void aPanDraggedByAFractionOfABinIsAMovedPicture()
+    {
+        Fixture f(/*withCore=*/true);
+        QVERIFY(f.start());
+        QSignalSpy frames(f.widget, &SpectrumWidget::spectrumFrameRendered);
+        QVERIFY(f.run([&] { return f.contextFollowsLastAsk() && frames.size() >= 5; }));
+        const double binHz = f.widget->binWidthHz();
+        QVERIFY(binHz > 0.0);
+
+        int moved = 0;
+        int changedByOneBin = 0;
+        QStringList seen;
+        for (int drag = 0; drag < 6; ++drag) {
+            const quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
+            const int asked = f.panAsks();
+            const double spanBefore = f.widget->bandwidth();
+            // 12 010 Hz is 256.2 bins of 46.875 Hz and no whole number of
+            // any finer bin either. There and back, so the view stays
+            // inside what the receiver covers.
+            const double dragHz = drag % 2 == 0 ? 12010.0 : -12010.0;
+            f.widget->setDisplayWindowPreservingHistory(
+                f.widget->centerFrequency() + dragHz, f.widget->bandwidth());
+            QVERIFY(f.run([&] {
+                f.plan();
+                return f.panAsks() > asked
+                    && f.widget->remoteCodecForTest().contextGeneration != generation
+                    && f.widget->remoteCodecForTest().traceSamples != 0
+                    && f.contextFollowsLastAsk();
+            }));
+            const double change = f.widget->bandwidth() - spanBefore;
+            seen.append(QStringLiteral("%1 bins").arg(change / binHz, 0, 'f', 3));
+            if (std::abs(std::abs(change) - binHz) < 1.0e-6) { ++changedByOneBin; }
+            QVERIFY2(std::abs(change) < 1.5 * binHz,
+                     qPrintable(QStringLiteral("drag %1 changed the pan's width by %2 Hz "
+                                               "(spans changed by: %3)")
+                                    .arg(drag).arg(change).arg(seen.join(QStringLiteral(", ")))));
+            if (f.widget->remoteContextPicture()
+                == SpectrumWidget::RemoteContextPicture::Moved) { ++moved; }
+        }
+        // The case under test did happen: the Core's bin count changed by one.
+        QVERIFY2(changedByOneBin >= 1, qPrintable(seen.join(QStringLiteral(", "))));
+        QVERIFY2(moved == 6,
+                 qPrintable(QStringLiteral("%1 of 6 drags were a moved picture (spans "
+                                           "changed by: %2)")
+                                .arg(moved).arg(seen.join(QStringLiteral(", ")))));
+        // The pan is as wide as it was asked to be, to within the bin edges.
+        QVERIFY2(std::abs(f.widget->bandwidth() - 96000.0) <= 2.0 * binHz,
+                 qPrintable(QStringLiteral("the pan is %1 Hz wide after six drags")
+                                .arg(f.widget->bandwidth(), 0, 'f', 3)));
+
+        // A real change of width, three bins: a new picture.
+        const quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
+        const int asked = f.panAsks();
+        f.widget->setDisplayWindowPreservingHistory(
+            f.widget->centerFrequency(), f.widget->bandwidth() - 3.0 * binHz);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.panAsks() > asked
+                && f.widget->remoteCodecForTest().contextGeneration != generation
+                && f.widget->remoteCodecForTest().traceSamples != 0
+                && f.contextFollowsLastAsk();
+        }));
+        QCOMPARE(f.widget->remoteContextPicture(),
+                 SpectrumWidget::RemoteContextPicture::New);
+        f.finish();
+    }
 };
 
 QTEST_MAIN(TstRemoteDisplayHold)

@@ -24,6 +24,7 @@
 #include "gui/setup/DisplaySetupPages.h"
 #undef private
 #include "core/session/media/SpectrumEndpoint.h"
+#include "core/spectrum/SpectrumReducer.h"
 
 using namespace NereusSDR;
 
@@ -659,6 +660,91 @@ private slots:
         widget.clearRemoteSpectrum();
         QCOMPARE(widget.remoteGrantedFftSize(), 0);
         QCOMPARE(widget.binWidthHz(), 192000.0 / 4096.0);
+    }
+
+    // R-DISP-RETUNE: the window judges a moved picture as the Core does, by
+    // the span that was asked. The span the Core answers with is its crop,
+    // cut at FFT bin edges (SpectrumReducer::visibleBinRange), and is one
+    // bin wider or narrower as the view's alignment to the bins changes; the
+    // contexts here are built with that rule, so the case is the real one.
+    void aMovedPictureIsJudgedByTheSpanAsked()
+    {
+        constexpr int kFftSize = 4096;
+        constexpr double kRateHz = 192000.0;
+        constexpr double kBinHz = kRateHz / kFftSize;
+        constexpr double kSourceHz = 14'225'000.0;
+        constexpr double kAskedSpanHz = 96000.0;
+        quint32 generation = 0;
+        const auto answer = [&generation](double sourceHz, double viewCentreHz,
+                                          double askedSpanHz) {
+            ReducerConfig crop;
+            crop.centreHz = viewCentreHz;
+            crop.spanHz = askedSpanHz;
+            crop.streamCentreHz = sourceHz;
+            crop.sampleRateHz = kRateHz;
+            const std::pair<int, int> bins = SpectrumReducer::visibleBinRange(kFftSize, crop);
+            SpectrumEndpointContext context;
+            context.codec = {41, ++generation, -180, 0, 128, 128, 0};
+            context.exactCentreHz = sourceHz - kRateHz * 0.5
+                + (bins.first + bins.second + 1) * kBinHz * 0.5;
+            context.exactSpanHz = (bins.second - bins.first + 1) * kBinHz;
+            context.targetFps = 30;
+            return context;
+        };
+        using Picture = SpectrumWidget::RemoteContextPicture;
+        SpectrumWidget widget;
+        const SpectrumEndpointContext first = answer(kSourceHz, kSourceHz, kAskedSpanHz);
+        widget.setRemoteSpectrumContext(first, kSourceHz, kRateHz, kFftSize, kAskedSpanHz);
+        QCOMPARE(widget.remoteContextPicture(), Picture::New);
+
+        // The view dragged 12 010 Hz, 256.2 bins: the crop is one bin wider.
+        const SpectrumEndpointContext dragged =
+            answer(kSourceHz, kSourceHz + 12010.0, kAskedSpanHz);
+        QCOMPARE(dragged.exactSpanHz - first.exactSpanHz, kBinHz);
+        widget.setRemoteSpectrumContext(dragged, kSourceHz, kRateHz, kFftSize, kAskedSpanHz);
+        QCOMPARE(widget.remoteContextPicture(), Picture::Moved);
+
+        // The receiver retuned 1 010 Hz under the same view, 21.5 bins: the
+        // same request, answered again by a relabelled source.
+        const SpectrumEndpointContext retuned =
+            answer(kSourceHz + 1010.0, kSourceHz + 12010.0, kAskedSpanHz);
+        QVERIFY(retuned.exactCentreHz != dragged.exactCentreHz);
+        widget.setRemoteSpectrumContext(retuned, kSourceHz + 1010.0, kRateHz, kFftSize,
+                                        kAskedSpanHz);
+        QCOMPARE(widget.remoteContextPicture(), Picture::Moved);
+
+        // Back on the bins: one bin narrower, and still the picture moved.
+        const SpectrumEndpointContext aligned =
+            answer(kSourceHz + 1010.0, kSourceHz + 1010.0, kAskedSpanHz);
+        QCOMPARE(retuned.exactSpanHz - aligned.exactSpanHz, kBinHz);
+        widget.setRemoteSpectrumContext(aligned, kSourceHz + 1010.0, kRateHz, kFftSize,
+                                        kAskedSpanHz);
+        QCOMPARE(widget.remoteContextPicture(), Picture::Moved);
+
+        // Another span asked, by less than a bin: the Core's crop is the
+        // same size, and it is a new picture all the same, as it is for the
+        // Core, which compares what was asked.
+        const SpectrumEndpointContext nudged =
+            answer(kSourceHz + 1010.0, kSourceHz + 1020.0, kAskedSpanHz + 10.0);
+        QCOMPARE(nudged.exactSpanHz, retuned.exactSpanHz);
+        widget.setRemoteSpectrumContext(nudged, kSourceHz + 1010.0, kRateHz, kFftSize,
+                                        kAskedSpanHz + 10.0);
+        QCOMPARE(widget.remoteContextPicture(), Picture::New);
+
+        // A real change of span, three bins, at a moved centre.
+        const SpectrumEndpointContext zoomed =
+            answer(kSourceHz + 1010.0, kSourceHz + 2020.0, kAskedSpanHz - 3.0 * kBinHz);
+        QVERIFY(std::abs(zoomed.exactSpanHz - nudged.exactSpanHz) >= 2.0 * kBinHz);
+        widget.setRemoteSpectrumContext(zoomed, kSourceHz + 1010.0, kRateHz, kFftSize,
+                                        kAskedSpanHz - 3.0 * kBinHz);
+        QCOMPARE(widget.remoteContextPicture(), Picture::New);
+
+        // A caller that names no asked span is taken to have asked for the
+        // span it was answered with.
+        SpectrumWidget plain;
+        plain.setRemoteSpectrumContext(first, kSourceHz, kRateHz, kFftSize);
+        plain.setRemoteSpectrumContext(dragged, kSourceHz, kRateHz, kFftSize);
+        QCOMPARE(plain.remoteContextPicture(), Picture::New);
     }
 
     // Parity Task 17 (B3.10): the active peak hold falls at its rate per

@@ -2314,11 +2314,28 @@ public actor MediaControlClient {
     /// counts and wide state, both receive or both transmit, with the stream
     /// centre, the view centre or both at another frequency. The Core
     /// carries its averaged trace on through such a move.
+    ///
+    /// The Core judges the span by what was asked, exactly
+    /// (SpectrumEndpoint.cpp, movedPlanePicture). The span a context states
+    /// is the Core's crop of that, cut at FFT bin edges, and is one bin
+    /// wider or narrower as the view's alignment to the bins changes. This
+    /// app takes a context for any revision it sent and holds only its
+    /// latest subscription, so it has no asked span for a context of an
+    /// earlier revision. It therefore takes two stated spans within one bin
+    /// of each other (the sample rate over the FFT size the Core runs) as
+    /// the same span asked; without a granted FFT size the width of a bin is
+    /// not known and the spans must be equal.
     static func movedPicture(_ held: MediaControlEvent.DisplayContext,
                              _ next: MediaControlEvent.DisplayContext) -> Bool {
-        held.endpointId == next.endpointId && held.sourceStream == next.sourceStream
+        var sameSpanAsked = held.spanHz == next.spanHz
+        if !sameSpanAsked, let fftSize = next.grant?.grantedFftSize, fftSize > 0, next.sampleRateHz > 0 {
+            let binHz = next.sampleRateHz / Double(fftSize)
+            // One bin, with room for the rounding of two products of it.
+            sameSpanAsked = abs(held.spanHz - next.spanHz) <= binHz * 1.000_001
+        }
+        return held.endpointId == next.endpointId && held.sourceStream == next.sourceStream
             && held.sampleRateHz == next.sampleRateHz
-            && held.spanHz == next.spanHz && held.wideSpanHz == next.wideSpanHz
+            && sameSpanAsked && held.wideSpanHz == next.wideSpanHz
             && held.traceSamples == next.traceSamples && held.waterfallSamples == next.waterfallSamples
             && held.wideSamples == next.wideSamples && held.wideband == next.wideband
             && held.grant?.grantedFftSize == next.grant?.grantedFftSize

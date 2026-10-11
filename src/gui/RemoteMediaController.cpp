@@ -1003,12 +1003,21 @@ struct RemoteMediaController::Private {
         /// again, so the Core aligns it to the same bins: asking for the
         /// answered view moved the upper edge out by one bin at every ask,
         /// and made each ask a new picture.
+        /// R-DISP-RETUNE: the same holds while the pan keeps the answered
+        /// width and moves (a drag, or a pan that follows its receiver): it
+        /// asks for the width it asked before, at the asked centre moved as
+        /// far as the pan moved. Asking for the answered width made every
+        /// drag two bins wider and a new picture for the Core, which judges
+        /// a moved picture by the span asked.
         double viewAskedCentreHz = 0;
         double viewAskedSpanHz = 0;
         double viewAnsweredCentreHz = 0;
         double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
         QVector<float> lastMiniTrace;
+        // R-DISP-RETUNE: the span asked for the picture this mini display
+        // shows (the request its accepted context answered).
+        double miniShownAskedSpanHz = 0;
         // R-DISP-RETUNE: this mini display was asked again for the picture it
         // shows, or for that picture moved in frequency, and kept its painted
         // frame for the context that answers.
@@ -1190,13 +1199,20 @@ struct RemoteMediaController::Private {
         if (built.isEmpty() || !widget) { return built; }
         // R-DISP-HOLD: a pan still showing the view the Core answered asks
         // for the view it asked before (see Binding::viewAskedCentreHz).
+        // R-DISP-RETUNE: a pan that kept the answered width and moved asks
+        // for the width it asked before, at the asked centre moved as far as
+        // the pan moved.
         for (const auto& entry : bindings) {
             const Binding& binding = entry.second;
             if (binding.widget != widget || binding.isMini()) { continue; }
             if (binding.viewAskedSpanHz > 0.0
-                && qFuzzyCompare(widget->centerFrequency(), binding.viewAnsweredCentreHz)
                 && qFuzzyCompare(widget->bandwidth(), binding.viewAnsweredSpanHz)) {
-                built.insert(QStringLiteral("centreHz"), binding.viewAskedCentreHz);
+                const bool unmoved = qFuzzyCompare(widget->centerFrequency(),
+                                                   binding.viewAnsweredCentreHz);
+                built.insert(QStringLiteral("centreHz"), unmoved
+                    ? binding.viewAskedCentreHz
+                    : binding.viewAskedCentreHz
+                        + (widget->centerFrequency() - binding.viewAnsweredCentreHz));
                 built.insert(QStringLiteral("spanHz"), binding.viewAskedSpanHz);
             }
             break;
@@ -6950,6 +6966,11 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         // (it is centred on the slice, so every tuning step moves it), leaves
         // the painted frame in place until the keyframe; the Core's averaged
         // trace carried on. Anything else is a new picture and blanks it.
+        //
+        // The span compared is the one asked for, exactly, as the Core
+        // compares it (SpectrumEndpoint.cpp, movedPlanePicture). The span
+        // answered is the Core's crop, cut at FFT bin edges, and is a bin
+        // wider or narrower as the display moves over the bins.
         const auto fftOf = [](const std::optional<SpectrumContextGrant>& grant) {
             return grant ? grant->grantedFftSize : 0;
         };
@@ -6961,7 +6982,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             && shown.codec.waterfallSamples == context.codec.waterfallSamples
             && shown.codec.wideSamples == context.codec.wideSamples
             && shown.source == context.source
-            && shown.exactSpanHz == context.exactSpanHz
+            && binding.miniShownAskedSpanHz == expectedSpan
             && binding.capture.sourceSampleRateHz == rate
             && fftOf(binding.grant) == fftOf(decoded->grant);
         if (!carriesOn) {
@@ -6969,6 +6990,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             binding.lastMiniTrace.clear();
         }
         binding.miniKeptAtAsk = false;
+        binding.miniShownAskedSpanHz = expectedSpan;
         binding.context = context;
         binding.contextRevision = revision;
         binding.sourceCentreHz = sourceCentre;
@@ -7066,7 +7088,12 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     // a context of the picture it already shows (a new dBm range or frame
     // rate), and empties it for a new picture.
     const QPointer<SpectrumWidget> contextWidget = binding.widget;
-    contextWidget->setRemoteSpectrumContext(context, sourceCentre, rate, grantedFftSize);
+    // R-DISP-RETUNE: with the span this context's request asked for, by
+    // which a moved picture is judged.
+    contextWidget->setRemoteSpectrumContext(
+        context, sourceCentre, rate, grantedFftSize,
+        (budgetMode ? binding.acceptedRequest : binding.observed)
+            .value(QStringLiteral("spanHz")).toDouble());
     if (!self || d->connectionId != connectionId) { return; }
     it = d->bindings.find(endpointId);
     if (it != d->bindings.end() && it->second.contextRevision == acceptedContextRevision

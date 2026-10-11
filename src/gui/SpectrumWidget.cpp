@@ -1577,6 +1577,7 @@ void SpectrumWidget::clearRemoteSpectrum()
     m_remoteWidebandAdcRateHz = 0.0;
     m_remoteFftSize = 0;
     m_remoteFps = 0;
+    m_remoteAskedSpanHz = 0.0;
     recomputeExtendedMode();
     m_dss.clear();
     m_dssFoldCount = 0;
@@ -1597,7 +1598,7 @@ void SpectrumWidget::clearRemoteSpectrum()
 
 void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                                double sourceCentreHz, double sampleRateHz,
-                                               int grantedFftSize)
+                                               int grantedFftSize, double askedSpanHz)
 {
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
@@ -1630,6 +1631,15 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // picture. The pan's own window is not compared: it may already stand at
     // the new centre (the operator moved it) or still at the old one (the
     // Core moved the stream).
+    //
+    // The span compared is the one asked for, exactly, as the Core compares
+    // it (SpectrumEndpoint.cpp, movedPlanePicture). The span answered is the
+    // Core's crop, cut at FFT bin edges (SpectrumReducer::visibleBinRange):
+    // it is a bin wider or narrower as the view's alignment to the bins
+    // changes, so two contexts of one picture moved do not agree on it.
+    const double askedSpan = askedSpanHz > 0.0 ? askedSpanHz : context.exactSpanHz;
+    const double shownAskedSpan = m_remoteAskedSpanHz;
+    m_remoteAskedSpanHz = askedSpan;
     const bool movedPicture = !samePicture && m_remoteSpectrum
         && m_remoteCodec.traceSamples != 0
         && shown.codec.endpointId == context.codec.endpointId
@@ -1637,7 +1647,7 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && shown.codec.waterfallSamples == context.codec.waterfallSamples
         && shown.codec.wideSamples == context.codec.wideSamples
         && shown.source == context.source
-        && shown.exactSpanHz == context.exactSpanHz
+        && shownAskedSpan == askedSpan
         && shown.wideSpanHz == context.wideSpanHz
         && shown.wideband == context.wideband
         && m_remoteCapture.sourceSampleRateHz == sampleRateHz
