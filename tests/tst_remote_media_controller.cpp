@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (fourth wave): the
+//                                    contexts the window must not draw
+//                                    (another stream, a changed stream or
+//                                    epoch, transmit, wideband that does
+//                                    not fit).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): tests that
 //                                    send contexts by hand stand for a Core
 //                                    that states no picture; a context of
@@ -5848,6 +5854,219 @@ private slots:
         QCOMPARE(frames.count(), 6);
         QTRY_VERIFY(retiredApplet.isNull());
         QTRY_VERIFY(retiredWidget.isNull());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // R-DISP-RETUNE (fourth wave): what the window must not draw. Each row
+    // is a context that states the picture the pan shows, is newer than the
+    // one drawn and answers a request the window has since replaced, so
+    // nothing but the one rule the row names keeps it out of the pan:
+    //   - it is of another receiver's stream;
+    //   - the pan's receiver has moved to another stream since;
+    //   - the pan's stream was given up and claimed again since (its epoch
+    //     changed), so the picture shown is no longer this binding's;
+    //   - it is a transmit display's context;
+    //   - the pan shows the transmit display;
+    //   - its wideband state does not fit the frequencies it states.
+    // None of it is drawn: no frame of it is counted, the pan shows what it
+    // showed and no keyframe is asked for it.
+    void aContextTheWindowMustNotDrawIsNotDrawn_data()
+    {
+        QTest::addColumn<QString>("rule");
+        QTest::newRow("of another stream") << QStringLiteral("other-stream");
+        QTest::newRow("after the receiver changed stream") << QStringLiteral("stream-changed");
+        QTest::newRow("after the stream epoch changed") << QStringLiteral("epoch-changed");
+        QTest::newRow("a transmit context") << QStringLiteral("transmit-context");
+        QTest::newRow("while the transmit display is shown") << QStringLiteral("transmit-shown");
+        QTest::newRow("wideband that does not fit") << QStringLiteral("wideband");
+    }
+
+    void aContextTheWindowMustNotDrawIsNotDrawn()
+    {
+        QFETCH(QString, rule);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        // A TX analyzer: this Core offers the transmit display, so a context
+        // says whether it is one.
+        TxAnalyzer txAnalyzer(TxAnalyzer::kTxDispId);
+        station.setTxAnalyzer(&txAnalyzer);
+        const auto clearAnalyzer = qScopeGuard([&station] { station.setTxAnalyzer(nullptr); });
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setWfLowThreshold(-140.0f);
+        widget->setWfHighThreshold(-70.0f);
+        widget->setWfAgcEnabled(false);
+        widget->setWaterfallNFAGCEnabled(false);
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setWfUpdatePeriodMs(20);
+        widget->setWaterfallTickerPausedForTest(true);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        QSignalSpy receivedControls(&client, &StationClient::mediaControlReceived);
+        QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy transmitContexts(&controller, &RemoteMediaController::transmitContextReceived);
+        QSignalSpy transmitFrames(&controller, &RemoteMediaController::transmitFrameReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QCOMPARE(client.capabilities().spectrumPictureVersion, 1);
+        QVERIFY(controller.txDisplayNegotiated());
+        const QJsonObject first = lastControl(controls, QStringLiteral("subscribe"));
+        const quint32 id = quint32(first.value(QStringLiteral("endpointId")).toDouble());
+        SliceModel* slice = remote.sliceById(stationSlice->sliceIndex());
+        QVERIFY(slice);
+        QCOMPARE(slice->streamIndex(), 0);
+        WidebandDisplayContext wideband;
+        wideband.available = true;
+        wideband.physicalAdcIndex = 0;
+        wideband.filterChainIndex = 0;
+        wideband.adcRateHz = 4000000;
+        constexpr double kCentreHz = 14225023.4375;
+        constexpr double kSpanHz = 24046.875;
+        // A context of picture 1 answering the pan's first request.
+        const auto contextOf = [&](int generation, int sourceStream, bool transmit,
+                                   double centreHz) {
+            return QJsonObject{
+                {QStringLiteral("op"), QStringLiteral("context")},
+                {QStringLiteral("connectionId"), first.value(QStringLiteral("connectionId"))},
+                {QStringLiteral("endpointId"), double(id)},
+                {QStringLiteral("revision"), first.value(QStringLiteral("revision"))},
+                {QStringLiteral("contextGeneration"), generation},
+                {QStringLiteral("pictureGeneration"), 1},
+                {QStringLiteral("sourceStream"), sourceStream},
+                {QStringLiteral("sourceCentreHz"), 14225000},
+                {QStringLiteral("sampleRateHz"), 192000},
+                {QStringLiteral("centreHz"), centreHz}, {QStringLiteral("spanHz"), kSpanHz},
+                {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
+                {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
+                {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
+                {QStringLiteral("maxDbm"), 0}, {QStringLiteral("fps"), 30},
+                {QStringLiteral("framesPerLine"), 1},
+                {QStringLiteral("wideband"), wideband.toJson()},
+                {QStringLiteral("grantedFftSize"), 8192},
+                {QStringLiteral("grantedTier"), QStringLiteral("wide")},
+                {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
+                {QStringLiteral("limit"), QStringLiteral("none")},
+                {QStringLiteral("transmit"), transmit}};
+        };
+        // Sent, and read by the window.
+        const auto deliverContext = [&](const QJsonObject& context) {
+            const int before = countControl(receivedControls, QStringLiteral("context"));
+            return server.sendMediaControl(context, server.mediaSessionEpoch())
+                && QTest::qWaitFor([&] {
+                       return countControl(receivedControls, QStringLiteral("context")) > before;
+                   }, 5'000);
+        };
+        quint32 made = 0;
+        // The first frame of a context, as its own encoder makes it.
+        const auto keyframeOf = [&](quint32 generation, float level) {
+            DisplayCodecFrame frame;
+            frame.context = {id, generation, -180, 0, 128, 128, 0};
+            frame.encoderSequence = 1;
+            frame.producerTimestamp = quint64(1'000'000'000LL + ++made * 33'333'333LL);
+            frame.waterfallAdvance = true;
+            frame.traceDbm = QVector<float>(128, level);
+            frame.waterfallDbm = QVector<float>(128, level);
+            DisplayCodecEncoder encoder;
+            return encoder.encode(frame, true);
+        };
+        const auto shows = [&](float level) {
+            return widget->renderedPixels().size() == 128
+                && std::abs(widget->renderedPixels().at(64) - level) < 0.4f;
+        };
+
+        // The picture the pan shows: context 1, which starts picture 1.
+        QVERIFY(deliverContext(contextOf(1, 0, false, kCentreHz)));
+        QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 1);
+        QCOMPARE(widget->remoteCodecForTest().contextGeneration, quint32(1));
+        media->deliver(keyframeOf(1, -100.0f));
+        QCOMPARE(frames.count(), 1);
+        QVERIFY(shows(-100.0f));
+
+        quint32 generation = 2;
+        if (rule == QLatin1String("transmit-shown")) {
+            // The Core's transmit display for this pan, answering the
+            // request the pan has: taken, and its keyframe asked for.
+            QTest::qWait(250); // past the window's 200 ms keyframe-request spacing
+            QVERIFY(deliverContext(contextOf(int(generation), 0, true, kCentreHz)));
+            QTRY_COMPARE(transmitContexts.count(), 1);
+            QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 2);
+            ++generation;
+        }
+        // The window's request moves on, so a context that answers the
+        // first one answers an earlier request.
+        if (rule == QLatin1String("stream-changed")) {
+            slice->setStreamIndex(1);
+        } else if (rule == QLatin1String("epoch-changed")) {
+            slice->setStreamEpoch(slice->streamEpoch() + 1);
+        } else {
+            widget->setCenterFrequency(widget->centerFrequency() + 500);
+        }
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        const QJsonObject second = lastControl(controls, QStringLiteral("subscribe"));
+        QVERIFY(second.value(QStringLiteral("revision")) != first.value(QStringLiteral("revision")));
+        QCOMPARE(quint32(second.value(QStringLiteral("endpointId")).toDouble()), id);
+        const quint32 codecBefore = widget->remoteCodecForTest().contextGeneration;
+        const int keyframesBefore = countControl(controls, QStringLiteral("keyframe"));
+
+        // The context of the row: picture 1, newer than the one drawn.
+        const bool otherStream = rule == QLatin1String("other-stream");
+        const bool transmitContext = rule == QLatin1String("transmit-context");
+        // 150 kHz above the receiver's centre is outside its 192 kHz of
+        // samples: frequencies only the wideband source has, in a context
+        // that says the wideband source is not running.
+        const double centreHz = rule == QLatin1String("wideband") ? kCentreHz + 150'000.0
+                                                                  : kCentreHz;
+        QVERIFY(deliverContext(contextOf(int(generation), otherStream ? 1 : 0,
+                                         transmitContext, centreHz)));
+        media->deliver(keyframeOf(generation, -60.0f));
+        QCOMPARE(frames.count(), 1);
+        QCOMPARE(transmitFrames.count(), 0);
+        QVERIFY(shows(-100.0f));
+        QCOMPARE(widget->remoteCodecForTest().contextGeneration, codecBefore);
+        QCOMPARE(countControl(controls, QStringLiteral("keyframe")), keyframesBefore);
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        QCOMPARE(transmitContexts.count(), rule == QLatin1String("transmit-shown") ? 1 : 0);
+
+        if (otherStream || transmitContext || rule == QLatin1String("wideband")) {
+            // Nothing else stood in the way: the same context without the
+            // row's fault is drawn.
+            ++generation;
+            QVERIFY(deliverContext(contextOf(int(generation), 0, false, kCentreHz)));
+            media->deliver(keyframeOf(generation, -40.0f));
+            QCOMPARE(frames.count(), 2);
+            QVERIFY(shows(-40.0f));
+            QCOMPARE(countControl(controls, QStringLiteral("keyframe")), keyframesBefore);
+        }
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

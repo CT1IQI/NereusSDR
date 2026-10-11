@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (fourth wave): a pan forgets the picture it
+//               shows when its receiver changes stream or stream epoch, so a
+//               late context of that picture is not drawn. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): the media start declares
 //               spectrumPictureVersion to a Core that offers it, and each
 //               context is then read with its pictureGeneration. J.J. Boyd
@@ -1017,7 +1021,8 @@ struct RemoteMediaController::Private {
         // receive context continues (its pictureGeneration). The next
         // context carries on exactly when it states the same one. None from
         // a Core that states no picture, and none once the Core has refused
-        // the binding or retired its source.
+        // the binding or retired its source, or the binding has left the
+        // stream or the stream epoch the picture was shown on.
         std::optional<quint32> shownPicture;
         // R-DISP-RETUNE (7b): a context of the picture shown that answers a
         // request the window has since changed, taken for drawing only. Its
@@ -4999,10 +5004,15 @@ void RemoteMediaController::refreshSubscriptions()
             && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
         // R-DISP-RETUNE (7b): a context taken for drawing only is one of
-        // this stream; its frames keep drawing through an ask on it.
+        // this stream; its frames keep drawing through an ask on it. The
+        // picture shown is one of this stream and epoch too: once the
+        // binding leaves either, no context carries it on, and a late one
+        // that states it (the Core does not say which epoch a context is
+        // of) is not drawn.
         if (binding.observedStream != slice->streamIndex()
             || binding.observedStreamEpoch != slice->streamEpoch()) {
             binding.drawing.reset();
+            binding.shownPicture.reset();
         }
         binding.observed = request;
         binding.observedStream = slice->streamIndex();
@@ -6594,10 +6604,12 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.refusalReason.clear();
             if (binding.slice) {
                 // R-DISP-RETUNE (7b): a context taken for drawing only is
-                // one of the stream it was taken on.
+                // one of the stream it was taken on, and so is the picture
+                // shown: neither outlives the stream or its epoch.
                 if (binding.observedStream != binding.slice->streamIndex()
                     || binding.observedStreamEpoch != binding.slice->streamEpoch()) {
                     binding.drawing.reset();
+                    binding.shownPicture.reset();
                 }
                 binding.observedStream = binding.slice->streamIndex();
                 binding.observedStreamEpoch = binding.slice->streamEpoch();
