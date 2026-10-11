@@ -108,7 +108,12 @@ struct Flag {
 };
 
 // The look's sheet for `original` on a control of class T that sits in an
-// ordinary themed panel, the size of `like`.
+// ordinary themed panel, the size of `like`. A size the program fixed on
+// `like` is fixed here too. A size its layout gave it is only this
+// control's size: the pass gives a slider thinner than the look's handle
+// a minimum height unless its height is fixed, and Fusion's slider is
+// thinner than that at 96 dpi on Linux (15 px) and not on the Mac (20 px),
+// so a control fixed at the flag slider's size got another sheet there.
 template <typename T>
 QString lookElsewhere(const QString& original, const QWidget* like)
 {
@@ -120,7 +125,13 @@ QString lookElsewhere(const QString& original, const QWidget* like)
     if (auto* button = qobject_cast<QPushButton*>(control)) {
         button->setCheckable(true);
     }
-    control->setFixedSize(like->size());
+    control->resize(like->size());
+    if (like->minimumWidth() == like->maximumWidth()) {
+        control->setFixedWidth(like->width());
+    }
+    if (like->minimumHeight() == like->maximumHeight()) {
+        control->setFixedHeight(like->height());
+    }
     control->setStyleSheet(original);
     panel.show();
     WorkspacePreview::themeSubtree(&panel);
