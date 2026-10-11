@@ -38,6 +38,11 @@
 //               spectrum threads records what a raise does not buy,
 //               measured on the installed build. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-11: that comment corrected: the wait is not held to two
+//               ticks. A thread that has just woken keeps the core for up
+//               to half the scheduling latency (12.1 ms measured). J.J.
+//               Boyd (KG4VCF), with AI-assisted implementation via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/platform/ThreadPlacement.h"
@@ -646,15 +651,22 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // 14 times in four minutes, 5.4 ms at most, and the DSP thread never
     // 0.3 ms. Not measured while transmitting.
     //
-    // What a raise buys against a thread at normal priority is a bound,
-    // not immunity. The scheduler lets a normal-priority thread that lands
-    // on the core finish its smallest slice (3 ms, looked at on a 3.3 ms
-    // tick), so a raised thread waits at most two ticks for it. Recorded
-    // on 2026-10-11, one receiver at 768,000, every switch on the
-    // connection thread's core for four minutes: nine waits of 2 ms or
-    // more, eight of them (4.4 to 5.4 ms) behind a program that is not
-    // the Core's (htop in a terminal, allowed on every core) and one
-    // (2.0 ms) behind a spectrum thread. No packet was dropped: one
+    // What a raise buys against a thread at normal priority is less than
+    // it looks: it does not take the core from one that has just woken.
+    // Linux places a thread that wakes from sleep up to half its
+    // scheduling latency ahead of the threads already queued
+    // (place_entity, kernel/sched/fair.c, v6.1; 12 ms on this board:
+    // latency 24 ms with GENTLE_FAIR_SLEEPERS on). A normal-priority
+    // thread uses that lead up one for one as it runs, and until it has,
+    // the tick hands the core straight back to it (check_preempt_tick,
+    // pick_next_entity). So a raised thread can wait out a normal-priority
+    // thread's whole run, up to about 12 ms. Recorded on 2026-10-11 with
+    // one receiver at 768,000. Every switch on the connection thread's
+    // core for four minutes: nine waits of 2 ms or more, eight of them
+    // (4.4 to 5.4 ms) behind a program that is not the Core's (htop in a
+    // terminal, allowed on every core) and one (2.0 ms) behind a spectrum
+    // thread. On a later build, two minutes of polling: one wait, 12.1 ms,
+    // while htop ran 12.7 ms on that core. No packet was dropped: one
     // receiver's packets fill the socket buffer in about 45 ms. Four wide
     // receivers fill it in 6 to 9 ms, which is where such a wait costs
     // packets. Real-time priority would end it and this board refuses it
