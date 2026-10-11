@@ -4,6 +4,11 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE: a retune relabels the running spectrum
+//               source and each pan on it keeps what it has averaged; a
+//               picture moved in frequency keeps its noise floor and
+//               waterfall levels and empties its peak hold and blobs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10: R-DISP-HOLD: an endpoint asked for again keeps its
 //               reduction and, for the same picture, its display extras.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3308,7 +3313,8 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
             }
         });
     }
-    if (!reconcileSource(source)) {
+    DaemonSpectrumSourceUpdate sourceUpdate;
+    if (!reconcileSource(source, &sourceUpdate)) {
         // A source that cannot be reconfigured keeps every pan as it was.
         for (const Resized& previous : resized) {
             previous.entry->sourceFftSize = previous.previousFftSize;
@@ -3335,10 +3341,22 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // (configureEndpointFromFrame). A re-request whose only change is the
     // dBm range, the frame rate or the line period therefore restarts
     // nothing the client sees.
+    //
+    // R-DISP-RETUNE: a re-request that only moves the view centre (the
+    // window following a tune) is a moved picture: the planes go on
+    // averaging, the extras keep the noise floor and the waterfall levels
+    // and drop the peak hold and the blobs. The reduction was out of the
+    // table while the source was reconciled above, so a relabel done there
+    // is handed to it here.
     if (replaced.has_value()) {
         EndpointEntry& current = m_endpoints.at(endpointId);
         current.endpoint = std::move(replaced->endpoint);
-        current.endpoint.awaitContext();
+        if (sourceUpdate.relabelled) {
+            current.endpoint.awaitMovedSource(sourceUpdate.fromGeneration,
+                                              sourceUpdate.toGeneration);
+        } else {
+            current.endpoint.awaitContext();
+        }
         if (current.extras && replaced->extras) {
             replaced->extras->updateRequest(current.extrasRequest);
             current.extras = std::move(replaced->extras);
@@ -4696,14 +4714,25 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
         // picture starts them again; for an endpoint asked for again that
         // is a new processor, as before, so its noise floor and waterfall
         // levels start again with it.
-        const bool samePicture = entry.endpoint.tracePlaneKept()
-            && entry.endpoint.waterfallPlaneKept();
-        if (!samePicture) {
+        //
+        // R-DISP-RETUNE: a moved picture (the same shape at another centre)
+        // keeps the processor it has, carried over a re-request or not, so
+        // the noise floor, the waterfall levels and Core Clarity go on, and
+        // empties the peak hold and the blobs, which were measured at
+        // frequencies the pixels no longer show.
+        switch (entry.endpoint.picture()) {
+        case SpectrumPictureKind::Same:
+            break;
+        case SpectrumPictureKind::Moved:
+            entry.extras->newContext();
+            break;
+        case SpectrumPictureKind::New:
             if (entry.extrasCarried) {
                 entry.extras = std::make_unique<DisplayExtrasProcessor>(entry.extrasRequest);
             } else {
                 entry.extras->newContext();
             }
+            break;
         }
     }
     entry.extrasCarried = false;
@@ -5916,8 +5945,12 @@ void DaemonMediaController::releaseSourceIfUnused(const MediaSourceKey& key)
     m_sources.remove(key);
 }
 
-bool DaemonMediaController::reconcileSource(const MediaSourceKey& key)
+bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
+                                            DaemonSpectrumSourceUpdate* sourceUpdate)
 {
+    if (sourceUpdate) {
+        *sourceUpdate = {};
+    }
     // Task 76 (ruling 9.1): one engine for everyone watching this receiver,
     // at the largest size and highest rate any device's pans were granted.
     int maximumFft = 0;
@@ -5973,23 +6006,43 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key)
     const bool changed = !runtime.configured
         || (!rateOnly && !sameSourceConfig(runtime.config, config));
     bool accepted = true;
+    DaemonSpectrumSourceUpdate updated;
     if (!runtime.configured) {
         accepted = m_source.activate(key, config);
     } else if (rateOnly) {
         accepted = m_source.updateFrameRate(key, config.fft.fps,
                                             config.transformsFollowFrameRate);
     } else if (changed) {
-        accepted = m_source.update(key, config);
+        accepted = m_source.update(key, config, &updated);
     }
     if (!accepted) {
         return false;
     }
     runtime.config = config;
     runtime.configured = true;
+    if (sourceUpdate) {
+        *sourceUpdate = updated;
+    }
     if (changed) {
         // Every device's pans on this engine take the new context.
-        forEachSharedEndpoint(key, [](DaemonMediaController&, quint32, EndpointEntry& entry) {
-            entry.endpoint.reset();
+        //
+        // R-DISP-RETUNE: when the receiver was only retuned, the source was
+        // relabelled and goes on publishing, and each pan keeps what it has
+        // averaged; the context it is sent from the next frame is that of a
+        // moved picture (SpectrumEndpoint::configure). The display extras
+        // stay with the entry and configureEndpointFromFrame decides what
+        // they keep. Whatever else changed restarted the source, and the
+        // reduction starts again with it. Either way the old context ends
+        // here: the frame held under the old centre is dropped and the next
+        // context opens with a keyframe.
+        const DaemonSpectrumSourceUpdate moved = updated;
+        forEachSharedEndpoint(key, [moved](DaemonMediaController&, quint32,
+                                           EndpointEntry& entry) {
+            if (moved.relabelled) {
+                entry.endpoint.awaitMovedSource(moved.fromGeneration, moved.toGeneration);
+            } else {
+                entry.endpoint.reset();
+            }
             entry.encoder.reset();
             entry.latestInput.reset();
             entry.contextSent = false;

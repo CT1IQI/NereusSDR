@@ -746,12 +746,22 @@ private slots:
     void aNewPictureStillRestartsTheAveragedPlanes_data()
     {
         QTest::addColumn<QString>("change");
+        // R-DISP-RETUNE: the "centre" row that stood here pinned that a moved
+        // crop restarts the averaging. A moved crop is now a moved picture
+        // and keeps it (aMovedViewCentreKeepsTheAveragedEnergy). Every row
+        // below is still a new picture, alone or together with a move.
         QTest::newRow("span") << QStringLiteral("span");
-        QTest::newRow("centre") << QStringLiteral("centre");
+        QTest::newRow("span and centre") << QStringLiteral("spanAndCentre");
         QTest::newRow("pixel count") << QStringLiteral("pixels");
         QTest::newRow("averaging mode") << QStringLiteral("averageMode");
         QTest::newRow("detector") << QStringLiteral("detector");
+        QTest::newRow("sample rate") << QStringLiteral("sampleRate");
+        QTest::newRow("FFT size") << QStringLiteral("fftSize");
         QTest::newRow("source generation") << QStringLiteral("sourceGeneration");
+        QTest::newRow("restarted source at a moved centre")
+            << QStringLiteral("untoldGenerationMoved");
+        QTest::newRow("moved source of another generation")
+            << QStringLiteral("otherGenerationMoved");
         QTest::newRow("after reset") << QStringLiteral("reset");
     }
 
@@ -779,8 +789,26 @@ private slots:
         ++source.contextGeneration;
         if (change == QLatin1String("span")) {
             next.spanHz = 48'000.0;
-        } else if (change == QLatin1String("centre")) {
+        } else if (change == QLatin1String("spanAndCentre")) {
+            next.spanHz = 48'000.0;
             next.centreHz += 12'000.0;
+        } else if (change == QLatin1String("sampleRate")) {
+            source.sampleRateHz = 384'000.0;
+        } else if (change == QLatin1String("fftSize")) {
+            source.fftBins = 2048;
+        } else if (change == QLatin1String("untoldGenerationMoved")) {
+            // The source restarted (another window, say) and came back at
+            // another centre. Nobody told the endpoint that the new
+            // generation continues the old one, so it does not.
+            ++source.sourceGeneration;
+            source.centreHz += 100.0;
+            endpoint.awaitContext();
+        } else if (change == QLatin1String("otherGenerationMoved")) {
+            // A relabel of some other generation is not this endpoint's.
+            endpoint.awaitMovedSource(source.sourceGeneration + 5,
+                                      source.sourceGeneration + 6);
+            source.sourceGeneration += 6;
+            source.centreHz += 100.0;
         } else if (change == QLatin1String("pixels")) {
             next.pixels = 48;
         } else if (change == QLatin1String("averageMode")) {
@@ -806,6 +834,242 @@ private slots:
         QVERIFY(expected.has_value());
         QCOMPARE(restarted->traceDbm, expected->traceDbm);
         QCOMPARE(restarted->waterfallDbm, expected->waterfallDbm);
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::New);
+        QVERIFY(!endpoint.tracePlaneKept());
+        QVERIFY(!endpoint.waterfallPlaneKept());
+    }
+
+    // R-DISP-RETUNE: the stream centre moved under the same view. The source
+    // was relabelled, not restarted, and the endpoint was told so. Its
+    // converged trace and waterfall carry on: the first frame of the moved
+    // picture is within one codec step of the frame before the move. A
+    // restarted average reads 20 dB low on that frame (see
+    // logAveragingDoesNotRestartAtZeroDbAfterRetune).
+    void aMovedStreamCentreKeepsTheConvergedTrace()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::New);
+        qint64 at = 1'000'000'000;
+        std::optional<DisplayCodecFrame> output;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            output = endpoint.consume(input);
+            QVERIFY(output.has_value());
+        }
+        const QVector<float> convergedTrace = output->traceDbm;
+        const QVector<float> convergedWaterfall = output->waterfallDbm;
+        QVERIFY(allNear(convergedTrace, -120.0f));
+        QVERIFY(allNear(convergedWaterfall, -120.0f));
+
+        const SpectrumEndpointSourceContext before = source;
+        endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
+        QVERIFY(!endpoint.configured());
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        source.centreHz += 100.0;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.waterfallPicture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
+        // "Kept" still means the same picture, which this is not.
+        QVERIFY(!endpoint.tracePlaneKept());
+        QVERIFY(!endpoint.waterfallPlaneKept());
+        QCOMPARE(endpoint.context().sourceGeneration, source.sourceGeneration);
+        QCOMPARE(endpoint.context().codec.contextGeneration, source.contextGeneration);
+
+        // A frame from before the move is still refused.
+        DaemonSpectrumFrame stale = frame(before, at);
+        stale.binsLinear.fill(1.0e-12f);
+        QVERIFY(!endpoint.consume(stale).has_value());
+
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(1.0e-12f);
+        output = endpoint.consume(input);
+        QVERIFY(output.has_value());
+        // The context is new: its sequence and its waterfall pacing restart.
+        QCOMPARE(output->encoderSequence, quint32(0));
+        QVERIFY(output->waterfallAdvance);
+        const float step = (req.maxDbm - req.minDbm) / 255.0f;
+        QCOMPARE(output->traceDbm.size(), convergedTrace.size());
+        for (int index = 0; index < convergedTrace.size(); ++index) {
+            QVERIFY2(std::abs(output->traceDbm.at(index) - convergedTrace.at(index)) <= step,
+                     qPrintable(QStringLiteral("trace pixel %1 restarted at %2 dBm")
+                                    .arg(index).arg(output->traceDbm.at(index))));
+            QVERIFY2(std::abs(output->waterfallDbm.at(index) - convergedWaterfall.at(index))
+                         <= step,
+                     qPrintable(QStringLiteral("waterfall pixel %1 restarted at %2 dBm")
+                                    .arg(index).arg(output->waterfallDbm.at(index))));
+        }
+
+        // A second move straight after the first carries on the same way.
+        endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        source.centreHz += 100.0;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
+        at += 40'000'000;
+        DaemonSpectrumFrame louder = frame(source, at);
+        louder.binsLinear.fill(1.0e-10f);
+        output = endpoint.consume(louder);
+        QVERIFY(output.has_value());
+        // Recursive log averaging went on from the state: 0.5 * -120 + 0.5 * -100.
+        QVERIFY2(std::abs(output->traceDbm[32] - (-110.0f)) < 0.01f,
+                 qPrintable(QString::number(output->traceDbm[32])));
+    }
+
+    // R-DISP-RETUNE: the view centre moved over the same source (a pan
+    // dragged, or a re-ask after a tune). The averaged energy stays where it
+    // is on the screen and goes on averaging, as on the local display.
+    void aMovedViewCentreKeepsTheAveragedEnergy()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 1;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            QVERIFY(endpoint.consume(input).has_value());
+        }
+
+        SpectrumEndpointRequest next = req;
+        next.centreHz += 12'000.0;
+        ++source.contextGeneration;
+        endpoint.awaitContext();
+        QVERIFY(endpoint.configure(next, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.waterfallPicture(), SpectrumPictureKind::Moved);
+        QVERIFY(!endpoint.tracePlaneKept());
+        // The plane took the new crop.
+        QVERIFY(std::abs(endpoint.context().exactCentreHz - next.centreHz) < 200.0);
+
+        DaemonSpectrumFrame louder = frame(source, at);
+        louder.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> output = endpoint.consume(louder);
+        QVERIFY(output.has_value());
+        // Trace, recursive log: 0.5 * -120 + 0.5 * -100.
+        QVERIFY2(std::abs(output->traceDbm[32] - (-110.0f)) < 0.01f,
+                 qPrintable(QString::number(output->traceDbm[32])));
+        // Waterfall, recursive linear power: half way from 1e-12 to 1e-10.
+        const float expectedWaterfall =
+            10.0f * std::log10(0.5f * 1.0e-12f + 0.5f * 1.0e-10f);
+        QVERIFY2(std::abs(output->waterfallDbm[32] - expectedWaterfall) < 0.01f,
+                 qPrintable(QString::number(output->waterfallDbm[32])));
+
+        // A restart reads otherwise, so the check above can fail.
+        SpectrumEndpoint fresh;
+        QVERIFY(fresh.configure(next, source));
+        const std::optional<DisplayCodecFrame> restarted = fresh.consume(louder);
+        QVERIFY(restarted.has_value());
+        QVERIFY(std::abs(restarted->traceDbm[32] - output->traceDbm[32]) > 1.0f);
+
+        // Stream and view moved together, as when a pan follows the tune.
+        endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        source.centreHz += 5'000.0;
+        next.centreHz += 5'000.0;
+        QVERIFY(endpoint.configure(next, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
+        at += 40'000'000;
+        DaemonSpectrumFrame same = frame(source, at);
+        same.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> followed = endpoint.consume(same);
+        QVERIFY(followed.has_value());
+        // 0.5 * -110 + 0.5 * -100.
+        QVERIFY2(std::abs(followed->traceDbm[32] - (-105.0f)) < 0.01f,
+                 qPrintable(QString::number(followed->traceDbm[32])));
+    }
+
+    // R-DISP-RETUNE: one plane can be a moved picture while the other is a
+    // new one, and the endpoint's picture is then new.
+    void aMovedPlaneAndANewPlaneMakeANewPicture()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(1.0e-12f);
+            QVERIFY(endpoint.consume(input).has_value());
+        }
+        SpectrumEndpointRequest next = req;
+        next.centreHz += 12'000.0;
+        next.waterfall.averageMode = 1;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(next, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.waterfallPicture(), SpectrumPictureKind::New);
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::New);
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(1.0e-10f);
+        const std::optional<DisplayCodecFrame> output = endpoint.consume(input);
+        QVERIFY(output.has_value());
+        SpectrumEndpoint fresh;
+        QVERIFY(fresh.configure(next, source));
+        const std::optional<DisplayCodecFrame> expected = fresh.consume(input);
+        QVERIFY(expected.has_value());
+        QVERIFY2(std::abs(output->traceDbm[32] - (-110.0f)) < 0.01f,
+                 qPrintable(QString::number(output->traceDbm[32])));
+        QCOMPARE(output->waterfallDbm, expected->waterfallDbm);
+    }
+
+    // R-DISP-RETUNE: the extended (ADC wings) planes follow the same rule.
+    void anExtendedMovedViewKeepsTheAveragedPlanes()
+    {
+        SpectrumEndpointSourceContext source = extendedSourceContext();
+        SpectrumEndpointRequest req = extendedRequest();
+        req.centreHz = 1'500'000.0;
+        req.spanHz = 500'000.0;
+        req.trace.averageMode = 1;
+        req.trace.averageAlpha = 0.5;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        std::optional<DisplayCodecFrame> output;
+        for (int index = 0; index < 40; ++index, at += 40'000'000) {
+            output = endpoint.consume(frame(source, at), 0.0,
+                                      widebandAtDisplayLevel(source, -40.0f));
+            QVERIFY(output.has_value());
+        }
+        const float converged = output->traceDbm[50];
+
+        SpectrumEndpointRequest moved = req;
+        moved.centreHz += 10'000.0;
+        endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        source.centreHz += 10'000.0;
+        QVERIFY(endpoint.configure(moved, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::Moved);
+        output = endpoint.consume(frame(source, at), 0.0,
+                                  widebandAtDisplayLevel(source, -100.0f));
+        QVERIFY(output.has_value());
+        // Kept: half way in linear power from the -40 dBm state towards
+        // -100 dBm is 3 dB down. Restarted, it would read -100 dBm.
+        QVERIFY2(std::abs(output->traceDbm[50] - (converged - 3.01f)) < 0.05f,
+                 qPrintable(QStringLiteral("%1 after %2").arg(output->traceDbm[50])
+                                .arg(converged)));
     }
 
     // R-DISP-HOLD: the two planes are judged apart. A changed waterfall

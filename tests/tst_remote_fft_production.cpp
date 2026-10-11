@@ -248,39 +248,170 @@ private slots:
         QVERIFY(after->generation > before->generation);
     }
 
-    void centreRetuneResetsSameSizeRateInputHistory()
+    // R-DISP-RETUNE. This test was centreRetuneResetsSameSizeRateInputHistory
+    // and pinned the opposite: that a centre change dropped the engine's
+    // input history so the first frame after it held no old samples. The
+    // operator's choice is now that the picture carries on through a retune
+    // as the local display does, so a centre-only update relabels the
+    // running source. What it must still guarantee is in the assertions:
+    // no frame labelled with the old centre is handed out after the move.
+    void centreOnlyUpdateRelabelsTheRunningSource()
     {
         DaemonSpectrumSource source;
         const MediaSourceKey key{0, FftTier::Wide};
-        const auto firstConfig = sourceConfig(1024, 7100000.0, 48000.0);
-        QVERIFY(source.activate(key, firstConfig));
+        QVERIFY(source.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
         QTRY_VERIFY(source.isActive(key));
 
         QSignalSpy frames(&source, &DaemonSpectrumSource::frameAvailable);
+        // 1024 samples fill the window, sample 1025 runs the transform. At
+        // 48 kHz and 60 frames a second the window then advances 800, so
+        // the engine holds 224 samples of overlap plus the two that
+        // followed: 226 of the old tone.
         source.submitIq(0, syntheticIq(1026, 0.125));
         QTRY_VERIFY(frames.count() >= 1);
         const auto oldFrame = source.takeLatest(key);
         QVERIFY(oldFrame.has_value());
         const int oldPeak = dominantBin(oldFrame->binsLinear);
         QVERIFY(oldPeak >= 0);
+        const quint64 droppedBefore = source.droppedInputFrames(key);
 
-        // Same FFT size and rate intentionally exercise the path where
-        // setFftSize()/setSampleRate alone would retain FFTEngine overlap.
-        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0)));
-        QTRY_VERIFY(source.isActive(key));
-        source.submitIq(0, syntheticIq(1026, 0.25));
-        QTRY_VERIFY(frames.count() >= 2);
+        // A frame published before the move and not taken by anybody.
+        QVERIFY(source.publishFrameForTest(key, oldFrame->producedAtNs + 1));
+
+        DaemonSpectrumSourceUpdate result;
+        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0), &result));
+        QVERIFY(result.relabelled);
+        QCOMPARE(result.fromGeneration, oldFrame->generation);
+        QVERIFY(result.toGeneration > result.fromGeneration);
+        // No restart: active at once, with no configuration under way.
+        QVERIFY(source.isActive(key));
+        const DaemonSpectrumSource::InputQueueDiagnostics queue =
+            source.inputQueueDiagnostics(key);
+        QVERIFY(queue.active);
+        QVERIFY(!queue.configurationPending);
+        QCOMPARE(queue.generation, result.toGeneration);
+        // The old-centre frame is gone, so nothing can be configured from it.
+        QVERIFY(!source.takeLatest(key).has_value());
+
+        // 798 more samples fill the window again (226 + 798 = 1024). A
+        // restarted engine would hold only these 798 and need 1025.
+        const int framesBefore = frames.count();
+        quint64 handoffs = source.completedInputHandoffs(key);
+        source.submitIq(0, syntheticIq(798, 0.25));
+        QTRY_VERIFY(source.completedInputHandoffs(key) > handoffs);
+        // One more sample runs the transform. The engine refuses a second
+        // transform within 5 ms of the first and keeps its window full, so
+        // the trigger is offered again, a bounded number of times: 798 + 200
+        // samples stay short of the 1025 a restarted engine would need.
+        constexpr int kMaxTriggers = 200;
+        int triggers = 0;
+        while (frames.count() == framesBefore && triggers < kMaxTriggers) {
+            handoffs = source.completedInputHandoffs(key);
+            source.submitIq(0, syntheticIq(1, 0.25));
+            QTRY_VERIFY(source.completedInputHandoffs(key) > handoffs);
+            QCoreApplication::processEvents();
+            ++triggers;
+        }
+        QVERIFY2(frames.count() > framesBefore,
+                 "the relabelled source lost its input history");
         const auto retuned = source.takeLatest(key);
         QVERIFY(retuned.has_value());
         QCOMPARE(retuned->centreHz, 10100000.0);
-        QVERIFY(retuned->generation > oldFrame->generation);
+        QCOMPARE(retuned->generation, result.toGeneration);
+        QCOMPARE(retuned->sampleRateHz, 48000.0);
+        QCOMPARE(retuned->binsLinear.size(), 1024);
+        QVERIFY(retuned->producedAtNs > oldFrame->producedAtNs);
+        QCOMPARE(source.droppedInputFrames(key), droppedBefore);
 
+        // The frame is what the local display would show: mostly the new
+        // tone, with the overlap from before the move still in the window.
         const int newPeak = dominantBin(retuned->binsLinear);
         QVERIFY(newPeak >= 0);
         QVERIFY(newPeak != oldPeak);
         QVERIFY2(retuned->binsLinear.at(oldPeak)
-                     < retuned->binsLinear.at(newPeak) * 0.01f,
-                 "the retuned generation retained energy from the old tone");
+                     > retuned->binsLinear.at(newPeak) * 1.0e-4f,
+                 "the relabelled source dropped the overlap from before the move");
+    }
+
+    void anyOtherUpdateStillRestartsTheSource_data()
+    {
+        QTest::addColumn<QString>("change");
+        QTest::newRow("sample rate") << QStringLiteral("sampleRate");
+        QTest::newRow("FFT size") << QStringLiteral("fftSize");
+        QTest::newRow("window") << QStringLiteral("window");
+        QTest::newRow("decimation") << QStringLiteral("decimation");
+        QTest::newRow("sample rate and centre") << QStringLiteral("sampleRateAndCentre");
+    }
+
+    // R-DISP-RETUNE: only the centre is a label. Whatever changes what a
+    // bin holds restarts the source as before: the first frame after it is
+    // made of new input alone.
+    void anyOtherUpdateStillRestartsTheSource()
+    {
+        QFETCH(QString, change);
+        DaemonSpectrumSource source;
+        const MediaSourceKey key{0, FftTier::Wide};
+        QVERIFY(source.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
+        QTRY_VERIFY(source.isActive(key));
+        QSignalSpy frames(&source, &DaemonSpectrumSource::frameAvailable);
+        source.submitIq(0, syntheticIq(1026, 0.125));
+        QTRY_VERIFY(frames.count() >= 1);
+        const auto oldFrame = source.takeLatest(key);
+        QVERIFY(oldFrame.has_value());
+
+        DaemonSpectrumSourceConfig next = sourceConfig(1024, 7100000.0, 48000.0);
+        int feed = 1026;
+        // A new tone that sits exactly on a bin of the restarted engine.
+        double tone = 0.25;
+        if (change == QLatin1String("sampleRate")) {
+            next.sampleRateHz = 96000.0;
+        } else if (change == QLatin1String("sampleRateAndCentre")) {
+            next.sampleRateHz = 96000.0;
+            next.centreHz = 10100000.0;
+        } else if (change == QLatin1String("fftSize")) {
+            next.fft.fftSize = 2048;
+            feed = 2050;
+        } else if (change == QLatin1String("window")) {
+            next.fft.windowType = static_cast<int>(WindowFunction::BlackmanHarris4);
+        } else {
+            next.decimation = 2;
+            feed = 2052;
+            // Every second sample reaches the FFT: 0.375 cycles a sample
+            // there, clear of both the band edge and the old tone.
+            tone = 0.1875;
+        }
+        DaemonSpectrumSourceUpdate result;
+        result.relabelled = true;
+        QVERIFY(source.update(key, next, &result));
+        QVERIFY(!result.relabelled);
+        QCOMPARE(result.fromGeneration, oldFrame->generation);
+        QVERIFY(result.toGeneration > result.fromGeneration);
+        QTRY_VERIFY(source.isActive(key));
+
+        const int framesBefore = frames.count();
+        source.submitIq(0, syntheticIq(feed, tone));
+        QTRY_VERIFY(frames.count() > framesBefore);
+        const auto restarted = source.takeLatest(key);
+        QVERIFY(restarted.has_value());
+        QCOMPARE(restarted->generation, result.toGeneration);
+        QCOMPARE(restarted->centreHz, next.centreHz);
+        QCOMPARE(restarted->sampleRateHz, next.sampleRateHz);
+        QCOMPARE(restarted->binsLinear.size(), next.fft.fftSize);
+
+        // No sample of the old tone is in the window: everything away from
+        // the new tone is far below it. One kept overlap would show at
+        // about four parts in a thousand of the peak.
+        const int peak = dominantBin(restarted->binsLinear);
+        QVERIFY(peak >= 0);
+        constexpr int kMainLobeBins = 8;
+        float elsewhere = 0.0f;
+        for (int bin = 0; bin < restarted->binsLinear.size(); ++bin) {
+            if (std::abs(bin - peak) > kMainLobeBins) {
+                elsewhere = std::max(elsewhere, restarted->binsLinear.at(bin));
+            }
+        }
+        QVERIFY2(elsewhere < restarted->binsLinear.at(peak) * 1.0e-4f,
+                 "the restarted source retained energy from the old tone");
     }
 
     void stopAndRecreateDropsOldFrameAndGetsFreshGeneration()

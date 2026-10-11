@@ -4,6 +4,12 @@
 //
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
+// Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE: configure tells a picture moved in
+//               frequency from a new one and keeps its averaged planes;
+//               awaitMovedSource. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//
 // =================================================================
 
 #include "core/session/media/SpectrumEndpoint.h"
@@ -71,6 +77,32 @@ bool samePlanePicture(const ReducerConfig& held, const ReducerConfig& next)
         && held.spanHz == next.spanHz && held.streamCentreHz == next.streamCentreHz
         && held.sampleRateHz == next.sampleRateHz && held.detector == next.detector
         && held.averageMode == next.averageMode;
+}
+
+// R-DISP-RETUNE: the same picture in another place. Everything that shapes
+// the averaged state is equal (how many pixels, how wide, how each pixel is
+// detected and averaged); only where the stream or the crop is centred
+// differs. Each pixel then goes on averaging what arrives at its place on
+// the screen, which is what the local display does through a retune.
+bool movedPlanePicture(const ReducerConfig& held, const ReducerConfig& next)
+{
+    return held.pixels == next.pixels && held.spanHz == next.spanHz
+        && held.sampleRateHz == next.sampleRateHz && held.detector == next.detector
+        && held.averageMode == next.averageMode
+        && (held.centreHz != next.centreHz || held.streamCentreHz != next.streamCentreHz);
+}
+
+SpectrumPictureKind planePicture(bool sameSource, const ReducerConfig& held,
+                                 const ReducerConfig& next)
+{
+    if (!sameSource) {
+        return SpectrumPictureKind::New;
+    }
+    if (samePlanePicture(held, next)) {
+        return SpectrumPictureKind::Same;
+    }
+    return movedPlanePicture(held, next) ? SpectrumPictureKind::Moved
+                                         : SpectrumPictureKind::New;
 }
 
 bool finiteNonnegativeBins(const QVector<float>& bins)
@@ -271,11 +303,19 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     // range, the frame rate, the frames per line or the averaging constant.
     // Each plane is judged apart. Everything else restarts as on a first
     // configure.
+    //
+    // R-DISP-RETUNE: the source centre is no longer part of "same source".
+    // A source relabelled through a retune is the same source at another
+    // centre (awaitMovedSource carried its generation over), and the centre
+    // is judged with the crop, per plane: equal is the same picture, moved
+    // is a moved picture, and both keep the reducer. The generation is what
+    // tells a continued source from a restarted one, so a source that
+    // restarted with the same FFT size and sample rate (another window or
+    // decimation) still starts a new picture.
     const bool sameSource = m_planesHeld && m_extendedView == extendedView
         && m_sourceContext.source == sourceContext.source
         && m_sourceContext.sourceGeneration == sourceContext.sourceGeneration
         && m_sourceContext.fftBins == sourceContext.fftBins
-        && m_sourceContext.centreHz == sourceContext.centreHz
         && m_sourceContext.sampleRateHz == sourceContext.sampleRateHz
         && (!extendedView || !(m_sourceContext.wideband != sourceContext.wideband));
     const ReducerConfig waterfallConfig =
@@ -284,13 +324,29 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     std::unique_ptr<SpectrumReducer> waterfall;
     std::unique_ptr<ExtendedSpectrumReducer> extendedTrace;
     std::unique_ptr<ExtendedSpectrumReducer> extendedWaterfall;
-    bool traceKept = false;
-    bool waterfallKept = false;
+    SpectrumPictureKind tracePicture = SpectrumPictureKind::New;
+    SpectrumPictureKind waterfallPicture = SpectrumPictureKind::New;
     if (extendedView) {
-        traceKept = sameSource && m_extendedTraceReducer
-            && samePlanePicture(m_extendedTraceReducer->config(), traceConfig);
-        waterfallKept = sameSource && m_extendedWaterfallReducer
-            && samePlanePicture(m_extendedWaterfallReducer->config(), waterfallConfig);
+        if (m_extendedTraceReducer) {
+            tracePicture = planePicture(sameSource, m_extendedTraceReducer->config(),
+                                        traceConfig);
+        }
+        if (m_extendedWaterfallReducer) {
+            waterfallPicture = planePicture(sameSource, m_extendedWaterfallReducer->config(),
+                                            waterfallConfig);
+        }
+    } else {
+        if (m_traceReducer) {
+            tracePicture = planePicture(sameSource, m_traceReducer->config(), traceConfig);
+        }
+        if (m_waterfallReducer) {
+            waterfallPicture = planePicture(sameSource, m_waterfallReducer->config(),
+                                            waterfallConfig);
+        }
+    }
+    const bool traceKept = tracePicture != SpectrumPictureKind::New;
+    const bool waterfallKept = waterfallPicture != SpectrumPictureKind::New;
+    if (extendedView) {
         if (traceKept) {
             extendedTrace = std::move(m_extendedTraceReducer);
             extendedTrace->setConfig(traceConfig);
@@ -308,10 +364,6 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
             extendedWaterfall->clearAveraging();
         }
     } else {
-        traceKept = sameSource && m_traceReducer
-            && samePlanePicture(m_traceReducer->config(), traceConfig);
-        waterfallKept = sameSource && m_waterfallReducer
-            && samePlanePicture(m_waterfallReducer->config(), waterfallConfig);
         if (traceKept) {
             trace = std::move(m_traceReducer);
             trace->setConfig(traceConfig);
@@ -344,8 +396,8 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     m_nextEncoderSequence = 0;
     m_hasOverlap = hasOverlap;
     m_extendedView = extendedView;
-    m_tracePlaneKept = traceKept;
-    m_waterfallPlaneKept = waterfallKept;
+    m_tracePicture = tracePicture;
+    m_waterfallPicture = waterfallPicture;
     m_planesHeld = true;
     m_configured = true;
     return true;
@@ -481,12 +533,22 @@ void SpectrumEndpoint::awaitContext()
     m_nextEncoderSequence = 0;
 }
 
+void SpectrumEndpoint::awaitMovedSource(quint64 fromGeneration, quint64 toGeneration)
+{
+    awaitContext();
+    // The held centre stays as it was: the next configure compares it with
+    // the new one to tell a moved picture from the same one.
+    if (m_planesHeld && m_sourceContext.sourceGeneration == fromGeneration) {
+        m_sourceContext.sourceGeneration = toGeneration;
+    }
+}
+
 void SpectrumEndpoint::reset()
 {
     m_configured = false;
     m_planesHeld = false;
-    m_tracePlaneKept = false;
-    m_waterfallPlaneKept = false;
+    m_tracePicture = SpectrumPictureKind::New;
+    m_waterfallPicture = SpectrumPictureKind::New;
     m_hasOverlap = false;
     m_extendedView = false;
     m_traceReducer.reset();

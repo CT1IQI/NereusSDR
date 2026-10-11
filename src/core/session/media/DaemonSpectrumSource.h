@@ -44,8 +44,19 @@ struct DaemonSpectrumSourceConfig {
     int decimation{1};
 };
 
+/// What DaemonSpectrumSource::update() did to a source it accepted.
+/// R-DISP-RETUNE: `relabelled` is true when only the centre changed and the
+/// running source took it as a new label, without a restart; what it
+/// published under `fromGeneration` is then continued by `toGeneration`.
+/// Otherwise the source restarted and `toGeneration` continues nothing.
+struct DaemonSpectrumSourceUpdate {
+    bool relabelled{false};
+    quint64 fromGeneration{0};
+    quint64 toGeneration{0};
+};
+
 /// A complete, unreduced FFT frame.  `generation` changes on every accepted
-/// activate/update so consumers can discard a previous frequency context.
+/// activate/update so consumers can tell a previous frequency context.
 /// `producedAtNs` is a monotonic producer timestamp, not wall-clock time.
 struct DaemonSpectrumFrame {
     MediaSourceKey source;
@@ -82,10 +93,25 @@ public:
                   const DaemonSpectrumSourceConfig& config);
 
     /// Applies a validated source context and increments its generation.
-    /// A changed RF/FFT context drops queued input and resets the engine's
-    /// overlap history before the new generation accepts I/Q.
+    ///
+    /// R-DISP-RETUNE: when the centre is the only field that differs and the
+    /// source is running, the source is relabelled, not restarted. It stays
+    /// active, queued I/Q and the engine's overlap history are kept, nothing
+    /// is counted as dropped, and the next frame is published on the normal
+    /// cadence with the new centre and generation. A frame published before
+    /// the call and not yet taken is discarded, so no consumer is handed the
+    /// old centre after the move.
+    ///
+    /// Any other change (sample rate, FFT size, window, decimation, bin
+    /// target, queue size, frame rate) restarts the source: it accepts no
+    /// I/Q until its engine has taken the configuration, and a changed
+    /// sample rate, FFT size, window or decimation drops queued input and
+    /// the engine's overlap history first.
+    ///
+    /// `result`, when given, says which of the two happened.
     bool update(const MediaSourceKey& key,
-                const DaemonSpectrumSourceConfig& config);
+                const DaemonSpectrumSourceConfig& config,
+                DaemonSpectrumSourceUpdate* result = nullptr);
 
     /// Changes only the engine's output frame rate and whether transforms
     /// follow it. Both set how far the FFT window advances between frames,
@@ -178,6 +204,8 @@ private:
                               const DaemonSpectrumSourceConfig& config);
     static bool inputHistoryIsCompatible(const DaemonSpectrumSourceConfig& before,
                                          const DaemonSpectrumSourceConfig& after);
+    static bool onlyCentreDiffers(const DaemonSpectrumSourceConfig& before,
+                                  const DaemonSpectrumSourceConfig& after);
     static void applyEngineConfig(FFTEngine* engine,
                                   const DaemonSpectrumSourceConfig& config);
     static void enqueueIq(FFTEngine* engine,

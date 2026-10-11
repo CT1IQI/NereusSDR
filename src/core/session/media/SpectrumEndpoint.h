@@ -120,6 +120,19 @@ struct SpectrumEndpointContext {
     WidebandDisplayContext wideband;
 };
 
+/// R-DISP-HOLD, R-DISP-RETUNE: what an accepted configure made of the picture
+/// the endpoint already held. The order is from least kept to most.
+enum class SpectrumPictureKind {
+    /// Anything else: the reduction history starts again.
+    New,
+    /// The same shape in another place: the stream centre, the crop centre
+    /// or both moved, and nothing else. The averaged state carries on (it is
+    /// not shifted to follow the frequency and not cleared).
+    Moved,
+    /// Nothing about the geometry changed. Everything is kept.
+    Same,
+};
+
 class SpectrumEndpoint {
 public:
     static constexpr int kMaxPixels = 4096;
@@ -141,6 +154,16 @@ public:
     /// crop centre, span and pixel count, same detector and averaging mode.
     /// The dBm range, frame rate, frames per line and averaging constant may
     /// differ; a kept plane averages its next frame with the new constant.
+    ///
+    /// R-DISP-RETUNE: a plane whose picture only moved keeps its history
+    /// too. That is the same source continued through a retune
+    /// (awaitMovedSource), the same FFT size and sample rate, the same ADC
+    /// descriptor for an extended view, the same span and pixel count, the
+    /// same detector and averaging mode, with the source centre, the crop
+    /// centre or both at another frequency. The plane takes the new crop;
+    /// what it has averaged per pixel is neither shifted nor cleared, as on
+    /// the local display. tracePicture() and waterfallPicture() say which of
+    /// the three each plane was.
     /// A failed request preserves the previous accepted endpoint state.
     bool configure(const SpectrumEndpointRequest& request,
                    const SpectrumEndpointSourceContext& sourceContext);
@@ -167,15 +190,36 @@ public:
     /// newer than the last frame taken, or early).
     std::optional<qint64> outputDeadlineNs(qint64 producedAtNs) const;
 
-    /// Whether the last accepted configure kept that plane's averaged state.
-    bool tracePlaneKept() const { return m_tracePlaneKept; }
-    bool waterfallPlaneKept() const { return m_waterfallPlaneKept; }
+    /// Whether the last accepted configure found that plane drawing the same
+    /// picture as before (R-DISP-HOLD): true only for SpectrumPictureKind::
+    /// Same. A moved plane keeps its averaged state too and reads false here.
+    bool tracePlaneKept() const { return m_tracePicture == SpectrumPictureKind::Same; }
+    bool waterfallPlaneKept() const { return m_waterfallPicture == SpectrumPictureKind::Same; }
+
+    /// What the last accepted configure made of each plane, and of the
+    /// endpoint: the lesser of its two planes, so the picture is the same
+    /// only when both are, and new as soon as either is.
+    SpectrumPictureKind tracePicture() const { return m_tracePicture; }
+    SpectrumPictureKind waterfallPicture() const { return m_waterfallPicture; }
+    SpectrumPictureKind picture() const
+    {
+        return m_tracePicture < m_waterfallPicture ? m_tracePicture : m_waterfallPicture;
+    }
 
     /// Ends the accepted context and keeps the reduction histories for the
     /// next configure to judge (R-DISP-HOLD). Until that configure the
     /// endpoint is not configured and produces nothing, exactly as after
     /// reset().
     void awaitContext();
+
+    /// R-DISP-RETUNE: as awaitContext(), for a source that was relabelled
+    /// through a retune (DaemonSpectrumSourceUpdate::relabelled). Histories
+    /// held from `fromGeneration` are from then on histories of
+    /// `toGeneration`, so the next configure can keep them as a moved
+    /// picture. Histories of any other generation are left as they are, and
+    /// the next configure starts a new picture for them: a generation the
+    /// endpoint was not told continues its own is a restarted source.
+    void awaitMovedSource(quint64 fromGeneration, quint64 toGeneration);
 
     /// Ends the accepted context and drops both reduction histories: the
     /// next configure starts a new picture.
@@ -189,8 +233,8 @@ private:
     bool m_hasOverlap {false};
     bool m_extendedView {false};
     bool m_planesHeld {false};
-    bool m_tracePlaneKept {false};
-    bool m_waterfallPlaneKept {false};
+    SpectrumPictureKind m_tracePicture {SpectrumPictureKind::New};
+    SpectrumPictureKind m_waterfallPicture {SpectrumPictureKind::New};
     SpectrumEndpointRequest m_request;
     SpectrumEndpointSourceContext m_sourceContext;
     SpectrumEndpointContext m_context;

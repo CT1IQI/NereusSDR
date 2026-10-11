@@ -5791,6 +5791,13 @@ target_compile_definitions(tst_display_extras PRIVATE
 nereus_add_test(tst_daemon_display_keep
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# R-DISP-RETUNE: a remote pan's picture carries on through a retune. The
+# Core relabels the running spectrum source, the averaged trace goes on, the
+# peak hold and blobs empty, the noise floor and waterfall levels continue,
+# and frames keep coming while the operator tunes.
+nereus_add_test(tst_daemon_display_retune
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
