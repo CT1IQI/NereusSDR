@@ -555,16 +555,7 @@ DisplayExtrasProcessor::DisplayExtrasProcessor(const DisplayExtrasRequest& reque
     : m_request(request)
 {
     if (m_request.peakBlobs) {
-        const auto& blobs = *m_request.peakBlobs;
-        // The desktop's two switches ride on the numbers: a hold of 0 is
-        // hold off, a fall of 0 is a hard cut after the hold.
-        m_blobs.setCount(blobs.count);
-        m_blobs.setInsideFilterOnly(blobs.insideOnly);
-        m_blobs.setHoldEnabled(blobs.holdMs > 0);
-        if (blobs.holdMs > 0) { m_blobs.setHoldMs(blobs.holdMs); }
-        m_blobs.setHoldDrop(blobs.fallDbPerSec > 0.0);
-        if (blobs.fallDbPerSec > 0.0) { m_blobs.setFallDbPerSec(blobs.fallDbPerSec); }
-        m_blobs.setEnabled(true);
+        applyPeakBlobSettings();
         // A new display starts with a clearing reset, as the desktop's new
         // context (SpectrumWidget::invalidateRemoteSpectrumFrame) and
         // Thetis's clearBuffers (display.cs:2835-2837, 879-882
@@ -573,26 +564,112 @@ DisplayExtrasProcessor::DisplayExtrasProcessor(const DisplayExtrasRequest& reque
         m_blobs.clearMaximums();
     }
     if (m_request.activePeakHold) {
-        m_peakHold.setDurationMs(m_request.activePeakHold->holdMs);
-        m_peakHold.setDropDbPerSec(m_request.activePeakHold->fallDbPerSec);
-        m_peakHold.setOnTx(m_request.activePeakHold->onTx);
-        m_peakHold.setEnabled(m_request.activePeakHold->enabled);
+        applyPeakHoldSettings();
     }
     if (m_request.waterfallLevels) {
-        m_activeLow = static_cast<float>(m_request.waterfallLevels->lowDbm);
-        m_activeHigh = static_cast<float>(m_request.waterfallLevels->highDbm);
-        if (m_request.waterfallLevels->mode == WaterfallLevelMode::Clarity) {
-            m_clarity = std::make_unique<ClarityController>();
-            // As SpectrumWidget::setClarityWaterfallThresholds: Clarity
-            // writes the levels in force, and composition leaves them.
-            QObject::connect(m_clarity.get(), &ClarityController::waterfallThresholdsChanged,
-                             m_clarity.get(), [this](float low, float high) {
-                                 m_activeLow = low;
-                                 m_activeHigh = high;
-                             });
-            m_clarity->setEnabled(true);
+        startWaterfallLevels();
+    }
+}
+
+void DisplayExtrasProcessor::applyPeakBlobSettings()
+{
+    const auto& blobs = *m_request.peakBlobs;
+    // The desktop's two switches ride on the numbers: a hold of 0 is
+    // hold off, a fall of 0 is a hard cut after the hold.
+    m_blobs.setCount(blobs.count);
+    m_blobs.setInsideFilterOnly(blobs.insideOnly);
+    m_blobs.setHoldEnabled(blobs.holdMs > 0);
+    if (blobs.holdMs > 0) { m_blobs.setHoldMs(blobs.holdMs); }
+    m_blobs.setHoldDrop(blobs.fallDbPerSec > 0.0);
+    if (blobs.fallDbPerSec > 0.0) { m_blobs.setFallDbPerSec(blobs.fallDbPerSec); }
+    m_blobs.setEnabled(true);
+}
+
+void DisplayExtrasProcessor::applyPeakHoldSettings()
+{
+    m_peakHold.setDurationMs(m_request.activePeakHold->holdMs);
+    m_peakHold.setDropDbPerSec(m_request.activePeakHold->fallDbPerSec);
+    m_peakHold.setOnTx(m_request.activePeakHold->onTx);
+    m_peakHold.setEnabled(m_request.activePeakHold->enabled);
+}
+
+void DisplayExtrasProcessor::startWaterfallLevels()
+{
+    m_levels.resetAgc();
+    m_clarity.reset();
+    m_activeLow = static_cast<float>(m_request.waterfallLevels->lowDbm);
+    m_activeHigh = static_cast<float>(m_request.waterfallLevels->highDbm);
+    if (m_request.waterfallLevels->mode == WaterfallLevelMode::Clarity) {
+        m_clarity = std::make_unique<ClarityController>();
+        // As SpectrumWidget::setClarityWaterfallThresholds: Clarity
+        // writes the levels in force, and composition leaves them.
+        QObject::connect(m_clarity.get(), &ClarityController::waterfallThresholdsChanged,
+                         m_clarity.get(), [this](float low, float high) {
+                             m_activeLow = low;
+                             m_activeHigh = high;
+                         });
+        m_clarity->setEnabled(true);
+    }
+}
+
+void DisplayExtrasProcessor::updateRequest(const DisplayExtrasRequest& request)
+{
+    // R-DISP-HOLD: the same picture asked again. Each part takes what
+    // changed in its own settings and keeps the state those settings do not
+    // invalidate.
+    const DisplayExtrasRequest previous = m_request;
+    m_request = request;
+
+    // Blobs: a hold time, a fall rate or the passband switch is a setting of
+    // the peaks already found. A different count, or blobs asked for the
+    // first time, starts them again with the clearing reset a new display
+    // has, because the found list is sized and ranked for the count.
+    if (!m_request.peakBlobs) {
+        if (previous.peakBlobs) {
+            m_blobs.setEnabled(false);
+            m_blobs.clearMaximums();
+        }
+    } else if (m_request.peakBlobs != previous.peakBlobs) {
+        applyPeakBlobSettings();
+        if (!previous.peakBlobs || previous.peakBlobs->count != m_request.peakBlobs->count) {
+            m_blobs.clearMaximums();
         }
     }
+
+    // Peak hold: the hold time, the fall rate and the transmit switch are
+    // settings of the held row. Switched off, the row empties, so switching
+    // it on again starts from nothing as it does on the desktop.
+    const bool holdWasOn = previous.activePeakHold && previous.activePeakHold->enabled;
+    const bool holdIsOn = m_request.activePeakHold && m_request.activePeakHold->enabled;
+    if (m_request.activePeakHold) {
+        if (m_request.activePeakHold != previous.activePeakHold) {
+            applyPeakHoldSettings();
+        }
+    } else if (previous.activePeakHold) {
+        m_peakHold.setEnabled(false);
+    }
+    if (holdWasOn && !holdIsOn) {
+        m_peakHold.resize(0);
+    }
+
+    // Noise floor: the follower estimates the floor of the trace, and the
+    // shift is added when the section is sent, so nothing in it restarts.
+
+    // Waterfall levels: the manual levels and the offset are read on each
+    // waterfall line. A different mode is a different follower (automatic,
+    // noise floor, Clarity), so the levels start again from the levels asked
+    // for, as they do for a first subscribe.
+    if (!m_request.waterfallLevels) {
+        if (previous.waterfallLevels) {
+            m_levels.resetAgc();
+            m_clarity.reset();
+        }
+    } else if (!previous.waterfallLevels
+               || previous.waterfallLevels->mode != m_request.waterfallLevels->mode) {
+        startWaterfallLevels();
+    }
+    // normalize, calibrationOffsetDb and the averaging times are read from
+    // the request on each frame and hold no state here.
 }
 
 DisplayExtrasProcessor::~DisplayExtrasProcessor() = default;

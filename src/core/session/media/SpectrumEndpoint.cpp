@@ -62,6 +62,17 @@ bool overlapsSource(const SpectrumEndpointRequest& request,
     return requestHigh > sourceLow && requestLow < sourceHigh;
 }
 
+// R-DISP-HOLD: two reducer configurations draw the same picture when only
+// the averaging constant differs. The constant follows the frame rate and
+// applies to the next frame; it is not part of the averaged state.
+bool samePlanePicture(const ReducerConfig& held, const ReducerConfig& next)
+{
+    return held.pixels == next.pixels && held.centreHz == next.centreHz
+        && held.spanHz == next.spanHz && held.streamCentreHz == next.streamCentreHz
+        && held.sampleRateHz == next.sampleRateHz && held.detector == next.detector
+        && held.averageMode == next.averageMode;
+}
+
 bool finiteNonnegativeBins(const QVector<float>& bins)
 {
     return std::all_of(bins.cbegin(), bins.cend(), [](float value) {
@@ -253,25 +264,70 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
         }
     }
 
+    // R-DISP-HOLD: a plane whose picture is unchanged keeps its reducer and
+    // the averaged state in it. The state is linear power per output pixel,
+    // so it depends on the source geometry, the crop, the pixel count, the
+    // detector and the averaging mode, and on nothing else: not on the dBm
+    // range, the frame rate, the frames per line or the averaging constant.
+    // Each plane is judged apart. Everything else restarts as on a first
+    // configure.
+    const bool sameSource = m_planesHeld && m_extendedView == extendedView
+        && m_sourceContext.source == sourceContext.source
+        && m_sourceContext.sourceGeneration == sourceContext.sourceGeneration
+        && m_sourceContext.fftBins == sourceContext.fftBins
+        && m_sourceContext.centreHz == sourceContext.centreHz
+        && m_sourceContext.sampleRateHz == sourceContext.sampleRateHz
+        && (!extendedView || !(m_sourceContext.wideband != sourceContext.wideband));
+    const ReducerConfig waterfallConfig =
+        reducerConfig(request, sourceContext, request.waterfall, pixels);
     std::unique_ptr<SpectrumReducer> trace;
     std::unique_ptr<SpectrumReducer> waterfall;
     std::unique_ptr<ExtendedSpectrumReducer> extendedTrace;
     std::unique_ptr<ExtendedSpectrumReducer> extendedWaterfall;
+    bool traceKept = false;
+    bool waterfallKept = false;
     if (extendedView) {
-        extendedTrace = std::make_unique<ExtendedSpectrumReducer>();
-        extendedWaterfall = std::make_unique<ExtendedSpectrumReducer>();
-        extendedTrace->setConfig(traceConfig);
-        extendedWaterfall->setConfig(
-            reducerConfig(request, sourceContext, request.waterfall, pixels));
-        extendedTrace->clearAveraging();
-        extendedWaterfall->clearAveraging();
+        traceKept = sameSource && m_extendedTraceReducer
+            && samePlanePicture(m_extendedTraceReducer->config(), traceConfig);
+        waterfallKept = sameSource && m_extendedWaterfallReducer
+            && samePlanePicture(m_extendedWaterfallReducer->config(), waterfallConfig);
+        if (traceKept) {
+            extendedTrace = std::move(m_extendedTraceReducer);
+            extendedTrace->setConfig(traceConfig);
+        } else {
+            extendedTrace = std::make_unique<ExtendedSpectrumReducer>();
+            extendedTrace->setConfig(traceConfig);
+            extendedTrace->clearAveraging();
+        }
+        if (waterfallKept) {
+            extendedWaterfall = std::move(m_extendedWaterfallReducer);
+            extendedWaterfall->setConfig(waterfallConfig);
+        } else {
+            extendedWaterfall = std::make_unique<ExtendedSpectrumReducer>();
+            extendedWaterfall->setConfig(waterfallConfig);
+            extendedWaterfall->clearAveraging();
+        }
     } else {
-        trace = std::make_unique<SpectrumReducer>();
-        waterfall = std::make_unique<SpectrumReducer>();
-        trace->setConfig(traceConfig);
-        waterfall->setConfig(reducerConfig(request, sourceContext, request.waterfall, pixels));
-        trace->clearAveraging();
-        waterfall->clearAveraging();
+        traceKept = sameSource && m_traceReducer
+            && samePlanePicture(m_traceReducer->config(), traceConfig);
+        waterfallKept = sameSource && m_waterfallReducer
+            && samePlanePicture(m_waterfallReducer->config(), waterfallConfig);
+        if (traceKept) {
+            trace = std::move(m_traceReducer);
+            trace->setConfig(traceConfig);
+        } else {
+            trace = std::make_unique<SpectrumReducer>();
+            trace->setConfig(traceConfig);
+            trace->clearAveraging();
+        }
+        if (waterfallKept) {
+            waterfall = std::move(m_waterfallReducer);
+            waterfall->setConfig(waterfallConfig);
+        } else {
+            waterfall = std::make_unique<SpectrumReducer>();
+            waterfall->setConfig(waterfallConfig);
+            waterfall->clearAveraging();
+        }
     }
 
     m_request = request;
@@ -288,6 +344,9 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     m_nextEncoderSequence = 0;
     m_hasOverlap = hasOverlap;
     m_extendedView = extendedView;
+    m_tracePlaneKept = traceKept;
+    m_waterfallPlaneKept = waterfallKept;
+    m_planesHeld = true;
     m_configured = true;
     return true;
 }
@@ -409,9 +468,25 @@ std::optional<qint64> SpectrumEndpoint::outputDeadlineNs(qint64 producedAtNs) co
     return saturatingAdd(onCalendar ? m_nextOutputDueNs : producedAtNs, periodNs);
 }
 
+void SpectrumEndpoint::awaitContext()
+{
+    // As reset() for everything a context owns; the reducers stay so that
+    // the next configure can judge whether the picture is the same.
+    m_configured = false;
+    m_context = {};
+    m_hasProducerTimestamp = false;
+    m_lastProducerTimestampNs = 0;
+    m_nextOutputDueNs = 0;
+    m_emittedFrames = 0;
+    m_nextEncoderSequence = 0;
+}
+
 void SpectrumEndpoint::reset()
 {
     m_configured = false;
+    m_planesHeld = false;
+    m_tracePlaneKept = false;
+    m_waterfallPlaneKept = false;
     m_hasOverlap = false;
     m_extendedView = false;
     m_traceReducer.reset();

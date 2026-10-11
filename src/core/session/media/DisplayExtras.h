@@ -241,9 +241,16 @@ public:
 
     const DisplayExtrasRequest& request() const { return m_request; }
 
-    /// A new endpoint context: the blobs and the peak hold start again, as a
-    /// desktop remote window's do on a new context.
+    /// A new endpoint context for a new picture: the blobs and the peak hold
+    /// start again, as a desktop remote window's do on a new picture.
     void newContext();
+
+    /// R-DISP-HOLD: the same picture asked again with other display extras
+    /// settings. Takes the new request and restarts only the state a changed
+    /// setting invalidates: the blobs on a different count, the peak hold row
+    /// when it is switched off, the waterfall level follower (and Clarity) on
+    /// a different levels mode. Everything else carries on.
+    void updateRequest(const DisplayExtrasRequest& request);
 
     /// Clarity's input: the full-source noise floor the Core already
     /// estimates for the `noise-floor` operation, before any shift.
@@ -276,6 +283,10 @@ public:
     const ClarityController* clarity() const { return m_clarity.get(); }
 
 private:
+    void applyPeakBlobSettings();
+    void applyPeakHoldSettings();
+    void startWaterfallLevels();
+
     DisplayExtrasRequest m_request;
     PeakBlobDetector m_blobs;
     ActivePeakHoldTrace m_peakHold;
