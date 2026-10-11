@@ -176,6 +176,42 @@ The unchanged path-racer case remains integration coverage for the
 original relay handshake. Drop or revisit this patch when the upstream pin
 changes or upstream fixes this synchronous startup lock boundary.
 
+## Desktop/Core and iOS worker pool patch
+
+`cmake/patches/libdatachannel-0006-recheck-pool-queue-while-idle.patch`
+changes the pinned v0.24.5 `src/impl/threadpool.cpp` in the build-owned
+desktop/Core copy (2026-10-11, J.J. Boyd (KG4VCF), AI-assisted via
+Anthropic Claude Code). The byte-identical
+`ios/patches/libdatachannel/0006-recheck-pool-queue-while-idle.patch` is
+applied by `ios/scripts/vendor-sources.sh` to the committed iOS copy. Both
+are MPL-2.0 and carry that exact file's copyright line and MPL notice byte
+for byte; `CDataChannel/VENDORED.txt` records the iOS patch.
+
+The library runs its certificate generation, DTLS and SCTP receive work,
+transport teardown and timers on one process-wide thread pool. A worker
+with nothing to run waited on the pool's condition variable with no time
+limit, so a queued task depended on a single wake-up reaching a worker. On
+2026-10-11 a desktop window (macOS 27.0) froze for hours: its main thread
+waited for the certificate of a new peer connection while that task sat in
+the pool and all 18 workers were in the idle wait. A stand-alone run of the
+same pool (one thread queueing a task and waiting for its result, nothing
+else) stopped the same way once, after 36.9 million tasks, and one more
+task pushed to the pool did not free it. About 168 million further tasks
+on the pool, and about 173 million wait-and-signal cycles on plain
+pthreads condition variables, did not repeat it, so why the wake-up
+reaches no worker is not established; no fault was found in the pool's
+own logic.
+
+The patch makes each idle worker wait at most 100 ms before it looks at
+the queue again, and no longer than that when a later timed task is at the
+head of the queue. Task order, timed tasks, joining and the busy-worker
+count are unchanged. `tst_rtc_thread_pool_idle_recheck` leaves the queue
+the way a lost wake-up leaves it (a task queued, no worker notified), with
+and without a later timed task waiting, and checks that the task runs; it
+fails on the unpatched pool and passes on the patched one. The fault
+itself has not been seen against the patched pool. Drop or revisit this
+patch when the upstream pin changes.
+
 ## Build wiring
 
 `ios/NereusKit/Package.swift` builds the copy as the C++17 target
