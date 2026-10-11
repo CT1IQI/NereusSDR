@@ -24,16 +24,27 @@
 // the Core's start, and the first took its 64 only when its mode was next
 // changed (the Core's log has one "bufSize: 4096 -> 64" line for the day).
 //
+// The DSP > Options page shows those same starting values. With nothing
+// saved, each combo on it reads what a receiver or the transmitter in that
+// mode group starts with, and a saved value wins on the page and in both
+// channels. The FM row showed Thetis's 256 and 128 (console.cs:39149, 39160
+// [v2.10.3.15]) while both channels ran 64.
+//
 // Real channels: openRxChannelPool runs createRxChannel's OpenChannel, as in
-// tst_notch_channel_sync.
+// tst_notch_channel_sync; the transmit channel is opened as in
+// tst_tx_latency_dsp.
 
 #include <QtTest/QtTest>
+
+#include <QComboBox>
 
 #include "core/AppSettings.h"
 #include "core/DspControlThread.h"
 #include "core/RxChannel.h"
 #include "core/SampleRateCatalog.h"
+#include "core/TxChannel.h"
 #include "core/WdspEngine.h"
+#include "gui/setup/DspOptionsPage.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -56,6 +67,48 @@ void saveBlockSizes()
     auto& s = AppSettings::instance();
     s.setValue(QStringLiteral("DspOptionsBufferSizePhoneRx"), QString::number(kPhoneBlock));
     s.setValue(QStringLiteral("DspOptionsBufferSizeCwRx"), QString::number(kCwBlock));
+}
+
+// A mode group on the DSP > Options page and a mode that belongs to it.
+struct ModeGroup {
+    const char* key;
+    DSPMode mode;
+};
+constexpr ModeGroup kRxGroups[] = {
+    {"Phone", DSPMode::USB},
+    {"Fm", DSPMode::FM},
+    {"Cw", DSPMode::CWU},
+    {"Dig", DSPMode::DIGU},
+};
+// CW has no transmit row on the page.
+constexpr ModeGroup kTxGroups[] = {
+    {"Phone", DSPMode::USB},
+    {"Fm", DSPMode::FM},
+    {"Dig", DSPMode::DIGU},
+};
+
+// What the page's combo for a setting shows; empty when there is none.
+QString shownOnPage(const DspOptionsPage& page, const char* setting, const ModeGroup& group,
+                    const char* side)
+{
+    const QString name = QLatin1String(setting) + QLatin1String(group.key) + QLatin1String(side);
+    const auto* box = page.findChild<QComboBox*>(name);
+    return box != nullptr ? box->currentText() : QString();
+}
+
+// The transmit channel as the Core opens it (WdspEngine::kTxDspBufferSize),
+// before any mode has been applied to it. On an engine of its own, which has
+// no transmit lane, so the channel is open when this returns; a RadioModel's
+// engine opens it on the lane.
+TxChannel* openTxChannel(WdspEngine* engine)
+{
+    TxChannel* tx = engine->createTxChannel(WdspEngine::kTxChannelId, 64,
+                                            WdspEngine::kTxDspBufferSize, 48000,
+                                            WdspEngine::kTxDspSampleRate, 192000);
+    if (tx != nullptr) {
+        tx->setWdspEngine(engine);
+    }
+    return tx;
 }
 
 } // namespace
@@ -265,6 +318,128 @@ private slots:
         QCOMPARE(engine->rxChannel(c)->dspBlockSize(), 1024);
         QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 128);
         QCOMPARE(engine->rxChannel(b)->dspBlockSize(), 128);
+    }
+
+    // With nothing saved, the page shows for every mode group the block size
+    // and filter type a receiver in that group starts with. Building the page
+    // saves nothing, so what it shows is a starting value and not a saved one.
+    void the_page_shows_what_a_receiver_starts_with_when_nothing_is_saved()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+        const DspOptionsPage page(&model);
+
+        model.configureStreamPool(5, 5, kRateHz);
+        QList<int> ids;
+        for (const ModeGroup& group : kRxGroups) {
+            const int id = model.addSlice();
+            QVERIFY(id >= 0);
+            model.sliceById(id)->setDspMode(group.mode);
+            ids.append(id);
+        }
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
+
+        for (qsizetype i = 0; i < ids.size(); ++i) {
+            const ModeGroup& group = kRxGroups[i];
+            const RxChannel* rx = engine->rxChannel(ids[i]);
+            QVERIFY(rx != nullptr);
+            const QString size = shownOnPage(page, "DspOptionsBufferSize", group, "Rx");
+            QVERIFY2(size.toInt() == rx->dspBlockSize(),
+                     qPrintable(QStringLiteral("%1 receive: the page shows a block of \"%2\", "
+                                               "the receiver runs %3")
+                                    .arg(QLatin1String(group.key), size)
+                                    .arg(rx->dspBlockSize())));
+            const QString type = shownOnPage(page, "DspOptionsFilterType", group, "Rx");
+            QVERIFY2(!type.isEmpty()
+                         && (type == QStringLiteral("Linear Phase")) == rx->filterTypeLinearPhase(),
+                     qPrintable(QStringLiteral("%1 receive: the page shows \"%2\", the receiver "
+                                               "runs %3")
+                                    .arg(QLatin1String(group.key), type,
+                                         rx->filterTypeLinearPhase()
+                                             ? QStringLiteral("Linear Phase")
+                                             : QStringLiteral("Low Latency"))));
+            QVERIFY(!AppSettings::instance().contains(
+                QStringLiteral("DspOptionsBufferSize") + QLatin1String(group.key)
+                + QStringLiteral("Rx")));
+        }
+    }
+
+    // The same for the transmitter: each group's block size and filter type
+    // on the page are what the transmit channel takes when that group's mode
+    // is applied to it, as it is before each key.
+    void the_page_shows_what_the_transmitter_starts_with_when_nothing_is_saved()
+    {
+        RadioModel model;
+        const DspOptionsPage page(&model);
+        WdspEngine txEngine;
+        txEngine.m_initialized = true;
+        WdspEngine* engine = &txEngine;
+
+        for (const ModeGroup& group : kTxGroups) {
+            TxChannel* tx = openTxChannel(engine);
+            QVERIFY(tx != nullptr);
+            QCOMPARE(tx->txDspBlockSize(), WdspEngine::kTxDspBufferSize);
+            tx->onModeChanged(group.mode);
+
+            const QString size = shownOnPage(page, "DspOptionsBufferSize", group, "Tx");
+            const int runs = tx->txDspBlockSize();
+            const QString type = shownOnPage(page, "DspOptionsFilterType", group, "Tx");
+            // WDSP's minimum-phase flag: 1 is Low Latency, 0 is Linear Phase.
+            const int minimumPhase = tx->bandpassMinimumPhaseForTest();
+            engine->destroyTxChannel(WdspEngine::kTxChannelId);
+
+            QVERIFY2(size.toInt() == runs,
+                     qPrintable(QStringLiteral("%1 transmit: the page shows a block of \"%2\", "
+                                               "the transmitter runs %3")
+                                    .arg(QLatin1String(group.key), size)
+                                    .arg(runs)));
+            QVERIFY2(!type.isEmpty()
+                         && (type == QStringLiteral("Low Latency")) == (minimumPhase == 1),
+                     qPrintable(QStringLiteral("%1 transmit: the page shows \"%2\", WDSP's "
+                                               "minimum-phase flag is %3")
+                                    .arg(QLatin1String(group.key), type)
+                                    .arg(minimumPhase)));
+            QVERIFY(!AppSettings::instance().contains(
+                QStringLiteral("DspOptionsBufferSize") + QLatin1String(group.key)
+                + QStringLiteral("Tx")));
+        }
+    }
+
+    // A saved value wins over the starting value, on the page and in both
+    // channels. The values saved here are Thetis's FM sizes (256 receive,
+    // 128 transmit; console.cs:39149, 39160 [v2.10.3.15]), which the page
+    // showed unsaved before and no channel ran.
+    void a_saved_fm_block_size_is_shown_and_is_what_both_channels_run()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("DspOptionsBufferSizeFmRx"), QStringLiteral("256"));
+        s.setValue(QStringLiteral("DspOptionsBufferSizeFmTx"), QStringLiteral("128"));
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+        const DspOptionsPage page(&model);
+        const ModeGroup fm{"Fm", DSPMode::FM};
+        QCOMPARE(shownOnPage(page, "DspOptionsBufferSize", fm, "Rx"), QStringLiteral("256"));
+        QCOMPARE(shownOnPage(page, "DspOptionsBufferSize", fm, "Tx"), QStringLiteral("128"));
+
+        model.configureStreamPool(5, 5, kRateHz);
+        const int a = model.addSlice();
+        model.sliceById(a)->setDspMode(DSPMode::FM);
+        model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(laneIdle(model));
+        QVERIFY(engine->rxChannel(a) != nullptr);
+        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 256);
+
+        WdspEngine txEngine;
+        txEngine.m_initialized = true;
+        TxChannel* tx = openTxChannel(&txEngine);
+        QVERIFY(tx != nullptr);
+        tx->onModeChanged(DSPMode::FM);
+        const int runs = tx->txDspBlockSize();
+        txEngine.destroyTxChannel(WdspEngine::kTxChannelId);
+        QCOMPARE(runs, 128);
     }
 };
 

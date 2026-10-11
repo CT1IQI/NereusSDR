@@ -5854,7 +5854,8 @@ nereus_add_test(tst_dsp_options_per_mode_apply)
 # Every receive channel takes its slice's per-mode DSP > Options buffer size
 # before it runs a block (Thetis console.cs:2681-2692 SyncDSP), and on every
 # later mode change, the first receiver and the others alike. Real channels
-# through openRxChannelPool.
+# through openRxChannelPool. With nothing saved, the DSP > Options page shows
+# what a receiver and the transmitter start with in every mode group.
 nereus_add_test(tst_dsp_options_first_apply)
 
 # ── Task 4.3: Filter Impulse Cache toggle persistence ─────────────────────────
