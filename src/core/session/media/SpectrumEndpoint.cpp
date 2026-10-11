@@ -84,8 +84,17 @@ bool samePlanePicture(const ReducerConfig& held, const ReducerConfig& next)
 // detected and averaged); only where the stream or the crop is centred
 // differs. Each pixel then goes on averaging what arrives at its place on
 // the screen, which is what the local display does through a retune.
+//
+// Average mode -1 is the exception. It holds each pixel's maximum and never
+// lets it go (the "peak-hold" case in SpectrumAvenger.cpp), so a maximum carried through a move
+// would stay for good at a place on the screen it never came from. A plane
+// in that mode starts again on any move.
 bool movedPlanePicture(const ReducerConfig& held, const ReducerConfig& next)
 {
+    constexpr int kHeldMaximumAverageMode = -1;
+    if (next.averageMode == kHeldMaximumAverageMode) {
+        return false;
+    }
     return held.pixels == next.pixels && held.spanHz == next.spanHz
         && held.sampleRateHz == next.sampleRateHz && held.detector == next.detector
         && held.averageMode == next.averageMode

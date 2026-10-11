@@ -763,6 +763,13 @@ private slots:
         QTest::newRow("moved source of another generation")
             << QStringLiteral("otherGenerationMoved");
         QTest::newRow("after reset") << QStringLiteral("reset");
+        // R-DISP-RETUNE: average mode -1 holds each pixel's maximum and
+        // never lets it go, so a maximum carried through a move would stay
+        // on the screen at a frequency it never came from.
+        QTest::newRow("held maximum at a moved view centre")
+            << QStringLiteral("heldMaximumMovedView");
+        QTest::newRow("held maximum at a moved stream centre")
+            << QStringLiteral("heldMaximumMovedStream");
     }
 
     // R-DISP-HOLD: whatever makes the picture a different one restarts the
@@ -776,6 +783,15 @@ private slots:
         req.trace.averageAlpha = 0.5;
         req.waterfall.averageMode = 1;
         req.waterfall.averageAlpha = 0.5;
+        const bool heldMaximum = change.startsWith(QLatin1String("heldMaximum"));
+        // The first frame of the next picture. For a held maximum it is the
+        // weaker one, so a maximum kept from before would show in it.
+        float nextLevel = 1.0e-10f;
+        if (heldMaximum) {
+            req.trace.averageMode = -1;
+            req.waterfall.averageMode = -1;
+            nextLevel = 1.0e-14f;
+        }
         SpectrumEndpointSourceContext source = sourceContext();
         QVERIFY(endpoint.configure(req, source));
         qint64 at = 1'000'000'000;
@@ -787,7 +803,17 @@ private slots:
 
         SpectrumEndpointRequest next = req;
         ++source.contextGeneration;
-        if (change == QLatin1String("span")) {
+        if (change == QLatin1String("heldMaximumMovedView")) {
+            next.centreHz += 12'000.0;
+        } else if (change == QLatin1String("heldMaximumMovedStream")) {
+            // A relabelled source, told to the endpoint: for any other
+            // averaging this is a moved picture.
+            endpoint.awaitMovedSource(source.sourceGeneration,
+                                      source.sourceGeneration + 1);
+            ++source.sourceGeneration;
+            source.centreHz += 12'000.0;
+            next.centreHz += 12'000.0;
+        } else if (change == QLatin1String("span")) {
             next.spanHz = 48'000.0;
         } else if (change == QLatin1String("spanAndCentre")) {
             next.spanHz = 48'000.0;
@@ -824,7 +850,7 @@ private slots:
         }
         QVERIFY(endpoint.configure(next, source));
         DaemonSpectrumFrame input = frame(source, at);
-        input.binsLinear.fill(1.0e-10f);
+        input.binsLinear.fill(nextLevel);
         const std::optional<DisplayCodecFrame> restarted = endpoint.consume(input);
         QVERIFY(restarted.has_value());
 
