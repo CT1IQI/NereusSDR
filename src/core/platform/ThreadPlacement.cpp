@@ -34,7 +34,9 @@
 //               AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-11: a transmit channel listening for VOX is seated after the
 //               receive workers (setTransmitUse); as if keyed it held two
-//               fast cores for as long as VOX was on. J.J. Boyd (KG4VCF),
+//               fast cores for as long as VOX was on. The comment at the
+//               spectrum threads records what a raise does not buy,
+//               measured on the installed build. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
@@ -643,6 +645,22 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // thread on its core kept the connection thread waiting 2 ms or more
     // 14 times in four minutes, 5.4 ms at most, and the DSP thread never
     // 0.3 ms. Not measured while transmitting.
+    //
+    // What a raise buys against a thread at normal priority is a bound,
+    // not immunity. The scheduler lets a normal-priority thread that lands
+    // on the core finish its smallest slice (3 ms, looked at on a 3.3 ms
+    // tick), so a raised thread waits at most two ticks for it. Recorded
+    // on 2026-10-11, one receiver at 768,000, every switch on the
+    // connection thread's core for four minutes: nine waits of 2 ms or
+    // more, eight of them (4.4 to 5.4 ms) behind a program that is not
+    // the Core's (htop in a terminal, allowed on every core) and one
+    // (2.0 ms) behind a spectrum thread. No packet was dropped: one
+    // receiver's packets fill the socket buffer in about 45 ms. Four wide
+    // receivers fill it in 6 to 9 ms, which is where such a wait costs
+    // packets. Real-time priority would end it and this board refuses it
+    // to a service (its kernel groups real-time scheduling by cgroup and
+    // gives a service's group no budget); a socket buffer granted in full
+    // makes the wait harmless.
     //
     // Where every core is equally fast they stay on the housekeeping cores,
     // which no raised thread runs on.
