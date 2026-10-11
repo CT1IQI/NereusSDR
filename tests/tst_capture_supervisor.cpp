@@ -813,6 +813,31 @@ private slots:
         QCOMPARE(warned.count(), 1);
     }
 
+    // The open deadline's warning names the last open step the helper
+    // reported, so a slow open says where its time went.
+    void openTimeoutNamesTheHelpersLastStep()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open-after-step"));
+        options.openTimeoutMs = 500;                            // 10000 in production
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("the helper's last open step: devices listed at 12 ms"));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        QCOMPARE(warned.count(), 1);
+    }
+
+    void openTimeoutSaysWhenTheHelperReportedNoStep()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open"));
+        options.openTimeoutMs = 500;                            // 10000 in production
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("the helper reported no open step"));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QCOMPARE(warned.count(), 1);
+    }
+
     void earlyOpenDeadlineWaitsOutTheRest()
     {
         CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open"));

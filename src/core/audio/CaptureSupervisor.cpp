@@ -80,6 +80,7 @@ using Status = CaptureSupervisor::Status;
 using State = Status::State;
 using Reason = Status::Reason;
 
+constexpr QLatin1StringView kOpenStepMark("open step: ");
 constexpr int kStderrLineChars = 512;          // one forwarded diagnostic line
 constexpr int kStderrPendingBytes = 4096;      // unterminated diagnostic text kept
 constexpr int kDelayWindowMs = 10'000;         // wake-hop log period while Ready
@@ -760,6 +761,7 @@ private:
         m_helloReceived = false;
         m_dying = false;
         m_stderrPending.clear();
+        m_lastOpenStep.clear();
         QProcess* process = m_process;
         connect(process, &QProcess::started, this, [this, process]() {
             if (process == m_process) {
@@ -880,6 +882,7 @@ private:
         write(configureRecord);
         write(attachRecord);
         write(openRecord);
+        m_lastOpenStep.clear();
         m_stopGenerationOpen = true;
         m_openRemainingMs = m_options.openTimeoutMs;
         m_openPaused = false;
@@ -963,8 +966,12 @@ private:
         if (rearmIfEarly(m_openTimer, m_openClock, m_openRemainingMs)) {
             return;
         }
-        qCWarning(lcAudio) << "capture: no microphone samples within" << m_options.openTimeoutMs
-                           << "ms of opening generation" << m_generation;
+        qCWarning(lcAudio).noquote()
+            << "capture: no microphone samples within" << m_options.openTimeoutMs
+            << "ms of opening generation" << m_generation
+            << (m_lastOpenStep.isEmpty()
+                    ? QStringLiteral("(the helper reported no open step)")
+                    : QStringLiteral("(the helper's last open step: %1)").arg(m_lastOpenStep));
         failGeneration(Reason::Timeout, true);
     }
 
@@ -1032,6 +1039,12 @@ private:
         if (text.size() > kStderrLineChars) {
             text.truncate(kStderrLineChars);
             text.append(QStringLiteral(" [truncated]"));
+        }
+        // The helper's open steps (CaptureHelper.cpp, reportOpenStep): the
+        // last one is named when the open deadline passes.
+        const qsizetype step = text.indexOf(kOpenStepMark);
+        if (step >= 0) {
+            m_lastOpenStep = text.mid(step + kOpenStepMark.size());
         }
         qCInfo(lcAudio).noquote() << "capture helper stderr:" << text;
     }
@@ -1345,6 +1358,7 @@ private:
     QProcess* m_process = nullptr;            // Qt parent ownership; deleteLater on exit
     P::RecordReader m_records;
     QByteArray m_stderrPending;
+    QString m_lastOpenStep;
     bool m_helloReceived = false;
     bool m_dying = false;                     // Shutdown sent or killed; waiting for exit
     bool m_discardOutput = false;             // killed: remaining output is ignored
