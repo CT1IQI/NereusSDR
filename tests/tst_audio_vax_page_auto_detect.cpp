@@ -1327,6 +1327,60 @@ private slots:
         QCOMPARE(value(QStringLiteral("audio/Vax1/DriverApi")), mme);
     }
 
+    // R-AUD-03: Rescan opens the "new cables" notice only when it has a
+    // cable end to offer to a VAX slot. NereusSDR's own VAX devices, seen
+    // for the first time on a Mac (four recording devices, fed directly),
+    // are new and offer nothing: the notice opened and counted "0 new".
+    void rescanOpensNoNoticeForOwnVaxDevicesAlone()
+    {
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Mac);
+        RadioModel model;
+        QList<AudioDeviceInfo> own;
+        for (int i = 1; i <= 4; ++i) {
+            own << device(AudioBackendId::Wasapi, AudioDeviceDirection::Input,
+                          QStringLiteral("vax-%1-uid").arg(i),
+                          QStringLiteral("NereusSDR VAX %1").arg(i));
+        }
+        PageRig rig(own);
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        const QVector<DetectedCable> listed =
+            VirtualCableDetector::detect(*model.localAudioDevices()->catalogue());
+        QCOMPARE(listed.size(), 4);
+        // Nothing known before, from the same list: all four are new.
+        AppSettings::instance().setValue(QStringLiteral("audio/LastDetectedCables"), QString());
+        AppSettings::instance().setValue(QStringLiteral("audio/LastDetectedCablesSource"),
+                                         VirtualCableDetector::fingerprintSource(true));
+
+        // A notice, if one opened, would wait in exec(): close it and count it.
+        int opened = 0;
+        QTimer closer;
+        closer.setInterval(10);
+        connect(&closer, &QTimer::timeout, &closer, [&opened]() {
+            for (QWidget* top : QApplication::topLevelWidgets()) {
+                auto* dlg = qobject_cast<VaxFirstRunDialog*>(top);
+                if (dlg != nullptr && dlg->isVisible()) {
+                    ++opened;
+                    dlg->reject();
+                }
+            }
+        });
+        closer.start();
+
+        QSignalSpy rescanned(model.localAudioDevices()->catalogue(),
+                             &IAudioDeviceCatalog::olderDriversRescanned);
+        auto* button = page.findChild<QPushButton*>(QStringLiteral("detectedCablesRescan"));
+        QVERIFY(button != nullptr);
+        button->click();
+        QVERIFY(rescanned.count() == 1 || rescanned.wait(5000));
+        // The rescan was read and saved (the notice is decided right after).
+        QTRY_COMPARE_WITH_TIMEOUT(value(QStringLiteral("audio/LastDetectedCables")),
+                                  VirtualCableDetector::fingerprintCsv(listed), 3000);
+        QTest::qWait(100);
+        QCOMPARE(opened, 0);
+    }
+
     // V-UI-1: Digital modes on Windows with a chosen cable missing.
     void captureDigitalModesCableMissing()
     {

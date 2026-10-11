@@ -62,6 +62,10 @@
 // (KG4VCF), AI-assisted via Anthropic Claude Code. The one-driver prompt
 // through askAsioSwitchAll(), shared with the Setup cards and the header;
 // the headphones Enabled box read through AudioEngine.
+//
+// 2026-10-11 (R-AUD-03): Rescan opens the "new cables" notice only when it
+// has a cable end to offer to a VAX slot. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioVaxPage.h"
@@ -1911,7 +1915,11 @@ void AudioVaxPage::afterRescan(const QVector<DetectedCable>& current)
     s.setValue(QStringLiteral("audio/LastDetectedCablesSource"), source);
     s.save();
 
-    if (!newCables.isEmpty()) {
+    // The notice binds a cable's playback end to a VAX slot and nothing
+    // else, so it opens only when it has one to offer. NereusSDR's own VAX
+    // devices seen for the first time (recording devices on a Mac and on
+    // Linux) opened it with "0 new" cables.
+    if (!VirtualCableDetector::bindableEnds(newCables).isEmpty()) {
         VaxFirstRunDialog dlg(FirstRunScenario::RescanNewCables, newCables, this);
         dlg.setAudioEngine(m_engine);
         dlg.exec();

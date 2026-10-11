@@ -7,7 +7,9 @@
 # the helper and by a scratch nereusd kept off the network. The app job
 # (plan Task 51) generates the Xcode project, builds the app for the
 # simulator and for devices, and runs the app's tests and NereusKit's on an
-# iPhone 17 simulator. They run on
+# iPhone 17 simulator: it builds the tests first, then boots the simulator
+# and waits for the runner to go quiet (ios/scripts/sim-settle.sh), then
+# tests. They run on
 # changes to the app, to the conformance fixtures the app's tests read, to
 # the station's media transport, pairing and console and the helpers, and
 # to this workflow. The provenance check over ios/ runs in ci.yml's
@@ -134,8 +136,22 @@ jobs:
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO build
 
+      - name: Build the tests
+        # Before any simulator boots: a build beside a simulator's first
+        # boot took three times as long.
+        run: |
+          xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            build-for-testing
+
+      - name: Boot the simulator and wait for the runner to go quiet
+        # A simulator's first boot keeps this runner busy for a quarter of
+        # an hour. Tests run through it were three to five times as slow,
+        # and waits in them ran out of time.
+        run: ios/scripts/sim-settle.sh 'iPhone 17'
+
       - name: Test on an iPhone 17 simulator
         run: |
           xcodebuild -project ios/NereusSDR.xcodeproj -scheme NereusSDR \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
-            test
+            test-without-building

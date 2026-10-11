@@ -1327,6 +1327,9 @@ nereus_add_test(tst_about_dialog)
 # ── Phase 3O Sub-Phase 11 Task 11a: VaxFirstRunDialog ────────────────────
 nereus_add_test(tst_vax_first_run_dialog)
 
+# ── R-AUD-03: the launch check behind that dialog and the "new cables" notice
+nereus_add_test(tst_vax_first_run_check)
+
 # ── Phase 3O VAX routing ──────────────────────────────────────────────────
 nereus_add_test(tst_slice_model_vax)
 
@@ -9968,6 +9971,21 @@ endif()
 # NereusSDR-original.
 if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_dynamic_overlay_clear NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
+# ── GPU waterfall draws nothing across its ring seam ─────────────────────
+# The waterfall texture is a ring that repeats down its height, sampled
+# through a linear filter at a position that glides between rows. The glide
+# reached one row past the oldest, and the repeat gave it the newest: the
+# bottom line of the waterfall flashed each new row as it arrived. A paused
+# waterfall ran the same glide and jumped a row whenever one arrived
+# underneath. Also holds the glide at set points and measures the four-row
+# blend: the grain of noise rows stays level through the glide, and one
+# bright row lands on the lines around it in the blend's shares. Grabs real
+# GPU frames, so it needs a native window and carries the `gpu` label; skips
+# where no QRhi comes up. NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_waterfall_ring_seam NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()
 
 # The same rule without a GPU, on every platform CI runs: every combination

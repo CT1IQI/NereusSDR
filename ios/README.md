@@ -72,7 +72,12 @@ first: `ios/scripts/sim-ready.sh "<simulator name>" [path/to/NereusSDR.app]`
 waits until the simulator has really finished booting (`simctl bootstatus -b`
 can return early while it is still migrating data), then launches the app
 until one launch succeeds. Build with `build-for-testing`, run the script with
-the built app, then `test-without-building`. In a debug build the app, when it
+the built app, then `test-without-building`. Where the simulator has never
+booted, as on CI's runner, `ios/scripts/sim-settle.sh "<simulator name>"`
+goes between the two instead: it boots the simulator and waits for the Mac to
+go quiet, because a first boot keeps a small Mac busy for a quarter of an
+hour and tests run through it are slow enough for their waits to run out. In
+a debug build the app, when it
 hosts the unit tests, starts with an empty scene: no Keychain, no looking for
 Cores, no sound. Building needs Xcode 27. The app's Metal
 shaders ship as source (`NereusApp/Resources/Shaders`) and compile at run
