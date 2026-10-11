@@ -56,6 +56,8 @@
 //              Anthropic Claude Code.
 // 2026-10-07 - The PTY dialects from the one list in CatPtyDialects.h.
 //              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
+// 2026-10-11 - One serial device under two spellings compares equal.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
@@ -201,6 +203,25 @@ CatGlobalConfig CatSettings::global() const
     config.pttSerialDataBits = m_settings.value(prefix + "Ptt/SerialDataBits", config.pttSerialDataBits).toInt();
     config.pttSerialStopBits = m_settings.value(prefix + "Ptt/SerialStopBits", config.pttSerialStopBits).toString();
     return config;
+}
+QString CatSettings::serialDeviceKey(const QString& name, bool windowsNames)
+{
+    QString key = name.trimmed();
+    if (!windowsNames) { return key; }
+    // The Setup device list holds QSerialPortInfo::systemLocation(), which on
+    // Windows is the port name behind the Win32 device prefix ("\\.\COM10");
+    // QSerialPort::setPortName() takes either form:
+    // https://doc.qt.io/qt-6/qserialportinfo.html#systemLocation
+    // https://doc.qt.io/qt-6/qserialport.html#setPortName
+    // Windows device names are not case-sensitive:
+    // https://learn.microsoft.com/windows/win32/fileio/naming-a-file
+    static const QString kDevicePrefix = QStringLiteral("\\\\.\\");
+    if (key.startsWith(kDevicePrefix)) { key.remove(0, kDevicePrefix.size()); }
+    return key.toUpper();
+}
+bool CatSettings::sameSerialDevice(const QString& a, const QString& b, bool windowsNames)
+{
+    return serialDeviceKey(a, windowsNames) == serialDeviceKey(b, windowsNames);
 }
 bool CatSettings::validateGlobal(const CatGlobalConfig& config)
 {

@@ -67,6 +67,8 @@ LogManager::LogManager()
           QStringLiteral("TCI WebSocket server, command dispatch, client lifecycle"), false },
         { QStringLiteral("nereus.spots"),    QStringLiteral("Spots"),
           QStringLiteral("DX spot ingest (cluster, RBN, SpotCollector, WSJT-X)"), false },
+        { QStringLiteral("nereus.cat"),      QStringLiteral("CAT"),
+          QStringLiteral("CAT serial, TCP and rigctld ports, PTT input, refused settings"), false },
     };
 }
 
