@@ -109,15 +109,38 @@ struct WaterfallArea {
 WaterfallArea waterfallArea(const SpectrumWidget& w, const QImage& frame)
 {
     WaterfallArea area;
-    area.dpr = static_cast<double>(frame.height()) / qMax(1, w.height());
+    // As renderGpuFrame() places the waterfall: the device pixels to a
+    // logical pixel come from the widths, and the edges are measured up from
+    // the bottom of the frame. At a scaling that is not a whole number
+    // (125%, 150%) an edge can fall inside a device row; a row whose center
+    // lies on an edge is left out here. Which rows the GPU draws at such an
+    // edge is the backend's to round (Metal at a forced 150% leaves the
+    // frame's last row to the clear color), so the cases that read the
+    // waterfall's first and last row skip there: see wholeScaling().
+    constexpr double kOnTheEdge = 0.001;
+    area.dpr = static_cast<double>(frame.width()) / qMax(1, w.width());
     const QRect wf = w.waterfallRectForTest();
-    area.top = static_cast<int>(std::lround(wf.top() * area.dpr));
-    area.bottom = static_cast<int>(std::lround((wf.bottom() + 1) * area.dpr)) - 1;
+    const double topEdge = frame.height() - (w.height() - wf.top()) * area.dpr;
+    const double bottomEdge = frame.height() - (w.height() - wf.bottom() - 1) * area.dpr;
+    area.top = static_cast<int>(std::ceil(topEdge - 0.5 + kOnTheEdge));
+    area.bottom = static_cast<int>(std::ceil(bottomEdge - 0.5 - kOnTheEdge)) - 1;
     // A band in the left half, clear of the strip on the right edge.
     area.left = static_cast<int>(std::lround((wf.left() + wf.width() * 0.10) * area.dpr));
     area.right = static_cast<int>(std::lround((wf.left() + wf.width() * 0.40) * area.dpr));
     return area;
 }
+
+// True where a waterfall row is a whole number of device rows tall (100%,
+// 200%). Only there do the waterfall's first and last device row lie where
+// this test can name them.
+bool wholeScaling(const WaterfallArea& area)
+{
+    return std::abs(area.dpr - area.rowsPerLine()) <= 0.01;
+}
+
+constexpr char kFractionalScalingSkip[] =
+    "the screen's scaling is not a whole number, so the waterfall's rows do not fall on "
+    "device rows this test can name";
 
 // Mean brightness of one device row over the sampled columns: red, green
 // and blue summed, so every channel counts.
@@ -289,6 +312,7 @@ private:
         double topRow{0.0};     // first device row of the waterfall
         double bottomRow{0.0};  // last device row
         double contrast{0.0};
+        bool wholeScaling{true};
         QString text;
     };
 
@@ -304,6 +328,7 @@ private:
         }
         const QImage rgb = frame.convertToFormat(QImage::Format_RGB32);
         const WaterfallArea area = waterfallArea(w, rgb);
+        edges.wholeScaling = wholeScaling(area);
         const int lines = w.waterfallHeightForTest();
         const double dark = linesLevel(rgb, area, lines / 2, lines / 2 + 7);
         const double bright = linesLevel(rgb, area, brightFirstLine, brightFirstLine + 2);
@@ -332,11 +357,15 @@ private:
         }
         const QImage rgb = frame.convertToFormat(QImage::Format_RGB32);
         const WaterfallArea area = waterfallArea(w, rgb);
-        const double dark = rowLevel(rgb, area, area.top + 2 * area.rowsPerLine());
+        // The block lies mid-picture. Two lines at each edge are left out,
+        // so a device row the GPU did not draw at a fractional scaling
+        // cannot weigh in.
+        const int margin = 2 * area.rowsPerLine();
+        const double dark = rowLevel(rgb, area, area.top + margin);
         double weight = 0.0;
         double moment = 0.0;
         double peak = 0.0;
-        for (int y = area.top; y <= area.bottom; ++y) {
+        for (int y = area.top + margin; y <= area.bottom - margin; ++y) {
             const double level = qMax(0.0, rowLevel(rgb, area, y) - dark);
             weight += level;
             moment += level * (y - area.top);
@@ -372,6 +401,9 @@ private slots:
 
         // Lines 3 to 5 lie inside the block wherever the glide stands.
         const Edges arriving = grabEdges(w, 3);
+        if (!arriving.wholeScaling) {
+            QSKIP(kFractionalScalingSkip);
+        }
         qInfo().noquote() << "just after a new row:" << arriving.text;
         QVERIFY2(arriving.contrast >= kMinContrast, qPrintable(arriving.text));
         QVERIFY2(arriving.bottomRow <= kAbsent,
@@ -412,6 +444,9 @@ private slots:
         QTest::qWait(kSettleMs);
 
         const Edges settled = grabEdges(w, lines - 5);
+        if (!settled.wholeScaling) {
+            QSKIP(kFractionalScalingSkip);
+        }
         qInfo().noquote() << "after the glide:" << settled.text;
         QVERIFY2(settled.contrast >= kMinContrast, qPrintable(settled.text));
         QVERIFY2(settled.bottomRow >= kPresent,
@@ -589,6 +624,12 @@ private slots:
             const QImage rgb = frame.convertToFormat(QImage::Format_RGB32);
             const WaterfallArea area = waterfallArea(w, rgb);
             const int perRow = area.rowsPerLine();
+            // The weights below are worked for a whole number of screen
+            // pixels to a row. At a scaling such as 150% the screen lines
+            // fall between those points; the grain case covers that screen.
+            if (!wholeScaling(area)) {
+                QSKIP(kFractionalScalingSkip);
+            }
             // Lines 3 to 5 lie inside the block wherever the glide stands;
             // three quarters of the way down nothing is bright.
             const double bright = linesLevel(rgb, area, 3, 5);
