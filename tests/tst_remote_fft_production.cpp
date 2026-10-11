@@ -279,7 +279,8 @@ private slots:
         QVERIFY(source.publishFrameForTest(key, oldFrame->producedAtNs + 1));
 
         DaemonSpectrumSourceUpdate result;
-        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0), &result));
+        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0),
+                              DaemonSpectrumCentreMove::Relabel, &result));
         QVERIFY(result.relabelled);
         QCOMPARE(result.fromGeneration, oldFrame->generation);
         QVERIFY(result.toGeneration > result.fromGeneration);
@@ -333,6 +334,68 @@ private slots:
                  "the relabelled source dropped the overlap from before the move");
     }
 
+    // R-DISP-RETUNE: the relabel is the display's choice alone. A caller
+    // that does not ask for it (the auto-AGC noise floor source, level
+    // calibration) gets what it had before: a centre change restarts the
+    // source and empties the engine's input history, so the first frame
+    // under the new centre holds no sample from before the move.
+    void centreRetuneResetsSameSizeRateInputHistory()
+    {
+        DaemonSpectrumSource source;
+        const MediaSourceKey key{0, FftTier::Wide};
+        const auto firstConfig = sourceConfig(1024, 7100000.0, 48000.0);
+        QVERIFY(source.activate(key, firstConfig));
+        QTRY_VERIFY(source.isActive(key));
+
+        QSignalSpy frames(&source, &DaemonSpectrumSource::frameAvailable);
+        source.submitIq(0, syntheticIq(1026, 0.125));
+        QTRY_VERIFY(frames.count() >= 1);
+        const auto oldFrame = source.takeLatest(key);
+        QVERIFY(oldFrame.has_value());
+        const int oldPeak = dominantBin(oldFrame->binsLinear);
+        QVERIFY(oldPeak >= 0);
+
+        // Same FFT size and rate intentionally exercise the path where
+        // setFftSize()/setSampleRate alone would retain FFTEngine overlap.
+        DaemonSpectrumSourceUpdate result;
+        result.relabelled = true;
+        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0),
+                              DaemonSpectrumCentreMove::Restart, &result));
+        QVERIFY(!result.relabelled);
+        QCOMPARE(result.fromGeneration, oldFrame->generation);
+        QVERIFY(result.toGeneration > result.fromGeneration);
+        QTRY_VERIFY(source.isActive(key));
+
+        // The engine held 226 samples of the old tone. Had it kept them, 798
+        // more would fill its window and the next would run a transform. A
+        // restarted engine holds nothing and needs 1025, so 998 make no
+        // frame. The wait puts them clear of the 5 ms in which the engine
+        // refuses a second transform, so a kept history would show.
+        const int framesBefore = frames.count();
+        QTest::qWait(10);
+        const quint64 handoffs = source.completedInputHandoffs(key);
+        source.submitIq(0, syntheticIq(998, 0.25));
+        QTRY_VERIFY(source.completedInputHandoffs(key) > handoffs);
+        QCoreApplication::processEvents();
+        QVERIFY2(!source.takeLatest(key).has_value(),
+                 "the restarted source kept input from before the retune");
+        QCOMPARE(frames.count(), framesBefore);
+
+        source.submitIq(0, syntheticIq(1026, 0.25));
+        QTRY_VERIFY(frames.count() > framesBefore);
+        const auto retuned = source.takeLatest(key);
+        QVERIFY(retuned.has_value());
+        QCOMPARE(retuned->centreHz, 10100000.0);
+        QVERIFY(retuned->generation > oldFrame->generation);
+
+        const int newPeak = dominantBin(retuned->binsLinear);
+        QVERIFY(newPeak >= 0);
+        QVERIFY(newPeak != oldPeak);
+        QVERIFY2(retuned->binsLinear.at(oldPeak)
+                     < retuned->binsLinear.at(newPeak) * 0.01f,
+                 "the retuned generation retained energy from the old tone");
+    }
+
     void anyOtherUpdateStillRestartsTheSource_data()
     {
         QTest::addColumn<QString>("change");
@@ -382,7 +445,7 @@ private slots:
         }
         DaemonSpectrumSourceUpdate result;
         result.relabelled = true;
-        QVERIFY(source.update(key, next, &result));
+        QVERIFY(source.update(key, next, DaemonSpectrumCentreMove::Relabel, &result));
         QVERIFY(!result.relabelled);
         QCOMPARE(result.fromGeneration, oldFrame->generation);
         QVERIFY(result.toGeneration > result.fromGeneration);

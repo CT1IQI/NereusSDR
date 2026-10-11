@@ -6013,7 +6013,10 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
         accepted = m_source.updateFrameRate(key, config.fft.fps,
                                             config.transformsFollowFrameRate);
     } else if (changed) {
-        accepted = m_source.update(key, config, &updated);
+        // R-DISP-RETUNE: the display is the one caller that asks for a
+        // centre-only move to relabel the running source.
+        accepted = m_source.update(key, config,
+                                   DaemonSpectrumCentreMove::Relabel, &updated);
     }
     if (!accepted) {
         return false;
