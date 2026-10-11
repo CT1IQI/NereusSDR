@@ -648,6 +648,11 @@
 //   2026-10-10 - A remote window's six transmit peak meters read the Core's
 //                peak readings (txReadingsVersion 4). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - showSliceOnItsPan: a slice the window reveals (Take
+//                control, Listen, or selecting its letter) becomes the slice
+//                its pan shows, and a pan whose view does not hold the slice
+//                moves onto it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -2129,6 +2134,7 @@ void MainWindow::revealSliceInWindow(int sliceId)
         // one included. Nothing moves.
         m_panStack->setActivePan(target);
         m_panStack->raiseFloatingPan(target);
+        showSliceOnItsPan(slice);
         return;
     }
     // Ruling U1: an empty pan in the main window.
@@ -2195,6 +2201,7 @@ void MainWindow::revealSliceInWindow(int sliceId)
                 }
                 m_panStack->setActivePan(id);
                 m_panStack->raiseFloatingPan(id);
+                showSliceOnItsPan(chosen);
             });
         }
         menu->popup(QCursor::pos());
@@ -2212,6 +2219,36 @@ void MainWindow::revealSliceInWindow(int sliceId)
         rebuildFftRouting();
     }
     m_panStack->setActivePan(target);
+    showSliceOnItsPan(slice);
+}
+
+void MainWindow::showSliceOnItsPan(SliceModel* slice)
+{
+    if (!slice || !m_panStack || !m_radioModel) { return; }
+    const int id = slice->sliceIndex();
+    // A marker-only slice never moves the pan it marks.
+    if (markerOnlyPlacement(id)) { return; }
+    const QString panId = windowPanFor(slice);
+    PanadapterApplet* applet = m_panStack->panadapter(panId);
+    SpectrumWidget* sw = m_panStack->spectrum(panId);
+    if (!applet || !sw) { return; }
+    // The pan shows the stream of its own active slice. A slice this window
+    // only listens to never becomes the Core's active slice, so nothing
+    // else makes it the one its pan shows.
+    if (applet->associatedSlices().contains(id)) { applet->setActiveSliceIndex(id); }
+    const double hz = slice->frequency();
+    const auto offScreen = [sw, hz] {
+        const double halfSpan = sw->bandwidth() / 2.0;
+        return hz < sw->centerFrequency() - halfSpan || hz > sw->centerFrequency() + halfSpan;
+    };
+    // A view that already holds the slice is the operator's: it stays.
+    if (!offScreen()) { return; }
+    if (!m_radioModel->ownsLocalDsp()) {
+        followRemoteSliceFrequency(sw, hz);
+        return;
+    }
+    applyStreamWindowToPan(panId, slice->streamIndex());
+    if (offScreen()) { sw->setDisplayWindowClamped(hz, sw->bandwidth()); }
 }
 
 void MainWindow::reconcileListenPlacements()

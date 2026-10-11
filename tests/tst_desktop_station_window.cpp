@@ -50,6 +50,7 @@
 #include "models/TransmitModel.h"
 #include "models/NotchModel.h"
 
+#include <cmath>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -2094,6 +2095,60 @@ private slots:
                  stack->panadapter(QStringLiteral("pan-1"))->spectrumWidget());
         QCOMPARE(model->slices().size(), count);
         controller.stop();
+    }
+
+    // A window that owns the radio: selecting a slice whose pan was moved
+    // off it takes that pan back to the slice, keeping its span. A view
+    // that already holds the slice stays where the operator put it.
+    void selectingASliceLetterTakesItsPanToTheSlice()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = model->addSlice(QStringLiteral("pan-0"));
+        const int bId = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(applyLayout(window, QStringLiteral("2v")));
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SliceModel* b = model->sliceById(bId);
+        constexpr double kOtherBandHz = 7'150'000.0;
+        b->setFrequency(kOtherBandHz);
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(sw);
+        const auto holdsTheSlice = [sw] {
+            return std::abs(sw->centerFrequency() - kOtherBandHz) <= sw->bandwidth() / 2.0;
+        };
+        QTRY_VERIFY(holdsTheSlice());
+        RxApplet* applet = window.findChild<RxApplet*>();
+        QVERIFY(applet);
+        emit applet->sliceActivationRequested(aId);
+        QCOMPARE(model->activeSlice(), model->sliceById(aId));
+
+        // The operator's view of pan-1, zoomed in beside the slice.
+        constexpr double kSpanHz = 20'000.0;
+        constexpr double kAsideHz = kOtherBandHz + 60'000.0;
+        sw->setDisplayWindowPreservingHistory(kAsideHz, kSpanHz);
+        QVERIFY(!holdsTheSlice());
+        emit applet->sliceActivationRequested(bId);
+        QCOMPARE(model->activeSlice(), b);
+        QVERIFY2(holdsTheSlice(),
+                 qPrintable(QStringLiteral("pan at %1 Hz, span %2 Hz, slice at %3 Hz")
+                                .arg(sw->centerFrequency(), 0, 'f', 0)
+                                .arg(sw->bandwidth(), 0, 'f', 0)
+                                .arg(kOtherBandHz, 0, 'f', 0)));
+        QCOMPARE(sw->bandwidth(), kSpanHz);
+
+        // On screen already, off centre: nothing moves.
+        const double offCentre = kOtherBandHz + kSpanHz / 4.0;
+        sw->setDisplayWindowPreservingHistory(offCentre, kSpanHz);
+        emit applet->sliceActivationRequested(aId);
+        emit applet->sliceActivationRequested(bId);
+        QCOMPARE(sw->centerFrequency(), offCentre);
     }
 
     // Slice control plan Task 16 (ruling U3): a click on a pan's background
