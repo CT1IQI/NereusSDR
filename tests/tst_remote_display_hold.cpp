@@ -142,6 +142,8 @@ struct Fixture {
     QPointer<Test::LoopbackTransport> stationLink;
     // Called inside the send of each mini display ask.
     std::function<void()> onMiniAsk;
+    // Called inside the send of each pan ask.
+    std::function<void()> onPanAsk;
     int sliceId = -1;
     int stream = -1;
     double centre = 0.0;
@@ -235,6 +237,7 @@ struct Fixture {
         ask.mini = wire.contains("\"displayRole\":\"mini\"");
         asks.append(ask);
         if (ask.mini && onMiniAsk) { onMiniAsk(); }
+        if (!ask.mini && onPanAsk) { onPanAsk(); }
     }
 
     int panAsks() const
@@ -1035,6 +1038,124 @@ private slots:
         }));
         QCOMPARE(f.widget->remoteContextPicture(),
                  SpectrumWidget::RemoteContextPicture::New);
+        f.finish();
+    }
+
+    // R-DISP-RETUNE. A measurement, with what it found pinned: what the
+    // main pan draws while it is moved faster than the link answers (a
+    // tuning wheel with the pan following its receiver). Thirty steps, each
+    // made before the Core's context for the step before it has arrived.
+    // The window ignores a context whose request has since changed
+    // (RemoteMediaController::onMediaControl), so it accepts none of them;
+    // the Core has moved on to each new context and the window, still on
+    // the old one, can draw none of its frames.
+    void whatAPanDrawsWhileItIsMovedFasterThanTheLinkAnswers()
+    {
+        Fixture f(/*withCore=*/true);
+        QVERIFY(f.start());
+        QSignalSpy frames(f.widget, &SpectrumWidget::spectrumFrameRendered);
+        QVERIFY(f.run([&] { return f.contextFollowsLastAsk() && frames.size() >= 30; }));
+        const double startCentre = f.widget->centerFrequency();
+        // 500 Hz a step: 15 kHz in all, well inside what the receiver covers.
+        constexpr double kStepHz = 500.0;
+        constexpr int kSteps = 30;
+
+        quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
+        const quint32 generationBefore = generation;
+        const QVector<float> traceBefore = f.widget->renderedPixels();
+        QVERIFY(!traceBefore.isEmpty());
+        const qsizetype framesBefore = frames.size();
+        const int askedBefore = f.panAsks();
+        int contextsAccepted = 0;
+        int stepsWithAFrame = 0;
+        int stepsBlank = 0;
+        qsizetype framesAfterFirstAsk = -1;
+
+        // What the Core answers waits on the link from each ask on.
+        f.onPanAsk = [&f] { f.stationLink->setHoldsOutgoing(true); };
+        for (int step = 1; step <= kSteps; ++step) {
+            const qsizetype framesAtStep = frames.size();
+            f.widget->setDisplayWindowPreservingHistory(startCentre + step * kStepHz,
+                                                        f.widget->bandwidth());
+            // The answer to the step before arrives now, after this step.
+            f.stationLink->setHoldsOutgoing(false);
+            for (int turn = 0; turn < 6; ++turn) {
+                f.feed();
+                f.plan();
+                QTest::qWait(5);
+                const quint32 current = f.widget->remoteCodecForTest().contextGeneration;
+                if (current != generation) {
+                    generation = current;
+                    ++contextsAccepted;
+                }
+            }
+            if (frames.size() != framesAtStep) { ++stepsWithAFrame; }
+            if (f.widget->renderedPixels().isEmpty()) { ++stepsBlank; }
+            if (step == 1) { framesAfterFirstAsk = frames.size(); }
+        }
+        const int asksInSpin = f.panAsks() - askedBefore;
+        const qsizetype framesInSpin = frames.size() - framesBefore;
+        const qsizetype framesAfterStepOne = frames.size() - framesAfterFirstAsk;
+        const double pannedHz = f.widget->centerFrequency() - startCentre;
+        // What is on screen: the trace that was there, drawn that many
+        // pixels to the left (the pan moved up), or something else.
+        const QVector<float> traceAfter = f.widget->renderedPixels();
+        const int pixels = int(traceBefore.size());
+        const int expectedShift = int(std::lround(pannedHz / f.widget->bandwidth() * pixels));
+        int bestShift = 0;
+        double bestDifference = std::numeric_limits<double>::max();
+        if (traceAfter.size() == traceBefore.size()) {
+            for (int shift = -pixels / 2; shift <= pixels / 2; ++shift) {
+                double sum = 0.0;
+                int counted = 0;
+                for (int pixel = 0; pixel < pixels; ++pixel) {
+                    const int from = pixel + shift;
+                    if (from < 0 || from >= pixels) { continue; }
+                    sum += std::abs(traceAfter.at(pixel) - traceBefore.at(from));
+                    ++counted;
+                }
+                if (counted > 0 && sum / counted < bestDifference) {
+                    bestDifference = sum / counted;
+                    bestShift = shift;
+                }
+            }
+        }
+
+        // The wheel stops: the last answer arrives and the pan catches up.
+        f.onPanAsk = nullptr;
+        f.stationLink->setHoldsOutgoing(false);
+        QElapsedTimer caughtUp;
+        caughtUp.start();
+        const qsizetype framesAtStop = frames.size();
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.widget->remoteCodecForTest().contextGeneration != generationBefore
+                && f.contextFollowsLastAsk() && frames.size() > framesAtStop;
+        }));
+        const qint64 caughtUpMs = caughtUp.elapsed();
+        qInfo().noquote() << QStringLiteral(
+            "R-DISP-RETUNE fast spin: %1 steps of %2 Hz, %3 asks, %4 contexts accepted, "
+            "%5 frames drawn during the spin (%6 after the first step), %7 steps drew a "
+            "frame, %8 steps showed a blank pan; on screen the trace from before the "
+            "spin drawn %9 pixels along (%13 dB mean difference, %14 pixels wide, the "
+            "pan having moved %10 Hz, %15 pixels); first new frame %11 ms after the "
+            "last step, as a %12 picture")
+            .arg(kSteps).arg(kStepHz).arg(asksInSpin).arg(contextsAccepted)
+            .arg(framesInSpin).arg(framesAfterStepOne).arg(stepsWithAFrame).arg(stepsBlank)
+            .arg(bestShift)
+            .arg(pannedHz).arg(caughtUpMs)
+            .arg(f.widget->remoteContextPicture() == SpectrumWidget::RemoteContextPicture::Moved
+                     ? QStringLiteral("moved")
+                     : f.widget->remoteContextPicture()
+                               == SpectrumWidget::RemoteContextPicture::Same
+                           ? QStringLiteral("same") : QStringLiteral("new"))
+            .arg(bestDifference, 0, 'f', 3).arg(pixels).arg(expectedShift);
+        QCOMPARE(asksInSpin, kSteps);
+        QCOMPARE(contextsAccepted, 0);
+        QCOMPARE(framesAfterStepOne, 0);
+        QCOMPARE(stepsBlank, 0);
+        QCOMPARE(f.widget->remoteContextPicture(),
+                 SpectrumWidget::RemoteContextPicture::Moved);
         f.finish();
     }
 };
