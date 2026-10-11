@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: the slices made for empty pans at
+//                connect come back as they were saved (populatePanSlices).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). Issue #357: a hosting window's TUNE
 //                (TX applet and container) reads the transmit model's TUNE,
 //                which the release press clears, so it goes back to "TUNE"
@@ -16985,7 +16988,11 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         if (hosting) {
             hosting->addOnPan(emptyPan);
         } else {
-            model->addSliceOnPan(emptyPan);
+            // Settings restore (2026-10-11): the slices made here at
+            // connect (not asked for by the operator) come back as they
+            // were saved, so receivers B to D return like A without a
+            // Core. A layout change or +RX still makes a new slice.
+            model->addSliceOnPan(emptyPan, !operatorRequested);
         }
     }
 }

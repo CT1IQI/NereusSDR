@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: addSlice and addSliceOnPan take
+//                restoreSavedState. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - Settings restore: pushSliceStateToChannel, the slice A
 //                state push run for every slice. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -2575,7 +2578,7 @@ public:
     /// is a host and sharing it is the point. It was briefly a caller-
     /// supplied flag; every caller that forgot it silently reintroduced the
     /// coupled-pan defect, so the decision lives with the data it depends on.
-    int addSlice(const QString& initialPanId = QString());
+    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -2786,7 +2789,13 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    Q_INVOKABLE void addSliceOnPan(const QString& panId);
+    // `restoreSavedState` (2026-10-11): the slice comes back as it was last
+    // saved (Slice<N>/LastBand and that band's keys) instead of starting on
+    // the active slice's frequency and mode. The standalone app asks for it
+    // for the slices it makes for empty pans at connect, so receivers B to D
+    // return like A. A slice with nothing saved, and every slice asked for
+    // without it (+RX, a layout change, a session verb), starts fresh.
+    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one
     /// that is. Returns how many moved.
@@ -7328,7 +7337,8 @@ private:
     void publishRadeModeSlices();
     int addSliceImpl(int requestedId, const QString& initialPanId,
                      const ReceiveSliceState* restoreSeed = nullptr,
-                     bool bindRestored = false);
+                     bool bindRestored = false,
+                     bool restoreSavedState = false);
 
     /// iPhone app Task 73: every slice's `active` from its owner's active
     /// slice, and activeSlice() moved to the station-level one (emitting

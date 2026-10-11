@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: addSliceOnPan can make a slice that
+//                comes back as it was saved, for the standalone app's
+//                receivers B to D at connect. NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Settings restore: the slice A state push at connect is
 //                lifted into pushSliceStateToChannel and run for every
 //                slice when its channel is switched on, so a restored
@@ -14770,7 +14774,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return true;
 }
 
-int RadioModel::addSlice(const QString& initialPanId)
+int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState)
 {
     // Remote-daemon R2: a remote client must not mint a slice id. Ids are
     // the STATION's (addSliceWithStationId's comment has the full reason),
@@ -14829,7 +14833,7 @@ int RadioModel::addSlice(const QString& initialPanId)
     // it does now. The body moved to addSliceImpl so a remote client can
     // reproduce the STATION's ids verbatim (addSliceWithStationId); no
     // behaviour changed on this path.
-    return addSliceImpl(-1, initialPanId);
+    return addSliceImpl(-1, initialPanId, nullptr, false, restoreSavedState);
 }
 
 QString RadioModel::sliceCapReason(int cap) const
@@ -14888,7 +14892,8 @@ void RadioModel::publishReadySlices(int id)
 }
 
 int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
-                             const ReceiveSliceState* restoreSeed, bool bindRestored)
+                             const ReceiveSliceState* restoreSeed, bool bindRestored,
+                             bool restoreSavedState)
 {
     // iPhone app Task 73: `bindRestored` makes a device's saved slice again
     // while the radio runs (restoreSliceFor). It restores `restoreSeed`'s
@@ -15049,6 +15054,24 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         if (!restored) { delete slice; return -1; }
     }
+    // Settings restore (2026-10-11): without a Core, receivers B to D come
+    // back at connect like A. loadSliceState restores only the active slice
+    // (A); the slices the window then makes for its other pans started
+    // fresh although their keys were always written. Same restore as
+    // loadSliceState: the band the slice was last saved on, then that
+    // band's stored state, frequency and mode included, before the slice
+    // binds, so it binds where it was. The slice is not wired to a channel
+    // yet; activateSliceChannel pushes the restored state when it is. A
+    // station that manages a receive layout (the Core) restores through
+    // restoreSeed above and never takes this branch.
+    bool restoredSavedState = false;
+    if (restoreSavedState && !restoreSeed && role() == Role::Local && !m_receiveLayoutManaged) {
+        if (const auto lastBand = SliceModel::loadLastBandFromSettings(index)) {
+            slice->restoreFromSettings(*lastBand);
+            if (!self || !added) { return -1; }
+            restoredSavedState = true;
+        }
+    }
     m_slices.append(slice);
     m_slicePublications[slice].constructing = false;
     const auto currentAdded = [&] {
@@ -15117,7 +15140,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
-    if (!restoreSeed && seedFrom && seedFrom != slice) {
+    if (!restoreSeed && !restoredSavedState && seedFrom && seedFrom != slice) {
         const double seedFrequency = seedFrom->frequency();
         const DSPMode seedMode = seedFrom->dspMode();
         slice->setFrequency(seedFrequency);
@@ -15572,6 +15595,13 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             scheduleSettingsSave(slice);
         }
     });
+    if (restoredSavedState) {
+        // And put the restored rate on the DDC, not just on the menu, as
+        // loadSliceState does for slice A. No-op when the slice has no
+        // stream or its stream already runs at that rate.
+        applyRestoredSampleRate(slice);
+        if (!currentAdded()) { return -1; }
+    }
 
     auto publication = m_slicePublications.value(slice);
     publication.incarnation = m_sliceOwnership->incarnation(index);
@@ -15930,7 +15960,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
 // Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
 // Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
 // (+RX button handler).
-void RadioModel::addSliceOnPan(const QString& panId)
+void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState)
 {
     // Remote-daemon R2: sent as its own verb rather than falling through
     // to addSlice's Role::Remote branch, because the two are not the same
@@ -15981,7 +16011,7 @@ void RadioModel::addSliceOnPan(const QString& panId)
     // pan", so it must not assert either answer: passing a bare `true` here
     // is what made ordinary +RX slices demand a third DDC and get refused on
     // a 2-DDC HL2 (Codex P1, PR #311).
-    addSlice(panId);
+    addSlice(panId, restoreSavedState);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
