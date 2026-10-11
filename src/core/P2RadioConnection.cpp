@@ -166,6 +166,9 @@
 //                inputs, sent at once while running, and byte 1400 bit 1 from
 //                speakerAmplifierOff in buildCodecContext. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - applySocketBufferSizes logs the receive buffer the
+//                system gave. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //
@@ -668,6 +671,14 @@ void P2RadioConnection::applySocketBufferSizes()
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
                               QVariant(0x400000));  // 4 MB requested; kernel may cap
+    // What the system gave. Linux caps the request at net.core.rmem_max and
+    // reports the size doubled: at the stock 212,992 that is 425,984 bytes,
+    // 9 ms of three wide receivers on the Rock 5C (2026-10-10), where one
+    // 14 ms stall of the connection thread then lost packets.
+    qCInfo(lcConnection) << "P2: socket receive buffer"
+                         << m_socket->socketOption(
+                                QAbstractSocket::ReceiveBufferSizeSocketOption).toInt()
+                         << "bytes (4194304 asked for)";
 }
 
 // ---------------------------------------------------------------------------
