@@ -743,7 +743,7 @@ private:
     QList<quint32> endpointIds() const;
     void removeEndpoint(quint32 endpointId, bool retainOperation = true);
     /// `sourceUpdate`, when given, says what an accepted reconcile did to a
-    /// source that was already running (R-DISP-RETUNE): relabelled through
+    /// source that was already running (R-DISP-RETUNE): relabeled through
     /// a retune, or anything else. A caller holding an endpoint outside
     /// m_endpoints uses it to carry that endpoint over a relabel too.
     bool reconcileSource(const MediaSourceKey& key,

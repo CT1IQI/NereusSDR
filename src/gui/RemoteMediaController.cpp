@@ -1007,7 +1007,7 @@ struct RemoteMediaController::Private {
         /// and made each ask a new picture.
         /// R-DISP-RETUNE: the same holds while the pan keeps the answered
         /// width and moves (a drag, or a pan that follows its receiver): it
-        /// asks for the width it asked before, at the asked centre moved as
+        /// asks for the width it asked before, at the asked center moved as
         /// far as the pan moved. Asking for the answered width made every
         /// drag two bins wider and a new picture for the Core, which judges
         /// a moved picture by the span asked.
@@ -1228,7 +1228,7 @@ struct RemoteMediaController::Private {
         // R-DISP-HOLD: a pan still showing the view the Core answered asks
         // for the view it asked before (see Binding::viewAskedCentreHz).
         // R-DISP-RETUNE: a pan that kept the answered width and moved asks
-        // for the width it asked before, at the asked centre moved as far as
+        // for the width it asked before, at the asked center moved as far as
         // the pan moved.
         for (const auto& entry : bindings) {
             const Binding& binding = entry.second;
@@ -5750,7 +5750,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
             // R-DISP-RETUNE: where the Core states the picture, an ask
             // leaves the painted frame alone and the Core's answer decides:
             // its context continues the picture shown (every tuning step
-            // moves a mini display, which is centred on its slice, and the
+            // moves a mini display, which is centered on its slice, and the
             // Core carries that on), or it does not and the display is
             // blanked then. Nothing is predicted here; the window used to
             // compare each ask with the one before it to guess what the
@@ -7106,7 +7106,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             return;
         }
         // R-DISP-RETUNE: the mini display follows the pan's rule. A context
-        // the Core says continues the picture shown (it is centred on the
+        // the Core says continues the picture shown (it is centered on the
         // slice, so every tuning step moves it, and the Core carries that
         // on) leaves the painted frame in place until the keyframe.
         // Anything else is a new picture and blanks it. From a Core that
@@ -7544,7 +7544,7 @@ void RemoteMediaController::presentDueDisplay()
                 const QJsonObject wanted = d->requestMini(mini.slice);
                 // R-DISP-RETUNE (7b): the context whose frames are given,
                 // the accepted one or one taken for drawing only. The mini
-                // display is given each frame with the centre and span of
+                // display is given each frame with the center and span of
                 // its own context, not those the slice has moved to.
                 const SpectrumEndpointContext& given =
                     mini.drawing ? mini.drawing->context : mini.context;

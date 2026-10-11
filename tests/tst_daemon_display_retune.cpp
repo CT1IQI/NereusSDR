@@ -4,8 +4,8 @@
 // no-port-check: NereusSDR-original test. R-DISP-RETUNE.
 //
 // A remote pan's picture carries on through a retune. When the receiver's
-// stream centre moves under a pan that still sees it, or the pan is asked
-// for again at another centre, the Core sends a new context that opens with
+// stream center moves under a pan that still sees it, or the pan is asked
+// for again at another center, the Core sends a new context that opens with
 // a keyframe, and the averaged trace goes on from where it was. The peak
 // hold and the blobs empty; the noise floor and the waterfall levels
 // continue. A pan the retune left outside the receiver is retired, as
@@ -112,7 +112,7 @@ QJsonObject plane()
             {QStringLiteral("averageAlpha"), 0.0}};
 }
 
-QJsonObject subscription(quint32 endpointId, int sliceId, double centreHz, int revision,
+QJsonObject subscription(quint32 endpointId, int sliceId, double centerHz, int revision,
                          double spanHz)
 {
     return {{QStringLiteral("op"), QStringLiteral("subscribe")},
@@ -123,7 +123,7 @@ QJsonObject subscription(quint32 endpointId, int sliceId, double centreHz, int r
             {QStringLiteral("tier"), QStringLiteral("wide")},
             {QStringLiteral("fftSize"), kFftSize},
             {QStringLiteral("windowType"), static_cast<int>(WindowFunction::Hann)},
-            {QStringLiteral("centreHz"), centreHz},
+            {QStringLiteral("centreHz"), centerHz},
             {QStringLiteral("spanHz"), spanHz},
             {QStringLiteral("pixels"), kPixels},
             {QStringLiteral("fps"), kFps},
@@ -156,7 +156,7 @@ QJsonObject subscription(quint32 endpointId, int sliceId, double centreHz, int r
 
 // The receiver's spectrum: a flat floor and one carrier, `carrierBin` being
 // where the carrier falls in the source. A carrier that stays at one radio
-// frequency moves down the source by as many bins as the centre moves up.
+// frequency moves down the source by as many bins as the center moves up.
 QVector<float> spectrum(int carrierBin)
 {
     QVector<float> bins(kFftSize, 1.0e-9f);
@@ -302,10 +302,10 @@ struct Harness {
         return true;
     }
 
-    bool ask(quint32 endpointId, double centreHz, int revision, double spanHz = kSpanHz)
+    bool ask(quint32 endpointId, double centerHz, int revision, double spanHz = kSpanHz)
     {
         return client.sendMediaControl(
-            subscription(endpointId, sliceId, centreHz, revision, spanHz),
+            subscription(endpointId, sliceId, centerHz, revision, spanHz),
             client.sessionEpoch());
     }
 
@@ -474,8 +474,8 @@ private:
     // hold, the blobs, the noise floor and the levels all being sent.
     static void settle(Harness& h, Settled& settled)
     {
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
-        QVERIFY(h.ask(kEndpoint, centre, 1));
+        const double center = h.radio.streamCentreHz(h.streamIndex);
+        QVERIFY(h.ask(kEndpoint, center, 1));
         QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
         QVERIFY(h.findSource());
         h.run(kStartNs + 5 * kFps * kPeriodNs, [] { return spectrum(kCarrierBin); });
@@ -556,25 +556,25 @@ private:
         QVERIFY(h.start(declare));
         QCOMPARE(h.client.capabilities().spectrumPictureVersion, 1);
         QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        const double center = h.radio.streamCentreHz(h.streamIndex);
         const auto bins = [] { return spectrum(kCarrierBin); };
-        QVERIFY(h.ask(kEndpoint, centre, 1));
+        QVERIFY(h.ask(kEndpoint, center, 1));
         QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
         QVERIFY(h.findSource());
         QVERIFY(h.runUntilContexts(kEndpoint, 1, bins));
 
-        QJsonObject request = subscription(kEndpoint, h.sliceId, centre, 2, kSpanHz);
+        QJsonObject request = subscription(kEndpoint, h.sliceId, center, 2, kSpanHz);
         request.insert(QStringLiteral("minDbm"), -170.0);
         QVERIFY(h.askFor(request));
         QVERIFY(h.runUntilContexts(kEndpoint, 2, bins));
 
-        const double moved = centre + 8 * kBinHz;
+        const double moved = center + 8 * kBinHz;
         request.insert(QStringLiteral("centreHz"), moved);
         request.insert(QStringLiteral("revision"), 3);
         QVERIFY(h.askFor(request));
         QVERIFY(h.runUntilContexts(kEndpoint, 3, bins));
 
-        QVERIFY(h.radio.requestStreamCentre(h.sliceId, centre + 256 * kBinHz));
+        QVERIFY(h.radio.requestStreamCentre(h.sliceId, center + 256 * kBinHz));
         QVERIFY(h.runUntilContexts(kEndpoint, 4, bins));
 
         request.insert(QStringLiteral("spanHz"), kSpanHz / 2.0);
@@ -615,7 +615,7 @@ private slots:
 #endif
     }
 
-    // The stream centre moves under a pan that still sees the receiver, and
+    // The stream center moves under a pan that still sees the receiver, and
     // away from a narrow pan that then sees none of it.
     void aRetuneUnderAPanCarriesItsPictureOn()
     {
@@ -627,8 +627,8 @@ private slots:
         if (QTest::currentTestFailed()) { return; }
 
         // A second, narrow pan near the lower edge of the receiver.
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
-        QVERIFY(h.ask(kNarrowEndpoint, centre - 90000.0, 1, 1000.0));
+        const double center = h.radio.streamCentreHz(h.streamIndex);
+        QVERIFY(h.ask(kNarrowEndpoint, center - 90000.0, 1, 1000.0));
         QTRY_COMPARE(h.controller.activeEndpointCount(), 2);
         h.run(h.nextFrameNs() + 10 * kPeriodNs, [] { return spectrum(kCarrierBin); });
         QCOMPARE(h.refused, 0);
@@ -649,9 +649,9 @@ private slots:
         // The receiver is retuned 48 kHz up: 256 bins exactly, so a carrier
         // that stays put on the air stays on its pixel.
         constexpr int kMoveBins = 256;
-        QVERIFY(h.radio.requestStreamCentre(h.sliceId, centre + kMoveBins * kBinHz));
-        QCOMPARE(h.radio.streamCentreHz(h.streamIndex), centre + kMoveBins * kBinHz);
-        // The source was relabelled, not restarted: it publishes at once.
+        QVERIFY(h.radio.requestStreamCentre(h.sliceId, center + kMoveBins * kBinHz));
+        QCOMPARE(h.radio.streamCentreHz(h.streamIndex), center + kMoveBins * kBinHz);
+        // The source was relabeled, not restarted: it publishes at once.
         QVERIFY2(h.source->isActive(h.key), "the retune restarted the spectrum source");
         QVERIFY(h.source->inputQueueDiagnostics(h.key).generation > sourceGeneration);
         // The wide pan stays; the narrow pan is retired.
@@ -666,7 +666,7 @@ private slots:
         // The carrier is where it was on the screen.
         const Watched& pan = h.watched[kEndpoint];
         QCOMPARE(peakIndex(pan.seen[pan.generations.last()].firstTrace), peakIndex(before));
-        // The context the Core announced for it is at the new centre.
+        // The context the Core announced for it is at the new center.
         QTRY_VERIFY(!lastMessage(controls, QStringLiteral("context"), kEndpoint).isEmpty());
         QTRY_COMPARE(static_cast<quint32>(lastMessage(controls, QStringLiteral("context"),
                                                       kEndpoint)
@@ -675,7 +675,7 @@ private slots:
                      pan.generations.last());
         QCOMPARE(lastMessage(controls, QStringLiteral("context"), kEndpoint)
                      .value(QStringLiteral("sourceCentreHz")).toDouble(),
-                 centre + kMoveBins * kBinHz);
+                 center + kMoveBins * kBinHz);
         QVERIFY(lastMessage(controls, QStringLiteral("rejected"), kEndpoint).isEmpty());
 
         // The narrow pan was told why it went, and got nothing more.
@@ -696,9 +696,9 @@ private slots:
         h.finish();
     }
 
-    // The pan is asked for again with only its centre moved, as a window
+    // The pan is asked for again with only its center moved, as a window
     // does when its view follows a tune. The receiver did not move.
-    void aPanAskedAgainAtAnotherCentreCarriesItsPictureOn()
+    void aPanAskedAgainAtAnotherCenterCarriesItsPictureOn()
     {
         Harness h;
         QVERIFY(h.start());
@@ -706,12 +706,12 @@ private slots:
         Settled settled;
         settle(h, settled);
         if (QTest::currentTestFailed()) { return; }
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        const double center = h.radio.streamCentreHz(h.streamIndex);
         const quint64 sourceGeneration = h.source->inputQueueDiagnostics(h.key).generation;
 
         // Eight bins up: the carrier moves four pixels down the screen.
         constexpr int kMoveBins = 8;
-        QVERIFY(h.ask(kEndpoint, centre + kMoveBins * kBinHz, 2));
+        QVERIFY(h.ask(kEndpoint, center + kMoveBins * kBinHz, 2));
         // The request crosses the station session's event loop; the calendar
         // goes on meanwhile, and the Core answers with a new context.
         QVERIFY(h.runUntilContexts(kEndpoint, 2, [] { return spectrum(kCarrierBin); }));
@@ -725,7 +725,7 @@ private slots:
         carriedOn(h, settled, 1.0);
         if (QTest::currentTestFailed()) { return; }
         QVERIFY(lastMessage(controls, QStringLiteral("rejected"), kEndpoint).isEmpty());
-        // The context the Core announced for it is at the new centre.
+        // The context the Core announced for it is at the new center.
         QTRY_COMPARE(static_cast<quint32>(lastMessage(controls, QStringLiteral("context"),
                                                       kEndpoint)
                                               .value(QStringLiteral("contextGeneration"))
@@ -733,10 +733,10 @@ private slots:
                      h.watched[kEndpoint].generations.last());
         const QJsonObject context = lastMessage(controls, QStringLiteral("context"), kEndpoint);
         QVERIFY2(std::abs(context.value(QStringLiteral("centreHz")).toDouble()
-                          - (centre + kMoveBins * kBinHz)) <= kBinHz,
+                          - (center + kMoveBins * kBinHz)) <= kBinHz,
                  qPrintable(QString::number(context.value(QStringLiteral("centreHz")).toDouble(),
                                             'f', 1)));
-        QCOMPARE(context.value(QStringLiteral("sourceCentreHz")).toDouble(), centre);
+        QCOMPARE(context.value(QStringLiteral("sourceCentreHz")).toDouble(), center);
 
         // Four seconds later the trace has followed the carrier to its new
         // pixel.
@@ -747,7 +747,7 @@ private slots:
         QVERIFY(peakIndex(later.lastTrace) < peakIndex(settled.trace));
 
         // Another span is a new picture, and that still starts again.
-        QVERIFY(h.ask(kEndpoint, centre + kMoveBins * kBinHz, 3, kSpanHz / 2.0));
+        QVERIFY(h.ask(kEndpoint, center + kMoveBins * kBinHz, 3, kSpanHz / 2.0));
         QVERIFY(h.runUntilContexts(kEndpoint, 3, [] { return spectrum(kCarrierBin); }));
         QCOMPARE(pan.generations.size(), 3);
         const Seen& restarted = pan.seen[pan.generations.last()];
@@ -849,7 +849,7 @@ private slots:
         }
     }
 
-    // The operator tunes: the receiver's centre moves once every frame
+    // The operator tunes: the receiver's center moves once every frame
     // period for two seconds. The pan goes on getting its frames, at the
     // rate it had, and its picture does not start again.
     void tuningDoesNotStarveThePan()
@@ -859,7 +859,7 @@ private slots:
         Settled settled;
         settle(h, settled);
         if (QTest::currentTestFailed()) { return; }
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        const double center = h.radio.streamCentreHz(h.streamIndex);
         // Two seconds of frames: sixty periods.
         constexpr qint64 kMeasureNs = 2 * kFps * kPeriodNs;
 
@@ -878,7 +878,7 @@ private slots:
         int restarts = 0;
         h.run(h.nextFrameNs() + kMeasureNs, [] { return spectrum(kCarrierBin); }, [&] {
             ++moves;
-            if (!h.radio.requestStreamCentre(h.sliceId, centre + moves * 100.0)
+            if (!h.radio.requestStreamCentre(h.sliceId, center + moves * 100.0)
                 || !h.source->isActive(h.key)) {
                 ++restarts;
             }
@@ -886,7 +886,7 @@ private slots:
         const int tuning = h.watched[kEndpoint].frames - framesBeforeTuning;
         qInfo().noquote() << QStringLiteral(
             "R-DISP-RETUNE tuning: %1 frames in two seconds standing still, %2 in two seconds "
-            "with %3 centre moves (%4 source frames published, %5 refused, %6 restarts)")
+            "with %3 center moves (%4 source frames published, %5 refused, %6 restarts)")
             .arg(still).arg(tuning).arg(moves).arg(h.published - publishedBeforeTuning)
             .arg(h.refused).arg(restarts);
         QCOMPARE(moves, 60);
@@ -915,7 +915,7 @@ private slots:
 
     // A measurement, with what it found pinned. A source frame waits at its
     // endpoint for the sender's next tick (every 5 ms), and a retune ends the
-    // old context and drops the frame waiting under the old centre
+    // old context and drops the frame waiting under the old center
     // (DaemonMediaController::reconcileSource). So a move made after a frame
     // arrived and before the tick that would have sent it costs that frame.
     // Here every move is made in that gap, the worst case, on a link with no
@@ -952,7 +952,7 @@ private slots:
         Settled settled;
         settle(h, settled);
         if (QTest::currentTestFailed()) { return; }
-        const double centre = h.radio.streamCentreHz(h.streamIndex);
+        const double center = h.radio.streamCentreHz(h.streamIndex);
         constexpr qint64 kMeasureNs = 2 * kFps * kPeriodNs;
 
         struct Counted {
@@ -962,7 +962,7 @@ private slots:
             qint64 longestWaitNs = 0;
             qint64 waitedNs = 0;
         };
-        // Runs the calendar for two seconds. With `moving`, the centre moves
+        // Runs the calendar for two seconds. With `moving`, the center moves
         // straight after every `framesPerMove`th frame is published, before
         // any sender tick.
         const auto measure = [&](bool moving) {
@@ -984,7 +984,7 @@ private slots:
                     ++h.frame;
                     if (moving && counted.published % framesPerMove == 0) {
                         ++counted.moves;
-                        h.radio.requestStreamCentre(h.sliceId, centre + counted.moves * 100.0);
+                        h.radio.requestStreamCentre(h.sliceId, center + counted.moves * 100.0);
                     }
                     continue;
                 }

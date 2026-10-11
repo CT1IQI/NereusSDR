@@ -3545,7 +3545,7 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // dBm range, the frame rate or the line period therefore restarts
     // nothing the client sees.
     //
-    // R-DISP-RETUNE: a re-request that only moves the view centre (the
+    // R-DISP-RETUNE: a re-request that only moves the view center (the
     // window following a tune) is a moved picture: the planes go on
     // averaging, the extras keep the noise floor and the waterfall levels
     // and drop the peak hold and the blobs. The reduction was out of the
@@ -3554,7 +3554,7 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     if (replaced.has_value()) {
         EndpointEntry& current = m_endpoints.at(endpointId);
         current.endpoint = std::move(replaced->endpoint);
-        if (sourceUpdate.relabelled) {
+        if (sourceUpdate.relabeled) {
             current.endpoint.awaitMovedSource(sourceUpdate.fromGeneration,
                                               sourceUpdate.toGeneration);
         } else {
@@ -4909,7 +4909,7 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
         // is a new processor, as before, so its noise floor and waterfall
         // levels start again with it.
         //
-        // R-DISP-RETUNE: a moved picture (the same shape at another centre)
+        // R-DISP-RETUNE: a moved picture (the same shape at another center)
         // keeps the processor it has, carried over a re-request or not, so
         // the noise floor, the waterfall levels and Core Clarity go on, and
         // empties the peak hold and the blobs, which were measured at
@@ -6222,9 +6222,9 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
                                             config.transformsFollowFrameRate);
     } else if (changed) {
         // R-DISP-RETUNE: the display is the one caller that asks for a
-        // centre-only move to relabel the running source.
+        // center-only move to relabel the running source.
         accepted = m_source.update(key, config,
-                                   DaemonSpectrumCentreMove::Relabel, &updated);
+                                   DaemonSpectrumCenterMove::Relabel, &updated);
     }
     if (!accepted) {
         return false;
@@ -6238,18 +6238,18 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
         // Every device's pans on this engine take the new context.
         //
         // R-DISP-RETUNE: when the receiver was only retuned, the source was
-        // relabelled and goes on publishing, and each pan keeps what it has
+        // relabeled and goes on publishing, and each pan keeps what it has
         // averaged; the context it is sent from the next frame is that of a
         // moved picture (SpectrumEndpoint::configure). The display extras
         // stay with the entry and configureEndpointFromFrame decides what
         // they keep. Whatever else changed restarted the source, and the
         // reduction starts again with it. Either way the old context ends
-        // here: the frame held under the old centre is dropped and the next
+        // here: the frame held under the old center is dropped and the next
         // context opens with a keyframe.
         const DaemonSpectrumSourceUpdate moved = updated;
         forEachSharedEndpoint(key, [moved](DaemonMediaController&, quint32,
                                            EndpointEntry& entry) {
-            if (moved.relabelled) {
+            if (moved.relabeled) {
                 entry.endpoint.awaitMovedSource(moved.fromGeneration, moved.toGeneration);
             } else {
                 entry.endpoint.reset();

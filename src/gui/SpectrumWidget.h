@@ -516,7 +516,7 @@ public:
     /// this context continues the picture the pan shows (its
     /// `pictureGeneration` is the one of the context shown), and it alone
     /// decides: true is the picture shown, moved or not; false is a new
-    /// picture whatever its numbers. The pan compares no spans or centres
+    /// picture whatever its numbers. The pan compares no spans or centers
     /// to tell a move from a new picture. Without it (a Core that states no
     /// picture) the rule is the one before the moved picture: a context
     /// that differs only in its dBm range or frame rate is the picture
@@ -540,7 +540,7 @@ public:
         New,
         /// The Core says this context continues the picture shown, and
         /// something the pan holds per pixel changed with it (a retune or a
-        /// pan drag moved the stream centre, the view centre or both). Only
+        /// pan drag moved the stream center, the view center or both). Only
         /// a Core that states the picture can say so; the pan derives no
         /// move of its own. The Core's averaged trace carried
         /// on, so the drawn trace stays, at the frequency it was captured

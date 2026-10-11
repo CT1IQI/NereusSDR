@@ -1637,7 +1637,7 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
     // R-DISP-RETUNE: the picture shown, carried on at the Core, with
     // something the pan holds per pixel changed: a retune moved the stream
-    // centre under the pan, or a drag moved the view centre. The Core's
+    // center under the pan, or a drag moved the view center. The Core's
     // word decides this and nothing of the pan's does. The pan used to
     // derive a move from the span it had asked for, the window from the
     // spans of its requests and the phone from the span answered to within

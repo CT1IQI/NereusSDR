@@ -125,7 +125,7 @@ struct SpectrumEndpointContext {
 enum class SpectrumPictureKind {
     /// Anything else: the reduction history starts again.
     New,
-    /// The same shape in another place: the stream centre, the crop centre
+    /// The same shape in another place: the stream center, the crop center
     /// or both moved, and nothing else. The averaged state carries on (it is
     /// not shifted to follow the frequency and not cleared).
     Moved,
@@ -159,8 +159,8 @@ public:
     /// too. That is the same source continued through a retune
     /// (awaitMovedSource), the same FFT size and sample rate, the same ADC
     /// descriptor for an extended view, the same span and pixel count, the
-    /// same detector and averaging mode, with the source centre, the crop
-    /// centre or both at another frequency. The plane takes the new crop;
+    /// same detector and averaging mode, with the source center, the crop
+    /// center or both at another frequency. The plane takes the new crop;
     /// what it has averaged per pixel is neither shifted nor cleared, as on
     /// the local display. tracePicture() and waterfallPicture() say which of
     /// the three each plane was.
@@ -222,8 +222,8 @@ public:
     /// reset().
     void awaitContext();
 
-    /// R-DISP-RETUNE: as awaitContext(), for a source that was relabelled
-    /// through a retune (DaemonSpectrumSourceUpdate::relabelled). Histories
+    /// R-DISP-RETUNE: as awaitContext(), for a source that was relabeled
+    /// through a retune (DaemonSpectrumSourceUpdate::relabeled). Histories
     /// held from `fromGeneration` are from then on histories of
     /// `toGeneration`, so the next configure can keep them as a moved
     /// picture. Histories of any other generation are left as they are, and

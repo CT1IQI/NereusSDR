@@ -85,7 +85,7 @@ bool samePlanePicture(const ReducerConfig& held, const ReducerConfig& next)
 
 // R-DISP-RETUNE: the same picture in another place. Everything that shapes
 // the averaged state is equal (how many pixels, how wide, how each pixel is
-// detected and averaged); only where the stream or the crop is centred
+// detected and averaged); only where the stream or the crop is centered
 // differs. Each pixel then goes on averaging what arrives at its place on
 // the screen, which is what the local display does through a retune.
 //
@@ -317,9 +317,9 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     // Each plane is judged apart. Everything else restarts as on a first
     // configure.
     //
-    // R-DISP-RETUNE: the source centre is no longer part of "same source".
-    // A source relabelled through a retune is the same source at another
-    // centre (awaitMovedSource carried its generation over), and the centre
+    // R-DISP-RETUNE: the source center is no longer part of "same source".
+    // A source relabeled through a retune is the same source at another
+    // center (awaitMovedSource carried its generation over), and the center
     // is judged with the crop, per plane: equal is the same picture, moved
     // is a moved picture, and both keep the reducer. The generation is what
     // tells a continued source from a restarted one, so a source that
@@ -561,7 +561,7 @@ void SpectrumEndpoint::awaitContext()
 void SpectrumEndpoint::awaitMovedSource(quint64 fromGeneration, quint64 toGeneration)
 {
     awaitContext();
-    // The held centre stays as it was: the next configure compares it with
+    // The held center stays as it was: the next configure compares it with
     // the new one to tell a moved picture from the same one.
     if (m_planesHeld && m_sourceContext.sourceGeneration == fromGeneration) {
         m_sourceContext.sourceGeneration = toGeneration;

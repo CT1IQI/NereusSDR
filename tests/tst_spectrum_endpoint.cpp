@@ -746,19 +746,19 @@ private slots:
     void aNewPictureStillRestartsTheAveragedPlanes_data()
     {
         QTest::addColumn<QString>("change");
-        // R-DISP-RETUNE: the "centre" row that stood here pinned that a moved
+        // R-DISP-RETUNE: the "center" row that stood here pinned that a moved
         // crop restarts the averaging. A moved crop is now a moved picture
-        // and keeps it (aMovedViewCentreKeepsTheAveragedEnergy). Every row
+        // and keeps it (aMovedViewCenterKeepsTheAveragedEnergy). Every row
         // below is still a new picture, alone or together with a move.
         QTest::newRow("span") << QStringLiteral("span");
-        QTest::newRow("span and centre") << QStringLiteral("spanAndCentre");
+        QTest::newRow("span and center") << QStringLiteral("spanAndCenter");
         QTest::newRow("pixel count") << QStringLiteral("pixels");
         QTest::newRow("averaging mode") << QStringLiteral("averageMode");
         QTest::newRow("detector") << QStringLiteral("detector");
         QTest::newRow("sample rate") << QStringLiteral("sampleRate");
         QTest::newRow("FFT size") << QStringLiteral("fftSize");
         QTest::newRow("source generation") << QStringLiteral("sourceGeneration");
-        QTest::newRow("restarted source at a moved centre")
+        QTest::newRow("restarted source at a moved center")
             << QStringLiteral("untoldGenerationMoved");
         QTest::newRow("moved source of another generation")
             << QStringLiteral("otherGenerationMoved");
@@ -766,9 +766,9 @@ private slots:
         // R-DISP-RETUNE: average mode -1 holds each pixel's maximum and
         // never lets it go, so a maximum carried through a move would stay
         // on the screen at a frequency it never came from.
-        QTest::newRow("held maximum at a moved view centre")
+        QTest::newRow("held maximum at a moved view center")
             << QStringLiteral("heldMaximumMovedView");
-        QTest::newRow("held maximum at a moved stream centre")
+        QTest::newRow("held maximum at a moved stream center")
             << QStringLiteral("heldMaximumMovedStream");
     }
 
@@ -806,7 +806,7 @@ private slots:
         if (change == QLatin1String("heldMaximumMovedView")) {
             next.centreHz += 12'000.0;
         } else if (change == QLatin1String("heldMaximumMovedStream")) {
-            // A relabelled source, told to the endpoint: for any other
+            // A relabeled source, told to the endpoint: for any other
             // averaging this is a moved picture.
             endpoint.awaitMovedSource(source.sourceGeneration,
                                       source.sourceGeneration + 1);
@@ -815,7 +815,7 @@ private slots:
             next.centreHz += 12'000.0;
         } else if (change == QLatin1String("span")) {
             next.spanHz = 48'000.0;
-        } else if (change == QLatin1String("spanAndCentre")) {
+        } else if (change == QLatin1String("spanAndCenter")) {
             next.spanHz = 48'000.0;
             next.centreHz += 12'000.0;
         } else if (change == QLatin1String("sampleRate")) {
@@ -824,7 +824,7 @@ private slots:
             source.fftBins = 2048;
         } else if (change == QLatin1String("untoldGenerationMoved")) {
             // The source restarted (another window, say) and came back at
-            // another centre. Nobody told the endpoint that the new
+            // another center. Nobody told the endpoint that the new
             // generation continues the old one, so it does not.
             ++source.sourceGeneration;
             source.centreHz += 100.0;
@@ -865,13 +865,13 @@ private slots:
         QVERIFY(!endpoint.waterfallPlaneKept());
     }
 
-    // R-DISP-RETUNE: the stream centre moved under the same view. The source
-    // was relabelled, not restarted, and the endpoint was told so. Its
+    // R-DISP-RETUNE: the stream center moved under the same view. The source
+    // was relabeled, not restarted, and the endpoint was told so. Its
     // converged trace and waterfall carry on: the first frame of the moved
     // picture is within one codec step of the frame before the move. A
     // restarted average reads 20 dB low on that frame (see
     // logAveragingDoesNotRestartAtZeroDbAfterRetune).
-    void aMovedStreamCentreKeepsTheConvergedTrace()
+    void aMovedStreamCenterKeepsTheConvergedTrace()
     {
         SpectrumEndpoint endpoint;
         SpectrumEndpointRequest req = request();
@@ -952,10 +952,10 @@ private slots:
                  qPrintable(QString::number(output->traceDbm[32])));
     }
 
-    // R-DISP-RETUNE: the view centre moved over the same source (a pan
+    // R-DISP-RETUNE: the view center moved over the same source (a pan
     // dragged, or a re-ask after a tune). The averaged energy stays where it
     // is on the screen and goes on averaging, as on the local display.
-    void aMovedViewCentreKeepsTheAveragedEnergy()
+    void aMovedViewCenterKeepsTheAveragedEnergy()
     {
         SpectrumEndpoint endpoint;
         SpectrumEndpointRequest req = request();
@@ -1211,7 +1211,7 @@ private slots:
         QCOMPARE(endpoint.context().codec.contextGeneration, quint32(5));
         QCOMPARE(endpoint.pictureGeneration(), quint32(4));
 
-        // Moved: the view centre.
+        // Moved: the view center.
         req.centreHz += 12'000.0;
         ++source.contextGeneration;
         endpoint.awaitContext();
@@ -1219,7 +1219,7 @@ private slots:
         QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
         QCOMPARE(endpoint.pictureGeneration(), quint32(4));
 
-        // Moved: the source, relabelled through a retune.
+        // Moved: the source, relabeled through a retune.
         endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
         ++source.sourceGeneration;
         ++source.contextGeneration;
@@ -1246,7 +1246,7 @@ private slots:
         QCOMPARE(endpoint.pictureGeneration(), quint32(9));
 
         // New: the source restarted (a generation nobody said continues the
-        // one held), at the same centre, size and rate.
+        // one held), at the same center, size and rate.
         endpoint.awaitContext();
         ++source.sourceGeneration;
         ++source.contextGeneration;

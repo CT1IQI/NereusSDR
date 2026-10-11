@@ -156,8 +156,8 @@ public:
 };
 
 // The frequency of the strongest signal in a row of samples drawn across
-// centreHz +- spanHz / 2.
-std::optional<double> strongestHz(const QVector<float>& samples, double centreHz, double spanHz)
+// centerHz +- spanHz / 2.
+std::optional<double> strongestHz(const QVector<float>& samples, double centerHz, double spanHz)
 {
     if (samples.isEmpty() || spanHz <= 0.0) { return std::nullopt; }
     const float top = *std::max_element(samples.cbegin(), samples.cend());
@@ -166,7 +166,7 @@ std::optional<double> strongestHz(const QVector<float>& samples, double centreHz
     for (int i = 0; i < samples.size(); ++i) {
         if (samples.at(i) >= top - 0.01f) { sum += i; ++counted; }
     }
-    return centreHz - spanHz / 2.0 + (sum / counted + 0.5) * spanHz / samples.size();
+    return centerHz - spanHz / 2.0 + (sum / counted + 0.5) * spanHz / samples.size();
 }
 
 struct Ask {
@@ -225,7 +225,7 @@ struct Fixture {
     int stream = -1;
     double centre = 0.0;
     std::minstd_rand noise{20261010U};
-    // A carrier this far from the receiver's centre, when set.
+    // A carrier this far from the receiver's center, when set.
     std::optional<double> toneOffsetHz;
     double tonePhase = 0.0;
 
@@ -805,7 +805,7 @@ private slots:
     }
 
     // R-DISP-RETUNE. The operator drags the pan 12 kHz: the same span, the
-    // same sample counts, another centre. The Core's averaged trace carried
+    // same sample counts, another center. The Core's averaged trace carried
     // on, so before the keyframe of the new context arrives the pan still
     // has a trace and its waterfall history, its noise floor estimate has
     // not moved and the noise floor is still "received"; the peak hold,
@@ -903,9 +903,9 @@ private slots:
         f.finish();
     }
 
-    // R-DISP-RETUNE. The mini display is centred on its slice, so every
+    // R-DISP-RETUNE. The mini display is centered on its slice, so every
     // tuning step asks for its picture moved. It keeps its painted frame
-    // until the frames of the new centre arrive; taking the mini display
+    // until the frames of the new center arrive; taking the mini display
     // away still blanks it.
     void theMiniDisplayKeepsItsFrameThroughATuningStep()
     {
@@ -915,7 +915,7 @@ private slots:
         QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
         f.window->setMiniDisplaySlices({f.sliceId});
         QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
-        const double shownCentre = miniFrames.last().at(3).toDouble();
+        const double shownCenter = miniFrames.last().at(3).toDouble();
         const int miniAsked = f.miniAsks();
         unavailable.clear();
 
@@ -925,7 +925,7 @@ private slots:
         QVERIFY(f.run([&] {
             f.plan();
             return f.miniAsks() > miniAsked && !miniFrames.isEmpty()
-                && miniFrames.last().at(3).toDouble() != shownCentre;
+                && miniFrames.last().at(3).toDouble() != shownCenter;
         }));
         QVERIFY2(unavailable.isEmpty(),
                  qPrintable(QStringLiteral("the mini display was blanked %1 times by a "
@@ -1187,14 +1187,14 @@ private slots:
         };
         const std::optional<double> carrierAtStart = carrierHz();
         QVERIFY(carrierAtStart);
-        const double startCentre = f.widget->centerFrequency();
+        const double startCenter = f.widget->centerFrequency();
         const double width = f.widget->bandwidth();
         const double pixelHz = width / f.widget->renderedPixels().size();
         QVERIFY2(std::abs(std::abs(*carrierAtStart - f.centre) - 20000.0) <= 2.0 * pixelHz,
                  qPrintable(QStringLiteral("the carrier is drawn %1 Hz from the receiver's "
-                                           "centre").arg(*carrierAtStart - f.centre)));
+                                           "center").arg(*carrierAtStart - f.centre)));
         // Toward the carrier, so it stays in the pan.
-        const double direction = *carrierAtStart >= startCentre ? 1.0 : -1.0;
+        const double direction = *carrierAtStart >= startCenter ? 1.0 : -1.0;
         constexpr double kStepHz = 1000.0;
         constexpr int kSteps = 30;
 
@@ -1219,7 +1219,7 @@ private slots:
         for (int step = 1; step <= kSteps; ++step) {
             const double stepWidth = newPictureEachStep && step % 2 == 1 ? width - 600.0 : width;
             f.widget->setDisplayWindowPreservingHistory(
-                startCentre + direction * step * kStepHz, stepWidth);
+                startCenter + direction * step * kStepHz, stepWidth);
             // The answer to the step before arrives now, after this step,
             // and the window asks for this one.
             f.stationLink->setHoldsOutgoing(false);
@@ -1310,12 +1310,12 @@ private slots:
     }
 
     // R-DISP-RETUNE (third wave). The same for the mini display, which is
-    // centred on its slice: sixteen tuning steps of 500 Hz, each made before
+    // centered on its slice: sixteen tuning steps of 500 Hz, each made before
     // the context for the step before it has arrived, over the link that
     // delays frames as it delays answers.
     //
     // The Core states the picture: the mini display is never blanked, and it
-    // is given the frames of each context at that context's own centre and
+    // is given the frames of each context at that context's own center and
     // span, the carrier in them at its frequency. The Core states no
     // picture: it is blanked at every ask and given no frame until the
     // wheel stops.
@@ -1351,12 +1351,12 @@ private slots:
         QVERIFY2(std::abs(std::abs(*carrierAtStart - f.centre) - 6000.0)
                      <= 2.0 * sampleHzOf(miniFrames.last()),
                  qPrintable(QStringLiteral("the carrier is drawn %1 Hz from the receiver's "
-                                           "centre").arg(*carrierAtStart - f.centre)));
+                                           "center").arg(*carrierAtStart - f.centre)));
         const double direction = *carrierAtStart >= start ? 1.0 : -1.0;
-        const double centreBefore = miniFrames.last().at(3).toDouble();
+        const double centerBefore = miniFrames.last().at(3).toDouble();
         constexpr double kStepHz = 500.0;
         constexpr int kSteps = 16;
-        // The Core's crop is cut at bin edges: a centre is a step's to within
+        // The Core's crop is cut at bin edges: a center is a step's to within
         // a bin.
         constexpr double kBinToleranceHz = 50.0;
 
@@ -1383,10 +1383,10 @@ private slots:
             if (miniFrames.size() != framesAtStep) { ++stepsWithAFrame; }
             for (qsizetype i = framesAtStep; i < miniFrames.size(); ++i) {
                 const QList<QVariant>& frame = miniFrames.at(i);
-                // Its own frequencies: the centre of a step asked before
-                // this one, never the centre the slice now has.
+                // Its own frequencies: the center of a step asked before
+                // this one, never the center the slice now has.
                 const double stepsAlong =
-                    (frame.at(3).toDouble() - centreBefore) / (direction * kStepHz);
+                    (frame.at(3).toDouble() - centerBefore) / (direction * kStepHz);
                 const double nearest = std::round(stepsAlong);
                 if (nearest >= 1.0 && nearest <= double(step - 1)
                     && std::abs(stepsAlong - nearest) * kStepHz <= kBinToleranceHz) {
@@ -1417,7 +1417,7 @@ private slots:
         }));
         qInfo().noquote() << QStringLiteral(
             "R-DISP-RETUNE fast spin, mini display (%1): %2 steps of %3 Hz, %4 asks, blanked "
-            "%5 times; given %6 frames at the centre of an earlier step and %7 elsewhere, of "
+            "%5 times; given %6 frames at the center of an earlier step and %7 elsewhere, of "
             "%8 frames the Core sent for both displays in the spin; %9 steps gave a frame; "
             "the carrier at most %10 samples from its frequency")
             .arg(QString::fromUtf8(QTest::currentDataTag()))
@@ -1491,7 +1491,7 @@ private slots:
 
     // R-DISP-RETUNE (third wave). A Core that states no picture: the mini
     // display is blanked by a tuning step, as it was before the moved
-    // picture, and shows the frames of the new centre when they come.
+    // picture, and shows the frames of the new center when they come.
     void aMiniDisplayOfACoreThatStatesNoPictureIsBlankedByATuningStep()
     {
         Fixture f(/*withCore=*/true, /*statesPicture=*/false);
@@ -1500,7 +1500,7 @@ private slots:
         QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
         f.window->setMiniDisplaySlices({f.sliceId});
         QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
-        const double shownCentre = miniFrames.last().at(3).toDouble();
+        const double shownCenter = miniFrames.last().at(3).toDouble();
         const int miniAsked = f.miniAsks();
         unavailable.clear();
 
@@ -1510,7 +1510,7 @@ private slots:
         QVERIFY(f.run([&] {
             f.plan();
             return f.miniAsks() > miniAsked && !miniFrames.isEmpty()
-                && miniFrames.last().at(3).toDouble() != shownCentre;
+                && miniFrames.last().at(3).toDouble() != shownCenter;
         }));
         QVERIFY2(!unavailable.isEmpty(),
                  "a tuning step did not blank the mini display of a Core that states no "

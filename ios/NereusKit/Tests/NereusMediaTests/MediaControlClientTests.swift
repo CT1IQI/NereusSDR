@@ -1758,7 +1758,7 @@ import Testing
         await rig.deliver(ranged)
         #expect(await rig.client.displayExtras(endpointId: 1) == full)
 
-        // The pan tuned: the stream centre and the view centre moved together.
+        // The pan tuned: the stream center and the view center moved together.
         var tuned = Self.context(id, generation: 3, grant: true)
         tuned["centreHz"] = 14_101_000
         tuned["sourceCentreHz"] = 14_101_000

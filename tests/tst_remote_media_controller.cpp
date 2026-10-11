@@ -5707,7 +5707,7 @@ private slots:
         wideband.filterChainIndex = 0;
         wideband.adcRateHz = 4000000;
         const auto contextFor = [&](const QJsonObject& ask, int generation, int picture,
-                                    double centreHz, double spanHz) {
+                                    double centerHz, double spanHz) {
             return QJsonObject{
                 {QStringLiteral("op"), QStringLiteral("context")},
                 {QStringLiteral("connectionId"), ask.value(QStringLiteral("connectionId"))},
@@ -5718,7 +5718,7 @@ private slots:
                 {QStringLiteral("sourceStream"), 0},
                 {QStringLiteral("sourceCentreHz"), 14225000},
                 {QStringLiteral("sampleRateHz"), 192000},
-                {QStringLiteral("centreHz"), centreHz}, {QStringLiteral("spanHz"), spanHz},
+                {QStringLiteral("centreHz"), centerHz}, {QStringLiteral("spanHz"), spanHz},
                 {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
                 {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
                 {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
@@ -5773,12 +5773,12 @@ private slots:
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
         const QJsonObject third = lastControl(controls, QStringLiteral("subscribe"));
         const quint32 codecWhileAsking = widget->remoteCodecForTest().contextGeneration;
-        const double secondCentre = second.value(QStringLiteral("centreHz")).toDouble();
+        const double secondCenter = second.value(QStringLiteral("centreHz")).toDouble();
         const double secondSpan = second.value(QStringLiteral("spanHz")).toDouble();
 
         // The answer to the first step: picture 1 carried on. Its frames
         // are drawn; nothing else of the window moves.
-        QVERIFY(deliverContext(contextFor(second, 2, 1, secondCentre, secondSpan)));
+        QVERIFY(deliverContext(contextFor(second, 2, 1, secondCenter, secondSpan)));
         DisplayCodecEncoder encoder2;
         media->deliver(encoder2.encode(frameOf(2, -60.0f), true));
         QCOMPARE(frames.count(), 2);
@@ -5789,7 +5789,7 @@ private slots:
 
         // Another picture answering that earlier request: ignored. The
         // generation drawn is still drawn.
-        QVERIFY(deliverContext(contextFor(second, 3, 3, secondCentre, secondSpan)));
+        QVERIFY(deliverContext(contextFor(second, 3, 3, secondCenter, secondSpan)));
         DisplayCodecEncoder encoder3;
         media->deliver(encoder3.encode(frameOf(3, -20.0f), true));
         QCOMPARE(frames.count(), 2);
@@ -5799,11 +5799,11 @@ private slots:
 
         // Out of order: context 5 arrives, then context 4. The older one is
         // ignored.
-        QVERIFY(deliverContext(contextFor(second, 5, 1, secondCentre, secondSpan)));
+        QVERIFY(deliverContext(contextFor(second, 5, 1, secondCenter, secondSpan)));
         DisplayCodecEncoder encoder5;
         media->deliver(encoder5.encode(frameOf(5, -50.0f), true));
         QCOMPARE(frames.count(), 4);
-        QVERIFY(deliverContext(contextFor(second, 4, 1, secondCentre, secondSpan)));
+        QVERIFY(deliverContext(contextFor(second, 4, 1, secondCenter, secondSpan)));
         DisplayCodecEncoder encoder4;
         media->deliver(encoder4.encode(frameOf(4, -40.0f), true));
         QCOMPARE(frames.count(), 4);
@@ -5814,7 +5814,7 @@ private slots:
         // A frame of the generation drawn is missing: the keyframe is asked
         // for against that generation.
         QTest::qWait(250); // past the window's 200 ms keyframe-request spacing
-        QVERIFY(deliverContext(contextFor(second, 6, 1, secondCentre, secondSpan)));
+        QVERIFY(deliverContext(contextFor(second, 6, 1, secondCenter, secondSpan)));
         QCOMPARE(countControl(controls, QStringLiteral("keyframe")), 1);
         DisplayCodecEncoder encoder6;
         const QByteArray lost = encoder6.encode(frameOf(6, -45.0f), true);
@@ -5950,11 +5950,11 @@ private slots:
         wideband.physicalAdcIndex = 0;
         wideband.filterChainIndex = 0;
         wideband.adcRateHz = 4000000;
-        constexpr double kCentreHz = 14225023.4375;
+        constexpr double kCenterHz = 14225023.4375;
         constexpr double kSpanHz = 24046.875;
         // A context of picture 1 answering the pan's first request.
         const auto contextOf = [&](int generation, int sourceStream, bool transmit,
-                                   double centreHz) {
+                                   double centerHz) {
             return QJsonObject{
                 {QStringLiteral("op"), QStringLiteral("context")},
                 {QStringLiteral("connectionId"), first.value(QStringLiteral("connectionId"))},
@@ -5965,7 +5965,7 @@ private slots:
                 {QStringLiteral("sourceStream"), sourceStream},
                 {QStringLiteral("sourceCentreHz"), 14225000},
                 {QStringLiteral("sampleRateHz"), 192000},
-                {QStringLiteral("centreHz"), centreHz}, {QStringLiteral("spanHz"), kSpanHz},
+                {QStringLiteral("centreHz"), centerHz}, {QStringLiteral("spanHz"), kSpanHz},
                 {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
                 {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
                 {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -180},
@@ -6005,7 +6005,7 @@ private slots:
         };
 
         // The picture the pan shows: context 1, which starts picture 1.
-        QVERIFY(deliverContext(contextOf(1, 0, false, kCentreHz)));
+        QVERIFY(deliverContext(contextOf(1, 0, false, kCenterHz)));
         QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 1);
         QCOMPARE(widget->remoteCodecForTest().contextGeneration, quint32(1));
         media->deliver(keyframeOf(1, -100.0f));
@@ -6017,7 +6017,7 @@ private slots:
             // The Core's transmit display for this pan, answering the
             // request the pan has: taken, and its keyframe asked for.
             QTest::qWait(250); // past the window's 200 ms keyframe-request spacing
-            QVERIFY(deliverContext(contextOf(int(generation), 0, true, kCentreHz)));
+            QVERIFY(deliverContext(contextOf(int(generation), 0, true, kCenterHz)));
             QTRY_COMPARE(transmitContexts.count(), 1);
             QTRY_COMPARE(countControl(controls, QStringLiteral("keyframe")), 2);
             ++generation;
@@ -6041,13 +6041,13 @@ private slots:
         // The context of the row: picture 1, newer than the one drawn.
         const bool otherStream = rule == QLatin1String("other-stream");
         const bool transmitContext = rule == QLatin1String("transmit-context");
-        // 150 kHz above the receiver's centre is outside its 192 kHz of
+        // 150 kHz above the receiver's center is outside its 192 kHz of
         // samples: frequencies only the wideband source has, in a context
         // that says the wideband source is not running.
-        const double centreHz = rule == QLatin1String("wideband") ? kCentreHz + 150'000.0
-                                                                  : kCentreHz;
+        const double centerHz = rule == QLatin1String("wideband") ? kCenterHz + 150'000.0
+                                                                  : kCenterHz;
         QVERIFY(deliverContext(contextOf(int(generation), otherStream ? 1 : 0,
-                                         transmitContext, centreHz)));
+                                         transmitContext, centerHz)));
         media->deliver(keyframeOf(generation, -60.0f));
         QCOMPARE(frames.count(), 1);
         QCOMPARE(transmitFrames.count(), 0);
@@ -6061,7 +6061,7 @@ private slots:
             // Nothing else stood in the way: the same context without the
             // row's fault is drawn.
             ++generation;
-            QVERIFY(deliverContext(contextOf(int(generation), 0, false, kCentreHz)));
+            QVERIFY(deliverContext(contextOf(int(generation), 0, false, kCenterHz)));
             media->deliver(keyframeOf(generation, -40.0f));
             QCOMPARE(frames.count(), 2);
             QVERIFY(shows(-40.0f));

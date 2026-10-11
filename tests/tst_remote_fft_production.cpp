@@ -249,13 +249,13 @@ private slots:
     }
 
     // R-DISP-RETUNE. This test was centreRetuneResetsSameSizeRateInputHistory
-    // and pinned the opposite: that a centre change dropped the engine's
+    // and pinned the opposite: that a center change dropped the engine's
     // input history so the first frame after it held no old samples. The
     // operator's choice is now that the picture carries on through a retune
-    // as the local display does, so a centre-only update relabels the
+    // as the local display does, so a center-only update relabels the
     // running source. What it must still guarantee is in the assertions:
-    // no frame labelled with the old centre is handed out after the move.
-    void centreOnlyUpdateRelabelsTheRunningSource()
+    // no frame labeled with the old center is handed out after the move.
+    void centerOnlyUpdateRelabelsTheRunningSource()
     {
         DaemonSpectrumSource source;
         const MediaSourceKey key{0, FftTier::Wide};
@@ -280,8 +280,8 @@ private slots:
 
         DaemonSpectrumSourceUpdate result;
         QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0),
-                              DaemonSpectrumCentreMove::Relabel, &result));
-        QVERIFY(result.relabelled);
+                              DaemonSpectrumCenterMove::Relabel, &result));
+        QVERIFY(result.relabeled);
         QCOMPARE(result.fromGeneration, oldFrame->generation);
         QVERIFY(result.toGeneration > result.fromGeneration);
         // No restart: active at once, with no configuration under way.
@@ -291,7 +291,7 @@ private slots:
         QVERIFY(queue.active);
         QVERIFY(!queue.configurationPending);
         QCOMPARE(queue.generation, result.toGeneration);
-        // The old-centre frame is gone, so nothing can be configured from it.
+        // The old-center frame is gone, so nothing can be configured from it.
         QVERIFY(!source.takeLatest(key).has_value());
 
         // 798 more samples fill the window again (226 + 798 = 1024). A
@@ -314,7 +314,7 @@ private slots:
             ++triggers;
         }
         QVERIFY2(frames.count() > framesBefore,
-                 "the relabelled source lost its input history");
+                 "the relabeled source lost its input history");
         const auto retuned = source.takeLatest(key);
         QVERIFY(retuned.has_value());
         QCOMPARE(retuned->centreHz, 10100000.0);
@@ -331,14 +331,14 @@ private slots:
         QVERIFY(newPeak != oldPeak);
         QVERIFY2(retuned->binsLinear.at(oldPeak)
                      > retuned->binsLinear.at(newPeak) * 1.0e-4f,
-                 "the relabelled source dropped the overlap from before the move");
+                 "the relabeled source dropped the overlap from before the move");
     }
 
     // R-DISP-RETUNE: the relabel is the display's choice alone. A caller
     // that does not ask for it (the auto-AGC noise floor source, level
-    // calibration) gets what it had before: a centre change restarts the
+    // calibration) gets what it had before: a center change restarts the
     // source and empties the engine's input history, so the first frame
-    // under the new centre holds no sample from before the move.
+    // under the new center holds no sample from before the move.
     void centreRetuneResetsSameSizeRateInputHistory()
     {
         DaemonSpectrumSource source;
@@ -358,10 +358,10 @@ private slots:
         // Same FFT size and rate intentionally exercise the path where
         // setFftSize()/setSampleRate alone would retain FFTEngine overlap.
         DaemonSpectrumSourceUpdate result;
-        result.relabelled = true;
+        result.relabeled = true;
         QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0),
-                              DaemonSpectrumCentreMove::Restart, &result));
-        QVERIFY(!result.relabelled);
+                              DaemonSpectrumCenterMove::Restart, &result));
+        QVERIFY(!result.relabeled);
         QCOMPARE(result.fromGeneration, oldFrame->generation);
         QVERIFY(result.toGeneration > result.fromGeneration);
         QTRY_VERIFY(source.isActive(key));
@@ -403,23 +403,23 @@ private slots:
         QTest::newRow("FFT size") << QStringLiteral("fftSize");
         QTest::newRow("window") << QStringLiteral("window");
         QTest::newRow("decimation") << QStringLiteral("decimation");
-        QTest::newRow("sample rate and centre") << QStringLiteral("sampleRateAndCentre");
-        // One row for each field DaemonSpectrumSource::onlyCentreDiffers
-        // reads: a move of the centre that comes with any of them is not a
+        QTest::newRow("sample rate and center") << QStringLiteral("sampleRateAndCenter");
+        // One row for each field DaemonSpectrumSource::onlyCenterDiffers
+        // reads: a move of the center that comes with any of them is not a
         // relabel. Dropping a field from that function fails its row here.
-        QTest::newRow("frame rate and centre") << QStringLiteral("frameRateAndCentre");
-        QTest::newRow("FFT size and centre") << QStringLiteral("fftSizeAndCentre");
-        QTest::newRow("window and centre") << QStringLiteral("windowAndCentre");
-        QTest::newRow("bin target and centre") << QStringLiteral("binTargetAndCentre");
-        QTest::newRow("thread count and centre") << QStringLiteral("threadCountAndCentre");
-        QTest::newRow("queue capacity and centre")
-            << QStringLiteral("queueCapacityAndCentre");
-        QTest::newRow("transforms follow frame rate and centre")
-            << QStringLiteral("transformsFollowAndCentre");
-        QTest::newRow("decimation and centre") << QStringLiteral("decimationAndCentre");
+        QTest::newRow("frame rate and center") << QStringLiteral("frameRateAndCenter");
+        QTest::newRow("FFT size and center") << QStringLiteral("fftSizeAndCenter");
+        QTest::newRow("window and center") << QStringLiteral("windowAndCenter");
+        QTest::newRow("bin target and center") << QStringLiteral("binTargetAndCenter");
+        QTest::newRow("thread count and center") << QStringLiteral("threadCountAndCenter");
+        QTest::newRow("queue capacity and center")
+            << QStringLiteral("queueCapacityAndCenter");
+        QTest::newRow("transforms follow frame rate and center")
+            << QStringLiteral("transformsFollowAndCenter");
+        QTest::newRow("decimation and center") << QStringLiteral("decimationAndCenter");
     }
 
-    // R-DISP-RETUNE: only the centre is a label. Whatever changes what a
+    // R-DISP-RETUNE: only the center is a label. Whatever changes what a
     // bin holds restarts the source as before: the first frame after it is
     // made of new input alone.
     void anyOtherUpdateStillRestartsTheSource()
@@ -439,29 +439,29 @@ private slots:
         int feed = 1026;
         // A new tone that sits exactly on a bin of the restarted engine.
         double tone = 0.25;
-        if (change.endsWith(QLatin1String("AndCentre"))) {
+        if (change.endsWith(QLatin1String("AndCenter"))) {
             next.centreHz = 10100000.0;
         }
         if (change == QLatin1String("sampleRate")
-            || change == QLatin1String("sampleRateAndCentre")) {
+            || change == QLatin1String("sampleRateAndCenter")) {
             next.sampleRateHz = 96000.0;
-        } else if (change == QLatin1String("frameRateAndCentre")) {
+        } else if (change == QLatin1String("frameRateAndCenter")) {
             next.fft.fps = 30;
-        } else if (change == QLatin1String("binTargetAndCentre")) {
+        } else if (change == QLatin1String("binTargetAndCenter")) {
             // The width of a bin as it is, so the engine keeps its size.
             next.fft.hzPerBinTarget = 48000.0 / 1024.0;
-        } else if (change == QLatin1String("threadCountAndCentre")) {
+        } else if (change == QLatin1String("threadCountAndCenter")) {
             next.fft.threadCount += 1;
-        } else if (change == QLatin1String("queueCapacityAndCentre")) {
+        } else if (change == QLatin1String("queueCapacityAndCenter")) {
             next.maxPendingIqFloats = 16384;
-        } else if (change == QLatin1String("transformsFollowAndCentre")) {
+        } else if (change == QLatin1String("transformsFollowAndCenter")) {
             next.transformsFollowFrameRate = true;
         } else if (change == QLatin1String("fftSize")
-                   || change == QLatin1String("fftSizeAndCentre")) {
+                   || change == QLatin1String("fftSizeAndCenter")) {
             next.fft.fftSize = 2048;
             feed = 2050;
         } else if (change == QLatin1String("window")
-                   || change == QLatin1String("windowAndCentre")) {
+                   || change == QLatin1String("windowAndCenter")) {
             next.fft.windowType = static_cast<int>(WindowFunction::BlackmanHarris4);
         } else {
             next.decimation = 2;
@@ -471,9 +471,9 @@ private slots:
             tone = 0.1875;
         }
         DaemonSpectrumSourceUpdate result;
-        result.relabelled = true;
-        QVERIFY(source.update(key, next, DaemonSpectrumCentreMove::Relabel, &result));
-        QVERIFY(!result.relabelled);
+        result.relabeled = true;
+        QVERIFY(source.update(key, next, DaemonSpectrumCenterMove::Relabel, &result));
+        QVERIFY(!result.relabeled);
         QCOMPARE(result.fromGeneration, oldFrame->generation);
         QVERIFY(result.toGeneration > result.fromGeneration);
         QTRY_VERIFY(source.isActive(key));

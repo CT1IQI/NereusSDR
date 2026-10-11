@@ -682,10 +682,10 @@ private slots:
         constexpr double kSourceHz = 14'225'000.0;
         constexpr double kAskedSpanHz = 96000.0;
         quint32 generation = 0;
-        const auto answer = [&generation](double sourceHz, double viewCentreHz,
+        const auto answer = [&generation](double sourceHz, double viewCenterHz,
                                           double askedSpanHz) {
             ReducerConfig crop;
-            crop.centreHz = viewCentreHz;
+            crop.centreHz = viewCenterHz;
             crop.spanHz = askedSpanHz;
             crop.streamCentreHz = sourceHz;
             crop.sampleRateHz = kRateHz;
@@ -711,7 +711,7 @@ private slots:
         widget.setRemoteSpectrumContext(dragged, kSourceHz, kRateHz, kFftSize, true);
         QCOMPARE(widget.remoteContextPicture(), Picture::Moved);
 
-        // Three bins narrower at another centre under a retuned receiver. No
+        // Three bins narrower at another center under a retuned receiver. No
         // rule of the window's own would call this the same picture moved;
         // the Core carried it on, and that is all the window asks.
         SpectrumEndpointContext narrower =
