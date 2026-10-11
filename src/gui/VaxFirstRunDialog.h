@@ -24,6 +24,10 @@
 //                device catalogue and follows it live; "Rescan now"
 //                rescans the older drivers and lists again. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - the "new cables" notice names the system it runs on
+//                (systemBadgeText); it said WINDOWS on a Mac and on Linux.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 #include <QDialog>
@@ -33,6 +37,7 @@
 #include <QVector>
 
 #include "core/audio/VirtualCableDetector.h"
+#include "gui/setup/SoundSystemLine.h"
 
 class QPushButton;
 class QVBoxLayout;
@@ -65,6 +70,13 @@ public:
     // before listing again. Without an engine the dialog shows what it
     // was given and "Rescan now" scans once.
     void setAudioEngine(AudioEngine* engine);
+
+    // The header badge's word for a system: WINDOWS, MACOS or LINUX. The
+    // "new cables" notice (RescanNewCables) opens on every system, so its
+    // badge is this for the system it runs on; the other four scenarios
+    // belong to one system each. Pure, so every system's word is testable
+    // anywhere. The badge label is "platformBadge".
+    static QString systemBadgeText(SoundSystemLine::System system);
 
 #ifdef NEREUS_BUILD_TESTS
     // Test seam — returns the scenario this dialog was constructed for.
