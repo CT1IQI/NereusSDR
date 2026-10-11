@@ -1,5 +1,34 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-10: R-DISP-HOLD: a pan and the mini display hold the dBm
+//               range they asked the Core for while the scale and the
+//               waterfall levels lie inside it with no edge more than two
+//               headrooms out, and otherwise ask for what is needed plus
+//               a headroom, on whole dB (heldDbmWindow). A request for
+//               the view the Core last answered carries the view first
+//               asked for, so an unchanged view stays the same picture.
+//               The noise floor's received state is kept across a context
+//               for the same picture. planNowForTest. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: Bench fix (a Windows window on a remote Core lost
+//               microphone audio on every key): the microphone is
+//               collected by a real-time thread (MicUplinkCollector)
+//               while the capture lease is held, and the pump drains
+//               its queue instead of pulling the microphone on the GUI
+//               thread, where a stall longer than 30 ms lost the rest.
+//               setMicCollectorInlineForTest, collectMicNowForTest,
+//               pumpMicUplinkForTest. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-09: R-R3-44 load fix: setReceiverAudioClockForTest, the
+//               clock the receiver audio streams for apps on this computer
+//               stamp and release by, so a test running its source and
+//               devices on one clock runs their jitter hold on it too. No
+//               production caller; production is unchanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09: R-AUD-17, R-R3-36: the microphone drain also stops at a
+//               short pull, so it ends after what is waiting even with a
+//               reader that fills every pull.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Review fixes: a run that carried a program's audio stays
 //               off the microphone until the line stops or a screen key or
 //               VOX wants it (programRun), so the unkey edge never sends
@@ -175,6 +204,7 @@
 #include "core/AudioEngine.h"
 #include "core/Resampler.h"
 #include "core/audio/CaptureSupervisor.h"
+#include "core/audio/MicUplinkCollector.h"
 #include "core/session/PathRacer.h"
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/RemoteAudioReceiver.h"
@@ -227,6 +257,7 @@
 #include <QUuid>
 #include <QtEndian>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <deque>
 #include <limits>
@@ -509,12 +540,15 @@ struct RequestInputs {
     bool coreWaterfallLevels = false;
 };
 
-// Parity Task 17 follow-up (R-R3-01, R-R3-04): the headroom a waterfall
-// level set at run time (waterfall AGC, noise-floor AGC, Clarity) is given
-// in the dBm window, and twice it the slack the window keeps before it
-// narrows. Those levels move a little every line; the window follows them
-// only when they leave it or it is far wider than they need, so the Core
-// is not asked again at every line.
+// R-DISP-HOLD (was Parity Task 17 follow-up, R-R3-01, R-R3-04): the headroom
+// the dBm window keeps beyond what the pan needs, on each side, and twice it
+// the slack the window keeps before it narrows. The pan's scale (the grid
+// follower moves it 2 dB at a time) and the waterfall levels set at run time
+// (waterfall AGC, noise-floor AGC, Clarity, which move a little every line)
+// both move without the operator; the window follows them only when they
+// leave it or it is far wider than they need, so the Core is not asked again
+// for the same picture. The cost is 256 codec steps over a range 20 dB wider:
+// a 96 dB scale is coded in 0.45 dB steps instead of 0.38.
 constexpr double kRuntimeLevelHeadroomDb = 10.0;
 
 // How far below the pan's floor (or the stored low level, when lower) a
@@ -540,45 +574,6 @@ bool runtimeWaterfallLevels(const SpectrumWidget* widget)
         || widget->waterfallNFAGCEnabled();
 }
 
-// The waterfall levels the dBm window must hold: the stored levels while
-// they are what colours the waterfall; otherwise the levels in force now
-// (wfActiveLow/HighThreshold, which AGC and Clarity set) with headroom,
-// kept from `held` while they still fit it.
-// `panLowDbm` is the pan's own floor in the frame's values (liveDbmWindow).
-DbmWindow waterfallLevelsWindow(const SpectrumWidget* widget,
-                                const std::optional<DbmWindow>& held, double panLowDbm)
-{
-    const DbmWindow stored{double(widget->wfLowThreshold()), double(widget->wfHighThreshold())};
-    if (!runtimeWaterfallLevels(widget)) {
-        return stored;
-    }
-    // Core automatic levels and Clarity's floor come from the source
-    // before codec clamping. Only a local AGC following transported rows
-    // needs the reach cap to prevent clamped-floor feedback.
-    const auto coreLevels = widget->coreWaterfallLevelsInUse()
-        ? widget->coreWaterfallLevels() : std::nullopt;
-    double activeLow = coreLevels ? double(coreLevels->first)
-                                  : double(widget->wfActiveLowThreshold());
-    if (!coreLevels && !widget->clarityActive()) {
-        const double reach = std::floor(std::min(panLowDbm, stored.minDbm)
-                                        - kRuntimeLowLevelReachDb);
-        activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
-    }
-    const double high = coreLevels ? double(coreLevels->second)
-                                  : double(widget->wfActiveHighThreshold());
-    const double activeHigh = std::max(high, activeLow);
-    if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
-        return held.value_or(stored);
-    }
-    if (held && activeLow >= held->minDbm && activeHigh <= held->maxDbm
-        && held->minDbm >= activeLow - 2.0 * kRuntimeLevelHeadroomDb
-        && held->maxDbm <= activeHigh + 2.0 * kRuntimeLevelHeadroomDb) {
-        return *held;
-    }
-    return {std::floor(activeLow - kRuntimeLevelHeadroomDb),
-            std::ceil(activeHigh + kRuntimeLevelHeadroomDb)};
-}
-
 // The pan's own floor, in the frame's un-normalised values.
 double panLowDbm(const SpectrumWidget* widget, double binWidthHz)
 {
@@ -586,25 +581,111 @@ double panLowDbm(const SpectrumWidget* widget, double binWidthHz)
         - double(widget->dynamicRange());
 }
 
-DbmWindow liveDbmWindow(const SpectrumWidget* widget, double binWidthHz,
-                        const DbmWindow& levels)
+// The waterfall levels the dBm window must hold: the stored levels while
+// they are what colours the waterfall; otherwise the levels in force now
+// (wfActiveLow/HighThreshold, which AGC and Clarity set). Empty when the
+// levels in force are not finite.
+// `panLow` is the pan's own floor in the frame's values (panLowDbm).
+std::optional<DbmWindow> neededWaterfallLevels(const SpectrumWidget* widget, double panLow)
+{
+    const DbmWindow stored{double(widget->wfLowThreshold()), double(widget->wfHighThreshold())};
+    if (!runtimeWaterfallLevels(widget)) {
+        return stored;
+    }
+    // Core automatic levels and Clarity's floor come from the source
+    // before codec clamping. Only a local AGC following transported rows
+    // needs the reach cap to prevent clamped-floor feedback. The cap is on
+    // the window's edge, so the level it allows stands one headroom above
+    // the reach.
+    const auto coreLevels = widget->coreWaterfallLevelsInUse()
+        ? widget->coreWaterfallLevels() : std::nullopt;
+    double activeLow = coreLevels ? double(coreLevels->first)
+                                  : double(widget->wfActiveLowThreshold());
+    if (!coreLevels && !widget->clarityActive()) {
+        const double reach = std::floor(std::min(panLow, stored.minDbm)
+                                        - kRuntimeLowLevelReachDb);
+        activeLow = std::max(activeLow, reach + kRuntimeLevelHeadroomDb);
+    }
+    const double high = coreLevels ? double(coreLevels->second)
+                                  : double(widget->wfActiveHighThreshold());
+    const double activeHigh = std::max(high, activeLow);
+    if (!std::isfinite(activeLow) || !std::isfinite(activeHigh)) {
+        return std::nullopt;
+    }
+    return DbmWindow{activeLow, activeHigh};
+}
+
+// R-DISP-HOLD: what the pan needs coded now: its own dBm range (the grid's
+// top down by its dynamic range, less the normalise shift) joined with the
+// waterfall levels in force, inside the link's limits. The waterfall's
+// levels colour the frame's values directly, so no colour may clip at the
+// window's edge. Empty when the pan's range is not finite, or when its
+// run-time levels are not: the held window then stays.
+std::optional<DbmWindow> neededDbmWindow(const SpectrumWidget* widget, double binWidthHz)
 {
     const double shift = normalizeShiftDb(widget->normalizeActive(), binWidthHz);
     const double panHigh = double(widget->refLevel()) - shift;
     const double panLow = panLowDbm(widget, binWidthHz);
-    // Parity Task 17 follow-up: the waterfall's levels colour the frame's
-    // values directly, so the window holds the levels in force (the run-time
-    // ones with waterfall AGC or Clarity), and no colour clips at its edge.
-    double low = std::min(panLow, levels.minDbm);
-    double high = std::max(panHigh, levels.maxDbm);
+    const std::optional<DbmWindow> levels = neededWaterfallLevels(widget, panLow);
+    if (!levels) {
+        return std::nullopt;
+    }
+    double low = std::min(panLow, levels->minDbm);
+    double high = std::max(panHigh, levels->maxDbm);
+    if (!std::isfinite(low) || !std::isfinite(high)) {
+        return std::nullopt;
+    }
+    low = std::clamp(low, kMinDbmLimit, kMaxDbmLimit - 1.0);
+    high = std::clamp(high, low + 1.0, kMaxDbmLimit);
+    return DbmWindow{low, high};
+}
+
+// The window a pan with nothing held and nothing finite to need asks for:
+// its own range with the stored waterfall levels, or the link's default.
+DbmWindow fallbackDbmWindow(const SpectrumWidget* widget, double binWidthHz)
+{
+    const double shift = normalizeShiftDb(widget->normalizeActive(), binWidthHz);
+    double low = std::min(panLowDbm(widget, binWidthHz), double(widget->wfLowThreshold()));
+    double high = std::max(double(widget->refLevel()) - shift,
+                           double(widget->wfHighThreshold()));
     if (!std::isfinite(low) || !std::isfinite(high)) {
         return {};
     }
     low = std::clamp(low, kMinDbmLimit, kMaxDbmLimit - 1.0);
     high = std::clamp(high, low + 1.0, kMaxDbmLimit);
-    // Whole tenths of a dB: a window that differs by less than that paints
-    // the same, and must not ask the Core again.
-    return {std::floor(low * 10.0) / 10.0, std::ceil(high * 10.0) / 10.0};
+    return {low, high};
+}
+
+// R-DISP-HOLD: the one hold rule for the dBm window a pan asks the Core
+// for. The held window stays while what the pan needs lies inside it and
+// neither held edge is more than twice the headroom outside what it needs.
+// Otherwise the window is what the pan needs widened by the headroom on
+// each side, its edges on whole dB, inside the link's limits. A pan with
+// nothing held takes that at once.
+//
+// The window cannot walk or alternate: a new window stands at least one
+// headroom outside the need on each side and less than a headroom and one
+// dB (the rounding), so the need has to travel a headroom less one dB at
+// one edge before the rule asks again.
+DbmWindow widenedDbmWindow(const DbmWindow& needed)
+{
+    return {std::max(std::floor(needed.minDbm - kRuntimeLevelHeadroomDb), kMinDbmLimit),
+            std::min(std::ceil(needed.maxDbm + kRuntimeLevelHeadroomDb), kMaxDbmLimit)};
+}
+
+DbmWindow heldDbmWindow(const SpectrumWidget* widget, double binWidthHz,
+                        const std::optional<DbmWindow>& held)
+{
+    const std::optional<DbmWindow> needed = neededDbmWindow(widget, binWidthHz);
+    if (!needed) {
+        return held ? *held : widenedDbmWindow(fallbackDbmWindow(widget, binWidthHz));
+    }
+    if (held && needed->minDbm >= held->minDbm && needed->maxDbm <= held->maxDbm
+        && held->minDbm >= needed->minDbm - 2.0 * kRuntimeLevelHeadroomDb
+        && held->maxDbm <= needed->maxDbm + 2.0 * kRuntimeLevelHeadroomDb) {
+        return *held;
+    }
+    return widenedDbmWindow(*needed);
 }
 
 int requestedFps()
@@ -684,9 +765,7 @@ QJsonObject requestFor(SpectrumWidget* widget, SliceModel* slice,
         ? dssMaxRowSpanFactor(dssShapeForAngle(0)) : 0.0;
     const double binWidthHz = double(slice->sampleRateHz()) / size;
     const DbmWindow dbm = inputs.dbmWindow.value_or(
-        liveDbmWindow(widget, binWidthHz,
-                      waterfallLevelsWindow(widget, std::nullopt,
-                                            panLowDbm(widget, binWidthHz))));
+        heldDbmWindow(widget, binWidthHz, std::nullopt));
     QJsonObject request{{QStringLiteral("sliceId"), slice->sliceIndex()},
             {QStringLiteral("tier"), size > baseSize ? QStringLiteral("fine") : QStringLiteral("wide")},
             {QStringLiteral("fftSize"), size}, {QStringLiteral("windowType"), window},
@@ -897,6 +976,17 @@ struct RemoteMediaController::Private {
         bool askAgain = false;
         QJsonObject askedAgain;
         double sourceCentreHz = 0;
+        /// R-DISP-HOLD: the view this pan asked for and the bin-aligned view
+        /// the Core answered it with (zero until a receive context answers
+        /// the pan's latest ask). While the pan still shows the answered
+        /// view, a new ask (a new dBm range, say) carries the asked one
+        /// again, so the Core aligns it to the same bins: asking for the
+        /// answered view moved the upper edge out by one bin at every ask,
+        /// and made each ask a new picture.
+        double viewAskedCentreHz = 0;
+        double viewAskedSpanHz = 0;
+        double viewAnsweredCentreHz = 0;
+        double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
         QVector<float> lastMiniTrace;
         // R-R3-21 / R-R3-08: decoded frames waiting for their presentation
@@ -1037,15 +1127,20 @@ struct RemoteMediaController::Private {
     // Parity Task 17 (R-R3-01, R-R3-04): each pan's dBm window, settled
     // once it has held for a frame period so a drag of the dBm strip asks
     // the Core again when it stops, not at every step.
+    // R-DISP-HOLD: `settled` is the held window (heldDbmWindow), the one the
+    // pan's requests carry; `live` is what the hold rule gives now, which
+    // differs from it only once the pan needs a range the held one does not
+    // cover or is far narrower than.
     struct DbmWindowState {
         DbmWindow settled;
         DbmWindow live;
         qint64 liveSinceMs = 0;
-        // Parity Task 17 follow-up: the waterfall levels the window holds
-        // (waterfallLevelsWindow), kept while the run-time levels fit.
-        DbmWindow levels;
     };
     QHash<const SpectrumWidget*, DbmWindowState> dbmWindows;
+    // R-DISP-HOLD: the mini display's held window, by slice. It follows the
+    // same hold rule; it has no drag to wait out, so it is taken at once.
+    // Forgotten when the slice's mini display is no longer wanted.
+    mutable QHash<int, DbmWindow> miniDbmWindows;
 
     /// The request this window would send for the pan now: requestFor with
     /// the pan's settled dBm window and, for a Core at spectrumGrantVersion
@@ -1066,7 +1161,23 @@ struct RemoteMediaController::Private {
         }
         inputs.duplex = displayDuplexNegotiated && displayDuplex;
         inputs.coreWaterfallLevels = coreWaterfallLevelsAvailable();
-        return requestFor(widget, slice, client && client->remoteWidebandAvailable(), inputs);
+        QJsonObject built = requestFor(widget, slice,
+                                       client && client->remoteWidebandAvailable(), inputs);
+        if (built.isEmpty() || !widget) { return built; }
+        // R-DISP-HOLD: a pan still showing the view the Core answered asks
+        // for the view it asked before (see Binding::viewAskedCentreHz).
+        for (const auto& entry : bindings) {
+            const Binding& binding = entry.second;
+            if (binding.widget != widget || binding.isMini()) { continue; }
+            if (binding.viewAskedSpanHz > 0.0
+                && qFuzzyCompare(widget->centerFrequency(), binding.viewAnsweredCentreHz)
+                && qFuzzyCompare(widget->bandwidth(), binding.viewAnsweredSpanHz)) {
+                built.insert(QStringLiteral("centreHz"), binding.viewAskedCentreHz);
+                built.insert(QStringLiteral("spanHz"), binding.viewAskedSpanHz);
+            }
+            break;
+        }
+        return built;
     }
 
     /// JJ's ruling of 2026-09-28: the Core computes a pan's waterfall AGC
@@ -1102,11 +1213,16 @@ struct RemoteMediaController::Private {
             int(WindowFunction::Count) - 1);
         SpectrumWidget* source = miniSettingsWidget(stack, slice->sliceIndex());
         const double binWidthHz = double(slice->sampleRateHz()) / size;
-        const DbmWindow dbm = source
-            ? liveDbmWindow(source, binWidthHz,
-                waterfallLevelsWindow(source, std::nullopt,
-                    panLowDbm(source, binWidthHz)))
-            : DbmWindow{-140.0, -40.0};
+        DbmWindow dbm{-140.0, -40.0};
+        if (source) {
+            const auto held = miniDbmWindows.constFind(slice->sliceIndex());
+            dbm = heldDbmWindow(source, binWidthHz,
+                                held == miniDbmWindows.cend()
+                                    ? std::nullopt : std::optional<DbmWindow>(*held));
+            miniDbmWindows.insert(slice->sliceIndex(), dbm);
+        } else {
+            miniDbmWindows.remove(slice->sliceIndex());
+        }
         QJsonObject request{{QStringLiteral("sliceId"), slice->sliceIndex()},
             {QStringLiteral("tier"), size > base ? QStringLiteral("fine")
                                                   : QStringLiteral("wide")},
@@ -1137,13 +1253,18 @@ struct RemoteMediaController::Private {
         return request;
     }
 
-    /// Parity Task 17: brings each pan's dBm window up to date. A pan seen
-    /// for the first time takes its window at once; a changed window is
-    /// taken once it has held for a frame period of the pan's rate (the
-    /// planner's tick, kPlannerIntervalMs, is longer, so a range change
-    /// asks the Core again at most once a tick and a drag once it stops).
+    /// Parity Task 17, R-DISP-HOLD: brings each pan's dBm window up to date.
+    /// A pan seen for the first time takes its window (what it needs plus
+    /// headroom) at once. After that the held window stays while the hold
+    /// rule keeps it (heldDbmWindow); a window the rule replaces is taken
+    /// once it has held for a frame period of the pan's rate (the planner's
+    /// tick, kPlannerIntervalMs, is longer, so a range change asks the Core
+    /// again at most once a tick and a drag once it stops).
     void settleDbmWindows(qint64 now)
     {
+        for (auto it = miniDbmWindows.begin(); it != miniDbmWindows.end();) {
+            it = miniWanted.contains(it.key()) ? std::next(it) : miniDbmWindows.erase(it);
+        }
         if (!stack || !model) { return; }
         QSet<const SpectrumWidget*> seen;
         for (PanadapterApplet* applet : stack->allApplets()) {
@@ -1156,18 +1277,15 @@ struct RemoteMediaController::Private {
             seen.insert(widget);
             auto found = dbmWindows.find(widget);
             const double binWidthHz = double(slice->sampleRateHz()) / size;
-            const DbmWindow levels = waterfallLevelsWindow(
-                widget,
+            const DbmWindow live = heldDbmWindow(
+                widget, binWidthHz,
                 found == dbmWindows.end() ? std::nullopt
-                                          : std::optional<DbmWindow>(found->levels),
-                panLowDbm(widget, binWidthHz));
-            const DbmWindow live = liveDbmWindow(widget, binWidthHz, levels);
+                                          : std::optional<DbmWindow>(found->settled));
             if (found == dbmWindows.end()) {
-                dbmWindows.insert(widget, {live, live, now, levels});
+                dbmWindows.insert(widget, {live, live, now});
                 continue;
             }
             DbmWindowState& state = *found;
-            state.levels = levels;
             if (live != state.live) {
                 state.live = live;
                 state.liveSinceMs = now;
@@ -1324,6 +1442,8 @@ struct RemoteMediaController::Private {
     // released, so a test can order events against the step without
     // racing a real timer.
     bool audioRestartHeldForTest = false;
+    // R-R3-44: setReceiverAudioClockForTest; empty is the receiver's own.
+    RemoteAudioReceiver::Clock receiverAudioClockForTest;
     std::function<void()> heldAudioRestartStep;
     // R-R3-21: repeated restarts wait 1, 2, 4 s, reset by a healthy 10 s.
     RemoteAudioRestartBackoff audioRestartBackoff;
@@ -1403,6 +1523,16 @@ struct RemoteMediaController::Private {
     std::unique_ptr<RemoteMicEncoder> micEncoder;
     std::vector<float> micPending;
     std::vector<float> micScratch;
+    // 2026-10-10: the microphone's collector: its real-time thread pulls
+    // the microphone (AudioEngine::pullTxMic, whose one caller it is)
+    // while micLease is held, and the pump drains its queue. Made for
+    // micCollectorEngine on the first lease; stopped (joined) before the
+    // lease is released and before that engine goes.
+    std::unique_ptr<MicUplinkCollector> micCollector;
+    AudioEngine* micCollectorEngine = nullptr;
+    // What the collector had dropped when the line last started or
+    // reported: the rest is this key's.
+    quint64 micDroppedReported = 0;
     quint16 micSequence = 0;
     quint32 micTimestamp = 0;
     quint64 micPacketsSent = 0;
@@ -1757,6 +1887,16 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     connect(d->micTimer, &QTimer::timeout, this, &RemoteMediaController::reconcileMicUplink);
     d->micEncoder = std::make_unique<RemoteMicEncoder>();
     resetMicrophoneQuality();
+    // 2026-10-10: the collector's thread reads the model's audio engine;
+    // it is joined before the model deletes that engine (a child of the
+    // model, deleted after this signal).
+    if (model) {
+        connect(model, &QObject::destroyed, this, [this] {
+            stopMicCollector();
+            d->micCollector.reset();
+            d->micCollectorEngine = nullptr;
+        });
+    }
     d->micScratch.resize(static_cast<size_t>(RemoteMicConfig::kOpusFrameSamples));
     // Desktop remote transmit (R-IOS-13): the uplink's production callers.
     // The window's transmit client says when its key is down and when its
@@ -2648,7 +2788,15 @@ void RemoteMediaController::reconcileMicUplink()
         d->micLease = d->model->audioEngine()->acquireCaptureDemand(
             CaptureSupervisor::Demand::RemoteWindow);
     } else if (!captureWanted && !keepLease && leaseWasActive) {
+        // 2026-10-10: the collector is joined before its lease goes.
+        stopMicCollector();
         d->micLease.release();
+    }
+    // 2026-10-10: the collector runs exactly while the lease is held.
+    if (d->micLease.isActive()) {
+        startMicCollector(d->model->audioEngine());
+    } else {
+        stopMicCollector();
     }
     // Samples waiting before key-down belong to preview, even when the
     // key arrives between timer ticks. Drain them before sending fresh PCM.
@@ -2666,7 +2814,9 @@ void RemoteMediaController::reconcileMicUplink()
             // acquiring it from no demand starts a new generation by
             // itself. Both are read before the acquire.
             retryCapture = !programAudio && demandBefore && captureFailedBefore;
+            d->micDroppedReported = d->micCollector ? d->micCollector->droppedFrames() : 0;
         } else {
+            reportMicDropped();
             d->micPending.clear();
             d->programPending.clear();
             d->programUntilMs = -1;
@@ -2696,11 +2846,16 @@ void RemoteMediaController::reconcileMicUplink()
     // what the microphone captured meanwhile is drained and dropped.
     const qint64 nowMs = micNowMs();
     const bool program = nowMs < d->programUntilMs;
-    if (d->micLease.isActive()) {
-        AudioEngine* engine = d->model->audioEngine();
+    if (d->micLease.isActive() && d->micCollector) {
+        // 2026-10-10: the collector's thread pulled the microphone; this
+        // drains what it queued. (Inline, a test's collector has no thread
+        // and collects here, as this pump itself did before.)
+        if (!d->micCollector->isRunning()) {
+            d->micCollector->collectOnce();
+        }
         for (;;) {
-            const int got = engine->pullTxMic(d->micScratch.data(),
-                                              static_cast<int>(d->micScratch.size()));
+            const int got = d->micCollector->drain(d->micScratch.data(),
+                                                   static_cast<int>(d->micScratch.size()));
             if (got <= 0) {
                 break;
             }
@@ -2710,6 +2865,11 @@ void RemoteMediaController::reconcileMicUplink()
             if (d->micRunning && !starting && !program && !programAudio) {
                 d->micPending.insert(d->micPending.end(), d->micScratch.begin(),
                                      d->micScratch.begin() + got);
+            }
+            // A short block means nothing more is waiting.  [2026-10-10:
+            // the queue is finite, so this loop ends either way.]
+            if (got < static_cast<int>(d->micScratch.size())) {
+                break;
             }
         }
     }
@@ -2761,11 +2921,100 @@ bool RemoteMediaController::micCaptureLeaseHeldForTest() const
     return d->micLease.isActive();
 }
 
+namespace {
+// setMicCollectorInlineForTest.
+std::atomic<bool> g_micCollectorInlineForTest{false};
+}
+
+void RemoteMediaController::setMicCollectorInlineForTest(bool inlineMode)
+{
+    g_micCollectorInlineForTest.store(inlineMode, std::memory_order_release);
+}
+
+bool RemoteMediaController::micCollectorThreadRunningForTest() const
+{
+    return d->micCollector && d->micCollector->isRunning();
+}
+
+int RemoteMediaController::collectMicNowForTest()
+{
+    if (!d->micCollector || d->micCollector->isRunning() || !d->micLease.isActive()) {
+        return 0;
+    }
+    return d->micCollector->collectOnce();
+}
+
+void RemoteMediaController::pumpMicUplinkForTest()
+{
+    reconcileMicUplink();
+}
+
+void RemoteMediaController::startMicCollector(AudioEngine* engine)
+{
+    if (engine == nullptr) {
+        stopMicCollector();
+        return;
+    }
+    if (!d->micCollector || d->micCollectorEngine != engine) {
+        d->micCollector.reset();
+        d->micCollectorEngine = engine;
+        d->micCollector = std::make_unique<MicUplinkCollector>(
+            [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        d->micDroppedReported = 0;
+    }
+    if (g_micCollectorInlineForTest.load(std::memory_order_acquire)) {
+        // A test's collector has no thread: the pump (or collectMicNowForTest)
+        // collects inline. Production never comes here.
+        if (d->micCollector->isRunning()) {
+            d->micCollector->stop();
+        }
+        return;
+    }
+    if (!d->micCollector->isRunning()) {
+        d->micCollector->start();
+        qCInfo(lcRemoteMedia) << "Microphone collector thread started";
+    }
+}
+
+void RemoteMediaController::stopMicCollector()
+{
+    if (!d->micCollector) {
+        return;
+    }
+    const bool wasRunning = d->micCollector->isRunning();
+    const bool realtime = d->micCollector->realtimePriorityHeld();
+    // Joins the thread and discards what it queued: nothing collected under
+    // this lease follows into the next.
+    d->micCollector->stop();
+    if (wasRunning) {
+        qCInfo(lcRemoteMedia) << "Microphone collector thread stopped"
+                              << (realtime ? "(it ran at real-time audio priority)"
+                                           : "(the system gave it no real-time priority)");
+    }
+}
+
+void RemoteMediaController::reportMicDropped()
+{
+    const quint64 dropped = d->micCollector ? d->micCollector->droppedFrames() : 0;
+    if (dropped > d->micDroppedReported) {
+        const quint64 frames = dropped - d->micDroppedReported;
+        qCWarning(lcRemoteMedia) << "Microphone uplink: this window was too busy to send"
+                                 << (frames * 1000 / MicUplinkCollector::kSampleRate)
+                                 << "ms of microphone audio during this key; the oldest was dropped";
+    }
+    d->micDroppedReported = dropped;
+}
+
 void RemoteMediaController::dropMediaPeerForTest()
 {
     if (d->peer) {
         emit d->peer->closed();
     }
+}
+
+void RemoteMediaController::planNowForTest()
+{
+    refreshSubscriptions();
 }
 
 void RemoteMediaController::queueProgramSilence(qint64 nowMs)
@@ -3238,6 +3487,11 @@ void RemoteMediaController::stop()
     // Task 36: the microphone line goes with the media connection; the
     // capture helper closes.
     d->micTimer->stop();
+    // 2026-10-10: the collector is joined before its lease goes.
+    if (d->micRunning) {
+        reportMicDropped();
+    }
+    stopMicCollector();
     d->micLease.release();
     d->micRunning = false;
     d->micPending.clear();
@@ -3920,6 +4174,11 @@ void RemoteMediaController::holdAudioRestartForTest(bool held)
 bool RemoteMediaController::audioRestartStepHeldForTest() const
 {
     return bool(d->heldAudioRestartStep);
+}
+
+void RemoteMediaController::setReceiverAudioClockForTest(RemoteAudioReceiver::Clock clock)
+{
+    d->receiverAudioClockForTest = std::move(clock);
 }
 
 void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault)
@@ -5701,7 +5960,7 @@ std::shared_ptr<RemoteTciAudioStage> RemoteMediaController::requestReceiverAudio
                 for (IReceiverPcmSink* consumer : std::as_const(fanout->sinks)) {
                     consumer->receiverAudioBlock(fanout->sliceId, pcm, frames);
                 }
-            }, stream.tciStage});
+            }, stream.tciStage}, nullptr, d->receiverAudioClockForTest);
         RemoteAudioReceiver* const receiver = stream.receiver.get();
         connect(receiver, &RemoteAudioReceiver::restartRequested, this,
                 [this, sliceId, receiver](const QString& reason, RemoteAudioReceiver::Fault fault) {
@@ -6695,11 +6954,26 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     binding.contextRevision = revision;
     binding.sourceCentreHz = sourceCentre;
     binding.capture = {context, sourceCentre, rate};
+    {
+        // R-DISP-HOLD: the view asked and the view answered, when this
+        // context answers the pan's latest ask.
+        const QJsonObject& asked = budgetMode ? binding.acceptedRequest : binding.observed;
+        const bool answersLatest = revision
+            == (budgetMode ? binding.acceptedRevision : binding.revision);
+        const double askedSpan = asked.value(QStringLiteral("spanHz")).toDouble();
+        if (answersLatest && askedSpan > 0.0 && context.exactSpanHz > 0.0) {
+            binding.viewAskedCentreHz = asked.value(QStringLiteral("centreHz")).toDouble();
+            binding.viewAskedSpanHz = askedSpan;
+            binding.viewAnsweredCentreHz = context.exactCentreHz;
+            binding.viewAnsweredSpanHz = context.exactSpanHz;
+        } else {
+            binding.viewAskedSpanHz = 0.0;
+        }
+    }
     binding.decoder.reset();
     binding.presenter.restartChain();
     binding.accepted = true;
     binding.rejected = false;
-    binding.receivedNoiseFloor = false;
     binding.receivedFrameTimesMs.clear();
     const QPointer<RemoteMediaController> self(this);
     const QString connectionId = d->connectionId;
@@ -6711,8 +6985,20 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     const int grantedFftSize = decoded->grant ? decoded->grant->grantedFftSize
         : (budgetMode ? binding.acceptedRequest : binding.observed)
               .value(QStringLiteral("fftSize")).toInt();
-    binding.widget->setRemoteSpectrumContext(context, sourceCentre, rate, grantedFftSize);
+    // R-DISP-HOLD: the decoder and the presenter's chain are renewed for
+    // every context and a keyframe is asked for below. What the pan has
+    // drawn and measured is the widget's to keep or empty: it keeps it for
+    // a context of the picture it already shows (a new dBm range or frame
+    // rate), and empties it for a new picture.
+    const QPointer<SpectrumWidget> contextWidget = binding.widget;
+    contextWidget->setRemoteSpectrumContext(context, sourceCentre, rate, grantedFftSize);
     if (!self || d->connectionId != connectionId) { return; }
+    it = d->bindings.find(endpointId);
+    if (it != d->bindings.end() && it->second.contextRevision == acceptedContextRevision
+        && !(contextWidget && contextWidget->remoteContextKeptPicture())) {
+        // The Core's noise floor for a new picture has not arrived.
+        it->second.receivedNoiseFloor = false;
+    }
     // Show or clear this pan's grant line now rather than on the next refresh.
     refreshPanGrantStatus(panId);
     if (!self || d->connectionId != connectionId) { return; }

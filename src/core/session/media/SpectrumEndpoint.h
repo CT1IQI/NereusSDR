@@ -133,9 +133,15 @@ public:
                              double sourceCentreHz, double sourceSampleRateHz,
                              bool extendedView);
 
-    /// Validates and accepts a request against an active source. This clears
-    /// both reduction histories and output cadence. A failed request preserves
-    /// the previous accepted endpoint state.
+    /// Validates and accepts a request against an active source. The context,
+    /// the sequence and the output cadence always restart. A reduction history
+    /// restarts too unless its plane draws the same picture as before
+    /// (R-DISP-HOLD): same source and source generation, same FFT size, source
+    /// centre and sample rate, same ADC descriptor for an extended view, same
+    /// crop centre, span and pixel count, same detector and averaging mode.
+    /// The dBm range, frame rate, frames per line and averaging constant may
+    /// differ; a kept plane averages its next frame with the new constant.
+    /// A failed request preserves the previous accepted endpoint state.
     bool configure(const SpectrumEndpointRequest& request,
                    const SpectrumEndpointSourceContext& sourceContext);
 
@@ -161,6 +167,18 @@ public:
     /// newer than the last frame taken, or early).
     std::optional<qint64> outputDeadlineNs(qint64 producedAtNs) const;
 
+    /// Whether the last accepted configure kept that plane's averaged state.
+    bool tracePlaneKept() const { return m_tracePlaneKept; }
+    bool waterfallPlaneKept() const { return m_waterfallPlaneKept; }
+
+    /// Ends the accepted context and keeps the reduction histories for the
+    /// next configure to judge (R-DISP-HOLD). Until that configure the
+    /// endpoint is not configured and produces nothing, exactly as after
+    /// reset().
+    void awaitContext();
+
+    /// Ends the accepted context and drops both reduction histories: the
+    /// next configure starts a new picture.
     void reset();
 
 private:
@@ -170,6 +188,9 @@ private:
     bool m_configured {false};
     bool m_hasOverlap {false};
     bool m_extendedView {false};
+    bool m_planesHeld {false};
+    bool m_tracePlaneKept {false};
+    bool m_waterfallPlaneKept {false};
     SpectrumEndpointRequest m_request;
     SpectrumEndpointSourceContext m_sourceContext;
     SpectrumEndpointContext m_context;

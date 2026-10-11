@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-10 : R-DISP-HOLD: remoteContextKeptPicture() and
+//                 remoteCodecForTest(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-09 : DynamicOverlayRows and m_overlayDynamicRows, the GPU
 //                 dynamic overlay's row tracking, and spectrumRectForTest().
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -504,6 +507,11 @@ public:
     void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                   double sourceCentreHz, double sampleRateHz,
                                   int grantedFftSize = 0);
+    /// R-DISP-HOLD: whether the last context was for the picture the pan
+    /// already showed (same receiver and source geometry, same view, same
+    /// sample counts and wide row), so the pan kept its last frame, peak
+    /// hold, blobs and pending waterfall row. A new picture empties them.
+    bool remoteContextKeptPicture() const { return m_remoteContextKeptPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture);
@@ -1057,6 +1065,9 @@ public:
     // dssFloorDbm() directly so the floor-anchoring math is testable
     // without standing up the noise-floor pipeline.
     void setMeasuredNoiseFloorForTest(float dbm) { m_noiseFloor.setLerpAverage(dbm); }
+    // Test only (R-DISP-HOLD): the codec context of the remote display this
+    // pan accepts frames for (all zero while it accepts none).
+    const DisplayCodecContext& remoteCodecForTest() const { return m_remoteCodec; }
     // The spectrum's rect in the current layout (logical pixels), so a
     // native test can tell spectrum rows of a grabbed frame from the
     // frequency scale and waterfall rows below them.
@@ -3035,6 +3046,7 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
+    bool m_remoteContextKeptPicture{false};
     bool m_remoteWidebandAvailable{false};
     bool m_remoteWidebandActive{false};
     double m_remoteWidebandAdcRateHz{0.0};

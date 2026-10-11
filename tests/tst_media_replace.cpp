@@ -81,6 +81,7 @@
 #include <map>
 #include <memory>
 
+#include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/HpsdrModel.h"
@@ -144,14 +145,8 @@ public:
     bool acceptDescription(const QString&, const QString&) override { return true; }
     bool acceptCandidate(const QString&, const QString&) override { return true; }
     bool sendDisplay(const QByteArray&) override { return readyState; }
-    bool sendRtp(const QByteArray& packet) override
-    {
-        if (!readyState) {
-            return false;
-        }
-        rtpPackets.append(packet);
-        return true;
-    }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     std::optional<MediaIcePath> selectedPath() const override { return path; }
     void becomeReady()
@@ -163,10 +158,14 @@ public:
 
     bool started{false};
     bool stopped{false};
-    bool readyState{false};
+    // R-AUD-SEND: the Core sends audio from its sender thread, through the
+    // sink; what the sink took is read under its lock.
+    const std::shared_ptr<Test::RecordingRtpSink> rtpSink{
+        std::make_shared<Test::RecordingRtpSink>()};
+    std::atomic<bool>& readyState{rtpSink->ready};
+    Test::SharedPacketList& rtpPackets{rtpSink->packets};
     StartOptions startOptions{Role::Answerer, 0};
     std::optional<MediaIcePath> path;
-    QList<QByteArray> rtpPackets;
 };
 
 quint32 ssrcOf(const QByteArray& packet)
@@ -315,6 +314,12 @@ struct CoreHarness {
                 engine->rxBlockReady(slice, tone.constData(), kDspFrames);
             }
         }
+        // R-AUD-SEND: this thread stands in for the DSP thread and feeds no
+        // more after the last block. A block that completed while the
+        // sender thread was taking an earlier one stays with the capture
+        // bridge until the DSP thread's next callback; this is that
+        // hand-over, so every block fed is queued when feed() returns.
+        controller.handOverPendingAudioForTest();
     }
 };
 
