@@ -3245,6 +3245,180 @@ private slots:
         QTRY_VERIFY(!flagFor(h, bId)->isListening());
         QVERIFY(h.addSliceCommands().isEmpty());
     }
+
+    // A take of a slice on another band: the pan the window opens for it
+    // shows that band, while the slice is still placed as a listened one
+    // (the answer came before the access update) and after the update says
+    // this window controls it. The window's own pan stays where it was.
+    void remoteTakeLandsItsPanOnTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(1, QStringLiteral("1")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        const int bId = phonesSliceOnAnotherPan(h, phone);
+        QVERIFY(bId > 0);
+        constexpr double kOtherBandHz = 7'150'000.0;
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        SliceOwnership* ownership = h.station().sliceOwnership();
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* own = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(own);
+        const double ownCentre = own->centerFrequency();
+        QVERIFY(std::abs(ownCentre - kOtherBandHz) > own->bandwidth());
+        StationClient* client = h.client();
+        QTRY_VERIFY(client->sliceAccess()->entry(bId).has_value());
+
+        h.server().deviceSessions()->sessionEnded(phone, &phoneSession,
+                                                  DeviceSessionRegistry::EndKind::Dropped);
+        QTRY_COMPARE(client->sliceAccess()->entry(bId)->controlRevision,
+                     ownership->controlRevision(bId));
+        QTest::qWait(kSettleMs);
+        h.coreLink()->holdSliceAccessUpdates();
+        SliceChooser* chooser = openChooser(h);
+        QVERIFY(chooser);
+        QSignalSpy answered(client, &StationClient::deviceCommandFinished);
+        emit chooser->takeControlRequested(bId);
+        QTRY_VERIFY(!answered.isEmpty());
+        QVERIFY(answered.first().at(2).toBool());
+        QTRY_VERIFY(h.coreLink()->heldSliceAccessCount() > 0);
+        QTRY_COMPARE(stack->currentLayoutId(), QStringLiteral("2v"));
+        QTRY_VERIFY(stack->panadapter(QStringLiteral("pan-1"))->associatedSlices().contains(bId));
+        SpectrumWidget* opened = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(opened);
+        QTRY_VERIFY(h.remoteModel()->sliceById(bId)
+                    && h.remoteModel()->sliceById(bId)->frequency() == kOtherBandHz);
+        const auto showsTheSlice = [opened] {
+            return std::abs(opened->centerFrequency() - kOtherBandHz) <= opened->bandwidth() / 2.0;
+        };
+        QTRY_VERIFY2(showsTheSlice(),
+                     qPrintable(QStringLiteral("placed as listened: pan at %1 Hz, slice at %2 Hz")
+                                    .arg(opened->centerFrequency(), 0, 'f', 0)
+                                    .arg(kOtherBandHz, 0, 'f', 0)));
+
+        h.coreLink()->releaseSliceAccessUpdates();
+        QTRY_COMPARE(client->sliceAccess()->entry(bId)->controllerDeviceId,
+                     QStringLiteral("token:1"));
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->panKey(), QStringLiteral("pan-1"));
+        QTest::qWait(kSettleMs);
+        QVERIFY2(showsTheSlice(),
+                 qPrintable(QStringLiteral("controlled: pan at %1 Hz, slice at %2 Hz")
+                                .arg(opened->centerFrequency(), 0, 'f', 0)
+                                .arg(kOtherBandHz, 0, 'f', 0)));
+        QCOMPARE(own->centerFrequency(), ownCentre);
+    }
+
+    // A take of a slice whose pan this window also has: nothing is placed
+    // or grown (ruling U2), so nothing else moves that pan. It becomes the
+    // slice the pan shows and the pan's view moves onto it, even though the
+    // operator had moved that pan before.
+    void remoteTakeOfASliceOnAPanThisWindowHasShowsTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(1, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("2v"));
+        SpectrumWidget* shared = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(shared);
+        // The operator's own view of that pan, on a third band.
+        constexpr double kOperatorViewHz = 21'200'000.0;
+        constexpr double kOtherBandHz = 7'150'000.0;
+        shared->setCenterFrequency(kOperatorViewHz);
+
+        SliceOwnership* ownership = h.station().sliceOwnership();
+        const QByteArray self = QByteArrayLiteral("token:1");
+        const int bId = h.station().addSlice(QStringLiteral("pan-1"));
+        QVERIFY(bId > 0);
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        ownership->setOwner(bId, phone);
+        ownership->leave(self, bId);
+        StationClient* client = h.client();
+        QTRY_VERIFY(client->sliceAccess()->entry(bId).has_value()
+                    && client->sliceAccess()->entry(bId)->controllerDeviceId
+                           != QStringLiteral("token:1"));
+        h.server().deviceSessions()->sessionEnded(phone, &phoneSession,
+                                                  DeviceSessionRegistry::EndKind::Dropped);
+        QTRY_COMPARE(client->sliceAccess()->entry(bId)->controlRevision,
+                     ownership->controlRevision(bId));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(shared->centerFrequency(), kOperatorViewHz);
+
+        SliceChooser* chooser = openChooser(h);
+        QVERIFY(chooser);
+        emit chooser->takeControlRequested(bId);
+        QTRY_COMPARE(client->sliceAccess()->entry(bId)->controllerDeviceId,
+                     QStringLiteral("token:1"));
+        PanadapterApplet* pan = stack->panadapter(QStringLiteral("pan-1"));
+        QVERIFY(pan);
+        QTRY_VERIFY(pan->associatedSlices().contains(bId));
+        QTRY_VERIFY(flagFor(h, bId) && flagFor(h, bId)->parentWidget() == shared);
+        QTest::qWait(kSettleMs);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("2v"));
+        QCOMPARE(pan->activeSliceIndex(), bId);
+        QVERIFY2(std::abs(shared->centerFrequency() - kOtherBandHz) <= shared->bandwidth() / 2.0,
+                 qPrintable(QStringLiteral("pan at %1 Hz, slice at %2 Hz")
+                                .arg(shared->centerFrequency(), 0, 'f', 0)
+                                .arg(kOtherBandHz, 0, 'f', 0)));
+    }
+
+    // Two of this window's slices on one pan, the pan's view on the first.
+    // Selecting the second from the RX tabs makes it the slice the pan
+    // shows and moves the view onto it; selecting a slice the view already
+    // holds leaves the view where the operator put it.
+    void remoteSelectingASliceLetterTakesItsPanToTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("1")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        const int aId = 0;
+        const int bId = 1;
+        QTRY_VERIFY(h.remoteModel()->sliceById(aId) && h.remoteModel()->sliceById(bId));
+        constexpr double kOtherBandHz = 7'150'000.0;
+        h.station().sliceById(bId)->setPanKey(QStringLiteral("pan-0"));
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->panKey(), QStringLiteral("pan-0"));
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->frequency(), kOtherBandHz);
+        PanadapterApplet* pan = stack->panadapter(QStringLiteral("pan-0"));
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(pan && sw);
+        QTRY_VERIFY(pan->associatedSlices().contains(aId) && pan->associatedSlices().contains(bId));
+        auto* applet = h.window()->findChild<RxApplet*>();
+        QVERIFY(applet);
+        QTest::qWait(kSettleMs);
+
+        // The view on Slice A, Slice A selected.
+        const double aHz = h.remoteModel()->sliceById(aId)->frequency();
+        QVERIFY(std::abs(aHz - kOtherBandHz) > sw->bandwidth());
+        emit applet->sliceActivationRequested(aId);
+        QTRY_COMPARE(pan->activeSliceIndex(), aId);
+        sw->setDisplayWindowPreservingHistory(aHz, sw->bandwidth());
+        QTest::qWait(kSettleMs);
+        QVERIFY(std::abs(sw->centerFrequency() - aHz) <= sw->bandwidth() / 2.0);
+
+        emit applet->sliceActivationRequested(bId);
+        QTRY_COMPARE(pan->activeSliceIndex(), bId);
+        QTRY_VERIFY2(std::abs(sw->centerFrequency() - kOtherBandHz) <= sw->bandwidth() / 2.0,
+                     qPrintable(QStringLiteral("pan at %1 Hz, slice at %2 Hz")
+                                    .arg(sw->centerFrequency(), 0, 'f', 0)
+                                    .arg(kOtherBandHz, 0, 'f', 0)));
+
+        // A slice the view already holds: the operator's offset view stays.
+        const double offset = sw->bandwidth() / 4.0;
+        sw->setDisplayWindowPreservingHistory(kOtherBandHz + offset, sw->bandwidth());
+        emit applet->sliceActivationRequested(bId);
+        QTest::qWait(kSettleMs);
+        QCOMPARE(sw->centerFrequency(), kOtherBandHz + offset);
+    }
 };
 
 int main(int argc, char** argv)

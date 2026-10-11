@@ -42,6 +42,7 @@
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
 
+#include <cstdio>
 #include <QCoreApplication>
 #include <QFile>
 #include <QtEndian>
@@ -75,7 +76,7 @@ constexpr double kTwoPi = 6.283185307179586;
 constexpr int kToneFrames = 480;
 
 enum class Scenario {
-    Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
+    Ready, HangOpen, HangOpenAfterStep, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
     PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
     Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing
@@ -85,6 +86,7 @@ std::optional<Scenario> scenarioFromName(const QString& name)
 {
     if (name == QLatin1String("ready")) { return Scenario::Ready; }
     if (name == QLatin1String("hang-open")) { return Scenario::HangOpen; }
+    if (name == QLatin1String("hang-open-after-step")) { return Scenario::HangOpenAfterStep; }
     if (name == QLatin1String("no-hello")) { return Scenario::NoHello; }
     if (name == QLatin1String("permission-then-ready")) { return Scenario::PermissionThenReady; }
     if (name == QLatin1String("crash-after-ready")) { return Scenario::CrashAfterReady; }
@@ -473,6 +475,12 @@ private:
             sendStatus(m_generation, P::HelperState::Opening);
             m_ignoring = true;
             markHanging();
+            return;
+        case Scenario::HangOpenAfterStep:
+            sendStatus(m_generation, P::HelperState::Opening);
+            std::fprintf(stderr, "nereus-audio-capture: open step: devices listed at 12 ms\n");
+            std::fflush(stderr);
+            m_ignoring = true;
             return;
         case Scenario::PermissionThenReady:
             sendStatus(m_generation, P::HelperState::Permission);

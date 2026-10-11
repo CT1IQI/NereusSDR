@@ -686,6 +686,8 @@ private:
         }
 
         sendStatus(P::HelperState::Opening);
+        m_openStarted = Clock::now();
+        m_firstSamplesReported = true;
 
         // R-R3-21, R-AUD-32: a test run never makes an engine backend,
         // initialises PortAudio or opens a real device, the same decision
@@ -754,6 +756,7 @@ private:
     void openNative(AudioEngineKind engine)
     {
         IAudioEngineBackend* backend = backendFor(engine);
+        reportOpenStep("audio engine made");
         if (backend == nullptr) {
             sendFailure(P::FailReason::OpenFailed,
                         audioEngineLabel(engine) + QStringLiteral(" is not available here"));
@@ -770,6 +773,7 @@ private:
                 inputs.append(info);
             }
         }
+        reportOpenStep("devices listed");
 
         AudioStreamRequest request;
         request.direction = AudioDeviceDirection::Input;
@@ -853,6 +857,7 @@ private:
         if (busy) {
             m_streamEvent.store(kEventNone, std::memory_order_release);
         }
+        reportOpenStep("stream opened");
         const int rate = stream->sampleRate();
         const std::optional<std::int64_t> latencyNs = stream->inputLatencyNs();
         const int latencyUs = latencyNs && *latencyNs > 0
@@ -879,6 +884,7 @@ private:
             }
             m_paInitialized = true;
         }
+        reportOpenStep("PortAudio ready");
 
         auto bus = std::make_unique<PortAudioBus>();
         AudioFormat format;
@@ -927,6 +933,7 @@ private:
             sendFailure(reason, bus->errorString());
             return;
         }
+        reportOpenStep("stream opened");
         const int rate = bus->openedNativeRate();
         const int channels = bus->openedStreamChannels();
         const QString name = bus->openedDeviceName();
@@ -990,6 +997,21 @@ private:
         m_lastProgress = Clock::now();
         m_nextTick = m_lastProgress + kTickInterval;
         write(record);
+        reportOpenStep("ready sent");
+        m_firstSamplesReported = false;
+    }
+
+    // One stderr line per step of an open, with the time since the open
+    // began.  The window logs each and names the last one when its open
+    // deadline passes (CaptureSupervisor.cpp, kOpenStepMark), so a slow open
+    // says where its time went.
+    void reportOpenStep(const char* step)
+    {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - m_openStarted);
+        std::fprintf(stderr, "nereus-audio-capture: open step: %s at %lld ms\n", step,
+                     static_cast<long long>(elapsed.count()));
+        std::fflush(stderr);
     }
 
     void tick()
@@ -1022,6 +1044,10 @@ private:
         if (lastWrite != m_lastWriteNs) {
             m_lastWriteNs = lastWrite;
             m_lastProgress = now;
+            if (!m_firstSamplesReported) {
+                m_firstSamplesReported = true;
+                reportOpenStep("first samples");
+            }
         } else if (now - m_lastProgress >= kInputLostAfter) {
             qCWarning(lcAudio) << "capture helper: no input for 500 ms on generation"
                                << m_generation;
@@ -1449,6 +1475,8 @@ private:
     std::unique_ptr<PortAudioBus> m_bus;
     std::unique_ptr<IAudioInputStream> m_stream;
     std::int64_t m_lastWriteNs = 0;
+    Clock::time_point m_openStarted = Clock::now();
+    bool m_firstSamplesReported = true;
     Clock::time_point m_lastProgress;
     Clock::time_point m_nextTick;
     // ASIO.  The driver outlives the session; the session (declared last,
