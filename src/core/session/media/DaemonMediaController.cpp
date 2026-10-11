@@ -6565,6 +6565,18 @@ void DaemonMediaController::maybeLogAudioDiagnostics(bool final)
         return;
     }
     const DaemonAudioDiagnostics snapshot = snapshotAudioDiagnostics();
+    // R-AUD-SEND: how evenly the sender thread sent, in milliseconds to one
+    // decimal, -1 when fewer than two packets went: the longest gap between
+    // two consecutive packets since this context started, and since the
+    // previous line. Only a line really logged takes the second figure;
+    // snapshotAudioDiagnostics(), which others call too, never does.
+    const auto gapMs = [](qint64 gapUs) {
+        constexpr double kUsPerMs = 1000.0;
+        return gapUs < 0 ? QStringLiteral("-1")
+                         : QString::number(static_cast<double>(gapUs) / kUsPerMs, 'f', 1);
+    };
+    const qint64 gapSinceLastUs =
+        m_audioSender ? m_audioSender->takeLongestSendGapSinceTakenUs() : qint64{-1};
     qCInfo(lcDaemonMedia).nospace()
         << "daemon audio diagnostics " << (final ? "final" : "periodic")
         << " context=" << snapshot.contextGeneration
@@ -6587,6 +6599,8 @@ void DaemonMediaController::maybeLogAudioDiagnostics(bool final)
         << " sendRejected=" << snapshot.sendRejected
         << " sendInFlight=" << snapshot.sendInFlight
         << " sendUnresolvedAtRetirement=" << snapshot.sendUnresolvedAtRetirement
+        << " sendGapMaxMs=" << qPrintable(gapMs(snapshot.sender.longestSendGapUs))
+        << " sendGapMaxSinceLastMs=" << qPrintable(gapMs(gapSinceLastUs))
         << " hasLastPacket=" << snapshot.sender.hasLastEmittedPacket
         << " lastSequence=" << snapshot.sender.lastEmittedSequence
         << " lastTimestamp=" << snapshot.sender.lastEmittedTimestamp

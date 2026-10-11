@@ -92,6 +92,8 @@ bool DaemonAudioSender::start(quint32 ssrc, quint16 firstSequence,
     m_baseTimestamp = firstTimestamp;
     m_nextTimestamp = firstTimestamp;
     m_telemetry = {};
+    m_hasLastHandOver = false;
+    m_lastHandOverNs = 0;
     ++m_lifecycleGeneration;
     m_running = true;
     return true;
@@ -241,6 +243,28 @@ DaemonAudioSenderTelemetry DaemonAudioSender::telemetry() const noexcept
     return snapshot;
 }
 
+qint64 DaemonAudioSender::takeLongestSendGapSinceTakenUs() noexcept
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    return std::exchange(m_telemetry.longestSendGapSinceTakenUs, qint64{-1});
+}
+
+// The draining thread, with the mutex held, as a packet is handed to the
+// sink: one reading of the sender's monotonic clock per packet.
+void DaemonAudioSender::noteHandedOverLocked()
+{
+    constexpr qint64 kNsPerUs = 1000;
+    const qint64 now = m_pacingClock();
+    if (m_hasLastHandOver) {
+        const qint64 gapUs = (now - m_lastHandOverNs) / kNsPerUs;
+        m_telemetry.longestSendGapUs = std::max(m_telemetry.longestSendGapUs, gapUs);
+        m_telemetry.longestSendGapSinceTakenUs =
+            std::max(m_telemetry.longestSendGapSinceTakenUs, gapUs);
+    }
+    m_hasLastHandOver = true;
+    m_lastHandOverNs = now;
+}
+
 void DaemonAudioSender::drain()
 {
     quint64 drainGeneration = 0;
@@ -299,6 +323,7 @@ void DaemonAudioSender::drain()
             ++m_nextSequence;
             // Delivered under the mutex: stop() takes it, so nothing of
             // this epoch is delivered once stop() has returned.
+            noteHandedOverLocked();
             if (m_sink) {
                 m_sink(encoded.packet);
             }
@@ -383,6 +408,7 @@ void DaemonAudioSender::drainLossless(quint64 drainGeneration)
             ++sent;
             m_pacingAllowanceUnits -= kUnitsPerPacket;
             // Delivered under the mutex, as for Opus.
+            noteHandedOverLocked();
             if (m_sink) {
                 m_sink(next.packet);
             }

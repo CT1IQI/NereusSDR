@@ -23,8 +23,12 @@
 #include "models/RadioModel.h"
 
 #include <QPointer>
+#include <QRegularExpression>
+#include <QStringList>
 #include <QTemporaryDir>
 #include "fakes/UpgradedCoreToken.h"
+
+#include <mutex>
 
 using namespace NereusSDR;
 
@@ -95,6 +99,49 @@ QJsonObject audioControl(quint32 revision, bool enabled)
             {QStringLiteral("connectionId"), QLatin1String(kConnectionId)},
             {QStringLiteral("revision"), static_cast<qint64>(revision)},
             {QStringLiteral("enabled"), enabled}};
+}
+
+// The "daemon audio diagnostics" lines logged while one of these lives.
+class DiagnosticsLines final {
+public:
+    DiagnosticsLines()
+    {
+        s_lines = &m_lines;
+        m_previous = qInstallMessageHandler(&DiagnosticsLines::handle);
+    }
+    ~DiagnosticsLines()
+    {
+        qInstallMessageHandler(m_previous);
+        s_lines = nullptr;
+    }
+    DiagnosticsLines(const DiagnosticsLines&) = delete;
+    DiagnosticsLines& operator=(const DiagnosticsLines&) = delete;
+    QStringList lines() const
+    {
+        const std::lock_guard<std::mutex> lock(s_mutex);
+        return m_lines;
+    }
+
+private:
+    static void handle(QtMsgType, const QMessageLogContext&, const QString& message)
+    {
+        const std::lock_guard<std::mutex> lock(s_mutex);
+        if (s_lines != nullptr && message.contains(QLatin1String("daemon audio diagnostics "))) {
+            s_lines->append(message);
+        }
+    }
+    static inline std::mutex s_mutex;
+    static inline QStringList* s_lines = nullptr;
+    QStringList m_lines;
+    QtMessageHandler m_previous = nullptr;
+};
+
+// One field of a diagnostics line, as its text.
+QString diagnosticsField(const QString& line, const QString& name)
+{
+    const QRegularExpressionMatch match =
+        QRegularExpression(QStringLiteral(" %1=(\\S+)").arg(name)).match(line);
+    return match.hasMatch() ? match.captured(1) : QString();
 }
 
 QJsonObject latestAudioContext(const QSignalSpy& controls)
@@ -384,6 +431,86 @@ private slots:
         QCOMPARE(diagnostics.sendAttempts, std::uint64_t{0});
         QCOMPARE(diagnostics.sendRejected, std::uint64_t{0});
         QVERIFY(h.mediaTransport->rtpPackets.isEmpty());
+    }
+
+    // R-AUD-SEND: the diagnostics line says how evenly the sender thread
+    // sent: the longest gap between two packets since the context started
+    // and since the previous line, in milliseconds to one decimal, after
+    // sendUnresolvedAtRetirement. Reading the diagnostics for another
+    // purpose does not take the second figure; a line that is logged does,
+    // so one gap is reported as "since the previous line" exactly once.
+    void theDiagnosticsLineReportsTheLongestSendGap()
+    {
+        constexpr int kLineDeadlineMs = 20'000;
+        const QString none = QStringLiteral("-1");
+        const QString sinceStart = QStringLiteral("sendGapMaxMs");
+        const QString sinceLast = QStringLiteral("sendGapMaxSinceLastMs");
+        Harness h;
+        h.establishAndReady();
+        DiagnosticsLines log;
+
+        // A context with one packet: no gap was measured, in any line.
+        QVERIFY(h.client.sendMediaControl(audioControl(1, true), h.client.sessionEpoch()));
+        QTRY_VERIFY(h.controller.audioDiagnostics().activeContext);
+        h.feedMixed(DaemonAudioSource::kBlockFrames);
+        QTRY_COMPARE(h.mediaTransport->rtpPackets.size(), 1);
+        QVERIFY(h.client.sendMediaControl(audioControl(2, false), h.client.sessionEpoch()));
+        QTRY_VERIFY(!h.controller.audioDiagnostics().activeContext);
+        const QStringList single = log.lines();
+        QVERIFY(!single.isEmpty());
+        QVERIFY(single.constLast().contains(QLatin1String("diagnostics final ")));
+        for (const QString& line : single) {
+            QVERIFY2(line.contains(QLatin1String(
+                         " sendUnresolvedAtRetirement=0 sendGapMaxMs=-1 sendGapMaxSinceLastMs=-1 "
+                         "hasLastPacket=")),
+                     qPrintable(line));
+        }
+
+        // A context with two packets has one gap.
+        const qsizetype firstOfPair = single.size();
+        QVERIFY(h.client.sendMediaControl(audioControl(3, true), h.client.sessionEpoch()));
+        QTRY_VERIFY(h.controller.audioDiagnostics().activeContext);
+        h.feedMixed(DaemonAudioSource::kBlockFrames);
+        QTRY_COMPARE(h.mediaTransport->rtpPackets.size(), 2);
+        h.feedMixed(DaemonAudioSource::kBlockFrames);
+        QTRY_COMPARE(h.mediaTransport->rtpPackets.size(), 3);
+        // Read for another purpose, more than once: that takes nothing.
+        const qint64 gapUs = h.controller.audioDiagnostics().sender.longestSendGapUs;
+        QVERIFY(gapUs >= 0);
+        QCOMPARE(h.controller.audioDiagnostics().sender.longestSendGapUs, gapUs);
+        const QString expected = QString::number(double(gapUs) / 1000.0, 'f', 1);
+        QVERIFY2(QRegularExpression(QStringLiteral("^\\d+\\.\\d$")).match(expected).hasMatch(),
+                 qPrintable(expected));
+
+        // A periodic line after the gap, then the final one. Nothing was
+        // sent between them, so the final line has no gap since the last.
+        const qsizetype afterTheGap = log.lines().size();
+        QTRY_VERIFY_WITH_TIMEOUT(log.lines().size() > afterTheGap, kLineDeadlineMs);
+        QVERIFY(h.client.sendMediaControl(audioControl(4, false), h.client.sessionEpoch()));
+        QTRY_VERIFY(!h.controller.audioDiagnostics().activeContext);
+        const QStringList lines = log.lines();
+        QVERIFY(lines.constLast().contains(QLatin1String("diagnostics final ")));
+        int linesWithTheGapSinceLast = 0;
+        for (qsizetype i = firstOfPair; i < lines.size(); ++i) {
+            const QString& line = lines.at(i);
+            QVERIFY2(line.contains(QRegularExpression(QStringLiteral(
+                         " sendUnresolvedAtRetirement=\\d+ sendGapMaxMs=\\S+ "
+                         "sendGapMaxSinceLastMs=\\S+ hasLastPacket="))),
+                     qPrintable(line));
+            const QString last = diagnosticsField(line, sinceLast);
+            if (last == expected) {
+                ++linesWithTheGapSinceLast;
+            } else {
+                QVERIFY2(last == none, qPrintable(line));
+            }
+            if (i >= afterTheGap) {
+                QCOMPARE(diagnosticsField(line, sinceStart), expected);
+            }
+        }
+        QCOMPARE(linesWithTheGapSinceLast, 1);
+        QCOMPARE(diagnosticsField(lines.at(afterTheGap), sinceLast), expected);
+        QCOMPARE(diagnosticsField(lines.constLast(), sinceLast), none);
+        QCOMPARE(h.controller.audioDiagnostics().sender.longestSendGapUs, gapUs);
     }
 
     // R-AUD-SEND: a ready transport that will not take a packet. That is a
