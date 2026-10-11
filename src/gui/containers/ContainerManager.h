@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - windowIsHome's `restoring`: the header rule is for a place
+//                 the app restores, never one the operator just dropped;
+//                 m_documentSizing, sizesWindowDifferently. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - headerReachable: a window is at home only where its
 //                 header is on a screen. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -507,11 +511,17 @@ private:
     QRect nearestClearFreeRect(const QRect& wanted, const QString& exceptId) const;
     // True when a floating window can be shown at its remembered place:
     // its monitor is here (or, with none saved, the place is on a screen)
-    // and its header can be reached there.
-    bool windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const;
-    // True when enough of the header of a window at `remembered` is on a
-    // present screen to take hold of.
+    // and, when the app is `restoring` the place (start-up, a monitor
+    // added, removed or changed, a layout loaded), its header can be
+    // reached there. A place the operator's own drop or resize just
+    // committed is not judged by its header.
+    bool windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen, bool restoring) const;
+    // True when enough of the header of a window at `remembered` is on the
+    // usable area of a present screen to take hold of.
     bool headerReachable(const QRect& remembered) const;
+    // True when `now` sizes a window differently from `before` with its
+    // geometry left alone.
+    static bool sizesWindowDifferently(const ContainerDocument& before, const ContainerDocument& now);
     // Where a window that cannot be shown at its remembered place goes.
     QRect displacedWindowRect(const QString& id, const QRect& remembered,
                               const std::optional<SavedScreen>& screen, const QSize& size) const;
@@ -520,9 +530,10 @@ private:
     // from its place on a present screen. `fromDocument`: a commit just
     // placed the window, so one that is home is put at its place; false
     // for a commit that left its place and monitor as they were.
+    // `restoring`: see windowIsHome.
     void placeFloatingWindow(const QString& id, const QRect& remembered,
                              const std::optional<SavedScreen>& screen, FloatingContainer* form,
-                             bool fromDocument);
+                             bool fromDocument, bool restoring);
     // `wanted` on `screen`, off every other visible container's top-left.
     QRect windowRectOn(const QRect& wanted, const ScreenInfo& screen, const QString& exceptId) const;
     ScreenInfo mainWindowScreen() const;
@@ -533,6 +544,8 @@ private:
     QMap<QString, std::optional<SavedScreen>> m_rememberedScreen;
     // Each window's monitor in the document last reconciled.
     QMap<QString, std::optional<SavedScreen>> m_documentScreen;
+    // Each container in the document last reconciled, for what sizes it.
+    QMap<QString, ContainerDocument> m_documentSizing;
     // Floating windows shown away from their remembered place.
     QSet<QString> m_displaced;
     QString m_storageError;

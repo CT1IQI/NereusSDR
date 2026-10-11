@@ -402,12 +402,16 @@ Startup:
   removed does not re-place windows.
 * Review fixes, 2026-10-11, with the look on and off. Of two monitors that
   report one serial, a window's is the one with the saved geometry, else
-  the one its remembered place is on. A window is at its place only when at
-  least 48 px of its header's width and half its height are on a screen;
-  otherwise it is shown on the screen and keeps its saved place. A save
-  that does not change a window's place or monitor leaves the window where
-  it is, so a window the system moved with no drag does not jump back; that
-  move is still not remembered.
+  the one its remembered place is on. A place the app restores (start-up, a
+  monitor change, a layout loaded) is used only when at least 48 px of the
+  window's header width and half its height are on a screen's usable area
+  (clear of the system's bars); otherwise the window is shown on the screen
+  and keeps its saved place. A place the operator drops or resizes a window
+  to is never judged that way: it stays there. A save that does not change
+  a window's place or monitor leaves the window where it is, so a window
+  the system moved with no drag does not jump back; that move is still not
+  remembered. A save that changes what sizes a window (auto height, its
+  content, layout or header) sizes it from the saved geometry.
 
 Evidence is in the capture run and gallery of 2026-10-11 (real renders at
 both profiles; they replace the mock-ups below as evidence). Still owed:

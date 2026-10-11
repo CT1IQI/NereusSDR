@@ -368,6 +368,112 @@ private slots:
         QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
     }
 
+    // The header rule is for a place the app restores. Where the operator
+    // drops a window is theirs, however little of it is left on a screen.
+    void aWindowDroppedWithASliverOnScreenStaysWhereItWasDropped_data()
+    {
+        QTest::addColumn<bool>("lookOn");
+        QTest::newRow("look off") << false;
+        QTest::newRow("look on") << true;
+    }
+    void aWindowDroppedWithASliverOnScreenStaysWhereItWasDropped()
+    {
+        QFETCH(bool, lookOn);
+        WorkspacePreview::setEnabledForTest(lookOn);
+        const QRect start(300, 300, 400, 300);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("sliver.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("a"), start, savedScreenOf(screenA()))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {screenA()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QCOMPARE(rig.window(QStringLiteral("a")), start);
+
+        // 20 px of the header are left on the only screen.
+        const QRect dropped(QPoint(kScreenARect.right() + 1 - 20, 300), kWindowSize);
+        QWidget* form = rig.manager->container(QStringLiteral("a"))->window();
+        form->move(dropped.topLeft());
+        rig.manager->rememberOperatorGeometry(QStringLiteral("a"));
+        QTRY_COMPARE_WITH_TIMEOUT(stored(store, QStringLiteral("a")).geometry, dropped, kSaveTimeoutMs);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(rig.window(QStringLiteral("a")), dropped);
+        QCOMPARE(stored(store, QStringLiteral("a")).screen, std::optional<SavedScreen>(savedScreenOf(screenA())));
+
+        // Nor does a save of something else move it afterwards.
+        WorkspaceDocument draft = store.snapshot();
+        draft.containers[0].config[QStringLiteral("showOnTx")] = false;
+        QCOMPARE(rig.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(rig.window(QStringLiteral("a")), dropped);
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, dropped);
+    }
+
+    // A header wholly under the system's own bar cannot be taken hold of.
+    void aWindowWhoseHeaderIsUnderTheSystemBarIsShownClearOfIt()
+    {
+        // A 50 px taskbar along the bottom of the screen.
+        const QRect usable = kScreenARect.adjusted(0, 0, 0, -50);
+        const ScreenInfo present{QStringLiteral("A"), QString(), kScreenARect, usable};
+        const QRect place(500, 1040, 400, 300);
+        QVERIFY(kScreenARect.contains(QRect(place.topLeft(), QSize(place.width(), 22))));
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("bar.settings")));
+        ContainerWorkspaceStore store(settings);
+        QCOMPARE(store.commit(workspace({floatingContainer(QStringLiteral("a"), place, savedScreenOf(present))}), 0)
+                     .status,
+                 CommitStatus::Saved);
+        const QByteArray before = ContainerDocumentCodec::encode(store.snapshot());
+        FakeScreens screens;
+        screens.list = {present};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        const QRect shown = rig.window(QStringLiteral("a"));
+        qInfo() << "header under the bar, shown at:" << shown;
+        QVERIFY2(usable.contains(shown), "shown clear of the system bar");
+        QVERIFY(rig.settleCapture());
+        rig.manager->saveState();
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+    }
+
+    // A save that changes what sizes a window (auto height switched off
+    // here) sizes it from the document though its place did not change.
+    void turningAutoHeightOffReturnsAWindowToItsDocumentSize()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("auto-height.settings")));
+        ContainerWorkspaceStore store(settings);
+        ContainerDocument container = floatingContainer(QStringLiteral("a"), kOnB, savedScreenOf(screenB()));
+        container.autoHeight = true;
+        QCOMPARE(store.commit(workspace({container}), 0).status, CommitStatus::Saved);
+        FakeScreens screens;
+        screens.list = {screenA(), screenB()};
+        Rig rig(store, screens);
+        rig.manager->restoreState();
+        QVERIFY(rig.show());
+        QVERIFY(rig.settleCapture());
+        // Auto height fits the window to its (empty) content.
+        QVERIFY2(rig.window(QStringLiteral("a")).height() < kOnB.height(),
+                 qPrintable(QStringLiteral("height %1").arg(rig.window(QStringLiteral("a")).height())));
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, kOnB);
+
+        WorkspaceDocument draft = store.snapshot();
+        draft.containers[0].autoHeight = false;
+        QCOMPARE(rig.manager->commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(rig.window(QStringLiteral("a")), kOnB);
+        QCOMPARE(stored(store, QStringLiteral("a")).geometry, kOnB);
+    }
+
     // The system can move a window with no drag (a snap, a display
     // rearranged). That is not remembered, and a save of something else
     // does not put the window back mid-session.

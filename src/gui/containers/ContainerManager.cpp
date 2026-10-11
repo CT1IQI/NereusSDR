@@ -7,6 +7,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Both looks: the header rule judges only a place the app
+//                 restores (start-up, a monitor change, a layout loaded),
+//                 never the place the operator's own drop or resize just
+//                 committed, and it reads the screen's usable area. A
+//                 commit that changes what sizes a window (auto height,
+//                 content, layout, header) sizes it from the document
+//                 though its place did not change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Both looks: a window is at home only where its header can
 //                 be reached (headerReachable); one whose rect touches its
 //                 screen with the header off it, as after a drop in
@@ -387,6 +395,7 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_rememberedPane.clear();
     m_documentPane.clear();
     m_documentScreen.clear();
+    m_documentSizing.clear();
     m_interactionStart.clear();
     m_provisionalPane.clear();
     m_rememberedScreen.clear();
@@ -739,6 +748,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_rememberedPane.remove(id);
             m_documentPane.remove(id);
             m_documentScreen.remove(id);
+            m_documentSizing.remove(id);
             m_interactionStart.remove(id);
             m_provisionalPane.remove(id);
             m_rememberedScreen.remove(id);
@@ -764,6 +774,17 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             || !m_documentGeometry.contains(d.id) || m_documentGeometry.value(d.id) != d.geometry
             || m_documentScreen.value(d.id) != d.screen
             || m_rememberedGeometry.value(d.id, d.geometry) != d.geometry;
+        // Its size comes from the document then too, and when the commit
+        // changed something else that sizes a window with its geometry
+        // left alone (auto height switched, its content, layout or header).
+        const bool windowSized = windowPlaced || !m_documentSizing.contains(d.id)
+            || sizesWindowDifferently(m_documentSizing.value(d.id), d);
+        // The place the operator's own drop or resize just committed: the
+        // window is already there. It is theirs however little of it is on
+        // a screen, so it is not judged as a place the app restores.
+        const FloatingContainer* shownForm = c && c->isFloating() ? m_floatingForms.value(d.id) : nullptr;
+        const bool atDocumentPlace = shownForm && d.dockMode == DockMode::Floating
+            && shownForm->pos() == d.geometry.topLeft();
         if (preserveGeometry) {
             m_pendingGeometry.insert(d.id);
         } else {
@@ -942,7 +963,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             // height is known; a free or docked container takes its rect.
             if (d.geometry.isValid()) {
                 if (d.dockMode == DockMode::Floating) {
-                    if (windowPlaced) {
+                    if (windowSized) {
                         form->resize(d.geometry.size());
                     }
                 } else {
@@ -1036,7 +1057,10 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (d.dockMode == DockMode::Floating && !preserveGeometry) {
             // At its remembered place when its monitor is here; otherwise on
             // the main window's screen, and nothing is remembered for that.
-            placeFloatingWindow(d.id, d.geometry, d.screen, form, windowPlaced);
+            // A window already shown away from its place stays judged as
+            // one the app is restoring.
+            const bool restoring = m_displaced.contains(d.id) || (windowPlaced && !atDocumentPlace);
+            placeFloatingWindow(d.id, d.geometry, d.screen, form, windowPlaced, restoring);
         }
         // A free container is shown by placeFreeContainers() below, from its
         // remembered place; nothing is clamped into that place here.
@@ -1050,6 +1074,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         m_documentGeometry[d.id] = d.geometry;
         m_documentPane[d.id] = d.geometryPane;
         m_documentScreen[d.id] = d.screen;
+        m_documentSizing[d.id] = d;
     }
     if (edgeMode()) {
         layoutEdgeStrips(document);
@@ -2294,7 +2319,7 @@ int ContainerManager::availableHeightFor(const QWidget* target) const
 
 std::optional<SavedScreen> ContainerManager::screenForNewWindow(const QRect& geometry) const
 {
-    if (!windowIsHome(geometry, std::nullopt)) {
+    if (!windowIsHome(geometry, std::nullopt, false)) {
         return std::nullopt;
     }
     const std::optional<ScreenInfo> on = m_screens->screenHolding(geometry);
@@ -2411,7 +2436,8 @@ QRect ContainerManager::nearestClearFreeRect(const QRect& wanted, const QString&
     return best ? *best : defaultFreeRect(wanted, exceptId);
 }
 
-bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const
+bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen,
+                                    bool restoring) const
 {
     if (!remembered.isValid()) {
         return false;
@@ -2420,24 +2446,39 @@ bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional
         // Its monitor is here, and the place is still on it (a monitor
         // known by its serial may have been moved in the arrangement).
         const std::optional<ScreenInfo> present = m_screens->matching(*screen, remembered);
-        return present && remembered.intersects(present->geometry) && headerReachable(remembered);
+        return present && remembered.intersects(present->geometry) && (!restoring || headerReachable(remembered));
     }
     // An older layout names no monitor: any present screen the rect is on
     // will do. A rect at the origin is the place a window never given one
     // lands at, where the main window hides it (see
     // FloatingContainer::ensureVisiblePosition); it was never a chosen place.
     return remembered.topLeft() != QPoint(0, 0) && m_screens->onAnyScreen(remembered)
-        && headerReachable(remembered);
+        && (!restoring || headerReachable(remembered));
+}
+
+bool ContainerManager::sizesWindowDifferently(const ContainerDocument& before, const ContainerDocument& now)
+{
+    // What a window's size follows besides its geometry: whether its
+    // height is its content's, and what that content and its header are.
+    static const QStringList kChromeKeys{QStringLiteral("border"), QStringLiteral("noControls")};
+    const bool chrome = std::any_of(kChromeKeys.cbegin(), kChromeKeys.cend(), [&before, &now](const QString& key) {
+        return before.config.value(key) != now.config.value(key);
+    });
+    return chrome || before.autoHeight != now.autoHeight || before.contents != now.contents
+        || before.layout != now.layout || before.header != now.header || before.popOutShell != now.popOutShell;
 }
 
 bool ContainerManager::headerReachable(const QRect& remembered) const
 {
-    // The window's own header is the top strip of its rect.
+    // The window's own header is the top strip of its rect. A piece of it
+    // under the system's own bars cannot be taken hold of, so it is the
+    // screen's usable area that counts.
     const QRect header(remembered.topLeft(), QSize(remembered.width(), ContainerWidget::kTitleBarHeight));
     const int wide = qMin(kHeaderReachWidthPx, header.width());
     const QVector<ScreenInfo> present = m_screens->screens();
     return std::any_of(present.cbegin(), present.cend(), [&header, wide](const ScreenInfo& screen) {
-        const QRect shared = screen.geometry.intersected(header);
+        const QRect usable = screen.available.isValid() ? screen.available : screen.geometry;
+        const QRect shared = usable.intersected(header);
         return shared.width() >= wide && shared.height() >= kHeaderReachHeightPx;
     });
 }
@@ -2463,9 +2504,9 @@ QRect ContainerManager::displacedWindowRect(const QString& id, const QRect& reme
 
 void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remembered,
                                            const std::optional<SavedScreen>& screen, FloatingContainer* form,
-                                           bool fromDocument)
+                                           bool fromDocument, bool restoring)
 {
-    if (windowIsHome(remembered, screen)) {
+    if (windowIsHome(remembered, screen, restoring)) {
         const bool wasAway = m_displaced.remove(id);
         if ((fromDocument || wasAway) && form->pos() != remembered.topLeft()) {
             form->move(remembered.topLeft());
@@ -2501,7 +2542,7 @@ void ContainerManager::screensChanged()
             continue;
         }
         placeFloatingWindow(d.id, m_rememberedGeometry.value(d.id, d.geometry),
-                            m_rememberedScreen.value(d.id, d.screen), form, false);
+                            m_rememberedScreen.value(d.id, d.screen), form, false, true);
     }
 }
 
