@@ -7,6 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: while arranging, one drop rule
+//                 for every container (finishArrangeDrop). A header drag of
+//                 a strip, free, floating or pop-out container docks in an
+//                 edge zone at the previewed place, sits free over the
+//                 pane, becomes a window outside the main window and is
+//                 cancelled anywhere else; a drop commits once and a
+//                 cancelled drag commits nothing. Not arranging, a drag is
+//                 as before. Each container is told the Arrange switch
+//                 apart from the Shift hold. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: arranging is the switch or the
 //                 Shift hold (setArrangeHeld, arranging); containers, entry
 //                 headers and the edge bands follow arranging(), and
@@ -553,6 +563,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (!ids.contains(id)) { destroyContainer(id); }
     }
     m_pendingGeometry.intersect(ids);
+    m_dropSettled.intersect(ids);
     for (const QString& id : m_documentGeometry.keys()) {
         if (!ids.contains(id)) {
             m_documentGeometry.remove(id);
@@ -656,6 +667,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             connect(c, &ContainerWidget::edgeDragStarted, this, [this, id = d.id] {
                 if (edgeMode()) {
                     m_edgeDragId = id;
+                    m_edgeDragArranging = arranging();
                     if (auto* dragged = container(id)) {
                         m_edgeDragMode = dragged->dockMode();
                     }
@@ -707,6 +719,8 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (WorkspacePreview::enabled()) {
             applyWorkspaceHeader(c, d);
             c->setDockEdge(d.edge);
+            // The one drop rule needs the edge area to judge a release.
+            c->setArrangeDropRule(edgeMode());
             c->setGridAlignment(document.arrangement.gridAlignment ? kWorkspaceSnapGridPx : 0);
         }
         c->setContainerEnabled(d.config.value("enabled").toBool(true));
@@ -867,6 +881,11 @@ void ContainerManager::setArrangeMode(bool on)
     }
     // Arrange is runtime only, never saved.
     m_arrangeMode = on;
+    for (ContainerWidget* c : std::as_const(m_containers)) {
+        if (c) {
+            c->setArrangeSwitchOn(on);
+        }
+    }
     applyArranging();
     emit arrangeModeChanged(on);
 }
@@ -1275,9 +1294,15 @@ void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos
         return;
     }
     const auto target = m_edgeArea->dropTargetAt(globalPos);
+    // Only a strip container reports an edge drag when not arranging.
+    const bool oneRule = m_edgeDragArranging || m_edgeDragMode != DockMode::PanelDocked;
     m_edgeDragId.clear();
     m_edgeArea->clearDropPreview();
     m_edgeArea->setTargetBandsVisible(arranging());
+    if (oneRule) {
+        finishArrangeDrop(id, globalPos);
+        return;
+    }
     if (target.valid) {
         moveContainerToEdge(id, target.edge, target.index);
         return;
@@ -1300,6 +1325,162 @@ void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos
         return;
     }
 }
+QRect ContainerManager::paneRectWithout(const QString& id) const
+{
+    QRect pane(m_dockParent->mapToGlobal(QPoint(0, 0)), m_dockParent->size());
+    const ContainerWidget* c = container(id);
+    if (!edgeMode() || !c || !c->isPanelDocked()) {
+        return pane;
+    }
+    const DockEdge edge = c->dockEdge();
+    for (const auto& d : m_store->snapshot().containers) {
+        if (d.id != id && d.dockMode == DockMode::PanelDocked && d.edge == edge && effectiveVisible(d)) {
+            // The strip stays open for its other containers.
+            return pane;
+        }
+    }
+    const QRect area(m_edgeArea->mapToGlobal(QPoint(0, 0)), m_edgeArea->size());
+    switch (edge) {
+    case DockEdge::Left:
+        pane.setLeft(area.left());
+        break;
+    case DockEdge::Right:
+        pane.setRight(area.right());
+        break;
+    case DockEdge::Top:
+        pane.setTop(area.top());
+        break;
+    case DockEdge::Bottom:
+        pane.setBottom(area.bottom());
+        break;
+    }
+    return pane;
+}
+
+QRect ContainerManager::freeDropRect(const QRect& wanted, const QSize& pane) const
+{
+    QRect rect(wanted.topLeft(), wanted.size().boundedTo(pane));
+    const auto inside = [&pane, &rect](const QPoint& topLeft) {
+        return QPoint(std::clamp(topLeft.x(), 0, std::max(0, pane.width() - rect.width())),
+                      std::clamp(topLeft.y(), 0, std::max(0, pane.height() - rect.height())));
+    };
+    rect.moveTopLeft(inside(rect.topLeft()));
+    if (gridAlignment() && !(QApplication::keyboardModifiers() & Qt::AltModifier)) {
+        rect.moveTopLeft(inside(workspaceSnappedTopLeft(rect.topLeft(), kWorkspaceSnapGridPx)));
+    }
+    return rect;
+}
+
+void ContainerManager::finishArrangeDrop(const QString& id, const QPoint& globalPos)
+{
+    ContainerWidget* c = container(id);
+    FloatingContainer* form = m_floatingForms.value(id);
+    if (!c || !m_store || !m_dockParent) {
+        return;
+    }
+    const EdgeDockArea::DropTarget target = m_edgeArea->dropTargetAt(globalPos);
+    // A free or floating container followed the pointer; a strip container
+    // stayed in its strip.
+    const bool followed = !c->isPanelDocked();
+    const QRect start = m_interactionStart.value(id);
+    QWidget* shown = c->isFloating() && form ? static_cast<QWidget*>(form) : c;
+    if (followed) {
+        m_dropSettled.insert(id);
+    }
+    const quint64 revision = m_store->snapshot().revision;
+    // The header sits under the pointer where it was grabbed.
+    const QPoint grab = c->dragGrabOffset();
+    const QRect pane(m_dockParent->mapToGlobal(QPoint(0, 0)), m_dockParent->size());
+    const QWidget* mainWindow = m_edgeArea->window();
+    const bool outside = target.detach && !mainWindow->frameGeometry().contains(globalPos);
+
+    const auto commitPlace = [this, &id](DockMode mode, const QRect& geometry, const QSize& paneSize = QSize()) {
+        WorkspaceDocument draft = m_store->snapshot();
+        for (auto& d : draft.containers) {
+            if (d.id != id) {
+                continue;
+            }
+            d.dockMode = mode;
+            d.geometry = geometry;
+            d.geometryPane.reset();
+            d.screen.reset();
+            if (mode == DockMode::OverlayDocked && dockParentLaidOut()) {
+                // Placed for the pane it lands in.
+                d.geometryPane = paneSize.isValid() ? paneSize : m_dockParent->size();
+            } else if (mode == DockMode::Floating) {
+                if (const std::optional<ScreenInfo> on = m_screens->screenHolding(geometry)) {
+                    d.screen = savedScreenOf(*on);
+                }
+            }
+            commitWorkspace(draft, draft.revision);
+            return;
+        }
+    };
+    // Same dock mode as before: the operator's move, remembered and saved
+    // now. A drop back on the start changes nothing.
+    const auto keepMoved = [this, &id, &start, shown](const QPoint& topLeft) {
+        if (shown->pos() != topLeft) {
+            QScopedValueRollback<bool> guard(m_reconciling, true);
+            shown->move(topLeft);
+        }
+        if (liveGeometry(id) != start) {
+            rememberOperatorGeometry(id);
+            saveState();
+        }
+    };
+    const auto documentOf = [this, &id]() -> ContainerDocument {
+        for (const auto& d : m_store->snapshot().containers) {
+            if (d.id == id) {
+                return d;
+            }
+        }
+        return {};
+    };
+
+    if (target.valid) {
+        moveContainerToEdge(id, target.edge, target.index);
+    } else if (pane.contains(globalPos)) {
+        if (c->isOverlayDocked()) {
+            keepMoved(freeDropRect(c->geometry(), pane.size()).topLeft());
+        } else if (c->isFloating()) {
+            commitPlace(DockMode::OverlayDocked,
+                        freeDropRect(QRect(m_dockParent->mapFromGlobal(shown->pos()), shown->size()), pane.size()));
+        } else {
+            // Its strip may close behind it: the place is for the pane as
+            // it will be, so the container stays under the pointer.
+            const QRect landing = paneRectWithout(id);
+            const QSize size = freePlacementSize(id, documentOf());
+            const QPoint offset(std::min(grab.x(), size.width() - 1), grab.y());
+            commitPlace(DockMode::OverlayDocked,
+                        freeDropRect(QRect(globalPos - offset - landing.topLeft(), size), landing.size()),
+                        landing.size());
+        }
+    } else if (outside) {
+        if (c->isFloating()) {
+            // A window is only moved; the grid applies as it does to any
+            // window move.
+            QPoint topLeft = shown->pos();
+            if (gridAlignment() && !(QApplication::keyboardModifiers() & Qt::AltModifier)) {
+                topLeft = workspaceSnappedTopLeft(topLeft, kWorkspaceSnapGridPx);
+            }
+            keepMoved(topLeft);
+        } else if (c->isOverlayDocked()) {
+            commitPlace(DockMode::Floating, QRect(c->mapToGlobal(QPoint(0, 0)), c->size()));
+        } else {
+            const QSize size = freePlacementSize(id, documentOf());
+            const QPoint offset(std::min(grab.x(), size.width() - 1), grab.y());
+            commitPlace(DockMode::Floating, QRect(globalPos - offset, size));
+        }
+    }
+    // Anywhere else inside the main window (its menu bar, status bar or
+    // title bar) nothing can take the container: the drag is cancelled.
+    if (followed && m_store->snapshot().revision == revision && liveGeometry(id) != start && start.isValid()) {
+        // Cancelled, or nothing was saved: back where it started.
+        QScopedValueRollback<bool> guard(m_reconciling, true);
+        (c->isFloating() && form ? static_cast<QWidget*>(form) : c)->move(start.topLeft());
+    }
+}
+
 void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerDocument &d)
 {
     // A single entry's title is the header, so there is never a second bar.
@@ -1345,6 +1526,7 @@ void ContainerManager::applyWorkspaceHeader(ContainerWidget *c, const ContainerD
     c->setSourceMenuRx(menuRx);
     c->setWorkspaceSource(source, colour);
     c->setArrangeActive(arranging());
+    c->setArrangeSwitchOn(m_arrangeMode);
 }
 void ContainerManager::setSliceAvailability(std::function<bool(int sliceId)> available)
 {
@@ -1438,6 +1620,11 @@ void ContainerManager::wireContainer(ContainerWidget* container)
             const QString id = container->id();
             const bool known = m_interactionStart.contains(id);
             const QRect start = m_interactionStart.take(id);
+            if (m_dropSettled.remove(id)) {
+                // The drop rule placed it, saved it and reported the end of
+                // the drag (finishArrangeDrop).
+                return;
+            }
             if (!known || liveGeometry(id) != start) {
                 rememberOperatorGeometry(id);
             }

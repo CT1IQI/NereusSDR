@@ -280,6 +280,19 @@ for the strips in use. Their sidecars have `provenance: proposed` and a
 `proposed_values` block, and the notes list each strip's size and
 containers.
 
+`arrange-drag-edge-free` and `arrange-drag-edge-floating` pose a drag held
+over an edge while arranging, with the landing box shown through
+`ContainerManager::showDropPreviewForTest`. In the first the Levels
+container is free; its header is pressed and held and the container moved
+to where a pointer in the left edge zone has it, part of it past the edge
+of the spectrum, and the drag is given up with Escape after the capture.
+In the second the Levels container is a window moved so that its header
+is over the right edge zone, above the middle of the Main Panel, with the
+landing box above the Main Panel; the window is a top-level of
+its own, so it is painted over the main window image where it sits,
+written as `arrange-drag-edge-floating--floating`, and its sidecar records
+`position_in_main_window`. The pointer is not part of a capture.
+
 ### Longpath instrument scenes
 
 `instruments-sheet` builds the ported Longpath instruments directly, with

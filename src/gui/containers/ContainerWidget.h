@@ -317,6 +317,19 @@ public:
     // shows, the outline and the inside resize handles appear. Not saved.
     void setArrangeActive(bool active);
     bool arrangeActive() const { return m_arrangeActive; }
+    // The Arrange switch (the menu item and its shortcut), apart from the
+    // Shift hold: what the menus' "Arrange Workspace" ticks and toggles.
+    void setArrangeSwitchOn(bool on) { m_arrangeSwitchOn = on; }
+    bool arrangeSwitchOn() const { return m_arrangeSwitchOn; }
+    // Workspace preview: with the rule on, a header drag made while
+    // arranging reports through the edge drag signals whatever the
+    // container's dock mode, and the manager decides the drop at release.
+    // A free or floating container still follows the pointer, and is not
+    // held inside the pane meanwhile.
+    void setArrangeDropRule(bool on) { m_arrangeDropRule = on; }
+    bool arrangeDropRule() const { return m_arrangeDropRule; }
+    // Where the header was pressed, from the container's top-left.
+    QPoint dragGrabOffset() const { return m_grabOffset; }
     // The title the group header shows (a single-content container passes
     // its entry's name) and its source chip ("RX A"); empty hides the chip.
     void setWorkspaceTitle(const QString& title);
@@ -345,8 +358,9 @@ public:
     DockEdge dockEdge() const { return m_dockEdge; }
     void setGridAlignment(int gridPx) { m_gridPx = gridPx; }
     int gridAlignment() const { return m_gridPx; }
-    // True while a panel-docked container's header is being dragged
-    // toward an edge (ContainerManager shows the destination preview).
+    // True while a header drag is reporting through the edge drag signals
+    // (ContainerManager shows the destination preview): a panel-docked
+    // container's, or any container's while arranging.
     bool edgeDragActive() const { return m_edgeDragging; }
 
     // Minimised collapse state (runtime only; not persisted). Collapses
@@ -406,8 +420,9 @@ signals:
     // Workspace preview: a source menu choice, kActiveSliceSource or 1..4.
     void sourceRequested(int rxSource);
     // Workspace preview: the options menu's Move to Edge and Place Free,
-    // and a panel-docked header drag (global pointer positions). Only a
-    // release on a valid destination commits; Escape cancels.
+    // and a header drag (global pointer positions): a panel-docked
+    // container's, or any container's while arranging. Only a release on
+    // a valid destination commits; Escape or a lost mouse grab cancels.
     void moveToEdgeRequested(DockEdge edge);
     void placeFreeRequested();
     void edgeDragStarted();
@@ -476,6 +491,9 @@ private:
     void updateDrag(const QPoint& globalPos);
     void endDrag();
     void cancelDrag();
+    // Ends a drag made under the arrange drop rule: cancelled, the
+    // container is back where it started.
+    void finishArrangeDrag(bool cancelled, const QPoint& globalPos);
     void endEdgeDrag(bool cancelled, const QPoint& globalPos);
 
     void beginResize(const QPoint& globalPos);
@@ -555,6 +573,11 @@ private:
     QWidget* m_edgeBottom{nullptr};
     QGraphicsOpacityEffect* m_headerOpacity{nullptr};
     bool m_arrangeActive{false};
+    bool m_arrangeSwitchOn{false};
+    bool m_arrangeDropRule{false};
+    // The drag in progress follows the arrange drop rule.
+    bool m_arrangeDrag{false};
+    QPoint m_grabOffset;
     bool m_followsSelectedRx{false};
     int m_sourceMenuRx{0};
     std::function<bool(int)> m_sliceAvailable;

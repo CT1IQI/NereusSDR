@@ -17,8 +17,9 @@ class ContainerManager;
 // Shift pressed alone and held for kHoldDelayMs arranges until it is let
 // go (ContainerManager::setArrangeHeld). A mouse press, a wheel turn or any
 // other key before the delay is over cancels it for that press of Shift,
-// so Shift with a click, a wheel or a letter never arranges. Let go during
-// a container drag, the hold ends when the drag does.
+// so Shift with a click, a wheel or a letter never arranges. It does not
+// begin while a text field has keyboard focus. Let go during a container
+// drag, the hold ends when the drag does.
 //
 // Escape leaves the switched-on Arrange when nothing else has a claim on
 // the key: no drag, no popup, no dialog, no text being edited.

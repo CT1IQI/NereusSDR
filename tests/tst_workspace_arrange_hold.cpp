@@ -4,9 +4,14 @@
 //                 else with Shift does not, Escape leaves the switched-on
 //                 Arrange, and the look-off window has none of it. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The hold does not begin with focus in a text field, and a
+//                 container's menus tick Arrange Workspace from the switch,
+//                 not the hold. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialog>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -14,11 +19,13 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTemporaryDir>
 #include <QTextEdit>
+#include <QTimer>
 #include <QWheelEvent>
 #include <chrono>
 #include <memory>
@@ -401,14 +408,14 @@ private slots:
 
     // Shift alone types nothing, so a hold arranges with a text field
     // focused; typing a capital is another key and does not.
-    void aHoldInATextFieldArrangesAndTypingACapitalDoesNot_data()
+    void aHoldDoesNotBeginInATextField_data()
     {
         QTest::addColumn<QString>("kind");
         for (const char* kind : {"QLineEdit", "QTextEdit", "QPlainTextEdit", "QSpinBox", "editable QComboBox"}) {
             QTest::newRow(kind) << QString::fromLatin1(kind);
         }
     }
-    void aHoldInATextFieldArrangesAndTypingACapitalDoesNot()
+    void aHoldDoesNotBeginInATextField()
     {
         QFETCH(QString, kind);
         HoldFixture f;
@@ -434,14 +441,92 @@ private slots:
                     && (QApplication::focusWidget() == field || field->isAncestorOf(QApplication::focusWidget())));
         QWidget* typedAt = QApplication::focusWidget();
 
+        // Shift alone, held: the delay never starts, so nothing arranges.
+        f.shiftDown(Qt::NoModifier, typedAt);
+        QVERIFY(!f.filter->holdPendingForTest());
+        QVERIFY(f.nothingArranges());
+        f.shiftUp(typedAt);
+        // Typing a capital does not either.
         f.shiftDown(Qt::NoModifier, typedAt);
         f.key(QEvent::KeyPress, Qt::Key_N, Qt::ShiftModifier, typedAt);
         f.key(QEvent::KeyRelease, Qt::Key_N, Qt::ShiftModifier, typedAt);
         QVERIFY(f.nothingArranges());
         f.shiftUp(typedAt);
 
-        QVERIFY(f.hold(typedAt));
-        f.shiftUp(typedAt);
+        // With focus out of the field the same press arranges.
+        f.probe->setFocus(Qt::OtherFocusReason);
+        QTRY_COMPARE(QApplication::focusWidget(), f.probe);
+        QVERIFY(f.hold());
+        f.shiftUp();
+        QVERIFY(!f.manager.arranging());
+    }
+
+    void theMenusTickTheSwitchAndChoosingItDuringAHoldTurnsItOn_data()
+    {
+        QTest::addColumn<bool>("options");
+        QTest::newRow("header options menu") << true;
+        QTest::newRow("body right-click menu") << false;
+    }
+    void theMenusTickTheSwitchAndChoosingItDuringAHoldTurnsItOn()
+    {
+        QFETCH(bool, options);
+        HoldFixture f;
+        QVERIFY(f.show());
+        ContainerWidget* shown = f.manager.container("shown");
+        const auto open = [shown, options] {
+            if (options) {
+                shown->workspaceHeader()->optionsButton()->click();
+            } else {
+                const QPoint at(20, shown->height() - 20);
+                QContextMenuEvent event(QContextMenuEvent::Mouse, at, shown->mapToGlobal(at));
+                QApplication::sendEvent(shown, &event);
+            }
+        };
+        // Reads the item's tick and chooses it.
+        const auto choose = [&open](bool& ticked) {
+            bool found = false;
+            QTimer::singleShot(0, [&found, &ticked] {
+                auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+                if (menu == nullptr) {
+                    return;
+                }
+                for (QAction* action : menu->actions()) {
+                    if (action->text() == QStringLiteral("Arrange Workspace")) {
+                        found = true;
+                        ticked = action->isChecked();
+                        action->trigger();
+                    }
+                }
+                menu->close();
+            });
+            // Never leave a menu open under a failed lookup.
+            QTimer::singleShot(3000, [] {
+                if (QWidget* popup = QApplication::activePopupWidget()) {
+                    popup->close();
+                }
+            });
+            open();
+            return found;
+        };
+
+        QVERIFY(f.hold());
+        settle();
+        QVERIFY(f.manager.arranging());
+        QVERIFY(!f.manager.arrangeMode());
+        // Held, with the switch off: not ticked, and choosing it turns the
+        // switch on.
+        bool ticked = true;
+        QVERIFY(choose(ticked));
+        QVERIFY(!ticked);
+        QVERIFY(f.manager.arrangeMode());
+        f.shiftUp();
+        settle();
+        QVERIFY(f.manager.arranging());
+        // Switched on: ticked, and choosing it turns the switch off.
+        ticked = false;
+        QVERIFY(choose(ticked));
+        QVERIFY(ticked);
+        QVERIFY(!f.manager.arrangeMode());
         QVERIFY(!f.manager.arranging());
     }
 

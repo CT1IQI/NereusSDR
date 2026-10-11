@@ -398,6 +398,20 @@ private:
     // Makes every Reveal header Hidden; true when one was Reveal.
     static bool hideRevealHeaders(WorkspaceDocument& document);
     void finishEdgeDrag(const QString& id, const QPoint& globalPos);
+    // Workspace preview, arranging: the one drop rule for a strip, free,
+    // floating or pop-out container, by where the pointer is at release.
+    // An edge zone docks at the previewed place; elsewhere over the pane
+    // the container sits free there; anywhere else inside the main window
+    // the drag is cancelled; outside it the container is a window with its
+    // header under the pointer where it was grabbed. One commit for a
+    // drop, none for a cancelled one.
+    void finishArrangeDrop(const QString& id, const QPoint& globalPos);
+    // A free rect wholly inside a pane of size `pane`, on the 8 px grid
+    // when "Align to 8 px Grid" is on and Alt is not held.
+    QRect freeDropRect(const QRect& wanted, const QSize& pane) const;
+    // The pane's rect on the screen once strip container `id` has left its
+    // strip: a strip left empty closes and the pane takes its room.
+    QRect paneRectWithout(const QString& id) const;
     // Size for a strip container leaving its strip: its width, its
     // content's height.
     QSize freePlacementSize(const QString& id, const ContainerDocument& d) const;
@@ -405,6 +419,11 @@ private:
     QString m_edgeDragId;
     // The dragged container's mode when its edge drag started.
     DockMode m_edgeDragMode = DockMode::PanelDocked;
+    // Whether the app was arranging when that drag started.
+    bool m_edgeDragArranging = false;
+    // Containers whose drag the drop rule has already settled: the end of
+    // the interaction remembers nothing more for them.
+    QSet<QString> m_dropSettled;
     void applyWorkspaceHeader(ContainerWidget* c, const ContainerDocument& d);
     bool m_arrangeMode = false;
     bool m_arrangeHeld = false;

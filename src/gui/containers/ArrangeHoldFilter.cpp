@@ -3,6 +3,9 @@
 //   2026-10-11 - Holding Shift alone arranges while it is held, and Escape
 //                 leaves the switched-on Arrange, by J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The hold does not begin while a text field has keyboard
+//                 focus. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include "ArrangeHoldFilter.h"
 
 #include "ContainerManager.h"
@@ -136,6 +139,10 @@ void ArrangeHoldFilter::shiftPressed(Qt::KeyboardModifiers modifiers)
     const Qt::KeyboardModifiers held = modifiers | QGuiApplication::keyboardModifiers();
     const bool buttonDown = m_buttonsDown != Qt::NoButton || QGuiApplication::mouseButtons() != Qt::NoButton;
     if (!m_manager || (held & kOtherModifiers) != Qt::NoModifier || buttonDown) {
+        return;
+    }
+    // Shift in a text field is for typing: the hold does not begin there.
+    if (textFieldHasFocus()) {
         return;
     }
     m_delay.start();

@@ -610,6 +610,11 @@ nereus_add_test(tst_workspace_header_modes)
 nereus_add_test(tst_workspace_edge_strips)
 # Holding Shift alone arranges, Escape leaves Arrange; the look-off window has neither (offscreen).
 nereus_add_test(tst_workspace_arrange_hold fakes/RemoteWindowHarness.cpp)
+# While arranging, one drag rule for every container: dock in an edge zone, free over the pane, pop out outside the main window (offscreen).
+nereus_add_test(tst_workspace_arrange_drag)
+# The same rule between native windows: a free container dragged out of the main window, a window dragged onto an edge.
+# Needs real windows and the desktop; run by hand with JJ's OK only.
+nereus_add_test(tst_workspace_arrange_drag_native NATIVE_WINDOW)
 nereus_add_test(tst_workspace_live_input)
 # Each case builds a MainWindow; 43 cases ran past the 120 s limit under
 # load. Four entries of the same binary (the limit is not raised; groups in

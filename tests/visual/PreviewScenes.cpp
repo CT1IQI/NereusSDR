@@ -181,6 +181,11 @@
 //                 The look-off scenes, baseline-header-reveal among them,
 //                 are unchanged. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - arrange-drag-edge-free and arrange-drag-edge-floating: a
+//                 free container and a floating window held over an edge of
+//                 the main window while arranging, with the landing box
+//                 shown. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -195,6 +200,7 @@
 #include <QProgressDialog>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTest>
 #include <QUuid>
 #include <QCoreApplication>
 #include <QDialog>
@@ -1789,6 +1795,17 @@ void sceneProposedEdges(SceneContext& ctx, const QString& name,
     }
     noteStrips(ctx);
     captureWindow(ctx, name);
+}
+
+// The visible window a floating container is in, or nullptr.
+QWidget* floatingWindowOf(ContainerManager* manager, const QString& id)
+{
+    ContainerWidget* container = manager != nullptr ? manager->container(id) : nullptr;
+    if (container == nullptr || !container->isFloating()) {
+        return nullptr;
+    }
+    QWidget* top = container->window();
+    return top->isVisible() ? top : nullptr;
 }
 
 // ---- Longpath instruments (workspace preview) ------------------------------
@@ -7565,6 +7582,124 @@ QVector<Scene> fixedScenes()
             c.notes.append(QStringLiteral(
                 "Arrange on; ContainerManager::showDropPreviewForTest(Right, 1)"));
         });
+    }, true});
+    // A drag held over an edge while arranging. The pointer is not in a
+    // capture.
+    scenes.append({QStringLiteral("arrange-drag-edge-free"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("arrange-drag-edge-free"), [](SceneContext& c) {
+            const QString id = addLevelsContainer(c, DockEdge::Left);
+            if (id.isEmpty()) {
+                return;
+            }
+            // Options > Place Free.
+            emit c.window->findChild<ContainerManager*>()->container(id)->placeFreeRequested();
+        }, [](SceneContext& c) {
+            auto* manager = c.window->findChild<ContainerManager*>();
+            ContainerWidget* levels = manager->container(QStringLiteral("preview-levels"));
+            QWidget* pane = levels != nullptr ? levels->parentWidget() : nullptr;
+            if (pane == nullptr || !levels->isOverlayDocked()) {
+                c.failure = QStringLiteral("the Levels container was not placed free");
+                return;
+            }
+            manager->setArrangeMode(true);
+            pump(kSettleMs);
+            // A held drag: the header is pressed a quarter of the way
+            // along, which is what keeps the workspace from putting the
+            // container back at its saved place, and the container is put
+            // where a pointer in the left edge zone has it, part of it past
+            // the pane's edge (a drag does not hold a container inside the
+            // pane). The pointer of a window that is not on screen maps to
+            // no edge zone, so the landing box comes from the preview seam.
+            QWidget* header = levels->workspaceHeader();
+            if (header == nullptr || !header->isVisible()) {
+                c.failure = QStringLiteral("the Levels container has no header to drag");
+                return;
+            }
+            constexpr int kPointerFromEdgePx = 12;
+            constexpr int kDragTopPx = 96;
+            const QPoint grab(header->width() / 4, header->height() / 2);
+            QTest::mousePress(header, Qt::LeftButton, Qt::NoModifier, grab);
+            if (!levels->geometryInteractionActive()) {
+                c.failure = QStringLiteral("pressing the Levels header began no drag");
+                return;
+            }
+            levels->move(kPointerFromEdgePx - grab.x(), kDragTopPx);
+            levels->raise();
+            manager->showDropPreviewForTest(DockEdge::Left, 0);
+            c.notes.append(QStringLiteral(
+                "Arrange on; Levels free, its header pressed and held, the container moved to %1,%2 "
+                "of the pane as a drag to the left edge has it; "
+                "ContainerManager::showDropPreviewForTest(Left, 0)")
+                               .arg(levels->x()).arg(levels->y()));
+        });
+        // The held drag is given up: nothing is committed.
+        QTest::keyClick(ctx.window, Qt::Key_Escape);
+    }, true});
+    scenes.append({QStringLiteral("arrange-drag-edge-floating"), QStringLiteral("2v"), false,
+                   [](SceneContext& ctx) {
+        sceneProposedEdges(ctx, QStringLiteral("arrange-drag-edge-floating"), [](SceneContext& c) {
+            const QString id = addLevelsContainer(c, DockEdge::Left);
+            if (id.isEmpty()) {
+                return;
+            }
+            c.window->findChild<ContainerManager*>()->floatContainer(id);
+        }, [](SceneContext& c) {
+            auto* manager = c.window->findChild<ContainerManager*>();
+            auto* area = c.window->findChild<EdgeDockArea*>();
+            manager->setArrangeMode(true);
+            pump(kSettleMs);
+            QWidget* floating = floatingWindowOf(manager, QStringLiteral("preview-levels"));
+            if (floating == nullptr || area == nullptr) {
+                c.failure = QStringLiteral("the Levels container did not float");
+                return;
+            }
+            // Where the drag has it: the window's header, held near its
+            // right end, under a pointer in the right edge zone of the main
+            // window and above the middle of the Main Panel, so the landing
+            // box is over the Main Panel.
+            constexpr int kPointerFromEdgePx = 12;
+            const QPoint kHeaderGrabPx(floating->width() - 96, 12);
+            // By window geometry: a top-level shown with WA_DontShowOnScreen
+            // keeps a stale mapToGlobal (see topOffset).
+            const QPoint inWindow = area->mapTo(
+                c.window, QPoint(area->width() - kPointerFromEdgePx, area->height() / 4));
+            floating->move(c.window->geometry().topLeft() + inWindow - kHeaderGrabPx);
+            manager->showDropPreviewForTest(DockEdge::Right, 0);
+            c.notes.append(QStringLiteral(
+                "Arrange on; the Levels window moved so its header is at %1,%2 of the main window, "
+                "in the right edge zone; ContainerManager::showDropPreviewForTest(Right, 0). "
+                "The window is its own image, arrange-drag-edge-floating--floating.")
+                               .arg(inWindow.x()).arg(inWindow.y()));
+        });
+        if (!ctx.failure.isEmpty()) {
+            return;
+        }
+        QWidget* floating = floatingWindowOf(ctx.window->findChild<ContainerManager*>(),
+                                             QStringLiteral("preview-levels"));
+        if (floating == nullptr) {
+            ctx.failure = QStringLiteral("the Levels container did not float");
+            return;
+        }
+        if (ctx.beforeGrab) {
+            ctx.beforeGrab(floating);
+            pump(kFinalSettleMs);
+        }
+        // The window is a top-level of its own: painted over the main
+        // window image where it is, and written as an image of its own.
+        compositeAndRecrop(ctx, QStringLiteral("arrange-drag-edge-floating"), {floating}, true);
+        CapturedImage img;
+        img.name = QStringLiteral("arrange-drag-edge-floating--floating");
+        img.kind = QStringLiteral("floating");
+        img.image = grabWidget(floating);
+        img.logicalSize = floating->size();
+        img.dpr = img.image.devicePixelRatio();
+        img.extra[QStringLiteral("window_title")] = floating->windowTitle();
+        img.extra[QStringLiteral("position_in_main_window")] =
+            QJsonArray{topOffset(ctx.window, floating, true).x(),
+                       topOffset(ctx.window, floating, true).y()};
+        attachRegions(img, floating);
+        ctx.images.append(img);
     }, true});
 
     // ---- coverage scenes (switch on) ----

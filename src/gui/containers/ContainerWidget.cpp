@@ -7,6 +7,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: while arranging, a free or
+//                 floating container's header drag reports through the
+//                 edge drag signals as a strip container's does, follows
+//                 the pointer without being held inside the pane, and
+//                 leaves the drop to the manager; Escape or a lost mouse
+//                 grab puts it back. Ctrl no longer steps a drag or a
+//                 resize by 10 px there (the 8 px grid is the one snap
+//                 aid). The menus tick "Arrange Workspace" from the
+//                 switch, not from a Shift hold. Arrange's outline no
+//                 longer paints a floating window's background over the
+//                 container in it. With the look off
+//                 dragging, the Ctrl step and the menus are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: a header is shown or hidden. The
 //                 header's eye button and the body menu's "Keep Header
 //                 Showing" switch it, Arrange draws a hidden header over
@@ -224,6 +237,9 @@ public:
         // Covers the whole container in Arrange and is raised over the
         // header: as a native view it took every click on macOS.
         WorkspacePreview::passInputThrough(this);
+        // A window a container floats in gives every widget in it its
+        // background, and this one lies over the header and the content.
+        setStyleSheet(QStringLiteral("background: transparent;"));
         hide();
     }
 protected:
@@ -640,9 +656,11 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
         free->setToolTip(tr("Place over the spectrum, inside the main window"));
     }
     auto* arrange = menu.addAction(tr("Arrange Workspace"), this,
-                                   [this] { emit arrangeWorkspaceRequested(!m_arrangeActive); });
+                                   [this] { emit arrangeWorkspaceRequested(!m_arrangeSwitchOn); });
     arrange->setCheckable(true);
-    arrange->setChecked(m_arrangeActive);
+    // The switch, not a Shift hold: choosing it while Shift is held turns
+    // the switch on.
+    arrange->setChecked(m_arrangeSwitchOn);
     if (auto* host = qobject_cast<ContainerContentHost*>(m_content)) {
         menu.addSeparator();
         host->addContentsMenu(menu);
@@ -796,9 +814,9 @@ void ContainerWidget::contextMenuEvent(QContextMenuEvent *event)
     }
     if (m_groupHeader) {
         auto *arrange = menu.addAction(tr("Arrange Workspace"), this,
-                                       [this] { emit arrangeWorkspaceRequested(!m_arrangeActive); });
+                                       [this] { emit arrangeWorkspaceRequested(!m_arrangeSwitchOn); });
         arrange->setCheckable(true);
-        arrange->setChecked(m_arrangeActive);
+        arrange->setChecked(m_arrangeSwitchOn);
     }
     if (auto *host = qobject_cast<ContainerContentHost *>(m_content)) {
         host->addContentsMenu(menu);
@@ -1253,10 +1271,25 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
         && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) {
         if (m_edgePressed) {
             endEdgeDrag(true, QCursor::pos());
+        } else if (m_arrangeDrag) {
+            finishArrangeDrag(true, QCursor::pos());
         } else {
             cancelDrag();
         }
         return true;
+    }
+    // While arranging, a drag that loses the mouse (the header's grab is
+    // taken, or the app is left) will never see its release: it is
+    // cancelled like Escape.
+    if (m_groupHeader && m_arrangeActive && m_arrangeDropRule && (m_edgePressed || m_arrangeDrag)
+        && ((watched == m_groupHeader && event->type() == QEvent::UngrabMouse)
+            || event->type() == QEvent::ApplicationDeactivate)) {
+        if (m_edgePressed) {
+            endEdgeDrag(true, QCursor::pos());
+        } else {
+            finishArrangeDrag(true, QCursor::pos());
+        }
+        return false;
     }
     // Workspace preview: nothing here shows a hidden header; the eye
     // button, the body menu and Arrange do.
@@ -1291,7 +1324,12 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
         if (event->type() == QEvent::MouseButtonPress) {
             auto* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
+                m_grabOffset = mapFromGlobal(me->globalPosition().toPoint());
                 if (!m_locked && !isPanelDocked()) {
+                    // While arranging the manager decides where it lands.
+                    m_arrangeDrag = m_arrangeActive && m_arrangeDropRule;
+                    m_edgeDragging = false;
+                    m_edgePressGlobal = me->globalPosition().toPoint();
                     beginDrag(me->globalPosition().toPoint());
                 } else if (!m_locked) {
                     // A docked container moves between strips: past the
@@ -1321,7 +1359,11 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
             updateDrag(static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
             return true;
         } else if (event->type() == QEvent::MouseButtonRelease && m_dragging) {
-            endDrag();
+            if (m_arrangeDrag) {
+                finishArrangeDrag(false, static_cast<QMouseEvent*>(event)->globalPosition().toPoint());
+            } else {
+                endDrag();
+            }
             return true;
         }
     }
@@ -1437,11 +1479,34 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
     if (!m_dragging) {
         return;
     }
+    // Workspace preview: the 8 px grid is the one snap aid; Ctrl steps by
+    // 10 px with the look off only.
+    const bool ctrlSteps = !m_groupHeader && (QApplication::keyboardModifiers() & Qt::ControlModifier);
+
+    if (m_arrangeDrag) {
+        // Arranging: past the drag distance the manager shows where a
+        // release would land. The container follows the pointer anywhere;
+        // nothing holds it inside the pane until it is dropped.
+        if (!m_edgeDragging) {
+            if ((globalPos - m_edgePressGlobal).manhattanLength() < QApplication::startDragDistance()) {
+                return;
+            }
+            m_edgeDragging = true;
+            emit edgeDragStarted();
+        }
+        QWidget* moved = isFloating() ? parentWidget() : this;
+        const QPoint newPos = globalPos - m_dragStartPos;
+        if (moved && moved->pos() != newPos) {
+            moved->move(newPos);
+        }
+        emit edgeDragMoved(globalPos);
+        return;
+    }
 
     if (isFloating()) {
         // From Thetis ucMeter.cs:319-345
         QPoint newPos = globalPos - m_dragStartPos;
-        if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+        if (ctrlSteps) {
             newPos.setX(roundToNearestTen(newPos.x()));
             newPos.setY(roundToNearestTen(newPos.y()));
         }
@@ -1451,7 +1516,7 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
     } else {
         // From Thetis ucMeter.cs:346-374 — overlay-docked, clamped
         QPoint newPos = globalPos - m_dragStartPos;
-        if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+        if (ctrlSteps) {
             newPos.setX(roundToNearestTen(newPos.x()));
             newPos.setY(roundToNearestTen(newPos.y()));
         }
@@ -1488,6 +1553,7 @@ void ContainerWidget::endDrag()
         }
     }
     m_dragging = false;
+    m_arrangeDrag = false;
     emit geometryInteractionFinished();
     m_dragStartPos = QPoint();
     m_titleBar->unsetCursor();
@@ -1520,6 +1586,35 @@ void ContainerWidget::cancelDrag()
     if (m_groupHeader) {
         m_groupHeader->setCursor(Qt::OpenHandCursor);
     }
+}
+
+void ContainerWidget::finishArrangeDrag(bool cancelled, const QPoint& globalPos)
+{
+    if (!m_dragging) {
+        return;
+    }
+    const bool reported = m_edgeDragging;
+    m_arrangeDrag = false;
+    m_edgeDragging = false;
+    if (cancelled) {
+        // Back to where the drag began; nothing of it is kept.
+        QWidget* moved = isFloating() ? parentWidget() : this;
+        if (moved && moved->pos() != m_dragOrigin) {
+            moved->move(m_dragOrigin);
+        }
+    }
+    m_dragging = false;
+    m_dragStartPos = QPoint();
+    m_titleBar->unsetCursor();
+    m_titleLabel->setCursor(Qt::OpenHandCursor);
+    m_groupHeader->setCursor(Qt::OpenHandCursor);
+    // The manager decides the drop first; the interaction then ends.
+    if (reported && cancelled) {
+        emit edgeDragCancelled();
+    } else if (reported) {
+        emit edgeDragFinished(globalPos);
+    }
+    emit geometryInteractionFinished();
 }
 
 void ContainerWidget::endEdgeDrag(bool cancelled, const QPoint& globalPos)
@@ -1572,7 +1667,8 @@ void ContainerWidget::updateResize(const QPoint& globalPos)
         newH = m_resizeStartSize.height();
     }
 
-    if (QApplication::keyboardModifiers() & Qt::ControlModifier) {
+    // Workspace preview: no 10 px step (see updateDrag).
+    if (!m_groupHeader && (QApplication::keyboardModifiers() & Qt::ControlModifier)) {
         newW = roundToNearestTen(newW);
         newH = roundToNearestTen(newH);
     }
