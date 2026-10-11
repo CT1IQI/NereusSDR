@@ -459,6 +459,10 @@ nereus_add_test(tst_nnr_radio_persistence EXTRA_LABELS models)
 # main thread (which sends the receive audio) does not wait for the disk.
 nereus_add_test(tst_app_settings_background_save EXTRA_LABELS core)
 nereus_add_test(tst_radio_settings_background_save EXTRA_LABELS models)
+# The Core's other timed saves (step attenuator, accessory records) and the
+# control changes that saved at once (TCI, VAX levels, accessory addresses,
+# the Core speaker, spots, radios): the file is written on the writer thread.
+nereus_add_test(tst_control_saves_in_background EXTRA_LABELS core models)
 nereus_add_test(tst_session_property_result fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_ps3_display_adapter EXTRA_LABELS core)
 nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)

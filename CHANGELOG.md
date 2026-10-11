@@ -73,6 +73,12 @@ Advanced, and each control appears on one page only.
   (a third of a second and more on a Rock 5C). The timed save now writes the
   file on its own thread. Saves at quit, at disconnect and at station handover
   still finish before the program goes on.
+- The same pause no longer follows other changes made on a running Core: the
+  attenuator and preamp, the Core speaker's level, mute and device, VAX
+  levels, TCI server settings, amplifier and tuner addresses, the rotor setup
+  and presets, the transmit display settings, the radio list, and the
+  accessory fault and limit records. Each of these saved the settings file on
+  the thread that sends the audio and now hands it to the same writer thread.
 
 ## [2026.10.0] - 2026-10-05
 
