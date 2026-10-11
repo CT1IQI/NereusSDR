@@ -307,7 +307,10 @@ private:
 #endif
 
 signals:
+    // AUTO was clicked and the slice shown was set to `on`.
     void autoAgcToggled(bool on);
+    // The applet shows another slice (or none).
+    void sliceChanged();
     void openSetupRequested();
     // Phase 3F (Bug 3): a slice tab was clicked; MainWindow routes this to
     // RadioModel::setActiveSlice. Mirrors AetherSDR
