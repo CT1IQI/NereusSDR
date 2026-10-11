@@ -35,6 +35,9 @@
 //   2026-10-10 - The filled PC and RADIO sliders' unfilled part read at
 //                 1x and 2x, enabled and disabled.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The Core speaker card's volume slider is marked as a
+//                 filled speaker slider.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -58,12 +61,14 @@
 #include "gui/AmpViewChart.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/StyleConstants.h"
+#include "gui/setup/CoreSpeakerCard.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/MasterOutputWidget.h"
 #include "gui/widgets/ParametricEqWidget.h"
 #include "gui/widgets/VfoStyles.h"
+#include "models/RadioModel.h"
 #include "visual/LongpathControlStyles.h"
 
 using namespace NereusSDR;
@@ -301,6 +306,19 @@ private slots:
         s->setEnabled(false);
         const QColor off = leftOfHandle(s);
         QVERIFY2(off == role("inset"), qPrintable(off.name()));
+    }
+
+    // D24: the Core speaker card's volume (Setup > Audio > Outputs, a window
+    // connected to a Core) is a speaker volume with the PC slider's sheet,
+    // so the card marks it to keep its filled side.
+    void coreSpeakerSliderIsMarkedFilled()
+    {
+        RadioModel model;
+        CoreSpeakerCard card(&model, nullptr);
+        auto* volume = card.findChild<QSlider*>(QStringLiteral("coreSpeakerVolume"));
+        QVERIFY(volume != nullptr);
+        QVERIFY(volume->property(WorkspacePreview::kFilledSliderProperty).toBool());
+        QCOMPARE(volume->styleSheet(), QLatin1String(HeaderVolumeStyle::kPcSlider));
     }
 
     // The Audio Setup "No radio connected" lines take the same workspace
