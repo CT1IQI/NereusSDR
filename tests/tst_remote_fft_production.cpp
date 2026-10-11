@@ -404,6 +404,19 @@ private slots:
         QTest::newRow("window") << QStringLiteral("window");
         QTest::newRow("decimation") << QStringLiteral("decimation");
         QTest::newRow("sample rate and centre") << QStringLiteral("sampleRateAndCentre");
+        // One row for each field DaemonSpectrumSource::onlyCentreDiffers
+        // reads: a move of the centre that comes with any of them is not a
+        // relabel. Dropping a field from that function fails its row here.
+        QTest::newRow("frame rate and centre") << QStringLiteral("frameRateAndCentre");
+        QTest::newRow("FFT size and centre") << QStringLiteral("fftSizeAndCentre");
+        QTest::newRow("window and centre") << QStringLiteral("windowAndCentre");
+        QTest::newRow("bin target and centre") << QStringLiteral("binTargetAndCentre");
+        QTest::newRow("thread count and centre") << QStringLiteral("threadCountAndCentre");
+        QTest::newRow("queue capacity and centre")
+            << QStringLiteral("queueCapacityAndCentre");
+        QTest::newRow("transforms follow frame rate and centre")
+            << QStringLiteral("transformsFollowAndCentre");
+        QTest::newRow("decimation and centre") << QStringLiteral("decimationAndCentre");
     }
 
     // R-DISP-RETUNE: only the centre is a label. Whatever changes what a
@@ -426,15 +439,29 @@ private slots:
         int feed = 1026;
         // A new tone that sits exactly on a bin of the restarted engine.
         double tone = 0.25;
-        if (change == QLatin1String("sampleRate")) {
-            next.sampleRateHz = 96000.0;
-        } else if (change == QLatin1String("sampleRateAndCentre")) {
-            next.sampleRateHz = 96000.0;
+        if (change.endsWith(QLatin1String("AndCentre"))) {
             next.centreHz = 10100000.0;
-        } else if (change == QLatin1String("fftSize")) {
+        }
+        if (change == QLatin1String("sampleRate")
+            || change == QLatin1String("sampleRateAndCentre")) {
+            next.sampleRateHz = 96000.0;
+        } else if (change == QLatin1String("frameRateAndCentre")) {
+            next.fft.fps = 30;
+        } else if (change == QLatin1String("binTargetAndCentre")) {
+            // The width of a bin as it is, so the engine keeps its size.
+            next.fft.hzPerBinTarget = 48000.0 / 1024.0;
+        } else if (change == QLatin1String("threadCountAndCentre")) {
+            next.fft.threadCount += 1;
+        } else if (change == QLatin1String("queueCapacityAndCentre")) {
+            next.maxPendingIqFloats = 16384;
+        } else if (change == QLatin1String("transformsFollowAndCentre")) {
+            next.transformsFollowFrameRate = true;
+        } else if (change == QLatin1String("fftSize")
+                   || change == QLatin1String("fftSizeAndCentre")) {
             next.fft.fftSize = 2048;
             feed = 2050;
-        } else if (change == QLatin1String("window")) {
+        } else if (change == QLatin1String("window")
+                   || change == QLatin1String("windowAndCentre")) {
             next.fft.windowType = static_cast<int>(WindowFunction::BlackmanHarris4);
         } else {
             next.decimation = 2;
