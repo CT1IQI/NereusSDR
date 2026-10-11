@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: operatorSizesHeight() and
+//                 sizingHeightNow(). A popped-out object's window keeps its
+//                 resize corner while its height follows its content; a
+//                 resize in height makes the height the operator's (JJ,
+//                 2026-10-11). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: pinOnTopRequested, from the
 //                 header's pin and the Options menu. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -292,6 +298,16 @@ public:
     void setNoControls(bool noControls);
     bool autoHeight() const { return m_autoHeight; }
     void setAutoHeight(bool autoHeight);
+    // Workspace preview only: the window of one popped-out object. Its
+    // height follows its content until the operator resizes it in height
+    // (corner, or the bottom edge while arranging); that resize turns auto
+    // height off, and the height is then theirs. Never less than the
+    // content needs. Always false with the look off.
+    bool operatorSizesHeight() const;
+    // True while a corner or bottom edge drag of such a window is under way.
+    bool sizingHeightNow() const;
+    // What its content and header need at the width it has now.
+    int naturalHeight() const;
     int containerHeight() const { return m_containerHeight; }
 
     // Title-bar visibility toggle — from Thetis chkContainerNoTitle

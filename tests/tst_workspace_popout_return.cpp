@@ -33,6 +33,7 @@
 #include <QTemporaryDir>
 #include <memory>
 #include "core/AppSettings.h"
+#include "gui/containers/ContainerArrangeController.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
@@ -327,6 +328,30 @@ struct ReturnFixture {
         }
         settle();
         return widget(id) != nullptr && widget(id)->isFloating();
+    }
+    // Pops the one object `entryId` out into a window of its own; returns
+    // that window's container id, or an empty string.
+    QString popOutObject(const QString& entryId)
+    {
+        if (!manager->arrangeController() || !manager->arrangeController()->popOut(entryId).ok) {
+            return {};
+        }
+        settle();
+        for (const auto& d : store.snapshot().containers) {
+            if (d.popOutShell && d.contents.size() == 1 && d.contents.first().id == entryId) {
+                return d.id;
+            }
+        }
+        return {};
+    }
+    // A press on `handle`, a move by `by`, a release.
+    void dragHandle(QWidget* handle, const QPoint& by) const
+    {
+        const QPoint start = handle->mapToGlobal(handle->rect().center());
+        press(handle, start);
+        move(handle, start + by);
+        release(handle, start + by);
+        settle();
     }
     void returnByHeader(const QString& id)
     {
@@ -944,7 +969,7 @@ private slots:
 
     // A container whose height follows its content has no corner and no
     // bottom edge, in a window too: its height is not the user's to set.
-    // Popping one object out of a container makes such a window.
+    // (The window of one popped-out object is the exception, below.)
     void anAutoHeightWindowHasNoResizeCorner()
     {
         ReturnFixture f;
@@ -965,6 +990,161 @@ private slots:
         QVERIFY(right->isVisible());
         f.manager->setArrangeMode(false);
         settle();
+    }
+
+    // JJ, 2026-10-11: the window of one popped-out object opens at the
+    // height its content needs and can be resized in height with the
+    // corner. It shows the corner exactly in its corner with Arrange off
+    // and on, and the bottom and right edges while arranging.
+    void aPoppedOutObjectsWindowOpensAtItsContentHeightWithTheCorner()
+    {
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree());
+        const QString shellId = f.popOutObject(QStringLiteral("second-meter"));
+        QVERIFY(!shellId.isEmpty());
+        ContainerWidget* c = f.widget(shellId);
+        QVERIFY(c && c->isFloating());
+        QVERIFY(c->operatorSizesHeight());
+        QVERIFY(c->autoHeight());
+        QVERIFY(f.document(shellId).autoHeight);
+        QCOMPARE(f.shell(shellId)->height(), c->naturalHeight());
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        auto* right = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeRight"));
+        auto* bottom = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeBottom"));
+        QVERIFY(grip && right && bottom);
+        const QRect corner(c->width() - WorkspaceCornerGrip::kSize, c->height() - WorkspaceCornerGrip::kSize,
+                           WorkspaceCornerGrip::kSize, WorkspaceCornerGrip::kSize);
+        QVERIFY(grip->isVisible());
+        QCOMPARE(grip->geometry(), corner);
+        QVERIFY(!bottom->isVisible());
+        f.manager->setArrangeMode(true);
+        settle();
+        QVERIFY(grip->isVisible());
+        QCOMPARE(grip->geometry(), corner);
+        QVERIFY(bottom->isVisible());
+        QVERIFY(right->isVisible());
+        f.manager->setArrangeMode(false);
+        settle();
+    }
+
+    // A corner resize in height makes the height the operator's: auto
+    // height goes off in the document with the new size, the corner stays
+    // in the corner, and the window is never shorter than its content needs.
+    void aCornerResizeInHeightMakesTheHeightTheOperators()
+    {
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree());
+        const QString shellId = f.popOutObject(QStringLiteral("second-meter"));
+        QVERIFY(!shellId.isEmpty());
+        ContainerWidget* c = f.widget(shellId);
+        QWidget* shell = f.shell(shellId);
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        QVERIFY(grip);
+        const QSize opened = shell->size();
+        const int natural = c->naturalHeight();
+        QCOMPARE(opened.height(), natural);
+
+        f.dragHandle(grip, QPoint(24, 70));
+        QCOMPARE(shell->size(), opened + QSize(24, 70));
+        QVERIFY(!c->autoHeight());
+        // Saved at once, not after the commit delay.
+        QVERIFY(!f.document(shellId).autoHeight);
+        QCOMPARE(f.document(shellId).geometry.size(), opened + QSize(24, 70));
+        QVERIFY(grip->isVisible());
+        QCOMPARE(grip->geometry().bottomRight(), c->rect().bottomRight());
+        // It keeps that height: nothing puts the content's height back.
+        QTest::qWait(kPastCommitDelayMs);
+        settle();
+        QCOMPARE(shell->height(), opened.height() + 70);
+
+        // Smaller again, but never below what the content needs.
+        f.dragHandle(grip, QPoint(0, -30));
+        QCOMPARE(shell->height(), opened.height() + 40);
+        f.dragHandle(grip, QPoint(0, -900));
+        QCOMPARE(shell->height(), c->naturalHeight());
+        QVERIFY(!f.document(shellId).autoHeight);
+    }
+
+    // The right edge resizes the width only: the height still follows the
+    // content. The bottom edge sets the height like the corner.
+    void whileArrangingTheRightEdgeKeepsAutoHeightAndTheBottomEdgeSetsTheHeight()
+    {
+        ReturnFixture f;
+        QVERIFY(f.showStripOfThree());
+        const QString shellId = f.popOutObject(QStringLiteral("second-meter"));
+        QVERIFY(!shellId.isEmpty());
+        ContainerWidget* c = f.widget(shellId);
+        QWidget* shell = f.shell(shellId);
+        f.manager->setArrangeMode(true);
+        settle();
+        auto* right = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeRight"));
+        auto* bottom = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeBottom"));
+        QVERIFY(right && bottom && right->isVisible() && bottom->isVisible());
+        const int width = shell->width();
+        f.dragHandle(right, QPoint(30, 0));
+        QCOMPARE(shell->width(), width + 30);
+        QVERIFY(c->autoHeight());
+        QTest::qWait(kPastCommitDelayMs);
+        settle();
+        QVERIFY(f.document(shellId).autoHeight);
+        QCOMPARE(shell->height(), c->naturalHeight());
+
+        const int height = shell->height();
+        f.dragHandle(bottom, QPoint(0, 50));
+        QCOMPARE(shell->height(), height + 50);
+        QVERIFY(!c->autoHeight());
+        QVERIFY(!f.document(shellId).autoHeight);
+        f.manager->setArrangeMode(false);
+        settle();
+    }
+
+    // The operator's height survives the document being saved and read
+    // again, and a saved height the content no longer fits in grows to fit.
+    void theOperatorsHeightSurvivesSaveAndRestore()
+    {
+        QVector<ContainerDocument> saved;
+        QString shellId;
+        QSize resized;
+        int natural = 0;
+        {
+            ReturnFixture f;
+            QVERIFY(f.showStripOfThree());
+            shellId = f.popOutObject(QStringLiteral("second-meter"));
+            QVERIFY(!shellId.isEmpty());
+            ContainerWidget* c = f.widget(shellId);
+            natural = c->naturalHeight();
+            f.dragHandle(c->findChild<QWidget*>(QStringLiteral("containerResizeGrip")), QPoint(0, 64));
+            resized = f.shell(shellId)->size();
+            QCOMPARE(resized.height(), natural + 64);
+            const QByteArray bytes = ContainerDocumentCodec::encode(f.store.snapshot());
+            const auto decoded = ContainerDocumentCodec::decode(bytes);
+            QVERIFY(decoded.ok);
+            saved = decoded.document.containers;
+        }
+        {
+            ReturnFixture g;
+            QVERIFY(g.show(saved));
+            ContainerWidget* c = g.widget(shellId);
+            QVERIFY(c && c->isFloating());
+            QVERIFY(!c->autoHeight());
+            QCOMPARE(g.shell(shellId)->size(), resized);
+            auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+            QVERIFY(grip && grip->isVisible());
+            QCOMPARE(grip->geometry().bottomRight(), c->rect().bottomRight());
+        }
+        {
+            // Saved shorter than the content needs: shown at what it needs.
+            for (ContainerDocument& d : saved) {
+                if (d.id == shellId) {
+                    d.geometry.setHeight(natural - 20);
+                }
+            }
+            ReturnFixture h;
+            QVERIFY(h.show(saved));
+            ContainerWidget* c = h.widget(shellId);
+            QVERIFY(c && !c->autoHeight());
+            QCOMPARE(h.shell(shellId)->height(), c->naturalHeight());
+        }
     }
 };
 

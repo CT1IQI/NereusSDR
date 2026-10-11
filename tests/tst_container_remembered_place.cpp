@@ -25,6 +25,7 @@
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ContainerArrangeController.h"
 #include "gui/containers/WorkspaceProfiles.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -474,6 +475,53 @@ private slots:
         QCOMPARE(rig.shown(QStringLiteral("a")), resized);
         QVERIFY(rig.settleCapture());
         QTRY_COMPARE_WITH_TIMEOUT(storedGeometry(store, QStringLiteral("a")), resized, kSaveTimeoutMs);
+    }
+
+    // Today's look: the window of one popped-out object follows its
+    // content's height and has no resize corner (unchanged; the workspace
+    // look alone lets the operator set its height).
+    void lookOffAPoppedOutObjectsWindowIsAutoHeightWithNoCorner()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("shell.settings")));
+        ContainerWorkspaceStore store(settings);
+        Rig rig(store);
+        QVERIFY(rig.show());
+        ContainerDocument a = freeContainer(QStringLiteral("a"), kFirstRect);
+        ContentEntry entry = rig.registry.makeEntry(QStringLiteral("meter.signalMaxBin"));
+        entry.id = QStringLiteral("a-meter");
+        entry.context["sliceId"] = 0;
+        a.contents.append(entry);
+        ContentEntry other = rig.registry.makeEntry(QStringLiteral("meter.signalMaxBin"));
+        other.id = QStringLiteral("a-meter-2");
+        other.context["sliceId"] = 0;
+        a.contents.append(other);
+        QCOMPARE(rig.manager->commitWorkspace(workspace({a}), 0).status, CommitStatus::Saved);
+        QVERIFY(rig.settleCapture());
+        QVERIFY(rig.manager->arrangeController());
+        QVERIFY(rig.manager->arrangeController()->popOut(QStringLiteral("a-meter")).ok);
+        QVERIFY(rig.settleCapture());
+        const ContainerDocument shell = store.snapshot().containers.last();
+        QVERIFY(shell.popOutShell);
+        QVERIFY(shell.autoHeight);
+        ContainerWidget* c = rig.manager->container(shell.id);
+        QVERIFY(c && c->isFloating());
+        QVERIFY(c->autoHeight());
+        QVERIFY(!c->operatorSizesHeight());
+        auto* grip = c->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        QVERIFY(grip);
+        QVERIFY(!grip->isVisible());
+        // A press and drag on it does nothing.
+        const QSize before = c->window()->size();
+        dragBy(grip, QPoint(0, 40));
+        QCOMPARE(c->window()->size(), before);
+        QVERIFY(c->autoHeight());
+        QVERIFY(rig.settleCapture());
+        QVERIFY(store.snapshot().containers.last().autoHeight);
+        // Back in the main window before the rig goes (offscreen platform).
+        rig.manager->recoverContainer(shell.id);
+        QCoreApplication::processEvents();
     }
 
     // Cause 6: the first run with the look on copies the look-off layout,

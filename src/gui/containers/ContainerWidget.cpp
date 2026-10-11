@@ -129,6 +129,12 @@
 //                 either: the window's background made each an opaque 4 px
 //                 strip over the outline and the end of the header.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: a popped-out object's window
+//                 shows its resize corner (and the bottom edge while
+//                 arranging) although its height follows its content. A
+//                 resize in height turns auto height off; the window is
+//                 never shorter than its content needs (JJ, 2026-10-11).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucMeter.cs
@@ -619,9 +625,12 @@ void ContainerWidget::updateWorkspaceChrome()
     const bool resizable = m_arrangeActive && !isPanelDocked();
     // A frameless floating window keeps its resize corner, inside its bounds.
     const bool floatingCorner = isFloating();
-    m_resizeGrip->setVisible((resizable || floatingCorner) && !m_autoHeight);
+    // A popped-out object's window keeps both although its height follows
+    // its content: a resize in height makes the height the operator's.
+    const bool heightIsSet = !m_autoHeight || operatorSizesHeight();
+    m_resizeGrip->setVisible((resizable || floatingCorner) && heightIsSet);
     m_edgeRight->setVisible(resizable);
-    m_edgeBottom->setVisible(resizable && !m_autoHeight);
+    m_edgeBottom->setVisible(resizable && heightIsSet);
     m_arrangeFrame->setVisible(m_arrangeActive);
     m_btnFloat->setEnabled(true);
     m_btnAxis->setEnabled(true);
@@ -767,6 +776,8 @@ void ContainerWidget::setPopOutShell(bool shell)
 {
     m_popOutShell = shell;
     updateTitleBar();
+    // Workspace preview: a popped-out object's window has its own resize rule.
+    updateChrome();
 }
 void ContainerWidget::setHeaderMode(HeaderMode mode)
 {
@@ -1177,6 +1188,22 @@ void ContainerWidget::setAutoHeight(bool autoHeight)
     updateChrome();
 }
 
+bool ContainerWidget::operatorSizesHeight() const
+{
+    return m_groupHeader != nullptr && m_popOutShell && isFloating();
+}
+
+bool ContainerWidget::sizingHeightNow() const
+{
+    return m_resizing && m_resizeAxes.testFlag(Qt::Vertical) && operatorSizesHeight();
+}
+
+int ContainerWidget::naturalHeight() const
+{
+    const auto* host = qobject_cast<const ContainerContentHost*>(m_content);
+    return (host ? host->preferredContentHeight() : 0) + headerExtent();
+}
+
 void ContainerWidget::setTitleBarVisible(bool visible)
 {
     if (m_titleBarVisible == visible) { return; }
@@ -1491,7 +1518,7 @@ bool ContainerWidget::eventFilter(QObject* watched, QEvent* event)
     }
 
     // Resize grip (not for panel-docked)
-    if (watched == m_resizeGrip && !m_locked && !m_autoHeight && !isPanelDocked()) {
+    if (watched == m_resizeGrip && !m_locked && (!m_autoHeight || operatorSizesHeight()) && !isPanelDocked()) {
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent* me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
@@ -1741,6 +1768,12 @@ void ContainerWidget::updateResize(const QPoint& globalPos)
 
 void ContainerWidget::endResize()
 {
+    if (m_resizing && m_autoHeight && operatorSizesHeight() && m_resizeAxes.testFlag(Qt::Vertical)
+        && parentWidget() && parentWidget()->height() != m_resizeStartSize.height()) {
+        // Workspace preview: the operator set this window's height. It no
+        // longer follows the content; the manager saves that with the size.
+        m_autoHeight = false;
+    }
     m_resizing = false;
     emit geometryInteractionFinished();
     m_resizeStartGlobal = QPoint();
@@ -1754,6 +1787,10 @@ void ContainerWidget::doResize(int w, int h)
     // From Thetis ucMeter.cs:520-549
     w = std::max(w, std::max(kMinContainerWidth, minimumSizeHint().width()));
     h = std::max(h, std::max(kMinContainerHeight, minimumSizeHint().height()));
+    if (operatorSizesHeight()) {
+        // Workspace preview: never shorter than its content needs.
+        h = std::max(h, naturalHeight());
+    }
 
     if (isFloating()) {
         if (parentWidget()) {

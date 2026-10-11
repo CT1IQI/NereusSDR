@@ -178,6 +178,11 @@
 //                 out of the manager, so shutdown never released its
 //                 content and the host then read the deleted registry.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: a popped-out object's window
+//                 whose height the operator set keeps it, growing only
+//                 when its content no longer fits; the resize that set it
+//                 is saved at once with auto height off (JJ, 2026-10-11).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1022,8 +1027,13 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 const WorkspaceDocument latest = m_store->snapshot();
                 const auto placement = std::find_if(latest.containers.cbegin(), latest.containers.cend(),
                     [&id](const ContainerDocument& value) { return value.id == id; });
-                if (placement == latest.containers.cend() || !placement->autoHeight
-                    || placement->dockMode == DockMode::PanelDocked) {
+                if (placement == latest.containers.cend() || placement->dockMode == DockMode::PanelDocked) {
+                    return;
+                }
+                // Workspace preview: a popped-out object's window whose
+                // height the operator set keeps it and only grows to fit.
+                const bool operatorHeight = !placement->autoHeight && view->operatorSizesHeight();
+                if ((!placement->autoHeight && !operatorHeight) || view->sizingHeightNow()) {
                     return;
                 }
                 QWidget* target = placement->dockMode == DockMode::Floating
@@ -1035,6 +1045,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 if (const int available = availableHeightFor(target);
                     placement->layout == ContentLayout::FreeCanvas && available > 0) {
                     height = qMin(height, available);
+                }
+                if (operatorHeight) {
+                    height = qMax(height, target->height());
                 }
                 const QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
                     .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
@@ -1059,6 +1072,12 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 height = qMin(height, available);
             }
             target->resize(qMax(target->width(), c->minimumSizeHint().width()),height);
+        }
+        if (!d.autoHeight && d.dockMode == DockMode::Floating && c->operatorSizesHeight()
+            && form->height() < c->naturalHeight()) {
+            // Workspace preview: the operator's height, but never less than
+            // the content needs.
+            form->resize(form->width(), c->naturalHeight());
         }
         if (d.dockMode == DockMode::Floating && !preserveGeometry) {
             // At its remembered place when its monitor is here; otherwise on
@@ -1867,7 +1886,14 @@ void ContainerManager::wireContainer(ContainerWidget* container)
             if (!known || liveGeometry(id) != start) {
                 rememberOperatorGeometry(id);
             }
-            m_geometryCommit.start();
+            if (container->operatorSizesHeight() && !container->autoHeight()) {
+                // Workspace preview: a resize in height just made this
+                // window's height the operator's. Saved now, so nothing
+                // puts the content's height back before the delayed commit.
+                saveState();
+            } else {
+                m_geometryCommit.start();
+            }
         }
         emit containerDragFinished();
     });
