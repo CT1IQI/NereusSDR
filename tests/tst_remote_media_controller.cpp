@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-10: the microphone's collector: a pump stalled for 150 ms of
+//               the microphone's clock sends all of it afterwards; the
+//               collector's thread runs exactly while the capture lease
+//               is held. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-09: Fix round 2: a key retries a Failed capture that another
 //               demand holds open; a lost media connection during a
 //               program key leaves the next key its lead. J.J. Boyd
@@ -176,6 +181,7 @@
 #include "OperatorWording.h"
 #include "gui/OperatorReasonText.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "core/audio/CaptureAudioBus.h"
 #include "fakes/FakeAudioBus.h"
 #include "fakes/UpgradedCoreToken.h"
 
@@ -514,6 +520,58 @@ private:
     QElapsedTimer m_clock;
     qint64 m_lastPullMs{0};
     qint64 m_delivered{0};
+};
+
+// 2026-10-10: a microphone paced as the PC microphone's reader is
+// (CaptureAudioBus::pull), on a clock the test moves: a pull gives at most
+// the clock's frames since the last pull plus kPaceSlackFrames, and unused
+// credit stops at kPaceCreditCapFrames. 48 kHz mono float.
+class ClockPacedMicrophone final : public IAudioBus {
+public:
+    explicit ClockPacedMicrophone(const qint64* nowFrames) : m_nowFrames(nowFrames) {}
+    bool open(const AudioFormat& format) override
+    {
+        m_format = format;
+        m_open = true;
+        return true;
+    }
+    void close() override { m_open = false; }
+    bool isOpen() const override { return m_open; }
+    qint64 push(const char*, qint64) override { return 0; }
+    void flush() override {}
+    qint64 pull(char* data, qint64 maxBytes) override
+    {
+        if (!m_open || data == nullptr || maxBytes < 4) {
+            return 0;
+        }
+        if (!m_started) {
+            m_started = true;
+            m_lastFrames = *m_nowFrames;
+        }
+        m_credit = std::min<qint64>(m_credit + (*m_nowFrames - m_lastFrames),
+                                    CaptureAudioBus::kPaceCreditCapFrames);
+        m_lastFrames = *m_nowFrames;
+        const qint64 frames = std::clamp<qint64>(m_credit + CaptureAudioBus::kPaceSlackFrames,
+                                                 0, maxBytes / 4);
+        m_credit -= frames;
+        auto* out = reinterpret_cast<float*>(data);
+        for (qint64 i = 0; i < frames; ++i) {
+            out[i] = 0.25f;
+        }
+        return frames * 4;
+    }
+    float rxLevel() const override { return 0.0f; }
+    float txLevel() const override { return 0.0f; }
+    QString backendName() const override { return QStringLiteral("ClockPacedMicrophone"); }
+    AudioFormat negotiatedFormat() const override { return m_format; }
+
+private:
+    const qint64* m_nowFrames;
+    AudioFormat m_format;
+    bool m_open{false};
+    bool m_started{false};
+    qint64 m_lastFrames{0};
+    qint64 m_credit{0};
 };
 
 void attachRemoteMicrophone(Test::RemoteAudioSessionHarness& h, float amplitude, double hz)
@@ -5194,15 +5252,32 @@ private slots:
                 && stack.spectrum(id)->wfActiveHighThreshold()==floor+55);
             QCOMPARE(stack.spectrum(id)->wfActiveHighThreshold(),floor+55);
         }
-        QTRY_VERIFY(countControl(controls,QStringLiteral("subscribe"))>=8);
+        // R-DISP-HOLD: each pan first asked for -120 to -50 dBm (its scale
+        // and stored levels with the headroom). Pans 0 to 2 take levels
+        // below that and ask again; pan 3's (-110 to -50) lie inside what it
+        // holds, so it asks nothing. (This test waited for a second ask from
+        // every pan and for 10 dB outside every pan's levels: the old rule
+        // gave run-time levels their own headroom whenever they arrived.
+        // A held range is kept while it holds what the pan needs; a new
+        // range is what gets the headroom.)
+        QTRY_VERIFY(countControl(controls,QStringLiteral("subscribe"))>=7);
         for(int n=0;n<4;++n) {
             const QString id=QStringLiteral("pan-%1").arg(n);
             QJsonObject latest;
+            int asks=0;
             for(const auto& event:controls) { const auto payload=event.first().toJsonObject();
-                if(payload.value(QStringLiteral("op"))==QStringLiteral("subscribe") && payload.value(QStringLiteral("sliceId")).toInt()==sliceIds[n]) { latest=payload; } }
+                if(payload.value(QStringLiteral("op"))==QStringLiteral("subscribe") && payload.value(QStringLiteral("sliceId")).toInt()==sliceIds[n]) { latest=payload; ++asks; } }
             QVERIFY(!latest.isEmpty());
-            QVERIFY(latest.value(QStringLiteral("minDbm")).toDouble() <= stack.spectrum(id)->wfActiveLowThreshold()-10);
-            QVERIFY(latest.value(QStringLiteral("maxDbm")).toDouble() >= stack.spectrum(id)->wfActiveHighThreshold()+10);
+            QCOMPARE(asks, n<3 ? 2 : 1);
+            const double low=stack.spectrum(id)->wfActiveLowThreshold();
+            const double high=stack.spectrum(id)->wfActiveHighThreshold();
+            QVERIFY(latest.value(QStringLiteral("minDbm")).toDouble() <= low);
+            QVERIFY(latest.value(QStringLiteral("maxDbm")).toDouble() >= high);
+            if (n<3) {
+                // A new range: the headroom outside what the pan needs.
+                QCOMPARE(latest.value(QStringLiteral("minDbm")).toDouble(), low-10);
+                QCOMPARE(latest.value(QStringLiteral("maxDbm")).toDouble(), std::max(high,-60.0)+10);
+            }
         }
         const int settled=countControl(controls,QStringLiteral("subscribe"));
         stack.setActivePan(QStringLiteral("pan-2"));
@@ -6328,8 +6403,11 @@ private slots:
         QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
         // The pan shows -100 to +20 dBm and the waterfall -130 to -70: the
         // window spans both, so +20 dBm is not clipped at 0.
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -130.0);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 20.0);
+        // R-DISP-HOLD: with 10 dB either side (this test held the bare
+        // -130 to +20; a range with no headroom is asked again at every
+        // 2 dB move of the grid, and each ask restarted the picture).
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -140.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 30.0);
         // The averaging times at the 20 frames a second asked.
         QCOMPARE(asked.value(QStringLiteral("fps")).toInt(), 20);
         QCOMPARE(asked.value(QStringLiteral("trace")).toObject()
@@ -6364,10 +6442,14 @@ private slots:
         asked = lastControl(controls, QStringLiteral("subscribe"));
         const double low = asked.value(QStringLiteral("minDbm")).toDouble();
         const double high = asked.value(QStringLiteral("maxDbm")).toDouble();
-        QCOMPARE(low, -96.0);
-        QCOMPARE(high, -76.0);
-        // A 20 dB range in 256 levels: steps under 0.1 dB.
-        QVERIFY((high - low) / 255.0 < 0.1);
+        // R-DISP-HOLD: the pan now needs -96 to -76 dBm, far inside the
+        // -140 to +30 held, so the range is drawn in to it with the headroom
+        // (this test held the bare -96 to -76 and steps under 0.1 dB).
+        QCOMPARE(low, -106.0);
+        QCOMPARE(high, -66.0);
+        // A 20 dB range with its headroom in 256 levels: steps under 0.2 dB,
+        // the cost the hold rule states for not restarting the picture.
+        QVERIFY((high - low) / 255.0 < 0.2);
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs * 2);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
 
@@ -6383,8 +6465,13 @@ private slots:
         const double binWidth = double(mirrored->sampleRateHz())
             / asked.value(QStringLiteral("fftSize")).toDouble();
         const double shift = -10.0 * std::log10(binWidth);
-        QVERIFY(std::abs(asked.value(QStringLiteral("maxDbm")).toDouble()
-                         - std::ceil((-76.0 - shift) * 10.0) / 10.0) < 1.0e-9);
+        // R-DISP-HOLD: on whole dB with the headroom (was a tenth of a dB
+        // and none).
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(),
+                 std::ceil(-76.0 - shift + 10.0));
+        // The waterfall's stored -96 dBm low is a frame value already and
+        // does not move with normalise: it stays the bottom of what is needed.
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -106.0);
 
         client.disconnectFromStation(QStringLiteral("test complete"));
         remote.setFftEngine(nullptr);
@@ -6587,18 +6674,29 @@ private slots:
         settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
         asked = lastControl(controls, QStringLiteral("subscribe"));
+        // R-DISP-HOLD: the pan's own -60 dBm top takes the headroom too
+        // (this test held -60: the scale had none, so each move of the grid
+        // asked again).
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -130.0);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
 
-        // Back to the stored levels: the window is the pan and those levels.
+        // Back to the stored levels (-110 to -70): what the pan needs is
+        // now -110 to -60, which the held -130 to -50 holds, so nothing is
+        // asked. (This test held a fourth ask here for the bare -110 to
+        // -60; a range that still holds what the pan needs is kept.)
         // (Waterfall AGC's levels come from a Core that offers display
         // extras, as this one does: coreWaterfallAgcAsksNothingAsItSettles.)
         registry.setEnabled(false);
         settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
+        // The stored levels are the ones in force: moving one past the
+        // held range asks for the pan and those levels.
+        widget->setWfLowThreshold(-135.0f);
+        settle();
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 4);
         asked = lastControl(controls, QStringLiteral("subscribe"));
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -110.0);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -145.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
 
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
@@ -6824,18 +6922,19 @@ private slots:
         QCOMPARE(widget->wfHighThreshold(), 0.0f);
         QCOMPARE(widget->wfAgcEnabled(), agc);
         QCOMPARE(widget->waterfallNFAGCEnabled(), nfAgc);
-        // AGC's accepted -171 dBm low needs its 10 dB headroom below the
-        // stored -180 dBm window. The old no-request assertion hid that
-        // clipping bug. Other modes here already fit their stored window.
+        // AGC's accepted -171 dBm low needs 10 dB below it in the window.
+        // R-DISP-HOLD: the first range asked already has it (the pan's and
+        // the stored levels' -180 to 0 dBm with the headroom), so the Core's
+        // levels arriving ask nothing in any mode. (This test held a second
+        // ask in the AGC row, for -181 dBm: the first range had no headroom
+        // and the levels' own had to be asked for when they arrived.)
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -190.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 10.0);
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
-        const int expectedRequests = mode == QStringLiteral("agc") ? 2 : 1;
+        const int expectedRequests = 1;
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
-        if (mode == QStringLiteral("agc")) {
-            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
-                         .value(QStringLiteral("minDbm")).toDouble(), -181.0);
-        }
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
@@ -6918,8 +7017,12 @@ private slots:
                               {QStringLiteral("lowDbm"), -109.5},
                               {QStringLiteral("highDbm"), -70.0},
                               {QStringLiteral("offsetDb"), 0}}));
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        // R-DISP-HOLD: the pan's -100 to -60 dBm and the stored levels,
+        // with 10 dB either side on whole dB. (This test held the bare
+        // -109.5 to -60, here and in the contexts and codecs below; every
+        // range below now carries the pan's headroom at its top, -50 dBm.)
+        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -120.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
         QVERIFY(widget->coreWaterfallLevelsInUse());
 
         const auto settle = [&] {
@@ -6970,15 +7073,15 @@ private slots:
             {QStringLiteral("centreHz"), 14225023.4375}, {QStringLiteral("spanHz"), 24046.875},
             {QStringLiteral("wideCentreHz"), 0}, {QStringLiteral("wideSpanHz"), 0},
             {QStringLiteral("traceSamples"), 128}, {QStringLiteral("waterfallSamples"), 128},
-            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -109.5},
-            {QStringLiteral("maxDbm"), -60}, {QStringLiteral("fps"), 20},
+            {QStringLiteral("wideSamples"), 0}, {QStringLiteral("minDbm"), -120},
+            {QStringLiteral("maxDbm"), -50}, {QStringLiteral("fps"), 20},
             {QStringLiteral("framesPerLine"), 1},
             {QStringLiteral("wideband"), WidebandDisplayContext{}.toJson()},
             {QStringLiteral("grantedFftSize"), 4096}, {QStringLiteral("grantedTier"), QStringLiteral("wide")},
             {QStringLiteral("requestedPixels"), 128}, {QStringLiteral("grantedPixels"), 128},
             {QStringLiteral("limit"), QStringLiteral("none")}};
         QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
-        const DisplayCodecContext codec{id, 1, -109.5f, -60.0f, 128, 128, 0};
+        const DisplayCodecContext codec{id, 1, -120.0f, -50.0f, 128, 128, 0};
         const auto deliverLevels = [&](float low, float high, quint32 sequence) {
             DisplayExtrasFrame extras;
             extras.endpointId = id;
@@ -7001,7 +7104,7 @@ private slots:
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
         asked = lastControl(controls, QStringLiteral("subscribe"));
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -142.0);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
         const QVector<float> represented = decodedRow(
             asked.value(QStringLiteral("minDbm")).toDouble(),
             asked.value(QStringLiteral("maxDbm")).toDouble());
@@ -7026,7 +7129,7 @@ private slots:
         context.insert(QStringLiteral("contextGeneration"), 2);
         context.insert(QStringLiteral("minDbm"), -142.0);
         QVERIFY(server.sendMediaControl(context, server.mediaSessionEpoch()));
-        const DisplayCodecContext freshCodec{id, 2, -142.0f, -60.0f, 128, 128, 0};
+        const DisplayCodecContext freshCodec{id, 2, -142.0f, -50.0f, 128, 128, 0};
         DisplayExtrasFrame fresh;
         fresh.endpointId = id;
         fresh.contextGeneration = 2;
@@ -7096,7 +7199,7 @@ private slots:
         QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 3);
         asked = lastControl(controls, QStringLiteral("subscribe"));
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -260.0);
-        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -60.0);
+        QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), -50.0);
         widget->composeWaterfallActiveThresholds(line);
         QCOMPARE(widget->wfActiveLowThreshold(), -250.0f);
         settle();
@@ -7116,7 +7219,10 @@ private slots:
         const QJsonObject levels = asked.value(QStringLiteral("waterfallLevels")).toObject();
         QCOMPARE(levels.value(QStringLiteral("mode")).toString(), QStringLiteral("noiseFloorAgc"));
         QCOMPARE(levels.value(QStringLiteral("offsetDb")).toInt(), 6);
-        QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -109.5);
+        // The stored levels again, with the headroom: the -260 dBm held for
+        // the AGC's pair is far wider than they need.
+        QTRY_COMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("minDbm")).toDouble(), -120.0);
         widget->composeWaterfallActiveThresholds(line);
         QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
 
@@ -10954,6 +11060,101 @@ private slots:
             QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
         }
         h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-10 (bench: a Windows window on a remote Core lost microphone
+    // audio on every key): the pump does not run for 150 ms of the
+    // microphone's clock while keyed. With nobody collecting meanwhile the
+    // microphone's pacing gives the late pump 30 ms of it; with the
+    // collector stepping every 5 ms, all 150 ms is sent afterwards.
+    void aStalledPumpSendsAllTheMicrophoneAudioTheCollectorPulled()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        qint64 nowFrames = 0;
+        auto microphone = std::make_unique<ClockPacedMicrophone>(&nowFrames);
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        h.remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        constexpr int kPacketFrames = RemoteMicConfig::kOpusFrameSamples;   // 20 ms
+        constexpr int kStallMs = 150;
+
+        // From here on no event runs, so the pump's timer never does: the
+        // test runs the pump and the collector's steps itself.
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QVERIFY(!media.micCollectorThreadRunningForTest());   // inline in tests
+        media.pumpMicUplinkForTest();
+        const quint64 start = media.micPacketsSent();
+
+        // Nobody collects during the stall: the late pump gets the pacing's
+        // credit and slack (30 ms), one packet, and the rest is lost.
+        nowFrames += kStallMs * 48;
+        media.pumpMicUplinkForTest();
+        const quint64 lost = media.micPacketsSent();
+        QCOMPARE(lost - start, quint64((CaptureAudioBus::kPaceCreditCapFrames
+                                        + CaptureAudioBus::kPaceSlackFrames) / kPacketFrames));
+        // The half packet that pump left waiting.
+        const int waiting = (CaptureAudioBus::kPaceCreditCapFrames
+                             + CaptureAudioBus::kPaceSlackFrames) % kPacketFrames;
+
+        // The collector steps every 5 ms of the same stall: the pump then
+        // sends every frame of the 150 ms.
+        int collected = 0;
+        for (int ms = 0; ms < kStallMs; ms += 5) {
+            nowFrames += 5 * 48;
+            collected += media.collectMicNowForTest();
+        }
+        QCOMPARE(collected, kStallMs * 48);
+        QCOMPARE(media.micPacketsSent(), lost);                // the pump has not run
+        media.pumpMicUplinkForTest();
+        QCOMPARE(media.micPacketsSent() - lost,
+                 quint64((waiting + kStallMs * 48) / kPacketFrames));
+        QVERIFY((waiting + kStallMs * 48) % kPacketFrames == 0);
+
+        media.setHoldsTransmit(false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-10: production, with no inline seam: the collector's thread
+    // runs exactly while the capture lease is held, the pump sends what it
+    // collected, and the thread is joined when the line goes.
+    void theMicrophoneIsCollectedOnItsOwnThreadWhileTheLeaseIsHeld()
+    {
+        const RestoreAudioChoice restore;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);   // the harness set it
+        // Pulled only by the collector's thread from here on.
+        attachRemoteMicrophone(h, 0.3f, 1000.0);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Opus);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QCOMPARE(media.micCollectorThreadRunningForTest(), media.micCaptureLeaseHeldForTest());
+
+        media.setHoldsTransmit(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(media.micCaptureLeaseHeldForTest());
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        const quint64 before = media.micPacketsSent();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micPacketsSent() >= before + 10, 10000);
+
+        media.setHoldsTransmit(false);
+        QVERIFY(!media.micUplinkRunning());
+        QCOMPARE(media.micCollectorThreadRunningForTest(), media.micCaptureLeaseHeldForTest());
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+        QTRY_VERIFY_WITH_TIMEOUT(!media.micCaptureLeaseHeldForTest(), 5000);
+        QVERIFY(!media.micCollectorThreadRunningForTest());
     }
 
     // 2026-10-09 (review item 6): VOX armed holds the capture lease; a
