@@ -17,6 +17,9 @@ constexpr int kBarHeight = 12;
 constexpr int kBarTop = (kBaseHeight - kBarHeight) / 2;
 constexpr int kScaleTop = kBarTop + kBarHeight + 1;
 constexpr int kScalePointSize = 7;
+constexpr int kTitlePointSize = 8;
+// The width of the slot a scale number is centered in, on its tick.
+constexpr int kScaleSlotWidth = 40;
 
 } // namespace
 
@@ -60,6 +63,21 @@ void HGauge::setScaleFontPixelSize(int pixelSize)
     m_scaleFontPixelSize = pixelSize;
     updateFixedHeight();
     update();
+}
+
+void HGauge::setTitleFontPixelSize(int pixelSize)
+{
+    m_titleFontPixelSize = pixelSize;
+    update();
+}
+
+QFont HGauge::titleFont(const QString& family) const
+{
+    QFont f(family, kTitlePointSize, QFont::Bold);
+    if (m_titleFontPixelSize > 0) {
+        f.setPixelSize(m_titleFontPixelSize);
+    }
+    return f;
 }
 
 QFont HGauge::scaleFont(const QString& family) const
@@ -186,14 +204,19 @@ void HGauge::paintEvent(QPaintEvent*)
     // Center title
     if (!m_title.isEmpty()) {
         p.setPen(QColor(Style::kTextSecondary));
-        p.setFont(QFont(p.font().family(), 8, QFont::Bold));
-        p.drawText(QRect(barX, barY, barW, barH), Qt::AlignCenter, m_title);
+        p.setFont(titleFont(p.font().family()));
+        // Not clipped to the bar: at 96 dpi the title's line (15 px in
+        // Segoe UI) is taller than the 12 px bar, and clipping cut the
+        // tail of the "p" in "Temp". Where the line fits the bar (the Mac)
+        // nothing was clipped and the picture is the same.
+        p.drawText(QRect(barX, barY, barW, barH), Qt::AlignCenter | Qt::TextDontClip, m_title);
     }
 
     // Tick labels along bottom
     if (!m_tickLabels.isEmpty()) {
         p.setFont(scaleFont(p.font().family()));
         const int scaleH = height() - kScaleTop;
+        const QFontMetrics fm = p.fontMetrics();
         const int n = m_tickLabels.size();
         for (int i = 0; i < n; ++i) {
             double frac = static_cast<double>(i) / (n - 1);
@@ -203,8 +226,24 @@ void HGauge::paintEvent(QPaintEvent*)
             if (val >= m_redStart) { col = QColor(Style::kGaugeDanger); }
             else if (val >= m_yellowStart) { col = QColor(Style::kGaugeWarning); }
             p.setPen(col);
-            p.drawText(QRect(x - 20, kScaleTop, 40, scaleH),
-                       Qt::AlignHCenter | Qt::AlignTop, m_tickLabels[i]);
+            // A number is centered on its tick. The first and last ticks
+            // are the bar's ends, 2 px inside the widget, so half of those
+            // two numbers fell outside it and was cut. A number that would
+            // pass an end of the bar is drawn flush with that end instead;
+            // every other number stays centered on its tick.
+            const int textW = fm.horizontalAdvance(m_tickLabels[i]);
+            const int halfW = (textW + 1) / 2;
+            if (x - halfW < barX) {
+                p.drawText(QRect(barX, kScaleTop, textW + kScaleSlotWidth, scaleH),
+                           Qt::AlignLeft | Qt::AlignTop, m_tickLabels[i]);
+            } else if (x + halfW > barX + barW) {
+                p.drawText(QRect(barX + barW - textW - kScaleSlotWidth, kScaleTop,
+                                 textW + kScaleSlotWidth, scaleH),
+                           Qt::AlignRight | Qt::AlignTop, m_tickLabels[i]);
+            } else {
+                p.drawText(QRect(x - kScaleSlotWidth / 2, kScaleTop, kScaleSlotWidth, scaleH),
+                           Qt::AlignHCenter | Qt::AlignTop, m_tickLabels[i]);
+            }
         }
     }
 }

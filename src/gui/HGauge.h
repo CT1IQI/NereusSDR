@@ -45,6 +45,9 @@ public:
     // 7 px on the Mac and 9 px at 96 dpi (Windows at 100%, Linux), so a
     // test on any platform can render either case.
     void setScaleFontPixelSize(int pixelSize);
+    // Test seam: the same for the title in the bar, which the app draws
+    // at 8 points bold: 8 px on the Mac and 11 px at 96 dpi.
+    void setTitleFontPixelSize(int pixelSize);
 
     QSize sizeHint() const override { return {200, heightForScale()}; }
     QSize minimumSizeHint() const override { return {100, 26}; }
@@ -56,6 +59,8 @@ protected:
 private:
     // The font of the scale numbers under the bar.
     QFont scaleFont(const QString& family) const;
+    // The font of the title in the bar.
+    QFont titleFont(const QString& family) const;
     // The widget height that shows the scale numbers whole: 30 px where
     // the scale font is 7 px, more where it is larger.
     int heightForScale() const;
@@ -73,6 +78,7 @@ private:
     QString m_unit;
     QStringList m_tickLabels;
     int m_scaleFontPixelSize = 0;
+    int m_titleFontPixelSize = 0;
 };
 
 } // namespace NereusSDR

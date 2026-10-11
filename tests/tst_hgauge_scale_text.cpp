@@ -12,6 +12,23 @@
 //   - at 7 px the gauge keeps its 30 px height and the numbers fit as before;
 //   - at the platform's own 7 point size the numbers are whole as well;
 //   - a gauge without scale numbers stays 30 px at either size.
+//
+// The title in the bar is 8 points bold: 8 px on the Mac and 11 px at
+// 96 dpi, where its line is taller than the 12 px bar. The text was clipped
+// to the bar, so with a font whose line is as tall as Segoe UI's the tail
+// of the "p" in "Temp" lost its last row or two. The title cases check that
+// every gauge's title covers the same rows as the same text drawn with
+// nothing to cut it, at both sizes and at larger ones with taller lines.
+//
+// Each number was also drawn centered on its tick, and the first and last
+// ticks are the bar's ends, 2 px inside the gauge, so the gauge's left edge
+// cut the first number and its right edge cut the last ("2k" lost its "k")
+// on every platform. The end-number cases check, at both sizes:
+//   - the first and last numbers are as wide in ink as the same text drawn
+//     with room to spare, with a clear column at each edge of the gauge and
+//     a clear column between them and their neighbors;
+//   - the numbers between them are, pixel for pixel, where centering on
+//     the tick puts them.
 
 #include <QtTest/QtTest>
 
@@ -21,6 +38,7 @@
 #include <QPixmap>
 
 #include "gui/HGauge.h"
+#include "gui/StyleConstants.h"
 
 using namespace NereusSDR;
 
@@ -30,6 +48,12 @@ constexpr int kGaugeWidth = 252;   // the gauge's width in a 260 px applet
 constexpr int kScaleTop = 22;      // first row under the bar and its gap
 constexpr int kMacScalePx = 7;     // 7 points at the Mac's 72 dpi
 constexpr int kWindowsScalePx = 9; // 7 points at 96 dpi
+constexpr int kMacTitlePx = 8;      // the title's 8 points at 72 dpi
+constexpr int kWindowsTitlePx = 11; // 8 points at 96 dpi
+// Segoe UI at 11 px has a 15 px line (ascent 12, descent 3). The font the
+// offscreen platform gives the Mac has a 13 px line at 11 px, which does
+// not reach past the bar, and Segoe UI's 15 px line at 12 px.
+constexpr int kTallLineTitlePx = 12;
 
 // The scale numbers of every gauge the app builds with a scale: the two
 // amplifier panels (AmpApplet.cpp, Rf2ksApplet.cpp), TxApplet, PhoneCwApplet
@@ -117,6 +141,84 @@ int wholeInkRows(const QStringList& labels, const QFont& font, int dpi)
     return (first < 0) ? 0 : last - first + 1;
 }
 
+bool columnHasInk(const QImage& image, int x, int fromRow)
+{
+    const QRgb background = image.pixel(0, 0);
+    for (int y = fromRow; y < image.height(); ++y) {
+        if (isInk(image.pixel(x, y), background)) { return true; }
+    }
+    return false;
+}
+
+// The first and last column in [fromColumn, toColumn) that holds ink at or
+// below fromRow; both -1 when none does.
+struct InkSpan {
+    int first = -1;
+    int last = -1;
+    int width() const { return (first < 0) ? 0 : last - first + 1; }
+};
+
+InkSpan inkSpan(const QImage& image, int fromColumn, int toColumn, int fromRow)
+{
+    InkSpan span;
+    for (int x = qMax(0, fromColumn); x < qMin(toColumn, image.width()); ++x) {
+        if (columnHasInk(image, x, fromRow)) {
+            if (span.first < 0) { span.first = x; }
+            span.last = x;
+        }
+    }
+    return span;
+}
+
+// The gauge's scale font: 7 points, or the seam's pixel size.
+QFont scaleFontOf(const HGauge& gauge, int pixelSize)
+{
+    QFont font(gauge.font().family(), 7);
+    if (pixelSize > 0) { font.setPixelSize(pixelSize); }
+    return font;
+}
+
+// A canvas the size of the gauge's picture, in the gauge's background
+// color and at its dpi, to draw reference text on.
+QImage referenceCanvas(const QImage& gaugeImage, int dpi)
+{
+    QImage canvas(gaugeImage.size(), QImage::Format_ARGB32_Premultiplied);
+    const int dotsPerMeter = qRound(dpi / 0.0254);
+    canvas.setDotsPerMeterX(dotsPerMeter);
+    canvas.setDotsPerMeterY(dotsPerMeter);
+    canvas.fill(gaugeImage.pixel(0, 0));
+    return canvas;
+}
+
+// How many columns of ink a label has when nothing can cut it: drawn in
+// the middle of a canvas, flush to the side the gauge aligns it to.
+int wholeInkColumns(const QImage& gaugeImage, const QString& label, const QFont& font,
+                    const QColor& color, Qt::Alignment side, int dpi)
+{
+    QImage canvas = referenceCanvas(gaugeImage, dpi);
+    QPainter p(&canvas);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setFont(font);
+    p.setPen(color);
+    p.drawText(QRect(60, kScaleTop, 80, canvas.height() - kScaleTop), side | Qt::AlignTop, label);
+    p.end();
+    return inkSpan(canvas, 1, canvas.width(), kScaleTop).width();
+}
+
+// Where the gauge puts tick i of n: the bar runs from 2 px inside the left
+// edge to 2 px inside the right edge.
+int tickX(int i, int n, int gaugeWidth)
+{
+    return 2 + static_cast<int>(static_cast<double>(i) / (n - 1) * (gaugeWidth - 4));
+}
+
+// The titles of every gauge the app builds with one.
+QStringList appTitles()
+{
+    return {"Fwd Pwr", "RF Pwr", "SWR", "Temp", "Level", "Compression",
+            "FB Level", "Correction", "+PK", "-PK"};
+}
+
 void setUpGauge(HGauge& gauge, const QStringList& labels)
 {
     gauge.setRange(0.0, 2000.0);
@@ -135,6 +237,14 @@ class TestHGaugeScaleText : public QObject
 private:
     // Every label set: the numbers are whole and one row under them is clear.
     void scaleNumbersAreWhole(int pixelSize);
+    // Every label set: the first and last numbers are whole and inside the
+    // gauge, clear of its edges and of their neighbors.
+    void endNumbersAreInsideTheGauge(int pixelSize);
+    // Every label set: the numbers between the first and last are where
+    // centering on the tick puts them.
+    void innerNumbersAreCenteredOnTheirTicks(int pixelSize);
+    // Every title: on the same rows as the same text drawn unclipped.
+    void titleIsWhole(int pixelSize);
 
 private slots:
     void windowsSizeNumbersAreWholeWithAClearRowUnder();
@@ -144,6 +254,16 @@ private slots:
     void windowsSizeGaugeGrowsOnlyByWhatTheNumbersNeed();
     void gaugeWithoutScaleStaysThirtyPixels();
     void barDoesNotMoveWhenTheGaugeGrows();
+    void windowsSizeEndNumbersAreInsideTheGauge();
+    void macSizeEndNumbersAreInsideTheGauge();
+    void platformSizeEndNumbersAreInsideTheGauge();
+    void windowsSizeInnerNumbersDidNotMove();
+    void macSizeInnerNumbersDidNotMove();
+    void platformSizeInnerNumbersDidNotMove();
+    void windowsSizeTitleIsWhole();
+    void macSizeTitleIsWhole();
+    void platformSizeTitleIsWhole();
+    void tallLineTitleIsWhole();
 };
 void TestHGaugeScaleText::scaleNumbersAreWhole(int pixelSize)
 {
@@ -249,6 +369,226 @@ void TestHGaugeScaleText::barDoesNotMoveWhenTheGaugeGrows()
     QVERIFY(b.height() > a.height());
     // The rows above the scale (the bar and its title) are the same picture.
     QCOMPARE(b.copy(0, 0, b.width(), kScaleTop), a.copy(0, 0, a.width(), kScaleTop));
+}
+
+void TestHGaugeScaleText::endNumbersAreInsideTheGauge(int pixelSize)
+{
+    const QList<QStringList> sets = appLabelSets();
+    for (const QStringList& labels : sets) {
+        HGauge gauge;
+        setUpGauge(gauge, labels);
+        gauge.setScaleFontPixelSize(pixelSize);
+        const QImage image = render(gauge);
+        const QString what = labels.join(QLatin1Char(' '));
+        const QFont font = scaleFontOf(gauge, pixelSize);
+        const QFontMetrics metrics(font, &gauge);
+        const int n = labels.size();
+        const int w = image.width();
+
+        // A clear column at each edge of the gauge.
+        QVERIFY2(!columnHasInk(image, 0, kScaleTop),
+                 qPrintable(QStringLiteral("%1: scale ink in the gauge's first column").arg(what)));
+        QVERIFY2(!columnHasInk(image, w - 1, kScaleTop),
+                 qPrintable(QStringLiteral("%1: scale ink in the gauge's last column").arg(what)));
+
+        // The neighbors are centered on their ticks; their text boxes
+        // bound the room the first and last numbers have.
+        const int secondLeft = tickX(1, n, w) - (metrics.horizontalAdvance(labels[1]) + 1) / 2 - 1;
+        const int beforeLastRight =
+            tickX(n - 2, n, w) + (metrics.horizontalAdvance(labels[n - 2]) + 1) / 2 + 1;
+
+        // With setUpGauge's thresholds the first number is in the normal
+        // color and the last in the danger color.
+        const InkSpan first = inkSpan(image, 0, secondLeft, kScaleTop);
+        QVERIFY2(first.first >= 1, qPrintable(what));
+        QVERIFY2(first.last <= secondLeft - 2,
+                 qPrintable(QStringLiteral("%1: the first number reaches column %2, its neighbor starts at %3")
+                                .arg(what).arg(first.last).arg(secondLeft)));
+        const int firstWhole = wholeInkColumns(image, labels.first(), font,
+                                               QColor(Style::kGaugeNormal), Qt::AlignLeft,
+                                               gauge.logicalDpiY());
+        QVERIFY2(first.width() == firstWhole,
+                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink")
+                                .arg(what, labels.first()).arg(first.width()).arg(firstWhole)));
+
+        const InkSpan last = inkSpan(image, beforeLastRight + 1, w, kScaleTop);
+        QVERIFY2(last.first >= beforeLastRight + 2,
+                 qPrintable(QStringLiteral("%1: the last number starts at column %2, its neighbor ends at %3")
+                                .arg(what).arg(last.first).arg(beforeLastRight)));
+        QVERIFY2(last.last <= w - 2, qPrintable(what));
+        const int lastWhole = wholeInkColumns(image, labels.last(), font,
+                                              QColor(Style::kGaugeDanger), Qt::AlignRight,
+                                              gauge.logicalDpiY());
+        QVERIFY2(last.width() == lastWhole,
+                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink")
+                                .arg(what, labels.last()).arg(last.width()).arg(lastWhole)));
+    }
+}
+
+void TestHGaugeScaleText::innerNumbersAreCenteredOnTheirTicks(int pixelSize)
+{
+    const QList<QStringList> sets = appLabelSets();
+    for (const QStringList& labels : sets) {
+        HGauge gauge;
+        // One color for every number, so the reference needs no thresholds.
+        gauge.setRange(0.0, 2000.0);
+        gauge.setYellowStart(5000.0);
+        gauge.setRedStart(6000.0);
+        gauge.setTickLabels(labels);
+        gauge.setScaleFontPixelSize(pixelSize);
+        const QImage image = render(gauge);
+        const QFont font = scaleFontOf(gauge, pixelSize);
+        const QFontMetrics metrics(font, &gauge);
+        const int n = labels.size();
+        const int w = image.width();
+
+        // The numbers as the gauge has always drawn them: each centered on
+        // its tick in a 40 px slot.
+        QImage reference = referenceCanvas(image, gauge.logicalDpiY());
+        QPainter p(&reference);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setFont(font);
+        p.setPen(QColor(Style::kGaugeNormal));
+        for (int i = 1; i < n - 1; ++i) {
+            p.drawText(QRect(tickX(i, n, w) - 20, kScaleTop, 40, image.height() - kScaleTop),
+                       Qt::AlignHCenter | Qt::AlignTop, labels[i]);
+        }
+        p.end();
+        reference = reference.convertToFormat(QImage::Format_ARGB32);
+
+        for (int i = 1; i < n - 1; ++i) {
+            const int half = (metrics.horizontalAdvance(labels[i]) + 1) / 2 + 1;
+            const QRect box(tickX(i, n, w) - half, kScaleTop, 2 * half, image.height() - kScaleTop);
+            QVERIFY2(inkSpan(image, box.left(), box.right() + 1, kScaleTop).width() > 0,
+                     qPrintable(labels[i]));
+            QVERIFY2(image.copy(box) == reference.copy(box),
+                     qPrintable(QStringLiteral("%1: \"%2\" is not where centering on its tick puts it")
+                                    .arg(labels.join(QLatin1Char(' ')), labels[i])));
+        }
+    }
+}
+
+void TestHGaugeScaleText::windowsSizeEndNumbersAreInsideTheGauge()
+{
+    endNumbersAreInsideTheGauge(kWindowsScalePx);
+}
+
+void TestHGaugeScaleText::macSizeEndNumbersAreInsideTheGauge()
+{
+    endNumbersAreInsideTheGauge(kMacScalePx);
+}
+
+void TestHGaugeScaleText::platformSizeEndNumbersAreInsideTheGauge()
+{
+    endNumbersAreInsideTheGauge(0);
+}
+
+void TestHGaugeScaleText::windowsSizeInnerNumbersDidNotMove()
+{
+    innerNumbersAreCenteredOnTheirTicks(kWindowsScalePx);
+}
+
+void TestHGaugeScaleText::macSizeInnerNumbersDidNotMove()
+{
+    innerNumbersAreCenteredOnTheirTicks(kMacScalePx);
+}
+
+void TestHGaugeScaleText::platformSizeInnerNumbersDidNotMove()
+{
+    innerNumbersAreCenteredOnTheirTicks(0);
+}
+
+void TestHGaugeScaleText::titleIsWhole(int pixelSize)
+{
+    constexpr int kBarTop = 9;      // the bar's first row in the gauge
+    constexpr int kBarHeight = 12;
+    constexpr int kCanvasBarTop = 24;
+
+    const QStringList titles = appTitles();
+    for (const QString& title : titles) {
+        HGauge titled;
+        titled.setTitle(title);
+        titled.setTitleFontPixelSize(pixelSize);
+        HGauge bare;
+        const QImage with = render(titled);
+        const QImage without = render(bare);
+        QCOMPARE(with.size(), without.size());
+
+        // The title's rows are the rows the title changes in the picture,
+        // by any amount: the tail of a "p" on the bar's border row is
+        // nearly the border's own color.
+        int first = -1;
+        int last = -1;
+        for (int y = 0; y < with.height(); ++y) {
+            for (int x = 0; x < with.width(); ++x) {
+                if (with.pixel(x, y) != without.pixel(x, y)) {
+                    if (first < 0) { first = y; }
+                    last = y;
+                    break;
+                }
+            }
+        }
+        QVERIFY2(first >= 0, qPrintable(title));
+
+        // The same text, centered on a bar of the same height, with
+        // nothing to cut it.
+        QImage canvas(with.width(), 60, QImage::Format_ARGB32_Premultiplied);
+        const int dotsPerMeter = qRound(titled.logicalDpiY() / 0.0254);
+        canvas.setDotsPerMeterX(dotsPerMeter);
+        canvas.setDotsPerMeterY(dotsPerMeter);
+        const QColor barColor(Style::kInsetBg);
+        canvas.fill(barColor);
+        QFont font(titled.font().family(), 8, QFont::Bold);
+        if (pixelSize > 0) { font.setPixelSize(pixelSize); }
+        QPainter p(&canvas);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setFont(font);
+        p.setPen(QColor(Style::kTextSecondary));
+        p.drawText(QRect(2, kCanvasBarTop, canvas.width() - 4, kBarHeight),
+                   Qt::AlignCenter | Qt::TextDontClip, title);
+        p.end();
+        int wholeFirst = -1;
+        int wholeLast = -1;
+        for (int y = 0; y < canvas.height(); ++y) {
+            for (int x = 0; x < canvas.width(); ++x) {
+                if (canvas.pixel(x, y) != barColor.rgb()) {
+                    if (wholeFirst < 0) { wholeFirst = y; }
+                    wholeLast = y;
+                    break;
+                }
+            }
+        }
+        QVERIFY2(wholeFirst >= 0, qPrintable(title));
+
+        // Rows counted from the top of the bar.
+        const QString where =
+            QStringLiteral("\"%1\" is drawn on rows %2 to %3 of the bar; whole, it is rows %4 to %5")
+                .arg(title).arg(first - kBarTop).arg(last - kBarTop)
+                .arg(wholeFirst - kCanvasBarTop).arg(wholeLast - kCanvasBarTop);
+        QVERIFY2(first - kBarTop == wholeFirst - kCanvasBarTop, qPrintable(where));
+        QVERIFY2(last - kBarTop == wholeLast - kCanvasBarTop, qPrintable(where));
+    }
+}
+
+void TestHGaugeScaleText::windowsSizeTitleIsWhole()
+{
+    titleIsWhole(kWindowsTitlePx);
+}
+
+void TestHGaugeScaleText::macSizeTitleIsWhole()
+{
+    titleIsWhole(kMacTitlePx);
+}
+
+void TestHGaugeScaleText::platformSizeTitleIsWhole()
+{
+    titleIsWhole(0);
+}
+
+void TestHGaugeScaleText::tallLineTitleIsWhole()
+{
+    titleIsWhole(kTallLineTitlePx);
+    titleIsWhole(kTallLineTitlePx + 1);
 }
 
 QTEST_MAIN(TestHGaugeScaleText)
