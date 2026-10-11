@@ -5024,8 +5024,10 @@ void RemoteMediaController::refreshLegacyMiniSubscriptions()
         if (binding.observed == desired && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
         // R-DISP-RETUNE: as in the budget planner, an ask for the picture it
-        // shows or for that picture moved keeps the painted frame.
-        binding.miniKeptAtAsk = binding.accepted && !binding.transmit
+        // shows or for that picture moved keeps the painted frame, and so
+        // does the ask after it while the first is still unanswered.
+        binding.miniKeptAtAsk = (binding.accepted || binding.miniKeptAtAsk)
+            && !binding.transmit
             && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()
             && miniAskKeepsThePicture(binding.observed, desired);
@@ -5681,8 +5683,15 @@ void RemoteMediaController::refreshBudgetSubscriptions()
             // picture moved (every tuning step moves a mini display, which is
             // centred on its slice), the mini display keeps its painted frame
             // until the keyframe. Frames of the old context are still refused.
-            binding.miniKeptAtAsk = binding.accepted && !binding.transmit
-                && !candidate.unsubscribe && binding.slice
+            //
+            // A wheel turned faster than the link asks again before the
+            // context of the step before has been accepted (the window
+            // ignores a context whose request has since changed). The frame
+            // was kept at that ask, so it is kept at this one on the same
+            // terms: each ask is compared with the one before it, and the
+            // first that is not a move of the same picture ends the chain.
+            binding.miniKeptAtAsk = (binding.accepted || binding.miniKeptAtAsk)
+                && !binding.transmit && !candidate.unsubscribe && binding.slice
                 && binding.observedStream == binding.slice->streamIndex()
                 && binding.observedStreamEpoch == binding.slice->streamEpoch()
                 && miniAskKeepsThePicture(binding.acceptedRequest, candidate.request);

@@ -138,6 +138,10 @@ struct Fixture {
     std::unique_ptr<RemoteMediaController> window;
     qint64 now = 1'000;
     QList<Ask> asks;
+    // The station's end of the session link, to hold what the Core sends.
+    QPointer<Test::LoopbackTransport> stationLink;
+    // Called inside the send of each mini display ask.
+    std::function<void()> onMiniAsk;
     int sliceId = -1;
     int stream = -1;
     double centre = 0.0;
@@ -196,7 +200,7 @@ struct Fixture {
                 return windowMedia;
             },
             [this] { return now; });
-        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
         stationLink->linkTo(clientLink);
         // Each ask is recorded as it leaves the window, inside the send.
@@ -230,6 +234,7 @@ struct Fixture {
         ask.maxDbm = maximum.match(text).captured(1).toDouble();
         ask.mini = wire.contains("\"displayRole\":\"mini\"");
         asks.append(ask);
+        if (ask.mini && onMiniAsk) { onMiniAsk(); }
     }
 
     int panAsks() const
@@ -831,6 +836,83 @@ private slots:
 
         f.window->setMiniDisplaySlices({});
         QTRY_VERIFY(!unavailable.isEmpty());
+        f.finish();
+    }
+
+    // R-DISP-RETUNE. A tuning wheel over a link: each step is made before
+    // the Core's context for the step before it has arrived. The window
+    // ignores a context whose request has since changed and asks again, so
+    // the ask for the second step, and for the third, is made while the
+    // first is still unanswered. The mini display keeps its painted frame
+    // through all of them. A step that is not a move of the same picture
+    // (here another detector) made in that same state still blanks it.
+    void theMiniDisplayKeepsItsFrameThroughStepsFasterThanTheLink()
+    {
+        Fixture f(/*withCore=*/true);
+        QVERIFY(f.start());
+        QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        f.window->setMiniDisplaySlices({f.sliceId});
+        QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
+        unavailable.clear();
+        SliceModel* const slice = f.remote.sliceById(f.sliceId);
+        QVERIFY(slice);
+        const double start = slice->frequency();
+        // 3 kHz is a whole number of bins at any FFT size.
+        constexpr double kStepHz = 3000.0;
+
+        // Step one. Its ask leaves; what the Core answers waits on the link.
+        f.stationLink->setHoldsOutgoing(true);
+        int asked = f.miniAsks();
+        slice->setFrequency(start + kStepHz);
+        f.plan();
+        QCOMPARE(f.miniAsks(), asked + 1);
+        for (int turn = 0; turn < 10; ++turn) { f.feed(); QTest::qWait(10); }
+
+        // Step two, before the context of step one. The context then
+        // arrives, is ignored for the request that has changed, and the
+        // window asks for step two; the answer to that waits as well.
+        slice->setFrequency(start + 2.0 * kStepHz);
+        f.onMiniAsk = [&f] { f.stationLink->setHoldsOutgoing(true); };
+        f.stationLink->setHoldsOutgoing(false);
+        QVERIFY(f.run([&] { f.plan(); return f.miniAsks() == asked + 2; }));
+        f.onMiniAsk = nullptr;
+        for (int turn = 0; turn < 10; ++turn) { f.feed(); QTest::qWait(10); }
+        QVERIFY2(unavailable.isEmpty(),
+                 "the mini display was blanked by a second step made before the "
+                 "first step's context");
+
+        // Step three, before the context of step two.
+        slice->setFrequency(start + 3.0 * kStepHz);
+        f.stationLink->setHoldsOutgoing(false);
+        const double binTolerance = 50.0;
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.miniAsks() >= asked + 3 && !miniFrames.isEmpty()
+                && std::abs(miniFrames.last().at(3).toDouble()
+                            - (start + 3.0 * kStepHz)) < binTolerance;
+        }));
+        QCOMPARE(f.miniAsks(), asked + 3);
+        QVERIFY2(unavailable.isEmpty(),
+                 qPrintable(QStringLiteral("the mini display was blanked %1 times by three "
+                                           "steps faster than the link")
+                                .arg(unavailable.size())));
+
+        // The same state once more: a step whose answer waits on the link.
+        f.stationLink->setHoldsOutgoing(true);
+        asked = f.miniAsks();
+        slice->setFrequency(start + 4.0 * kStepHz);
+        f.plan();
+        QCOMPARE(f.miniAsks(), asked + 1);
+        for (int turn = 0; turn < 10; ++turn) { f.feed(); QTest::qWait(10); }
+        QVERIFY(unavailable.isEmpty());
+        // Now a new picture is asked: the chain of kept frames ends here.
+        f.widget->setSpectrumDetector(SpectrumDetector::Average);
+        f.stationLink->setHoldsOutgoing(false);
+        QVERIFY(f.run([&] { f.plan(); return f.miniAsks() >= asked + 2; }));
+        QVERIFY2(!unavailable.isEmpty(),
+                 "a new picture asked while a moved one was awaited did not blank "
+                 "the mini display");
         f.finish();
     }
 };
