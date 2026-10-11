@@ -9534,6 +9534,10 @@ nereus_add_test(tst_pcm_audio_codec)
 # producer at the DSP cadence against a polling consumer and allows no drop.
 nereus_add_test(tst_daemon_audio_source REALTIME)
 nereus_add_test(tst_daemon_audio_sender)
+# R-AUD-SEND: the Core's receive audio is encoded and sent by a thread of
+# its own. Conditions and an injected clock only; nothing here is measured
+# against the wall clock.
+nereus_add_test(tst_daemon_audio_send_thread)
 nereus_add_test(tst_audio_jitter_buffer)
 # R-R3-23 Task 2: RFC 3550 jitter and sequence accounting for one context.
 nereus_add_test(tst_rtp_reception_stats)

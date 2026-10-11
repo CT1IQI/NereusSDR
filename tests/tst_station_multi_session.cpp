@@ -179,6 +179,7 @@
 //               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "fakes/RecordingRtpSink.h"
 #include "MultiDeviceHarness.h"
 
 #include <QtEndian>
@@ -263,20 +264,21 @@ public:
         if (readyState) { displays.append(bytes); }
         return readyState;
     }
-    bool sendRtp(const QByteArray& packet) override
-    {
-        if (readyState) { rtpPackets.append(packet); }
-        return readyState;
-    }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     bool losslessAudioNegotiated() const override { return true; }
     void becomeReady() { readyState = true; emit ready(); }
 
     bool started{false};
-    bool readyState{false};
+    // R-AUD-SEND: the Core sends audio from its sender thread, through the
+    // sink; what the sink took is read under its lock.
+    const std::shared_ptr<Test::RecordingRtpSink> rtpSink{
+        std::make_shared<Test::RecordingRtpSink>()};
+    std::atomic<bool>& readyState{rtpSink->ready};
+    Test::SharedPacketList& rtpPackets{rtpSink->packets};
     StartOptions startOptions{Role::Answerer, 0};
     QList<QByteArray> displays;
-    QList<QByteArray> rtpPackets;
 };
 
 constexpr char kMediaConnection[] = "11111111-2222-4333-8444-555555555555";

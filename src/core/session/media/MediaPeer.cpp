@@ -34,6 +34,9 @@
 //               Anthropic Claude Code.
 //   2026-10-01: Control logging lane: rttMs(). Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: audioRtpSink(), sendRtp() with this peer's
+//               checks from any thread. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/MediaPeer.h"
@@ -50,6 +53,8 @@
 #include <QUuid>
 
 #include <initializer_list>
+#include <memory>
+#include <mutex>
 #include <utility>
 
 namespace NereusSDR {
@@ -140,8 +145,58 @@ quint32 rtpSsrc(const QByteArray& packet)
 
 } // namespace
 
+// R-AUD-SEND: sendRtp() from any thread, with this peer's own checks (it is
+// started, the packet's SSRC is one it declared) before the transport's.
+// start() and stop() publish what the checks read, holding the lock only to
+// copy; a send holds it throughout, so none is inside the transport once
+// stop() has published. One object for the peer's whole life.
+class MediaPeerRtpSink final : public MediaRtpSink {
+public:
+    struct State {
+        std::shared_ptr<MediaRtpSink> transport;   // null: not started
+        quint32 audioSsrc = 0;
+        QList<quint32> receiverAudioSsrcs;
+        quint32 headphonesAudioSsrc = 0;
+    };
+
+    void publish(State state)
+    {
+        {
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            std::swap(m_state, state);
+        }
+    }
+
+    RtpSendResult sendRtp(const QByteArray& packet) override
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_state.transport) {
+            // Not started, or stopped: nothing is asked of a transport.
+            return RtpSendResult::NotReady;
+        }
+        if (packet.size() < IMediaTransport::kMinRawRtpBytes
+            || packet.size() > IMediaTransport::kMaxRawRtpBytes) {
+            return RtpSendResult::Refused;
+        }
+        const quint32 ssrc = rtpSsrc(packet);
+        if (ssrc == 0
+            || !(ssrc == m_state.audioSsrc || m_state.receiverAudioSsrcs.contains(ssrc)
+                 || ssrc == m_state.headphonesAudioSsrc)) {
+            return RtpSendResult::Refused;
+        }
+        return m_state.transport->sendRtp(packet);
+    }
+
+private:
+    std::mutex m_mutex;
+    State m_state;
+};
+
 struct MediaPeer::Private {
     TransportFactory factory;
+    const std::shared_ptr<MediaPeerRtpSink> rtpSink = std::make_shared<MediaPeerRtpSink>();
+    // Whether the started transport gave rtpSink somewhere to send.
+    bool transportHasAudioRtpSink = false;
     // Task 28: the session's ICE settings through the service.
     std::optional<IceConfiguration> ice;
     QPointer<IMediaTransport> transport;
@@ -234,6 +289,11 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     d->pendingCandidates.clear();
     d->ready = false;
     d->started = true;
+    // R-AUD-SEND: this start's checks, for a send from another thread.
+    const std::shared_ptr<MediaRtpSink> transportSink = transport->audioRtpSink();
+    d->transportHasAudioRtpSink = transportSink != nullptr;
+    d->rtpSink->publish({transportSink, d->audioSsrc, d->receiverAudioSsrcs,
+                         d->headphonesAudioSsrc});
 
     QPointer<MediaPeer> self(this);
     QPointer<IMediaTransport> guardedTransport(transport);
@@ -519,6 +579,9 @@ void MediaPeer::stopInternal(bool notify)
     ++d->generation;
     d->started = false;
     d->ready = false;
+    // R-AUD-SEND: no send from another thread passes this peer from here.
+    d->rtpSink->publish({});
+    d->transportHasAudioRtpSink = false;
     d->remoteDescriptionAccepted = false;
     d->remoteCandidateControls = 0;
     d->localCandidateControls = 0;
@@ -672,6 +735,16 @@ bool MediaPeer::sendRtp(const QByteArray& packet)
         && packet.size() <= IMediaTransport::kMaxRawRtpBytes
         && isDeclaredAudioSsrc(rtpSsrc(packet))
         && d->transport->sendRtp(packet);
+}
+
+std::shared_ptr<MediaRtpSink> MediaPeer::audioRtpSink() const
+{
+    return d->rtpSink;
+}
+
+bool MediaPeer::transportHasAudioRtpSink() const
+{
+    return d->transportHasAudioRtpSink;
 }
 
 bool MediaPeer::sendMicRtp(const QByteArray& packet)

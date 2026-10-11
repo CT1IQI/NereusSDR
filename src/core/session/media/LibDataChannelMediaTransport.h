@@ -33,6 +33,9 @@
 //   2026-10-01: Mic 48k lane: kMicLineMaxAverageBitrate, the microphone
 //               line's 48 kbit/s ceiling. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: audioRtpSink(), a sink any thread may send
+//               the receive audio lines through, valid after stop().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/IMediaTransport.h"
@@ -151,6 +154,7 @@ public:
     bool iqBusy() const override;
     bool displayBusy() const override;
     bool sendRtp(const QByteArray& packet) override;
+    std::shared_ptr<MediaRtpSink> audioRtpSink() override;
     bool sendMicRtp(const QByteArray& packet) override;
     bool sendTx(const QByteArray& message) override;
     bool setMicPacketSink(MicPacketSink sink) override;

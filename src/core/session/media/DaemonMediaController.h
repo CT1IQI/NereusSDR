@@ -10,6 +10,11 @@
 //   2026-10-11: R-DISP-RETUNE (third wave): a start may declare
 //               spectrumPictureVersion. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: receive audio is encoded and sent by a thread
+//               of its own (DaemonAudioSendThread), through AudioSendRoute,
+//               one per sender; nothing of it runs on this controller's
+//               thread. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-01: TX diagnostics lane: unkeyEventLines, one line for each
 //               placed microphone underrun, the first radio ran dry and
 //               each catch-up burst. J.J. Boyd (KG4VCF), AI-assisted via
@@ -104,6 +109,7 @@
 #include "core/NoiseFloorEstimator.h"
 #include "core/RadioConnection.h"
 #include "core/session/media/DaemonAudioSender.h"
+#include "core/session/media/DaemonAudioSendThread.h"
 #include "core/session/media/DaemonSpectrumSource.h"
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/DisplayCodec.h"
@@ -180,6 +186,15 @@ private:
 /// not evidence of network delivery. For every context,
 /// attempts = accepted + rejected + inFlight + unresolvedAtRetirement.
 /// Unresolved sends were interrupted by retirement and are not packet loss.
+///
+/// R-AUD-SEND: the sends are made by the sender thread and counted there
+/// (AudioSendRoute). An attempt is a packet a ready transport was asked to
+/// take; rejected is that transport's own refusal, a transport fault to a
+/// reader. A packet that met a transport which was not ready (stopping,
+/// stopped, gone) is not an attempt and is counted nowhere, as when the
+/// controller's thread sent. inFlight is the sends that thread had begun
+/// and whose transport had not yet answered when this was read: 0 or 1 in a
+/// periodic reading.
 struct DaemonAudioDiagnostics {
     quint32 contextGeneration = 0;
     quint32 revision = 0;
@@ -190,6 +205,11 @@ struct DaemonAudioDiagnostics {
     std::uint64_t sendAccepted = 0;
     std::uint64_t sendRejected = 0;
     std::uint64_t sendInFlight = 0;
+    /// R-AUD-SEND: always 0 now. It counted sends the retirement of a
+    /// context cut short on the controller's thread; the context is now
+    /// retired only after the sender's stop(), which returns once the send
+    /// under way has its answer. Kept so the log line and readers keep
+    /// their shape.
     std::uint64_t sendUnresolvedAtRetirement = 0;
 };
 
@@ -325,6 +345,14 @@ public:
     /// session runs now (the speakers' mix, the headphones mix, each
     /// receiver stream's), so a test can see none was remade.
     QList<const DaemonAudioSender*> audioSendersForTest() const;
+#ifdef NEREUS_BUILD_TESTS
+    /// Test seam, the thread that feeds the audio engine only, no
+    /// production caller: every sender's capture bridge hands over a block
+    /// a busy sender thread kept it from queueing, as the DSP thread's next
+    /// callback does (DaemonAudioSource::handOverPendingForTest). A test
+    /// that feeds a fixed number of blocks calls it after the last.
+    void handOverPendingAudioForTest();
+#endif
     DaemonAudioDiagnostics audioDiagnostics() const;
     /// The Opus target, bit/s, for the speakers' mix and the headphones mix
     /// this controller sends (R-R3-23: nereusd's audio_bitrate). Applies to
@@ -471,6 +499,10 @@ private:
     using SourceRuntime = DaemonSharedSpectrum::SourceRuntime;
     /// R-R3-43: one slice's receiver audio request and, while it holds a
     /// receiver stream id, the sender capturing that slice.
+public:
+    struct AudioSendRoute;
+
+private:
     struct ReceiverAudioStream {
         quint32 revision{0};
         bool desiredEnabled{false};
@@ -481,6 +513,8 @@ private:
         int streamIndex{-1};
         bool sending{false};
         std::unique_ptr<DaemonAudioSender> sender;
+        /// R-AUD-SEND: where `sender`'s packets go; made and dropped with it.
+        std::shared_ptr<AudioSendRoute> route;
     };
     struct IqStream {
         quint32 revision = 0;
@@ -517,7 +551,47 @@ private:
         quint16 nextSequence{1};
         quint32 nextTimestamp{0};
         std::unique_ptr<DaemonAudioSender> sender;
+        /// R-AUD-SEND: where `sender`'s packets go; made and dropped with it.
+        std::shared_ptr<AudioSendRoute> route;
     };
+public:
+    /// R-AUD-SEND: one sender's way out. Public only so its test can drive
+    /// it; see m_audioRoute below for the contract.
+    struct AudioSendRoute {
+        /// Guards every member but the counters. Taken by deliver() only to
+        /// copy out where one packet goes, never across a send, and by the
+        /// controller's thread only to copy new values in (never while it
+        /// holds another lock). So neither thread waits here for a send.
+        std::mutex mutex;
+        std::shared_ptr<MediaRtpSink> current;
+        QHash<quint32, quint32> rewrite;
+        /// While a replacement is ready: its sink, and the two peers' audio
+        /// SSRCs in stream order (audioSsrcsOf).
+        std::shared_ptr<MediaRtpSink> replacement;
+        QList<quint32> replacementFrom;
+        QList<quint32> replacementTo;
+        /// Sends to the current peer since resetCounters(): written by
+        /// deliver() on the sender thread, read without the lock. attempts is
+        /// raised before the transport is asked and one of the others after
+        /// it answers, so a reader takes accepted and rejected first. A
+        /// transport that answers "not ready" was asked nothing: the attempt
+        /// is taken back and none of the three counts it.
+        std::atomic<std::uint64_t> attempts{0};
+        std::atomic<std::uint64_t> accepted{0};
+        std::atomic<std::uint64_t> rejected{0};
+
+        /// The sender thread. Sends `packet` to the current peer with its
+        /// SSRC as that peer's, and during a replacement to the new peer
+        /// too, with the same sequence number and timestamp and the new
+        /// peer's SSRC. Nothing, and nothing counted, while closed.
+        void deliver(const QByteArray& packet);
+        /// The controller's thread, while the route's sender is stopped.
+        void resetCounters();
+        /// The controller's thread: nothing is sent from here on.
+        void close();
+    };
+
+private:
     struct AdmittedAudioProfile {
         RemoteAudioProfile active{RemoteAudioProfile::Opus};
         std::optional<RemoteAudioProfileRefusal> refusal;
@@ -654,11 +728,6 @@ private:
     void clearReplacement();
     /// Wires `peer` as the current peer (handleStart's callbacks).
     void wireCurrentPeer(MediaPeer* peer, const QString& connectionId);
-    /// One audio packet (any stream) to the current peer, with its SSRC as
-    /// that peer's, and during a replacement to the new peer too with the
-    /// same sequence number and timestamp and the new peer's SSRC. What the
-    /// current peer accepted.
-    bool sendAudioRtp(MediaPeer* peer, const QByteArray& packet);
     /// A peer's audio SSRCs in stream order: main, receiver 0 to 3,
     /// headphones.
     static QList<quint32> audioSsrcsOf(const MediaPeer* peer);
@@ -742,7 +811,6 @@ private:
     void retireReceiverSender(ReceiverAudioStream& stream);
     void sendReceiverAudioContext(int sliceId, const ReceiverAudioStream& stream,
                                   bool enabled, RemoteAudioOffReason reason);
-    void onReceiverAudioPacket(int sliceId, DaemonAudioSender* sender, const QByteArray& packet);
     void resetReceiverAudioSession();
     quint32 nextReceiverContextGeneration();
     // R-R3-45: the headphones mix.
@@ -752,7 +820,6 @@ private:
     std::optional<RemoteAudioOffReason> headphonesBlockedBy() const;
     void stopHeadphonesAudioCapture();
     void sendHeadphonesAudioContext(bool enabled, RemoteAudioOffReason reason);
-    void onHeadphonesAudioPacket(DaemonAudioSender* sender, const QByteArray& packet);
     void resetHeadphonesAudioSession();
     quint32 nextHeadphonesContextGeneration();
     /// Some slice on this Core plays on the headphones now.
@@ -815,6 +882,30 @@ private:
     std::shared_ptr<MicRoute> m_micRoute{std::make_shared<MicRoute>()};
     void syncMicRoute();
     IMediaTransport::MicPacketSink micRouteSink() const;
+    // R-AUD-SEND: the mirror of MicRoute for receive audio. m_sendThread
+    // drains every sender this controller runs; a sender hands each packet
+    // to its own route's deliver(), on that thread. The route holds what
+    // sending needs, copied in under its lock by this controller's thread
+    // whenever any of it changes (syncAudioRoutes): the current peer's sink
+    // and SSRC rewrite, and while a replacement is ready its sink and SSRC
+    // mapping. deliver() never calls back into this controller. A packet in
+    // delivery holds its own reference to the sinks it copied out, not the
+    // lock, so a sync never waits for a send: the one packet under way may
+    // still go to a sink the sync just took out. A sink is valid for as long
+    // as anything holds it and answers "not ready" once its peer stopped.
+    // What ends a sender's sends for certain is its stop().
+    void attachAudioSender(DaemonAudioSender* sender,
+                           const std::shared_ptr<AudioSendRoute>& route);
+    /// Stops `sender`, closes `route` and takes the sender from the thread:
+    /// when this returns the thread never touches the sender again.
+    void detachAudioSender(DaemonAudioSender* sender,
+                           const std::shared_ptr<AudioSendRoute>& route);
+    void syncAudioRoutes();
+    // The media connections already warned about for having no audio send
+    // off the transport's own thread: said once for each, not at every sync.
+    QSet<QString> m_noAudioSinkWarned;
+    std::shared_ptr<AudioSendRoute> m_audioRoute{std::make_shared<AudioSendRoute>()};
+    DaemonAudioSendThread m_sendThread;
     // What the current peer's start negotiated, which a replacement keeps.
     bool m_startOfferedLossless{false};
     /// Task 29 step 2b: the media start declared the tunnel.

@@ -31,6 +31,10 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-01: Control logging lane: rttMs(). Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: audioRtpSink(), the receive audio lines'
+//               sink for the Core's sender thread, with this peer's
+//               checks. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -126,6 +130,16 @@ public:
     bool iqBusy() const;
     bool displayBusy() const;
     bool sendRtp(const QByteArray& packet);
+    /// R-AUD-SEND: sendRtp() for another thread (the Core's audio send
+    /// thread): the same checks, from any thread. The same object for this
+    /// peer's whole life; it refuses while the peer is not started, and
+    /// when the transport has no send that is safe off its owner's thread
+    /// (IMediaTransport::audioRtpSink). Owner's thread only.
+    std::shared_ptr<MediaRtpSink> audioRtpSink() const;
+    /// R-AUD-SEND: whether this peer's started transport has such a send
+    /// (false while not started). Without one audioRtpSink() answers "not
+    /// ready" for ever and receive audio goes nowhere on this connection.
+    bool transportHasAudioRtpSink() const;
     /// Task 36: one packet on the microphone line (the answerer's), whose
     /// SSRC must be micAudioSsrc().
     bool sendMicRtp(const QByteArray& packet);
