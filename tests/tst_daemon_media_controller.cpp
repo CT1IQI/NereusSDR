@@ -2768,7 +2768,9 @@ void TstDaemonMediaController::failedSourceUpdateReleasesAllocationAndCanRecover
     QJsonObject request = subscription(102, 1, harness.sliceId, centre);
     QVERIFY(harness.client.sendMediaControl(request, harness.client.sessionEpoch()));
     QTRY_VERIFY(allocationFor(controls, 102, 1).value(QStringLiteral("accepted")).toBool());
-    QCOMPARE(harness.controller.activeSourceCount(), 1);
+    // The source goes active on its engine's thread, after the allocation is
+    // accepted: wait for it, as the other subscriptions in this file do.
+    QTRY_COMPARE(harness.controller.activeSourceCount(), 1);
 
     // Remove the actual producer through its existing QObject/public seam.
     // The next overlapping retune reaches update() on a now-missing source
@@ -2789,7 +2791,7 @@ void TstDaemonMediaController::failedSourceUpdateReleasesAllocationAndCanRecover
     request.insert(QStringLiteral("revision"), 2);
     QVERIFY(harness.client.sendMediaControl(request, harness.client.sessionEpoch()));
     QTRY_VERIFY(allocationFor(controls, 102, 2).value(QStringLiteral("accepted")).toBool());
-    QCOMPARE(harness.controller.activeSourceCount(), 1);
+    QTRY_COMPARE(harness.controller.activeSourceCount(), 1);
     QTRY_VERIFY(([&] {
         harness.feedRadio();
         return !harness.mediaTransport->displays.isEmpty();
