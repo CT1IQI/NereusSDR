@@ -23,6 +23,8 @@
 //                         NEREUS_FAKE_CAPTURE_HANG_DIR set, it then creates
 //                         the empty file <dir>/<its pid>.  Before that
 //                         Open, Shutdown still ends it.
+//   hang-open-after-step  As hang-open, after one "open step" line on
+//                         stderr ("devices listed at 12 ms"); no marker file.
 //   no-hello              Never writes anything and ignores every command.
 //   permission-then-ready Hello; on Open: Permission, 300 ms later as ready.
 //   crash-after-ready     As ready; exits with code 3 after 100 ms of streaming.
