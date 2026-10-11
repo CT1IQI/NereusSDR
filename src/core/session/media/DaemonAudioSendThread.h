@@ -69,6 +69,12 @@ public:
     bool realtimePriorityHeld() const { return m_elevated.load(std::memory_order_acquire); }
     // Passes over the senders completed (diagnostics and tests).
     quint64 passes() const { return m_passes.load(std::memory_order_acquire); }
+#ifdef NEREUS_BUILD_TESTS
+    // Test seam, no production caller: the longest the thread waits for a
+    // block before it drains anyway (DaemonAudioSender::kDrainIntervalMs
+    // unless set).  Only before the first add(), which starts the thread.
+    void setTickMsForTest(int tickMs) { m_tickMs = tickMs; }
+#endif
 
 private:
     void run();
@@ -79,6 +85,8 @@ private:
     std::condition_variable m_drained;
     std::vector<DaemonAudioSender*> m_senders;
     DaemonAudioSender* m_draining{nullptr};
+    // Written only before the thread starts; the thread reads it.
+    int m_tickMs;
     std::atomic<bool> m_stopRequested{false};
     std::atomic<bool> m_elevated{false};
     std::atomic<quint64> m_passes{0};

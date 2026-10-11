@@ -136,6 +136,10 @@ public:
     /// when the transport has no send that is safe off its owner's thread
     /// (IMediaTransport::audioRtpSink). Owner's thread only.
     std::shared_ptr<MediaRtpSink> audioRtpSink() const;
+    /// R-AUD-SEND: whether this peer's started transport has such a send
+    /// (false while not started). Without one audioRtpSink() answers "not
+    /// ready" for ever and receive audio goes nowhere on this connection.
+    bool transportHasAudioRtpSink() const;
     /// Task 36: one packet on the microphone line (the answerer's), whose
     /// SSRC must be micAudioSsrc().
     bool sendMicRtp(const QByteArray& packet);

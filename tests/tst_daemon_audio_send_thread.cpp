@@ -290,6 +290,38 @@ private slots:
         thread.remove(&sender);
     }
 
+    // The thread wakes at the block, not at its tick. The tick is set far
+    // beyond anything this test waits for, so the one way a queued block
+    // can reach the sink within the bound is the capture bridge's wake.
+    void aQueuedBlockWakesTheThreadWithoutItsTick()
+    {
+        constexpr int kTickMs = 60'000;
+        static_assert(kUpperBoundMs * 3 <= kTickMs);
+        Harness h;
+        PacketLog log;
+        DaemonAudioSender sender(h.engine);
+        DaemonAudioSendThread thread;
+        thread.setTickMsForTest(kTickMs);
+        sender.setPacketSink(log.sink());
+        QVERIFY(sender.setBlockWake(thread.wake()));
+        thread.add(&sender);
+        QVERIFY(sender.start(kSsrc, 1, 0));
+        // The pass add() itself asks for is over: the thread now waits for
+        // a block or for its tick, a minute away.
+        QDeadlineTimer firstPass(kUpperBoundMs);
+        while (thread.passes() == 0 && !firstPass.hasExpired()) {
+            std::this_thread::yield();
+        }
+        QCOMPARE(thread.passes(), quint64{1});
+        QCOMPARE(log.count(), 0);
+
+        h.feed(DaemonAudioSource::kBlockFrames);
+        QVERIFY2(log.waitForCount(1), "the queued block did not wake the sender thread");
+        QCOMPARE(log.count(), 1);
+        sender.stop();
+        thread.remove(&sender);
+    }
+
     // stop() while the thread is inside a drain: it waits for the block
     // under way and no more (two further blocks are queued), nothing is
     // delivered after it returns, and the next sequence and timestamp are
@@ -671,41 +703,64 @@ private slots:
     }
 
     // A transport that has stopped leaves its sink valid, and the sink
-    // refuses: the route counts the packet rejected. The real transport,
-    // never connected, and stopped.
-    void aStoppedTransportsSinkRefusesAndIsCountedRejected()
+    // answers "not ready": the route counts nothing, as when the
+    // controller's thread skipped a peer that was not ready. The real
+    // transport, never connected, and stopped.
+    void aStoppedTransportsSinkIsNotReadyAndIsNotCounted()
     {
+        using Result = MediaRtpSink::RtpSendResult;
         std::shared_ptr<MediaRtpSink> sink;
         DaemonMediaController::AudioSendRoute route;
         {
             LibDataChannelMediaTransport transport;
             sink = transport.audioRtpSink();
             QVERIFY(sink != nullptr);
+            // Never connected: not ready before it stops, too.
+            QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
             transport.stop();
+            QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
             {
                 const std::lock_guard<std::mutex> lock(route.mutex);
                 route.current = sink;
             }
             route.deliver(rtpPacket(0x10, 1, 100));
-            QCOMPARE(route.attempts.load(), std::uint64_t{1});
+            QCOMPARE(route.attempts.load(), std::uint64_t{0});
             QCOMPARE(route.accepted.load(), std::uint64_t{0});
-            QCOMPARE(route.rejected.load(), std::uint64_t{1});
+            QCOMPARE(route.rejected.load(), std::uint64_t{0});
         }
         // The transport is gone; the sink the route still holds is valid.
+        QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
         route.deliver(rtpPacket(0x10, 2, 200));
-        QCOMPARE(route.attempts.load(), std::uint64_t{2});
+        QCOMPARE(route.attempts.load(), std::uint64_t{0});
         QCOMPARE(route.accepted.load(), std::uint64_t{0});
-        QCOMPARE(route.rejected.load(), std::uint64_t{2});
+        QCOMPARE(route.rejected.load(), std::uint64_t{0});
+    }
 
-        // And a transport that takes nothing just now.
-        const auto refusing = std::make_shared<Test::RecordingRtpSink>();
+    // A ready transport that will not take a packet is a refusal: an
+    // attempt, and rejected. One that is not ready is neither.
+    void aReadyTransportsRefusalIsCountedRejected()
+    {
+        const auto sink = std::make_shared<Test::RecordingRtpSink>();
+        DaemonMediaController::AudioSendRoute route;
         {
             const std::lock_guard<std::mutex> lock(route.mutex);
-            route.current = refusing;
+            route.current = sink;
         }
-        route.deliver(rtpPacket(0x10, 3, 300));
-        QCOMPARE(route.rejected.load(), std::uint64_t{3});
-        QCOMPARE(refusing->packets.size(), 0);
+        sink->ready = true;
+        sink->accept = false;
+        route.deliver(rtpPacket(0x10, 1, 100));
+        QCOMPARE(sink->attempts.load(), 1);
+        QCOMPARE(sink->packets.size(), 0);
+        QCOMPARE(route.attempts.load(), std::uint64_t{1});
+        QCOMPARE(route.accepted.load(), std::uint64_t{0});
+        QCOMPARE(route.rejected.load(), std::uint64_t{1});
+
+        sink->ready = false;
+        route.deliver(rtpPacket(0x10, 2, 200));
+        QCOMPARE(sink->attempts.load(), 2);
+        QCOMPARE(route.attempts.load(), std::uint64_t{1});
+        QCOMPARE(route.accepted.load(), std::uint64_t{0});
+        QCOMPARE(route.rejected.load(), std::uint64_t{1});
     }
 
     // During a replacement the new peer gets a copy with the same sequence

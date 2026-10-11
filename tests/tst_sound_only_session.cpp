@@ -84,7 +84,7 @@ public:
         displays.append(bytes);
         return true;
     }
-    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     void becomeReady() { readyState = true; emit ready(); }

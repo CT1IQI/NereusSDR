@@ -201,7 +201,7 @@ public:
         displays.append(std::exchange(heldDisplay, {}));
         emit displayWritable();
     }
-    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     bool losslessAudioNegotiated() const override { return losslessNegotiated; }
@@ -4208,6 +4208,9 @@ void feedAudioBlock(Harness& h)
         engine->rxBlockReady(h.sliceId, left.constData(), 64);
         engine->rxBlockReady(h.spareSliceId, right.constData(), 64);
     }
+    // R-AUD-SEND: no DSP callback follows the last one here; see
+    // DaemonAudioSource::handOverPendingForTest().
+    h.controller.handOverPendingAudioForTest();
 }
 
 quint16 rtpSequence(const QByteArray& packet)
@@ -4790,6 +4793,9 @@ void feedSlicesBlock(Harness& h, const QList<QPair<int, float>>& slices)
             engine->rxBlockReady(sliceId, block.constData(), 64);
         }
     }
+    // R-AUD-SEND: no DSP callback follows the last one here; see
+    // DaemonAudioSource::handOverPendingForTest().
+    h.controller.handOverPendingAudioForTest();
 }
 
 } // namespace
@@ -6734,17 +6740,18 @@ void TstDaemonMediaController::headphoneRateSwitchRetiresASenderTheThreadIsDrain
 
     // Each rate switch: two blocks queued and the sender thread held inside
     // the first one's send when the new rate arrives on the controller's
-    // thread. The controller then waits for that send wherever it first
-    // needs what the send holds, so a helper lets each held send go until
-    // the controller is through.
+    // thread. The held send is let go only once the controller is waiting
+    // in the old sender's stop(): the first thing of the sender's it waits
+    // for, and the one wait a drain gives way to. So the block under way
+    // goes and the one queued behind it never does.
     const std::shared_ptr<Test::RecordingRtpSink> sink = h.mediaTransport->rtpSink;
     quint32 revision = 0;
+    constexpr int kUpperBoundMs = 20'000;
     const auto switchDuringDrain = [&](int bitrate) -> bool {
         QSemaphore entered;
         QSemaphore gate;
         std::atomic<bool> held{true};
-        std::atomic<bool> arriving{false};
-        std::atomic<bool> ownerThrough{false};
+        std::atomic<bool> ownerWaitedInStop{false};
         sink->setHook([&](const QByteArray& packet) {
             if (held.load() && packet.size() >= 12 && rtpSsrcOf(packet) == ssrc) {
                 entered.release();
@@ -6753,38 +6760,40 @@ void TstDaemonMediaController::headphoneRateSwitchRetiresASenderTheThreadIsDrain
         });
         feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
         feedSlicesBlock(h, {{h.spareSliceId, 0.5f}});
-        const bool insideASend = entered.tryAcquire(1, 20'000);
+        const bool insideASend = entered.tryAcquire(1, kUpperBoundMs);
+        // Alive until this thread's event loop reclaims it, after the join.
+        DaemonAudioSender* const oldSender = sender.data();
         std::thread releaser([&] {
-            while (!arriving.load()) {
+            QDeadlineTimer waiting(kUpperBoundMs);
+            while (oldSender->ownersWaitingForTest() == 0 && !waiting.hasExpired()) {
                 std::this_thread::yield();
             }
-            gate.release(1);
-            while (!ownerThrough.load()) {
-                if (entered.tryAcquire(1)) {
-                    gate.release(1);
-                } else {
-                    std::this_thread::yield();
-                }
+            ownerWaitedInStop.store(oldSender->ownersWaitingForTest() > 0);
+            if (ownerWaitedInStop.load()) {
+                // One send: the block under way.
+                gate.release(1);
+            } else {
+                // The controller is stuck on something else of the send's;
+                // let everything go so the failure is reported, not hung.
+                held.store(false);
+                gate.release(100);
             }
         });
         QJsonObject control = audioControl(++revision, false, QStringLiteral("opus"));
         control.insert(QStringLiteral("opusBitrate"), bitrate);
-        arriving.store(true);
         emit h.server.mediaControlReceived(control, h.client.sessionEpoch());
-        ownerThrough.store(true);
         releaser.join();
         held.store(false);
         gate.release(100);
         sink->setHook({});
-        return insideASend;
+        return insideASend && ownerWaitedInStop.load();
     };
 
     qsizetype before = sent().size();
     QVERIFY(switchDuringDrain(48000));
-    // The block whose send was under way went; the one queued behind it
-    // went only if its send began before the sender was stopped.
+    // The block whose send was under way went, and only that one.
     qsizetype after = sent().size();
-    QVERIFY(after >= before + 1 && after <= before + 2);
+    QCOMPARE(after, before + 1);
     // Stopped, and alive until the event loop reclaims it.
     QVERIFY(sender);
     QVERIFY(!sender->isRunning());
@@ -6798,7 +6807,7 @@ void TstDaemonMediaController::headphoneRateSwitchRetiresASenderTheThreadIsDrain
     before = after;
     QVERIFY(switchDuringDrain(24000));
     after = sent().size();
-    QVERIFY(after >= before + 1 && after <= before + 2);
+    QCOMPARE(after, before + 1);
     const QByteArray lastOld = sent().constLast();
     QVERIFY(sender);
     QVERIFY(!sender->isRunning());

@@ -48,6 +48,15 @@ struct DaemonAudioSenderTelemetry {
     // audio waiting: a slow Core, which a bad link cannot cause (the sender
     // never waits for the network).
     std::uint64_t losslessCappedTicks = 0;
+    // R-AUD-SEND: how evenly the packets left. The longest interval, in
+    // microseconds, between two consecutive packets handed to the sink
+    // since start(), read on the draining thread from the sender's
+    // monotonic clock; -1 until two packets have gone (the first packet
+    // after start() opens no gap). A late sender thread shows here; network
+    // jitter cannot. longestSendGapSinceTakenUs is the same maximum since
+    // takeLongestSendGapSinceTakenUs() last took it.
+    qint64 longestSendGapUs = -1;
+    qint64 longestSendGapSinceTakenUs = -1;
     bool hasLastEmittedPacket = false;
     quint16 lastEmittedSequence = 0;
     quint32 lastEmittedTimestamp = 0;
@@ -140,7 +149,13 @@ public:
     /// iPhone app Task 76: the mixes from one owner mix of AudioEngine
     /// (DaemonAudioSource::setOwnerMix). Refused while running.
     bool setOwnerMix(int slot);
-    void stop();
+    /// Ends the capture epoch. Returns whether the sender was running, read
+    /// under the same lock that stops it: an owner that needs to know asks
+    /// here, not isRunning() first. isRunning() and the other read-outs take
+    /// the mutex without telling a drain an owner is waiting, so a drain
+    /// under way could send every block it has queued before such a call
+    /// got in; stop() waits for one block at most.
+    bool stop();
     bool isRunning() const noexcept;
 
     /// R-AUD-SEND: where each packet goes, called on the draining thread
@@ -168,6 +183,11 @@ public:
     /// Read-only diagnostics. The snapshot remains available after stop() and
     /// resets only after a later successful start().
     DaemonAudioSenderTelemetry telemetry() const noexcept;
+    /// R-AUD-SEND: the longest send gap since this was last called (or
+    /// since start()), which it then begins again; -1 when no gap was
+    /// measured. For the one reader that reports it periodically.
+    /// telemetry() shows the same figure without taking it.
+    qint64 takeLongestSendGapSinceTakenUs() noexcept;
 
     /// One bounded consumer tick: the unit of work DaemonAudioSendThread
     /// repeats, and directly callable (tests, an explicit host loop). One
@@ -189,6 +209,14 @@ public:
     {
         return m_ownerWaiting.load(std::memory_order_acquire);
     }
+    /// Test seam, the feeding thread only, no production caller: see
+    /// DaemonAudioSource::handOverPendingForTest().
+    void handOverPendingCaptureForTest()
+    {
+        if (m_source) {
+            m_source->handOverPendingForTest();
+        }
+    }
 #endif
 
 signals:
@@ -202,6 +230,7 @@ private:
     };
     void drainLossless(quint64 drainGeneration);
     void noteCaptured(const DaemonAudioBlock& block, quint32 timestamp);
+    void noteHandedOverLocked();
     bool runningLocked() const noexcept;
     bool profileReadyLocked() const;
 
@@ -222,6 +251,9 @@ private:
     QList<PendingPacket> m_pendingLossless;
     PacingClock m_pacingClock;
     qint64 m_lastPacingNs{0};
+    // When the previous packet of this run was handed to the sink.
+    bool m_hasLastHandOver{false};
+    qint64 m_lastHandOverNs{0};
     // The allowance in 1e-7 packet units (one packet is 10'000'000), so the
     // fraction a late tick earns carries to the next tick exactly.
     qint64 m_pacingAllowanceUnits{0};

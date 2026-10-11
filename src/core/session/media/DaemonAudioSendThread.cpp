@@ -36,6 +36,7 @@ void nameThisThread()
 
 DaemonAudioSendThread::DaemonAudioSendThread()
     : m_wake(std::make_shared<DaemonAudioBlockWake>())
+    , m_tickMs(DaemonAudioSender::kDrainIntervalMs)
 {
 }
 
@@ -100,7 +101,7 @@ void DaemonAudioSendThread::run()
         }
         // A block queued while the last pass ran left its wake pending, so
         // this returns at once for it.
-        m_wake->wait(idle ? -1 : DaemonAudioSender::kDrainIntervalMs);
+        m_wake->wait(idle ? -1 : m_tickMs);
         if (m_stopRequested.load(std::memory_order_acquire)) {
             break;
         }

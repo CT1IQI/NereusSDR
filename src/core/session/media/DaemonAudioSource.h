@@ -204,6 +204,14 @@ public:
     // Deterministic race seam: runs on the consumer thread inside
     // takeBlock() while it holds the bridge lock, before the ring is read.
     void setTakeBlockLockedHookForTest(std::function<void()> hook);
+    // Test seam, the producer's thread only, no production caller. A block
+    // that completed while the consumer held the bridge lock stays with the
+    // producer until its next callback (it never waits). A radio's DSP
+    // thread calls again within a few milliseconds; a test that feeds a
+    // fixed number of blocks and then stops never does, and the last block
+    // would stay there. This is that next callback's hand-over, without its
+    // samples: it returns once nothing is held back.
+    void handOverPendingForTest();
 #endif
 
 private:

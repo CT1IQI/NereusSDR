@@ -1581,6 +1581,24 @@ QList<const DaemonAudioSender*> DaemonMediaController::audioSendersForTest() con
     return senders;
 }
 
+#ifdef NEREUS_BUILD_TESTS
+void DaemonMediaController::handOverPendingAudioForTest()
+{
+    if (m_audioSender) {
+        m_audioSender->handOverPendingCaptureForTest();
+    }
+    if (m_headphones.sender) {
+        m_headphones.sender->handOverPendingCaptureForTest();
+    }
+    for (const auto& [sliceId, stream] : m_receiverStreams) {
+        Q_UNUSED(sliceId);
+        if (stream.sender) {
+            stream.sender->handOverPendingCaptureForTest();
+        }
+    }
+}
+#endif
+
 bool DaemonMediaController::seesSlice(int sliceId) const
 {
     return m_server && m_epoch != 0 && m_server->mediaSessionSeesSlice(m_epoch, sliceId);
@@ -2190,24 +2208,52 @@ bool DaemonMediaController::radioIdleForReplace() const
 
 void DaemonMediaController::AudioSendRoute::deliver(const QByteArray& packet)
 {
-    const std::lock_guard<std::mutex> lock(mutex);
-    if (!current) {
+    // One consistent copy of where this packet goes, taken under the lock;
+    // the sends themselves run without it. The controller's thread
+    // therefore never waits for a send here (syncAudioRoutes(), close()):
+    // the only wait it has on a send under way is the sender's own stop(),
+    // which the drain gives way to after one block.
+    std::shared_ptr<MediaRtpSink> to;
+    std::shared_ptr<MediaRtpSink> copyTo;
+    QHash<quint32, quint32> ssrcRewrite;
+    QList<quint32> copyFrom;
+    QList<quint32> copyToSsrcs;
+    {
+        const std::lock_guard<std::mutex> lock(mutex);
+        to = current;
+        copyTo = replacement;
+        ssrcRewrite = rewrite;
+        copyFrom = replacementFrom;
+        copyToSsrcs = replacementTo;
+    }
+    if (!to) {
         return;
     }
     // A sender started before a replacement stamps the peer it started
     // with; the current peer sends and accepts only its own SSRCs.
-    const QByteArray out = rewriteRtpSsrc(packet, rewrite);
+    const QByteArray out = rewriteRtpSsrc(packet, ssrcRewrite);
+    // Counted as before the sender thread: an attempt is a packet a ready
+    // transport was asked to take, and it ends accepted or rejected. A
+    // transport that is not ready (stopping, stopped, gone) was asked
+    // nothing, so the attempt raised for the send under way is taken back
+    // and nothing is counted: rejected stays a transport's own refusal.
     attempts.fetch_add(1, std::memory_order_acq_rel);
-    if (current->sendRtp(out)) {
+    switch (to->sendRtp(out)) {
+    case MediaRtpSink::RtpSendResult::Accepted:
         accepted.fetch_add(1, std::memory_order_acq_rel);
-    } else {
+        break;
+    case MediaRtpSink::RtpSendResult::Refused:
         rejected.fetch_add(1, std::memory_order_acq_rel);
+        break;
+    case MediaRtpSink::RtpSendResult::NotReady:
+        attempts.fetch_sub(1, std::memory_order_acq_rel);
+        break;
     }
-    if (replacement && out.size() >= 12) {
+    if (copyTo && out.size() >= 12) {
         const quint32 ssrc = qFromBigEndian<quint32>(out.constData() + 8);
-        const qsizetype index = ssrc != 0 ? replacementFrom.indexOf(ssrc) : -1;
-        if (index >= 0 && replacementTo.value(index) != 0) {
-            replacement->sendRtp(rewriteRtpSsrc(out, {{ssrc, replacementTo.value(index)}}));
+        const qsizetype index = ssrc != 0 ? copyFrom.indexOf(ssrc) : -1;
+        if (index >= 0 && copyToSsrcs.value(index) != 0) {
+            copyTo->sendRtp(rewriteRtpSsrc(out, {{ssrc, copyToSsrcs.value(index)}}));
         }
     }
 }
@@ -2282,7 +2328,38 @@ void DaemonMediaController::syncAudioRoutes()
         Q_UNUSED(sliceId);
         apply(stream.route, stream.sender != nullptr && m_receiverAudioNegotiated);
     }
-    apply(m_headphones.route, m_headphones.sender != nullptr && m_headphonesMixNegotiated);
+    const bool headphonesOpen = m_headphones.sender != nullptr && m_headphonesMixNegotiated;
+    apply(m_headphones.route, headphonesOpen);
+
+    // A transport with no audio send for another thread
+    // (IMediaTransport::audioRtpSink() is null by default) takes nothing:
+    // its peer's sink answers "not ready" for ever. Say so once for each
+    // connection that would otherwise carry a stream now.
+    bool anyOpen = m_audioSender != nullptr || headphonesOpen;
+    for (const auto& [sliceId, stream] : m_receiverStreams) {
+        Q_UNUSED(sliceId);
+        anyOpen = anyOpen || (stream.sender != nullptr && m_receiverAudioNegotiated);
+    }
+    const auto warnIfNoSink = [this](const MediaPeer* peer) {
+        if (peer->transportHasAudioRtpSink()) {
+            return;
+        }
+        const QString connectionId = peer->connectionId();
+        if (m_noAudioSinkWarned.contains(connectionId)) {
+            return;
+        }
+        m_noAudioSinkWarned.insert(connectionId);
+        qCWarning(lcDaemonMedia).noquote()
+            << QStringLiteral("receive audio cannot be sent on media connection %1: its "
+                              "transport has no audio send for the sender thread")
+                   .arg(connectionId.left(64));
+    };
+    if (anyOpen && peerUp) {
+        warnIfNoSink(m_peer.get());
+        if (copying) {
+            warnIfNoSink(m_replacement.get());
+        }
+    }
 }
 
 std::optional<IceConfiguration> DaemonMediaController::mediaIceConfiguration()
@@ -4092,11 +4169,11 @@ void DaemonMediaController::stopReceiverAudioCapture(ReceiverAudioStream& stream
         stream.sending = false;
         return;
     }
-    // R-AUD-SEND: stopped first. The sender thread may send a block until
-    // stop() returns, and only then are the next sequence and timestamp
-    // final.
-    const bool wasRunning = stream.sender->isRunning();
-    stream.sender->stop();
+    // R-AUD-SEND: stopped first, and stop() is this thread's first touch of
+    // the sender: it is the one call a drain under way gives way to, so the
+    // sender thread sends the block it is on and no more. Only then are the
+    // next sequence and timestamp final.
+    const bool wasRunning = stream.sender->stop();
     if (stream.streamIndex >= 0 && wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         const auto index = static_cast<size_t>(stream.streamIndex);
@@ -4456,11 +4533,11 @@ void DaemonMediaController::stopHeadphonesAudioCapture()
     if (!m_headphones.sender) {
         return;
     }
-    // R-AUD-SEND: stopped first. The sender thread may send a block until
-    // stop() returns, and only then are the next sequence and timestamp
-    // final.
-    const bool wasRunning = m_headphones.sender->isRunning();
-    m_headphones.sender->stop();
+    // R-AUD-SEND: stopped first, and stop() is this thread's first touch of
+    // the sender: it is the one call a drain under way gives way to, so the
+    // sender thread sends the block it is on and no more. Only then are the
+    // next sequence and timestamp final.
+    const bool wasRunning = m_headphones.sender->stop();
     if (wasRunning) {
         // As the main stream: the stream id's timeline continues from here.
         m_headphones.nextSequence = m_headphones.sender->nextSequence();
@@ -6467,6 +6544,10 @@ void DaemonMediaController::finalizeAudioDiagnostics()
         return;
     }
     m_audioDiagnostics = snapshotAudioDiagnostics();
+    // R-AUD-SEND: always adds zero now. The sender was stopped before this
+    // (stopAudioCapture), and stop() returns only after the send under way
+    // has its answer, so nothing is in flight here. The field and the sum
+    // stay so the log line and every reader keep their shape.
     m_audioDiagnostics.sendUnresolvedAtRetirement += m_audioDiagnostics.sendInFlight;
     m_audioDiagnostics.sendInFlight = 0;
     maybeLogAudioDiagnostics(true);
@@ -6484,6 +6565,18 @@ void DaemonMediaController::maybeLogAudioDiagnostics(bool final)
         return;
     }
     const DaemonAudioDiagnostics snapshot = snapshotAudioDiagnostics();
+    // R-AUD-SEND: how evenly the sender thread sent, in milliseconds to one
+    // decimal, -1 when fewer than two packets went: the longest gap between
+    // two consecutive packets since this context started, and since the
+    // previous line. Only a line really logged takes the second figure;
+    // snapshotAudioDiagnostics(), which others call too, never does.
+    const auto gapMs = [](qint64 gapUs) {
+        constexpr double kUsPerMs = 1000.0;
+        return gapUs < 0 ? QStringLiteral("-1")
+                         : QString::number(static_cast<double>(gapUs) / kUsPerMs, 'f', 1);
+    };
+    const qint64 gapSinceLastUs =
+        m_audioSender ? m_audioSender->takeLongestSendGapSinceTakenUs() : qint64{-1};
     qCInfo(lcDaemonMedia).nospace()
         << "daemon audio diagnostics " << (final ? "final" : "periodic")
         << " context=" << snapshot.contextGeneration
@@ -6506,6 +6599,8 @@ void DaemonMediaController::maybeLogAudioDiagnostics(bool final)
         << " sendRejected=" << snapshot.sendRejected
         << " sendInFlight=" << snapshot.sendInFlight
         << " sendUnresolvedAtRetirement=" << snapshot.sendUnresolvedAtRetirement
+        << " sendGapMaxMs=" << qPrintable(gapMs(snapshot.sender.longestSendGapUs))
+        << " sendGapMaxSinceLastMs=" << qPrintable(gapMs(gapSinceLastUs))
         << " hasLastPacket=" << snapshot.sender.hasLastEmittedPacket
         << " lastSequence=" << snapshot.sender.lastEmittedSequence
         << " lastTimestamp=" << snapshot.sender.lastEmittedTimestamp
@@ -6581,6 +6676,7 @@ void DaemonMediaController::clearSession()
     MediaPeer* const peer = m_peer.release();
     // R-AUD-SEND: the peer leaves every route before it stops.
     syncAudioRoutes();
+    m_noAudioSinkWarned.clear();
     if (peer) {
         peer->disconnect(this);
         peer->stop();
