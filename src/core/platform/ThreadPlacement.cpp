@@ -43,6 +43,11 @@
 //               to half the scheduling latency (12.1 ms measured). J.J.
 //               Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-11: that comment corrected again: the Rock 5C does not refuse
+//               real-time priority to a service outright, only while a
+//               root login has the CPU controller switched on. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/platform/ThreadPlacement.h"
@@ -669,10 +674,17 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // while htop ran 12.7 ms on that core. No packet was dropped: one
     // receiver's packets fill the socket buffer in about 45 ms. Four wide
     // receivers fill it in 6 to 9 ms, which is where such a wait costs
-    // packets. Real-time priority would end it and this board refuses it
-    // to a service (its kernel groups real-time scheduling by cgroup and
-    // gives a service's group no budget); a socket buffer granted in full
-    // makes the wait harmless.
+    // packets. Real-time priority would end it. This board does not
+    // refuse it to a service outright, as this comment first said: its
+    // kernel groups real-time scheduling by cgroup, and a request is
+    // refused only while the CPU controller is switched on, which root's
+    // login manager (user@0.service, started by any root login) asks for.
+    // Read on the Rock on 2026-10-11 by the native audio work: of six
+    // requests by audio threads, the four made while that login manager
+    // ran were refused and the two made with it stopped were granted
+    // (SCHED_FIFO 98). The threads placed here do not ask for it; they
+    // take the raise above. A socket buffer granted in full makes the
+    // wait harmless.
     //
     // Where every core is equally fast they stay on the housekeeping cores,
     // which no raised thread runs on.
