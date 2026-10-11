@@ -1297,6 +1297,7 @@ nereus_add_test(tst_slice_persistence_per_band)
 # without a Core, receivers B to D come back at connect like A.
 # Source: NereusSDR-original tests.
 nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
+nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
