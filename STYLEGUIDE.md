@@ -175,6 +175,78 @@ With the look off the sheets above draw as written.
     affected. An action button a sheet draws marks its default state through
     `:default` with the same rim colour.
 
+### Workspace look: container headers and arranging
+
+With the preview switch on, a container's chrome is one 18 px header
+(`WorkspaceGroupHeader`, `src/gui/containers/WorkspaceHeader.cpp`). With the
+switch off the 22 px title bar and its menus are as they were; nothing here
+applies to it. Settled with JJ on 2026-10-10; design in
+`docs/architecture/2026-10-10-container-arrange-design.md`.
+
+- **Two states, per container:** the header is shown or it is hidden. Shown,
+  it sits in the layout above the content. Hidden, nothing is drawn and no
+  room is kept for it; the content has the whole container. There is no
+  header that appears on hover or on focus, and no timer.
+- **Header buttons, left to right after the title and the source chip:**
+  eye, pin (a popped-out window only), pop out or return arrow, options
+  (three dots), close. Each is 16 x 14 px. All draw in one colour, the
+  `text-scale` role, and on hover take the `text` role on a `button-hover`
+  plate. A new header button follows the same size and the same two roles.
+- **The eye:** an open eye means the header stays; a crossed-out eye means
+  the header hides when not arranging. It is a toggle and changes that
+  container only. Its tooltip says what a click will do ("Hide this header
+  when not arranging" or "Keep this header showing"). The eye is drawn in
+  code (`WorkspaceEyeButton`), not from an icon file, because an icon file
+  cannot take the header's colour. The right-click menu's "Keep Header
+  Showing" is the same switch, ticked when the header is shown.
+- **The pin:** only in the header of a popped-out window, left of the return
+  arrow. Tilted pin: the window is not kept on top. Upright pushpin: it is.
+  Tooltips "Keep this window on top" and "Stop keeping this window on top".
+  The shapes are the app's `pin` and `pinned` art
+  (`resources/icons/emoji/`), drawn as a one-colour silhouette at 14 px in
+  the header's glyph colour, so the pin never carries its own red. "Pin on
+  Top" in the Options menu is the same switch.
+- **Arrange:** headers of hidden containers are drawn only while arranging,
+  over the top of the content, and take no layout room. Arranging is on
+  while Shift is held alone for 300 ms (`ArrangeHoldFilter::kHoldDelayMs`),
+  until Shift is let go, or while Containers > Arrange Workspace
+  (Ctrl+Shift+A) is switched on, until it is switched off or Escape is
+  pressed. A click, a wheel turn or another key while Shift is down cancels
+  the hold for that press, so Shift-tuning never shows headers; a hold does
+  not begin while a text field has the keyboard. Arranging never changes a
+  container's shown or hidden choice and saves nothing by itself.
+- **The Arrange cue:** every header showing and the dashed accent outline
+  round each container. No banner, no toast, no tint over the content. The
+  outline has a transparent fill, so a popped-out window keeps its face.
+- **One drag rule while arranging.** The header is the handle, and where the
+  pointer is at release decides, whatever the container was before:
+  - within 48 px of an edge of the main window: it docks in that edge's
+    strip. The landing box (the strips' translucent accent box) shows the
+    place during the drag, for every kind of container;
+  - elsewhere over the spectrum: it sits free there, on the 8 px grid unless
+    Alt is held;
+  - outside the main window: it becomes a window where it was dropped;
+  - over the menu bar, the status bar or the title bar, or on Escape: the
+    drag is cancelled and the container goes back where it started.
+  When not arranging, a drag is as before: a strip container docks at an
+  edge, a free container stays inside the spectrum pane, a window only
+  moves.
+- **One snap:** the 8 px grid, which Alt bypasses. Ctrl does not step a drag
+  or a resize in the look.
+- **No lock.** The look has no Lock setting, no padlock in the header and no
+  Lock item in any menu. A container with a hidden header has no handle, so
+  it cannot be moved by accident; moving anything takes Arrange.
+- **Menus:** the body's right-click menu starts with "Pop Out" ("Return" on
+  a window), then Container Settings, Hide container, Keep Header Showing,
+  Arrange Workspace and Contents. The Options menu keeps Axis Lock (a free
+  container only), Pin on Top (a window only), Pop Out or Dock, Container
+  Settings, Move to Edge, Place Free, Arrange Workspace and Contents.
+  Neither has a Header submenu.
+- **Return goes home:** the return arrow puts a popped-out container back
+  where it was popped out of (its strip, beside the neighbour it had, or
+  its free place). A window that was never docked joins the Main Panel's
+  strip.
+
 ### Sliders
 
 **Horizontal:**

@@ -40,6 +40,9 @@
 #   2026-10-11 - Scene names follow the two header choices (header-shown,
 #                mixed-container-hidden; the reveal scenes are gone).
 #                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+#   2026-10-11 - Placement section and status rows list the pinned
+#                floating window and the two arrange drag scenes. J.J. Boyd
+#                (KG4VCF), AI-assisted via Anthropic Claude Code.
 #   2026-10-08 - Tall extra images held to 1000 px in Fit; "no longer
 #                produced" counts as a verify failure; dialog-only scenes
 #                say which profiles dialogs are captured at; status table
@@ -339,7 +342,9 @@ SECTIONS = [
      "shown header, a hidden one, and Arrange.",
      ["header-shown", "header-hidden", "arrange-on",
       "edge-right", "edge-left", "edge-top-bottom", "free-container", "floating-container",
-      "drag-preview-left", "drag-preview-between"], ["edge-all-four", "edge-all-four-clean"]),
+      "floating-container-pinned", "drag-preview-left", "drag-preview-between",
+      "arrange-drag-edge-free", "arrange-drag-edge-floating"],
+     ["edge-all-four", "edge-all-four-clean"]),
     ("editing", "Widget and container editing",
      "Add content, source selection, content properties, and mixed-content composition using actual or "
      "deliberately designed screens.",
@@ -384,14 +389,15 @@ STILLS = "not verifiable from stills"
 STATUS_ROWS = [
     ("Compact group header (18 px)", STATUS_BUILT,
      "Grip, title, source chip, eye, pop-out, options and hide inside one header; replaces the 22 px "
-     "title bar.",
-     "header-shown, arrange-on", True),
+     "title bar. A floating window's header adds a pin beside the return arrow.",
+     "header-shown, arrange-on, floating-container, floating-container-pinned", True),
     ("Hidden", STATUS_BUILT,
      "No header; the eye button, Keep Header Showing in the right-click menu, or Arrange brings it back.",
      "header-hidden, arrange-on", True),
     ("Arrange mode", STATUS_BUILT,
-     "Containers > Arrange Workspace (Ctrl+Shift+A): every header, accent outline, dot corners, strip "
-     "target bands. Runtime only, never saved.", "arrange-on, drag-preview-left", True),
+     "Containers > Arrange Workspace (Ctrl+Shift+A, Escape leaves) or Shift held alone: every header, "
+     "accent outline, dot corners, strip target bands. Runtime only, never saved.",
+     "arrange-on, drag-preview-left, arrange-drag-edge-free, arrange-drag-edge-floating", True),
     ("Entry headers (16 px)", STATUS_BUILT,
      "One per entry in a multi-content stack; a single-content container uses the group header title.",
      "mixed-container, header-shown", True),
@@ -407,13 +413,17 @@ STATUS_ROWS = [
      "edge-top-bottom", True),
     ("Bottom edge strip", STATUS_BUILT, "Containers docked along the bottom.", "edge-top-bottom", True),
     ("Drag preview", STATUS_BUILT,
-     "Target bands and the destination preview during a header drag. The stills pose it through a test seam.",
-     "drag-preview-left, drag-preview-between", True),
+     "Target bands and the destination preview during a header drag, for a strip, a free and a floating "
+     "source. The stills pose it through a test seam.",
+     "drag-preview-left, drag-preview-between, arrange-drag-edge-free, arrange-drag-edge-floating", True),
     ("Free placement", STATUS_BUILT,
-     "Options > Place Free puts a container over the spectrum. Docking a free container by dropping it is "
-     "not implemented; it reaches an edge through Move to Edge.", "free-container", True),
-    ("Floating window", STATUS_BUILT, "The existing floating container, sized from the container.",
-     "floating-container", True),
+     "Options > Place Free, or a drop over the spectrum while arranging, puts a container over the "
+     "spectrum. While arranging, a free container dropped at an edge docks there.",
+     "free-container, arrange-drag-edge-free", True),
+    ("Floating window", STATUS_BUILT,
+     "The existing floating container, sized from the container. Its header's pin keeps it on top; while "
+     "arranging, its header dragged over the main window docks it or sets it free.",
+     "floating-container, floating-container-pinned, arrange-drag-edge-floating", True),
     ("FrequencyInstrument (Longpath port)", STATUS_BUILT, "Number only, band strip and flat arc forms.",
      "instruments-sheet, mixed-container", True),
     ("NeedleInstrument (Longpath port)", STATUS_BUILT, "RX signal and TX power needles.",

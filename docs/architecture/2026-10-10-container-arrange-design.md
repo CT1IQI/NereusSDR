@@ -3,7 +3,8 @@
 Status: design, agreed with JJ (KG4VCF) on 2026-10-10. Mock-ups, drawn over
 real captures of the workspace look, are in
 [2026-10-10-container-arrange-design/](2026-10-10-container-arrange-design/).
-They show intent, not final art.
+They show intent, not final art. Built on 2026-10-11; "Built", near the end,
+lists where the code differs from this text.
 
 ## Goal
 
@@ -224,18 +225,36 @@ operator had moved it.**
 ### Saved layout
 
 Changes to the container document (`ContainerDocumentCodec.cpp`), all
-readable by older builds, which keep unknown fields:
+readable by older builds, which keep unknown fields. This list is what the
+code saves (corrected 2026-10-11; see "Built"):
 
-* `"header"`: written as shown or hidden only.
-* `"locked"`: ignored on read, not written.
-* New: where a popped-out container came from (strip and index, or free
-  rectangle).
-* New: the monitor a floating or popped-out window was on (name and serial,
-  with its geometry at save, so a different monitor in the same place is not
-  mistaken for it).
+* `"header"`: the integer 0 (shown), 1 (the hover choice, "Reveal") or 2
+  (hidden). With the look on only 0 and 2 are written: a saved 1 is saved
+  once as 2 when the layout is first loaded. With the look off all three are
+  read and written as before.
+* `"locked"`: written only when true. With the look on it is cleared when
+  the layout is loaded and before every save, so it is never written there.
+  With the look off it is read and written as before.
+* New, `"geometryPane": [w, h]`: for a free container, the size the spectrum
+  pane had when the operator last placed it, so it comes back where it was
+  showing. Written only once the operator has moved that container.
+* New, `"screen": {"name", "serial", "geometry": [x, y, w, h]}`: the monitor
+  a floating or popped-out window is on, with that monitor's geometry at
+  save, so a different monitor in the same place is not mistaken for it.
+  Written only for a window.
+* New, `"home": {"dockMode", "edge", "before", "after", "geometry"}`: where a
+  popped-out container came from (its strip and the neighbours on each side,
+  or its free rectangle). Written only while the container is a window, with
+  the look on. Unknown keys inside `"home"` are kept on rewrite.
+* `"pinOnTop"`, inside the container's existing `config`: with the look on
+  it is saved as soon as the pin or the menu item changes it.
 
-No schema version change is intended; the new fields are optional. The plan
-confirms that against the codec's version handling before any field is added.
+A new field that cannot be read (`geometryPane`, `screen`, `home`, or the
+`geometry` of a window) is dropped for that container with a log line, and
+the rest of the layout loads.
+
+No schema version change was needed (`schemaVersion` stays 1); the new
+fields are optional.
 
 ## Errors
 
@@ -283,6 +302,88 @@ cannot prove pointer behaviour between native views.
 
 By JJ, on a build of his choosing: arrange his own layout, quit and start
 several times with a window on each monitor, and confirm nothing moved.
+
+## Built (2026-10-11)
+
+Built on branch `claude/workspace-look` in seven changes, `309c0fdb7` to
+`6df0ddcb7`. Where the code differs from the text above, the code is as
+listed here.
+
+Saved fields:
+
+* A free container saves `geometryPane`, the pane size its place was chosen
+  in. The design had no such field. Without it a container anchored to the
+  right or the bottom could not be put back where it was showing.
+* A window saves `screen` (name, serial, geometry). On the development Mac
+  the built-in display reports an empty serial, so a monitor is matched by
+  name and geometry when the serial is empty.
+* A popped-out container saves `home`, with an open set of extra keys that
+  are kept on rewrite.
+
+Headers:
+
+* `HeaderMode` keeps three values, `Shown`, `Reveal` and `Hidden`. The
+  design said two. `Reveal` shipped with the look off and stays there
+  exactly as it was. With the look on a header is shown or hidden, and a
+  saved `Reveal` is saved once as `Hidden` by the container manager when
+  the layout is first loaded.
+* The eye is drawn in code. No `eye.svg` or `eye-off.svg` exists: an icon
+  file cannot take the header's colour.
+* The pin is the approved `pin` and `pinned` art drawn as a one-colour
+  silhouette, 14 px high in the 16 x 14 px button, in the header's glyph
+  colour. The art's own red and its soft shadow are not drawn.
+* The header of a hidden container, drawn over the content while arranging,
+  is 0.96 opaque with a 6 px shadow. There is no fade and no timer.
+
+Arranging and dragging:
+
+* A Shift hold does not begin while a text field has the keyboard. Escape
+  in a text field goes to the field.
+* Dropped over the main window's menu bar, status bar or title bar, a drag
+  is cancelled. So is a drag whose mouse grab is lost.
+* A free container dropped over the spectrum is held wholly inside the
+  pane, then placed on the 8 px grid unless Alt is held.
+* The Ctrl 10 px step is gone everywhere in the look, for a drag and for a
+  resize, while arranging or not. With the look off it is unchanged.
+* While Arrange was on, a popped-out window was drawn as a blank box with a
+  dashed border. That was a fault in the Arrange outline from earlier work
+  and is fixed: the window keeps its face.
+
+Pop out, pin and return:
+
+* A window's place when it is created (by the header button, the menu, a
+  drop outside the main window, a new container, Duplicate or a pop-out
+  shell) is its remembered place, saved with its monitor. This holds with
+  the look off too. Before, such a window took a default place on every
+  start until it was moved.
+* A window with no `home` returns to the end of the Main Panel's strip. The
+  main container with no `home` returns to its panel dock as before.
+* A returned container goes back to its place in the strip's order, but the
+  share of the strip it had is not restored; it gets the strip's usual
+  share.
+* Pin on Top is saved as soon as it changes, with the look on. Before, it
+  was written at the next save and could be undone by a layout pass.
+
+Lock:
+
+* With the look on, a layout holding a locked container is saved once,
+  unlocked, when it is first loaded. `"locked"` is still read and written
+  with the look off, and is written only when true.
+
+Startup:
+
+* A layout saved before this change has no `geometryPane`. Its free
+  containers are placed against the pane's size once the pane has been
+  still for 100 ms after the first show, since the pane is resized twice
+  while the window lays out.
+* A change of screen resolution or arrangement with no monitor added or
+  removed does not re-place windows.
+
+Evidence is in the capture run and gallery of 2026-10-11 (real renders at
+both profiles; they replace the mock-ups below as evidence). Still owed:
+the native-window tests and the checks by JJ that "Acceptance and evidence"
+lists (the drag across the main window's edge on macOS, the Shift hold at a
+real keyboard, two real monitors, and that a pinned window stays on top).
 
 ## Mock-ups
 
