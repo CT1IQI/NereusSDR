@@ -52,6 +52,9 @@
 //   2026-10-08 - Both headers end with a hide button (Longpath's close
 //                 cross, last and rightmost); it hides, never deletes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The padlock and setLocked are gone: the workspace look has
+//                 no Lock setting. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -85,15 +88,6 @@ private:
     bool m_pressed{false};
 };
 
-// A small padlock, drawn so it takes the header's glyph colour.
-class WorkspaceLockGlyph final : public QWidget {
-    Q_OBJECT
-public:
-    explicit WorkspaceLockGlyph(QWidget* parent = nullptr);
-protected:
-    void paintEvent(QPaintEvent* event) override;
-};
-
 // The 12x12 bottom-right resize corner: three diagonals of dots.
 class WorkspaceCornerGrip final : public QWidget {
     Q_OBJECT
@@ -120,7 +114,6 @@ public:
     // Empty text hides the chip.
     void setSource(const QString& text, const QColor& colour);
     QString sourceText() const;
-    void setLocked(bool locked);
     // ↗ (pop out) while docked, ↙ (return) while floating.
     void setFloating(bool floating);
     // Arrange: the bottom border becomes the accent.
@@ -130,8 +123,7 @@ public:
     QWidget* grip() const;
     QPushButton* popOutButton() const { return m_popOut; }
     QPushButton* optionsButton() const { return m_options; }
-    // The hide button, last and rightmost. Enabled exactly when the
-    // pop-out button is (setLocked).
+    // The hide button, last and rightmost.
     QPushButton* hideButton() const { return m_hide; }
     WorkspaceSourceChip* sourceChip() const { return m_chip; }
 
@@ -147,7 +139,6 @@ private:
     QLabel* m_grip{nullptr};
     QLabel* m_title{nullptr};
     WorkspaceSourceChip* m_chip{nullptr};
-    WorkspaceLockGlyph* m_lock{nullptr};
     QPushButton* m_popOut{nullptr};
     QPushButton* m_options{nullptr};
     QPushButton* m_hide{nullptr};

@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: lockRequested is gone with the
+//                 Options menu's Lock item. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-08 - setContentMinimumWidth: the container is never narrower
 //                 than its content needs. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
@@ -400,8 +403,7 @@ signals:
     void returnContainerRequested();
     void hideContainerRequested();
     void headerModeRequested(HeaderMode mode);
-    // Workspace preview: the options menu's Lock and Arrange workspace.
-    void lockRequested(bool locked);
+    // Workspace preview: the options menu's Arrange workspace.
     void arrangeWorkspaceRequested(bool active);
     // Workspace preview: a source menu choice, kActiveSliceSource or 1..4.
     void sourceRequested(int rxSource);

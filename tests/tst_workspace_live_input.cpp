@@ -37,6 +37,10 @@
 //   2026-10-09 - Four ctest entries of the one binary (TestFunctionGroups),
 //                 so no entry runs near the 120 s limit under load, by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The look has no Lock setting: no padlock in the header,
+//                 and a container committed locked keeps its pop-out and
+//                 hide buttons enabled, by J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //
 // Why this test routes clicks itself: on macOS every widget under the main
 // window is a native child view (the Metal meter and spectrum leaves promote
@@ -1117,7 +1121,7 @@ private slots:
 
     // What made it look locked: under the cursor the header's open hand never
     // showed (the view on top has the arrow), and nothing answered. There is
-    // no lock glyph and no disabled item: the container is not locked.
+    // no lock glyph (the look has none) and no disabled item.
     void arrangeDoesNotLookLocked()
     {
         LiveFixture f;
@@ -1126,9 +1130,10 @@ private slots:
         WorkspaceGroupHeader* header = f.groupHeader();
         auto* grip = header->findChild<QLabel*>(QStringLiteral("workspaceGrip"));
         QVERIFY(grip);
-        auto* lock = header->findChild<WorkspaceLockGlyph*>();
-        QVERIFY(lock);
-        QVERIFY(!lock->isVisible());
+        for (const QWidget* child : header->findChildren<QWidget*>()) {
+            QVERIFY2(!QString::fromLatin1(child->metaObject()->className()).contains(QStringLiteral("Lock")),
+                     child->metaObject()->className());
+        }
         NativeMouse mouse(f.window.get());
         QWidget* view = mouse.targetAt(centreOf(grip));
         QWidget* under = view->childAt(view->mapFromGlobal(centreOf(grip)));
@@ -1184,8 +1189,9 @@ private slots:
         settle();
     }
 
-    // Disabled, never hidden, when the menu's Pop Out is disabled: a locked
-    // container, or no arrange controller (the menu is then empty).
+    // Disabled, never hidden, when the menu's Pop Out is disabled: no
+    // arrange controller (the menu is then empty). The look has no Lock
+    // setting, so a container committed locked disables nothing.
     void entryPopOutButtonIsDisabledWhenPopOutIs()
     {
         LiveFixture f;
@@ -1201,34 +1207,20 @@ private slots:
         WorkspaceEntryHeader* header = f.entryHeader(f.rxEntryId);
         QVERIFY(header);
         f.reveal(header);
+        QVERIFY(!f.document(f.mainId)->locked);
         QVERIFY(header->popOutButton()->isVisible());
-        QVERIFY(!header->popOutButton()->isEnabled());
+        QVERIFY(header->popOutButton()->isEnabled());
         QVERIFY(header->hideButton()->isVisible());
-        QVERIFY(!header->hideButton()->isEnabled());
+        QVERIFY(header->hideButton()->isEnabled());
         MenuProbe probe;
         probe.arm();
         NativeMouse mouse(f.window.get());
         mouse.click(centreOf(header->optionsButton()));
         QTRY_VERIFY_WITH_TIMEOUT(probe.opened, kMenuWaitMs);
         QVERIFY(probe.actions.contains(QStringLiteral("Pop Out")));
-        QVERIFY(!probe.enabled.value(QStringLiteral("Pop Out"), true));
-        mouse.click(centreOf(header->popOutButton()));
-        settle();
+        QVERIFY(probe.enabled.value(QStringLiteral("Pop Out"), false));
         QCOMPARE(f.entryIndex(f.mainId, f.rxEntryId), 3);
-        mouse.click(centreOf(header->hideButton()));
-        settle();
         QVERIFY(f.entry(f.mainId, f.rxEntryId).visible);
-
-        QVERIFY(f.edit([&](WorkspaceDocument& d) {
-            for (auto& c : d.containers) {
-                if (c.id == f.mainId) {
-                    c.locked = false;
-                }
-            }
-        }));
-        header = f.entryHeader(f.rxEntryId);
-        QVERIFY(header && header->popOutButton()->isEnabled());
-        QVERIFY(header->hideButton()->isEnabled());
         ContainerContentHost* host = f.host();
         host->setArrangeController(nullptr);
         settle();
@@ -1597,7 +1589,8 @@ private slots:
     }
 
     // The group header's hide button hides the container (the menu's "Hide
-    // container"); disabled, never hidden, when its pop-out is (locked).
+    // container"). The look has no Lock setting: a container committed
+    // locked keeps it, and the pop-out button, enabled.
     void groupHideButtonHidesTheContainer()
     {
         LiveFixture f;
@@ -1626,19 +1619,11 @@ private slots:
             }
         }));
         NativeMouse mouse(f.window.get());
-        QVERIFY(!header->popOutButton()->isEnabled());
-        QVERIFY(hide->isVisible() && !hide->isEnabled());
-        mouse.click(centreOf(hide));
-        settle();
+        QVERIFY(!f.document(f.mainId)->locked);
+        QVERIFY(!f.mainContainer()->isLocked());
+        QVERIFY(header->popOutButton()->isEnabled());
+        QVERIFY(hide->isVisible() && hide->isEnabled());
         QVERIFY(f.document(f.mainId)->visible);
-        QVERIFY(f.edit([&](WorkspaceDocument& d) {
-            for (auto& c : d.containers) {
-                if (c.id == f.mainId) {
-                    c.locked = false;
-                }
-            }
-        }));
-        QVERIFY(header->popOutButton()->isEnabled() && hide->isEnabled());
 
         const QPoint at = centreOf(hide);
         QWidget* hit = mouse.targetAt(at);

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the Options menu has no Lock item,
+//                 the header no padlock, and nothing in the look's chrome
+//                 or menu is disabled for Lock. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: the header options and source menus
 //                 live on the heap under the container too, and no menu
 //                 touches the container after an action removed it. J.J.
@@ -618,19 +622,18 @@ void ContainerWidget::updateWorkspaceChrome()
     m_groupHeader->setVisible(inLayout || overlayShown);
     m_revealShadow->setVisible(overlayShown);
     m_groupHeader->setArrangeAccent(m_arrangeActive);
-    m_groupHeader->setLocked(m_locked);
     m_groupHeader->setFloating(isFloating());
 
-    const bool resizable = m_arrangeActive && !m_locked && !isPanelDocked();
+    const bool resizable = m_arrangeActive && !isPanelDocked();
     // A frameless floating window keeps its resize corner, inside its bounds.
-    const bool floatingCorner = isFloating() && !m_locked;
+    const bool floatingCorner = isFloating();
     m_resizeGrip->setVisible((resizable || floatingCorner) && !m_autoHeight);
     m_edgeRight->setVisible(resizable);
     m_edgeBottom->setVisible(resizable && !m_autoHeight);
     m_arrangeFrame->setVisible(m_arrangeActive);
-    m_btnFloat->setEnabled(!m_locked);
-    m_btnAxis->setEnabled(!m_locked);
-    m_btnPin->setEnabled(!m_locked);
+    m_btnFloat->setEnabled(true);
+    m_btnAxis->setEnabled(true);
+    m_btnPin->setEnabled(true);
     placeWorkspaceOverlays();
 }
 
@@ -677,23 +680,17 @@ void ContainerWidget::resizeEvent(QResizeEvent* event)
 void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
 {
     if (isOverlayDocked()) {
-        auto* axis = menu.addAction(tr("Axis Lock %1 (cycle)").arg(m_btnAxis->text()), this,
-                                    [this] { cycleAxisLock(false); });
-        axis->setEnabled(!m_locked);
+        menu.addAction(tr("Axis Lock %1 (cycle)").arg(m_btnAxis->text()), this,
+                       [this] { cycleAxisLock(false); });
     }
     if (isFloating()) {
         auto* pin = menu.addAction(tr("Pin on Top"), this, [this] { setPinOnTop(!m_pinOnTop); });
         pin->setCheckable(true);
         pin->setChecked(m_pinOnTop);
-        pin->setEnabled(!m_locked);
     }
-    auto* lock = menu.addAction(tr("Lock"), this, [this] { emit lockRequested(!m_locked); });
-    lock->setCheckable(true);
-    lock->setChecked(m_locked);
     const QString floatText = isFloating()
         ? (m_popOutShell ? tr("Return All Objects") : tr("Dock")) : tr("Pop Out");
-    auto* pop = menu.addAction(floatText, this, [this] { m_btnFloat->click(); });
-    pop->setEnabled(!m_locked);
+    menu.addAction(floatText, this, [this] { m_btnFloat->click(); });
     menu.addAction(tr("Container Settings…"), this, [this] { emit settingsRequested(); });
     menu.addSeparator();
     auto* header = menu.addMenu(tr("Header"));
@@ -716,13 +713,10 @@ void ContainerWidget::populateWorkspaceMenu(QMenu& menu)
         auto* action = edge->addAction(name, this, [this, value] { emit moveToEdgeRequested(value); });
         action->setCheckable(true);
         action->setChecked(isPanelDocked() && m_dockEdge == value);
-        action->setEnabled(!m_locked);
     }
-    edge->setEnabled(!m_locked);
     if (!isOverlayDocked()) {
         auto* free = menu.addAction(tr("Place Free"), this, [this] { emit placeFreeRequested(); });
         free->setToolTip(tr("Place over the spectrum, inside the main window"));
-        free->setEnabled(!m_locked);
     }
     auto* arrange = menu.addAction(tr("Arrange Workspace"), this,
                                    [this] { emit arrangeWorkspaceRequested(!m_arrangeActive); });

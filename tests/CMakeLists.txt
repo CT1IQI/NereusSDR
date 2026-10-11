@@ -615,6 +615,8 @@ nereus_add_test(tst_workspace_live_input)
 nereus_split_test(tst_workspace_live_input
     ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
 nereus_add_test(tst_workspace_profiles)
+# The workspace look has no Lock setting; with the look off Lock is unchanged (offscreen).
+nereus_add_test(tst_workspace_no_lock)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
 nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
 # A container's stylesheet border stays on the container (antenna switch toast,

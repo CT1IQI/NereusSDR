@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - locked is written only when true; a document without the
+//                 key loads unlocked, as before. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - screen, written for floating and popped-out containers
 //                 only; an unreadable screen, or an unreadable geometry of
 //                 a floating container, costs that container its place and
@@ -475,7 +478,10 @@ QJsonObject encodeContainer(const ContainerDocument& container)
                                        {"geometry", QJsonArray{on.x(), on.y(), on.width(), on.height()}}};
     }
     object["visible"] = container.visible;
-    object["locked"] = container.locked;
+    // Only when set: the workspace look has no Lock setting and writes none.
+    if (container.locked) {
+        object["locked"] = true;
+    }
     object["autoHeight"] = container.autoHeight;
     object["popOutShell"] = container.popOutShell;
     object["config"] = container.config;

@@ -7,6 +7,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the look has no Lock setting. A
+//                 container loads, runs and commits unlocked there
+//                 (lockApplies, clearLocks), and a strip divider beside a
+//                 container that was saved locked moves. With the look off
+//                 Lock is unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Windows remember their monitor and no two share a default
 //                 spot. Screens are read through a ScreenSource. A floating
 //                 window is shown at its remembered place when its monitor
@@ -359,10 +365,27 @@ CommitResult ContainerManager::commitWorkspace(const WorkspaceDocument& document
             return {CommitStatus::Invalid, expectedRevision, QStringLiteral("%1 already has a placement").arg(d.title)};
         }
     }
-    const CommitResult result = m_store->commit(document, expectedRevision);
+    WorkspaceDocument saved = document;
+    if (!lockApplies()) {
+        clearLocks(saved);
+    }
+    const CommitResult result = m_store->commit(saved, expectedRevision);
     if (result.status != CommitStatus::Saved) { m_storageError = result.error; emit workspaceError(result.error); }
     else { m_storageError.clear(); }
     return result;
+}
+bool ContainerManager::lockApplies()
+{
+    return !WorkspacePreview::enabled();
+}
+bool ContainerManager::clearLocks(WorkspaceDocument& document)
+{
+    bool cleared = false;
+    for (auto& container : document.containers) {
+        cleared = cleared || container.locked;
+        container.locked = false;
+    }
+    return cleared;
 }
 bool ContainerManager::effectiveVisible(const ContainerDocument &document) const
 {
@@ -410,9 +433,9 @@ bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
         handle && edgeMode() && handle->splitter() != m_splitter &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
          event->type() == QEvent::MouseButtonRelease)) {
-        // Workspace preview: a strip's handle, or the handle beside a strip,
-        // does not resize a locked container.
-        return edgeHandleTouchesLockedContainer(handle);
+        // Workspace preview: a strip's handle, and the handle beside a
+        // strip, always resize. The look has no Lock setting.
+        return false;
     }
     if (qobject_cast<QSplitterHandle *>(watched) &&
         (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove ||
@@ -451,6 +474,16 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
     if (!m_store || !m_registry || m_reconciling) { return; }
     // Refuse draft/preview state. Dependent controllers commit through the store.
     if (document != m_store->snapshot()) { return; }
+    if (!lockApplies()) {
+        // A document saved locked (by an older build, or seeded from the
+        // look-off workspace) is saved unlocked before anything is shown.
+        // That commit reconciles the unlocked document, so this call is done.
+        WorkspaceDocument unlocked = document;
+        if (clearLocks(unlocked)
+            && m_store->commit(unlocked, unlocked.revision).status == CommitStatus::Saved) {
+            return;
+        }
+    }
     QScopedValueRollback<bool> guard(m_reconciling, true);
     m_geometryCommit.stop();
     QHash<QString, QString> placements;
@@ -575,16 +608,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                         }
                         commitWorkspace(draft, draft.revision);
                     });
-            // Workspace preview: the header's Lock item and Arrange toggle.
-            connect(c, &ContainerWidget::lockRequested, this, [this, id = d.id](bool locked) {
-                auto draft = m_store->snapshot();
-                for (auto &value : draft.containers) {
-                    if (value.id == id) {
-                        value.locked = locked;
-                    }
-                }
-                commitWorkspace(draft, draft.revision);
-            });
+            // Workspace preview: the header's Arrange toggle.
             connect(c, &ContainerWidget::arrangeWorkspaceRequested, this, &ContainerManager::setArrangeMode);
             // Workspace preview: the header's source menu. The same config
             // write as Container Settings' Slice combo, committed as a draft;
@@ -643,7 +667,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             else { c->setParent(m_dockParent); }
         }
         c->setDockMode(d.dockMode); c->setNotes(d.name); c->setRxSource(d.config.value("rxSource").toInt(1));
-        c->setAxisLock(d.anchor); c->setLocked(d.locked); c->setAutoHeight(d.autoHeight);
+        c->setAxisLock(d.anchor); c->setLocked(lockApplies() && d.locked); c->setAutoHeight(d.autoHeight);
         c->setPopOutShell(d.popOutShell);
         c->setHeaderMode(d.header);
         if (WorkspacePreview::enabled()) {
@@ -997,34 +1021,6 @@ void ContainerManager::layoutEdgeStrips(const WorkspaceDocument& document)
     }
 }
 
-bool ContainerManager::edgeHandleTouchesLockedContainer(QSplitterHandle* handle) const
-{
-    QSplitter* splitter = handle->splitter();
-    if (splitter == nullptr) {
-        return false;
-    }
-    const auto locked = [](QWidget* w) {
-        if (auto* c = qobject_cast<ContainerWidget*>(w)) {
-            return c->isLocked();
-        }
-        if (auto* strip = qobject_cast<EdgeDockStrip*>(w)) {
-            const QList<QWidget*> held = strip->containers();
-            return std::any_of(held.cbegin(), held.cend(), [](QWidget* inner) {
-                auto* c = qobject_cast<ContainerWidget*>(inner);
-                return c != nullptr && !c->isHidden() && c->isLocked();
-            });
-        }
-        return false;
-    };
-    // Handle i sits between widget i - 1 and widget i.
-    for (int i = 1; i < splitter->count(); ++i) {
-        if (splitter->handle(i) == handle) {
-            return locked(splitter->widget(i - 1)) || locked(splitter->widget(i));
-        }
-    }
-    return false;
-}
-
 void ContainerManager::captureArrangement(WorkspaceDocument& document) const
 {
     WorkspaceArrangement& arrangement = document.arrangement;
@@ -1084,7 +1080,7 @@ void ContainerManager::moveContainerToEdge(const QString& id, DockEdge edge, int
     if (position < 0) {
         return;
     }
-    if (draft.containers[position].locked) {
+    if (lockApplies() && draft.containers[position].locked) {
         emit workspaceError(tr("Arrangement is locked"));
         return;
     }
@@ -1127,7 +1123,7 @@ void ContainerManager::placeContainerFree(const QString& id)
         if (d.id != id) {
             continue;
         }
-        if (d.locked) {
+        if (lockApplies() && d.locked) {
             emit workspaceError(tr("Arrangement is locked"));
             return;
         }
@@ -1321,7 +1317,7 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
     WorkspaceDocument document = m_store->snapshot();
     for (auto &d : document.containers) {
         if (d.id == id) {
-            if (d.locked) {
+            if (lockApplies() && d.locked) {
                 emit workspaceError(tr("Arrangement is locked"));
                 return true;
             }

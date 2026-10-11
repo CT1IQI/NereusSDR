@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: no Lock setting (lockApplies,
+//                 clearLocks); edgeHandleTouchesLockedContainer is gone.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Windows remember their monitor and no two share a default
 //                 spot: screens are read through a ScreenSource, a window
 //                 whose monitor is absent is shown on the main window's
@@ -365,9 +368,12 @@ private:
     void applyEdgeStripContentHints(bool sideStripsOnly);
     void scheduleEdgeStripContentHints();
     void captureArrangement(WorkspaceDocument& document) const;
-    // True when the edge-area handle borders a locked container, or a strip
-    // that holds one.
-    bool edgeHandleTouchesLockedContainer(QSplitterHandle* handle) const;
+    // The one place that decides whether the Lock setting exists: it does
+    // with the workspace look off, and not with it on. There every
+    // container loads, runs and commits unlocked.
+    static bool lockApplies();
+    // Unlocks every container; true when one was locked.
+    static bool clearLocks(WorkspaceDocument& document);
     void finishEdgeDrag(const QString& id, const QPoint& globalPos);
     // Size for a strip container leaving its strip: its width, its
     // content's height.

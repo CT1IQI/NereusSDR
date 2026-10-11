@@ -42,6 +42,9 @@
 //   2026-10-08 - Both headers end with a hide button (Longpath's close
 //                 cross, last and rightmost); it hides, never deletes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The padlock and setLocked are gone: the workspace look has
+//                 no Lock setting. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspaceHeader.h"
@@ -75,7 +78,6 @@ constexpr int kChipHeight = 13;
 constexpr int kChipRadius = 4;
 constexpr int kChipPadding = 4;
 constexpr int kChipBorderAlpha = 153;           // 60 % of 255
-constexpr int kLockSize = 9;
 constexpr int kHeaderTopRadius = 9;             // kGlassPanelRadius - 1, From Longpath src/gui/applets/GridCellWidget.cpp:63 [@551576e3]
 constexpr int kOverlayPlateAlpha = 224;
 
@@ -183,32 +185,6 @@ void WorkspaceSourceChip::paintEvent(QPaintEvent*)
     p.drawText(rect(), Qt::AlignCenter, m_text);
 }
 
-// ---- WorkspaceLockGlyph -----------------------------------------------------
-
-WorkspaceLockGlyph::WorkspaceLockGlyph(QWidget* parent) : QWidget(parent)
-{
-    setFixedSize(kLockSize, kLockSize);
-    setToolTip(tr("Locked: placement and size are fixed until you unlock"));
-    hide();
-}
-
-void WorkspaceLockGlyph::paintEvent(QPaintEvent*)
-{
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const QColor c(Workspace::role("text-scale", Workspace::kTextScale));
-    // Shackle: an arc over the body.
-    p.setPen(QPen(c, 1.2));
-    p.setBrush(Qt::NoBrush);
-    p.drawArc(QRectF(2.0, 0.6, 5.0, 6.0), 0, 180 * 16);
-    p.drawLine(QPointF(2.0, 3.6), QPointF(2.0, 4.4));
-    p.drawLine(QPointF(7.0, 3.6), QPointF(7.0, 4.4));
-    // Body.
-    p.setPen(Qt::NoPen);
-    p.setBrush(c);
-    p.drawRoundedRect(QRectF(0.5, 4.0, 8.0, 5.0), 1.0, 1.0);
-}
-
 // ---- WorkspaceCornerGrip ----------------------------------------------------
 
 WorkspaceCornerGrip::WorkspaceCornerGrip(QWidget* parent) : QWidget(parent)
@@ -285,9 +261,6 @@ WorkspaceGroupHeader::WorkspaceGroupHeader(QWidget* parent) : QWidget(parent)
     connect(m_chip, &WorkspaceSourceChip::clicked, this, &WorkspaceGroupHeader::sourceClicked);
     row->addWidget(m_chip);
 
-    m_lock = new WorkspaceLockGlyph(this);
-    row->addWidget(m_lock);
-
     row->addStretch(1);
 
     m_popOut = makeButton(QStringLiteral("↗"), kGroupButtonWidth, kGroupButtonHeight,
@@ -336,12 +309,6 @@ void WorkspaceGroupHeader::setSource(const QString& text, const QColor& colour)
     m_chip->setSource(text, colour);
 }
 QString WorkspaceGroupHeader::sourceText() const { return m_chip->isVisibleTo(this) ? m_chip->text() : QString(); }
-void WorkspaceGroupHeader::setLocked(bool locked)
-{
-    m_lock->setVisible(locked);
-    m_popOut->setEnabled(!locked);
-    m_hide->setEnabled(!locked);
-}
 void WorkspaceGroupHeader::setFloating(bool floating)
 {
     m_popOut->setText(floating ? QStringLiteral("↙") : QStringLiteral("↗"));

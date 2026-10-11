@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: no Lock checkbox. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Duplicate always gives a shown, floating copy next to the
 //                 original (ContainerManager::showDuplicate). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1078,8 +1080,11 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         return cb;
     };
 
-    m_lockCheck              = makeCheck(QStringLiteral("Lock"),
+    // The workspace look has no Lock setting: no checkbox there.
+    if (!WorkspacePreview::enabled()) {
+        m_lockCheck          = makeCheck(QStringLiteral("Lock"),
                                          m_container && m_container->isLocked());
+    }
     m_hideTitleCheck         = makeCheck(QStringLiteral("Hide title"),
                                          m_container && !m_container->isTitleBarVisible());
     m_minimisesCheck         = makeCheck(QStringLiteral("Minimizes"),
@@ -1095,7 +1100,9 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
                                          m_container && m_container->isHighlighted());
 
-    row2->addWidget(m_lockCheck);
+    if (m_lockCheck) {
+        row2->addWidget(m_lockCheck);
+    }
     if(m_editSession) {
         m_hideTitleCheck->hide();
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
@@ -1792,7 +1799,7 @@ MeterWidget* ContainerSettingsDialog::findMeterWidget() const
 
 void ContainerSettingsDialog::populateItemList()
 {
-    if (m_editSession) { if (m_lockCheck) { loadCurrentDraft(); } return; }
+    if (m_editSession) { if (m_hideTitleCheck) { loadCurrentDraft(); } return; }
     qDeleteAll(m_workingItems);
     m_workingItems.clear();
 

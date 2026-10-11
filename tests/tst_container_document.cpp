@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - locked is written only when true, and a document without
+//                 the key loads unlocked. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-11 - screen round trip, absent and malformed, and a floating
 //                 container's unreadable geometry. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -75,6 +78,42 @@ private slots:
         QCOMPARE(int(DockMode::OverlayDocked), 1);
         QCOMPARE(int(DockMode::Floating), 2);
         QCOMPARE(int(AxisLock::BottomLeft), 7);
+    }
+    void lockedIsWrittenOnlyWhenTrue()
+    {
+        const auto containerObject = [](const WorkspaceDocument& doc) {
+            return QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object()["containers"].toArray().first().toObject();
+        };
+        WorkspaceDocument doc = sample();
+        QVERIFY(doc.containers[0].locked);
+        QJsonObject written = containerObject(doc);
+        QVERIFY(written.contains("locked"));
+        QCOMPARE(written["locked"], QJsonValue(true));
+        DocumentResult decoded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QVERIFY(decoded.document.containers[0].locked);
+
+        doc.containers[0].locked = false;
+        written = containerObject(doc);
+        QVERIFY(!written.contains("locked"));
+        QVERIFY(written.contains("autoHeight"));
+        // Without the key the container loads unlocked.
+        decoded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(doc));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QVERIFY(!decoded.document.containers[0].locked);
+        QCOMPARE(decoded.document, doc);
+
+        // A document that carries "locked": false, as older builds wrote it,
+        // still loads, unlocked.
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        first["locked"] = false;
+        containers[0] = first;
+        root["containers"] = containers;
+        decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson(QJsonDocument::Compact));
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
     }
     void freeCanvasKeepsPrecisePlacementAndLegacyRecord()
     {

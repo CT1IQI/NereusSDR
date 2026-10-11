@@ -14,6 +14,10 @@
 //   2026-10-09 - The right strip's handle draws today's 3 px and grabs
 //                 what today's 3 px handle grabs. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The look has no Lock setting: a container committed locked
+//                 is unlocked, its strip handles resize and Move to Edge
+//                 moves it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -411,13 +415,17 @@ private slots:
                  qMax(int(EdgeDockStrip::kEndThicknessPx), content));
     }
 
-    void lockedContainerBlocksStripHandles()
+    // The look has no Lock setting: a container committed locked is
+    // unlocked, and the handles beside it resize.
+    void lockedContainerDoesNotBlockStripHandles()
     {
         EdgeFixture f;
         ContainerDocument a = f.container("a", DockEdge::Left);
         a.locked = true;
         QVERIFY(f.commit({a, f.container("b", DockEdge::Left), f.container("main", DockEdge::Right)}));
         f.show();
+        QVERIFY(!f.document("a")->locked);
+        QVERIFY(!f.manager->container("a")->isLocked());
         EdgeDockStrip* left = f.area->strip(DockEdge::Left);
         const auto drag = [&](QSplitterHandle* handle, const QPoint& by) {
             const QPoint grab = handle->mapToGlobal(handle->rect().center());
@@ -428,21 +436,9 @@ private slots:
         };
         const QList<int> before = left->extents();
         drag(left->splitter()->handle(1), QPoint(0, 80));
-        QCOMPARE(left->extents(), before);
-        // The area handle beside the strip does not resize it either.
-        const int width = left->width();
-        drag(f.area->middleSplitter()->handle(1), QPoint(80, 0));
-        QCOMPARE(left->width(), width);
-
-        // Unlocked, the same drags resize.
-        WorkspaceDocument document = f.store.snapshot();
-        for (auto& d : document.containers) {
-            d.locked = false;
-        }
-        QCOMPARE(f.manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
-        settle();
-        drag(left->splitter()->handle(1), QPoint(0, 80));
         QVERIFY(left->extents() != before);
+        // The area handle beside the strip resizes it too.
+        const int width = left->width();
         drag(f.area->middleSplitter()->handle(1), QPoint(80, 0));
         QVERIFY(left->width() != width);
     }
@@ -584,16 +580,17 @@ private slots:
         QCOMPARE(f.document("b")->dockMode, DockMode::OverlayDocked);
         QCOMPARE(f.manager->container("b")->parentWidget(), f.center);
         QVERIFY(f.area->strip(DockEdge::Left)->isHidden());
-        // A locked container stays where it is.
+        // The look has no Lock setting: a container committed locked moves.
         WorkspaceDocument locked = f.store.snapshot();
         for (auto& d : locked.containers) {
             d.locked = d.id == "main";
         }
         QCOMPARE(f.manager->commitWorkspace(locked, locked.revision).status, CommitStatus::Saved);
         settle();
+        QVERIFY(!f.document("main")->locked);
         f.manager->moveContainerToEdge("main", DockEdge::Left);
         settle();
-        QCOMPARE(f.document("main")->edge, DockEdge::Right);
+        QCOMPARE(f.document("main")->edge, DockEdge::Left);
     }
 
     void dropPreviewSeamShowsBetweenContainers()
