@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE: setRemoteSpectrumContext
+//                 tells a picture moved in frequency (a retune, a pan drag)
+//                 from a new picture. AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF. R-DISP-HOLD: setRemoteSpectrumContext
 //                 keeps the painted frame, peak hold, blobs and waterfall
 //                 rows when the context is for the picture already shown.
@@ -1621,13 +1624,44 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
         && qFuzzyCompare(m_centerHz, context.exactCentreHz)
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
-    m_remoteContextKeptPicture = samePicture;
+    // R-DISP-RETUNE: the same shape in another place. A retune moves the
+    // stream centre under the pan, a pan drag moves the view centre; the
+    // Core's averaged trace carried on through either, so this is not a new
+    // picture. The pan's own window is not compared: it may already stand at
+    // the new centre (the operator moved it) or still at the old one (the
+    // Core moved the stream).
+    const bool movedPicture = !samePicture && m_remoteSpectrum
+        && m_remoteCodec.traceSamples != 0
+        && shown.codec.endpointId == context.codec.endpointId
+        && shown.codec.traceSamples == context.codec.traceSamples
+        && shown.codec.waterfallSamples == context.codec.waterfallSamples
+        && shown.codec.wideSamples == context.codec.wideSamples
+        && shown.source == context.source
+        && shown.exactSpanHz == context.exactSpanHz
+        && shown.wideSpanHz == context.wideSpanHz
+        && shown.wideband == context.wideband
+        && m_remoteCapture.sourceSampleRateHz == sampleRateHz
+        && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
+        && (shown.exactCentreHz != context.exactCentreHz
+            || shown.wideCentreHz != context.wideCentreHz
+            || m_remoteCapture.sourceCentreHz != sourceCentreHz);
+    m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
+        : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
         m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
         return;
     }
+    // R-DISP-RETUNE: a moved picture and a new picture retire the same
+    // things here. Of what this empties, the peak hold and the blobs must go
+    // for a moved picture too (held per pixel, and every pixel now shows
+    // another frequency); the pending waterfall row and wide row were
+    // captured at the old window and a row of the new one replaces them; and
+    // the drawn trace is put back at once from the last trace the Core sent,
+    // at the frequency it was captured at (refreshRemoteTraceProjection,
+    // R-R3-21). The waterfall history, the queued rows and the noise floor
+    // estimate are not touched by it.
     invalidateRemoteSpectrumFrame();
     const double binWidthBefore = binWidthHz();
     // NereusSDR-original remote wiring: a new codec generation retires live

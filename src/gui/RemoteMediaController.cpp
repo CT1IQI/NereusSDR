@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE: a context for a picture moved in frequency
+//               (a retune, a pan drag) keeps the noise floor's received
+//               state, and the mini display keeps its painted frame
+//               through a context for the picture it shows or for that
+//               picture moved. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-10: R-DISP-HOLD: a pan and the mini display hold the dBm
 //               range they asked the Core for while the scale and the
 //               waterfall levels lie inside it with no edge more than two
@@ -881,6 +887,20 @@ bool sameOriginalIntent(QJsonObject left, QJsonObject right)
     return left == right;
 }
 
+// R-DISP-RETUNE: whether a mini display asked again shows the picture it
+// already shows or that picture moved in frequency: nothing but the centre
+// and the dBm range (R-DISP-HOLD) differs between the two requests.
+bool miniAskKeepsThePicture(QJsonObject shown, QJsonObject asked)
+{
+    if (shown.isEmpty() || asked.isEmpty()) { return false; }
+    for (const QString& key : {QStringLiteral("centreHz"), QStringLiteral("minDbm"),
+                               QStringLiteral("maxDbm")}) {
+        shown.remove(key);
+        asked.remove(key);
+    }
+    return shown == asked;
+}
+
 bool zeroCharge(const DisplayBudgetCharge& charge)
 {
     return charge.applicationBytesPerSecond == 0
@@ -989,6 +1009,10 @@ struct RemoteMediaController::Private {
         double viewAnsweredSpanHz = 0;
         DisplayCodecDecoder decoder;
         QVector<float> lastMiniTrace;
+        // R-DISP-RETUNE: this mini display was asked again for the picture it
+        // shows, or for that picture moved in frequency, and kept its painted
+        // frame for the context that answers.
+        bool miniKeptAtAsk = false;
         // R-R3-21 / R-R3-08: decoded frames waiting for their presentation
         // time, and the rows filling a lost message's gap.
         RemoteDisplayPresenter presenter;
@@ -4999,7 +5023,16 @@ void RemoteMediaController::refreshLegacyMiniSubscriptions()
         auto& binding = found->second;
         if (binding.observed == desired && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
-        emit miniDisplayUnavailable(sliceId);
+        // R-DISP-RETUNE: as in the budget planner, an ask for the picture it
+        // shows or for that picture moved keeps the painted frame.
+        binding.miniKeptAtAsk = binding.accepted && !binding.transmit
+            && binding.observedStream == slice->streamIndex()
+            && binding.observedStreamEpoch == slice->streamEpoch()
+            && miniAskKeepsThePicture(binding.observed, desired);
+        if (!binding.miniKeptAtAsk) {
+            emit miniDisplayUnavailable(sliceId);
+            binding.lastMiniTrace.clear();
+        }
         binding.observed = desired;
         binding.observedStream = slice->streamIndex();
         binding.observedStreamEpoch = slice->streamEpoch();
@@ -5644,12 +5677,23 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         if (found == d->bindings.end() || found->second.pending) { return; }
         Private::Binding& binding = found->second;
         if (binding.isMini()) {
-            emit miniDisplayUnavailable(binding.miniSliceId);
+            // R-DISP-RETUNE: asked again for the picture it shows or for that
+            // picture moved (every tuning step moves a mini display, which is
+            // centred on its slice), the mini display keeps its painted frame
+            // until the keyframe. Frames of the old context are still refused.
+            binding.miniKeptAtAsk = binding.accepted && !binding.transmit
+                && !candidate.unsubscribe && binding.slice
+                && binding.observedStream == binding.slice->streamIndex()
+                && binding.observedStreamEpoch == binding.slice->streamEpoch()
+                && miniAskKeepsThePicture(binding.acceptedRequest, candidate.request);
+            if (!binding.miniKeptAtAsk) {
+                emit miniDisplayUnavailable(binding.miniSliceId);
+                binding.lastMiniTrace.clear();
+            }
             binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
             binding.decoder.reset();
             binding.presenter.reset();
-            binding.lastMiniTrace.clear();
         }
         if (binding.askAgain) {
             binding.askAgain = false;
@@ -6892,7 +6936,30 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             || decoded->wideSamples != 0) {
             return;
         }
-        emit miniDisplayUnavailable(binding.miniSliceId);
+        // R-DISP-RETUNE: the mini display follows the pan's rule. A context
+        // for the picture it shows, or for that picture moved in frequency
+        // (it is centred on the slice, so every tuning step moves it), leaves
+        // the painted frame in place until the keyframe; the Core's averaged
+        // trace carried on. Anything else is a new picture and blanks it.
+        const auto fftOf = [](const std::optional<SpectrumContextGrant>& grant) {
+            return grant ? grant->grantedFftSize : 0;
+        };
+        const SpectrumEndpointContext& shown = binding.context;
+        const bool carriesOn = (binding.accepted || binding.miniKeptAtAsk)
+            && !binding.rejected && !binding.transmit && !wantsTx
+            && shown.codec.endpointId == context.codec.endpointId
+            && shown.codec.traceSamples == context.codec.traceSamples
+            && shown.codec.waterfallSamples == context.codec.waterfallSamples
+            && shown.codec.wideSamples == context.codec.wideSamples
+            && shown.source == context.source
+            && shown.exactSpanHz == context.exactSpanHz
+            && binding.capture.sourceSampleRateHz == rate
+            && fftOf(binding.grant) == fftOf(decoded->grant);
+        if (!carriesOn) {
+            emit miniDisplayUnavailable(binding.miniSliceId);
+            binding.lastMiniTrace.clear();
+        }
+        binding.miniKeptAtAsk = false;
         binding.context = context;
         binding.contextRevision = revision;
         binding.sourceCentreHz = sourceCentre;
@@ -6900,7 +6967,6 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         binding.grant = decoded->grant;
         binding.decoder.reset();
         binding.presenter.restartChain();
-        binding.lastMiniTrace.clear();
         binding.accepted = true;
         binding.rejected = false;
         binding.transmit = wantsTx;
@@ -6995,8 +7061,11 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     if (!self || d->connectionId != connectionId) { return; }
     it = d->bindings.find(endpointId);
     if (it != d->bindings.end() && it->second.contextRevision == acceptedContextRevision
-        && !(contextWidget && contextWidget->remoteContextKeptPicture())) {
-        // The Core's noise floor for a new picture has not arrived.
+        && !(contextWidget && contextWidget->remoteContextPicture()
+                 != SpectrumWidget::RemoteContextPicture::New)) {
+        // The Core's noise floor for a new picture has not arrived. For the
+        // same picture, or that picture moved in frequency (R-DISP-RETUNE),
+        // the Core's follower carried on and so does this.
         it->second.receivedNoiseFloor = false;
     }
     // Show or clear this pan's grant line now rather than on the next refresh.

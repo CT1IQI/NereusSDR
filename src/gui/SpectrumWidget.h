@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : R-DISP-RETUNE: RemoteContextPicture and
+//                 remoteContextPicture(): a context for the picture moved
+//                 in frequency is told apart from a new picture. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 : R-DISP-HOLD: remoteContextKeptPicture() and
 //                 remoteCodecForTest(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -511,7 +515,28 @@ public:
     /// already showed (same receiver and source geometry, same view, same
     /// sample counts and wide row), so the pan kept its last frame, peak
     /// hold, blobs and pending waterfall row. A new picture empties them.
-    bool remoteContextKeptPicture() const { return m_remoteContextKeptPicture; }
+    bool remoteContextKeptPicture() const
+    {
+        return m_remoteContextPicture == RemoteContextPicture::Same;
+    }
+    /// R-DISP-RETUNE: what the last context was to the picture the pan
+    /// already showed.
+    enum class RemoteContextPicture {
+        /// Anything else: the pan starts again, as it always did.
+        New,
+        /// The same receiver, sample rate, FFT size, sample counts, span and
+        /// wide state, with the stream centre, the view centre or both
+        /// moved (a retune or a pan drag). The Core's averaged trace carried
+        /// on, so the drawn trace stays, at the frequency it was captured
+        /// at, until the keyframe; the waterfall history and its queued rows
+        /// keep their frequencies; the noise floor estimate is untouched.
+        /// The peak hold and the blobs empty: they are held per pixel and
+        /// every pixel now shows another frequency.
+        Moved,
+        /// R-DISP-HOLD: the picture the pan already showed.
+        Same,
+    };
+    RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture);
@@ -3046,7 +3071,7 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
-    bool m_remoteContextKeptPicture{false};
+    RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
     bool m_remoteWidebandAvailable{false};
     bool m_remoteWidebandActive{false};
     double m_remoteWidebandAdcRateHz{0.0};

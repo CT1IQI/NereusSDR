@@ -18,7 +18,13 @@
 // The planner is run by planNowForTest on a clock the test moves; nothing
 // here is proved by waiting.
 //
+// R-DISP-RETUNE adds the third kind of context: the same picture moved in
+// frequency (a retune, a pan drag). The drawn trace, the waterfall history
+// and the noise floor carry on; the peak hold and the blobs empty.
+//
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE: the moved picture tests.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
 // =================================================================
@@ -279,6 +285,20 @@ struct Fixture {
 
     void finish() { client.disconnectFromStation(QStringLiteral("test complete")); }
 };
+
+// Counts the window's "Core noise floor received" lines, which it logs once
+// each time its received state goes from not received to received.
+int g_noiseFloorReceivedLines = 0;
+QtMessageHandler g_previousHandler = nullptr;
+
+void countNoiseFloorReceived(QtMsgType type, const QMessageLogContext& context,
+                             const QString& message)
+{
+    if (message.contains(QLatin1String("Core noise floor received for Clarity"))) {
+        ++g_noiseFloorReceivedLines;
+    }
+    if (g_previousHandler) { g_previousHandler(type, context, message); }
+}
 
 } // namespace
 
@@ -679,6 +699,138 @@ private slots:
                  qPrintable(QStringLiteral("the noise floor estimate was %1 dBm and ranged "
                                            "%2..%3 dBm after the ask")
                                 .arg(floorBefore).arg(lowest).arg(highest)));
+        f.finish();
+    }
+
+    // R-DISP-RETUNE. The operator drags the pan 12 kHz: the same span, the
+    // same sample counts, another centre. The Core's averaged trace carried
+    // on, so before the keyframe of the new context arrives the pan still
+    // has a trace and its waterfall history, its noise floor estimate has
+    // not moved and the noise floor is still "received"; the peak hold,
+    // held per pixel, is empty. A zoom is still a new picture: it empties
+    // the peak hold as well and the noise floor is awaited again.
+    void aMovedPictureCarriesOnAndEmptiesOnlyThePeakHold()
+    {
+        Fixture f(/*withCore=*/true);
+        PanClarityRegistry registry(&f.remote);
+        registry.registerPan(QStringLiteral("pan"), f.widget, nullptr);
+        QSignalSpy frames(f.widget, &SpectrumWidget::spectrumFrameRendered);
+        f.widget->setActivePeakHoldEnabled(true);
+        QVERIFY(settlePicture(f, frames));
+        QVERIFY(f.run([&] { return f.widget->activePeakHoldActive(); }));
+        const int samples = f.widget->remoteCodecForTest().traceSamples;
+        QVERIFY(samples > 0);
+
+        // The window logs the Core's noise floor once when it first arrives.
+        g_noiseFloorReceivedLines = 0;
+        g_previousHandler = qInstallMessageHandler(countNoiseFloorReceived);
+        const auto restore = qScopeGuard([] { qInstallMessageHandler(g_previousHandler); });
+        f.window->setClarityRegistry(&registry);
+        QVERIFY(f.run([&] { return g_noiseFloorReceivedLines == 1; }));
+        f.widget->tickWaterfallForTest();
+        QVERIFY(f.widget->waterfallHistoryRowsForTest() > 0);
+
+        // The Core's frames stop reaching the window: what it shows after
+        // the context is what it kept, not a keyframe.
+        f.coreMedia->gateOpen = false;
+        const float floorBefore = f.widget->nfLerpAverageForTest();
+        const int historyBefore = f.widget->waterfallHistoryRowsForTest();
+        const quint32 generation = f.widget->remoteCodecForTest().contextGeneration;
+        const int asked = f.panAsks();
+        QVERIFY(!f.widget->renderedPixels().isEmpty());
+
+        // 12 kHz is a whole number of bins at any FFT size, so the Core
+        // grants the same sample counts.
+        f.widget->setDisplayWindowPreservingHistory(f.centre + 12000.0, 96000);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.panAsks() > asked
+                && f.widget->remoteCodecForTest().contextGeneration != generation
+                && f.widget->remoteCodecForTest().traceSamples != 0;
+        }));
+        QVERIFY(!f.widget->remoteContextKeptPicture());
+        QCOMPARE(int(f.widget->remoteCodecForTest().traceSamples), samples);
+        QVERIFY2(f.widget->renderedPixels().size() == samples,
+                 "the trace was blanked by a context for the picture moved");
+        QVERIFY2(f.widget->waterfallHistoryRowsForTest() >= historyBefore,
+                 "the waterfall history was dropped by a context for the picture moved");
+        QCOMPARE(int(f.widget->activePeakHoldPeaksForTest().size()), 0);
+        QVERIFY(!f.widget->activePeakHoldActive());
+        QVERIFY2(std::abs(f.widget->nfLerpAverageForTest() - floorBefore) <= 1.0f,
+                 qPrintable(QStringLiteral("the noise floor estimate went from %1 to %2 dBm")
+                                .arg(floorBefore).arg(f.widget->nfLerpAverageForTest())));
+
+        // The new context's frames draw, the estimate stays where it was and
+        // the noise floor was never awaited again.
+        f.coreMedia->gateOpen = true;
+        float lowest = floorBefore;
+        float highest = floorBefore;
+        const qsizetype mark = frames.size();
+        qsizetype seen = mark;
+        QVERIFY(f.run([&] {
+            if (frames.size() != seen) {
+                seen = frames.size();
+                lowest = std::min(lowest, f.widget->nfLerpAverageForTest());
+                highest = std::max(highest, f.widget->nfLerpAverageForTest());
+            }
+            return frames.size() >= mark + 60;
+        }, 60'000));
+        QVERIFY2(floorBefore - lowest <= 1.0f && highest - floorBefore <= 1.0f,
+                 qPrintable(QStringLiteral("the noise floor estimate was %1 dBm and ranged "
+                                           "%2..%3 dBm after the move")
+                                .arg(floorBefore).arg(lowest).arg(highest)));
+        QVERIFY2(g_noiseFloorReceivedLines == 1,
+                 "the noise floor was awaited again after a context for the picture moved");
+        QCOMPARE(f.widget->remoteContextPicture(),
+                 SpectrumWidget::RemoteContextPicture::Moved);
+        QVERIFY(f.run([&] { return f.widget->activePeakHoldActive(); }));
+
+        // A new picture: the operator zooms in.
+        const quint32 before = f.widget->remoteCodecForTest().contextGeneration;
+        const int beforeAsks = f.panAsks();
+        f.widget->setDisplayWindowPreservingHistory(f.centre + 12000.0, 48000);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.panAsks() > beforeAsks
+                && f.widget->remoteCodecForTest().contextGeneration != before
+                && f.widget->remoteCodecForTest().traceSamples != 0
+                && g_noiseFloorReceivedLines == 2;
+        }));
+        QCOMPARE(f.widget->remoteContextPicture(),
+                 SpectrumWidget::RemoteContextPicture::New);
+        f.finish();
+    }
+
+    // R-DISP-RETUNE. The mini display is centred on its slice, so every
+    // tuning step asks for its picture moved. It keeps its painted frame
+    // until the frames of the new centre arrive; taking the mini display
+    // away still blanks it.
+    void theMiniDisplayKeepsItsFrameThroughATuningStep()
+    {
+        Fixture f(/*withCore=*/true);
+        QVERIFY(f.start());
+        QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        f.window->setMiniDisplaySlices({f.sliceId});
+        QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 5; }));
+        const double shownCentre = miniFrames.last().at(3).toDouble();
+        const int miniAsked = f.miniAsks();
+        unavailable.clear();
+
+        SliceModel* const slice = f.remote.sliceById(f.sliceId);
+        QVERIFY(slice);
+        slice->setFrequency(slice->frequency() + 3000.0);
+        QVERIFY(f.run([&] {
+            f.plan();
+            return f.miniAsks() > miniAsked && !miniFrames.isEmpty()
+                && miniFrames.last().at(3).toDouble() != shownCentre;
+        }));
+        QVERIFY2(unavailable.isEmpty(),
+                 qPrintable(QStringLiteral("the mini display was blanked %1 times by a "
+                                           "tuning step").arg(unavailable.size())));
+
+        f.window->setMiniDisplaySlices({});
+        QTRY_VERIFY(!unavailable.isEmpty());
         f.finish();
     }
 };
