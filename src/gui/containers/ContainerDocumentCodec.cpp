@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original lossless presentation JSON codec.
 // Modification history (NereusSDR):
+//   2026-10-11 - screen, written for floating and popped-out containers
+//                 only; an unreadable screen, or an unreadable geometry of
+//                 a floating container, costs that container its place and
+//                 nothing else. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - geometryPane, written for free containers only and read
 //                 leniently, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -22,7 +27,7 @@ namespace NereusSDR {
 namespace {
 const QStringList kWorkspaceFields{"schemaVersion", "revision", "mainContainerId", "containers", "arrangement"};
 const QStringList kContainerFields{"id", "name", "contents", "layout", "dockMode", "edge", "anchor", "header",
-                                   "geometry", "geometryPane", "visible", "locked", "autoHeight", "popOutShell",
+                                   "geometry", "geometryPane", "screen", "visible", "locked", "autoHeight", "popOutShell",
                                    "config"};
 const QStringList kArrangementFields{"strips", "gridAlignment"};
 const QStringList kStripFields{"thickness", "extents"};
@@ -232,6 +237,24 @@ bool paneSize(const QJsonValue& value, QSize& out)
     return true;
 }
 
+// {"name", "serial", "geometry": [x, y, w, h]} of the monitor a window was on.
+bool savedScreen(const QJsonValue& value, SavedScreen& out)
+{
+    if (!value.isObject()) {
+        return false;
+    }
+    const QJsonObject object = value.toObject();
+    if (!object["name"].isString() || !object["serial"].isString() || !object.contains("geometry")) {
+        return false;
+    }
+    QRect geometry;
+    if (!geometryField(object, geometry) || !geometry.isValid()) {
+        return false;
+    }
+    out = {object["name"].toString(), object["serial"].toString(), geometry};
+    return true;
+}
+
 bool nonNegativeInteger(const QJsonValue& value, int& out)
 {
     return integer(value, out) && out >= 0;
@@ -342,7 +365,7 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
     if (!stringField(object, "id", container.id) || !stringField(object, "name", container.name)
         || !enumField(object, "layout", container.layout) || !enumField(object, "dockMode", container.dockMode)
         || !enumField(object, "anchor", container.anchor) || !enumField(object, "header", container.header)
-        || !geometryField(object, container.geometry) || !boolField(object, "visible", container.visible)
+        || !boolField(object, "visible", container.visible)
         || !boolField(object, "locked", container.locked) || !boolField(object, "autoHeight", container.autoHeight)
         || !boolField(object, "popOutShell", container.popOutShell) || !objectField(object, "config", container.config)
         || !object["contents"].isArray()) {
@@ -351,6 +374,27 @@ bool decodeContainer(const QJsonObject& object, ContainerDocument& container)
     if (object.contains("edge")
         && (!object["edge"].isString() || !edgeFromName(object["edge"].toString(), container.edge))) {
         return false;
+    }
+    if (!geometryField(object, container.geometry)) {
+        if (container.dockMode != DockMode::Floating) {
+            return false;
+        }
+        // Lenient for a window: it loses its place, not the whole layout,
+        // and is shown at a default place until the operator moves it.
+        container.geometry = QRect();
+        qCWarning(lcContainer) << "Container" << container.id
+                               << "has an unreadable geometry; it takes a default place";
+    }
+    if (object.contains("screen")) {
+        // Lenient in the same way: without its monitor the window is placed
+        // by its geometry alone.
+        SavedScreen screen;
+        if (savedScreen(object["screen"], screen)) {
+            container.screen = screen;
+        } else {
+            qCWarning(lcContainer) << "Container" << container.id
+                                   << "has an unreadable screen; it is ignored";
+        }
     }
     if (object.contains("geometryPane")) {
         // Lenient: a value that does not read is dropped for this container
@@ -422,6 +466,13 @@ QJsonObject encodeContainer(const ContainerDocument& container)
     if (container.geometryPane && container.dockMode == DockMode::OverlayDocked
         && container.geometryPane->width() > 0 && container.geometryPane->height() > 0) {
         object["geometryPane"] = QJsonArray{container.geometryPane->width(), container.geometryPane->height()};
+    }
+    // Windows only, and only once the operator has placed one.
+    if (container.screen && (container.dockMode == DockMode::Floating || container.popOutShell)) {
+        const QRect& on = container.screen->geometry;
+        object["screen"] = QJsonObject{{"name", container.screen->name},
+                                       {"serial", container.screen->serial},
+                                       {"geometry", QJsonArray{on.x(), on.y(), on.width(), on.height()}}};
     }
     object["visible"] = container.visible;
     object["locked"] = container.locked;

@@ -7,6 +7,10 @@
 //   2026-10-08 - Workspace preview only: setEntryConfig commits an entry's
 //                 own settings. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - A pop-out shell takes its default place through
+//                 ContainerManager::defaultWindowRect, so two shells never
+//                 open on one spot. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include "ContainerArrangeController.h"
 #include "ContainerWorkspaceStore.h"
 #include "ContainerManager.h"
@@ -364,7 +368,10 @@ ArrangeResult ContainerArrangeController::popOut(const QString& id)
         }
     }
     shell.contents = {entry};
-    shell.geometry = QRect(140, 140, 360, 300);
+    // The shell's usual spot, or the next one down and right when another
+    // container already has it.
+    constexpr QRect kPopOutShellRect(140, 140, 360, 300);
+    shell.geometry = m_manager ? m_manager->defaultWindowRect(kPopOutShellRect) : kPopOutShellRect;
     d.containers[source].contents.removeAt(index);
     d.containers.append(shell);
     return commit(d);

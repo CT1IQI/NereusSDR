@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original GUI presentation value records.
 // Modification history (NereusSDR):
+//   2026-10-11 - SavedScreen and ContainerDocument::screen: the monitor a
+//                 floating or popped-out window was placed on, by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - geometryPane: the pane size a free container's place was
 //                 seen at, by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -37,6 +40,16 @@ struct ContentEntry {
     bool operator==(const ContentEntry&) const = default;
 };
 
+// The monitor a floating or popped-out window was on when the operator
+// placed it. A present screen matches it by serial when that is not empty,
+// else by name and geometry together.
+struct SavedScreen {
+    QString name;
+    QString serial;
+    QRect geometry;
+    bool operator==(const SavedScreen&) const = default;
+};
+
 struct ContainerDocument {
     QString id, name;
     QVector<ContentEntry> contents;
@@ -52,6 +65,10 @@ struct ContainerDocument {
     // showing. Empty in documents from before 2026-10-11 and until the
     // operator moves the container.
     std::optional<QSize> geometryPane;
+    // Floating and popped-out containers only: the monitor `geometry` was
+    // chosen on. Empty in documents from before 2026-10-11 and until the
+    // operator moves the window.
+    std::optional<SavedScreen> screen;
     bool visible = true;
     bool locked = false;
     bool autoHeight = false;

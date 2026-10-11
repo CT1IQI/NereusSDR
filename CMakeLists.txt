@@ -1874,6 +1874,8 @@ set(GUI_SOURCES
     src/gui/containers/WorkspaceProfiles.cpp
     src/gui/containers/WorkspaceProfilesDialog.h
     src/gui/containers/WorkspaceProfilesDialog.cpp
+    src/gui/containers/ScreenSource.h
+    src/gui/containers/ScreenSource.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp

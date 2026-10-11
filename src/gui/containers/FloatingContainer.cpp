@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - ensureVisiblePosition reads the screens through a
+//                 ScreenSource and says whether it moved the form, by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Workspace preview: the floating shell paints the palette's
 //                 panel surface by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -63,6 +66,7 @@ mw0lge@grange-lane.co.uk
 
 #include "FloatingContainer.h"
 #include "ContainerWidget.h"
+#include "ScreenSource.h"
 #include "gui/GuiApplication.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
@@ -70,8 +74,6 @@ mw0lge@grange-lane.co.uk
 #include "gui/styles/WorkspaceStyle.h"
 
 #include <QCloseEvent>
-#include <QGuiApplication>
-#include <QScreen>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -239,40 +241,40 @@ QRect FloatingContainer::clampedGeometry(const QRect &geometry, const QRect &ava
         h);
 }
 
-void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
+bool FloatingContainer::ensureVisiblePosition(QWidget* anchor, const ScreenSource* screens)
 {
     // A frameless Qt::Window with no explicit position defaults to (0,0)
     // on Windows, where it's usually obscured by the main application
     // window — which is how Container #0 "disappeared" when first
     // floated. Saved geometry at (0,0) (e.g., after the user closed the
     // invisible form) perpetuates the trap across restarts.
+    const ScreenSource* source = screens ? screens : ScreenSource::system();
     const QRect g = geometry();
     const int minW = ContainerWidget::kMinContainerWidth;
     const int minH = ContainerWidget::kMinContainerHeight;
 
     bool onScreen = false;
-    for (QScreen* s : QGuiApplication::screens()) {
-        if (s && s->availableGeometry().contains(g)) {
+    const QVector<ScreenInfo> present = source->screens();
+    for (const ScreenInfo& s : present) {
+        if (s.available.contains(g)) {
             onScreen = true;
             break;
         }
     }
     const bool atOrigin = (g.x() == 0 && g.y() == 0);
     if (onScreen && !atOrigin && g.width() >= minW && g.height() >= minH) {
-        return;
+        return false;
     }
 
-    QScreen* screen = nullptr;
+    ScreenInfo screen = source->primary();
     QRect anchorRect;
     if (anchor && anchor->window()) {
-        screen = anchor->window()->screen();
         anchorRect = anchor->window()->geometry();
+        screen = source->screenFor(anchorRect);
     }
-    if (!screen) {
-        screen = QGuiApplication::primaryScreen();
-    }
-    const QRect avail = screen ? screen->availableGeometry()
-                               : QRect(100, 100, 800, 600);
+    // With no screen at all, the area the form was always given.
+    constexpr QRect kNoScreenArea(100, 100, 800, 600);
+    const QRect avail = screen.available.isValid() ? screen.available : kNoScreenArea;
 
     const int w = qMax(g.width(),  minW > 0 ? minW : 260);
     const int h = qMax(g.height(), minH);
@@ -290,7 +292,8 @@ void FloatingContainer::ensureVisiblePosition(QWidget* anchor)
             : QSize(minW, minH);
     setGeometry(clampedGeometry(QRect(x, y, w, h), avail, minimum));
     qCDebug(lcContainer) << "FloatingContainer: repositioned to visible area"
-                          << QRect(x, y, w, h) << "on screen" << (screen ? screen->name() : QStringLiteral("(null)"));
+                          << QRect(x, y, w, h) << "on screen" << screen.name;
+    return true;
 }
 
 void FloatingContainer::updateTitle()

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original presentation document contract tests.
 // Modification history (NereusSDR):
+//   2026-10-11 - screen round trip, absent and malformed, and a floating
+//                 container's unreadable geometry. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - geometryPane round trip, absent and malformed. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Container edge and workspace arrangement round trips for
@@ -225,6 +228,109 @@ private slots:
         QVERIFY(!decoded.document.containers[0].geometryPane.has_value());
         QVERIFY(!decoded.document.containers[0].extensions.contains("geometryPane"));
         QCOMPARE(decoded.document.containers[1].geometryPane, std::optional<QSize>(QSize(900, 600)));
+    }
+    void screenRoundTripsForAWindow()
+    {
+        WorkspaceDocument doc = sample();
+        QCOMPARE(doc.containers[0].dockMode, DockMode::Floating);
+        doc.containers[0].screen = SavedScreen{QStringLiteral("DELL U2720Q"), QStringLiteral("SN-7"),
+                                               QRect(1920, 0, 2560, 1440)};
+        const QByteArray json = ContainerDocumentCodec::encode(doc);
+        const QJsonObject container = QJsonDocument::fromJson(json).object()["containers"].toArray().first().toObject();
+        QCOMPARE(container["screen"].toObject(),
+                 (QJsonObject{{"name", "DELL U2720Q"}, {"serial", "SN-7"},
+                              {"geometry", QJsonArray{1920, 0, 2560, 1440}}}));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QCOMPARE(decoded.document.containers.first().screen, doc.containers[0].screen);
+        QVERIFY(!decoded.document.containers.first().extensions.contains("screen"));
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+    }
+    void screenAbsentStaysAbsent()
+    {
+        // A document from before the field: read as empty, written without it.
+        const QByteArray json = ContainerDocumentCodec::encode(sample());
+        QVERIFY(!json.contains("\"screen\""));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(json);
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QVERIFY(!decoded.document.containers.first().screen.has_value());
+        QCOMPARE(ContainerDocumentCodec::encode(decoded.document), json);
+        // Written for floating and popped-out containers only.
+        WorkspaceDocument docked = sample();
+        docked.containers[0].dockMode = DockMode::OverlayDocked;
+        docked.containers[0].popOutShell = false;
+        docked.containers[0].screen = SavedScreen{QStringLiteral("A"), QString(), QRect(0, 0, 1920, 1080)};
+        QVERIFY(!ContainerDocumentCodec::encode(docked).contains("\"screen\""));
+        docked.containers[0].popOutShell = true;
+        QVERIFY(ContainerDocumentCodec::encode(docked).contains("\"screen\""));
+    }
+    void malformedScreenIsDroppedForThatContainerOnly_data()
+    {
+        QTest::addColumn<QJsonValue>("value");
+        QTest::newRow("string") << QJsonValue(QStringLiteral("DELL U2720Q"));
+        QTest::newRow("array") << QJsonValue(QJsonArray{1920, 0, 2560, 1440});
+        QTest::newRow("no geometry") << QJsonValue(QJsonObject{{"name", "A"}, {"serial", ""}});
+        QTest::newRow("geometry of three") << QJsonValue(QJsonObject{{"name", "A"}, {"serial", ""},
+                                                                      {"geometry", QJsonArray{0, 0, 1920}}});
+        QTest::newRow("empty geometry") << QJsonValue(QJsonObject{{"name", "A"}, {"serial", ""},
+                                                                   {"geometry", QJsonArray{0, 0, 0, 0}}});
+        QTest::newRow("name not a string") << QJsonValue(QJsonObject{{"name", 7}, {"serial", ""},
+                                                                      {"geometry", QJsonArray{0, 0, 1920, 1080}}});
+    }
+    void malformedScreenIsDroppedForThatContainerOnly()
+    {
+        QFETCH(QJsonValue, value);
+        WorkspaceDocument doc = sample();
+        ContainerDocument other;
+        other.id = QStringLiteral("other");
+        other.dockMode = DockMode::Floating;
+        other.geometry = QRect(2100, 200, 400, 300);
+        other.screen = SavedScreen{QStringLiteral("B"), QString(), QRect(1920, 0, 1920, 1080)};
+        doc.containers.append(other);
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        first["screen"] = value;
+        containers[0] = first;
+        root["containers"] = containers;
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unreadable screen")));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson());
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document, doc);
+        QVERIFY(!decoded.document.containers[0].screen.has_value());
+        QVERIFY(!decoded.document.containers[0].extensions.contains("screen"));
+        QCOMPARE(decoded.document.containers[1].screen, other.screen);
+    }
+    void unreadableGeometryCostsAWindowItsPlaceAndNothingElse()
+    {
+        WorkspaceDocument doc = sample();
+        ContainerDocument other;
+        other.id = QStringLiteral("other");
+        other.dockMode = DockMode::Floating;
+        other.geometry = QRect(2100, 200, 400, 300);
+        doc.containers.append(other);
+        QJsonObject root = QJsonDocument::fromJson(ContainerDocumentCodec::encode(doc)).object();
+        QJsonArray containers = root["containers"].toArray();
+        QJsonObject first = containers.first().toObject();
+        first["geometry"] = QStringLiteral("100,200,300,400");
+        containers[0] = first;
+        root["containers"] = containers;
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("unreadable geometry; it takes a default place")));
+        const DocumentResult decoded = ContainerDocumentCodec::decode(QJsonDocument(root).toJson());
+        QVERIFY2(decoded.ok, qPrintable(decoded.error));
+        QCOMPARE(decoded.document.containers.size(), 2);
+        QVERIFY(!decoded.document.containers[0].geometry.isValid());
+        WorkspaceDocument expected = doc;
+        expected.containers[0].geometry = QRect();
+        QCOMPARE(decoded.document, expected);
+        QCOMPARE(decoded.document.containers[1].geometry, other.geometry);
+        // A docked or free container's geometry is still a known field
+        // that is never defaulted.
+        first["dockMode"] = int(DockMode::OverlayDocked);
+        containers[0] = first;
+        root["containers"] = containers;
+        QVERIFY(!ContainerDocumentCodec::decode(QJsonDocument(root).toJson()).ok);
     }
     void documentWithoutEdgesStaysByteIdentical()
     {

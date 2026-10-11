@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original offscreen regressions for the place the operator gave a container.
 // Modification history (NereusSDR):
+//   2026-10-11 - A layout saved with no pane size is shown for the pane as
+//                 it settles after the window's first layout. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Containers keep the place the operator gave them: a free
 //                 container restored before the pane has its size, a pane
 //                 too small for it, anchoring, operator drags and grip
@@ -257,6 +260,54 @@ private slots:
         QCOMPARE(rig.shown(QStringLiteral("a")), saved);
         QVERIFY(rig.settleCapture());
         QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+    }
+
+    // A layout saved with no pane size (one from before places carried
+    // it, or one no operator has moved) is for the pane as it settles
+    // after the window's first layout, not for the first size the pane is
+    // given on the way there. The real spectrum pane is given two.
+    void layoutWithoutAPaneSizeIsShownForTheSettledPane()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath(QStringLiteral("settled.settings"));
+        const QRect saved(600, 100, 300, 200);
+        const QSize firstSize(1041, 700);
+        {
+            AppSettings settings(path);
+            ContainerWorkspaceStore store(settings);
+            QCOMPARE(store.commit(workspace({freeContainer(QStringLiteral("a"), saved, AxisLock::Right)}), 0).status,
+                     CommitStatus::Saved);
+        }
+        AppSettings settings(path);
+        settings.load();
+        ContainerWorkspaceStore store(settings);
+        QVERIFY(store.load().ok);
+        QVERIFY(!storedPane(store, QStringLiteral("a")).has_value());
+        const QByteArray before = ContainerDocumentCodec::encode(store.snapshot());
+
+        Rig rig(store, firstSize);
+        rig.manager->restoreState();
+        rig.host.show();
+        QCOMPARE(rig.pane->size(), firstSize);
+        // The pane's second size arrives before the window has settled.
+        rig.host.resize(kPaneSize);
+        QCOMPARE(rig.pane->size(), kPaneSize);
+        qInfo() << "pane" << firstSize << "then" << kPaneSize << "a:" << rig.shown(QStringLiteral("a"));
+        QCOMPARE(rig.shown(QStringLiteral("a")), saved);
+        QVERIFY(rig.settleCapture());
+        QCOMPARE(rig.shown(QStringLiteral("a")), saved);
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+
+        // From the settled pane on, the anchor works as it always did.
+        QVERIFY(rig.resizePane(QSize(1200, 700)));
+        QCOMPARE(rig.shown(QStringLiteral("a")).x(), 800);
+        QVERIFY(rig.resizePane(kPaneSize));
+        QCOMPARE(rig.shown(QStringLiteral("a")), saved);
+        QVERIFY(rig.settleCapture());
+        // Still never saved without an operator move.
+        QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
+        QVERIFY(!storedPane(store, QStringLiteral("a")).has_value());
     }
 
     void operatorDragIsSaved()

@@ -9,6 +9,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Windows remember their monitor and no two share a default
+//                 spot: screens are read through a ScreenSource, a window
+//                 whose monitor is absent is shown on the main window's
+//                 screen with its remembered place left alone
+//                 (screensChanged), and every default placement goes
+//                 through defaultWindowRect. A layout saved with no pane
+//                 size takes the pane's settled size for its anchor. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Containers keep the place the operator gave them: one
 //                 remembered rect per container, changed only by an
 //                 operator move (rememberOperatorGeometry) or a document
@@ -129,6 +137,8 @@ class FloatingContainer;
 class MeterItem;
 class MeterPoller;
 class MeterWidget;
+class ScreenSource;
+struct ScreenInfo;
 enum class DockMode;
 
 // Factory that materializes the inner content widget for a restored
@@ -257,6 +267,23 @@ public:
     // first resize, which also places them).
     void placeFreeContainers();
 
+    // --- Windows and their monitors ---
+    // How far a default placement steps, down and to the right, past a
+    // spot another container already has. NereusSDR-original value.
+    static constexpr int kCascadeOffsetPx = 24;
+    // A default place for a floating window, in screen coordinates:
+    // `wanted`, held on its screen, then moved down and right by
+    // kCascadeOffsetPx as many times as needed until no visible free or
+    // floating container has the same top-left.
+    QRect defaultWindowRect(const QRect& wanted) const;
+    // Test seam: the screens every placement here consults (the
+    // application's own when null). Not owned.
+    void setScreenSourceForTest(ScreenSource* source);
+    // A screen came or went. A floating window whose monitor is absent is
+    // shown on the main window's screen; one whose monitor is back returns
+    // to its remembered place. Display only: nothing is committed.
+    void screensChanged();
+
     // --- Panel width (QSplitter state) ---
     void saveSplitterState();
     void restoreSplitterState();
@@ -373,6 +400,38 @@ private:
     // Each container's rect when its drag or grip resize started.
     QMap<QString, QRect> m_interactionStart;
     bool m_dockParentResized = false;
+    // A place saved with no pane size takes the pane's size once the pane
+    // has stopped changing after its first layout; until then that
+    // baseline follows the pane.
+    bool m_paneSettled = false;
+    QTimer m_paneSettle;
+    QSet<QString> m_provisionalPane;
+    // --- Windows and their monitors ---
+    QRect defaultWindowRect(const QRect& wanted, const QString& exceptId) const;
+    // defaultWindowRect for a free container, in the pane's coordinates.
+    QRect defaultFreeRect(const QRect& wanted, const QString& exceptId) const;
+    // True when a floating window can be shown at its remembered place.
+    bool windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const;
+    // Where a window that cannot be shown at its remembered place goes.
+    QRect displacedWindowRect(const QString& id, const QRect& remembered,
+                              const std::optional<SavedScreen>& screen, const QSize& size) const;
+    // Shows a window at its remembered place when it is home; otherwise
+    // where displacedWindowRect says, unless it is already shown away
+    // from its place on a present screen. `fromDocument`: the document
+    // was just applied, so a window that is home is put at its place.
+    void placeFloatingWindow(const QString& id, const QRect& remembered,
+                             const std::optional<SavedScreen>& screen, FloatingContainer* form,
+                             bool fromDocument);
+    // `wanted` on `screen`, off every other visible container's top-left.
+    QRect windowRectOn(const QRect& wanted, const ScreenInfo& screen, const QString& exceptId) const;
+    ScreenInfo mainWindowScreen() const;
+    // The usable height of the screen `target` is on.
+    int availableHeightFor(const QWidget* target) const;
+    ScreenSource* m_screens{nullptr};
+    // The monitor each floating window's remembered place was chosen on.
+    QMap<QString, std::optional<SavedScreen>> m_rememberedScreen;
+    // Floating windows shown away from their remembered place.
+    QSet<QString> m_displaced;
     QString m_storageError;
     QTimer m_geometryCommit;
     bool m_edgeHintsPending = false;

@@ -592,6 +592,9 @@ nereus_add_test(tst_container_position_restore)
 # Containers keep the place the operator gave them: restore before the pane
 # has its size, a small pane, anchoring, operator moves (offscreen).
 nereus_add_test(tst_container_remembered_place)
+# Floating and popped-out windows remember their monitor, and no two
+# default placements share a spot (offscreen, fake screens).
+nereus_add_test(tst_container_window_monitors)
 # Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
 nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)

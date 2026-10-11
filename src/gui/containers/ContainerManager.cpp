@@ -7,6 +7,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Windows remember their monitor and no two share a default
+//                 spot. Screens are read through a ScreenSource. A floating
+//                 window is shown at its remembered place when its monitor
+//                 is present (or, with none saved, when its rect is on a
+//                 present screen), else on the main window's screen with
+//                 its remembered place and monitor left alone; a screen
+//                 coming or going follows the same rule and commits
+//                 nothing. Every default placement goes through
+//                 defaultWindowRect or defaultFreeRect. A window made free
+//                 remembers a rect inside the pane. A layout saved with no
+//                 pane size takes the pane's settled size as its anchor
+//                 baseline. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Containers keep the place the operator gave them: the
 //                 Move/Resize filter and reconcile no longer change or
 //                 clamp a remembered place, saveState writes remembered
@@ -140,6 +153,7 @@ mw0lge@grange-lane.co.uk
 #include "ContainerWidget.h"
 #include "ContainerSettingsDialog.h"
 #include "FloatingContainer.h"
+#include "ScreenSource.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "gui/applets/AppletPanelWidget.h"
@@ -207,6 +221,38 @@ QPoint anchoredTopLeft(const QPoint& at, AxisLock lock, const QSize& grown)
     }
     return at;
 }
+
+// How long the pane must go without a resize, once showing, before its
+// size counts as settled. NereusSDR-original value: the spectrum pane is
+// given a second size a few event-loop turns after its first.
+constexpr int kPaneSettleMs = 100;
+// A container is never placed smaller than this.
+constexpr QSize kPlacementMinimum(260, 24);
+// The size a container with no size of its own is placed at.
+constexpr QSize kPlacementFallbackSize(360, 300);
+constexpr int kMaxCascadeSteps = 256;
+
+// `wanted`, held inside `bounds` (when there are any), then moved down and
+// right by `step` until its top-left is none of `taken`. A step that would
+// leave the bounds wraps to their other side.
+QRect cascaded(const QRect& wanted, const QRect& bounds, const QVector<QPoint>& taken, int step)
+{
+    const bool bounded = bounds.isValid();
+    const QRect start = bounded ? FloatingContainer::clampedGeometry(wanted, bounds, kPlacementMinimum) : wanted;
+    const int spanX = bounded ? qMax(0, bounds.width() - start.width()) + 1 : 0;
+    const int spanY = bounded ? qMax(0, bounds.height() - start.height()) + 1 : 0;
+    for (int k = 0; k < kMaxCascadeSteps; ++k) {
+        QPoint at = start.topLeft() + QPoint(k * step, k * step);
+        if (bounded) {
+            at.setX(bounds.left() + (at.x() - bounds.left()) % spanX);
+            at.setY(bounds.top() + (at.y() - bounds.top()) % spanY);
+        }
+        if (!taken.contains(at)) {
+            return QRect(at, start.size());
+        }
+    }
+    return start;
+}
 } // namespace
 
 ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
@@ -215,43 +261,33 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
     , m_dockParent(dockParent)
     , m_splitter(splitter)
 {
+    m_screens = ScreenSource::system();
     m_geometryCommit.setSingleShot(true);
     m_geometryCommit.setInterval(200);
     connect(&m_geometryCommit, &QTimer::timeout, this, &ContainerManager::saveState);
+    m_paneSettle.setSingleShot(true);
+    m_paneSettle.setInterval(kPaneSettleMs);
+    connect(&m_paneSettle, &QTimer::timeout, this, [this] {
+        // Only a pane that is showing has been through its window's first
+        // layout; a hidden one is asked again when it shows or resizes.
+        if (m_dockParent && m_dockParent->isVisible()) {
+            m_paneSettled = true;
+            m_provisionalPane.clear();
+        }
+    });
+    // A top-level pane is laid out at once.
+    m_paneSettled = m_dockParent && m_dockParent->isWindow();
     if (m_dockParent) {
         // Free containers are shown again whenever the pane resizes, and a
         // child pane has no size of its own before its first resize.
         m_dockParent->installEventFilter(this);
         connect(m_dockParent, &QObject::destroyed, this, [this] { m_dockParent = nullptr; });
     }
-    connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *) {
-        if (!m_store) {
-            return;
-        }
-        // Screen changes are recovered through one document transaction. A
-        // failed save therefore leaves live geometry and retained bytes intact.
-        auto draft = m_store->snapshot();
-        for (auto &d : draft.containers) {
-            if (d.dockMode != DockMode::Floating) {
-                continue;
-            }
-            QScreen *screen = QGuiApplication::screenAt(d.geometry.center());
-            if (!screen) {
-                screen = QGuiApplication::primaryScreen();
-            }
-            if (!screen) {
-                continue;
-            }
-            auto *c = container(d.id);
-            const QSize minimum =
-                c ? c->minimumSizeHint().expandedTo(QSize(260, 24)) : QSize(260, 24);
-            d.geometry = FloatingContainer::clampedGeometry(d.geometry, screen->availableGeometry(),
-                                                            minimum);
-        }
-        if (draft != m_store->snapshot()) {
-            commitWorkspace(draft, draft.revision);
-        }
-    });
+    // Queued: the screen list is read once the change has been applied.
+    connect(qApp, &QGuiApplication::screenRemoved, this, [this](QScreen *) { screensChanged(); },
+            Qt::QueuedConnection);
+    connect(qApp, &QGuiApplication::screenAdded, this, [this](QScreen *) { screensChanged(); },
+            Qt::QueuedConnection);
     qCDebug(lcContainer) << "ContainerManager created";
 }
 
@@ -281,6 +317,9 @@ void ContainerManager::setWorkspaceAdapter(ContainerWorkspaceStore* store, Conta
     m_rememberedPane.clear();
     m_documentPane.clear();
     m_interactionStart.clear();
+    m_provisionalPane.clear();
+    m_rememberedScreen.clear();
+    m_displaced.clear();
     if (m_store) { disconnect(m_store, nullptr, this, nullptr); }
     if (m_registry) { disconnect(m_registry, nullptr, this, nullptr); }
     if (m_arrange) {
@@ -356,6 +395,11 @@ void ContainerManager::setTransmitting(bool transmitting)
 }
 bool ContainerManager::eventFilter(QObject* watched, QEvent* event)
 {
+    if (watched == m_dockParent && !m_paneSettled
+        && (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
+        // Still on the way to its first settled size.
+        m_paneSettle.start();
+    }
     if (watched == m_dockParent && event->type() == QEvent::Resize) {
         // The pane has its size: free containers are shown from their
         // remembered places, for display only. Nothing is saved for it.
@@ -452,6 +496,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_rememberedPane.remove(id);
             m_documentPane.remove(id);
             m_interactionStart.remove(id);
+            m_provisionalPane.remove(id);
+            m_rememberedScreen.remove(id);
+            m_displaced.remove(id);
         }
     }
     m_panelContainerId = document.mainContainerId;
@@ -477,13 +524,24 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             m_rememberedGeometry[d.id] = d.geometry;
             if (d.dockMode != DockMode::OverlayDocked) {
                 m_rememberedPane.remove(d.id);
+                m_provisionalPane.remove(d.id);
             } else if (placementChanged) {
+                m_provisionalPane.remove(d.id);
                 if (d.geometryPane) {
                     m_rememberedPane[d.id] = *d.geometryPane;
                 } else {
                     m_rememberedPane.remove(d.id);
                 }
             }
+            // A window's monitor is remembered with its place.
+            if (d.dockMode == DockMode::Floating) {
+                m_rememberedScreen[d.id] = d.screen;
+            } else {
+                m_rememberedScreen.remove(d.id);
+            }
+        }
+        if (d.dockMode != DockMode::Floating) {
+            m_displaced.remove(d.id);
         }
         if (!c) {
             c = new ContainerWidget(); c->setId(d.id);
@@ -602,10 +660,25 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         c->setPinOnTop(d.config.value("pinOnTop").toBool(false));
         if (fresh && d.dockMode==DockMode::Floating && !d.geometry.isValid()) {
             const QByteArray geometry=QByteArray::fromHex(d.config.value("legacyAppletFloatGeometry").toString().toLatin1());
-            if (!geometry.isEmpty()) { form->QWidget::restoreGeometry(geometry); }
+            if (!geometry.isEmpty()) {
+                form->QWidget::restoreGeometry(geometry);
+                // An imported float window keeps the place it had while that
+                // is on a screen; it is not a remembered place.
+                if (form->pos() != QPoint(0, 0) && m_screens->onAnyScreen(form->geometry())) {
+                    m_displaced.insert(d.id);
+                }
+            }
         }
         if (!preserveGeometry) {
-            if (d.geometry.isValid()) { (d.dockMode == DockMode::Floating ? static_cast<QWidget*>(form) : c)->setGeometry(d.geometry); }
+            // A window takes its size here and its place below, once its
+            // height is known; a free or docked container takes its rect.
+            if (d.geometry.isValid()) {
+                if (d.dockMode == DockMode::Floating) {
+                    form->resize(d.geometry.size());
+                } else {
+                    c->setGeometry(d.geometry);
+                }
+            }
         }
         if (!host) {
             host = new ContainerContentHost(*m_registry, c);
@@ -662,8 +735,9 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                     return;
                 }
                 int height = content->preferredContentHeight() + view->headerExtent();
-                if (placement->layout == ContentLayout::FreeCanvas && target->screen()) {
-                    height = qMin(height, target->screen()->availableGeometry().height());
+                if (const int available = availableHeightFor(target);
+                    placement->layout == ContentLayout::FreeCanvas && available > 0) {
+                    height = qMin(height, available);
                 }
                 const QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
                     .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
@@ -684,11 +758,15 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (d.autoHeight && d.dockMode != DockMode::PanelDocked) {
             QWidget *target = d.dockMode == DockMode::Floating ? static_cast<QWidget *>(form) : c;
             int height=host->preferredContentHeight()+c->headerExtent();
-            if(d.layout==ContentLayout::FreeCanvas && target->screen()) {height=qMin(height,target->screen()->availableGeometry().height());}
+            if (const int available = availableHeightFor(target); d.layout == ContentLayout::FreeCanvas && available > 0) {
+                height = qMin(height, available);
+            }
             target->resize(qMax(target->width(), c->minimumSizeHint().width()),height);
         }
-        if (d.dockMode == DockMode::Floating) {
-            form->ensureVisiblePosition(m_dockParent);
+        if (d.dockMode == DockMode::Floating && !preserveGeometry) {
+            // At its remembered place when its monitor is here; otherwise on
+            // the main window's screen, and nothing is remembered for that.
+            placeFloatingWindow(d.id, d.geometry, d.screen, form, true);
         }
         // A free container is shown by placeFreeContainers() below, from its
         // remembered place; nothing is clamped into that place here.
@@ -1064,9 +1142,11 @@ void ContainerManager::placeContainerFree(const QString& id)
                      qMax(0, (m_dockParent->height() - size.height()) / 2))
             : QPoint();
         d.dockMode = DockMode::OverlayDocked;
-        d.geometry = QRect(origin, size);
+        // Off any spot another free container already has.
+        d.geometry = defaultFreeRect(QRect(origin, size), id);
         // Placed for the pane as it is now.
         d.geometryPane.reset();
+        d.screen.reset();
         commitWorkspace(draft, draft.revision);
         return;
     }
@@ -1155,6 +1235,7 @@ void ContainerManager::finishEdgeDrag(const QString& id, const QPoint& globalPos
         const QSize size = freePlacementSize(id, d);
         d.dockMode = DockMode::Floating;
         d.geometry = QRect(globalPos - QPoint(size.width() / 2, WorkspaceGroupHeader::kHeight / 2), size);
+        d.screen.reset();
         commitWorkspace(draft, draft.revision);
         return;
     }
@@ -1251,7 +1332,8 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
                 // pop-out default size to use instead.
                 const QSize size = freePlacementSize(id, d);
                 const QRect anchor = m_edgeArea->window()->geometry();
-                d.geometry = QRect(anchor.center() - QPoint(size.width() / 2, size.height() / 2), size);
+                d.geometry = defaultWindowRect(
+                    QRect(anchor.center() - QPoint(size.width() / 2, size.height() / 2), size));
             } else if (d.dockMode == DockMode::PanelDocked && mode != DockMode::PanelDocked) {
                 // A docked container's rect is laid out, not remembered: it
                 // leaves the panel at the size it has now, as it always did.
@@ -1259,9 +1341,20 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
                     d.geometry = docked->geometry();
                 }
             }
+            if (mode == DockMode::OverlayDocked && d.dockMode == DockMode::Floating && dockParentLaidOut()) {
+                // A window's rect is in screen coordinates. Made free, the
+                // container's place is the rect it lands at inside the pane.
+                const QSize size = d.geometry.isValid() ? d.geometry.size() : kPlacementFallbackSize;
+                const QRect landing = d.geometry.isValid()
+                    ? d.geometry
+                    : QRect(QPoint((m_dockParent->width() - size.width()) / 2,
+                                   (m_dockParent->height() - size.height()) / 2), size);
+                d.geometry = defaultFreeRect(landing, id);
+            }
             if (d.dockMode != mode) {
                 // Its place is for the pane as it is now.
                 d.geometryPane.reset();
+                d.screen.reset();
             }
             d.dockMode = mode;
             commitWorkspace(document, document.revision);
@@ -1484,7 +1577,10 @@ void ContainerManager::showDuplicate(ContainerDocument& copy, const ContainerDoc
         anchor = QRect(window.center() - QPoint(size.width() / 2, size.height() / 2), size);
     }
     copy.dockMode = DockMode::Floating;
-    copy.geometry = anchor.translated(kDuplicateOffsetPx, kDuplicateOffsetPx);
+    // Beside the original, and off any spot another container already has
+    // (a second copy of the same original would land on the first).
+    copy.geometry = defaultWindowRect(anchor.translated(kDuplicateOffsetPx, kDuplicateOffsetPx));
+    copy.screen.reset();
 }
 
 ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
@@ -1649,7 +1745,10 @@ void ContainerManager::setMeterFloating(ContainerWidget* container, FloatingCont
     form->setContainerFloating(true);
     container->setDockMode(DockMode::Floating);
     container->setTopMost();  // Re-apply pin-on-top now that parent is set
-    form->ensureVisiblePosition(m_dockParent);
+    if (form->ensureVisiblePosition(m_dockParent, m_screens)) {
+        // A place the app chose: not one another window already has.
+        form->setGeometry(defaultWindowRect(form->geometry(), container->id()));
+    }
     form->show();
     installFreshMeter(container, payload);
     qCDebug(lcContainer) << "Floated container:" << container->id();
@@ -1678,9 +1777,10 @@ void ContainerManager::recoverContainer(const QString& id)
         for (auto& d : document.containers) { if(d.id==id) {
             d.visible=true; d.config["enabled"]=true;
             if(d.dockMode==DockMode::Floating) { d.dockMode=DockMode::OverlayDocked; }
-            if(m_dockParent) { const QSize size=d.geometry.isValid()?d.geometry.size():QSize(360,300); d.geometry=QRect(QPoint(qMax(0,(m_dockParent->width()-size.width())/2),qMax(0,(m_dockParent->height()-size.height())/2)),size); }
+            if(m_dockParent) { const QSize size=d.geometry.isValid()?d.geometry.size():QSize(360,300); d.geometry=defaultFreeRect(QRect(QPoint(qMax(0,(m_dockParent->width()-size.width())/2),qMax(0,(m_dockParent->height()-size.height())/2)),size), id); }
             // Centred for the pane as it is now.
             d.geometryPane.reset();
+            d.screen.reset();
             commitWorkspace(document,document.revision); return;
         } }
         return;
@@ -1705,6 +1805,155 @@ void ContainerManager::recoverContainer(const QString& id)
     }
     qCDebug(lcContainer) << "Recovered container:" << id;
 }
+
+// ---- Windows and their monitors -------------------------------------------
+
+void ContainerManager::setScreenSourceForTest(ScreenSource* source)
+{
+    m_screens = source ? source : ScreenSource::system();
+}
+
+ScreenInfo ContainerManager::mainWindowScreen() const
+{
+    if (m_dockParent && m_dockParent->window()) {
+        return m_screens->screenFor(m_dockParent->window()->geometry());
+    }
+    return m_screens->primary();
+}
+
+int ContainerManager::availableHeightFor(const QWidget* target) const
+{
+    const QRect onScreen(target->mapToGlobal(QPoint(0, 0)), target->size());
+    return m_screens->screenFor(onScreen).available.height();
+}
+
+QRect ContainerManager::defaultWindowRect(const QRect& wanted) const
+{
+    return defaultWindowRect(wanted, QString());
+}
+
+QRect ContainerManager::defaultWindowRect(const QRect& wanted, const QString& exceptId) const
+{
+    const std::optional<ScreenInfo> holding = m_screens->screenHolding(wanted);
+    return windowRectOn(wanted, holding ? *holding : mainWindowScreen(), exceptId);
+}
+
+QRect ContainerManager::windowRectOn(const QRect& wanted, const ScreenInfo& screen, const QString& exceptId) const
+{
+    // Every visible container's top-left, in screen coordinates.
+    QVector<QPoint> taken;
+    for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
+        ContainerWidget* c = it.value();
+        if (!c || it.key() == exceptId) {
+            continue;
+        }
+        if (c->isFloating()) {
+            const FloatingContainer* form = m_floatingForms.value(it.key());
+            if (form && form->isVisible()) {
+                taken.append(form->geometry().topLeft());
+            }
+        } else if (c->isOverlayDocked() && !c->isHidden() && c->parentWidget()) {
+            taken.append(c->mapToGlobal(QPoint(0, 0)));
+        }
+    }
+    return cascaded(wanted, screen.available, taken, kCascadeOffsetPx);
+}
+
+QRect ContainerManager::defaultFreeRect(const QRect& wanted, const QString& exceptId) const
+{
+    QVector<QPoint> taken;
+    for (auto it = m_containers.constBegin(); it != m_containers.constEnd(); ++it) {
+        const ContainerWidget* c = it.value();
+        if (c && it.key() != exceptId && c->isOverlayDocked() && !c->isHidden()
+            && c->parentWidget() == m_dockParent) {
+            taken.append(c->geometry().topLeft());
+        }
+    }
+    const QRect pane = dockParentLaidOut() ? QRect(QPoint(0, 0), m_dockParent->size()) : QRect();
+    return cascaded(wanted, pane, taken, kCascadeOffsetPx);
+}
+
+bool ContainerManager::windowIsHome(const QRect& remembered, const std::optional<SavedScreen>& screen) const
+{
+    if (!remembered.isValid()) {
+        return false;
+    }
+    if (screen) {
+        // Its monitor is here, and the place is still on it (a monitor
+        // known by its serial may have been moved in the arrangement).
+        const std::optional<ScreenInfo> present = m_screens->matching(*screen);
+        return present && remembered.intersects(present->geometry);
+    }
+    // An older layout names no monitor: any present screen the rect is on
+    // will do. A rect at the origin is the place a window never given one
+    // lands at, where the main window hides it (see
+    // FloatingContainer::ensureVisiblePosition); it was never a chosen place.
+    return remembered.topLeft() != QPoint(0, 0) && m_screens->onAnyScreen(remembered);
+}
+
+QRect ContainerManager::displacedWindowRect(const QString& id, const QRect& remembered,
+                                            const std::optional<SavedScreen>& screen, const QSize& size) const
+{
+    const std::optional<ScreenInfo> own = screen ? m_screens->matching(*screen) : std::nullopt;
+    const ScreenInfo target = own ? *own : mainWindowScreen();
+    QRect wanted;
+    if (remembered.isValid() && screen && target.geometry.isValid()) {
+        // Where it was on its own monitor, on this one, so windows that
+        // were apart stay apart.
+        wanted = QRect(remembered.topLeft() - screen->geometry.topLeft() + target.geometry.topLeft(), size);
+    } else {
+        // Over the main window, as a window with no place always was.
+        const QRect over = m_dockParent && m_dockParent->window() ? m_dockParent->window()->geometry()
+                                                                  : target.available;
+        wanted = QRect(QPoint(over.center().x() - size.width() / 2, over.center().y() - size.height() / 2), size);
+    }
+    return windowRectOn(wanted, target, id);
+}
+
+void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remembered,
+                                           const std::optional<SavedScreen>& screen, FloatingContainer* form,
+                                           bool fromDocument)
+{
+    if (windowIsHome(remembered, screen)) {
+        const bool wasAway = m_displaced.remove(id);
+        if ((fromDocument || wasAway) && form->pos() != remembered.topLeft()) {
+            form->move(remembered.topLeft());
+        }
+        const ContainerWidget* c = container(id);
+        if (wasAway && c && !c->autoHeight() && form->size() != remembered.size()) {
+            // Back at its own size too, had the other screen been smaller.
+            form->resize(remembered.size());
+        }
+        return;
+    }
+    if (m_displaced.contains(id) && m_screens->onAnyScreen(form->geometry())) {
+        // Already shown somewhere the operator can reach.
+        return;
+    }
+    form->setGeometry(displacedWindowRect(id, remembered, screen, form->size()));
+    m_displaced.insert(id);
+}
+
+void ContainerManager::screensChanged()
+{
+    if (!m_store || m_reconciling || GuiApplication::applicationQuitInProgress()) {
+        return;
+    }
+    // The app's own moves: nothing is remembered or committed for them.
+    QScopedValueRollback<bool> guard(m_reconciling, true);
+    const WorkspaceDocument document = m_store->snapshot();
+    for (const auto& d : document.containers) {
+        ContainerWidget* c = container(d.id);
+        FloatingContainer* form = m_floatingForms.value(d.id);
+        if (d.dockMode != DockMode::Floating || !c || !form || !c->isFloating()
+            || c->geometryInteractionActive()) {
+            continue;
+        }
+        placeFloatingWindow(d.id, m_rememberedGeometry.value(d.id, d.geometry),
+                            m_rememberedScreen.value(d.id, d.screen), form, false);
+    }
+}
+
 
 bool ContainerManager::dockParentLaidOut() const
 {
@@ -1740,7 +1989,15 @@ void ContainerManager::rememberOperatorGeometry(const QString& id)
         c->setDockedSize(place.size());
     } else {
         m_rememberedPane.remove(id);
+        if (c->isFloating()) {
+            // The monitor it was put on goes with the place, and the window
+            // is where the operator wants it wherever it was shown before.
+            const std::optional<ScreenInfo> on = m_screens->screenHolding(place);
+            m_rememberedScreen[id] = on ? std::optional<SavedScreen>(savedScreenOf(*on)) : std::nullopt;
+            m_displaced.remove(id);
+        }
     }
+    m_provisionalPane.remove(id);
     m_pendingGeometry.insert(id);
     if (!m_reconciling) {
         m_geometryCommit.start();
@@ -1772,10 +2029,16 @@ void ContainerManager::placeFreeContainersIn(const QSize& pane)
         if (!place.isValid()) {
             continue;
         }
-        if (!m_rememberedPane.contains(it.key())) {
+        if (!m_rememberedPane.contains(it.key()) || m_provisionalPane.contains(it.key())) {
             // No pane size came with the place (an older document, a menu
-            // command): it is for the pane as it is now.
+            // command): it is for the pane as it is now. While the pane is
+            // still on the way to its first settled size that baseline
+            // follows it, so the container is shown at its saved place for
+            // the size the pane ends at, not for one it passed through.
             m_rememberedPane[it.key()] = pane;
+            if (!m_paneSettled) {
+                m_provisionalPane.insert(it.key());
+            }
         }
         const QSize base = m_rememberedPane.value(it.key());
         // The anchor values the widget carries mirror the remembered place.
@@ -2055,6 +2318,12 @@ void ContainerManager::saveState()
             // The remembered place, never the widget's rect: what is shown
             // may differ for a while (a small pane, a missing screen).
             d.geometry = m_rememberedGeometry.value(d.id, d.geometry);
+            // A window's monitor goes with its place; nothing else has one.
+            if (d.dockMode != DockMode::Floating) {
+                d.screen.reset();
+            } else if (m_rememberedScreen.contains(d.id)) {
+                d.screen = m_rememberedScreen.value(d.id);
+            }
             if (d.dockMode != DockMode::OverlayDocked) {
                 d.geometryPane.reset();
             } else if (moved.contains(d.id)) {

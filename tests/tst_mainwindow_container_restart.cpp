@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original offscreen regression for free containers across a quit and a start of the real window.
 // Modification history (NereusSDR):
+//   2026-10-11 - A third container, anchored to the pane's right edge and
+//                 saved with no pane size: it too is shown at its saved
+//                 place, though the pane is given two sizes on the way up
+//                 in today's look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Two free containers keep their places across a quit and
 //                 a start of the real MainWindow, in today's look and in
 //                 the workspace preview: the saved layout is unchanged and
@@ -33,6 +38,8 @@ namespace {
 constexpr QSize kWindowSize(1500, 950);
 constexpr QRect kFirstRect(60, 50, 300, 200);
 constexpr QRect kSecondRect(420, 280, 320, 240);
+// Anchored to the pane's right edge.
+constexpr QRect kThirdRect(780, 560, 300, 200);
 constexpr int kShownMs = 400;
 constexpr int kSettleTimeoutMs = 10000;
 
@@ -44,13 +51,14 @@ void settle()
     }
 }
 
-ContainerDocument freeContainer(const QString& id, const QRect& geometry)
+ContainerDocument freeContainer(const QString& id, const QRect& geometry, AxisLock anchor = AxisLock::Left)
 {
     ContainerDocument d;
     d.id = id;
     d.name = id;
     d.layout = ContentLayout::VerticalStack;
     d.dockMode = DockMode::OverlayDocked;
+    d.anchor = anchor;
     d.geometry = geometry;
     d.config = {{QStringLiteral("enabled"), true},
                 {QStringLiteral("showOnRx"), true},
@@ -168,21 +176,25 @@ private slots:
             WorkspaceDocument document = manager->workspaceStore()->snapshot();
             document.containers.append(freeContainer(QStringLiteral("free-a"), kFirstRect));
             document.containers.append(freeContainer(QStringLiteral("free-b"), kSecondRect));
+            document.containers.append(freeContainer(QStringLiteral("free-c"), kThirdRect, AxisLock::Right));
             QCOMPARE(manager->commitWorkspace(document, document.revision).status, CommitStatus::Saved);
             settle();
             ContainerWidget* a = manager->container(QStringLiteral("free-a"));
             ContainerWidget* b = manager->container(QStringLiteral("free-b"));
-            QVERIFY(a && b);
+            ContainerWidget* c = manager->container(QStringLiteral("free-c"));
+            QVERIFY(a && b && c);
             QWidget* pane = a->parentWidget();
             QVERIFY(pane && b->parentWidget() == pane);
             savedPane = pane->size();
-            QVERIFY2(pane->rect().contains(kFirstRect) && pane->rect().contains(kSecondRect),
+            QVERIFY2(pane->rect().contains(kFirstRect) && pane->rect().contains(kSecondRect)
+                         && pane->rect().contains(kThirdRect),
                      qPrintable(QStringLiteral("pane %1x%2 does not hold the fixture rects")
                                     .arg(savedPane.width()).arg(savedPane.height())));
             QTest::qWait(kShownMs);
             QVERIFY(QTest::qWaitFor([manager] { return !manager->geometryCommitPendingForTest(); }, kSettleTimeoutMs));
             QCOMPARE(a->geometry(), kFirstRect);
             QCOMPARE(b->geometry(), kSecondRect);
+            QCOMPARE(c->geometry(), kThirdRect);
             window->close();
         }
         const QByteArray committedJson = savedContainersJson(preview);
@@ -193,6 +205,7 @@ private slots:
         // The next start.
         QRect shownA;
         QRect shownB;
+        QRect shownC;
         QSize finalPane;
         {
             std::unique_ptr<MainWindow> window = buildWindow(preview);
@@ -200,7 +213,8 @@ private slots:
             QVERIFY(manager);
             ContainerWidget* a = manager->container(QStringLiteral("free-a"));
             ContainerWidget* b = manager->container(QStringLiteral("free-b"));
-            QVERIFY(a && b);
+            ContainerWidget* c = manager->container(QStringLiteral("free-c"));
+            QVERIFY(a && b && c);
             QWidget* pane = a->parentWidget();
             QVERIFY(pane);
             ResizeLog log;
@@ -215,10 +229,11 @@ private slots:
             QTest::qWait(kShownMs);
             shownA = a->geometry();
             shownB = b->geometry();
+            shownC = c->geometry();
             finalPane = pane->size();
             qInfo() << "pane sizes after show, in order:" << log.sizes << "window:" << window->size()
                     << "pane at save:" << savedPane;
-            qInfo() << "shown free-a:" << shownA << "free-b:" << shownB;
+            qInfo() << "shown free-a:" << shownA << "free-b:" << shownB << "free-c:" << shownC;
             pane->removeEventFilter(&log);
             window->close();
         }
@@ -238,6 +253,11 @@ private slots:
         QCOMPARE(finalPane, savedPane);
         QCOMPARE(shownA, kFirstRect);
         QCOMPARE(shownB, kSecondRect);
+        // No pane size was saved with it (no operator move), so its right
+        // anchor works from the pane as it settled, not from the first
+        // size the pane was given.
+        QVERIFY(!after.containers.last().geometryPane.has_value());
+        QCOMPARE(shownC, kThirdRect);
     }
 };
 
