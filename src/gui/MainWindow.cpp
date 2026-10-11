@@ -5333,6 +5333,7 @@ void MainWindow::wireAutoAgcVisuals(RadioModel* model, SliceModel* slice,
     connect(slice, &SliceModel::stationAutoAgcNoiseFloorChanged, flag, refresh);
     connect(model, &RadioModel::connectionStateChanged, flag, refresh);
     connect(model, &RadioModel::activeSliceChanged, flag, refresh);
+    if (applet) { connect(applet, &RxApplet::sliceChanged, flag, refresh); }
     refresh();
 }
 
@@ -5353,7 +5354,9 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
         flag->updateAgcAutoVisuals(slice->autoAgcEnabled(), floor,
                                    slice->autoAgcOffset(), valid);
     }
-    if (applet && model->activeSlice() == slice) {
+    // The slice the applet shows, which is the window's receive slice and
+    // not always the model's active one.
+    if (applet && applet->slice() == slice) {
         applet->updateAgcAutoVisuals(slice->autoAgcEnabled(), floor,
                                        slice->autoAgcOffset(), valid);
     }
@@ -14511,12 +14514,9 @@ void MainWindow::wireSliceToSpectrum()
         refreshAutoAgcVisuals(m_radioModel, slice,
                     m_vfoWidgetsBySlice.value(slice->sliceIndex()), m_rxApplet);
 
-        // AUTO button toggle → SliceModel
-        connect(m_rxApplet, &RxApplet::autoAgcToggled, this, [this](bool enabled) {
-            if (SliceModel* active = activeSliceForWindow()) {
-                active->setAutoAgcEnabled(enabled);
-            }
-        });
+        // AUTO button toggle → SliceModel: the applet writes the slice it
+        // shows (RxApplet's AUTO click), so it is not routed through the
+        // window's active slice here.
 
         // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
         connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {

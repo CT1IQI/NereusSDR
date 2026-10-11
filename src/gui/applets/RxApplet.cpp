@@ -1169,7 +1169,12 @@ void RxApplet::buildUi()
         m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
         connect(m_agcAutoLabel, &QPushButton::clicked, this, [this]() {
             if (isListening()) { return; }  // Task 15: another device controls it
-            emit autoAgcToggled(!m_autoAgcActive);
+            // The slice the applet shows, as every other control here. The
+            // window's active slice can be another one (a remote window
+            // that controls Slice B while the Core's active slice is A).
+            const bool on = m_slice ? !m_slice->autoAgcEnabled() : !m_autoAgcActive;
+            if (m_slice) { m_slice->setAutoAgcEnabled(on); }
+            emit autoAgcToggled(on);
         });
         headerRow->addWidget(m_agcAutoLabel);
 
@@ -1611,6 +1616,11 @@ void RxApplet::setSlice(SliceModel* slice)
     // auto-attenuate.
     showStepAttValueForSlice();
     refreshAttForSlice();
+    // AUTO and its noise floor line follow the slice shown. The floor comes
+    // from the window (MainWindow::refreshAutoAgcVisuals), which listens for
+    // sliceChanged; with no slice there is nothing to light.
+    if (!m_slice) { updateAgcAutoVisuals(false, m_noiseFloorDbm, 0.0, false); }
+    emit sliceChanged();
 }
 
 void RxApplet::setSliceIndex(int idx)
