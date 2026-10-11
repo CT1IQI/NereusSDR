@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-11 - Settings restore: saveToSettings and restoreFromSettings
+//              carry the audio pan, BIN, squelch, APF, FM, DIG offset and
+//              RTTY values, per slice. They were never saved.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // 2026-10-04 - Guard mode/filter notification continuations against deletion
 //              and superseding commits, including a return to the same tuple.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -2957,6 +2962,31 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
     s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
 
+    // Audio panel, squelch, APF and the mode-specific offsets. Per slice
+    // (no band suffix), like Muted and AfGain beside them: each is a
+    // receiver's setting, not a band's. NereusSDR-original keys; they were
+    // not saved at all before 2026-10-11, so every one came back at its
+    // default whenever the slice was made again.
+    s.setValue(sp + QStringLiteral("AudioPan"),        m_audioPan);
+    s.setValue(sp + QStringLiteral("BinauralEnabled"), boolStr(m_binauralEnabled));
+    s.setValue(sp + QStringLiteral("SsqlEnabled"),     boolStr(m_ssqlEnabled));
+    s.setValue(sp + QStringLiteral("SsqlThresh"),      m_ssqlThresh);
+    s.setValue(sp + QStringLiteral("AmsqEnabled"),     boolStr(m_amsqEnabled));
+    s.setValue(sp + QStringLiteral("AmsqThresh"),      m_amsqThresh);
+    s.setValue(sp + QStringLiteral("FmsqEnabled"),     boolStr(m_fmsqEnabled));
+    s.setValue(sp + QStringLiteral("FmsqThresh"),      m_fmsqThresh);
+    s.setValue(sp + QStringLiteral("ApfEnabled"),      boolStr(m_apfEnabled));
+    s.setValue(sp + QStringLiteral("ApfTuneHz"),       m_apfTuneHz);
+    s.setValue(sp + QStringLiteral("FmCtcssMode"),     m_fmCtcssMode);
+    s.setValue(sp + QStringLiteral("FmCtcssValueHz"),  m_fmCtcssValueHz);
+    s.setValue(sp + QStringLiteral("FmOffsetHz"),      m_fmOffsetHz);
+    s.setValue(sp + QStringLiteral("FmTxMode"),        static_cast<int>(m_fmTxMode));
+    s.setValue(sp + QStringLiteral("FmReverse"),       boolStr(m_fmReverse));
+    s.setValue(sp + QStringLiteral("DiglOffsetHz"),    m_diglOffsetHz);
+    s.setValue(sp + QStringLiteral("DiguOffsetHz"),    m_diguOffsetHz);
+    s.setValue(sp + QStringLiteral("RttyMarkHz"),      m_rttyMarkHz);
+    s.setValue(sp + QStringLiteral("RttyShiftHz"),     m_rttyShiftHz);
+
     // Track the most recently saved band so RadioModel::loadSliceState() on
     // the next launch can land on the user's actual last-used frequency,
     // not the panadapter's 14.225 MHz default. Per-band Frequency keys
@@ -3301,6 +3331,52 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(sp + QStringLiteral("TxAntenna"))) {
         setTxAntenna(s.value(sp + QStringLiteral("TxAntenna")).toString());
     }
+
+    // Audio panel, squelch, APF and the mode-specific offsets (per slice).
+    // An absent key leaves the SliceModel default as it is.
+    const auto sliceBool = [&s, &sp](const char* key, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            apply(s.value(k).toString() == QLatin1String("True"));
+        }
+    };
+    const auto sliceInt = [&s, &sp](const char* key, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            apply(s.value(k).toInt());
+        }
+    };
+    const auto sliceDouble = [&s, &sp](const char* key, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            apply(s.value(k).toDouble());
+        }
+    };
+    sliceDouble("AudioPan",       [this](double v) { setAudioPan(v); });
+    sliceBool("BinauralEnabled",  [this](bool v) { setBinauralEnabled(v); });
+    sliceBool("SsqlEnabled",      [this](bool v) { setSsqlEnabled(v); });
+    sliceDouble("SsqlThresh",     [this](double v) { setSsqlThresh(v); });
+    sliceBool("AmsqEnabled",      [this](bool v) { setAmsqEnabled(v); });
+    sliceDouble("AmsqThresh",     [this](double v) { setAmsqThresh(v); });
+    sliceBool("FmsqEnabled",      [this](bool v) { setFmsqEnabled(v); });
+    sliceDouble("FmsqThresh",     [this](double v) { setFmsqThresh(v); });
+    sliceBool("ApfEnabled",       [this](bool v) { setApfEnabled(v); });
+    sliceInt("ApfTuneHz",         [this](int v) { setApfTuneHz(v); });
+    sliceInt("FmCtcssMode",       [this](int v) { setFmCtcssMode(v); });
+    sliceDouble("FmCtcssValueHz", [this](double v) { setFmCtcssValueHz(v); });
+    sliceInt("FmOffsetHz",        [this](int v) { setFmOffsetHz(v); });
+    sliceInt("FmTxMode", [this](int v) {
+        // Only the three values FmTxMode has; anything else in the file
+        // leaves the default.
+        if (v >= static_cast<int>(FmTxMode::High) && v <= static_cast<int>(FmTxMode::Low)) {
+            setFmTxMode(static_cast<FmTxMode>(v));
+        }
+    });
+    sliceBool("FmReverse",        [this](bool v) { setFmReverse(v); });
+    sliceInt("DiglOffsetHz",      [this](int v) { setDiglOffsetHz(v); });
+    sliceInt("DiguOffsetHz",      [this](int v) { setDiguOffsetHz(v); });
+    sliceInt("RttyMarkHz",        [this](int v) { setRttyMarkHz(v); });
+    sliceInt("RttyShiftHz",       [this](int v) { setRttyShiftHz(v); });
     restoreNnrSettings();
 }
 

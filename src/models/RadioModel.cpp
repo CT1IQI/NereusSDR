@@ -17,6 +17,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Settings restore: the FM, DIG offset and RTTY values
+//                schedule a save for their slice (they had no save
+//                trigger). NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -23451,6 +23455,19 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     connect(slice, &SliceModel::ritHzChanged,     this, [this](int) { scheduleSettingsSave(); });
     connect(slice, &SliceModel::xitEnabledChanged, this, [this](bool) { scheduleSettingsSave(); });
     connect(slice, &SliceModel::xitHzChanged,     this, [this](int) { scheduleSettingsSave(); });
+    // The FM, DIG offset and RTTY values had no handler that saved them
+    // (settings restore audit 2026-10-11): the DIG and RTTY connects above
+    // push the shift and the filter only, and nothing listened to the FM
+    // ones. NereusSDR-original.
+    connect(slice, &SliceModel::fmCtcssModeChanged,    this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::fmCtcssValueHzChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::fmOffsetHzChanged,     this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::fmTxModeChanged,       this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::fmReverseChanged,      this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diglOffsetHzChanged,   this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diguOffsetHzChanged,   this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::rttyMarkHzChanged,     this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::rttyShiftHzChanged,    this, [this, slice]() { scheduleSettingsSave(slice); });
 
     // XIT stored for 3M-1 (TX phase) to consume on keydown. No RX effect in 3G-10.
 
