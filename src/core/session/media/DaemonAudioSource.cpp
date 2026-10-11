@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 namespace NereusSDR {
 
@@ -238,6 +239,16 @@ public:
 
 #ifdef NEREUS_BUILD_TESTS
     std::function<void()> m_takeBlockLockedHookForTest;
+    // Producer thread only.
+    void handOverPendingForTest() noexcept
+    {
+        while (m_pendingValid && m_running.load(std::memory_order_acquire)) {
+            tryHandOverPending();
+            if (m_pendingValid) {
+                std::this_thread::yield();
+            }
+        }
+    }
 #endif
 
 private:
@@ -541,6 +552,11 @@ void DaemonAudioSource::dropIngressForTest(int frames) noexcept
 void DaemonAudioSource::setTakeBlockLockedHookForTest(std::function<void()> hook)
 {
     m_bridge->m_takeBlockLockedHookForTest = std::move(hook);
+}
+
+void DaemonAudioSource::handOverPendingForTest()
+{
+    m_bridge->handOverPendingForTest();
 }
 #endif
 

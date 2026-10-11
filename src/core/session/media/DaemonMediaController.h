@@ -342,6 +342,14 @@ public:
     /// session runs now (the speakers' mix, the headphones mix, each
     /// receiver stream's), so a test can see none was remade.
     QList<const DaemonAudioSender*> audioSendersForTest() const;
+#ifdef NEREUS_BUILD_TESTS
+    /// Test seam, the thread that feeds the audio engine only, no
+    /// production caller: every sender's capture bridge hands over a block
+    /// a busy sender thread kept it from queueing, as the DSP thread's next
+    /// callback does (DaemonAudioSource::handOverPendingForTest). A test
+    /// that feeds a fixed number of blocks calls it after the last.
+    void handOverPendingAudioForTest();
+#endif
     DaemonAudioDiagnostics audioDiagnostics() const;
     /// The Opus target, bit/s, for the speakers' mix and the headphones mix
     /// this controller sends (R-R3-23: nereusd's audio_bitrate). Applies to

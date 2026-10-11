@@ -1581,6 +1581,24 @@ QList<const DaemonAudioSender*> DaemonMediaController::audioSendersForTest() con
     return senders;
 }
 
+#ifdef NEREUS_BUILD_TESTS
+void DaemonMediaController::handOverPendingAudioForTest()
+{
+    if (m_audioSender) {
+        m_audioSender->handOverPendingCaptureForTest();
+    }
+    if (m_headphones.sender) {
+        m_headphones.sender->handOverPendingCaptureForTest();
+    }
+    for (const auto& [sliceId, stream] : m_receiverStreams) {
+        Q_UNUSED(sliceId);
+        if (stream.sender) {
+            stream.sender->handOverPendingCaptureForTest();
+        }
+    }
+}
+#endif
+
 bool DaemonMediaController::seesSlice(int sliceId) const
 {
     return m_server && m_epoch != 0 && m_server->mediaSessionSeesSlice(m_epoch, sliceId);

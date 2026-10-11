@@ -4206,6 +4206,9 @@ void feedAudioBlock(Harness& h)
         engine->rxBlockReady(h.sliceId, left.constData(), 64);
         engine->rxBlockReady(h.spareSliceId, right.constData(), 64);
     }
+    // R-AUD-SEND: no DSP callback follows the last one here; see
+    // DaemonAudioSource::handOverPendingForTest().
+    h.controller.handOverPendingAudioForTest();
 }
 
 quint16 rtpSequence(const QByteArray& packet)
@@ -4788,6 +4791,9 @@ void feedSlicesBlock(Harness& h, const QList<QPair<int, float>>& slices)
             engine->rxBlockReady(sliceId, block.constData(), 64);
         }
     }
+    // R-AUD-SEND: no DSP callback follows the last one here; see
+    // DaemonAudioSource::handOverPendingForTest().
+    h.controller.handOverPendingAudioForTest();
 }
 
 } // namespace

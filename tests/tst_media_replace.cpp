@@ -314,6 +314,12 @@ struct CoreHarness {
                 engine->rxBlockReady(slice, tone.constData(), kDspFrames);
             }
         }
+        // R-AUD-SEND: this thread stands in for the DSP thread and feeds no
+        // more after the last block. A block that completed while the
+        // sender thread was taking an earlier one stays with the capture
+        // bridge until the DSP thread's next callback; this is that
+        // hand-over, so every block fed is queued when feed() returns.
+        controller.handOverPendingAudioForTest();
     }
 };
 

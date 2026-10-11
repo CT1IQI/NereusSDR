@@ -177,6 +177,9 @@ struct Harness {
             engine->rxBlockReady(sliceA, left.constData(), kDspFrames);
             engine->rxBlockReady(sliceB, right.constData(), kDspFrames);
         }
+        // R-AUD-SEND: no DSP callback follows the last one here; see
+        // DaemonAudioSource::handOverPendingForTest().
+        controller.handOverPendingAudioForTest();
     }
 };
 

@@ -195,6 +195,14 @@ public:
     {
         return m_ownerWaiting.load(std::memory_order_acquire);
     }
+    /// Test seam, the feeding thread only, no production caller: see
+    /// DaemonAudioSource::handOverPendingForTest().
+    void handOverPendingCaptureForTest()
+    {
+        if (m_source) {
+            m_source->handOverPendingForTest();
+        }
+    }
 #endif
 
 signals:
