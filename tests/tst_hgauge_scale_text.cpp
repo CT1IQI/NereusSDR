@@ -29,6 +29,11 @@
 //     a clear column between them and their neighbors;
 //   - the numbers between them are, pixel for pixel, where centering on
 //     the tick puts them.
+// The text these cases compare the gauge with is drawn by a widget, the
+// way the gauge draws its own, and taken with grab() as well. Drawn on a
+// QImage instead it went through another painter and picture format, and
+// on Linux (FreeType) that text was not the gauge's text pixel for pixel:
+// a whole "1" measured 4 columns on the image and 5 in the gauge.
 
 #include <QtTest/QtTest>
 
@@ -36,6 +41,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPixmap>
+#include <QWidget>
 
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
@@ -74,10 +80,16 @@ QList<QStringList> appLabelSets()
     };
 }
 
+// A widget's picture, never shown.
+QImage picture(QWidget& widget)
+{
+    return widget.grab().toImage().convertToFormat(QImage::Format_ARGB32);
+}
+
 QImage render(HGauge& gauge)
 {
     gauge.resize(kGaugeWidth, gauge.height());
-    return gauge.grab().toImage().convertToFormat(QImage::Format_ARGB32);
+    return picture(gauge);
 }
 
 // Ink is a pixel that differs from the background by more than the faint
@@ -178,31 +190,81 @@ QFont scaleFontOf(const HGauge& gauge, int pixelSize)
     return font;
 }
 
-// A canvas the size of the gauge's picture, in the gauge's background
-// color and at its dpi, to draw reference text on.
-QImage referenceCanvas(const QImage& gaugeImage, int dpi)
+// One piece of scale text: its box, how it sits in the box, its color.
+struct ScaleText {
+    QRect box;
+    Qt::Alignment alignment;
+    QString text;
+    QColor color;
+};
+
+// Draws scale text as HGauge::paintEvent does: a painter on the widget,
+// antialiasing on, the scale font made from the painter's own family, the
+// text measured and then drawn into a box with drawText(). It has the
+// gauge's size and font, and its picture is taken with grab() like the
+// gauge's, so the text goes through the same painter, paint device and
+// picture format as the gauge's own numbers.
+class ScaleTextReference : public QWidget
 {
-    QImage canvas(gaugeImage.size(), QImage::Format_ARGB32_Premultiplied);
-    const int dotsPerMeter = qRound(dpi / 0.0254);
-    canvas.setDotsPerMeterX(dotsPerMeter);
-    canvas.setDotsPerMeterY(dotsPerMeter);
-    canvas.fill(gaugeImage.pixel(0, 0));
-    return canvas;
+public:
+    ScaleTextReference(const HGauge& gauge, int pixelSize, const QList<ScaleText>& texts)
+        : m_pixelSize(pixelSize), m_texts(texts)
+    {
+        setFont(gauge.font());
+        resize(gauge.size());
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        QFont font(p.font().family(), 7);
+        if (m_pixelSize > 0) { font.setPixelSize(m_pixelSize); }
+        p.setFont(font);
+        const QFontMetrics fm = p.fontMetrics();
+        for (const ScaleText& t : m_texts) {
+            p.setPen(t.color);
+            fm.horizontalAdvance(t.text);
+            p.drawText(t.box, t.alignment, t.text);
+        }
+    }
+
+private:
+    int m_pixelSize;
+    QList<ScaleText> m_texts;
+};
+
+// A label with nothing to cut it: drawn in the middle of a widget the
+// size of the gauge, flush to the side the gauge aligns it to. The box
+// starts and ends on a whole pixel, as the gauge's does.
+QImage wholeLabel(const HGauge& gauge, int pixelSize, const QString& label,
+                  const QColor& color, Qt::Alignment side)
+{
+    ScaleTextReference reference(
+        gauge, pixelSize,
+        {{QRect(60, kScaleTop, 80, gauge.height() - kScaleTop), side | Qt::AlignTop, label, color}});
+    return picture(reference);
 }
 
-// How many columns of ink a label has when nothing can cut it: drawn in
-// the middle of a canvas, flush to the side the gauge aligns it to.
-int wholeInkColumns(const QImage& gaugeImage, const QString& label, const QFont& font,
-                    const QColor& color, Qt::Alignment side, int dpi)
+// The pixels of columns [fromColumn, toColumn] from the scale's first row
+// down, as text for a failure message: one line a row, each pixel as how
+// far its red, green and blue are from the background's.
+QString pixelsOf(const QImage& image, int fromColumn, int toColumn)
 {
-    QImage canvas = referenceCanvas(gaugeImage, dpi);
-    QPainter p(&canvas);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setFont(font);
-    p.setPen(color);
-    p.drawText(QRect(60, kScaleTop, 80, canvas.height() - kScaleTop), side | Qt::AlignTop, label);
-    p.end();
-    return inkSpan(canvas, 1, canvas.width(), kScaleTop).width();
+    const QRgb background = image.pixel(0, 0);
+    QString out;
+    for (int y = kScaleTop; y < image.height(); ++y) {
+        out += QLatin1Char('\n');
+        for (int x = qMax(0, fromColumn); x <= toColumn && x < image.width(); ++x) {
+            const QRgb pixel = image.pixel(x, y);
+            const int far = qMax(qAbs(qRed(pixel) - qRed(background)),
+                                 qMax(qAbs(qGreen(pixel) - qGreen(background)),
+                                      qAbs(qBlue(pixel) - qBlue(background))));
+            out += QStringLiteral("%1 ").arg(far, 2, 16, QLatin1Char('0'));
+        }
+    }
+    return out;
 }
 
 // Where the gauge puts tick i of n: the bar runs from 2 px inside the left
@@ -404,24 +466,30 @@ void TestHGaugeScaleText::endNumbersAreInsideTheGauge(int pixelSize)
         QVERIFY2(first.last <= secondLeft - 2,
                  qPrintable(QStringLiteral("%1: the first number reaches column %2, its neighbor starts at %3")
                                 .arg(what).arg(first.last).arg(secondLeft)));
-        const int firstWhole = wholeInkColumns(image, labels.first(), font,
-                                               QColor(Style::kGaugeNormal), Qt::AlignLeft,
-                                               gauge.logicalDpiY());
-        QVERIFY2(first.width() == firstWhole,
-                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink")
-                                .arg(what, labels.first()).arg(first.width()).arg(firstWhole)));
+        const QImage firstAlone = wholeLabel(gauge, pixelSize, labels.first(),
+                                             QColor(Style::kGaugeNormal), Qt::AlignLeft);
+        const InkSpan firstWhole = inkSpan(firstAlone, 1, w, kScaleTop);
+        QVERIFY2(first.width() == firstWhole.width(),
+                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink\n"
+                                           "in the gauge:%5\nwhole:%6")
+                                .arg(what, labels.first()).arg(first.width()).arg(firstWhole.width())
+                                .arg(pixelsOf(image, first.first - 2, first.last + 2),
+                                     pixelsOf(firstAlone, firstWhole.first - 2, firstWhole.last + 2))));
 
         const InkSpan last = inkSpan(image, beforeLastRight + 1, w, kScaleTop);
         QVERIFY2(last.first >= beforeLastRight + 2,
                  qPrintable(QStringLiteral("%1: the last number starts at column %2, its neighbor ends at %3")
                                 .arg(what).arg(last.first).arg(beforeLastRight)));
         QVERIFY2(last.last <= w - 2, qPrintable(what));
-        const int lastWhole = wholeInkColumns(image, labels.last(), font,
-                                              QColor(Style::kGaugeDanger), Qt::AlignRight,
-                                              gauge.logicalDpiY());
-        QVERIFY2(last.width() == lastWhole,
-                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink")
-                                .arg(what, labels.last()).arg(last.width()).arg(lastWhole)));
+        const QImage lastAlone = wholeLabel(gauge, pixelSize, labels.last(),
+                                            QColor(Style::kGaugeDanger), Qt::AlignRight);
+        const InkSpan lastWhole = inkSpan(lastAlone, 1, w, kScaleTop);
+        QVERIFY2(last.width() == lastWhole.width(),
+                 qPrintable(QStringLiteral("%1: \"%2\" shows %3 of its %4 columns of ink\n"
+                                           "in the gauge:%5\nwhole:%6")
+                                .arg(what, labels.last()).arg(last.width()).arg(lastWhole.width())
+                                .arg(pixelsOf(image, last.first - 2, last.last + 2),
+                                     pixelsOf(lastAlone, lastWhole.first - 2, lastWhole.last + 2))));
     }
 }
 
@@ -444,17 +512,14 @@ void TestHGaugeScaleText::innerNumbersAreCenteredOnTheirTicks(int pixelSize)
 
         // The numbers as the gauge has always drawn them: each centered on
         // its tick in a 40 px slot.
-        QImage reference = referenceCanvas(image, gauge.logicalDpiY());
-        QPainter p(&reference);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setFont(font);
-        p.setPen(QColor(Style::kGaugeNormal));
+        QList<ScaleText> centered;
         for (int i = 1; i < n - 1; ++i) {
-            p.drawText(QRect(tickX(i, n, w) - 20, kScaleTop, 40, image.height() - kScaleTop),
-                       Qt::AlignHCenter | Qt::AlignTop, labels[i]);
+            centered.append({QRect(tickX(i, n, w) - 20, kScaleTop, 40, image.height() - kScaleTop),
+                             Qt::AlignHCenter | Qt::AlignTop, labels[i], QColor(Style::kGaugeNormal)});
         }
-        p.end();
-        reference = reference.convertToFormat(QImage::Format_ARGB32);
+        ScaleTextReference drawn(gauge, pixelSize, centered);
+        const QImage reference = picture(drawn);
+        QCOMPARE(reference.size(), image.size());
 
         for (int i = 1; i < n - 1; ++i) {
             const int half = (metrics.horizontalAdvance(labels[i]) + 1) / 2 + 1;
@@ -462,8 +527,11 @@ void TestHGaugeScaleText::innerNumbersAreCenteredOnTheirTicks(int pixelSize)
             QVERIFY2(inkSpan(image, box.left(), box.right() + 1, kScaleTop).width() > 0,
                      qPrintable(labels[i]));
             QVERIFY2(image.copy(box) == reference.copy(box),
-                     qPrintable(QStringLiteral("%1: \"%2\" is not where centering on its tick puts it")
-                                    .arg(labels.join(QLatin1Char(' ')), labels[i])));
+                     qPrintable(QStringLiteral("%1: \"%2\" is not where centering on its tick puts it\n"
+                                               "the gauge:%3\ncentered on the tick:%4")
+                                    .arg(labels.join(QLatin1Char(' ')), labels[i],
+                                         pixelsOf(image, box.left(), box.right()),
+                                         pixelsOf(reference, box.left(), box.right()))));
         }
     }
 }
