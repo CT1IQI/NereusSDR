@@ -18,6 +18,10 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-11: hasListed() and firstListed() (R-AUD-03): a reader that
+//               saves or compares what it reads can wait for a first list
+//               that is slow to arrive. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -45,9 +49,22 @@ public:
                                                          AudioDeviceDirection direction) const = 0;
     virtual void rescanOlderDrivers() = 0;
 
+    // R-AUD-03: false until the first device list is in.  The catalog
+    // waits a few seconds for it at its start and goes on without it when
+    // the system is slow to list, so until then the getters answer as if
+    // nothing were installed.  A reader that only shows the list follows
+    // devicesChanged(); one that saves what it reads, or compares it with
+    // what it saved, asks this first and waits for firstListed().  A
+    // catalog whose lists are there from the start (every one but the
+    // engine's) has always listed.
+    virtual bool hasListed() const { return true; }
+
 signals:
     void devicesChanged();
     void defaultChanged(NereusSDR::AudioDeviceDirection direction);
+    // R-AUD-03: hasListed() has become true.  Once for each start, after
+    // the list is in place (and after devicesChanged, when it differs).
+    void firstListed();
     // R-AUD-06: a rescanOlderDrivers() has finished; the list it made has
     // been adopted (devicesChanged, when it differs, came first).
     void olderDriversRescanned();

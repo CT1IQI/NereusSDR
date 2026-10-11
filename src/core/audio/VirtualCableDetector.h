@@ -146,6 +146,15 @@ public:
                                                  const QString& lastCsv,
                                                  const QString& lastSource,
                                                  const QString& source);
+
+    // What a "new cables" notice has to offer: the cable ends a VAX slot
+    // can be bound to.  That is the playback end of a third-party cable.
+    // A cable's recording end is the other program's side, and NereusSDR's
+    // own VAX devices are fed directly and need no binding (macOS and
+    // Linux list them as recording devices only).  A caller opens the
+    // notice only when this is not empty, so the notice never opens with
+    // nothing to bind.
+    static QVector<DetectedCable> bindableEnds(const QVector<DetectedCable>& cables);
 };
 
 } // namespace NereusSDR

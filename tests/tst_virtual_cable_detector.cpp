@@ -386,6 +386,39 @@ private slots:
         const auto fresh = VirtualCableDetector::diffNewCables(current, prevCsv);
         QVERIFY(fresh.isEmpty());
     }
+
+    // ── bindableEnds(): what a "new cables" notice has to offer ────────
+    // R-AUD-03: a VAX slot is bound to the playback end of a third-party
+    // cable, and to nothing else.
+    void bindableEndsKeepsThirdPartyPlaybackEnds() {
+        QVector<DetectedCable> all;
+        all.push_back(DetectedCable{VirtualCableProduct::VbCableA, "CABLE-A Input", false, 1});
+        all.push_back(DetectedCable{VirtualCableProduct::VbCableA, "CABLE-A Output", true, 1});
+        all.push_back(DetectedCable{VirtualCableProduct::NereusSdrVax, "NereusSDR VAX 1", false, 1});
+        all.push_back(DetectedCable{VirtualCableProduct::Voicemeeter, "VoiceMeeter Input", false, 0});
+
+        const auto ends = VirtualCableDetector::bindableEnds(all);
+        QCOMPARE(ends.size(), 2);
+        QCOMPARE(ends[0].deviceName, QStringLiteral("CABLE-A Input"));
+        QCOMPARE(ends[1].deviceName, QStringLiteral("VoiceMeeter Input"));
+    }
+    // What a Mac lists for NereusSDR's own VAX: four recording devices.
+    // There is nothing in them to bind, so a notice has nothing to offer.
+    void bindableEndsOfOwnVaxRecordingDevicesIsEmpty() {
+        QVector<DetectedCable> all;
+        for (int i = 1; i <= 4; ++i) {
+            all.push_back(DetectedCable{VirtualCableProduct::NereusSdrVax,
+                                        QStringLiteral("NereusSDR VAX %1").arg(i), true, i});
+        }
+        QVERIFY(VirtualCableDetector::bindableEnds(all).isEmpty());
+    }
+    void bindableEndsOfARecordingEndAloneIsEmpty() {
+        QVector<DetectedCable> all;
+        all.push_back(DetectedCable{VirtualCableProduct::VbCable,
+                                    "CABLE Output (VB-Audio Virtual Cable)", true, 0});
+        QVERIFY(VirtualCableDetector::bindableEnds(all).isEmpty());
+        QVERIFY(VirtualCableDetector::bindableEnds({}).isEmpty());
+    }
 };
 
 QTEST_APPLESS_MAIN(TstVirtualCableDetector)

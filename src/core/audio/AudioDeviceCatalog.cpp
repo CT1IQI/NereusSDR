@@ -18,6 +18,8 @@
 //   2026-10-10: load fix (R-AUD-03): the debounce window's starts and
 //               length are counted for tests, and a test can end a window.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: hasListed() and firstListed() (R-AUD-03).  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -372,6 +374,7 @@ void AudioDeviceCatalog::start()
     if (m_thread) {
         return;
     }
+    m_listed = false;
     m_state = std::make_shared<State>();
     m_state->backends = m_backends;
     m_state->claims = m_claims;
@@ -498,6 +501,7 @@ void AudioDeviceCatalog::stop()
     }
     m_worker = nullptr;
     m_state.reset();
+    m_listed = false;
 }
 
 void AudioDeviceCatalog::setDebounceIntervalForTest(int ms)
@@ -581,6 +585,11 @@ std::optional<AudioDeviceInfo> AudioDeviceCatalog::defaultDevice(AudioBackendId 
     return std::nullopt;
 }
 
+bool AudioDeviceCatalog::hasListed() const
+{
+    return m_listed;
+}
+
 void AudioDeviceCatalog::rescanOlderDrivers()
 {
     if (m_worker == nullptr) {
@@ -602,12 +611,14 @@ void AudioDeviceCatalog::adoptListing(Listing listing)
     bool devicesDiffer = false;
     bool outputDefaultDiffers = false;
     bool inputDefaultDiffers = false;
+    bool everyBackendAnswered = true;
     for (std::size_t i = 0; i < listing.backends.size(); ++i) {
         BackendSnapshot& next = listing.backends[i];
         const BackendSnapshot& prev = m_snapshot[i];
         if (next.held) {
             next.defaultOutput = prev.defaultOutput;
             next.defaultInput = prev.defaultInput;
+            everyBackendAnswered = false;
         }
         applyDefault(next.outputs, next.defaultOutput);
         applyDefault(next.inputs, next.defaultInput);
@@ -631,6 +642,12 @@ void AudioDeviceCatalog::adoptListing(Listing listing)
     }
     if (inputDefaultDiffers) {
         emit defaultChanged(AudioDeviceDirection::Input);
+    }
+    // R-AUD-03: the first list of this run that every backend answered.
+    // Until it, an empty list says nothing about what is installed.
+    if (!m_listed && everyBackendAnswered && m_thread) {
+        m_listed = true;
+        emit firstListed();
     }
 }
 

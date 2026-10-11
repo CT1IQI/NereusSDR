@@ -24,6 +24,9 @@
 //   2026-10-09 - native audio plan Task 18 (R-AUD-03, R-AUD-06): the
 //                render-end payloads and the live and Rescan now cases.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - the header badge (R-AUD-03): the "new cables" notice names
+//                the system it runs on. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -523,6 +526,64 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(dlg.scenarioForTest(), FirstRunScenario::WindowsCablesFound, 1000);
         QCOMPARE(renderEnds(dlg), QStringList{kCableA});
         QCOMPARE(dlg.suggestedBindingsForTest().at(0).second, kCableA);
+    }
+
+    // ── 15. R-AUD-03: the header badge names the system ────────────────
+    void systemBadgeTextNamesEachSystem()
+    {
+        QCOMPARE(VaxFirstRunDialog::systemBadgeText(SoundSystemLine::System::Mac),
+                 QStringLiteral("MACOS"));
+        QCOMPARE(VaxFirstRunDialog::systemBadgeText(SoundSystemLine::System::Linux),
+                 QStringLiteral("LINUX"));
+        QCOMPARE(VaxFirstRunDialog::systemBadgeText(SoundSystemLine::System::Windows),
+                 QStringLiteral("WINDOWS"));
+    }
+
+    // The "new cables" notice opens on every system (the Digital modes
+    // page's Rescan offers a new third-party cable on a Mac as on Windows),
+    // so its badge names the one this build runs on. It said WINDOWS on a
+    // Mac and on Linux.
+    void rescanNoticeBadgeNamesThisSystem()
+    {
+#if defined(Q_OS_MAC)
+        const QString here = QStringLiteral("MACOS");
+#elif defined(Q_OS_WIN)
+        const QString here = QStringLiteral("WINDOWS");
+#else
+        const QString here = QStringLiteral("LINUX");
+#endif
+        VaxFirstRunDialog dlg(FirstRunScenario::RescanNewCables, rescanNewCablesPayload());
+        auto* badge = dlg.findChild<QLabel*>(QStringLiteral("platformBadge"));
+        QVERIFY(badge != nullptr);
+        QCOMPARE(badge->text(), here);
+    }
+
+    // The first-run dialogs are each one system's own and keep its name.
+    void firstRunBadgesNameTheirOwnSystem_data()
+    {
+        QTest::addColumn<int>("scenarioInt");
+        QTest::addColumn<QString>("badge");
+        QTest::newRow("windows-cables") << static_cast<int>(FirstRunScenario::WindowsCablesFound)
+                                        << QStringLiteral("WINDOWS");
+        QTest::newRow("windows-none") << static_cast<int>(FirstRunScenario::WindowsNoCables)
+                                      << QStringLiteral("WINDOWS");
+        QTest::newRow("mac") << static_cast<int>(FirstRunScenario::MacNative)
+                             << QStringLiteral("MACOS");
+        QTest::newRow("linux") << static_cast<int>(FirstRunScenario::LinuxNative)
+                               << QStringLiteral("LINUX");
+    }
+    void firstRunBadgesNameTheirOwnSystem()
+    {
+        QFETCH(int, scenarioInt);
+        QFETCH(QString, badge);
+        const auto scenario = static_cast<FirstRunScenario>(scenarioInt);
+        const QVector<DetectedCable> payload =
+            scenario == FirstRunScenario::WindowsCablesFound ? windowsCablesPayload()
+                                                             : QVector<DetectedCable>{};
+        VaxFirstRunDialog dlg(scenario, payload);
+        auto* label = dlg.findChild<QLabel*>(QStringLiteral("platformBadge"));
+        QVERIFY(label != nullptr);
+        QCOMPARE(label->text(), badge);
     }
 };
 

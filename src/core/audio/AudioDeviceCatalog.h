@@ -43,6 +43,11 @@
 //               the debounce window was started, and ends a window itself,
 //               so no debounce test rests on the wall clock. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: hasListed() and firstListed() (R-AUD-03): false from
+//               start() until a list every backend answered is in, so a
+//               first list slower than kStartWaitMs is told from an empty
+//               system. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -94,6 +99,11 @@ public:
     std::optional<AudioDeviceInfo> defaultDevice(AudioBackendId id,
                                                  AudioDeviceDirection direction) const override;
     void rescanOlderDrivers() override;
+    // False from start() until a list is in that every backend answered
+    // (one skipped because an earlier call into it has not returned is not
+    // an answer); false while stopped.  start() itself returns with it
+    // false when the first list took longer than kStartWaitMs.
+    bool hasListed() const override;
 
 private:
     struct BackendSnapshot {
@@ -131,6 +141,7 @@ private:
     // Main thread only.
     std::vector<BackendSnapshot> m_snapshot;
     std::uint64_t m_adoptedGeneration = 0;
+    bool m_listed = false;               // hasListed(), for this run
 
     // One run's thread, worker and the state they share.  The worker
     // deletes itself on its own thread when the thread finishes; the
