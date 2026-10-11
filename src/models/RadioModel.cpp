@@ -1110,6 +1110,10 @@
 //                resampled to the mix rate (it was mixed at 192 kHz on a
 //                Protocol 2 radio). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - setPgxlOperateFromApplet: the local Power Genius OPERATE
+//                click no longer needs the station amplifier object, which
+//                only a Core that shares its accessories has. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -8210,6 +8214,34 @@ bool RadioModel::setPgxlOperateForStation(bool on, QString* reason)
     // actually-used wire command for OPERATE is `operate=1` (key=value),
     // not bare `operate`. PGXL rejected `operate` / `standby` with error
     // 50000016 every click.
+    m_pgxlConnection->sendCommand(on ? QStringLiteral("operate=1")
+                                     : QStringLiteral("operate=0"));
+    if (reason) { reason->clear(); }
+    return true;
+}
+
+// This computer's own applet (MainWindow's AmpApplet::operateToggled
+// handler). The handler called setPgxlOperateForStation, whose first check
+// asks for the station amplifier object; only nereusd makes one
+// (enableStationAccessoryIdentity), so on a desktop app the click was
+// refused and nothing was sent. The app owns its PgxlConnection either way.
+bool RadioModel::setPgxlOperateFromApplet(bool on, QString* reason)
+{
+    if (m_role != Role::Local) {
+        if (reason) {
+            *reason = QStringLiteral("This window does not own the Power Genius connection.");
+        }
+        return false;
+    }
+    if (pgxlSwitchRefusal(reason, /*standbyRequested=*/!on)) {
+        return false;
+    }
+    if (!m_pgxlConnection || !m_pgxlConnection->isConnected()) {
+        if (reason) { *reason = QStringLiteral("The Power Genius is not connected."); }
+        return false;
+    }
+    // The wire line: see setPgxlOperateForStation above (bench-fix
+    // 2026-05-19).
     m_pgxlConnection->sendCommand(on ? QStringLiteral("operate=1")
                                      : QStringLiteral("operate=0"));
     if (reason) { reason->clear(); }

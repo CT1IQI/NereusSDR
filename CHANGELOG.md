@@ -73,6 +73,9 @@ Advanced, and each control appears on one page only.
   (a third of a second and more on a Rock 5C). The timed save now writes the
   file on its own thread. Saves at quit, at disconnect and at station handover
   still finish before the program goes on.
+- The Power Genius XL's OPERATE button works again in a NereusSDR window
+  that runs its own radio. Since 2026.10.0 the click was sent only by the
+  headless Core (`nereusd`); in the desktop app it did nothing.
 
 ## [2026.10.0] - 2026-10-05
 
