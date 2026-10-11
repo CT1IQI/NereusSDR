@@ -1182,6 +1182,111 @@ private slots:
         QVERIFY(expected.has_value());
         QCOMPARE(restarted->traceDbm, expected->traceDbm);
     }
+
+    // R-DISP-RETUNE (third wave): the endpoint names the picture its frames
+    // continue: the context generation at which the planes now running were
+    // started. It stays through a context of the same picture and of that
+    // picture moved, and takes the new generation whenever a plane starts
+    // again.
+    void thePictureIsNamedByTheGenerationItsPlanesStartedAt()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = 3;
+        req.trace.averageAlpha = 0.5;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        // A first configure starts the planes.
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::New);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+
+        // Same: a new dBm range.
+        req.minDbm = -150.0f;
+        ++source.contextGeneration;
+        endpoint.awaitContext();
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Same);
+        QCOMPARE(endpoint.context().codec.contextGeneration, quint32(5));
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+
+        // Moved: the view centre.
+        req.centreHz += 12'000.0;
+        ++source.contextGeneration;
+        endpoint.awaitContext();
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+
+        // Moved: the source, relabelled through a retune.
+        endpoint.awaitMovedSource(source.sourceGeneration, source.sourceGeneration + 1);
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        source.centreHz += 100.0;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.context().codec.contextGeneration, quint32(7));
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+
+        // A configure that is refused changes nothing.
+        SpectrumEndpointRequest bad = req;
+        bad.trace.averageMode = 4;
+        ++source.contextGeneration;
+        QVERIFY(!endpoint.configure(bad, source));
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+
+        // New: one plane started again (another averaging mode), the other
+        // was kept. The picture is new as soon as either plane is.
+        req.waterfall.averageMode = 1;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::Same);
+        QCOMPARE(endpoint.waterfallPicture(), SpectrumPictureKind::New);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(9));
+
+        // New: the source restarted (a generation nobody said continues the
+        // one held), at the same centre, size and rate.
+        endpoint.awaitContext();
+        ++source.sourceGeneration;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::New);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(10));
+
+        // New: the planes were dropped.
+        endpoint.reset();
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.pictureGeneration(), quint32(11));
+    }
+
+    // Average mode -1 holds a maximum per pixel, and a pixel shows another
+    // frequency after a move: that plane starts again, so the picture is new.
+    void aHeldMaximumPlaneMovedStartsANewPicture()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.trace.averageMode = -1;
+        req.waterfall.averageMode = 3;
+        req.waterfall.averageAlpha = 0.5;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+        // Its dBm range alone: the same picture.
+        req.maxDbm = -10.0f;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.picture(), SpectrumPictureKind::Same);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(4));
+        // Moved.
+        req.centreHz += 12'000.0;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.tracePicture(), SpectrumPictureKind::New);
+        QCOMPARE(endpoint.waterfallPicture(), SpectrumPictureKind::Moved);
+        QCOMPARE(endpoint.pictureGeneration(), quint32(6));
+    }
 };
 
 QTEST_MAIN(TstSpectrumEndpoint)

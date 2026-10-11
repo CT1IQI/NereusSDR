@@ -5,6 +5,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): configure records the context
+//               generation at which the planes now running were started
+//               (pictureGeneration). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE: configure tells a picture moved in
 //               frequency from a new one and keeps its averaged planes;
 //               awaitMovedSource. J.J. Boyd (KG4VCF), AI-assisted via
@@ -355,6 +359,11 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     }
     const bool traceKept = tracePicture != SpectrumPictureKind::New;
     const bool waterfallKept = waterfallPicture != SpectrumPictureKind::New;
+    // R-DISP-RETUNE: the picture these planes draw is named by the context
+    // generation at which they were started. Each branch below that makes a
+    // plane anew notes it here, so the name is the record of what was done
+    // to the planes and not a second reading of the two configs.
+    bool planeStarted = false;
     if (extendedView) {
         if (traceKept) {
             extendedTrace = std::move(m_extendedTraceReducer);
@@ -363,6 +372,7 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
             extendedTrace = std::make_unique<ExtendedSpectrumReducer>();
             extendedTrace->setConfig(traceConfig);
             extendedTrace->clearAveraging();
+            planeStarted = true;
         }
         if (waterfallKept) {
             extendedWaterfall = std::move(m_extendedWaterfallReducer);
@@ -371,6 +381,7 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
             extendedWaterfall = std::make_unique<ExtendedSpectrumReducer>();
             extendedWaterfall->setConfig(waterfallConfig);
             extendedWaterfall->clearAveraging();
+            planeStarted = true;
         }
     } else {
         if (traceKept) {
@@ -380,6 +391,7 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
             trace = std::make_unique<SpectrumReducer>();
             trace->setConfig(traceConfig);
             trace->clearAveraging();
+            planeStarted = true;
         }
         if (waterfallKept) {
             waterfall = std::move(m_waterfallReducer);
@@ -388,6 +400,7 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
             waterfall = std::make_unique<SpectrumReducer>();
             waterfall->setConfig(waterfallConfig);
             waterfall->clearAveraging();
+            planeStarted = true;
         }
     }
 
@@ -407,6 +420,9 @@ bool SpectrumEndpoint::configure(const SpectrumEndpointRequest& request,
     m_extendedView = extendedView;
     m_tracePicture = tracePicture;
     m_waterfallPicture = waterfallPicture;
+    if (planeStarted) {
+        m_pictureGeneration = accepted.codec.contextGeneration;
+    }
     m_planesHeld = true;
     m_configured = true;
     return true;

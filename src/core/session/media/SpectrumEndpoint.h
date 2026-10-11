@@ -206,6 +206,16 @@ public:
         return m_tracePicture < m_waterfallPicture ? m_tracePicture : m_waterfallPicture;
     }
 
+    /// R-DISP-RETUNE: which picture the accepted context's frames continue,
+    /// named by the context generation at which the planes now running were
+    /// started. configure() sets it where it makes a plane anew and leaves
+    /// it where it carries both planes on, so it is the record of what was
+    /// done to the planes: unchanged through SpectrumPictureKind::Same and
+    /// Moved, the new context's generation for New. A client compares it
+    /// with the picture it shows instead of working the verdict out again
+    /// from the fields of the context.
+    quint32 pictureGeneration() const { return m_pictureGeneration; }
+
     /// Ends the accepted context and keeps the reduction histories for the
     /// next configure to judge (R-DISP-HOLD). Until that configure the
     /// endpoint is not configured and produces nothing, exactly as after
@@ -235,6 +245,7 @@ private:
     bool m_planesHeld {false};
     SpectrumPictureKind m_tracePicture {SpectrumPictureKind::New};
     SpectrumPictureKind m_waterfallPicture {SpectrumPictureKind::New};
+    quint32 m_pictureGeneration {0};
     SpectrumEndpointRequest m_request;
     SpectrumEndpointSourceContext m_sourceContext;
     SpectrumEndpointContext m_context;
