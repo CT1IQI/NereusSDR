@@ -9,6 +9,10 @@
 //   2026-10-08 - The plate limit is the product: limited and centred with
 //                 no seam, and the parent's background outside the bezel.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The look has no Lock setting: a dial's container committed
+//                 locked stays locked with the look off and is stored
+//                 unlocked with it on, and its menu commits in both.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QLabel>
@@ -541,7 +545,8 @@ private slots:
         QVERIFY(!station.entry(QStringLiteral("dial-follow")).config.contains(QLatin1String(SMeterDialContent::kFaceKey)));
     }
 
-    // Locked and editing, as the Longpath needle: a locked container locks
+    // Locked and editing, as the Longpath needle: a locked container (the
+    // workspace look off; the look has no Lock) locks
     // its arrangement, not its contents' settings (Container Settings'
     // property editor still edits a needle's properties), so the dial's
     // menu opens and its change commits; while Container Settings edits
@@ -572,22 +577,31 @@ private slots:
         QVERIFY(!needleEdits.isEmpty());
         QVERIFY(needleEdits.last().endsWith(QStringLiteral("Peak")));
 
-        // The dial in a locked container: the menu is offered and commits.
-        DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-locked"))}, true);
-        QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
-        QVERIFY(station.exposed);
-        QVERIFY(station.store.snapshot().containers.first().locked);
-        SMeterWidget* dial = dialFor(*station.host(), QStringLiteral("dial-locked"));
-        QVERIFY(dial);
-        std::unique_ptr<QMenu> menu(dial->buildContextMenuForTesting());
-        QAction* swr = menuAction(menu.get(), QStringLiteral("SWR"));
-        QVERIFY(swr);
-        QVERIFY(swr->isEnabled());
-        swr->trigger();
-        settle();
-        QCOMPARE(station.entry(QStringLiteral("dial-locked")).config.value(QLatin1String(SMeterDialContent::kTxModeKey)).toString(),
-                 QStringLiteral("SWR"));
-        QVERIFY(station.store.snapshot().containers.first().locked);
+        // The dial in a container committed locked: the menu is offered and
+        // commits. With the workspace look off the container stays locked
+        // through the commit. The look has no Lock setting
+        // (ContainerManager::lockApplies), so there the same container is
+        // stored unlocked, and the menu commits all the same.
+        for (const bool look : {false, true}) {
+            WorkspacePreview::setEnabledForTest(look);
+            auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(true); });
+            const char* const which = look ? "workspace look on" : "workspace look off";
+            DialStation station(registry, {dialEntry(registry, QStringLiteral("dial-locked"))}, true);
+            QVERIFY2(station.committed.status == CommitStatus::Saved, qPrintable(station.committed.error));
+            QVERIFY2(station.exposed, which);
+            QVERIFY2(station.store.snapshot().containers.first().locked == !look, which);
+            SMeterWidget* dial = dialFor(*station.host(), QStringLiteral("dial-locked"));
+            QVERIFY2(dial, which);
+            std::unique_ptr<QMenu> menu(dial->buildContextMenuForTesting());
+            QAction* swr = menuAction(menu.get(), QStringLiteral("SWR"));
+            QVERIFY2(swr, which);
+            QVERIFY2(swr->isEnabled(), which);
+            swr->trigger();
+            settle();
+            QCOMPARE(station.entry(QStringLiteral("dial-locked")).config.value(QLatin1String(SMeterDialContent::kTxModeKey)).toString(),
+                     QStringLiteral("SWR"));
+            QVERIFY2(station.store.snapshot().containers.first().locked == !look, which);
+        }
 
         // Container Settings' preview: neither takes the mouse, neither commits.
         QWidget previewParent;
