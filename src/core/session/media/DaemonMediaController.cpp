@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-10: R-AUD-SEND: receive audio leaves on the sender thread
+//               through AudioSendRoute; syncAudioRoutes copies the peers,
+//               the SSRC rewrites and the replacement in at every change.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04: Name the microphone-block wake interval accurately and
 //               report its worker/acquire split. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -913,6 +917,14 @@ DaemonMediaController::~DaemonMediaController()
     m_displayPacer.endSession();
     m_displayPacerInitialized = false;
     m_epoch = 0;
+    // R-AUD-SEND: clearSession() stopped every sender and took the receiver
+    // and headphones senders from the thread. The speakers' sender goes
+    // now, and the thread is joined before any member is destroyed.
+    if (m_audioSender) {
+        detachAudioSender(m_audioSender.get(), m_audioRoute);
+    }
+    m_audioRoute->close();
+    m_sendThread.stop();
     releaseOwnerMix();
     m_shared->leave(this);
 }
@@ -1474,6 +1486,7 @@ void DaemonMediaController::onSessionStarted(quint64 epoch)
     clearSession();
     m_lastSessionEpoch = epoch;
     m_epoch = epoch;
+    syncAudioRoutes();
     acquireOwnerMix();
     beginDisplayBudgetIfNeeded();
     refreshDisplayBudgetPacer();
@@ -1486,6 +1499,7 @@ void DaemonMediaController::onSessionEnded(quint64 epoch)
         m_displayPacer.endSession();
         m_displayPacerInitialized = false;
         m_epoch = 0;
+        syncAudioRoutes();
         releaseOwnerMix();
     }
 }
@@ -1936,6 +1950,7 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     m_sendSsrcRewrite.clear();
     m_micSsrcRewrite.clear();
     syncMicRoute();
+    syncAudioRoutes();
     wireCurrentPeer(peer, connectionId);
     const bool offerLossless = declaresAudioProfile && m_audioLosslessAllowed;
     // iPhone app plan Task 28 (R-IOS-16): a session through the remote
@@ -1958,12 +1973,14 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
                      declaresHeadphonesMix, declaresRemoteTx, declaresIq)) {
         m_displayDiagnosticsTimer.stop();
         m_peer.reset();
+        syncAudioRoutes();
         sendRejected(connectionId, 0, 0, QStringLiteral("The Core could not start audio and display."));
         return false;
     }
     m_receiverAudioNegotiated = declaresReceiverAudio;
     m_iqNegotiated = declaresIq;
     m_headphonesMixNegotiated = declaresHeadphonesMix;
+    syncAudioRoutes();
     // Parity Task 32: MON goes nowhere until the peer asks for a route.
     m_txMonitorNegotiated = declaresTxMonitor;
     m_monitorRevision = 0;
@@ -2164,22 +2181,101 @@ bool DaemonMediaController::radioIdleForReplace() const
     return mox == nullptr || mox->state() == MoxState::Rx;
 }
 
-bool DaemonMediaController::sendAudioRtp(MediaPeer* peer, const QByteArray& packet)
+void DaemonMediaController::AudioSendRoute::deliver(const QByteArray& packet)
 {
+    const std::lock_guard<std::mutex> lock(mutex);
+    if (!current) {
+        return;
+    }
     // A sender started before a replacement stamps the peer it started
     // with; the current peer sends and accepts only its own SSRCs.
-    const QByteArray current = rewriteRtpSsrc(packet, m_sendSsrcRewrite);
-    const bool accepted = peer->sendRtp(current);
-    if (m_replacement && m_replacementReady && peer == m_peer.get() && current.size() >= 12) {
-        const QList<quint32> from = audioSsrcsOf(peer);
-        const QList<quint32> to = audioSsrcsOf(m_replacement.get());
-        const quint32 ssrc = qFromBigEndian<quint32>(current.constData() + 8);
-        const qsizetype index = ssrc != 0 ? from.indexOf(ssrc) : -1;
-        if (index >= 0 && to.value(index) != 0) {
-            m_replacement->sendRtp(rewriteRtpSsrc(current, {{ssrc, to.value(index)}}));
+    const QByteArray out = rewriteRtpSsrc(packet, rewrite);
+    attempts.fetch_add(1, std::memory_order_acq_rel);
+    if (current->sendRtp(out)) {
+        accepted.fetch_add(1, std::memory_order_acq_rel);
+    } else {
+        rejected.fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (replacement && out.size() >= 12) {
+        const quint32 ssrc = qFromBigEndian<quint32>(out.constData() + 8);
+        const qsizetype index = ssrc != 0 ? replacementFrom.indexOf(ssrc) : -1;
+        if (index >= 0 && replacementTo.value(index) != 0) {
+            replacement->sendRtp(rewriteRtpSsrc(out, {{ssrc, replacementTo.value(index)}}));
         }
     }
-    return accepted;
+}
+
+void DaemonMediaController::AudioSendRoute::resetCounters()
+{
+    const std::lock_guard<std::mutex> lock(mutex);
+    attempts.store(0, std::memory_order_release);
+    accepted.store(0, std::memory_order_release);
+    rejected.store(0, std::memory_order_release);
+}
+
+void DaemonMediaController::AudioSendRoute::close()
+{
+    const std::lock_guard<std::mutex> lock(mutex);
+    current.reset();
+    rewrite.clear();
+    replacement.reset();
+    replacementFrom.clear();
+    replacementTo.clear();
+}
+
+void DaemonMediaController::attachAudioSender(DaemonAudioSender* sender,
+                                              const std::shared_ptr<AudioSendRoute>& route)
+{
+    // Before its first start: the capture bridge wakes the sender thread at
+    // each block, and every packet goes to the route, on that thread.
+    sender->setBlockWake(m_sendThread.wake());
+    sender->setPacketSink([route](const QByteArray& packet) { route->deliver(packet); });
+    m_sendThread.add(sender);
+}
+
+void DaemonMediaController::detachAudioSender(DaemonAudioSender* sender,
+                                              const std::shared_ptr<AudioSendRoute>& route)
+{
+    // Each lock is taken and let go in turn; none is held across another.
+    sender->stop();
+    if (route) {
+        route->close();
+    }
+    m_sendThread.remove(sender);
+    sender->setPacketSink({});
+}
+
+void DaemonMediaController::syncAudioRoutes()
+{
+    // Everything a send needs, read here on the controller's thread and
+    // copied into each route under its own lock. A sender delivers only
+    // while it runs, so a route is open whenever its sender exists and the
+    // peer can carry its stream; the sender's own start and stop gate the
+    // packets.
+    const bool peerUp = m_epoch != 0 && m_peer && m_peer->isReady();
+    const std::shared_ptr<MediaRtpSink> current = peerUp ? m_peer->audioRtpSink() : nullptr;
+    const bool copying = current && m_replacement && m_replacementReady;
+    const std::shared_ptr<MediaRtpSink> replacement =
+        copying ? m_replacement->audioRtpSink() : nullptr;
+    const QList<quint32> from = replacement ? audioSsrcsOf(m_peer.get()) : QList<quint32>();
+    const QList<quint32> to = replacement ? audioSsrcsOf(m_replacement.get()) : QList<quint32>();
+    const auto apply = [&](const std::shared_ptr<AudioSendRoute>& route, bool open) {
+        if (!route) {
+            return;
+        }
+        const std::lock_guard<std::mutex> lock(route->mutex);
+        route->current = open ? current : nullptr;
+        route->rewrite = open ? m_sendSsrcRewrite : QHash<quint32, quint32>();
+        route->replacement = open ? replacement : nullptr;
+        route->replacementFrom = open ? from : QList<quint32>();
+        route->replacementTo = open ? to : QList<quint32>();
+    };
+    apply(m_audioRoute, m_audioSender != nullptr);
+    for (const auto& [sliceId, stream] : m_receiverStreams) {
+        Q_UNUSED(sliceId);
+        apply(stream.route, stream.sender != nullptr && m_receiverAudioNegotiated);
+    }
+    apply(m_headphones.route, m_headphones.sender != nullptr && m_headphonesMixNegotiated);
 }
 
 std::optional<IceConfiguration> DaemonMediaController::mediaIceConfiguration()
@@ -2274,6 +2370,7 @@ bool DaemonMediaController::handleReplace(const QJsonObject& control)
     MediaPeer* const peer = m_replacement.get();
     const quint64 peerEpoch = m_epoch;
     m_replacementReady = false;
+    syncAudioRoutes();
     const auto current = [this, peer, peerEpoch] {
         return m_replacement.get() == peer && m_epoch == peerEpoch;
     };
@@ -2347,6 +2444,8 @@ void DaemonMediaController::onReplacementReady()
         m_micSsrcRewrite.insert(m_replacement->micAudioSsrc(), m_micReceiver->ssrc());
         syncMicRoute();
     }
+    // R-AUD-SEND: every audio packet goes to the new peer too from here.
+    syncAudioRoutes();
     m_replaceOverlapTimer.start(kReplaceOverlapMs);
     qCInfo(lcDaemonMedia) << "media replacement ready; audio on both connections";
 }
@@ -2407,6 +2506,10 @@ void DaemonMediaController::finishReplacement()
     m_peer = std::move(m_replacement);
     m_replacementId.clear();
     m_replacementReady = false;
+    // R-AUD-SEND: the new peer and the rewrite to its SSRCs go into every
+    // route together, so no packet meets one without the other. Until this
+    // returns a packet still goes to both peers, as during the overlap.
+    syncAudioRoutes();
     m_currentRouted = std::exchange(m_replacementRouted, false);
     MediaPeer* const peer = m_peer.get();
     const QString connectionId = peer->connectionId();
@@ -2439,6 +2542,7 @@ void DaemonMediaController::failReplacement(const QString& reason)
     const QString connectionId = std::exchange(m_replacementId, QString());
     MediaPeer* const peer = m_replacement.release();
     m_replacementReady = false;
+    syncAudioRoutes();
     if (m_micReceiver) {
         m_micSsrcRewrite.remove(peer->micAudioSsrc());
         syncMicRoute();
@@ -2460,6 +2564,8 @@ void DaemonMediaController::clearReplacement()
     m_retireDrainTimer.stop();
     m_replacementReady = false;
     m_replacementId.clear();
+    // R-AUD-SEND: the replacement leaves every route before it stops.
+    syncAudioRoutes();
     for (std::unique_ptr<MediaPeer>* slot : {&m_replacement, &m_retiring}) {
         if (*slot) {
             MediaPeer* const peer = slot->release();
@@ -3926,12 +4032,13 @@ void DaemonMediaController::reconcileReceiverAudio(int sliceId)
                 m_radioModel->audioEngine(), codecConfig, this);
             stream.sender->setSliceSource(sliceId);
             stream.sender->setCaptureClock([this] { return displayNowNs(); });
-            DaemonAudioSender* const sender = stream.sender.get();
-            connect(sender, &DaemonAudioSender::packetReady, this,
-                    [this, sliceId, sender](const QByteArray& packet) {
-                onReceiverAudioPacket(sliceId, sender, packet);
-            });
+            // R-AUD-SEND: drained and sent by the sender thread.
+            stream.route = std::make_shared<AudioSendRoute>();
+            attachAudioSender(stream.sender.get(), stream.route);
         }
+        // The route is open before the sender starts, so its first packet
+        // has somewhere to go.
+        syncAudioRoutes();
         const auto index = static_cast<size_t>(stream.streamIndex);
         const QList<quint32> ssrcs = m_peer->receiverAudioSsrcs();
         stream.sender->setProfile(stream.activeProfile);
@@ -4011,32 +4118,19 @@ void DaemonMediaController::sendReceiverAudioContext(int sliceId,
     sendControl(encodeReceiverAudioContext(message));
 }
 
-void DaemonMediaController::onReceiverAudioPacket(int sliceId, DaemonAudioSender* sender,
-                                                  const QByteArray& packet)
-{
-    // Emitted on the sender's owner thread. The identity checks keep a
-    // stopped or retired stream from reaching a replacement peer.
-    const auto it = m_receiverStreams.find(sliceId);
-    if (it == m_receiverStreams.end() || it->second.sender.get() != sender
-        || !it->second.sending || !sender->isRunning() || m_epoch == 0 || !m_peer
-        || !m_peer->isReady() || !m_receiverAudioNegotiated) {
-        return;
-    }
-    sendAudioRtp(m_peer.get(), packet);
-}
-
 void DaemonMediaController::retireReceiverSender(ReceiverAudioStream& stream)
 {
     stopReceiverAudioCapture(stream);
     if (!stream.sender) {
         return;
     }
-    // Retirement can run inside the sender's own packetReady emission (a
-    // send that synchronously closes the peer ends the session), so the
-    // sender is not destroyed under its drain(): stopped here (its slice tap
-    // is already cleared, so the DSP thread no longer reaches it) and
-    // deleted from the event loop.
+    // R-AUD-SEND: the sender thread lets go of it first (detachAudioSender
+    // returns once no drain of it is under way), and its route closes.
+    // Stopped here (its slice tap is already cleared, so the DSP thread no
+    // longer reaches it) and deleted from the event loop.
     DaemonAudioSender* const sender = stream.sender.release();
+    detachAudioSender(sender, stream.route);
+    stream.route.reset();
     sender->disconnect(this);
     sender->deleteLater();
 }
@@ -4049,6 +4143,7 @@ void DaemonMediaController::resetReceiverAudioSession()
     }
     m_receiverStreams.clear();
     m_receiverAudioNegotiated = false;
+    syncAudioRoutes();
     // A different media peer has different stream ids and a new timeline.
     m_receiverStreamSlice.fill(-1);
     m_receiverNextSequence.fill(1);
@@ -4249,10 +4344,13 @@ void DaemonMediaController::reconcileHeadphonesAudio()
     stopHeadphonesAudioCapture();
     m_headphonesRouted = headphonesMixNeeded();
     if (m_headphones.sender && m_headphones.encoderBitrate != audioStreamBitrate()) {
-        // A synchronous RTP recipient can change this rate inside the old
-        // sender's packetReady emission. As on session reset, let its drain
-        // return before the event loop reclaims the stopped sender.
+        // R-AUD-SEND: the sender thread lets go of the old sender first
+        // (detachAudioSender returns once no drain of it is under way), and
+        // its route closes. As on session reset, the event loop reclaims
+        // the stopped sender.
         DaemonAudioSender* const sender = m_headphones.sender.release();
+        detachAudioSender(sender, m_headphones.route);
+        m_headphones.route.reset();
         sender->disconnect(this);
         sender->deleteLater();
     }
@@ -4274,12 +4372,13 @@ void DaemonMediaController::reconcileHeadphonesAudio()
                 m_radioModel->audioEngine(), codecConfig, this);
             m_headphones.sender->setSliceSource(DaemonAudioSource::kHeadphonesMix);
             m_headphones.sender->setCaptureClock([this] { return displayNowNs(); });
-            DaemonAudioSender* const sender = m_headphones.sender.get();
-            connect(sender, &DaemonAudioSender::packetReady, this,
-                    [this, sender](const QByteArray& packet) {
-                onHeadphonesAudioPacket(sender, packet);
-            });
+            // R-AUD-SEND: drained and sent by the sender thread.
+            m_headphones.route = std::make_shared<AudioSendRoute>();
+            attachAudioSender(m_headphones.sender.get(), m_headphones.route);
         }
+        // The route is open before the sender starts, so its first packet
+        // has somewhere to go.
+        syncAudioRoutes();
         m_headphones.sender->setProfile(m_headphones.activeProfile);
         // Task 76 (ruling 9.2): this device's own headphones mix.
         m_headphones.sender->setOwnerMix(m_ownerMix);
@@ -4363,31 +4462,21 @@ void DaemonMediaController::sendHeadphonesAudioContext(bool enabled,
     sendControl(encodeHeadphonesAudioContext(context));
 }
 
-void DaemonMediaController::onHeadphonesAudioPacket(DaemonAudioSender* sender,
-                                                    const QByteArray& packet)
-{
-    // Emitted on the sender's owner thread. The identity checks keep a
-    // stopped or retired stream from reaching a replacement peer.
-    if (m_headphones.sender.get() != sender || !m_headphones.sending || !sender->isRunning()
-        || m_epoch == 0 || !m_peer || !m_peer->isReady() || !m_headphonesMixNegotiated) {
-        return;
-    }
-    sendAudioRtp(m_peer.get(), packet);
-}
-
 void DaemonMediaController::resetHeadphonesAudioSession()
 {
     stopHeadphonesAudioCapture();
     if (m_headphones.sender) {
-        // As a receiver stream: this can run inside the sender's own
-        // packetReady emission, so it goes from the event loop.
+        // As a receiver stream: the sender thread lets go of it first, and
+        // it goes from the event loop.
         DaemonAudioSender* const sender = m_headphones.sender.release();
+        detachAudioSender(sender, m_headphones.route);
         sender->disconnect(this);
         sender->deleteLater();
     }
     // A different media peer has a different stream id and a new timeline.
     m_headphones = HeadphonesAudioStream{};
     m_headphonesMixNegotiated = false;
+    syncAudioRoutes();
 }
 
 quint32 DaemonMediaController::nextHeadphonesContextGeneration()
@@ -6172,6 +6261,8 @@ void DaemonMediaController::reconcileAudio()
     // here, at the next capture block (capture is stopped above), with the
     // sequence and timestamp carried on.
     if (m_audioSender && m_audioSenderBitrate != audioStreamBitrate()) {
+        // R-AUD-SEND: the sender thread lets go of it before it is destroyed.
+        detachAudioSender(m_audioSender.get(), m_audioRoute);
         m_audioSender.reset();
     }
     if (shouldRun) {
@@ -6184,44 +6275,16 @@ void DaemonMediaController::reconcileAudio()
             // R-R3-35: capture times on the clock clock-echo reports. The
             // sender stops its DSP tap before this controller goes away.
             m_audioSender->setCaptureClock([this] { return displayNowNs(); });
-            DaemonAudioSender* const sender = m_audioSender.get();
-            connect(sender, &DaemonAudioSender::packetReady, this,
-                    [this, sender](const QByteArray& packet) {
-                // packetReady is emitted by the sender's owner thread.  The
-                // identity checks make a stopped/retired session unable to
-                // forward a late signal to a replacement peer.
-                if (m_audioSender.get() == sender && sender->isRunning()
-                    && m_epoch != 0 && m_peer && m_peer->isReady()) {
-                    MediaPeer* const peer = m_peer.get();
-                    const quint64 epoch = m_epoch;
-                    const quint32 contextGeneration = m_audioDiagnostics.contextGeneration;
-                    const bool activeContext = m_audioDiagnostics.activeContext;
-                    if (activeContext) {
-                        ++m_audioDiagnostics.sendAttempts;
-                        ++m_audioDiagnostics.sendInFlight;
-                    }
-                    const QPointer<DaemonMediaController> self(this);
-                    const bool accepted = sendAudioRtp(peer, packet);
-                    // The transport can synchronously retire or replace this
-                    // session. Resolve only into the context that initiated
-                    // this send, never a replacement that appeared mid-call.
-                    // Retirement finalizes any remaining in-flight attempt as
-                    // unresolved, without treating it as a packet-loss event.
-                    if (self && activeContext && m_audioSender.get() == sender
-                        && m_epoch == epoch && m_peer.get() == peer
-                        && m_audioDiagnostics.activeContext
-                        && m_audioDiagnostics.contextGeneration == contextGeneration) {
-                        --m_audioDiagnostics.sendInFlight;
-                        if (accepted) {
-                            ++m_audioDiagnostics.sendAccepted;
-                        } else {
-                            ++m_audioDiagnostics.sendRejected;
-                        }
-                        maybeLogAudioDiagnostics(false);
-                    }
-                }
-            });
+            // R-AUD-SEND: drained and sent by the sender thread, through
+            // m_audioRoute. Nothing of a packet's way out runs on this
+            // controller's thread, so a busy Core no longer holds audio up.
+            attachAudioSender(m_audioSender.get(), m_audioRoute);
         }
+        // The route is open, and its counters at zero, before the sender
+        // starts: its first packet has somewhere to go and is counted. The
+        // sender is stopped here, so no send is under way.
+        m_audioRoute->resetCounters();
+        syncAudioRoutes();
         m_audioSender->setProfile(m_audioActiveProfile);
         // R-R3-45: an app that plays the headphones mix on its own stream
         // gets the speakers' mix alone here; any other app the station's
@@ -6242,6 +6305,9 @@ void DaemonMediaController::reconcileAudio()
     // could not start.
     sendAudioContext(actualEnabled,
                      blockedBy.value_or(RemoteAudioOffReason::EncoderUnavailable));
+    // Whatever the above left (no sender, a peer that went): the routes say
+    // the same.
+    syncAudioRoutes();
 }
 
 void DaemonMediaController::stopAudioCapture()
@@ -6318,6 +6384,17 @@ DaemonAudioDiagnostics DaemonMediaController::snapshotAudioDiagnostics() const
         if (m_audioSender) {
             snapshot.sender = m_audioSender->telemetry();
         }
+        // R-AUD-SEND: counted by the sender thread. Each send raises
+        // attempts before the transport is asked and accepted or rejected
+        // after, so the answers are read first and what is left over is the
+        // send under way.
+        const std::uint64_t accepted = m_audioRoute->accepted.load(std::memory_order_acquire);
+        const std::uint64_t rejected = m_audioRoute->rejected.load(std::memory_order_acquire);
+        const std::uint64_t attempts = m_audioRoute->attempts.load(std::memory_order_acquire);
+        snapshot.sendAttempts = attempts;
+        snapshot.sendAccepted = accepted;
+        snapshot.sendRejected = rejected;
+        snapshot.sendInFlight = attempts - accepted - rejected;
     }
     return snapshot;
 }
@@ -6371,7 +6448,7 @@ void DaemonMediaController::maybeLogAudioDiagnostics(bool final)
         << " encoded=" << snapshot.sender.encodedPackets
         << " encodeFailures=" << snapshot.sender.encodeFailures
         // Lossless send ticks held to the per-tick cap with audio waiting:
-        // the Core's send timer ran late (a slow Core), not the network.
+        // the Core's sender thread ran late (a slow Core), not the network.
         << " losslessCappedTicks=" << snapshot.sender.losslessCappedTicks
         << " sendAttempts=" << snapshot.sendAttempts
         << " sendAccepted=" << snapshot.sendAccepted
@@ -6451,6 +6528,8 @@ void DaemonMediaController::clearSession()
     }
     m_displayDiagnosticsTimer.stop();
     MediaPeer* const peer = m_peer.release();
+    // R-AUD-SEND: the peer leaves every route before it stops.
+    syncAudioRoutes();
     if (peer) {
         peer->disconnect(this);
         peer->stop();

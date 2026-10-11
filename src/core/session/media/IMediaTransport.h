@@ -42,6 +42,10 @@
 //               transport outside the DLL (a test's wrapper) connects to
 //               its signals on Windows. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-10: R-AUD-SEND: MediaRtpSink and audioRtpSink(), the audio
+//               line's send from any thread, so the Core's receive audio
+//               leaves on a thread of its own. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -56,9 +60,28 @@
 #include <QString>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace NereusSDR {
+
+/// R-AUD-SEND: where one media connection's audio packets are sent from a
+/// thread other than the transport's owner (the Core's audio send thread).
+/// sendRtp() may be called from any thread, one call at a time or several.
+/// It makes the checks IMediaTransport::sendRtp() makes and returns what
+/// that would. The object outlives its transport: once the transport has
+/// stopped (or is gone) every call is refused, and no call is inside the
+/// transport when the transport's stop() returns. It never calls back into
+/// its caller.
+class MediaRtpSink {
+public:
+    MediaRtpSink() = default;
+    virtual ~MediaRtpSink() = default;
+    MediaRtpSink(const MediaRtpSink&) = delete;
+    MediaRtpSink& operator=(const MediaRtpSink&) = delete;
+
+    virtual bool sendRtp(const QByteArray& packet) = 0;
+};
 
 /// iPhone app plan Task 27: the pair of candidates a connection settled on,
 /// what the desktop's attempt record reads to tell a direct path from a
@@ -367,6 +390,12 @@ public:
     }
     virtual bool iqBusy() const { return false; }
     virtual bool sendRtp(const QByteArray& packet) = 0;
+    /// R-AUD-SEND: the audio line's send for another thread (MediaRtpSink).
+    /// The same object for the transport's whole life, so it may be asked
+    /// for before start() and kept across stop(). Null (the default) for a
+    /// transport with no send that is safe off its owner's thread; nothing
+    /// is sent from another thread then. Owner's thread only.
+    virtual std::shared_ptr<MediaRtpSink> audioRtpSink() { return nullptr; }
     /// Task 36: one RTP packet on the microphone line, which only an
     /// answerer started with micAudioSsrc sends on. False without that
     /// line, before ready, for a packet whose SSRC is not micAudioSsrc, and
