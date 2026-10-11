@@ -11417,7 +11417,12 @@ QList<QPair<SessionTransport*, DisplayBudgetShare>> StationServer::splitDisplayB
     QList<SessionTransport*> sharing;
     for (quint64 epoch : mediaSessionEpochs()) {
         SessionTransport* transport = mediaSessionFor(epoch);
-        const Peer& peer = m_peers.find(transport).value();
+        // The iterator is named so GCC 13's -Wdangling-reference does not
+        // take the Peer& for a reference into a temporary: value() refers
+        // into m_peers, which this const function never changes, and
+        // mediaSessionFor() found transport there, so the lookup never misses.
+        const auto it = m_peers.constFind(transport);
+        const Peer& peer = it.value();
         if (!m_mediaEnabled || peer.agreedMinor < kMediaSessionProtocolMinor
             || !displayBudgetTotalFor(transport)) {
             continue;

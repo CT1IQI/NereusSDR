@@ -75,6 +75,9 @@ Added extended CAT commands for APF funtions - May 2017.
 //              stopped again after the model has deleted them (a use-after-free
 //              in the CAT channel pages on exit). J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
+// 2026-10-11 - One serial device under two spellings is one assignment; ports,
+//              PTT input and refused settings are logged. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -143,11 +146,17 @@ bool CatService::reconfigureChannel(int channel, const CatEndpointConfig& suppli
     for (int other = 1; other <= 4; ++other) {
         if (other == channel) { continue; }
         const CatEndpointConfig& existing = m_channels[other - 1].config;
-        if (config.serialEnabled && existing.serialEnabled && config.serialDevice == existing.serialDevice) { return false; }
+        if (config.serialEnabled && existing.serialEnabled && CatSettings::sameSerialDevice(config.serialDevice, existing.serialDevice)) {
+            qCWarning(lcCat) << "CAT" << channel << "refused: serial device" << config.serialDevice << "is CAT" << other << "'s";
+            return false;
+        }
     }
     const CatGlobalConfig global = globalConfig();
     if (config.serialEnabled && global.pttEnabled && global.pttDeviceSource == "Physical"
-        && config.serialDevice == global.pttSerialDevice) { return false; }
+        && CatSettings::sameSerialDevice(config.serialDevice, global.pttSerialDevice)) {
+        qCWarning(lcCat) << "CAT" << channel << "refused: serial device" << config.serialDevice << "is the physical PTT input's";
+        return false;
+    }
     const CatEndpointConfig previous = channelConfig(channel);
     if (!m_channels[channel - 1].configured) { config.binding = m_adapter.snapshotBinding(config.binding); }
     else {
@@ -276,12 +285,12 @@ void CatService::startChannel(int channel)
         const auto startSerial = [&] {
             for (int other = 1; other <= 4; ++other) {
                 const CatEndpointConfig& assigned = m_channels[other - 1].config;
-                if (other != channel && assigned.serialEnabled && assigned.serialDevice == config.serialDevice) {
+                if (other != channel && assigned.serialEnabled && CatSettings::sameSerialDevice(assigned.serialDevice, config.serialDevice)) {
                     setTransportState(channel, CatTransportKind::Serial, "Serial error: duplicate CAT device assignment"); return;
                 }
             }
             const CatGlobalConfig global = globalConfig();
-            if (global.pttEnabled && global.pttDeviceSource == "Physical" && global.pttSerialDevice == config.serialDevice) {
+            if (global.pttEnabled && global.pttDeviceSource == "Physical" && CatSettings::sameSerialDevice(global.pttSerialDevice, config.serialDevice)) {
                 setTransportState(channel, CatTransportKind::Serial, "Serial error: device assigned to exclusive physical PTT"); return;
             }
             const auto serial = m_serialFactory ? m_serialFactory() : std::make_shared<CatSerialTransport>();
@@ -308,6 +317,8 @@ void CatService::startChannel(int channel)
                     if (self && run == m_lifecycleGeneration && revision == m_channels[channel - 1].revision && pinSource && !m_ptt) { setPttState("PTT error: " + error); }
                 }
             });
+            qCInfo(lcCat) << "CAT" << channel << "serial: opening" << config.serialDevice << config.serialBaud << "baud"
+                          << config.serialDataBits << "bits, parity" << config.serialParity << ", stop bits" << config.serialStopBits;
             const bool started = serial->start(config);
             if (!lifetime || (run != m_lifecycleGeneration || revision != m_channels[channel - 1].revision) || m_channels[channel - 1].serial != serial) { return; }
             if (started) { setTransportState(channel, CatTransportKind::Serial, "Listening"); }
@@ -374,6 +385,11 @@ QString CatService::transportState(int channel, CatTransportKind kind) const {
     return validChannel(channel) ? m_channels[channel - 1].transportStates.value(kind, "Stopped") : "Invalid channel";
 }
 void CatService::setTransportState(int channel, CatTransportKind kind, const QString& state) {
+    if (m_channels[channel - 1].transportStates.value(kind) != state) {
+        const char* name = kind == CatTransportKind::Tcp ? "TCP" : kind == CatTransportKind::Serial ? "serial"
+            : kind == CatTransportKind::Pty ? "PTY" : kind == CatTransportKind::Rigctld ? "rigctld" : "tester";
+        qCInfo(lcCat) << "CAT" << channel << name << "is now:" << state;
+    }
     m_channels[channel - 1].transportStates.insert(kind, state);
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
@@ -607,7 +623,10 @@ bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
     if (!CatSettings::validateGlobal(config)) { return false; }
     if (config.pttEnabled && config.pttDeviceSource == "Physical") {
         for (const Channel& endpoint : m_channels) {
-            if (endpoint.config.serialEnabled && endpoint.config.serialDevice == config.pttSerialDevice) { return false; }
+            if (endpoint.config.serialEnabled && CatSettings::sameSerialDevice(endpoint.config.serialDevice, config.pttSerialDevice)) {
+                qCWarning(lcCat) << "CAT PTT refused: serial device" << config.pttSerialDevice << "is CAT" << endpoint.config.channel << "'s";
+                return false;
+            }
         }
     }
     const CatGlobalConfig previous = globalConfig();
@@ -819,11 +838,17 @@ bool CatService::setSerialTransportFactoryForTest(std::function<std::shared_ptr<
 }
 void CatService::setPttState(const QString& state) {
     if (m_pttState == state) { return; }
+    // Every press and release passes through here; the rest is setup and faults.
+    if (state == "Armed" || state == "Asserted") { qCDebug(lcCat) << "CAT PTT input is now:" << state; }
+    else { qCInfo(lcCat) << "CAT PTT input is now:" << state; }
     m_pttState = state; emit pttStateChanged(state);
 }
 void CatService::startPtt() {
     const CatGlobalConfig config = globalConfig();
     if (!config.pttEnabled) { setPttState("Disabled"); return; }
+    qCInfo(lcCat) << "CAT PTT input: source" << config.pttDeviceSource
+                  << (config.pttDeviceSource == "Physical" ? config.pttSerialDevice : QString())
+                  << "reads CTS" << config.pttUseCts << "DSR" << config.pttUseDsr;
     const QPointer<CatService> self(this);
     const quint64 generation = m_lifecycleGeneration;
     const auto input = std::make_shared<PttInput>();
@@ -841,7 +866,7 @@ void CatService::startPtt() {
     input->sessionId = ++m_nextSessionId;
     if (input->separate) {
         for (const Channel& endpoint : m_channels) {
-            if (endpoint.config.serialEnabled && endpoint.config.serialDevice == config.pttSerialDevice) {
+            if (endpoint.config.serialEnabled && CatSettings::sameSerialDevice(endpoint.config.serialDevice, config.pttSerialDevice)) {
                 setPttState("PTT serial device is already assigned to CAT"); return;
             }
         }
