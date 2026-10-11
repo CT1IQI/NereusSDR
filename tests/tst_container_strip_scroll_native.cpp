@@ -8,6 +8,12 @@
 //                 Fusion with the look off the stack fits 520 px whole
 //                 (Linux CI). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The scroll range is used only once it has held one value:
+//                 a resize changes it at once, and the host's deferred
+//                 projection of the bar rows changes it again a turn later
+//                 (Linux CI read 40, then scrolled a range of 2). The layout
+//                 half also runs offscreen. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //
 // Native only: QWidget::grab() renders a QRhiWidget through Qt's readback,
 // not through the window server, so an offscreen or grabbed image cannot
@@ -19,6 +25,7 @@
 // content.
 #include <QtTest>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFrame>
 #include <QLabel>
 #include <QScreen>
@@ -29,6 +36,7 @@
 #include <QVBoxLayout>
 #include <QWindow>
 #include <memory>
+#include <optional>
 
 #include "core/AppSettings.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -51,11 +59,42 @@ constexpr double kBlackRowShare = 0.95;
 // The scroll steps below go to fixed offsets up to 31, so the stack must
 // overflow its viewport by more than that.
 constexpr int kLeastScrollRange = 32;
-// How long a layout gets to show the overflow, and how the window is
-// shortened where the stack fits it whole.
-constexpr int kOverflowWaitMs = 1000;
+// How the window is shortened where the stack fits it whole.
 constexpr int kShortenStep = 40;
 constexpr int kShortestWindow = 200;
+// The scroll range counts as settled once it has held one value this long,
+// and must get there within the timeout.
+constexpr int kRangeSettleMs = 250;
+constexpr int kRangeSettleTimeoutMs = 5000;
+constexpr int kRangePollMs = 10;
+
+// The scroll range once it has stopped changing; nothing when it never held
+// one value for kRangeSettleMs. A resize moves the range twice: the scroll
+// area re-ranges at once against the stack's old height, then the host's
+// deferred projection (ContainerContentHost::scheduleStackProjection, a
+// zero timer started by the resize) fits the bar rows to the new viewport
+// and the range changes again. Bar rows stretch to fill a viewport taller
+// than the stack and stop shrinking at their saved height, so a range read
+// straight after shortening the window is the old stretch, not an overflow.
+std::optional<int> settledScrollRange(const QScrollBar* bar)
+{
+    QElapsedTimer total;
+    total.start();
+    QElapsedTimer held;
+    held.start();
+    int range = bar->maximum();
+    while (held.elapsed() < kRangeSettleMs) {
+        if (total.elapsed() >= kRangeSettleTimeoutMs) {
+            return std::nullopt;
+        }
+        QTest::qWait(kRangePollMs);
+        if (bar->maximum() != range) {
+            range = bar->maximum();
+            held.restart();
+        }
+    }
+    return range;
+}
 
 QImage ownWindowCapture(QWidget& window)
 {
@@ -126,8 +165,7 @@ private slots:
     void scrolledStripShowsNoBlackBand()
     {
         QFETCH(bool, look);
-        if (QGuiApplication::platformName() == QStringLiteral("offscreen")
-            || QGuiApplication::platformName() == QStringLiteral("minimal")) {
+        if (QGuiApplication::platformName() == QStringLiteral("minimal")) {
             QSKIP("Needs NATIVE_WINDOW registration and a capture of its own window.");
         }
         WorkspacePreview::setEnabledForTest(look);
@@ -194,33 +232,49 @@ private slots:
         // offset below. How tall the stack is follows the platform's style
         // and fonts and the look's entry headers: with the look off under
         // Fusion (Linux) it fits a 520 px window whole and nothing scrolls,
-        // so the window is shortened until it does.
-        QScrollBar* range = scroll->verticalScrollBar();
-        (void)QTest::qWaitFor([range] { return range->maximum() >= kLeastScrollRange; }, kOverflowWaitMs);
-        while (range->maximum() < kLeastScrollRange && root.height() - kShortenStep >= kShortestWindow) {
+        // so the window is shortened until it does. Only a settled range
+        // counts (see settledScrollRange).
+        QScrollBar* bar = scroll->verticalScrollBar();
+        const auto geometry = [&root, scroll, bar] {
+            return QStringLiteral("window %1 x %2, viewport %3 px high, stack %4 px high, scroll range %5")
+                .arg(root.width()).arg(root.height()).arg(scroll->viewport()->height())
+                .arg(scroll->widget() != nullptr ? scroll->widget()->height() : -1).arg(bar->maximum());
+        };
+        std::optional<int> settled = settledScrollRange(bar);
+        qInfo().noquote() << QTest::currentDataTag() << "settled:" << geometry();
+        QVERIFY2(settled.has_value(), qPrintable(QStringLiteral("the scroll range never settled: ") + geometry()));
+        while (*settled < kLeastScrollRange && root.height() - kShortenStep >= kShortestWindow) {
             root.resize(root.width(), root.height() - kShortenStep);
-            (void)QTest::qWaitFor([range] { return range->maximum() >= kLeastScrollRange; }, kOverflowWaitMs / 4);
+            qInfo().noquote() << QTest::currentDataTag() << "shortened, before settling:" << geometry();
+            settled = settledScrollRange(bar);
+            qInfo().noquote() << QTest::currentDataTag() << "settled:" << geometry();
+            QVERIFY2(settled.has_value(), qPrintable(QStringLiteral("the scroll range never settled: ") + geometry()));
         }
-        const QString overflow = QStringLiteral("window %1 x %2, viewport %3 px high, stack %4 px high, scroll range %5")
-            .arg(root.width()).arg(root.height()).arg(scroll->viewport()->height())
-            .arg(scroll->widget() != nullptr ? scroll->widget()->height() : -1).arg(range->maximum());
-        qInfo().noquote() << QTest::currentDataTag() << overflow;
-        QVERIFY2(range->maximum() >= kLeastScrollRange, qPrintable(overflow));
+        QVERIFY2(*settled >= kLeastScrollRange, qPrintable(geometry()));
+        const int maximum = *settled;
+        QCOMPARE(bar->maximum(), maximum);
+        if (QGuiApplication::platformName() == QStringLiteral("offscreen")) {
+            QSKIP("Needs NATIVE_WINDOW registration and a capture of its own window.");
+        }
         QTest::qWait(kCompositeSettleMs);
         if (ownWindowCapture(root).isNull()) {
             QSKIP("A capture of the test's own window is unavailable (screen recording not granted).");
         }
 
         const QRect viewport(scroll->viewport()->mapTo(&root, QPoint()), scroll->viewport()->size());
-        QScrollBar* bar = scroll->verticalScrollBar();
-        const int maximum = bar->maximum();
         const QList<int> offsets{1, 19, maximum / 3, maximum, maximum - 17, maximum / 2, 0, 31, maximum, 3, 0};
         QStringList failures;
         for (qsizetype step = 0; step < offsets.size(); ++step) {
             const QString stage = QStringLiteral("%1-step-%2-offset-%3")
                 .arg(QLatin1String(QTest::currentDataTag())).arg(step, 2, 10, QLatin1Char('0')).arg(offsets[step]);
+            // The strip's content height must not move under the scroll:
+            // the range is the settled one before and after every step.
+            QVERIFY2(bar->maximum() == maximum,
+                     qPrintable(QStringLiteral("%1: the scroll range left its settled %2 before this step: %3")
+                                    .arg(stage).arg(maximum).arg(geometry())));
             bar->setValue(offsets[step]);
-            QCOMPARE(bar->value(), offsets[step]);
+            QVERIFY2(bar->value() == offsets[step],
+                     qPrintable(QStringLiteral("%1: the bar went to %2: %3").arg(stage).arg(bar->value()).arg(geometry())));
             QCoreApplication::processEvents();
             QTest::qWait(kCompositeSettleMs);
             // The first capture precedes any forced redraw: it is what the
@@ -250,7 +304,11 @@ private slots:
             const QRect pixels = pixelRect(viewport, stale, root.size()).intersected(stale.rect());
             const int band = blackBandRows(stale, fresh, pixels);
             const qsizetype changed = changedPixels(stale, fresh, pixels);
-            qInfo().noquote() << stage << "black rows:" << band << "changed pixels:" << changed;
+            qInfo().noquote() << stage << "black rows:" << band << "changed pixels:" << changed
+                              << "scroll range:" << bar->maximum();
+            QVERIFY2(bar->maximum() == maximum,
+                     qPrintable(QStringLiteral("%1: the scroll range left its settled %2 during this step: %3")
+                                    .arg(stage).arg(maximum).arg(geometry())));
             if (band > 0) {
                 failures.append(QStringLiteral("%1: %2 viewport rows black after scrolling, filled after a redraw")
                                     .arg(stage).arg(band));
