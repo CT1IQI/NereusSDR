@@ -2264,13 +2264,36 @@ public actor MediaControlClient {
               }) ?? true else {
             return
         }
+        // R-DISP-HOLD: a context for the picture the endpoint already shows
+        // (the Core renewed it for a new dBm range or frame rate and kept
+        // what it had measured) keeps the last extras. Extras of another
+        // picture belong to the context they were decoded against.
+        let samePicture = endpoint.context.map { Self.samePicture($0, context) } ?? false
         endpoint.context = context
         endpoint.decoder = DisplayFrameDecoder()
-        // Extras belong to the context they were decoded against.
-        endpoint.extras = nil
+        if !samePicture {
+            endpoint.extras = nil
+        }
         endpoints[context.endpointId] = endpoint
         eventSink.yield(.context(context))
         await requestKeyframe(endpointId: context.endpointId)
+    }
+
+    /// Whether two contexts of an endpoint show the same picture: the same
+    /// receiver and source geometry (stream, centre, sample rate, the FFT
+    /// size the Core runs), the same view to the Hz, the same sample counts
+    /// and wide row, and both receive or both transmit. Only the dBm range,
+    /// the frame rate and the frames per line may differ.
+    static func samePicture(_ held: MediaControlEvent.DisplayContext,
+                            _ next: MediaControlEvent.DisplayContext) -> Bool {
+        held.endpointId == next.endpointId && held.sourceStream == next.sourceStream
+            && held.sourceCentreHz == next.sourceCentreHz && held.sampleRateHz == next.sampleRateHz
+            && held.centreHz == next.centreHz && held.spanHz == next.spanHz
+            && held.wideCentreHz == next.wideCentreHz && held.wideSpanHz == next.wideSpanHz
+            && held.traceSamples == next.traceSamples && held.waterfallSamples == next.waterfallSamples
+            && held.wideSamples == next.wideSamples && held.wideband == next.wideband
+            && held.grant?.grantedFftSize == next.grant?.grantedFftSize
+            && (held.transmit ?? false) == (next.transmit ?? false)
     }
 
     private func display(_ datagram: Data, connection id: String) async {
