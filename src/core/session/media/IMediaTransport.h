@@ -68,11 +68,11 @@ namespace NereusSDR {
 /// R-AUD-SEND: where one media connection's audio packets are sent from a
 /// thread other than the transport's owner (the Core's audio send thread).
 /// sendRtp() may be called from any thread, one call at a time or several.
-/// It makes the checks IMediaTransport::sendRtp() makes and returns what
-/// that would. The object outlives its transport: once the transport has
-/// stopped (or is gone) every call is refused, and no call is inside the
-/// transport when the transport's stop() returns. It never calls back into
-/// its caller.
+/// It makes the checks IMediaTransport::sendRtp() makes; Accepted is that
+/// call's true, and its false is told apart here (RtpSendResult). The object
+/// outlives its transport: once the transport has stopped (or is gone) every
+/// call answers NotReady, and no call is inside the transport when the
+/// transport's stop() returns. It never calls back into its caller.
 class MediaRtpSink {
 public:
     MediaRtpSink() = default;
@@ -80,7 +80,22 @@ public:
     MediaRtpSink(const MediaRtpSink&) = delete;
     MediaRtpSink& operator=(const MediaRtpSink&) = delete;
 
-    virtual bool sendRtp(const QByteArray& packet) = 0;
+    /// What became of one packet handed to sendRtp().
+    enum class RtpSendResult {
+        /// The transport took it. Not evidence of network delivery.
+        Accepted,
+        /// A ready transport would not take it: the packet is invalid for
+        /// this connection, the line still holds an earlier one, or the send
+        /// failed. A reader of the diagnostics takes this as a transport
+        /// fault.
+        Refused,
+        /// Nothing was asked of a transport: it has not started, is not
+        /// ready yet, has stopped or is gone. Not a fault; audio simply has
+        /// nowhere to go just now.
+        NotReady,
+    };
+
+    virtual RtpSendResult sendRtp(const QByteArray& packet) = 0;
 };
 
 /// iPhone app plan Task 27: the pair of candidates a connection settled on,

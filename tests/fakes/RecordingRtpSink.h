@@ -84,9 +84,10 @@ private:
 
 class RecordingRtpSink final : public MediaRtpSink {
 public:
-    // Any thread. A packet is recorded only while `ready`; the answer is
-    // `ready && accept`, as a transport that took or refused the packet.
-    bool sendRtp(const QByteArray& packet) override
+    // Any thread. A packet is recorded only while `ready`. The answer is a
+    // transport's: not ready while `ready` is false, else accepted or
+    // refused by `accept`.
+    RtpSendResult sendRtp(const QByteArray& packet) override
     {
         attempts.fetch_add(1, std::memory_order_acq_rel);
         {
@@ -106,7 +107,15 @@ public:
         if (hook) {
             hook(packet);
         }
-        return taken;
+        if (!isReady) {
+            return RtpSendResult::NotReady;
+        }
+        return taken ? RtpSendResult::Accepted : RtpSendResult::Refused;
+    }
+    // The owner's thread's yes or no (IMediaTransport::sendRtp).
+    bool sendRtpAccepted(const QByteArray& packet)
+    {
+        return sendRtp(packet) == RtpSendResult::Accepted;
     }
 
     // Called on the sending thread after each attempt, with no lock held.

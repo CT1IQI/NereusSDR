@@ -2214,11 +2214,22 @@ void DaemonMediaController::AudioSendRoute::deliver(const QByteArray& packet)
     // A sender started before a replacement stamps the peer it started
     // with; the current peer sends and accepts only its own SSRCs.
     const QByteArray out = rewriteRtpSsrc(packet, ssrcRewrite);
+    // Counted as before the sender thread: an attempt is a packet a ready
+    // transport was asked to take, and it ends accepted or rejected. A
+    // transport that is not ready (stopping, stopped, gone) was asked
+    // nothing, so the attempt raised for the send under way is taken back
+    // and nothing is counted: rejected stays a transport's own refusal.
     attempts.fetch_add(1, std::memory_order_acq_rel);
-    if (to->sendRtp(out)) {
+    switch (to->sendRtp(out)) {
+    case MediaRtpSink::RtpSendResult::Accepted:
         accepted.fetch_add(1, std::memory_order_acq_rel);
-    } else {
+        break;
+    case MediaRtpSink::RtpSendResult::Refused:
         rejected.fetch_add(1, std::memory_order_acq_rel);
+        break;
+    case MediaRtpSink::RtpSendResult::NotReady:
+        attempts.fetch_sub(1, std::memory_order_acq_rel);
+        break;
     }
     if (copyTo && out.size() >= 12) {
         const quint32 ssrc = qFromBigEndian<quint32>(out.constData() + 8);
@@ -6484,6 +6495,10 @@ void DaemonMediaController::finalizeAudioDiagnostics()
         return;
     }
     m_audioDiagnostics = snapshotAudioDiagnostics();
+    // R-AUD-SEND: always adds zero now. The sender was stopped before this
+    // (stopAudioCapture), and stop() returns only after the send under way
+    // has its answer, so nothing is in flight here. The field and the sum
+    // stay so the log line and every reader keep their shape.
     m_audioDiagnostics.sendUnresolvedAtRetirement += m_audioDiagnostics.sendInFlight;
     m_audioDiagnostics.sendInFlight = 0;
     maybeLogAudioDiagnostics(true);

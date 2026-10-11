@@ -185,11 +185,13 @@ private:
 /// Unresolved sends were interrupted by retirement and are not packet loss.
 ///
 /// R-AUD-SEND: the sends are made by the sender thread and counted there
-/// (AudioSendRoute). inFlight is the sends that thread had begun and whose
-/// transport had not yet answered when this was read: 0 or 1 in a periodic
-/// reading. unresolvedAtRetirement is the same number when the context
-/// ended; stopping the sender waits for the send under way, so it is 0
-/// unless a send never returned.
+/// (AudioSendRoute). An attempt is a packet a ready transport was asked to
+/// take; rejected is that transport's own refusal, a transport fault to a
+/// reader. A packet that met a transport which was not ready (stopping,
+/// stopped, gone) is not an attempt and is counted nowhere, as when the
+/// controller's thread sent. inFlight is the sends that thread had begun
+/// and whose transport had not yet answered when this was read: 0 or 1 in a
+/// periodic reading.
 struct DaemonAudioDiagnostics {
     quint32 contextGeneration = 0;
     quint32 revision = 0;
@@ -200,6 +202,11 @@ struct DaemonAudioDiagnostics {
     std::uint64_t sendAccepted = 0;
     std::uint64_t sendRejected = 0;
     std::uint64_t sendInFlight = 0;
+    /// R-AUD-SEND: always 0 now. It counted sends the retirement of a
+    /// context cut short on the controller's thread; the context is now
+    /// retired only after the sender's stop(), which returns once the send
+    /// under way has its answer. Kept so the log line and readers keep
+    /// their shape.
     std::uint64_t sendUnresolvedAtRetirement = 0;
 };
 
@@ -555,7 +562,9 @@ public:
         /// Sends to the current peer since resetCounters(): written by
         /// deliver() on the sender thread, read without the lock. attempts is
         /// raised before the transport is asked and one of the others after
-        /// it answers, so a reader takes accepted and rejected first.
+        /// it answers, so a reader takes accepted and rejected first. A
+        /// transport that answers "not ready" was asked nothing: the attempt
+        /// is taken back and none of the three counts it.
         std::atomic<std::uint64_t> attempts{0};
         std::atomic<std::uint64_t> accepted{0};
         std::atomic<std::uint64_t> rejected{0};

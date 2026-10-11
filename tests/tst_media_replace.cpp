@@ -145,7 +145,7 @@ public:
     bool acceptDescription(const QString&, const QString&) override { return true; }
     bool acceptCandidate(const QString&, const QString&) override { return true; }
     bool sendDisplay(const QByteArray&) override { return readyState; }
-    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     std::optional<MediaIcePath> selectedPath() const override { return path; }

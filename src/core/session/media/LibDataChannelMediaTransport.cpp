@@ -709,29 +709,33 @@ public:
         // The replaced track and bridge are let go here, outside the lock.
     }
 
-    bool sendRtp(const QByteArray& packet) override
+    RtpSendResult sendRtp(const QByteArray& packet) override
     {
         const std::lock_guard lock(m_mutex);
-        if (!m_state.ready || !m_state.track || !m_state.bridge
-            || packet.size() < IMediaTransport::kMinRawRtpBytes
+        if (!m_state.ready || !m_state.track || !m_state.bridge) {
+            return RtpSendResult::NotReady;
+        }
+        if (packet.size() < IMediaTransport::kMinRawRtpBytes
             || packet.size() > IMediaTransport::kMaxRawRtpBytes
             || m_state.track->bufferedAmount() != 0
             || m_state.track->maxMessageSize() < static_cast<std::size_t>(packet.size())
             || !isDeclaredAudioSsrc(rtpSsrc(packet), m_state.mainSsrc, m_state.receiverSsrcs,
                                     m_state.headphonesSsrc)) {
-            return false;
+            return RtpSendResult::Refused;
         }
         m_state.bridge->submittedRtpBytes.fetch_add(
             static_cast<quint64>(packet.size()), std::memory_order_relaxed);
         try {
             return m_state.track->send(
-                reinterpret_cast<const rtc::byte*>(packet.constData()),
-                static_cast<std::size_t>(packet.size()));
+                       reinterpret_cast<const rtc::byte*>(packet.constData()),
+                       static_cast<std::size_t>(packet.size()))
+                ? RtpSendResult::Accepted
+                : RtpSendResult::Refused;
         } catch (const std::exception& error) {
             // Reported on the owner's thread, by its next drain, as an
             // error from one of the library's own threads is.
             queueEvent(m_state.bridge, CallbackEvent::Kind::Error, error.what());
-            return false;
+            return RtpSendResult::Refused;
         }
     }
 
@@ -1746,8 +1750,9 @@ bool LibDataChannelMediaTransport::iqBusy() const
 
 bool LibDataChannelMediaTransport::sendRtp(const QByteArray& packet)
 {
-    // R-AUD-SEND: one send path, the one another thread uses.
-    return d->audioSend->sendRtp(packet);
+    // R-AUD-SEND: one send path, the one another thread uses. On this
+    // thread the answer stays yes or no, as it always was.
+    return d->audioSend->sendRtp(packet) == MediaRtpSink::RtpSendResult::Accepted;
 }
 
 std::shared_ptr<MediaRtpSink> LibDataChannelMediaTransport::audioRtpSink()

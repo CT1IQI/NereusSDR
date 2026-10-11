@@ -42,7 +42,7 @@ public:
     bool acceptDescription(const QString&, const QString&) override { return true; }
     bool acceptCandidate(const QString&, const QString&) override { return true; }
     bool sendDisplay(const QByteArray&) override { return readyState; }
-    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     void becomeReady() { readyState = true; emit ready(); }
@@ -57,12 +57,13 @@ public:
     StartOptions startOptions{Role::Answerer, 0};
     std::atomic<int>& rtpAttempts{rtpSink->attempts};
     std::atomic<bool>& acceptRtp{rtpSink->accept};
-    // The next packet is refused, and the transport then says it closed:
-    // from the sender thread, so the signal reaches the peer on its own
-    // thread, as the real transport's does.
+    // The transport is closing: it is no longer ready, the next packet
+    // finds it so, and the transport then says it closed. From the sender
+    // thread, so the signal reaches the peer on its own thread, as the real
+    // transport's does.
     void closeOnNextRtp()
     {
-        acceptRtp = false;
+        readyState = false;
         rtpSink->setHook([this](const QByteArray&) {
             if (!m_closeSignalled.exchange(true)) {
                 QMetaObject::invokeMethod(this, [this] { emit closed(); }, Qt::QueuedConnection);
@@ -343,14 +344,36 @@ private slots:
                  rejected.sender.lastEmittedTimestamp);
     }
 
-    // R-AUD-SEND: a transport that closes during a send. (Before the
-    // sender thread the send ran on the controller's thread, the close
-    // retired the peer inside it, and the attempt stayed unresolved. The
-    // send now runs on the sender thread and the close reaches the
-    // controller on its own thread afterwards, so the send has its answer:
-    // refused.) The attempt is counted rejected, the retirement leaves
-    // nothing unresolved, and the counts still add up.
-    void audioDiagnosticsCountASendRejectedWhenItsTransportCloses()
+    // R-AUD-SEND: a ready transport that will not take a packet. That is a
+    // transport fault to a reader of the diagnostics: one attempt, rejected.
+    void audioDiagnosticsCountAReadyTransportsRefusalAsRejected()
+    {
+        Harness h;
+        h.establishAndReady();
+        QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+        QVERIFY(h.client.sendMediaControl(audioControl(1, true), h.client.sessionEpoch()));
+        QTRY_VERIFY(h.controller.audioDiagnostics().activeContext);
+
+        h.mediaTransport->acceptRtp = false;
+        h.feedMixed(DaemonAudioSource::kBlockFrames);
+        QTRY_COMPARE(h.mediaTransport->rtpAttempts.load(), 1);
+        QTRY_VERIFY(h.controller.audioDiagnostics().sendInFlight == std::uint64_t{0}
+                    && h.controller.audioDiagnostics().sendAttempts == std::uint64_t{1});
+        const auto refused = h.controller.audioDiagnostics();
+        QCOMPARE(refused.sendAttempts, std::uint64_t{1});
+        QCOMPARE(refused.sendAccepted, std::uint64_t{0});
+        QCOMPARE(refused.sendRejected, std::uint64_t{1});
+        QCOMPARE(refused.sendUnresolvedAtRetirement, std::uint64_t{0});
+    }
+
+    // R-AUD-SEND: a send that meets a closing transport. (Before the sender
+    // thread the send ran on the controller's thread, the close retired the
+    // peer inside it, and the attempt stayed unresolved. The send now runs
+    // on the sender thread: the transport is no longer ready when the
+    // packet comes, so nothing is asked of it, and the close reaches the
+    // controller on its own thread afterwards.) No attempt, nothing
+    // rejected, nothing unresolved at the retirement, and the counts add up.
+    void audioDiagnosticsDoNotCountASendThatMeetsAClosingTransport()
     {
         Harness h;
         h.establishAndReady();
@@ -359,19 +382,22 @@ private slots:
         QTRY_VERIFY(!latestAudioContext(controls).isEmpty());
         QTRY_VERIFY(h.controller.audioDiagnostics().activeContext);
 
-        // The next send is refused and the transport says it closed. Keep
-        // no raw fixture pointer after feeding audio: closing retires the
-        // peer, and the transport with it.
+        // The next packet finds the transport not ready and the transport
+        // says it closed. Keep no raw fixture pointer after feeding audio:
+        // closing retires the peer, and the transport with it.
         const std::shared_ptr<Test::RecordingRtpSink> sink = h.mediaTransport->rtpSink;
         h.mediaTransport->closeOnNextRtp();
         h.feedMixed(DaemonAudioSource::kBlockFrames);
 
         QTRY_VERIFY(!h.controller.audioDiagnostics().activeContext);
         const auto retired = h.controller.audioDiagnostics();
+        // The packet reached the sink, which answered "not ready".
         QCOMPARE(sink->attempts.load(), 1);
-        QCOMPARE(retired.sendAttempts, std::uint64_t{1});
+        QCOMPARE(sink->packets.size(), 0);
+        QCOMPARE(retired.sender.encodedPackets, std::uint64_t{1});
+        QCOMPARE(retired.sendAttempts, std::uint64_t{0});
         QCOMPARE(retired.sendAccepted, std::uint64_t{0});
-        QCOMPARE(retired.sendRejected, std::uint64_t{1});
+        QCOMPARE(retired.sendRejected, std::uint64_t{0});
         QCOMPARE(retired.sendInFlight, std::uint64_t{0});
         QCOMPARE(retired.sendUnresolvedAtRetirement, std::uint64_t{0});
         QCOMPARE(retired.sendAttempts, retired.sendAccepted + retired.sendRejected

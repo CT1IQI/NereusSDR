@@ -201,7 +201,7 @@ public:
         displays.append(std::exchange(heldDisplay, {}));
         emit displayWritable();
     }
-    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtp(packet); }
+    bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
     bool isReady() const override { return readyState; }
     bool losslessAudioNegotiated() const override { return losslessNegotiated; }

@@ -167,18 +167,24 @@ public:
         }
     }
 
-    bool sendRtp(const QByteArray& packet) override
+    RtpSendResult sendRtp(const QByteArray& packet) override
     {
         const std::lock_guard<std::mutex> lock(m_mutex);
-        if (!m_state.transport || packet.size() < IMediaTransport::kMinRawRtpBytes
+        if (!m_state.transport) {
+            // Not started, or stopped: nothing is asked of a transport.
+            return RtpSendResult::NotReady;
+        }
+        if (packet.size() < IMediaTransport::kMinRawRtpBytes
             || packet.size() > IMediaTransport::kMaxRawRtpBytes) {
-            return false;
+            return RtpSendResult::Refused;
         }
         const quint32 ssrc = rtpSsrc(packet);
-        return ssrc != 0
-            && (ssrc == m_state.audioSsrc || m_state.receiverAudioSsrcs.contains(ssrc)
-                || ssrc == m_state.headphonesAudioSsrc)
-            && m_state.transport->sendRtp(packet);
+        if (ssrc == 0
+            || !(ssrc == m_state.audioSsrc || m_state.receiverAudioSsrcs.contains(ssrc)
+                 || ssrc == m_state.headphonesAudioSsrc)) {
+            return RtpSendResult::Refused;
+        }
+        return m_state.transport->sendRtp(packet);
     }
 
 private:

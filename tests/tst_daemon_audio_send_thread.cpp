@@ -671,41 +671,64 @@ private slots:
     }
 
     // A transport that has stopped leaves its sink valid, and the sink
-    // refuses: the route counts the packet rejected. The real transport,
-    // never connected, and stopped.
-    void aStoppedTransportsSinkRefusesAndIsCountedRejected()
+    // answers "not ready": the route counts nothing, as when the
+    // controller's thread skipped a peer that was not ready. The real
+    // transport, never connected, and stopped.
+    void aStoppedTransportsSinkIsNotReadyAndIsNotCounted()
     {
+        using Result = MediaRtpSink::RtpSendResult;
         std::shared_ptr<MediaRtpSink> sink;
         DaemonMediaController::AudioSendRoute route;
         {
             LibDataChannelMediaTransport transport;
             sink = transport.audioRtpSink();
             QVERIFY(sink != nullptr);
+            // Never connected: not ready before it stops, too.
+            QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
             transport.stop();
+            QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
             {
                 const std::lock_guard<std::mutex> lock(route.mutex);
                 route.current = sink;
             }
             route.deliver(rtpPacket(0x10, 1, 100));
-            QCOMPARE(route.attempts.load(), std::uint64_t{1});
+            QCOMPARE(route.attempts.load(), std::uint64_t{0});
             QCOMPARE(route.accepted.load(), std::uint64_t{0});
-            QCOMPARE(route.rejected.load(), std::uint64_t{1});
+            QCOMPARE(route.rejected.load(), std::uint64_t{0});
         }
         // The transport is gone; the sink the route still holds is valid.
+        QCOMPARE(sink->sendRtp(rtpPacket(0x10, 0, 0)), Result::NotReady);
         route.deliver(rtpPacket(0x10, 2, 200));
-        QCOMPARE(route.attempts.load(), std::uint64_t{2});
+        QCOMPARE(route.attempts.load(), std::uint64_t{0});
         QCOMPARE(route.accepted.load(), std::uint64_t{0});
-        QCOMPARE(route.rejected.load(), std::uint64_t{2});
+        QCOMPARE(route.rejected.load(), std::uint64_t{0});
+    }
 
-        // And a transport that takes nothing just now.
-        const auto refusing = std::make_shared<Test::RecordingRtpSink>();
+    // A ready transport that will not take a packet is a refusal: an
+    // attempt, and rejected. One that is not ready is neither.
+    void aReadyTransportsRefusalIsCountedRejected()
+    {
+        const auto sink = std::make_shared<Test::RecordingRtpSink>();
+        DaemonMediaController::AudioSendRoute route;
         {
             const std::lock_guard<std::mutex> lock(route.mutex);
-            route.current = refusing;
+            route.current = sink;
         }
-        route.deliver(rtpPacket(0x10, 3, 300));
-        QCOMPARE(route.rejected.load(), std::uint64_t{3});
-        QCOMPARE(refusing->packets.size(), 0);
+        sink->ready = true;
+        sink->accept = false;
+        route.deliver(rtpPacket(0x10, 1, 100));
+        QCOMPARE(sink->attempts.load(), 1);
+        QCOMPARE(sink->packets.size(), 0);
+        QCOMPARE(route.attempts.load(), std::uint64_t{1});
+        QCOMPARE(route.accepted.load(), std::uint64_t{0});
+        QCOMPARE(route.rejected.load(), std::uint64_t{1});
+
+        sink->ready = false;
+        route.deliver(rtpPacket(0x10, 2, 200));
+        QCOMPARE(sink->attempts.load(), 2);
+        QCOMPARE(route.attempts.load(), std::uint64_t{1});
+        QCOMPARE(route.accepted.load(), std::uint64_t{0});
+        QCOMPARE(route.rejected.load(), std::uint64_t{1});
     }
 
     // During a replacement the new peer gets a copy with the same sequence
