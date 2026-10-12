@@ -39,6 +39,11 @@
 //                 collapsing profile rail left of the title, Ctrl+1..9 and
 //                 Containers > Manage Workspace Profiles. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - J.J. Boyd (KG4VCF). A container's controls follow a change
+//                of selected RX, a renamed filter preset and a slice moved
+//                to another pan by those events themselves; the PureSignal
+//                status, announced ten times a second, had been what
+//                refreshed them. AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). Issue #357: a hosting window's TUNE
 //                (TX applet and container) reads the transmit model's TUNE,
 //                which the release press clears, so it goes back to "TUNE"
@@ -2155,6 +2160,8 @@ void MainWindow::rehostSliceView(SliceModel* slice)
     }
     m_vfoWidgetsBySlice.remove(id);
     if (dest) { createSliceFlag(slice, dest); }
+    // A container's PEAK and CTUN light from the pan its slice is on.
+    refreshContainerControls();
 }
 
 void MainWindow::revealSliceInWindow(int sliceId)
@@ -7842,6 +7849,18 @@ void MainWindow::buildUI()
         if (NotchModel* notches = m_radioModel->notchModel()) {
             connect(notches, &NotchModel::globalEnabledChanged, this, refresh);
         }
+        // A container set to follow the selected RX shows the newly
+        // selected slice at once. With a radio connected the PureSignal
+        // status, announced ten times a second, used to be the only thing
+        // that refreshed it.
+        connect(m_radioModel, &RadioModel::activeSliceChanged, this, refresh);
+        if (SliceOwnership* ownership = m_radioModel->sliceOwnership()) {
+            connect(ownership, &SliceOwnership::activeRxChanged, this, refresh);
+        }
+        // And the filter buttons a preset's new name, for the same reason.
+        if (FilterPresetStore* presets = m_radioModel->filterPresetStore()) {
+            connect(presets, &FilterPresetStore::presetsChanged, this, refresh);
+        }
     }
     watchSlicesForContainers();
 
@@ -8232,6 +8251,9 @@ void MainWindow::buildUI()
             // model changed even when the destination pan does not exist
             // yet and no flag could be built.
             rebuildFftRouting();
+            // A container's PEAK and CTUN light from the pan its slice is
+            // on, which has just changed.
+            refreshContainerControls();
         });
     });
 

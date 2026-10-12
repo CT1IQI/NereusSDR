@@ -15,6 +15,11 @@
 //   2026-10-09: R-R3-21: dry events say whether the writer was running
 //               when the device ran out. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-11: a dry event says where its silence began in `heard` and
+//               how long it ran there. It gave only the part render() had
+//               not yet played out, so a test that cut a stall's silence
+//               from what it measured left most of it in. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // R-R3-23: the bus plays in the format it was opened with (48 kHz stereo
 // float when never opened): its queue, clock, capacity and `heard` count
@@ -45,7 +50,12 @@ public:
                 // R-R3-21: the writer's look at the queue just before this
                 // push, and the one before that (see DryEvent).
                 DryEvent e{dueFramesLocked(), dry};
-                e.heardFrame = heardAt;
+                // The silence began where render() first found the queue
+                // empty, which a caller that renders on a timer reached
+                // long before this push; `dry` is only what it had not yet
+                // played out.
+                e.heardFrame = silentSinceFrame >= 0 ? silentSinceFrame : heardAt;
+                e.heardFrames = heardAt + dry - e.heardFrame;
                 e.wokeAfterDry = lastLook.dry && lastLiveLook.ns >= 0;
                 e.queuedBeforeStall = lastLiveLook.ns >= 0 ? lastLiveLook.queued : -1;
                 e.stallNs = e.wokeAfterDry ? firstDryLookNs - lastLiveLook.ns : -1;
@@ -57,6 +67,7 @@ public:
             firstPushDueFrame = dueFramesLocked();
         }
         queue.insert(queue.end(), samples, samples + count);
+        silentSinceFrame = -1;
         peakQueued.store(std::max(peakQueued.load(), int(queue.size()) / channels));
         noteLookLocked();
         return bytes;
@@ -121,10 +132,16 @@ public:
     // that left its full target queued and then woke only after the
     // device had run dry was not scheduled; one that was awake while the
     // queue ran down, or left less than its target, ran dry itself.
+    // heardFrames: the whole silence in `heard`, from heardFrame. It is
+    // `frames` plus what render() had already played from an empty queue
+    // before the push: a caller that renders on a timer plays most of a
+    // long silence out before the writer comes back, and `frames` (and
+    // the dry count) hold only the rest.
     struct DryEvent {
         qint64 atFrame;
         qint64 frames;
         qint64 heardFrame = -1;   // where the silence starts in `heard`
+        qint64 heardFrames = 0;
         bool wokeAfterDry = false;
         int queuedBeforeStall = -1;
         qint64 stallNs = -1;
@@ -193,6 +210,9 @@ public:
     void render(int frames) {
         std::lock_guard<std::mutex> lock(mutex);
         for (int i = 0; i < frames * channelsLocked(); ++i) {
+            if (queue.empty() && silentSinceFrame < 0) {
+                silentSinceFrame = playedFrames + i / channelsLocked();
+            }
             heard.append(queue.empty() ? 0.0f : queue.front());
             if (!queue.empty()) { queue.pop_front(); }
         }
@@ -229,6 +249,9 @@ private:
     qint64 playedDryFrames = 0;
     qint64 playedDryFramesAtFirstPush = -1;
     qint64 firstPushDueFrame = -1;
+    // The frame of `heard` where render() first played from an empty queue
+    // since the last push (-1: it has not).
+    qint64 silentSinceFrame = -1;
     std::vector<DryEvent> dryEvents;
     // R-R3-21: the writer's looks at the bus (see DryEvent): the last,
     // the last while the device still had audio, and the first after that.
