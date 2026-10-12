@@ -49,10 +49,16 @@ final class TestRoute: @unchecked Sendable {
     var sent: [(session: Int, message: LinkMessage)] { lock.withLock { sentMessages } }
 
     private var awake = false
+    /// How many waits with an edit have begun. An edit's watcher lives
+    /// until the edit ends, often after its own wait has its sends, so it
+    /// wakes only the wait it was started for.
+    private var watchedWaits = 0
 
-    /// Wakes every waiter, whatever has been sent: an edit ended first.
-    private func wakeAll() {
+    /// Wakes every waiter, whatever has been sent: the edit that wait
+    /// `wait` watches ended first.
+    private func wakeAll(for wait: Int) {
         let all = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            guard wait == watchedWaits else { return [] }
             awake = true
             defer { waiters = [] }
             return waiters.map(\.1)
@@ -62,8 +68,12 @@ final class TestRoute: @unchecked Sendable {
 
     /// Waits for `count` sends, or for `edit` to end without them.
     func waitForCount(_ count: Int, unless edit: Task<SetupEditOutcome, Never>) async -> Bool {
-        lock.withLock { awake = false }
-        let watcher = Task { _ = await edit.value; wakeAll() }
+        let wait = lock.withLock { () -> Int in
+            awake = false
+            watchedWaits += 1
+            return watchedWaits
+        }
+        let watcher = Task { _ = await edit.value; wakeAll(for: wait) }
         await waitForCount(count)
         watcher.cancel()
         return sent.count >= count

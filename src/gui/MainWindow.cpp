@@ -710,6 +710,10 @@
 //   2026-10-11 - The bottom RX chooser's rows: the row of a slice this
 //                window plays reveals it (SliceChooser::showRequested).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Max Bin per slice in a window that runs its own radio:
+//                the slice meter pump takes each flag's reading from its
+//                own pan (maxBinSpectrumFor), as a window on a Core does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -2128,6 +2132,26 @@ QStringList MainWindow::windowPanIds() const
         if (m_panStack->panadapter(id)) { ids << id; }
     }
     return ids;
+}
+
+SpectrumWidget* MainWindow::maxBinSpectrumFor(const SliceModel* slice) const
+{
+    if (!slice || !m_panStack || slice->streamIndex() < 0
+        || markerOnlyPlacement(slice->sliceIndex())) {
+        return nullptr;
+    }
+    // Core's primary slice may have no panKey. Use its actual
+    // window host, as subscriptions do, never the active pan.
+    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
+    SliceModel* displayed = pan
+        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+    // Co-hosted slices may measure the same receiver trace;
+    // a marker for a different receiver may not borrow it.
+    if (!displayed || displayed->streamIndex() != slice->streamIndex()
+        || displayed->streamEpoch() != slice->streamEpoch()) {
+        return nullptr;
+    }
+    return pan->spectrumWidget();
 }
 
 QString MainWindow::windowPanFor(const SliceModel* slice) const
@@ -7883,11 +7907,7 @@ void MainWindow::buildUI()
     // can broadcast unit-mode changes to all live MeterItems.
     m_radioModel->setContainerManager(m_containerManager);
     const auto cachedMaxBin = MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
-        if (!slice || !m_panStack || slice->streamIndex() < 0 || markerOnlyPlacement(slice->sliceIndex())) { return nullptr; }
-        PanadapterApplet* pan=m_panStack->panadapter(windowPanFor(slice));
-        SliceModel* displayed=pan ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
-        if (!displayed || displayed->streamIndex()!=slice->streamIndex() || displayed->streamEpoch()!=slice->streamEpoch()) { return nullptr; }
-        return pan->spectrumWidget();
+        return maxBinSpectrumFor(slice);
     });
     m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
     m_meterPoller->setRxSourceIdentitySource([this](const QJsonObject& context) {
@@ -9513,22 +9533,7 @@ void MainWindow::populateDefaultMeter()
                     return m_stationClient && m_stationClient->isHandshakeComplete();
                 },
                 MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
-                    if (!slice || !m_panStack || slice->streamIndex() < 0
-                        || markerOnlyPlacement(slice->sliceIndex())) {
-                        return nullptr;
-                    }
-                    // Core's primary slice may have no panKey. Use its actual
-                    // window host, as subscriptions do, never the active pan.
-                    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
-                    SliceModel* displayed = pan
-                        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
-                    // Co-hosted slices may measure the same receiver trace;
-                    // a marker for a different receiver may not borrow it.
-                    if (!displayed || displayed->streamIndex() != slice->streamIndex()
-                        || displayed->streamEpoch() != slice->streamEpoch()) {
-                        return nullptr;
-                    }
-                    return pan->spectrumWidget();
+                    return maxBinSpectrumFor(slice);
                 }));
             // R-R3-13 / R-R3-49 (parity Task 15): the ADC and AGC meters
             // read the Core's slice readings when it sends them.
@@ -9581,6 +9586,15 @@ void MainWindow::populateDefaultMeter()
             }
             return SliceMeterPump::MeterSource::SignalAverage;
         });
+        // 2026-10-11: Max Bin per slice. The pump wrote the engine's one
+        // display-0 value, the active pan's, to every slice, so with
+        // several slices every flag showed the same number. Each flag now
+        // reads its own slice's passband on its own pan's trace, as a
+        // window on a Core already does (setRemoteRadioModel above).
+        pump->setMaxBinSource(MeterPoller::panMaxBinSourceForSlice(
+            [this](const SliceModel* slice) -> SpectrumWidget* {
+                return maxBinSpectrumFor(slice);
+            }));
     }
 
     // 2026-05-22 spectrum-calibration fix (Fix 1 from the S-meter / spectrum
