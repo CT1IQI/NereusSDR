@@ -8276,6 +8276,12 @@ target_compile_definitions(tst_controls_that_work PRIVATE NEREUS_BUILD_TESTS)
 # and zoom buttons and the status badges reach their existing features.
 nereus_add_test(tst_controls_connected)
 target_compile_definitions(tst_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# A container's controls follow a change of selected RX, a renamed filter
+# preset and a slice moved to another pan by those events themselves, with
+# no radio connected (so nothing announces on a timer). Its own binary:
+# tst_controls_connected is near the 120 s limit on a loaded machine.
+nereus_add_test(tst_container_controls_refresh)
+target_compile_definitions(tst_container_controls_refresh PRIVATE NEREUS_BUILD_TESTS)
 # ...and the Setup controls: Startup & Preferences, DSP ANF / CW peak
 # filter / AM and FM squelch, Meter Styles S-meter, Logs, VAX level.
 nereus_add_test(tst_setup_controls_connected)
