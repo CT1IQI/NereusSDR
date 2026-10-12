@@ -7,7 +7,7 @@
 // rescaling it is far too heavy to do once per row; the 250 ms resize
 // debounce exists to do it once, after the drag rests. These tests count
 // whole-history rescales through a drag and check that the rows captured
-// before and during the drag are still in the history afterwards.
+// before and during the drag are still in the history afterward.
 
 #include <QElapsedTimer>
 #include <QImage>

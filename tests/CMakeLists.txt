@@ -2969,7 +2969,7 @@ nereus_add_test(tst_waterfall_scrollback)
 # Dragging a dock edge changes the spectrum's width on every mouse move
 # while rows keep arriving. Counts whole-history rescales (none during the
 # drag, one after the resize debounce) and checks that the rows captured
-# before and during the drag are intact afterwards.
+# before and during the drag are intact afterward.
 nereus_add_test(tst_waterfall_history_resize_drag)
 
 # ── Task 2.8: WaterfallDefaultsPage changes (NF-AGC, Stop-on-TX, W5 removal) ─
