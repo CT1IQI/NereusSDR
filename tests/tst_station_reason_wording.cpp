@@ -1641,6 +1641,9 @@ const QList<ReasonSource>& reasonSources()
           // the Core's LAN scan for it and the saved address.
           QStringLiteral("stationPgxlControlAllowed"), QStringLiteral("setPgxlOperateForStation"),
           QStringLiteral("scanPgxlLanForStation"), QStringLiteral("setPgxlAddressForStation"),
+          // 2026-10-11: this computer's own OPERATE and STANDBY click, on an
+          // app that does not share its amplifier.
+          QStringLiteral("setPgxlOperateFromApplet"),
           // R-R3-49 (parity Task 10): the RF-Kit's OPERATE and STANDBY,
           // antenna, TCI mode and saved address.
           QStringLiteral("stationRfKitControlAllowed"),

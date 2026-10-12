@@ -11,6 +11,9 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Live Core status and passive numeric correction readouts,
 //                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+//   2026-10-11 — A status update restyles a light only when it changes
+//                 state; J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 
 //   2026-04-18 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
@@ -324,8 +327,13 @@ void PureSignalApplet::setLedActive(QLabel* led, bool active)
     if (!led) {
         return;
     }
-    led->setStyleSheet(QString::fromLatin1(active ? kLedActiveStyle
-                                                  : kLedInactiveStyle));
+    const QString style = QString::fromLatin1(active ? kLedActiveStyle
+                                                     : kLedInactiveStyle);
+    // Qt polishes and repaints a widget on every setStyleSheet(), the same
+    // text or not, and this runs on every status update.
+    if (led->styleSheet() != style) {
+        led->setStyleSheet(style);
+    }
 }
 
 void PureSignalApplet::setupRightClick(QWidget* widget)

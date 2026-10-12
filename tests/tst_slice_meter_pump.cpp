@@ -49,6 +49,9 @@
 //                 Connected and a slice with no channel. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-11 -- Max Bin with several slices: each slice takes its own
+//                 reading (setMaxBinSource). J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -457,6 +460,67 @@ private slots:
                  model.wdspEngine()->rxChannel(slice->sliceIndex())
                      ->getMeter(RxMeterType::SignalAvg) + model.rxMeterOffsetDb());
 
+        harness.reset();
+    }
+
+    // 2026-10-11, the bench fault: four slices on four bands, S-meter
+    // source on Max Bin, and every flag showed one number, the active
+    // pan's. With the window's per-slice source each slice takes its own
+    // reading plus its own receive offset, and a slice no pan shows takes
+    // no reading rather than another slice's.
+    void maxBinGivesEachSliceItsOwnReading()
+    {
+        std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create();
+        QVERIFY(harness != nullptr);
+        RadioModel& model = harness->model();
+        SliceMeterPump* pump = model.sliceMeterPump();
+        QVERIFY(pump != nullptr);
+
+        SliceModel* onTwenty = model.sliceById(0);
+        QVERIFY(onTwenty != nullptr);
+        SliceModel* onEighty = model.sliceById(model.addSlice());
+        QVERIFY(onEighty != nullptr);
+        SliceModel* notShown = model.sliceById(model.addSlice());
+        QVERIFY(notShown != nullptr);
+        WdspEngine* engine = model.wdspEngine();
+        for (SliceModel* slice : {onTwenty, onEighty, notShown}) {
+            if (engine->rxChannel(slice->sliceIndex()) == nullptr) {
+                QVERIFY(engine->createRxChannel(slice->sliceIndex()) != nullptr);
+            }
+        }
+
+        constexpr double kQuietBandDbm = -93.25;
+        constexpr double kHotBandDbm = -61.5;
+        pump->setSourceSelector([]() { return SliceMeterPump::MeterSource::MaxBin; });
+        pump->setMaxBinSource([onTwenty, onEighty](const SliceModel* slice) -> double {
+            if (slice == onTwenty) { return kQuietBandDbm; }
+            if (slice == onEighty) { return kHotBandDbm; }
+            return SliceMeterPump::kNoReadingDbm;
+        });
+        pollSettled(model, pump);
+
+        QCOMPARE(onTwenty->signalStrengthDbm(),
+                 kQuietBandDbm + model.rxMeterOffsetDbForSlice(onTwenty->sliceIndex()));
+        QCOMPARE(onEighty->signalStrengthDbm(),
+                 kHotBandDbm + model.rxMeterOffsetDbForSlice(onEighty->sliceIndex()));
+        QCOMPARE(notShown->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
+        // The other two readings are still each channel's own.
+        QCOMPARE(onEighty->signalPeakDbm(),
+                 engine->rxChannel(onEighty->sliceIndex())->getMeter(RxMeterType::SignalPeak)
+                     + model.rxMeterOffsetDbForSlice(onEighty->sliceIndex()));
+
+        // Another source than Max Bin does not ask the window at all.
+        int asked = 0;
+        pump->setMaxBinSource([&asked](const SliceModel*) -> double {
+            ++asked;
+            return -50.0;
+        });
+        pump->setSourceSelector([]() { return SliceMeterPump::MeterSource::SignalPeak; });
+        pollSettled(model, pump);
+        QCOMPARE(asked, 0);
+        QCOMPARE(onTwenty->signalStrengthDbm(), onTwenty->signalPeakDbm());
+
+        pump->setMaxBinSource({});
         harness.reset();
     }
 

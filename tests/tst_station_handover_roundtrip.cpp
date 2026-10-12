@@ -508,6 +508,9 @@ int main(int argc, char* argv[])
     if (!shortHome.isValid()) { return 20; }
     qputenv("HOME", shortHome.path().toUtf8());
     qputenv("CFFIXED_USER_HOME", shortHome.path().toUtf8());
+    // The test home guard (TestHomeGuard.cpp) checks each child process
+    // against NEREUS_TEST_HOME: the home moved, so the marker moves too.
+    qputenv("NEREUS_TEST_HOME", shortHome.path().toUtf8());
     QApplication app(argc, argv);
     CoreInit::initialize();
     TestStationHandoverRoundtrip tests;

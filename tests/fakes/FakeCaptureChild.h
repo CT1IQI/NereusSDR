@@ -28,6 +28,12 @@
 //                         stderr ("devices listed at 12 ms"); no marker file.
 //   no-hello              Never writes anything and ignores every command.
 //   permission-then-ready Hello; on Open: Permission, 300 ms later as ready.
+//   permission-while-marked
+//                         Hello; on Open: Permission, held while the file
+//                         NEREUS_FAKE_CAPTURE_PERMISSION_FILE names exists;
+//                         once the test removes it, as ready.  The hold
+//                         lasts as long as the test wants, so it can
+//                         outlast a deadline without racing it.
 //   crash-after-ready     As ready; exits with code 3 after 100 ms of streaming.
 //   malformed             Hello, then a record with bad magic at once.
 //   oversize              Hello; on Open: Opening, Ready, then one PCM
@@ -100,6 +106,9 @@
 //   2026-10-11: pcm-record builds no ring; the three -on-probe-enable
 //               scenarios.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-11: kFakeCaptureChildStartMs; the permission-while-marked
+//               scenario.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -107,6 +116,18 @@
 #include <QString>
 
 namespace NereusSDR::Test {
+
+// How long a test allows a newly started scripted helper before it calls the
+// start failed: the window's hello deadline (3000 ms in the app), and the
+// test's own wait for the first thing that start leads to.  The helper is
+// the test binary started again, so it loads the app's libraries before its
+// first write, and on a very busy computer that has taken more than 3
+// seconds (twice in about 750 starts at a load of 133 to 156 on 18 cores,
+// 2026-10-11).  A pass costs nothing: the hello comes in about 80 ms and a
+// wait returns when its state is seen.  Only a helper that never starts
+// takes this long to fail.  The cases that test the hello deadline itself
+// set their own short value.
+inline constexpr int kFakeCaptureChildStartMs = 30000;
 
 int runFakeCaptureChild(const QString& scenario);
 

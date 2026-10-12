@@ -67,6 +67,9 @@ Advanced, and each control appears on one page only.
 
 ### Fixes
 
+- With the S-meter set to Max Bin, each slice's flag shows its own signal. In
+  a window running its own radio, every flag showed the reading of whichever
+  pan was clicked last.
 - A desktop window that other windows or phones sign in to now shares its
   Tuner Genius XL, Power Genius XL and RF-Kit RF2K-S with them: meters,
   OPERATE and STANDBY, the tuner controls, connect and disconnect. Before,
@@ -78,6 +81,15 @@ Advanced, and each control appears on one page only.
   (a third of a second and more on a Rock 5C). The timed save now writes the
   file on its own thread. Saves at quit, at disconnect and at station handover
   still finish before the program goes on.
+- The same pause no longer follows other changes made on a running Core: the
+  attenuator and preamp, the Core speaker's level, mute and device, VAX
+  levels, TCI server settings, amplifier and tuner addresses, the rotor setup
+  and presets, the transmit display settings, the radio list, and the
+  accessory fault and limit records. Each of these saved the settings file on
+  the thread that sends the audio and now hands it to the same writer thread.
+- The Power Genius XL's OPERATE button works again in a NereusSDR window
+  that runs its own radio. Since 2026.10.0 the click was sent only by the
+  headless Core (`nereusd`); in the desktop app it did nothing.
 
 ## [2026.10.0] - 2026-10-05
 

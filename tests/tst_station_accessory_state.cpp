@@ -53,6 +53,7 @@
 #include <QTemporaryDir>
 #include <cmath>
 #include "core/AppSettings.h"
+#include "core/SettingsFileWriter.h"
 #include "core/SmartSdrApiListener.h"
 #include "core/LanDiscovery.h"
 #include "core/StationPgxlController.h"
@@ -273,6 +274,9 @@ private slots:
         QVERIFY(!model.fourO3AListening());
         QVERIFY(!model.fourO3AListenerError().isEmpty());
         QVERIFY(!status.isEmpty());
+        // The switch is saved on the settings writer thread, so the Core's
+        // main thread does not wait for the disk.
+        AppSettings::instance().backgroundSaveNotifier()->waitUntilIdle();
         AppSettings disk(AppSettings::instance().filePath());
         disk.load();
         QCOMPARE(disk.hardwareValue(model.currentRadioMac(),

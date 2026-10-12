@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - J.J. Boyd (KG4VCF). maxBinSpectrumFor: the one rule for
+//                which pan's trace measures a slice's Max Bin. AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). Turn the beam from a spot (rotor
 //                control plan Task 8): spotBeamTurner(), the window's one
 //                SpotBeamTurner for every pan's spot menu and the Spot Hub.
@@ -1357,6 +1360,13 @@ private:
     // slice, else its pan key, else the window pan that lists it. Empty
     // when this window does not show it.
     QString windowPanFor(const SliceModel* slice) const;
+    // The spectrum whose trace measures `slice`'s Max Bin: the window pan
+    // that shows the slice, while that pan displays the slice's own
+    // receiver. Null when no pan of this window does (a marker on another
+    // receiver's pan may not borrow its trace). The one rule for the
+    // container meters, a remote window's S-meter and flags, and a local
+    // window's flags.
+    SpectrumWidget* maxBinSpectrumFor(const SliceModel* slice) const;
     // Move a slice's flag onto the pan that shows it (spectrumForSlice).
     void rehostSliceView(SliceModel* slice);
     // Ruling U1 and U2: show `sliceId` in this window. A pan that shows it
