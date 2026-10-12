@@ -49,9 +49,21 @@
 //                 enabled state, not its parent's, so a control in a greyed
 //                 section is not left disabled when the gate lifts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - makePageTitle(): the page title, shared with RF-Kit's
+//                 tabbed page. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-09 - D25: a labelled row's label keeps its 150 px column but
+//                 widens when its text needs more (SetupFit::widthAtLeast), so
+//                 no label is cut short. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-10 - D25: the page scrolls in a SetupFit::FitScrollArea, so a
+//                 row that fits side by side without a scroll bar is side
+//                 by side whatever was shown before. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupPage.h"
+#include "gui/setup/SetupFit.h"
 #include "StyleConstants.h"
 
 #include <QScrollArea>
@@ -100,14 +112,11 @@ void SetupPage::init(const QString& title)
     rootLayout->setSpacing(6);
 
     // Page title
-    auto* titleLabel = new QLabel(title);
-    titleLabel->setStyleSheet(
-        "QLabel { color: #c8d8e8; font-size: 16px; font-weight: bold; "
-        "border-bottom: 1px solid #304050; padding-bottom: 4px; }");
-    rootLayout->addWidget(titleLabel);
+    rootLayout->addWidget(makePageTitle(title));
 
-    // Scrollable content area
-    auto* scroll = new QScrollArea;
+    // Scrollable content area. D25: rows that fit side by side without a
+    // vertical scroll bar stay side by side (SetupFit::FitScrollArea).
+    auto* scroll = new SetupFit::FitScrollArea;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setStyleSheet("QScrollArea { background: #0f0f1a; border: none; }");
@@ -122,6 +131,15 @@ void SetupPage::init(const QString& title)
 
     scroll->setWidget(contentWidget);
     rootLayout->addWidget(scroll, 1);
+}
+
+QLabel* SetupPage::makePageTitle(const QString& title, QWidget* parent)
+{
+    auto* titleLabel = new QLabel(title, parent);
+    titleLabel->setStyleSheet(
+        "QLabel { color: #c8d8e8; font-size: 16px; font-weight: bold; "
+        "border-bottom: 1px solid #304050; padding-bottom: 4px; }");
+    return titleLabel;
 }
 
 // ── Virtual ───────────────────────────────────────────────────────────────────
@@ -322,7 +340,8 @@ QHBoxLayout* SetupPage::makeLabeledRow(QLayout* parent, const QString& labelText
 
     auto* label = new QLabel(labelText);
     label->setStyleSheet(kLabelStyle);
-    label->setFixedWidth(150);
+    // D25: a label longer than the column widens its row, not cut short.
+    SetupFit::widthAtLeast(label, 150);
     row->addWidget(label);
     row->addWidget(control, 1);
 

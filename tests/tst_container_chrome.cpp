@@ -127,7 +127,7 @@ class TstContainerChrome : public QObject
         QCoreApplication::processEvents();
         QVERIFY(c.chromeVisible());
         QTest::keyRelease(&c, Qt::Key_Shift);
-        c.setHeaderMode(HeaderMode::Always);
+        c.setHeaderMode(HeaderMode::Shown);
         QVERIFY(c.chromeVisible());
         c.setHeaderMode(HeaderMode::Reveal);
         content.setFocus();

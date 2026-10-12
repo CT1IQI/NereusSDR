@@ -8,6 +8,22 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: Apply commits through the
+//                 container manager, so a placement chosen here records or
+//                 clears the container's home as Pop Out and Return do.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: the header choice is shown or
+//                 hidden, without the hover choice. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Workspace preview only: no Lock checkbox. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Duplicate always gives a shown, floating copy next to the
+//                 original (ContainerManager::showDuplicate). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The container Slice combo writes through
+//                 ContainerSourceAdapter::writeContainerSource, shared with
+//                 the workspace header's source menu. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Separate compact object actions within their editor panes by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Reset Qt 6.11 Cocoa popup accessibility cache before
@@ -132,10 +148,12 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "ContainerControlCatalog.h"
 #include "ContainerContentRegistry.h"
 #include "ContainerManager.h"
 #include "ContainerContentHost.h"
+#include "ContainerSourceAdapter.h"
 #include "ContainerWorkspaceStore.h"
 #include "MmioEndpointsDialog.h"
 
@@ -356,7 +374,19 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     setSizeGripEnabled(true);
 
     if (m_manager && m_manager->workspaceStore()) {
-        m_editSession=std::make_unique<ContainerEditSession>(*m_manager->workspaceStore());
+        // Workspace preview: Apply commits through the manager, as the
+        // arrange controller does, so a placement chosen here records or
+        // clears the container's home. With the look off the session
+        // commits to the store, as it always has.
+        ContainerEditSession::Commit commit;
+        if (WorkspacePreview::enabled()) {
+            commit = [manager = m_manager](const WorkspaceDocument& document, quint64 expectedRevision) {
+                return manager ? manager->commitWorkspace(document, expectedRevision)
+                               : CommitResult{CommitStatus::Invalid, expectedRevision,
+                                              QStringLiteral("No container manager")};
+            };
+        }
+        m_editSession=std::make_unique<ContainerEditSession>(*m_manager->workspaceStore(), std::move(commit));
         m_selectedId=m_container ? m_container->id() : m_editSession->draft().mainContainerId;
     }
     buildLayout();
@@ -368,6 +398,10 @@ ContainerSettingsDialog::ContainerSettingsDialog(ContainerWidget* container,
     // captured items into m_workingItems from the live MeterWidget.
     takeSnapshot();
     styleSelectorPopups(this);
+
+    // Workspace preview: the scoped stylesheet pass runs each time the
+    // dialog is shown (preview scaffolding; nothing with the switch off).
+    WorkspacePreview::themeOnShow(this);
 }
 
 ContainerSettingsDialog::~ContainerSettingsDialog()
@@ -724,8 +758,8 @@ void ContainerSettingsDialog::populateAvailableList()
         QFont f = h->font();
         f.setBold(true);
         h->setFont(f);
-        h->setForeground(QColor(0x8a, 0xa8, 0xc0));
-        h->setBackground(QColor(0x1a, 0x2a, 0x38));
+        h->setForeground(WorkspacePreview::roleColour(QColor(0x8a, 0xa8, 0xc0), "title-text"));
+        h->setBackground(WorkspacePreview::roleColour(QColor(0x1a, 0x2a, 0x38), "titlebar-bottom"));
         h->setFlags(Qt::NoItemFlags);   // non-selectable, non-enabled
     };
     auto addEntry = [this](const Entry& e) {
@@ -1065,8 +1099,11 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         return cb;
     };
 
-    m_lockCheck              = makeCheck(QStringLiteral("Lock"),
+    // The workspace look has no Lock setting: no checkbox there.
+    if (!WorkspacePreview::enabled()) {
+        m_lockCheck          = makeCheck(QStringLiteral("Lock"),
                                          m_container && m_container->isLocked());
+    }
     m_hideTitleCheck         = makeCheck(QStringLiteral("Hide title"),
                                          m_container && !m_container->isTitleBarVisible());
     m_minimisesCheck         = makeCheck(QStringLiteral("Minimizes"),
@@ -1082,12 +1119,19 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
     m_highlightCheck         = makeCheck(QStringLiteral("Highlight"),
                                          m_container && m_container->isHighlighted());
 
-    row2->addWidget(m_lockCheck);
+    if (m_lockCheck) {
+        row2->addWidget(m_lockCheck);
+    }
     if(m_editSession) {
         m_hideTitleCheck->hide();
         auto* modes=new QHBoxLayout;outer->addLayout(modes);
         m_headerCombo=new QComboBox(bar); m_headerCombo->setObjectName("containerHeader");
-        m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Always)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
+        if (WorkspacePreview::enabled()) {
+            // Workspace preview: a header is shown or hidden.
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Hidden"),int(HeaderMode::Hidden));
+        } else {
+            m_headerCombo->addItem(tr("Always visible"),int(HeaderMode::Shown)); m_headerCombo->addItem(tr("Reveal on hover / focus"),int(HeaderMode::Reveal)); m_headerCombo->addItem(tr("Hidden — recovery menu"),int(HeaderMode::Hidden));
+        }
         m_layoutCombo=new QComboBox(bar); m_layoutCombo->setObjectName("containerLayout"); m_layoutCombo->addItem(tr("Canvas"),int(ContentLayout::FreeCanvas)); m_layoutCombo->addItem(tr("Vertical stack"),int(ContentLayout::VerticalStack)); m_layoutCombo->addItem(tr("Saved legacy canvas"),int(ContentLayout::LegacyCanvas));
         m_layoutCombo->setToolTip(tr("Canvas lets each object move and resize independently and scrolls to retain its logical size. Saved legacy canvas preserves imported normalized compositions."));
         auto* canvasActions=new QHBoxLayout;outer->addLayout(canvasActions);
@@ -1155,6 +1199,9 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
                 if(!result.ok) {m_transactionStatus->setText(result.error);return;}
                 auto copy=result.document.containers.first(); copy.name+=tr(" copy");
                 for(auto& entry:copy.contents) {entry.returnLocation.reset();}
+                // Always a shown, floating copy beside the original; Thetis
+                // keeps the original's state (see ContainerManager::showDuplicate).
+                m_manager->showDuplicate(copy, original);
                 draft.containers.append(copy); m_editSession->setDraft(draft); refreshDraftDropdown(); selectDraftContainer(copy.id); return;
             }
             return;
@@ -1776,7 +1823,7 @@ MeterWidget* ContainerSettingsDialog::findMeterWidget() const
 
 void ContainerSettingsDialog::populateItemList()
 {
-    if (m_editSession) { if (m_lockCheck) { loadCurrentDraft(); } return; }
+    if (m_editSession) { if (m_hideTitleCheck) { loadCurrentDraft(); } return; }
     qDeleteAll(m_workingItems);
     m_workingItems.clear();
 
@@ -2116,7 +2163,11 @@ void ContainerSettingsDialog::loadCurrentDraft()
         if(m_autoHeightCheck) { m_autoHeightCheck->setChecked(c.autoHeight); }
         if(m_hidesWhenRxNotUsedCheck) { m_hidesWhenRxNotUsedCheck->setChecked(c.config.value("hidesWhenRxNotUsed").toBool()); }
         if(m_highlightCheck) { m_highlightCheck->setChecked(c.config.value("highlight").toBool()); }
-        if(m_headerCombo) {m_headerCombo->setCurrentIndex(m_headerCombo->findData(int(c.header)));}
+        if(m_headerCombo) {
+            // Workspace preview: there is no Reveal item; it reads as Hidden.
+            const int headerIndex=m_headerCombo->findData(int(c.header));
+            m_headerCombo->setCurrentIndex(headerIndex>=0 ? headerIndex : m_headerCombo->findData(int(HeaderMode::Hidden)));
+        }
         if(m_layoutCombo) {m_layoutCombo->setCurrentIndex(m_layoutCombo->findData(int(c.layout)));}
         if(m_anchorCombo) {m_anchorCombo->setCurrentIndex(m_anchorCombo->findData(int(c.anchor)));}
         if(m_placementCombo) {m_placementCombo->setCurrentIndex(m_placementCombo->findData(int(c.dockMode)));}
@@ -2158,15 +2209,15 @@ void ContainerSettingsDialog::saveCurrentDraft()
             d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);
             const int source=d.config.contains("sliceId") ? d.config.value("sliceId").toInt()+1 : d.config.value("rxSource").toInt(1);
             if (m_rxSourceCombo->currentData().toInt()!=source) {
-                if(d.config.contains("sliceId")) { d.config["sliceId"]=m_rxSourceCombo->currentData().toInt()-1; }
-                else { d.config["rxSource"]=m_rxSourceCombo->currentData().toInt(); }
+                // The workspace header's source menu writes through the same call.
+                ContainerSourceAdapter::writeContainerSource(d.config,m_rxSourceCombo->currentData().toInt());
             }
             setBool("highlight",m_highlightCheck->isChecked());
             setBool("showOnRx",m_showOnRxCheck->isChecked(),true); setBool("showOnTx",m_showOnTxCheck->isChecked(),true);
             if (m_lockCheck) { d.locked=m_lockCheck->isChecked(); }
             if (m_hideTitleCheck) {
                 if(m_hideTitleCheck->isChecked()) {d.header=HeaderMode::Hidden;}
-                else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Always;}
+                else if(d.header==HeaderMode::Hidden) {d.header=HeaderMode::Shown;}
             }
             if (m_minimisesCheck && m_minimisesCheck->isEnabled()) { setBool("containerMinimises",m_minimisesCheck->isChecked()); }
             if (m_autoHeightCheck) { d.autoHeight=m_autoHeightCheck->isChecked(); }

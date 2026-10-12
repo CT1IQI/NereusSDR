@@ -21,6 +21,18 @@
 //                and rows are the cables' render ends ("CABLE-A Input"),
 //                the end VAX writes to. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-09 - A detected-cable row names its own style rule, so its
+//                bottom line no longer repeats under every label in it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - "Apply to VAX N && M" doubles its ampersand so Qt draws it
+//                instead of taking it as a mnemonic. J.J. Boyd (KG4VCF), AI-
+//                assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the intro's emphasis takes the
+//                colour of its meaning (ready is the decided ok, nothing
+//                found or not detected the decided warn, new cables plain
+//                text) and the product captions the secondary text, not
+//                the selection blue. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - the "new cables" notice's badge names the system it runs
 //                on (systemBadgeText); it said WINDOWS on every system.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -29,6 +41,7 @@
 
 #include "VaxFirstRunDialog.h"
 #include "StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/AudioEngine.h"
 #include "core/audio/IAudioDeviceCatalog.h"
@@ -194,7 +207,7 @@ QWidget* makeDetRow(int vaxSlot,
         prodLabel->setStyleSheet(QStringLiteral(
             "QLabel { color: %1; font-size: 9px;"
             " letter-spacing: 0.3px; }")
-            .arg(Style::kAccent));
+            .arg(WorkspacePreview::roleColourName(Style::kAccent, "text-secondary")));
         devLayout->addWidget(prodLabel);
     }
 
@@ -218,8 +231,11 @@ QWidget* makeDetRow(int vaxSlot,
     }
     layout->addWidget(rightSide, 0, Qt::AlignTop);
 
+    // Named so the bottom line stays on the row: an unnamed QWidget rule
+    // reached every label in it and drew the line under each.
+    row->setObjectName(QStringLiteral("vaxDetectedRow"));
     row->setStyleSheet(QStringLiteral(
-        "QWidget { background: transparent; border-bottom: 1px solid %1; }")
+        "QWidget#vaxDetectedRow { background: transparent; border-bottom: 1px solid %1; }")
         .arg(Style::kInsetBorder));
 
     return row;
@@ -563,7 +579,7 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
         " installed on your system. Bind them to VAX slots so digital-mode"
         " apps (WSJT-X, FLDIGI, N1MM+) can see your NereusSDR receivers as"
         " audio sources.")
-        .arg(Style::kAccent)
+        .arg(WorkspacePreview::statusColourName(Style::kAccent, "ok"))
         .arg(inputCount)
         .arg(inputCount == 1 ? QStringLiteral("") : QStringLiteral("s")));
     bodyLayout->addWidget(intro);
@@ -601,7 +617,7 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
                            " available —<br/>"
                            "<span style='font-size:9px'>install another"
                            " cable to enable</span></span>")
-                .arg(Style::kTextInactive),
+                .arg(WorkspacePreview::roleColourName(Style::kTextInactive, "text-inactive")),
             QString(),
             QString(), QString(),
             QStringLiteral("unassigned"),
@@ -627,7 +643,7 @@ void VaxFirstRunDialog::buildBodyWindowsCablesFound(QVBoxLayout* bodyLayout)
         " <span style='color:%1;font-weight:bold'>1</span> on the VFO flag."
         " NereusSDR sends RX1 audio to CABLE-A, WSJT-X reads it. Same for"
         " VAX 2/3.")
-        .arg(Style::kTextPrimary));
+        .arg(WorkspacePreview::roleColourName(Style::kTextPrimary, "text")));
     explainLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }")
         .arg(Style::kTextSecondary));
@@ -645,7 +661,7 @@ void VaxFirstRunDialog::buildBodyWindowsNoCables(QVBoxLayout* bodyLayout)
         "VAX channels route audio to digital-mode apps (WSJT-X, FLDIGI,"
         " N1MM+). <b style='color:%1'>No virtual audio cables were found</b>"
         " on your system. Install one of these to enable VAX:")
-        .arg(Style::kAccent));
+        .arg(WorkspacePreview::statusColourName(Style::kAccent, "warn")));
     bodyLayout->addWidget(intro);
 
     // Install-cards grid — 2x2 layout per mockup.
@@ -825,7 +841,7 @@ void VaxFirstRunDialog::buildBodyWindowsNoCables(QVBoxLayout* bodyLayout)
         " cables the ham-radio community already trusts. On macOS and"
         " Linux, NereusSDR ships native VAX drivers so no extra install"
         " is needed.")
-        .arg(Style::kTextPrimary));
+        .arg(WorkspacePreview::roleColourName(Style::kTextPrimary, "text")));
     explainLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }")
         .arg(Style::kTextSecondary));
@@ -876,13 +892,13 @@ void VaxFirstRunDialog::buildBodyMacNative(QVBoxLayout* bodyLayout)
             "NereusSDR ships native VAX audio devices on macOS."
             " <b style='color:%1'>All 4 VAX channels are ready to use</b>"
             " &mdash; no extra installation needed.")
-            .arg(Style::kAccent));
+            .arg(WorkspacePreview::statusColourName(Style::kAccent, "ok")));
     } else if (detectedCount > 0) {
         intro->setText(QStringLiteral(
             "NereusSDR ships native VAX audio devices on macOS."
             " <b style='color:%1'>%2 of 4 VAX channels detected.</b>"
             " Reinstall NereusSDR if this persists.")
-            .arg(Style::kAmberText)
+            .arg(WorkspacePreview::statusColourName(Style::kAmberText, "warn"))
             .arg(detectedCount));
     } else {
         intro->setText(QStringLiteral(
@@ -891,7 +907,7 @@ void VaxFirstRunDialog::buildBodyMacNative(QVBoxLayout* bodyLayout)
             " Reinstall NereusSDR or unblock"
             " <code>NereusSDRVAX.driver</code> in System Settings"
             " &rarr; Privacy &amp; Security to enable native VAX.")
-            .arg(Style::kAmberText));
+            .arg(WorkspacePreview::statusColourName(Style::kAmberText, "warn")));
     }
     bodyLayout->addWidget(intro);
 
@@ -951,7 +967,7 @@ void VaxFirstRunDialog::buildBodyMacNative(QVBoxLayout* bodyLayout)
         " as the audio device. Set RX1's VAX button to"
         " <span style='color:%1;font-weight:bold'>1</span> on the VFO flag."
         " Done.")
-        .arg(Style::kTextPrimary));
+        .arg(WorkspacePreview::roleColourName(Style::kTextPrimary, "text")));
     explainLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }")
         .arg(Style::kTextSecondary));
@@ -970,7 +986,7 @@ void VaxFirstRunDialog::buildBodyLinuxNative(QVBoxLayout* bodyLayout)
         "NereusSDR created <b style='color:%1'>4 native VAX audio"
         " sources</b> via PipeWire. All channels are ready &mdash; no"
         " extra installation needed.")
-        .arg(Style::kAccent));
+        .arg(WorkspacePreview::statusColourName(Style::kAccent, "ok")));
     bodyLayout->addWidget(intro);
 
     auto* listFrame = new QFrame(this);
@@ -1005,7 +1021,7 @@ void VaxFirstRunDialog::buildBodyLinuxNative(QVBoxLayout* bodyLayout)
         " PulseAudio (via <code>pipewire-pulse</code> compat). In WSJT-X,"
         " pick <span style='color:%1;font-weight:bold'>\"NereusSDR VAX 1\"</span>"
         " from the audio device list.")
-        .arg(Style::kTextPrimary));
+        .arg(WorkspacePreview::roleColourName(Style::kTextPrimary, "text")));
     explainLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: %1; font-size: 10px; }")
         .arg(Style::kTextSecondary));
@@ -1030,7 +1046,7 @@ void VaxFirstRunDialog::buildBodyRescanNewCables(QVBoxLayout* bodyLayout)
         "NereusSDR detected <b style='color:%1'>%2 new virtual audio"
         " cable%3</b> since your last setup. Would you like to bind"
         " them to unassigned VAX slots?")
-        .arg(Style::kAccent)
+        .arg(WorkspacePreview::roleColourName(Style::kAccent, "text"))
         .arg(newCount)
         .arg(newCount == 1 ? QStringLiteral("") : QStringLiteral("s")));
     bodyLayout->addWidget(intro);
@@ -1202,7 +1218,7 @@ QWidget* VaxFirstRunDialog::buildFooter()
                     nums << QString::number(b.first);
                 }
                 applyLabel = QStringLiteral("Apply to VAX %1")
-                    .arg(nums.join(QStringLiteral(" & ")));
+                    .arg(nums.join(QStringLiteral(" && ")));
             } else {
                 applyLabel = QStringLiteral("Apply suggested");
             }

@@ -10,9 +10,16 @@
 //                 Claude Code.
 //   2026-09-22 — Accept owning PS3 curves with independent coordinates and
 //                 series visibility; J.J. Boyd (KG4VCF), OpenAI Codex.
+//   2026-10-09 - JJ's D22: with the workspace preview on, the chart takes
+//                 its container's background through
+//                 WorkspacePreview::dataBackground(); grid, traces, labels
+//                 and legend unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "AmpViewChart.h"
+
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QFontMetrics>
 #include <QPainter>
@@ -174,7 +181,7 @@ void AmpViewChart::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.fillRect(rect(), QColor(kBackground));
+    painter.fillRect(rect(), WorkspacePreview::dataBackground(QColor(kBackground), "app-bg", this));
 
     const QRectF plot(kLeft, kTop, width() - kLeft - kRight,
                       height() - kTop - kBottom);

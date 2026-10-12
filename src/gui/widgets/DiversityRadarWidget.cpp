@@ -21,6 +21,11 @@
 //                 core/DiversityPattern, which the Core also sends to the
 //                 phone; the radar draws from it. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the backdrop is a data background
+//                 (D22) and takes the surrounding container's surface
+//                 through WorkspacePreview::dataBackground(); the ink is
+//                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -65,6 +70,7 @@
 //============================================================================================//
 
 #include "gui/widgets/DiversityRadarWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QFont>
 #include <QLinearGradient>
@@ -156,8 +162,9 @@ void DiversityRadarWidget::paintEvent(QPaintEvent* /*event*/)
 
     // Backdrop radial gradient (NereusSDR-original chrome).
     QRadialGradient bg(c, r);
-    bg.setColorAt(0.0, QColor(0, 60, 100));
-    bg.setColorAt(1.0, QColor(0, 20, 40));
+    // Workspace preview: both stops are the container's surface (D22).
+    bg.setColorAt(0.0, WorkspacePreview::dataBackground(QColor(0, 60, 100), "panel", this));
+    bg.setColorAt(1.0, WorkspacePreview::dataBackground(QColor(0, 20, 40), "panel", this));
     p.setBrush(bg);
     p.setPen(QPen(QColor(0, 255, 255), 1.0));
     p.drawEllipse(c, r, r);

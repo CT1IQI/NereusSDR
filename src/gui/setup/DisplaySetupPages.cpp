@@ -56,6 +56,9 @@
 //   2026-09-29 - R-IOS-18: 3D Floor says what it does (how far below the
 //                 noise floor the 3D surface starts; kept per band).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - "Calibration && Peak Hold" doubles its ampersand so the
+//                group title draws it. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -983,7 +986,7 @@ void SpectrumDefaultsPage::buildUI()
     addContent(renderGroup);
 
     // --- Section: Calibration ---
-    auto* calGroup = new QGroupBox(QStringLiteral("Calibration & Peak Hold"), this);
+    auto* calGroup = new QGroupBox(QStringLiteral("Calibration && Peak Hold"), this);
     auto* calForm  = new QFormLayout(calGroup);
     calForm->setSpacing(6);
 

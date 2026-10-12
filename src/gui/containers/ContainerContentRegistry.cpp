@@ -1,7 +1,19 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview only: a preview tile has no background of
+//                 its own, so the container's background shows through it as
+//                 it does around the applet in the window. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: a widget factory registers its
+//                 declared properties (declaredProperties). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: createPreview passes the effective
+//                 context and the Preview render mode to widget factories.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The Rotor applet (applet:rotor), rotor control plan Task 6, by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Per-instance QWidget factories for the workspace preview
+//                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-03 — Canonical independent control creation shortcuts by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Plain preview and unavailable explanations by J.J. Boyd (KG4VCF),
@@ -12,6 +24,7 @@
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <QUuid>
 #include <QJsonDocument>
 #include "gui/meters/presets/BarPresetItem.h"
@@ -294,6 +307,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
             descriptor.available = false; descriptor.unavailableReason = QStringLiteral("This capability is not built");
         }
     }
+    for (const QString& typeId : m_widgetFactoryOrder) { result.append(m_widgetFactories.value(typeId).descriptor); }
     for (auto& d : result) {
         if (m_unavailable.contains(d.typeId)) { d.available = false; d.unavailableReason = m_unavailable.value(d.typeId); }
     }
@@ -391,8 +405,62 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     item->setParent(parent);
     return item.release();
 }
+void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
+                                                     const QVector<ContentProperty>& properties)
+{
+    if (typeId.isEmpty() || !factory) { return; }
+    ContentDescriptor stored = descriptor;
+    stored.typeId = typeId;
+    stored.singleton = false;
+    if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
+    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties});
+    ++m_generation;
+    emit runtimeChanged();
+}
+void ContainerContentRegistry::unregisterWidgetFactory(const QString& typeId)
+{
+    if (!m_widgetFactories.remove(typeId)) { return; }
+    m_widgetFactoryOrder.removeAll(typeId);
+    ++m_generation;
+    emit runtimeChanged();
+}
+bool ContainerContentRegistry::hasWidgetFactory(const QString& typeId) const { return m_widgetFactories.contains(typeId); }
+QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QString& typeId) const
+{
+    const auto it = m_widgetFactories.constFind(typeId);
+    return it == m_widgetFactories.constEnd() ? QVector<ContentProperty>{} : it->properties;
+}
+QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent,
+                                                ContentRenderMode mode) const
+{
+    const auto it = m_widgetFactories.constFind(entry.typeId);
+    if (it == m_widgetFactories.constEnd() || !isAvailable(entry.typeId)) { return nullptr; }
+    QWidget* widget = it->factory(entry, parent, mode);
+    if (!widget) { return nullptr; }
+    if (widget->parentWidget() != parent) { widget->setParent(parent); }
+    widget->setProperty("containerFactoryType", entry.typeId);
+    widget->setProperty("containerEntryId", entry.id);
+    return widget;
+}
 QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent) const
 {
+    return createPreview(entry, parent, entry.context);
+}
+QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWidget* parent,
+                                                 const QJsonObject& context) const
+{
+    if (hasWidgetFactory(entry.typeId) && isAvailable(entry.typeId)) {
+        // The live host's entry: the effective context in place of the
+        // entry's own, built inert.
+        ContentEntry effective = entry;
+        effective.context = context;
+        if (QWidget* view = createWidget(effective, parent, ContentRenderMode::Preview)) {
+            view->setAttribute(Qt::WA_TransparentForMouseEvents);
+            view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
+            view->setProperty("freeCanvasHint", view->sizeHint());
+            return view;
+        }
+    }
     if (!entry.typeId.startsWith("applet:") && isAvailable(entry.typeId)) {
         auto meter=std::make_unique<MeterWidget>();
         if (auto* item=createMeterItem(entry,meter.get(),ContentRenderMode::Preview)) {
@@ -402,6 +470,10 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
     }
     auto* tile=new QWidget(parent); auto* layout=new QVBoxLayout(tile);
     tile->setMinimumHeight(64); tile->setStyleSheet("background:#172534;color:#c8d8e8;border:1px solid #203040;");
+    if (WorkspacePreview::enabled()) {
+        // The container's background (ContainerPreviewWidget) shows through.
+        tile->setStyleSheet("background:transparent;color:#c8d8e8;border:1px solid #203040;");
+    }
     const QString reason=entry.extensions.contains("unavailableReason") ? entry.extensions.value("unavailableReason").toString() : !isAvailable(entry.typeId) ? unavailableReason(entry.typeId)
         : (entry.typeId.startsWith("applet:") ? (entry.typeId=="applet:s_meter" ? tr("Existing S-meter view. Source changes take effect on Apply; preview controls are disabled.") : tr("This applet keeps its current radio and slice. Preview controls are disabled."))
         : tr("Unsupported configuration; original data retained."));

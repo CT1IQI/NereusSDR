@@ -10,6 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - ensureVisiblePosition reads the screens through a
+//                 ScreenSource and says whether it moved the form, by J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -103,6 +106,7 @@ mw0lge@grange-lane.co.uk
 namespace NereusSDR {
 
 class ContainerWidget;
+class ScreenSource;
 
 class FloatingContainer : public QWidget {
     Q_OBJECT
@@ -144,8 +148,10 @@ public:
     // the (0,0) origin or outside every connected screen. Pass the main
     // window (or any widget on the target screen) as anchor; the form is
     // centered on the anchor's screen. No-op when geometry is already on
-    // a screen and not at (0,0).
-    void ensureVisiblePosition(QWidget* anchor);
+    // a screen and not at (0,0). The screens are read through `screens`
+    // (the application's own when null). Returns true when the form was
+    // moved, so the caller can keep it off another window's spot.
+    bool ensureVisiblePosition(QWidget* anchor, const ScreenSource* screens = nullptr);
     static QRect clampedGeometry(const QRect& geometry, const QRect& available, const QSize& minimum);
 
 signals:

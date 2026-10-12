@@ -13,7 +13,9 @@
     <qresource prefix="/icons">
         <file alias="NereusSDR.png">resources/icons/NereusSDR.png</file>
         <file alias="spin-up.svg">resources/icons/spin-up.svg</file>
+        <file alias="spin-up-workspace.svg">resources/icons/spin-up-workspace.svg</file>
         <file alias="spin-down.svg">resources/icons/spin-down.svg</file>
+        <file alias="spin-down-workspace.svg">resources/icons/spin-down-workspace.svg</file>
         <file alias="badge-check.svg">resources/icons/badge-check.svg</file>
         <file alias="badge-dot.svg">resources/icons/badge-dot.svg</file>
         <file alias="badge-prohibited.svg">resources/icons/badge-prohibited.svg</file>

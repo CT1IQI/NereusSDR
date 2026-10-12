@@ -70,6 +70,9 @@
 //   2026-10-06: R-SPK-21: the VAX right-click opens Setup > Audio >
 //               Microphone, the new name of TX Input. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -118,6 +121,7 @@
 //============================================================================================//
 
 #include "PhoneCwApplet.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/HGauge.h"
 #include "gui/meters/MeterPoller.h"
 #include "gui/ComboStyle.h"
@@ -355,6 +359,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
     // ── Control 3: Mic profile combo ─────────────────────────────────────────
     m_micProfileCombo = new QComboBox(page);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
+    installQtCocoaAccessibleTableCacheRepair(m_micProfileCombo->view());
     m_micProfileCombo->setFixedHeight(22);
     m_micProfileCombo->addItems({QStringLiteral("Default"), QStringLiteral("DX"),
                                  QStringLiteral("Contest"), QStringLiteral("Custom")});

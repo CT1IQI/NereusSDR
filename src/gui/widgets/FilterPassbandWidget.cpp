@@ -26,9 +26,16 @@
 //                 hand cursors instead of Qt's drawn four-way move cursor,
 //                 which crashed Qt 6.11.0 on macOS. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The background reads WorkspacePreview::dataBackground()
+//                 (the data colour choice; navy until a choice is made).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - JJ's data colour decision: the background is the
+//                 container's, the user's colour when set. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPassbandWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -87,7 +94,7 @@ void FilterPassbandWidget::paintEvent(QPaintEvent*)
     const int h = height();
 
     // Background — from AetherSDR
-    p.fillRect(rect(), QColor(0x0a, 0x0a, 0x18));
+    p.fillRect(rect(), WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x18), "panel", this));
 
     // Border
     p.setPen(QColor(0x20, 0x30, 0x40));

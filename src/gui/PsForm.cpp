@@ -70,6 +70,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "PsForm.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -244,6 +245,10 @@ PsForm::PsForm(RadioModel* radioModel, PureSignal* pureSignal, QWidget* parent)
         m_chkOnTop->setChecked(stayOnTop);
     }
     setWindowFlag(Qt::WindowStaysOnTopHint, stayOnTop);
+
+    // Workspace preview: the scoped stylesheet pass runs each time the
+    // dialog is shown (preview scaffolding; nothing with the switch off).
+    WorkspacePreview::themeOnShow(this);
 }
 
 PsForm::~PsForm() = default;

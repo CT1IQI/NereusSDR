@@ -2199,6 +2199,17 @@ private slots:
                     << "pixels=" << widget->renderedPixels().size()
                     << "history=" << widget->waterfallHistoryRowsForTest();
         };
+        // The view centre as the refusal is delivered. The controller's own
+        // streamCentreFinished slot was connected first, so it has restored
+        // the view by the time this one runs. Reading the widget later is a
+        // race: the restore asks for a fresh subscription, and once its
+        // context lands the view takes the Core's bin-aligned crop, up to
+        // one source bin away (as before the drag).
+        QList<double> viewAtRefusal;
+        const auto refusalView = connect(&client, &StationClient::streamCentreFinished, this,
+            [&viewAtRefusal, widget](int, quint64, bool accepted) {
+                if (!accepted) { viewAtRefusal.append(widget->centerFrequency()); }
+            });
         sendMouse(QEvent::MouseButtonPress, grab, Qt::LeftButton);
         QCOMPARE(widget->isZoomRecentring(), scale);
         sendMouse(QEvent::MouseMove, firstMove, Qt::LeftButton);
@@ -2212,6 +2223,9 @@ private slots:
             QVERIFY(update.name != "phase" || update.value.toString() != "needsConfirmation");
         }
         QCOMPARE(station.streamCentreHz(stream), centre);
+        disconnect(refusalView);
+        QCOMPARE(viewAtRefusal.size(), 1);
+        QVERIFY(std::abs(viewAtRefusal.first() - centre) < 1.0);
         // The refusal returns the view to the Core's source. A context still
         // settling from before the drag may land after that and move the view
         // to its bin-aligned crop, as the check before the drag allows; the

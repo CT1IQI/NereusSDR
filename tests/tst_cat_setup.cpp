@@ -6,6 +6,9 @@
 //            AI-assisted via Anthropic Claude Code.
 // 2026-10-07 Remote reasons and the log window follow CatControl.
 //            J.J. Boyd / KG4VCF, AI tooling: Claude Code.
+// 2026-10-09 "Always recenter VFOs" sits in the option rows' indicator
+//            column, both looks. J.J. Boyd (KG4VCF), AI-assisted via
+//            Anthropic Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -22,6 +25,7 @@
 #include <QTemporaryDir>
 #include <QScrollArea>
 #include <QScrollBar>
+#include "GridHeaderAlignment.h"
 #include "gui/setup/CatNetworkSetupPages.h"
 #include "gui/setup/CatLogWindow.h"
 #include "gui/applets/CatApplet.h"
@@ -186,6 +190,20 @@ private slots:
         connect(&service,&CatService::messageLogged,&model,[&](int,bool inbound,const QByteArray&) { if (inbound) { service.stopAll(); } });
         QCOMPARE(service.testCommand(1,"FA00014074000;"),QByteArray("?;")); QVERIFY(service.sessionIds(1).isEmpty());
         QVERIFY(model.sliceById(0)->frequency()!=14074000.0); QVERIFY(!service.isStarted());
+    }
+    // The disabled "Always recenter VFOs" row draws its indicator where the
+    // option rows above it draw theirs (it sat about 2 px left of them).
+    // Builds the page only; nothing starts listening.
+    void alwaysRecenterIndicatorSitsInItsColumn_data() { QTest::addColumn<bool>("workspace"); QTest::newRow("today")<<false; QTest::newRow("workspace")<<true; }
+    void alwaysRecenterIndicatorSitsInItsColumn() {
+        QFETCH(bool,workspace); GridHeaderAlignment::AppLook look(workspace);
+        RadioModel model; CatOptionsSetupPage page(&model); look.apply(&page); page.resize(900,650); page.show(); QVERIFY(QTest::qWaitForWindowExposed(&page));
+        for (int i=0;i<4;++i) { QCoreApplication::sendPostedEvents(nullptr,QEvent::LayoutRequest); QCoreApplication::processEvents(); }
+        QCheckBox* recenter=nullptr; for (QCheckBox* box:page.findChildren<QCheckBox*>()) { if (box->text()==QStringLiteral("Always recenter VFOs")) { recenter=box; } }
+        auto* above=control<QCheckBox>(page,"catLimitPower"); QVERIFY(recenter && above);
+        const auto indicator=[&page](const QCheckBox* box) { QStyleOptionButton option; option.initFrom(box); const QRect r=box->style()->subElementRect(QStyle::SE_CheckBoxIndicator,&option,box); return QRect(box->mapTo(&page,r.topLeft()),r.size()); };
+        QCOMPARE(indicator(recenter).left(),indicator(above).left()); QCOMPARE(indicator(recenter).size(),indicator(above).size());
+        QCOMPARE(recenter->height(),above->height());
     }
     void optionsRoundTripAndTesterHasRealEffectsWithoutSessions() {
         RadioModel model; model.addSlice(); model.sliceOwnership()->setOwner(0,SliceOwnership::stationDevice()); CatService& service=*model.catService(); service.startConfigured();

@@ -51,6 +51,12 @@ const QSet<QString> kStretchReplacedPages = {
     QStringLiteral("NereusSDR::NrAnfSetupPage"),
     QStringLiteral("NereusSDR::AgcAlcSetupPage"),
     QStringLiteral("NereusSDR::CoresSetupPage"),
+    // D25: the tab pane takes the page's height, and each tab scrolls down
+    // on its own (tst_setup_pages_fit_window).
+    QStringLiteral("NereusSDR::HardwarePage"),
+    // D25: the cards area takes the page's height, so stacked cards scroll
+    // down to the bottom of the window.
+    QStringLiteral("NereusSDR::RadioStatusPage"),
 };
 
 // The content widget of a SetupPage: the widget inside its own scroll area

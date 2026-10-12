@@ -33,10 +33,18 @@
 //                Packet gap and UDP seen are measured for a local radio
 //                (RadioLinkStats) and shown. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The Connection status word reads
+//                WorkspacePreview::statusColourName() (the status colour
+//                choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-09 - The section headers read WorkspacePreview::roleColourName()
+//                (title-text) with the preview on. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/NetworkDiagnosticsDialog.h"
 #include "StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <optional>
 #include "models/RadioModel.h"
 #include "core/AudioEngine.h"
@@ -107,7 +115,10 @@ QLabel* NetworkDiagnosticsDialog::makeFieldLabel(const QString& text)
 static void addSectionHeader(QGridLayout* grid, int row, const QString& title)
 {
     QLabel* hdr = new QLabel(title);
-    hdr->setStyleSheet(QString::fromUtf8(kSectionHeaderStyle));
+    // The header blue is decoration: the header text with the preview on.
+    hdr->setStyleSheet(QString::fromUtf8(kSectionHeaderStyle)
+                           .replace(QStringLiteral("#5fa8ff"),
+                                    WorkspacePreview::roleColourName("#5fa8ff", "title-text")));
     grid->addWidget(hdr, row, 0, 1, 4);
 }
 
@@ -346,8 +357,10 @@ void NetworkDiagnosticsDialog::refresh()
         const bool connected = m_model && m_model->isConnected();
         m_statusLabel->setText(
             connected
-                ? QStringLiteral("<span style='color:#5fff8a;'>&#x25cf; Connected</span>")
-                : QStringLiteral("<span style='color:#ff6060;'>&#x25cf; Disconnected</span>"));
+                ? QStringLiteral("<span style='color:%1;'>&#x25cf; Connected</span>")
+                      .arg(WorkspacePreview::statusColourName("#5fff8a", "ok"))
+                : QStringLiteral("<span style='color:%1;'>&#x25cf; Disconnected</span>")
+                      .arg(WorkspacePreview::statusColourName("#ff6060", "danger")));
         m_statusLabel->setTextFormat(Qt::RichText);
     }
 
