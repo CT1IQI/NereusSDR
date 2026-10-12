@@ -1036,6 +1036,9 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
           cmake --build build-hal
+          # 2026-10-12: J.J. Boyd / OpenAI Codex; check metadata before signing.
+          python3 scripts/verify_vax_factory.py --plist hal-plugin/Info.plist \
+            --plist build-hal/NereusSDRVAX.driver/Contents/Info.plist
 
       - name: Sign HAL plugin
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'

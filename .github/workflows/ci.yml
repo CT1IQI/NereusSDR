@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 2026-10-12: J.J. Boyd / OpenAI Codex; no audio APIs or installer scripts.
+      - name: Verify VAX factory registration and offline package gates
+        run: python3 scripts/test_vax_factory_identity.py
+
       - name: Verify Thetis license headers
         run: python3 scripts/verify-thetis-headers.py
 
