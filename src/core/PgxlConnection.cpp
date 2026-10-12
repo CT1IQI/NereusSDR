@@ -48,6 +48,10 @@
 //               answers log at debug; an S-frame logs at info only when
 //               its state changes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-11: Link trace: the last frames each way are kept and
+//               written to the log when the amp closes the link.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
@@ -61,6 +65,11 @@ namespace NereusSDR {
 Q_LOGGING_CATEGORY(lcPgxl, "nereus.pgxl")
 
 namespace {
+
+// Link trace size: at the 5 Hz status poll about three seconds each way.
+constexpr int kRecentWireMax = 32;
+// A status reply runs to a few hundred characters; the start names it.
+constexpr int kRecentWireLineMax = 200;
 
 // Commands a timer sends while connected: the status poll, the keepalive
 // status poke and the auto-ping. They log at debug; everything else is an
@@ -586,6 +595,7 @@ quint32 PgxlConnection::writeProtocolCommand(const QString& cmd)
     quint32 seq = ++m_seq;
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
     m_socket->write(line.toUtf8());
+    noteWire(/*sent=*/true, line.trimmed());
     qCDebug(lcPgxl) << "sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
     // The 5 Hz status poll and the auto-ping log at debug, not info; at
@@ -613,6 +623,7 @@ void PgxlConnection::onConnected(quint64 attemptGeneration) {
     m_reconnectTimer.stop();
     m_connectTimer.stop();
     m_connectedSinceMs = QDateTime::currentMSecsSinceEpoch();
+    m_recentWire.clear();
     // Bench-fix 2026-05-20: reset the version-received latch so the next
     // V-frame arrival re-arms the handshake and re-sets m_connected=true.
     // Without this, m_gotVersion stays sticky from the previous session,
@@ -644,6 +655,9 @@ void PgxlConnection::onDisconnected(quint64 attemptGeneration) {
         qCInfo(lcPgxl) << "PGXL disconnected cleanly";
     } else {
         qCWarning(lcPgxl) << "PGXL disconnected with error:" << err;
+        if (!m_userInitiatedDisconnect) {
+            logRecentWire();
+        }
     }
     m_pollTimer.stop();
     m_keepaliveTimer.stop();
@@ -668,6 +682,40 @@ void PgxlConnection::onDisconnected(quint64 attemptGeneration) {
         return;
     }
     scheduleReconnect();
+}
+
+void PgxlConnection::noteWire(bool sent, const QString& line)
+{
+    m_recentWire.append(WireRecord{QDateTime::currentMSecsSinceEpoch(), sent,
+                                   line.left(kRecentWireLineMax)});
+    while (m_recentWire.size() > kRecentWireMax) {
+        m_recentWire.removeFirst();
+    }
+}
+
+void PgxlConnection::logRecentWire() const
+{
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    qCWarning(lcPgxl).noquote()
+        << QStringLiteral("PGXL link closed %1 s after the TCP connect; last %2 frames, "
+                          "with ms before the close:")
+               .arg(double(nowMs - m_connectedSinceMs) / 1000.0, 0, 'f', 2)
+               .arg(m_recentWire.size());
+    for (const WireRecord& record : m_recentWire) {
+        qCInfo(lcPgxl).noquote()
+            << QStringLiteral("  PGXL link trace -%1 ms %2 %3")
+                   .arg(nowMs - record.ms)
+                   .arg(record.sent ? QStringLiteral("TX") : QStringLiteral("RX"), record.line);
+    }
+}
+
+QStringList PgxlConnection::recentWireForTesting() const
+{
+    QStringList lines;
+    for (const WireRecord& record : m_recentWire) {
+        lines.append((record.sent ? QStringLiteral("TX ") : QStringLiteral("RX ")) + record.line);
+    }
+    return lines;
 }
 
 void PgxlConnection::onError(quint64 attemptGeneration) {
@@ -724,6 +772,7 @@ void PgxlConnection::onReadyRead(quint64 attemptGeneration) {
         if (!line.isEmpty()) {
             ++m_framesIn;
             m_lastFrameMs = QDateTime::currentMSecsSinceEpoch();
+            noteWire(/*sent=*/false, line);
             QPointer<PgxlConnection> self(this);
             processLine(line, attemptGeneration);
             if (!self || !socketAttemptIsCurrent(attemptGeneration)) {
