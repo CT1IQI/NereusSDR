@@ -297,6 +297,10 @@
 //                                    receiverHeldReason (a remote window's
 //                                    copy of the pin refusals) are scanned.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  The notices that name the device that
+//                                    acted (a take, a pan move, a take of
+//                                    control) forward sliceHolderWords'
+//                                    words. AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -939,7 +943,10 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("letter"),
           // Slice control plan Task 4: the controller's or the taker's
           // name (the operator's own words, ruling 4.3) and the letter.
-          QStringLiteral("name, letter"), QStringLiteral("planDevice(taker).name, letter"),
+          // The taker by sliceHolderWords: a name, or the Core's own words
+          // for a device with none, with a capital at the sentence's start.
+          QStringLiteral("name, letter"),
+          QStringLiteral("sliceHolderWords(taker, WordsPlace::SentenceStart), letter"),
           // Slice control plan Task 17: sliceHolderWords' kind word for a
           // device with no name (DeviceSessionRegistry::kindWord, lowercase).
           QStringLiteral("kind")},
@@ -1118,9 +1125,12 @@ const QList<ReasonSource>& reasonSources()
           // Slice control plan Task 8: the same, the anchor not connected.
           QStringLiteral("awayPinReason(sliceHolderWords(anchor))"),
           QStringLiteral("olderWindowAskReason(namesOf(check.named))"),
-          QStringLiteral("takenOverReason(planDevice(taker).name)"),
-          QStringLiteral("sliceMovedReason(planDevice(requester).name, letters)"),
-          QStringLiteral("sliceClosedReason(planDevice(requester).name, lettersOf(it.value()))"),
+          // takerName and moverName are sliceHolderWords' (StationServer.cpp,
+          // scanned there): a name, or the Core's own words for a device
+          // with none.
+          QStringLiteral("takenOverReason(takerName)"),
+          QStringLiteral("sliceMovedReason(moverName, letters)"),
+          QStringLiteral("sliceClosedReason(moverName, lettersOf(it.value()))"),
           // Slice control plan Task 9: a closed slice's listeners are told;
           // listenedClosedReason's literals, scanned here.
           QStringLiteral("listenedClosedReason(why, name, lettersOf(it.value()))"),
