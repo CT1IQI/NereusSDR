@@ -7,6 +7,9 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): a start may declare
+//               spectrumPictureVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-10: R-AUD-SEND: receive audio is encoded and sent by a thread
 //               of its own (DaemonAudioSendThread), through AudioSendRoute,
 //               one per sender; nothing of it runs on this controller's
@@ -739,7 +742,12 @@ private:
     void clearProduction();
     QList<quint32> endpointIds() const;
     void removeEndpoint(quint32 endpointId, bool retainOperation = true);
-    bool reconcileSource(const MediaSourceKey& key);
+    /// `sourceUpdate`, when given, says what an accepted reconcile did to a
+    /// source that was already running (R-DISP-RETUNE): relabeled through
+    /// a retune, or anything else. A caller holding an endpoint outside
+    /// m_endpoints uses it to carry that endpoint over a relabel too.
+    bool reconcileSource(const MediaSourceKey& key,
+                         DaemonSpectrumSourceUpdate* sourceUpdate = nullptr);
     void releaseSourceIfUnused(const MediaSourceKey& key);
     void rebalanceSourceAfterDeparture(const MediaSourceKey& key);
     void configureEndpointFromFrame(EndpointEntry& endpoint,
@@ -934,6 +942,9 @@ private:
     // Parity Task 28: this session's start declared txDisplayVersion.
     bool m_txDisplayNegotiated{false};
     bool m_miniDisplayNegotiated{false};
+    // R-DISP-RETUNE: this session's start declared spectrumPictureVersion,
+    // so each of its spectrum contexts carries pictureGeneration.
+    bool m_spectrumPictureNegotiated{false};
     // Parity Task 31: the version it declared (3 and above: `duplex`), and
     // the device whose DUP this controller last told RadioModel is on.
     quint32 m_txDisplayDeclared{0};

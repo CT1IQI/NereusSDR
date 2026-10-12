@@ -243,6 +243,10 @@ public:
 
     /// A new endpoint context for a new picture: the blobs and the peak hold
     /// start again, as a desktop remote window's do on a new picture.
+    /// R-DISP-RETUNE: also called for a moved picture (the same shape at
+    /// another center), whose peak hold and blobs were measured at
+    /// frequencies the pixels no longer show. The noise floor, the waterfall
+    /// levels and Clarity are not touched by it and carry on.
     void newContext();
 
     /// R-DISP-HOLD: the same picture asked again with other display extras

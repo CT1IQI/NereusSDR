@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the hello
+//                                    declares spectrumPicture.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF  Core speaker: its properties left out
 //                                    by a host with no speaker of its own
 //                                    are not counted as schema skew.
@@ -999,6 +1002,9 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                                    {}, true);
     });
     m_declaredFeatures.insert(QByteArrayLiteral("miniDisplay"), 1);
+    // R-DISP-RETUNE: this client reads the picture a spectrum context
+    // continues, when the Core states it.
+    m_declaredFeatures.insert(QByteArrayLiteral("spectrumPicture"), 1);
     // Each transmit verb goes out as the same command three times (the
     // copies rule); the Core acts on the first and answers every copy.
     m_remoteTransmit = new RemoteTransmitClient(

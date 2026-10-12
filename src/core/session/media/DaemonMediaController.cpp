@@ -4,6 +4,15 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): a peer whose start declared
+//               spectrumPictureVersion is told, in each spectrum context,
+//               which picture its frames continue. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-11: R-DISP-RETUNE: a retune relabels the running spectrum
+//               source and each pan on it keeps what it has averaged; a
+//               picture moved in frequency keeps its noise floor and
+//               waterfall levels and empties its peak hold and blobs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10: R-AUD-SEND: receive audio leaves on the sender thread
 //               through AudioSendRoute; syncAudioRoutes copies the peers,
 //               the SSRC rewrites and the replacement in at every change.
@@ -1937,6 +1946,21 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
             return false;
         }
     }
+    // R-DISP-RETUNE: spectrumPictureVersion, from a peer the Core told
+    // spectrumPictureVersion 1 (its hello declared spectrumPicture at minor
+    // 11, media on); only then does a context carry pictureGeneration.
+    const bool declaresSpectrumPicture =
+        control.contains(QStringLiteral("spectrumPictureVersion"));
+    if (declaresSpectrumPicture) {
+        legacyShape.remove(QStringLiteral("spectrumPictureVersion"));
+        quint32 version = 0;
+        if (!m_server || !m_server->spectrumPictureAvailable(m_epoch)
+            || !exactUnsigned(control.value(QStringLiteral("spectrumPictureVersion")),
+                              version, /*nonzero=*/true)
+            || version != 1) {
+            return false;
+        }
+    }
     if (!exactKeys(legacyShape, {"op", "connectionId"})
         || !canonicalConnectionId(control.value(QStringLiteral("connectionId")))) {
         return false;
@@ -2013,6 +2037,7 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     refreshTxMonitor();
     m_txDisplayNegotiated = declaresTxDisplay;
     m_miniDisplayNegotiated = declaresMiniDisplay;
+    m_spectrumPictureNegotiated = declaresSpectrumPicture;
     // Task 29: what a replacement of this peer keeps.
     m_startOfferedLossless = offerLossless;
     m_startMicLine = declaresRemoteTx;
@@ -3491,7 +3516,8 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
             }
         });
     }
-    if (!reconcileSource(source)) {
+    DaemonSpectrumSourceUpdate sourceUpdate;
+    if (!reconcileSource(source, &sourceUpdate)) {
         // A source that cannot be reconfigured keeps every pan as it was.
         for (const Resized& previous : resized) {
             previous.entry->sourceFftSize = previous.previousFftSize;
@@ -3518,10 +3544,22 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // (configureEndpointFromFrame). A re-request whose only change is the
     // dBm range, the frame rate or the line period therefore restarts
     // nothing the client sees.
+    //
+    // R-DISP-RETUNE: a re-request that only moves the view center (the
+    // window following a tune) is a moved picture: the planes go on
+    // averaging, the extras keep the noise floor and the waterfall levels
+    // and drop the peak hold and the blobs. The reduction was out of the
+    // table while the source was reconciled above, so a relabel done there
+    // is handed to it here.
     if (replaced.has_value()) {
         EndpointEntry& current = m_endpoints.at(endpointId);
         current.endpoint = std::move(replaced->endpoint);
-        current.endpoint.awaitContext();
+        if (sourceUpdate.relabeled) {
+            current.endpoint.awaitMovedSource(sourceUpdate.fromGeneration,
+                                              sourceUpdate.toGeneration);
+        } else {
+            current.endpoint.awaitContext();
+        }
         if (current.extras && replaced->extras) {
             replaced->extras->updateRequest(current.extrasRequest);
             current.extras = std::move(replaced->extras);
@@ -4870,14 +4908,25 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
         // picture starts them again; for an endpoint asked for again that
         // is a new processor, as before, so its noise floor and waterfall
         // levels start again with it.
-        const bool samePicture = entry.endpoint.tracePlaneKept()
-            && entry.endpoint.waterfallPlaneKept();
-        if (!samePicture) {
+        //
+        // R-DISP-RETUNE: a moved picture (the same shape at another center)
+        // keeps the processor it has, carried over a re-request or not, so
+        // the noise floor, the waterfall levels and Core Clarity go on, and
+        // empties the peak hold and the blobs, which were measured at
+        // frequencies the pixels no longer show.
+        switch (entry.endpoint.picture()) {
+        case SpectrumPictureKind::Same:
+            break;
+        case SpectrumPictureKind::Moved:
+            entry.extras->newContext();
+            break;
+        case SpectrumPictureKind::New:
             if (entry.extrasCarried) {
                 entry.extras = std::make_unique<DisplayExtrasProcessor>(entry.extrasRequest);
             } else {
                 entry.extras->newContext();
             }
+            break;
         }
     }
     entry.extrasCarried = false;
@@ -4952,6 +5001,13 @@ void DaemonMediaController::sendContext(EndpointEntry& entry)
     // the receiver's display; every other peer's context is unchanged.
     if (m_txDisplayNegotiated) {
         contextMessage.transmit = false;
+    }
+    // R-DISP-RETUNE: a peer that declared spectrumPictureVersion is told
+    // which picture these frames continue, from the endpoint's own record
+    // of when it last started its planes; every other peer's context is
+    // unchanged.
+    if (m_spectrumPictureNegotiated) {
+        contextMessage.pictureGeneration = entry.endpoint.pictureGeneration();
     }
     // A minor-8 peer receives exactly the context it already parses.
     const QJsonObject message = encodeRemoteSpectrumContext(
@@ -5721,6 +5777,13 @@ void DaemonMediaController::reconcileTransmitDisplay()
         if (entry.txContextSent && shape == entry.txSentShape) { continue; }
         const quint32 generation = nextContextGeneration();
         message->insert(QStringLiteral("contextGeneration"), static_cast<qint64>(generation));
+        // R-DISP-RETUNE: the transmit display is the transmit analyzer's,
+        // not the endpoint's receive planes (dropped at the rise). Each of
+        // its contexts is stated as a picture of its own.
+        if (m_spectrumPictureNegotiated) {
+            message->insert(QStringLiteral("pictureGeneration"),
+                            static_cast<qint64>(generation));
+        }
         const int samples = message->value(QStringLiteral("traceSamples")).toInt();
         entry.txSentShape = shape;
         entry.txCodec = DisplayCodecContext{};
@@ -6090,8 +6153,12 @@ void DaemonMediaController::releaseSourceIfUnused(const MediaSourceKey& key)
     m_sources.remove(key);
 }
 
-bool DaemonMediaController::reconcileSource(const MediaSourceKey& key)
+bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
+                                            DaemonSpectrumSourceUpdate* sourceUpdate)
 {
+    if (sourceUpdate) {
+        *sourceUpdate = {};
+    }
     // Task 76 (ruling 9.1): one engine for everyone watching this receiver,
     // at the largest size and highest rate any device's pans were granted.
     int maximumFft = 0;
@@ -6147,23 +6214,46 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key)
     const bool changed = !runtime.configured
         || (!rateOnly && !sameSourceConfig(runtime.config, config));
     bool accepted = true;
+    DaemonSpectrumSourceUpdate updated;
     if (!runtime.configured) {
         accepted = m_source.activate(key, config);
     } else if (rateOnly) {
         accepted = m_source.updateFrameRate(key, config.fft.fps,
                                             config.transformsFollowFrameRate);
     } else if (changed) {
-        accepted = m_source.update(key, config);
+        // R-DISP-RETUNE: the display is the one caller that asks for a
+        // center-only move to relabel the running source.
+        accepted = m_source.update(key, config,
+                                   DaemonSpectrumCenterMove::Relabel, &updated);
     }
     if (!accepted) {
         return false;
     }
     runtime.config = config;
     runtime.configured = true;
+    if (sourceUpdate) {
+        *sourceUpdate = updated;
+    }
     if (changed) {
         // Every device's pans on this engine take the new context.
-        forEachSharedEndpoint(key, [](DaemonMediaController&, quint32, EndpointEntry& entry) {
-            entry.endpoint.reset();
+        //
+        // R-DISP-RETUNE: when the receiver was only retuned, the source was
+        // relabeled and goes on publishing, and each pan keeps what it has
+        // averaged; the context it is sent from the next frame is that of a
+        // moved picture (SpectrumEndpoint::configure). The display extras
+        // stay with the entry and configureEndpointFromFrame decides what
+        // they keep. Whatever else changed restarted the source, and the
+        // reduction starts again with it. Either way the old context ends
+        // here: the frame held under the old center is dropped and the next
+        // context opens with a keyframe.
+        const DaemonSpectrumSourceUpdate moved = updated;
+        forEachSharedEndpoint(key, [moved](DaemonMediaController&, quint32,
+                                           EndpointEntry& entry) {
+            if (moved.relabeled) {
+                entry.endpoint.awaitMovedSource(moved.fromGeneration, moved.toGeneration);
+            } else {
+                entry.endpoint.reset();
+            }
             entry.encoder.reset();
             entry.latestInput.reset();
             entry.contextSent = false;
@@ -6687,6 +6777,7 @@ void DaemonMediaController::clearSession()
     // Parity Task 28: the next peer declares its own.
     m_txDisplayNegotiated = false;
     m_miniDisplayNegotiated = false;
+    m_spectrumPictureNegotiated = false;
 }
 
 void DaemonMediaController::retirePeerKeepingSession()
