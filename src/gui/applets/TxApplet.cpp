@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Fit live inset threshold/hold readouts to the actual
+//                 slider range and resolved workspace font/style metrics.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -232,6 +235,8 @@
 //                fallback reads the transmit model's TUNE, which the
 //                release press clears, as the hosting window's handler
 //                does. AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF): approved 6 px workspace-look TX
+//               panel row spacing. AI-assisted via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -340,7 +345,9 @@
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "gui/widgets/InsetValueLabelFit.h"
 #include "gui/widgets/VfoWidget.h"
 #include "core/AudioEngine.h"
 #include "core/ControlRanges.h"
@@ -380,6 +387,8 @@
 namespace NereusSDR {
 
 namespace {
+
+constexpr int kWorkspaceTxRowSpacing = 6;
 
 // R-R3-45: the MON output captions, in one place so a rename is one edit.
 // They match the receiver flag's output buttons (VfoWidget), in capitals
@@ -456,7 +465,7 @@ void TxApplet::buildUI()
     body->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     auto* vbox = new QVBoxLayout(body);
     vbox->setContentsMargins(4, 2, 4, 2);
-    vbox->setSpacing(2);
+    vbox->setSpacing(WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2);
     outer->addWidget(body);
 
     // ── 0. Mic-source badge ── read-only label above the gauges ─────────────
@@ -722,6 +731,7 @@ void TxApplet::buildUI()
         m_voxLvlLabel->setFixedWidth(38);
         m_voxLvlLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxLvlLabel);
+        new InsetValueLabelFit(m_voxLvlLabel, m_voxSlider, QStringLiteral(" dB"), 38);
 
         m_voxDlySlider = new QSlider(Qt::Horizontal, this);
         // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
@@ -738,6 +748,7 @@ void TxApplet::buildUI()
         m_voxDlyLabel->setFixedWidth(42);
         m_voxDlyLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxDlyLabel);
+        new InsetValueLabelFit(m_voxDlyLabel, m_voxDlySlider, QStringLiteral(" ms"), 42);
 
         vbox->addLayout(row);
     }

@@ -33,6 +33,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
+#include <QFontMetrics>
+#include <QStyleOptionComboBox>
+#include "gui/styles/WorkspacePreview.h"
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -168,6 +171,75 @@ class TestRxAppletSliceAccess : public QObject {
 private slots:
     void initTestCase() { AppSettings::instance().clear(); }
     void cleanup()      { AppSettings::instance().clear(); }
+
+    void workspaceAgcLabelsAndLateAutoUpdatesFit()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        SliceModel slice(0);
+        RxApplet applet(&slice, nullptr);
+        applet.resize(260, 750);
+        applet.show();
+        WorkspacePreview::themeSubtree(&applet);
+        QCoreApplication::processEvents();
+        QComboBox* agc = nullptr;
+        QPushButton* badge = nullptr;
+        for (QComboBox* combo : applet.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("Long")) >= 0
+                && combo->findText(QStringLiteral("Fast")) >= 0) { agc = combo; }
+        }
+        for (QPushButton* button : applet.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("AUTO")) { badge = button; }
+        }
+        QVERIFY(agc);
+        QVERIFY(badge);
+        for (int index = 0; index < agc->count(); ++index) {
+            agc->setCurrentIndex(index);
+            QStyleOptionComboBox option;
+            option.initFrom(agc);
+            option.currentText = agc->currentText();
+            const QRect field = agc->style()->subControlRect(QStyle::CC_ComboBox, &option,
+                                                            QStyle::SC_ComboBoxEditField, agc);
+            QVERIFY2(field.width() >= QFontMetrics(agc->font(), agc).horizontalAdvance(option.currentText),
+                     qPrintable(option.currentText));
+        }
+        for (bool active : {true, false, true}) {
+            applet.updateAgcAutoVisuals(active, -98.0f, 20.0, true);
+            WorkspacePreview::themeSubtree(&applet);
+            QCoreApplication::processEvents();
+            const QFontMetrics metrics(badge->font(), badge);
+            QVERIFY(badge->width() >= metrics.horizontalAdvance(badge->text()) + 8);
+            QVERIFY(badge->height() >= metrics.height() + 4);
+        }
+        WorkspacePreview::setEnabledForTest(false);
+        // The look is a startup choice. Flipping its test switch does not
+        // send an event; themeSubtree deliberately does nothing when off.
+        // Verify the observer's classic Show path, then a fresh classic RX.
+        agc->hide();
+        agc->show();
+        applet.updateAgcAutoVisuals(false, -98.0f, 20.0, true);
+        QCoreApplication::processEvents();
+        QCOMPARE(agc->width(), 52);
+        QCOMPARE(badge->font().pixelSize(), 7);
+        QCOMPARE(badge->size(), QSize(30, 14));
+        RxApplet classic(&slice, nullptr);
+        classic.show();
+        QCoreApplication::processEvents();
+        QComboBox* classicAgc = nullptr;
+        QPushButton* classicBadge = nullptr;
+        for (QComboBox* combo : classic.findChildren<QComboBox*>()) {
+            if (combo->findText(QStringLiteral("Long")) >= 0
+                && combo->findText(QStringLiteral("Fast")) >= 0) { classicAgc = combo; }
+        }
+        for (QPushButton* button : classic.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("AUTO")) { classicBadge = button; }
+        }
+        QVERIFY(classicAgc);
+        QVERIFY(classicBadge);
+        QCOMPARE(classicAgc->width(), 52);
+        QCOMPARE(classicAgc->font().pixelSize(), 10);
+        QCOMPARE(classicBadge->font().pixelSize(), 7);
+        QCOMPARE(classicBadge->size(), QSize(30, 14));
+    }
 
     void unshared_applet_is_not_listening()
     {

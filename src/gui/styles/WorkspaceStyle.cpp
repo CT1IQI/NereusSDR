@@ -67,9 +67,13 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - scrollBarStyle(): kScrollBarStyle at a given thickness.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Floor font factories at JJ's approved 11 px minimum;
+//                 original tracking retained. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "WorkspaceStyle.h"
+#include "WorkspacePreview.h"
 
 #include "WorkspacePalette.h"
 
@@ -97,7 +101,7 @@ QFont capsFont(const QFont& base, int px)
     f.setWeight(QFont::DemiBold);
     f.setCapitalization(QFont::AllUppercase);
     f.setLetterSpacing(QFont::AbsoluteSpacing, px * kCapsTracking);
-    return f;
+    return WorkspacePreview::readableFont(f);
 }
 
 // From Longpath src/gui/StyleConstants.h:1383-1401 [@551576e3]
@@ -118,7 +122,7 @@ QFont monoFont(const QFont& base, int px, QFont::Weight w)
     // doch (2026-09-27).
     f.setStyleHint(QFont::TypeWriter);
     f.setFixedPitch(true);
-    return f;
+    return WorkspacePreview::readableFont(f);
 }
 
 // From Longpath src/gui/StyleConstants.h:544-553 [@551576e3]

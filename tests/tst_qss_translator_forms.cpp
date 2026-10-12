@@ -10,6 +10,10 @@
 // translating the retained original twice gives the same result; the
 // table names only existing roles and never shadows a legacy row.
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Text token regressions, J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
+
 #include <QtTest/QtTest>
 
 #include "gui/styles/QssTranslator.h"
@@ -30,6 +34,40 @@ private:
     }
 
 private slots:
+    void fontFloorOnlyRewritesFontSizeTokens()
+    {
+        const QString original = QStringLiteral(
+            "QLabel[tag=\"font-size: 8px\"] {"
+            " /* font-size: 7px; */ font-size: 9px; min-height: 9px;"
+            " padding: 2px; font-family: '9px'; image: url(:/9px.svg); }"
+            "QLabel:disabled { FONT-SIZE: 10.5px; }"
+            "QLabel#larger { font-size: 11px; }"
+            "QLabel#points { font-size: 7pt; }"
+            "QLabel#largePoints { font-size: 12pt; }");
+        QT::Options options;
+        options.minimumTextPixelSize = 11;
+        options.textLogicalDpi = 96.0;
+        const QString expected = QStringLiteral(
+            "QLabel[tag=\"font-size: 8px\"] {"
+            " /* font-size: 7px; */ font-size: 11px; min-height: 9px;"
+            " padding: 2px; font-family: '9px'; image: url(:/9px.svg); }"
+            "QLabel:disabled { FONT-SIZE: 11px; }"
+            "QLabel#larger { font-size: 11px; }"
+            "QLabel#points { font-size: 11px; }"
+            "QLabel#largePoints { font-size: 12pt; }");
+        QCOMPARE(QT::translate(original, options).qss, expected);
+        QCOMPARE(QT::translate(expected, options).qss, expected);
+        QCOMPARE(QT::translate(original).qss, original);
+        QCOMPARE(QT::translate(QStringLiteral("font-size:9px; margin:9px"), options).qss,
+                 QStringLiteral("font-size:11px; margin:9px"));
+        QCOMPARE(QT::translate(QStringLiteral("font-size: '9px';"), options).qss,
+                 QStringLiteral("font-size: '9px';"));
+        // Higher logical DPI makes this point font large enough already.
+        options.textLogicalDpi = 144.0;
+        QCOMPARE(QT::translate(QStringLiteral("font-size: 7pt;"), options).qss,
+                 QStringLiteral("font-size: 7pt;"));
+    }
+
     void sixDigitHex()
     {
         const auto r = QT::translate(QStringLiteral("QLabel { border: 1px solid #205070; }"));

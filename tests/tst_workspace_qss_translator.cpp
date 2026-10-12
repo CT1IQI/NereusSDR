@@ -9,12 +9,15 @@
 // the component treatment (src/gui/styles/WorkspaceComponents): raised,
 // pressed, selected and sunken controls, semantic colours kept, the
 // treatment idempotent, states that render distinct, and size hints
-// that do not change (the slider takes Longpath's handle, JJ's decision).
+// that do not change at an equal font size (the slider takes Longpath's
+// handle, JJ's decision).
 //
 // Modification history (NereusSDR):
 //   2026-10-10 - The component slider checks JJ's D29 track and its
 //                 disabled rule. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-12 - Compare component geometry at the approved font floor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include <QtTest/QtTest>
 
@@ -427,7 +430,9 @@ private slots:
         QCOMPARE(WorkspacePreview::lookQss(src), src);
     }
 
-    // The look must not move anything: same size hint before and after.
+    // Component geometry stays the same at an equal effective font size.
+    // Small inputs still pass through the real look, which must floor them
+    // to 11 px without changing their other font attributes.
     void componentKeepsSizeHints()
     {
         WorkspacePreview::setEnabledForTest(true);
@@ -437,8 +442,15 @@ private slots:
             "QPushButton:checked { background: #0070c0; color: #ffffff; border: 1px solid #0090e0; }");
         QPushButton a(QStringLiteral("TX I/Q"));
         QPushButton b(QStringLiteral("TX I/Q"));
-        a.setStyleSheet(btnQss);
+        QString referenceBtnQss = btnQss;
+        referenceBtnQss.replace(QStringLiteral("font-size: 10px"), QStringLiteral("font-size: 11px"));
+        a.setStyleSheet(referenceBtnQss);
         b.setStyleSheet(WorkspacePreview::lookQss(btnQss, &b));
+        a.ensurePolished();
+        b.ensurePolished();
+        QCOMPARE(b.font().pixelSize(), 11);
+        QCOMPARE(b.font(), a.font());
+        QVERIFY(b.font().bold());
         QCOMPARE(b.sizeHint(), a.sizeHint());
 
         const QString fieldQss = QStringLiteral(
@@ -448,6 +460,10 @@ private slots:
         QSpinBox s2;
         s1.setStyleSheet(fieldQss);
         s2.setStyleSheet(WorkspacePreview::lookQss(fieldQss, &s2));
+        s1.ensurePolished();
+        s2.ensurePolished();
+        QCOMPARE(s2.font().pixelSize(), 12);
+        QCOMPARE(s2.font(), s1.font());
         QCOMPARE(s2.sizeHint(), s1.sizeHint());
 
         // The shared spin box builder's shape, with styled buttons.
@@ -463,8 +479,14 @@ private slots:
             " background: #203040; }");
         QSpinBox t1;
         QSpinBox t2;
-        t1.setStyleSheet(spinQss);
+        QString referenceSpinQss = spinQss;
+        referenceSpinQss.replace(QStringLiteral("font-size: 10px"), QStringLiteral("font-size: 11px"));
+        t1.setStyleSheet(referenceSpinQss);
         t2.setStyleSheet(WorkspacePreview::lookQss(spinQss, &t2));
+        t1.ensurePolished();
+        t2.ensurePolished();
+        QCOMPARE(t2.font().pixelSize(), 11);
+        QCOMPARE(t2.font(), t1.font());
         QCOMPARE(t2.sizeHint(), t1.sizeHint());
 
         const QString editQss = QStringLiteral(
@@ -474,6 +496,10 @@ private slots:
         QLineEdit e2;
         e1.setStyleSheet(editQss);
         e2.setStyleSheet(WorkspacePreview::lookQss(editQss, &e2));
+        e1.ensurePolished();
+        e2.ensurePolished();
+        QCOMPARE(e2.font().pixelSize(), 12);
+        QCOMPARE(e2.font(), e1.font());
         QCOMPARE(e2.sizeHint(), e1.sizeHint());
 
         const QString comboQss = QStringLiteral(
@@ -485,6 +511,10 @@ private slots:
         c2.addItem(QStringLiteral("Med"));
         c1.setStyleSheet(comboQss);
         c2.setStyleSheet(WorkspacePreview::lookQss(comboQss, &c2));
+        c1.ensurePolished();
+        c2.ensurePolished();
+        QCOMPARE(c2.font().pixelSize(), 12);
+        QCOMPARE(c2.font(), c1.font());
         QCOMPARE(c2.sizeHint(), c1.sizeHint());
 
         const QString sliderQss = QStringLiteral(

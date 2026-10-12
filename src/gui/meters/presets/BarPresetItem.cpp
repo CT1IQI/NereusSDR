@@ -52,6 +52,10 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "BarPresetItem.h"
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
@@ -160,7 +164,7 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     const PresetGeometry g(pixelRect(width,height));
     const auto pos=[&](double value) { return g.left+g.width*calibratedPosition(value); };
     p.save(); p.setClipRect(g.face); p.setRenderHint(QPainter::Antialiasing,false);
-    QFont font=p.font(); font.setPixelSize(qMax(1,qRound(13*g.scale))); p.setFont(font);
+    QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(13*g.scale)))); p.setFont(font);
     // Workspace preview: the default backdrop takes the container's
     // background; a backdrop the user set is drawn as it is.
     const QColor backdrop=m_background==QColor(32,32,32) ? WorkspacePreview::dataBackground(m_background,"panel",parent()) : m_background;

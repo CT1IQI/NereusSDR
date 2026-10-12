@@ -104,6 +104,11 @@
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Floor cached painter fonts only in the workspace look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/BandwidthFilterPane.h"
 
 #include "gui/instruments/InstrumentStyle.h"
@@ -278,13 +283,15 @@ void BandwidthFilterPane::resolveColors()
 // when the widget's font is another one.
 void BandwidthFilterPane::resolveFonts()
 {
-    if (m_valueMetrics.has_value() && m_fontBase == font()) {
+    if (m_valueMetrics.has_value() && m_fontBase == font()
+        && m_readableFonts == WorkspacePreview::enabled()) {
         return;
     }
     m_fontBase = font();
-    m_valueFont = Style::monoFont(m_fontBase, Style::kFontSmall);
-    m_smallFont = Style::monoFont(m_fontBase, Style::kFontCaption);
-    m_capsFont = Style::capsFont(m_fontBase, 8);
+    m_readableFonts = WorkspacePreview::enabled();
+    m_valueFont = WorkspacePreview::readableFont(Style::monoFont(m_fontBase, Style::kFontSmall));
+    m_smallFont = WorkspacePreview::readableFont(Style::monoFont(m_fontBase, Style::kFontCaption));
+    m_capsFont = WorkspacePreview::readableFont(Style::capsFont(m_fontBase, 8));
     m_valueMetrics.emplace(m_valueFont);
     m_capsMetrics.emplace(m_capsFont);
 }
@@ -748,8 +755,9 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
             const QColor& gridLine = c.gridLine;
             const QColor& gridText = c.faint;
             const int spacing = (bot - top) / 4;
-            const bool roomForAll = spacing >= 14;
-            const bool roomForOne = spacing >= 10;
+            const int textHeight = WorkspacePreview::enabled() ? qMax(12, p.fontMetrics().height()) : 12;
+            const bool roomForAll = spacing >= qMax(14, textHeight);
+            const bool roomForOne = spacing >= (WorkspacePreview::enabled() ? textHeight : 10);
             for (int k = 1; k <= 3; ++k) {
                 const double frac = k / 4.0;
                 const int y = static_cast<int>(bot - (bot - top) * frac);
@@ -758,7 +766,7 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
                 if (!roomForAll && !(roomForOne && k == 2)) { continue; }
                 const int dbm = static_cast<int>(std::lround(lo + (hi - lo) * frac));
                 p.setPen(gridText);
-                p.drawText(QRect(r.right() - 46, y - 7, 42, 12),
+                p.drawText(QRect(r.right() - 46, y - (WorkspacePreview::enabled() ? textHeight / 2 : 7), 42, textHeight),
                            Qt::AlignRight | Qt::AlignVCenter,
                            QStringLiteral("%1").arg(dbm));
             }
@@ -911,6 +919,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     const QString widthText = widthLabel(m_high - m_low);
     const QFontMetrics& valueMetrics = *m_valueMetrics;
     const int chipW  = valueMetrics.horizontalAdvance(widthText) + 18;
+    const int captionHeight = WorkspacePreview::enabled() ? qMax(10, m_capsMetrics->height()) : 10;
+    const int valueHeight = WorkspacePreview::enabled() ? qMax(13, valueMetrics.height()) : 13;
     const int valueW = std::max(valueMetrics.horizontalAdvance(cutLabel(m_low)),
                                 valueMetrics.horizontalAdvance(cutLabel(m_high)));
     const bool numbers = labelRoom >= chipW + 2 * (valueW + 14);
@@ -922,11 +932,11 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         p.setFont(m_capsFont);
         p.setPen(faint);
         const bool lowerSideband = (m_low < 0 && m_high <= 0);
-        p.drawText(QRect(xl + 5, 1, 90, 10),
+        p.drawText(QRect(xl + 5, 1, 90, captionHeight),
                    Qt::AlignLeft | Qt::AlignVCenter,
                    lowerSideband ? QStringLiteral("HIGH CUT")
                                  : QStringLiteral("LOW CUT"));
-        p.drawText(QRect(xh - 95, 1, 90, 10),
+        p.drawText(QRect(xh - 95, 1, 90, captionHeight),
                    Qt::AlignRight | Qt::AlignVCenter,
                    lowerSideband ? QStringLiteral("LOW CUT")
                                  : QStringLiteral("HIGH CUT"));
@@ -935,10 +945,10 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     if (numbers) {
         p.setFont(value);
         p.setPen(ink);
-        const int yVal = wordMarks ? 12 : 4;
-        p.drawText(QRect(xl + 5, yVal, 90, 13),
+        const int yVal = wordMarks ? captionHeight + 2 : 4;
+        p.drawText(QRect(xl + 5, yVal, 90, valueHeight),
                    Qt::AlignLeft | Qt::AlignVCenter, cutLabel(m_low));
-        p.drawText(QRect(xh - 95, yVal, 90, 13),
+        p.drawText(QRect(xh - 95, yVal, 90, valueHeight),
                    Qt::AlignRight | Qt::AlignVCenter, cutLabel(m_high));
     }
 
@@ -961,7 +971,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         const QFont& cap = m_capsFont;
         const QFontMetrics& fm = *m_capsMetrics;
         const int tw = fm.horizontalAdvance(m_label) + 14;
-        const QRect box(4, 4, tw, 14);
+        const int labelHeight = WorkspacePreview::enabled() ? qMax(14, fm.height() + 2) : 14;
+        const QRect box(4, 4, tw, labelHeight);
         paintGlassChip(p, box, 7);
         p.setFont(cap);
         p.setPen(c.labelText);
@@ -1017,7 +1028,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         if (left < lastRight + 4) { continue; }
         lastRight = left + tw;
         p.setPen(faint);
-        p.drawText(QRect(left, height() - kPadBottom + 2, tw, 13),
+        p.drawText(QRect(left, height() - kPadBottom + 2, tw,
+                         WorkspacePreview::enabled() ? qMax(13, p.fontMetrics().height()) : 13),
                    Qt::AlignCenter, t);
     }
 }

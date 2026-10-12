@@ -219,6 +219,9 @@
 #include <QEnterEvent>
 #include <QHoverEvent>
 #include <QLabel>
+#include <QFontInfo>
+#include <QFontMetrics>
+#include <QGroupBox>
 #include <QMenu>
 #include <QCheckBox>
 #include <QLineEdit>
@@ -846,6 +849,50 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+// Capture resolved widget fonts as evidence alongside the raster image.
+// Painted fonts and explicit rich spans have separate source/test coverage.
+QJsonArray visibleTextFonts(QWidget* root)
+{
+    QJsonArray rows;
+    QList<QWidget*> widgets = root->findChildren<QWidget*>();
+    widgets.prepend(root);
+    for (QWidget* widget : widgets) {
+        if (!widget->isVisible()) {
+            continue;
+        }
+        QString text;
+        if (auto* label = qobject_cast<QLabel*>(widget)) {
+            text = label->text();
+        } else if (auto* button = qobject_cast<QAbstractButton*>(widget)) {
+            text = button->text();
+        } else if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
+            text = edit->text();
+        } else if (auto* combo = qobject_cast<QComboBox*>(widget)) {
+            text = combo->currentText();
+        } else if (auto* group = qobject_cast<QGroupBox*>(widget)) {
+            text = group->title();
+        } else if (auto* tabs = qobject_cast<QTabBar*>(widget)) {
+            for (int i = 0; i < tabs->count(); ++i) {
+                text += tabs->tabText(i) + QLatin1Char(' ');
+            }
+        }
+        if (text.isEmpty()) {
+            continue;
+        }
+        const QFontInfo info(widget->font());
+        const QFontMetrics metrics(widget->font(), widget);
+        rows.append(QJsonObject{
+            {QStringLiteral("class"), QString::fromLatin1(widget->metaObject()->className())},
+            {QStringLiteral("object"), widget->objectName()},
+            {QStringLiteral("text"), text},
+            {QStringLiteral("resolved_px"), info.pixelSize()},
+            {QStringLiteral("font_height"), metrics.height()},
+            {QStringLiteral("rect"), QJsonArray{widget->width(), widget->height()}},
+        });
+    }
+    return rows;
+}
+
 // The control kind a widget is, for masking a diff against the controls
 // a look restyles; "other" for everything else.
 QString controlKind(const QWidget* w)
@@ -1281,6 +1328,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
         }
     }
     full.extra[QStringLiteral("applet_fit")] = measureAppletFit(ctx.window);
+    full.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(ctx.window);
     attachRegions(full, ctx.window);
     ctx.images.append(full);
     appendCropImages(ctx, full, name);
@@ -2229,6 +2277,7 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
     img.dpr = img.image.devicePixelRatio();
     img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(dialog->metaObject()->className());
     img.extra[QStringLiteral("window_title")] = dialog->windowTitle();
+    img.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(dialog);
     img.geometry = widgetGeometry(dialog);
     attachRegions(img, dialog);
     ctx.images.append(img);
@@ -7381,6 +7430,24 @@ QVector<Scene> fixedScenes()
             }, look});
         }
     }
+    // Font B review: display-only AUTO/NF state in both matching surfaces.
+    scenes.append({QStringLiteral("font-minimum--auto-info"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, defaultPoses(), 0, {}, [](SceneContext& c) {
+            VfoWidget* flag = flagA(c);
+            if (flag != nullptr) {
+                flag->showTab(VfoWidget::Tab::Audio);
+                flag->updateAgcAutoVisuals(true, -98.0f, 20.0);
+            }
+            if (RxApplet* rx = c.window->findChild<RxApplet*>()) {
+                rx->updateAgcAutoVisuals(true, -98.0f, 20.0);
+            }
+            pump(kFinalSettleMs);
+        });
+        if (ctx.failure.isEmpty()) {
+            captureWindow(ctx, QStringLiteral("font-minimum--auto-info"));
+        }
+    }, true});
     // Four folded flags: A right of its marker (LSB), B left of its marker
     // (DIGU), C as the TX slice (the flag's display setter only), D locked
     // (the flag's display setter only). Crops of each at the crop profile.

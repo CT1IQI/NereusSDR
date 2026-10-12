@@ -37,6 +37,9 @@
 #include <QMenuBar>
 #include <QLabel>
 #include <QLayout>
+#include <QHBoxLayout>
+#include <QFontMetrics>
+#include "gui/styles/WorkspacePreview.h"
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
@@ -54,6 +57,37 @@ class TstTitleBar : public QObject {
     Q_OBJECT
 
 private slots:
+
+    void fullVolumeFitsBothReadoutFormsAfterReapplication() {
+        WorkspacePreview::setEnabledForTest(true);
+        QWidget host;
+        auto* layout = new QHBoxLayout(&host);
+        auto* button = new QPushButton(&host);
+        auto* word = new QLabel(QStringLiteral("RADIO"), &host);
+        auto* slider = new QSlider(Qt::Horizontal, &host);
+        auto* readout = new QLabel(QStringLiteral("100"), &host);
+        layout->addWidget(button);
+        layout->addWidget(word);
+        layout->addWidget(slider);
+        layout->addWidget(readout);
+        for (bool stacked : {false, true, false, true}) {
+            HeaderVolumeStyle::applyForm(button, word, slider, readout, stacked, 0,
+                                         HeaderVolumeStyle::kReadout);
+            WorkspacePreview::themeSubtree(&host);
+            host.show();
+            QCoreApplication::processEvents();
+            const QFontMetrics metrics(readout->font(), readout);
+            QVERIFY(readout->width() >= metrics.horizontalAdvance(readout->text()) + 6);
+            QVERIFY(readout->height() >= metrics.height() + (stacked ? 2 : 4));
+        }
+        WorkspacePreview::setEnabledForTest(false);
+        HeaderVolumeStyle::applyForm(button, word, slider, readout, true, 0,
+                                     HeaderVolumeStyle::kReadout);
+        QCOMPARE(readout->size(), QSize(20, 13));
+        HeaderVolumeStyle::applyForm(button, word, slider, readout, false, 0,
+                                     HeaderVolumeStyle::kReadout);
+        QCOMPARE(readout->width(), 22);
+    }
 
     // ── 1. Constructs without crashing ─────────────────────────────────────
 
