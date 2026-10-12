@@ -3154,6 +3154,13 @@ public:
     void setContainerManager(class ContainerManager* cm) { m_containerManager = cm; }
     QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
 
+    /// True while a source of its own (the headless Core's DaemonAgcSource)
+    /// writes each slice's station Auto AGC noise floor. Otherwise this
+    /// model writes it on the Auto AGC tick from the slice's registered
+    /// tracker, so a window signed in to a desktop window's Core reads the
+    /// floor that desktop window shows.
+    void setAutoAgcFloorPublishedBySource(bool on) { m_autoAgcFloorPublishedBySource = on; }
+
     // 3M-1a G.1: expose MoxController so MainWindow can wire
     // StepAttenuatorController::onMoxHardwareFlipped (F.2 connect) after
     // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
@@ -6448,6 +6455,7 @@ private:
     // is down (no link, or stationLinkReady() false).
     bool remoteCoreLinkDown() const;
     void updateAutoAgc();
+    void publishStationAutoAgcNoiseFloors();
 
     // RADE end-of-over callsigns (MoxController::setEndOfOverTail). Starts
     // the tail when this release is an operator's and the transmitter runs
@@ -8088,6 +8096,7 @@ private:
 
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
+    bool m_autoAgcFloorPublishedBySource{false};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
     QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.

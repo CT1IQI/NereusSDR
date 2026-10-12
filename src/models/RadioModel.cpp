@@ -25207,10 +25207,40 @@ QString RadioModel::lowPassHoldReason(const SliceModel* top,
     return parts.join(QLatin1Char(' '));
 }
 
+// A desktop window acting as Core: each slice's station noise floor, the
+// value a signed-in window or phone shows beside AUTO, from the same tracker
+// this window's own flag reads. The headless Core's DaemonAgcSource writes
+// these fields itself and turns this off.
+void RadioModel::publishStationAutoAgcNoiseFloors()
+{
+    if (!ownsLocalDsp() || m_autoAgcFloorPublishedBySource) {
+        return;
+    }
+    const bool connected = isConnected();
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const NoiseFloorTracker* tracker = noiseFloorTrackerForSlice(slice);
+        const quint64 generation = slice->stationAutoAgcNoiseFloorGeneration();
+        if (connected && tracker && tracker->isGood()) {
+            slice->setStationAutoAgcNoiseFloor(
+                static_cast<double>(tracker->noiseFloor()), true, generation);
+        } else if (slice->stationAutoAgcNoiseFloorValid()) {
+            // A new generation for whatever is measured next.
+            slice->setStationAutoAgcNoiseFloor(
+                slice->stationAutoAgcNoiseFloorDbm(), false, generation + 1);
+        }
+    }
+}
+
 // The same station-owned tick runs in the desktop local mode and daemon.
 // Source selection is registered separately; there is no GUI dependency.
 void RadioModel::updateAutoAgc()
 {
+    // Before the guards: a dropped radio has to mark the floor stale.
+    publishStationAutoAgcNoiseFloors();
+
     // From Thetis v2.10.3.13 console.cs:46059 — guard: skip if not connected or MOX
     if (!ownsLocalDsp() || !isConnected()) {
         return;
