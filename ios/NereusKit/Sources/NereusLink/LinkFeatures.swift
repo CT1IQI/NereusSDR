@@ -192,6 +192,12 @@
 /// the panel leaves the section out while the Core plays on no card, and a
 /// Core that sends none leaves it greyed with its reason.
 ///
+/// `spectrumPicture` 1: R-DISP-RETUNE. The Core then sends
+/// `spectrumPictureVersion` 1, a media `start` may declare it, and each
+/// spectrum context states the picture its frames continue
+/// (`pictureGeneration`), by which the app decides what a pan keeps when a
+/// context renews it. A Core that sends none is read by the rule before it.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -207,5 +213,6 @@ public enum LinkFeatures {
                                             "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1,
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
                                             "audioQuality": 1, "stationCat": 1,
-                                            "radioSpeaker": 1, "coreSpeaker": 1]
+                                            "radioSpeaker": 1, "coreSpeaker": 1,
+                                            "spectrumPicture": 1]
 }

@@ -10,6 +10,10 @@
 // 2026-09-30: Frames can carry their bins in dBm, converted on the engine
 // thread, so DaemonAgcSource does no per-bin log10 on the main thread.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-11: R-DISP-RETUNE: a caller can ask that a change of the center
+// alone relabels the running source and keeps its input history. Without
+// that the source restarts as before.
+// J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -153,8 +157,13 @@ bool DaemonSpectrumSource::activate(const MediaSourceKey& key,
 }
 
 bool DaemonSpectrumSource::update(const MediaSourceKey& key,
-                                  const DaemonSpectrumSourceConfig& config)
+                                  const DaemonSpectrumSourceConfig& config,
+                                  DaemonSpectrumCenterMove centerMove,
+                                  DaemonSpectrumSourceUpdate* result)
 {
+    if (result) {
+        *result = {};
+    }
     if (!isValidConfig(key, config)) {
         return false;
     }
@@ -167,6 +176,46 @@ bool DaemonSpectrumSource::update(const MediaSourceKey& key,
     bool resetInputHistory = false;
     {
         QMutexLocker lock(&it->state->mutex);
+        const quint64 previous = it->state->generation;
+        if (centerMove == DaemonSpectrumCenterMove::Relabel
+            && it->state->active && !it->state->configurationPending
+            && onlyCenterDiffers(it->state->config, config)) {
+            // R-DISP-RETUNE: the receiver was retuned, nothing else changed
+            // and the caller is the display, which asked for the picture to
+            // carry on. A retune changes which RF frequency the stored
+            // samples came from, so one transform after it can mix samples
+            // from before and after the step. That is JJ's choice for the
+            // display (2026-10-11): it carries on through a retune as
+            // NereusSDR's own local display does (its FFT path never calls
+            // FFTEngine::resetInputHistory) and as Thetis, piHPSDR,
+            // deskHPSDR and AetherSDR do. Dropping the history instead
+            // would be clean, and would freeze the picture for as long as a
+            // tuning wheel turns faster than one transform fills (up to
+            // 0.7 s at deep zoom). A caller that measures does not ask for
+            // this and takes the restart below.
+            //
+            // The engine does not use the center: it is a label put
+            // on each frame as it is published (publishFrame reads it under
+            // this mutex). So the running source takes the new label and a
+            // new generation here and carries on: no activation hop, queued
+            // I/Q and the engine's overlap history kept, nothing dropped.
+            // The one frame it may still hold was labeled before the move;
+            // it is discarded, so takeLatest() never hands a consumer the
+            // old center after this call. A frame the engine is producing
+            // now takes the lock after this and gets the new label.
+            it->state->config.centreHz = config.centreHz;
+            generation = ++m_nextGeneration;
+            it->state->generation = generation;
+            it->state->hasLatest = false;
+            it->state->notificationQueued = false;
+            if (result) {
+                *result = {true, previous, generation};
+            }
+            return true;
+        }
+        if (result) {
+            *result = {false, previous, m_nextGeneration + 1};
+        }
         resetInputHistory = !inputHistoryIsCompatible(it->state->config, config);
         it->state->active = false;
         it->state->configurationPending = true;
@@ -391,10 +440,29 @@ bool DaemonSpectrumSource::inputHistoryIsCompatible(
     // RF sample a stored I/Q pair represents. The RF tuning, sample rate,
     // FFT size and window do; retaining overlap across any of those would
     // make a new generation describe old-context samples.
+    //
+    // R-DISP-RETUNE: the center is in this list. The display's relabel of a
+    // center-only move never reaches this function (see update()).
     return before.centreHz == after.centreHz
         && before.sampleRateHz == after.sampleRateHz
         && before.fft.fftSize == after.fft.fftSize
         && before.fft.windowType == after.fft.windowType
+        && before.decimation == after.decimation;
+}
+
+bool DaemonSpectrumSource::onlyCenterDiffers(
+    const DaemonSpectrumSourceConfig& before,
+    const DaemonSpectrumSourceConfig& after)
+{
+    return before.centreHz != after.centreHz
+        && before.sampleRateHz == after.sampleRateHz
+        && before.fft.fps == after.fft.fps
+        && before.fft.fftSize == after.fft.fftSize
+        && before.fft.windowType == after.fft.windowType
+        && before.fft.hzPerBinTarget == after.fft.hzPerBinTarget
+        && before.fft.threadCount == after.fft.threadCount
+        && before.maxPendingIqFloats == after.maxPendingIqFloats
+        && before.transformsFollowFrameRate == after.transformsFollowFrameRate
         && before.decimation == after.decimation;
 }
 

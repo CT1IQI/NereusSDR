@@ -5798,6 +5798,13 @@ target_compile_definitions(tst_display_extras PRIVATE
 nereus_add_test(tst_daemon_display_keep
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# R-DISP-RETUNE: a remote pan's picture carries on through a retune. The
+# Core relabels the running spectrum source, the averaged trace goes on, the
+# peak hold and blobs empty, the noise floor and waterfall levels continue,
+# and frames keep coming while the operator tunes.
+nereus_add_test(tst_daemon_display_retune
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -9646,6 +9653,43 @@ nereus_add_test(tst_remote_media_controller
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold
     fakes/LoopbackTransport.cpp)
+# R-DISP-RETUNE (third wave): the retune functions (the test's
+# kRetuneFunctions) run as their own ctest entry, the same binary with
+# NEREUS_DISPLAY_HOLD_GROUP=retune, and the first entry runs the rest, so
+# neither carries the other's time against the 120 s limit (the whole run
+# takes about 130 s on a quiet Mac). The second entry takes the first's
+# labels, limit and environment, with its own home.
+if(TEST tst_remote_display_hold)
+    get_test_property(tst_remote_display_hold LABELS _rdh_labels)
+    get_test_property(tst_remote_display_hold TIMEOUT _rdh_timeout)
+    get_test_property(tst_remote_display_hold ENVIRONMENT_MODIFICATION _rdh_env_mod)
+    add_test(NAME tst_remote_display_hold_retune COMMAND tst_remote_display_hold)
+    set_tests_properties(tst_remote_display_hold_retune PROPERTIES
+        LABELS "${_rdh_labels}"
+        TIMEOUT ${_rdh_timeout})
+    if(_rdh_env_mod)
+        set_property(TEST tst_remote_display_hold_retune
+            PROPERTY ENVIRONMENT_MODIFICATION ${_rdh_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_rdh_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_display_hold_retune")
+        file(MAKE_DIRECTORY "${_rdh_home}")
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "HOME=${_rdh_home}")
+        if(APPLE)
+            set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_rdh_home}")
+        endif()
+    endif()
+    set_property(TEST tst_remote_display_hold APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=rest")
+    set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=retune")
+endif()
 # R-R3-21: its real-session cases take about 115 s alone on a quiet Mac
 # (repeatedAudioRestartsBackOff waits out the 1, 2, 4, 4 s retry backoff),
 # too close to the default 120 s, and a loaded machine stretches them.

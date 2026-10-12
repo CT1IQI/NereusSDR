@@ -12,6 +12,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the
+//                                    capture declares spectrumPicture, so
+//                                    spectrumPictureVersion, the start's
+//                                    declaration and the context's
+//                                    pictureGeneration are captured.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: the capture's model is a
 //                                    Core with its own speaker and the
 //                                    capture declares coreSpeaker, so
@@ -742,7 +748,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"radioSpeaker", 1},
                                   // Core speaker: coreSpeakerVersion and
                                   // radio's six Core speaker properties.
-                                  {"coreSpeaker", 1}})));
+                                  {"coreSpeaker", 1},
+                                  // R-DISP-RETUNE: spectrumPictureVersion
+                                  // and the context's pictureGeneration.
+                                  {"spectrumPicture", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -839,6 +848,8 @@ QJsonArray captureCapabilities()
     // Core speaker: sent to a peer that declared coreSpeaker, from a Core
     // with its own speaker.
     caps.coreSpeakerVersion = 1;
+    // R-DISP-RETUNE: sent to a peer that declared spectrumPicture.
+    caps.spectrumPictureVersion = 1;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its
@@ -1328,6 +1339,8 @@ QJsonObject guiToCoreOps()
     // once each declared version key is removed.
     ops.insert(QStringLiteral("start"), declaredOp(kMedia, peer, {
         {QStringLiteral("miniDisplayVersion"), {QStringLiteral("miniDisplayVersion")}},
+        // R-DISP-RETUNE: DaemonMediaController.cpp handleStart.
+        {QStringLiteral("spectrumPictureVersion"), {QStringLiteral("spectrumPictureVersion")}},
         {QStringLiteral("audioProfileVersion"), {QStringLiteral("audioProfileVersion")}},
         {QStringLiteral("receiverAudioVersion"), {QStringLiteral("receiverAudioVersion")}},
         {QStringLiteral("remoteIqVersion"), {QStringLiteral("remoteIqVersion")}},
@@ -1490,6 +1503,19 @@ QJsonObject spectrumContextShapes()
             }
             shapes.append({tags, encodeRemoteSpectrumContext(m, grant)});
             if (grant) {
+                // R-DISP-RETUNE: pictureGeneration is one more number on the
+                // grant shape, for a peer that declared
+                // spectrumPictureVersion, with or without `transmit`.
+                {
+                    SpectrumContextMessage stated = m;
+                    stated.pictureGeneration = 1;
+                    const QStringList pictureTags =
+                        tags + QStringList{QStringLiteral("spectrumPictureVersion")};
+                    shapes.append({pictureTags, encodeRemoteSpectrumContext(stated, grant)});
+                    stated.transmit = false;
+                    shapes.append({pictureTags + QStringList{QStringLiteral("txDisplayVersion")},
+                                   encodeRemoteSpectrumContext(stated, grant)});
+                }
                 // RemoteSpectrumContext.cpp:136-151: transmit is an optional
                 // bool on the grant shape; false still carries the field.
                 const QStringList txTags = tags + QStringList{QStringLiteral("txDisplayVersion")};

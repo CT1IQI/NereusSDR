@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion, after
+//               coreSpeakerVersion, for a peer that declared spectrumPicture.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Core speaker: coreSpeakerVersion, after radioSpeakerVersion
 //               and before coreBuildInfo (native audio plan Task 21,
 //               R-AUD-25). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -571,6 +574,13 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (coreSpeakerVersion > 0) {
         updates.append(intEntry("coreSpeakerVersion", coreSpeakerVersion));
     }
+    // R-DISP-RETUNE: the picture value of a spectrum context, after
+    // coreSpeakerVersion and before coreBuildInfo (which stays last), only
+    // for a peer that declared spectrumPicture; any other peer is sent no
+    // entry, so its capabilities are today's.
+    if (spectrumPictureVersion > 0) {
+        updates.append(intEntry("spectrumPictureVersion", spectrumPictureVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -896,6 +906,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "txReadingsVersion"
                    || u.name == "remoteIqVersion"
                    || u.name == "miniDisplayVersion"
+                   || u.name == "spectrumPictureVersion"
                    || u.name == "radioAntennaRowsVersion"
                    || u.name == "vaxVersion"
                    || u.name == "txEqCurveVersion"
@@ -1020,6 +1031,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.remoteIqVersion = version;
                 } else if (u.name == "miniDisplayVersion") {
                     caps.miniDisplayVersion = version;
+                } else if (u.name == "spectrumPictureVersion") {
+                    caps.spectrumPictureVersion = version;
                 } else if (u.name == "stationFreedvVersion") {
                     caps.stationFreedvVersion = version;
                 } else if (u.name == "mediaReplaceVersion") {

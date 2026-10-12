@@ -28,6 +28,10 @@
 //                                    recordStreamVersion and the record
 //                                    streams. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  calibrationMovesTheFramesBins compares
+//                                    planes that hold nothing, with one
+//                                    endpoint started before the other.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -192,6 +196,17 @@ QJsonObject plane()
 {
     return {{QStringLiteral("detector"), static_cast<int>(SpectrumDetectorMode::Peak)},
             {QStringLiteral("averageMode"), -1},
+            {QStringLiteral("averageAlpha"), 0.0}};
+}
+
+// A plane that keeps nothing from one frame to the next. plane() holds each
+// pixel's maximum, so what an endpoint shows for a frame depends on every
+// frame it was sent before. Two endpoints compared on one source frame
+// need this one: one of them may have started a frame earlier.
+QJsonObject planeWithoutHold()
+{
+    return {{QStringLiteral("detector"), static_cast<int>(SpectrumDetectorMode::Peak)},
+            {QStringLiteral("averageMode"), 0},
             {QStringLiteral("averageAlpha"), 0.0}};
 }
 
@@ -1505,13 +1520,30 @@ private slots:
         QVERIFY(harness.startReadyPeer());
         const double centreHz = harness.radio.streamCentreHz(harness.streamIndex);
         // The widest interval a request may name, so the tone's skirts and
-        // floor are not clipped.
+        // floor are not clipped. Neither plane holds anything: the two
+        // endpoints are compared on one frame, whatever each was sent before.
         const QJsonObject wide{{QStringLiteral("minDbm"), -400.0},
-                               {QStringLiteral("maxDbm"), 100.0}};
+                               {QStringLiteral("maxDbm"), 100.0},
+                               {QStringLiteral("trace"), planeWithoutHold()},
+                               {QStringLiteral("waterfall"), planeWithoutHold()}};
         QVERIFY(harness.client.sendMediaControl(
             withFields(withFields(subscription(7, harness.sliceId, centreHz), wide),
                        {{QStringLiteral("calibrationOffsetDb"), 20.0}}),
             harness.client.sessionEpoch()));
+        // Endpoint 7 is sent frames before endpoint 8 exists, so the
+        // comparison below covers an endpoint that started earlier. On a
+        // loaded machine that happened by itself now and then, and with
+        // planes that held each pixel's maximum the two traces differed.
+        const auto sentTo = [&harness](quint8 endpoint) {
+            int count = 0;
+            for (const QByteArray& bytes : harness.mediaTransport->displays) {
+                if (!bytes.startsWith("NSDX") && static_cast<quint8>(bytes.at(11)) == endpoint) {
+                    ++count;
+                }
+            }
+            return count;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((harness.feedRadio(), sentTo(7) >= 3), 10'000);
         QVERIFY(harness.client.sendMediaControl(
             withFields(subscription(8, harness.sliceId, centreHz), wide),
             harness.client.sessionEpoch()));

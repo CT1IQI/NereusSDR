@@ -555,6 +555,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "spectrumPictureVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -3458,6 +3463,10 @@
                     "limit": [
                         "spectrumGrantVersion"
                     ],
+                    "pictureGeneration": [
+                        "spectrumGrantVersion",
+                        "spectrumPictureVersion"
+                    ],
                     "requestedPixels": [
                         "spectrumGrantVersion"
                     ],
@@ -3810,6 +3819,9 @@
                     ],
                     "remoteTxVersion": [
                         "remoteTxVersion"
+                    ],
+                    "spectrumPictureVersion": [
+                        "spectrumPictureVersion"
                     ],
                     "txDisplayVersion": [
                         "txDisplayVersion"

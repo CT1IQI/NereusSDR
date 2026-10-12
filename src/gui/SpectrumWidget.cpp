@@ -8,6 +8,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
+//                 word (coreCarriedOn) decides whether a context continues
+//                 the picture shown; the pan's own moved-picture rule and
+//                 the span asked are gone. AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE: setRemoteSpectrumContext
+//                 tells a picture moved in frequency (a retune, a pan drag)
+//                 from a new picture. AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall blends four rows as it
 //                 glides (waterfall.frag, ported from AetherSDR) where it
 //                 mixed two, so its grain no longer pulses once per row;
@@ -1604,7 +1612,8 @@ void SpectrumWidget::clearRemoteSpectrum()
 
 void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                                double sourceCentreHz, double sampleRateHz,
-                                               int grantedFftSize)
+                                               int grantedFftSize,
+                                               std::optional<bool> coreCarriedOn)
 {
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
@@ -1614,8 +1623,13 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // place. The same picture is the same receiver and source geometry, the
     // same view to the Hz, the same sample counts and the same wide row;
     // only then are values the pan holds per pixel still the same pixels.
+    //
+    // R-DISP-RETUNE: and, where the Core states the picture, one the Core
+    // carried on. A context that matches in every number and starts a new
+    // picture at the Core (its source restarted, say) is a new picture.
     const SpectrumEndpointContext& shown = m_remoteCapture.context();
     const bool samePicture = m_remoteSpectrum && m_remoteCodec.traceSamples != 0
+        && coreCarriedOn.value_or(true)
         && shown.codec.endpointId == context.codec.endpointId
         && shown.codec.traceSamples == context.codec.traceSamples
         && shown.codec.waterfallSamples == context.codec.waterfallSamples
@@ -1631,13 +1645,35 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
         && qFuzzyCompare(m_centerHz, context.exactCentreHz)
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
-    m_remoteContextKeptPicture = samePicture;
+    // R-DISP-RETUNE: the picture shown, carried on at the Core, with
+    // something the pan holds per pixel changed: a retune moved the stream
+    // center under the pan, or a drag moved the view center. The Core's
+    // word decides this and nothing of the pan's does. The pan used to
+    // derive a move from the span it had asked for, the window from the
+    // spans of its requests and the phone from the span answered to within
+    // a bin; three derivations of a rule that is the Core's
+    // (SpectrumEndpoint.cpp, movedPlanePicture), each of which could
+    // disagree with it. Without the Core's word there is no moved picture.
+    const bool movedPicture = !samePicture && coreCarriedOn.value_or(false)
+        && m_remoteSpectrum
+        && shown.codec.endpointId == context.codec.endpointId;
+    m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
+        : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
         m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
         return;
     }
+    // R-DISP-RETUNE: a moved picture and a new picture retire the same
+    // things here. Of what this empties, the peak hold and the blobs must go
+    // for a moved picture too (held per pixel, and every pixel now shows
+    // another frequency); the pending waterfall row and wide row were
+    // captured at the old window and a row of the new one replaces them; and
+    // the drawn trace is put back at once from the last trace the Core sent,
+    // at the frequency it was captured at (refreshRemoteTraceProjection,
+    // R-R3-21). The waterfall history, the queued rows and the noise floor
+    // estimate are not touched by it.
     invalidateRemoteSpectrumFrame();
     const double binWidthBefore = binWidthHz();
     // NereusSDR-original remote wiring: a new codec generation retires live

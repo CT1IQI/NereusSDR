@@ -1003,6 +1003,17 @@ write of one from a peer that is not sent them is refused with "Update this
 app to change the Core speaker on this Core." The station does not declare
 it; the desktop's remote window does.
 
+**`spectrumPicture` 1** (R-DISP-RETUNE): the client reads, in each spectrum
+`context`, which picture the context's frames continue. A peer that
+declares it at agreed minor 11, while media is available, is sent
+`spectrumPictureVersion` (section 6.3) and may declare
+`spectrumPictureVersion` 1 in its media `start`; each `context` it is then
+sent carries one more field, `pictureGeneration` (the media control
+document's "The picture a context continues"). A peer that does not declare
+it sees exactly the wire it was built for: no capability entry, and every
+`context` byte for byte as before. The station does not declare it; the
+desktop's remote window and the phone app do.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -1197,6 +1208,7 @@ table.
 | `stationCatVersion` | 1 |
 | `radioSpeakerVersion` | 1 |
 | `coreSpeakerVersion` | 1 |
+| `spectrumPictureVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2311,6 +2323,17 @@ and none of the six. A client connected to a Core that sends no entry shows
 the Core speaker disabled, with the reason "This Core can't set its speaker
 from here. Update the Core.", and sends no write of the four.
 
+**The picture a spectrum context continues** (R-DISP-RETUNE). A client at
+agreed minor 11 that declared `spectrumPicture` 1 is sent
+`spectrumPictureVersion`, an `i64`, 1, while media is available, after
+`coreSpeakerVersion` (or after the last entry before it when that is
+absent) and before `coreBuildInfo`. At 1 the client's media `start` may
+declare `spectrumPictureVersion` 1, and each spectrum `context` it is sent
+then carries `pictureGeneration`. A peer that did not declare the feature
+is sent no entry. A client connected to a Core that sends no entry treats
+a context that differs from the one it shows in more than its dBm range or
+frame rate as a new picture; nothing is shown to the operator for it.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2349,7 +2372,8 @@ peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
 that declared `radeReason`; `stationCatVersion` only for a peer that
 declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a peer that
 declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
-`coreSpeaker` on a Core with its own speaker. A client ignores a capability it does not know
+`coreSpeaker` on a Core with its own speaker; `spectrumPictureVersion` only
+for a peer that declared `spectrumPicture` while media is available. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2548,7 +2572,8 @@ older window sees only the values it was built for.
 | 109 | `stationCatVersion` | `i64` |
 | 110 | `radioSpeakerVersion` | `i64` |
 | 111 | `coreSpeakerVersion` | `i64` |
-| 112 | `coreBuildInfo` | `utf8` |
+| 112 | `spectrumPictureVersion` | `i64` |
+| 113 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -6837,7 +6862,7 @@ Client to station:
 | `monitor-audio` | `txMonitorAudioVersion` | `connectionId`, `op`, `revision`, `route` | none | none |
 | `receiver-audio` | `receiverAudioVersion` | `connectionId`, `enabled`, `op`, `profile`, `revision`, `sliceId` | none | none |
 | `replace` | `mediaReplaceVersion` | `connectionId`, `op`, `replaces` | `mediaDirectVersion` with mediaDirectVersion | none |
-| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion | none |
+| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion | none |
 | `subscribe` | `remoteMediaVersion` | `centreHz`, `connectionId`, `endpointId`, `fftSize`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `pixels`, `revision`, `sliceId`, `spanHz`, `tier`, `trace`, `waterfall`, `wideSpanFactor`, `windowType` | `activePeakHold` with displayExtrasVersion; `averageTimeMs` with displayExtrasVersion; `calibrationOffsetDb` with displayExtrasVersion; `decimation` with spectrumGrantVersion; `displayRole` with miniDisplayVersion; `duplex` with txDisplayVersion; `extendedView` with remoteWidebandDisplayVersion; `noiseFloor` with displayExtrasVersion; `normalize` with displayExtrasVersion; `peakBlobs` with displayExtrasVersion; `txMaxDbm` with txDisplayVersion; `txMinDbm` with txDisplayVersion; `waterfallAverageTimeMs` with displayExtrasVersion; `waterfallLevels` with displayExtrasVersion | `activePeakHold`: {enabled, fallDbPerSec, holdMs, onTx} or {enabled, fallDbPerSec, holdMs}; `noiseFloor`: {enabled, fastAttack, shiftDb} or {enabled, shiftDb}; `peakBlobs`: {count, fallDbPerSec, holdMs, insideOnly}; `trace`: {averageAlpha, averageMode, detector}; `waterfall`: {averageAlpha, averageMode, detector}; `waterfallLevels`: {highDbm, lowDbm, mode, offsetDb} |
 | `unsubscribe` | `remoteMediaVersion` | `connectionId`, `endpointId`, `op` | `revision` with remoteDisplayBudgetVersion | none |
 
@@ -6849,7 +6874,7 @@ Station to client:
 | `audio-context` | `remoteMediaVersion` | `connectionId`, `enabled`, `firstSequence`, `firstTimestamp`, `generation`, `op`, `revision`, `ssrc` | `encoder` with enabled=true, remoteAudioStatusVersion; `opusBitrateRefusal` with audioProfileVersion, audioQualityVersion, opusBitrateRefused, remoteAudioStatusVersion; `profile` with audioProfileVersion, remoteAudioStatusVersion; `profileRefusal` with audioProfileVersion, profile=opus, profileRefused, remoteAudioStatusVersion; `reason` with enabled=false, remoteAudioStatusVersion | `encoder`: {audioBandwidthHz, channels, codec, frameSamples, sampleRate, targetBitrate} or {bitsPerSample, channels, codec, frameSamples, payloadType, sampleRate} |
 | `candidate` | `remoteMediaVersion` | `candidate`, `connectionId`, `mid`, `op` | none | none |
 | `clock-echo` | `audioClockVersion` | `capturedNs`, `connectionId`, `generation`, `id`, `op`, `rtpTimestamp`, `t0`, `t1`, `t2` | none | none |
-| `context` | `remoteMediaVersion` | `centreHz`, `connectionId`, `contextGeneration`, `endpointId`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `revision`, `sampleRateHz`, `sourceCentreHz`, `sourceStream`, `spanHz`, `traceSamples`, `waterfallSamples`, `wideCentreHz`, `wideSamples`, `wideSpanHz` | `grantedFftSize` with spectrumGrantVersion; `grantedPixels` with spectrumGrantVersion; `grantedTier` with spectrumGrantVersion; `limit` with spectrumGrantVersion; `requestedPixels` with spectrumGrantVersion; `transmit` with spectrumGrantVersion, txDisplayVersion; `wideband` with remoteWidebandDisplayVersion | `wideband`: {active, adcRateHz, available, filterChainIndex, geometryRateBasis, highHz, levelReference, lowHz, physicalAdcIndex, sourceGeneration, version} or {active, available, version} |
+| `context` | `remoteMediaVersion` | `centreHz`, `connectionId`, `contextGeneration`, `endpointId`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `revision`, `sampleRateHz`, `sourceCentreHz`, `sourceStream`, `spanHz`, `traceSamples`, `waterfallSamples`, `wideCentreHz`, `wideSamples`, `wideSpanHz` | `grantedFftSize` with spectrumGrantVersion; `grantedPixels` with spectrumGrantVersion; `grantedTier` with spectrumGrantVersion; `limit` with spectrumGrantVersion; `pictureGeneration` with spectrumGrantVersion, spectrumPictureVersion; `requestedPixels` with spectrumGrantVersion; `transmit` with spectrumGrantVersion, txDisplayVersion; `wideband` with remoteWidebandDisplayVersion | `wideband`: {active, adcRateHz, available, filterChainIndex, geometryRateBasis, highHz, levelReference, lowHz, physicalAdcIndex, sourceGeneration, version} or {active, available, version} |
 | `description` | `remoteMediaVersion` | `connectionId`, `op`, `sdp`, `type` | none | none |
 | `headphones-audio-context` | `headphonesMixVersion` | `connectionId`, `enabled`, `firstSequence`, `firstTimestamp`, `generation`, `op`, `profile`, `revision`, `ssrc` | `encoder` with enabled=true; `profileRefusal` with profile=opus, profileRefused; `reason` with enabled=false | `encoder`: {audioBandwidthHz, channels, codec, frameSamples, sampleRate, targetBitrate} or {bitsPerSample, channels, codec, frameSamples, payloadType, sampleRate} |
 | `iq-stream-context` | `remoteIqVersion` | `connectionId`, `enabled`, `generation`, `op`, `reason`, `revision`, `sampleRateHz`, `sliceId` | none | none |
