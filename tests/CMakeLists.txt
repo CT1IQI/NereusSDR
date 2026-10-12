@@ -1994,6 +1994,11 @@ nereus_add_test(tst_port_audio_library_lock)
 # Windows adapter files compile only in Windows CI.
 nereus_add_test(tst_wasapi_policy)
 target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
+# PortAudio starts on first need, never at launch: building an AudioEngine
+# starts nothing, and the catalog lists the older drivers only once
+# something asks for them.  Pa_Initialize is a counter; no PortAudio call.
+nereus_add_test(tst_port_audio_on_demand)
+target_compile_definitions(tst_port_audio_on_demand PRIVATE NEREUS_BUILD_TESTS)
 
 # Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
 # with fake engines, the catalogue and the stream supervisor: engine choice,

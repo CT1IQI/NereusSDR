@@ -39,10 +39,14 @@
 //               (lockBounded, LongHold); the counts are atomics read
 //               without the lock. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: PortAudio starts on first need, not at launch
+//               (ensureStarted, addUser, removeUser). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
+#include <functional>
 #include <mutex>
 
 namespace NereusSDR::PortAudioLibrary {
@@ -80,6 +84,34 @@ bool acquire();
 void release();
 // This process's references now.
 int references();
+
+// PortAudio starts on first need, never at launch: Pa_Initialize walks
+// every audio device, which holds the caller for many seconds on a system
+// that is slow to list them.  ensureStarted() is that first need (a stream
+// on the older drivers, or their device list): it starts PortAudio once
+// and keeps one reference for the process; later calls do nothing.  True
+// when PortAudio is running afterwards, however it was started.  False in
+// a test run (no PortAudio call), and when the lock is not had within the
+// bound and PortAudio was not started on demand before.
+bool ensureStarted();
+// True once ensureStarted() has started PortAudio and until its reference
+// is given back.
+bool startedOnDemand();
+// The engines that may need PortAudio.  The last one to leave gives back
+// ensureStarted()'s reference; with none, the reference lasts until the
+// process ends.
+void addUser();
+void removeUser();
+
+// Pa_Initialize and Pa_Terminate calls made through this file.
+int initializeCalls();
+int terminateCalls();
+#ifdef NEREUS_BUILD_TESTS
+// Stand-ins for Pa_Initialize and Pa_Terminate (each returns a PaError),
+// so a test counts the starts without a call into PortAudio.  Empty
+// functions restore PortAudio's own.
+void setDriverForTest(std::function<int()> initialize, std::function<int()> terminate);
+#endif
 
 // Rescan: true when PortAudio was started again, false when a stream is
 // open or there is no reference (the next acquire() lists afresh).

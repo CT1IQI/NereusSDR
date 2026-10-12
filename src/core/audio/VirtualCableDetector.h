@@ -43,6 +43,9 @@ public:
     static VirtualCableProduct matchProduct(const QString& deviceName);
 
     // Enumerates OS audio devices via PortAudio and returns matches.
+    // PortAudio starts on first need and this is not one: nothing is
+    // found while it is not running.  Only for a run with no device
+    // catalog; with one, detect(catalog) lists the cables.
     static QVector<DetectedCable> scan();
 
     // Pure (R-AUD-03): the cables among a list of catalogue devices. An

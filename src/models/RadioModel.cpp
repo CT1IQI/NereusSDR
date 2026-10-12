@@ -1429,6 +1429,7 @@ mw0lge@grange-lane.co.uk
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 #include "core/audio/RadioMicSource.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/audio/VaxTxMicSource.h"
@@ -26199,6 +26200,9 @@ void RadioModel::wirePcMicConfigProjection()
                 cfg.hostApiIndex = index;
                 cfg.driverApi.clear();
                 if (index >= 0) {
+                    // A host API picked by its PortAudio index is an older
+                    // driver: PortAudio starts here if it has not yet.
+                    PortAudioLibrary::ensureStarted();
                     const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
                     for (const PortAudioBus::HostApiInfo& api : apis) {
                         if (api.index == index) {
