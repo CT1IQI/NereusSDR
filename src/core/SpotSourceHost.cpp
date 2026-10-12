@@ -781,7 +781,7 @@ bool SpotSourceHost::setFreedvHidden(bool on, QString* reason)
     auto& s = AppSettings::instance();
     s.setValue(QStringLiteral("FreeDvReporter/Hidden"),
                on ? QStringLiteral("True") : QStringLiteral("False"));
-    s.save();
+    s.saveInBackground();
     if (m_freedvHidden == on) {
         return true;
     }

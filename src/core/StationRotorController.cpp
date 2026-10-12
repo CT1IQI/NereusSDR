@@ -779,7 +779,7 @@ bool StationRotorController::configureRotor(const RotorConfig& config, QString* 
                                    kKeyOffsetDeg}) {
             s.remove(key);
         }
-        s.save();
+        s.saveInBackground();
         m_config = RotorConfig{};
         m_fault.clear();
         connectNow();
@@ -803,7 +803,7 @@ bool StationRotorController::configureRotor(const RotorConfig& config, QString* 
     m_config.rangeDeg = RotorRoute::clampRangeDeg(config.rangeDeg);
     m_fault.clear();
     saveSettings();
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     qCInfo(lcRotorController) << "rotor set up, driver" << static_cast<int>(m_config.driver);
     connectNow();
     return true;
@@ -841,7 +841,7 @@ bool StationRotorController::setRotorPresets(const QString& presets, QString* re
     }
     m_presets = out.join(QLatin1Char('\n'));
     AppSettings::instance().setValue(kKeyPresets, m_presets);
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     emit stateChanged();
     return true;
 }
