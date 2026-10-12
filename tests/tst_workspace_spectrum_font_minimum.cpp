@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original actual paint-device typography checks.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-12.
+// 2026-10-12: J.J. Boyd (KG4VCF), OpenAI Codex: guard GPU-only cache checks.
 #include <QtTest>
 #include <QDir>
 #include <QFontMetricsF>
@@ -126,8 +127,10 @@ private slots:
         image.setDotsPerMeterX(qRound(dpi / 0.0254));
         image.setDotsPerMeterY(qRound(dpi / 0.0254));
         image.fill(Qt::black);
+#ifdef NEREUS_GPU_SPECTRUM
         spectrum.m_overlayStatic = image;
         QCOMPARE(spectrum.bandPlanStripHeight(), spectrum.bandPlanStripHeight(&image));
+#endif
         QPainter painter(&image);
         layers(spectrum, painter);
         painter.end();
