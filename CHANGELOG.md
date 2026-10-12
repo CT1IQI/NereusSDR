@@ -67,6 +67,11 @@ Advanced, and each control appears on one page only.
 
 ### Fixes
 
+- A desktop window that other windows or phones sign in to now shares its
+  Tuner Genius XL, Power Genius XL and RF-Kit RF2K-S with them: meters,
+  OPERATE and STANDBY, the tuner controls, connect and disconnect. Before,
+  only a headless Core shared them, and a window signed in to a desktop saw
+  "Updating the Core may help" with nothing to control.
 - Tuning from a remote console no longer makes the receive audio stutter. The
   Core saved its settings file half a second after a tuning step, on the same
   thread that sends the audio, and nothing was sent until the disk finished

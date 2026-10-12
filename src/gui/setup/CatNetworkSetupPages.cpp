@@ -12,6 +12,10 @@
 //              what Thetis's options do, their defaults come from
 //              TciProtocol.h, and Forget follows Duplicate as in Thetis.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11 - The Peripherals rows' Connect and Disconnect in a window
+//              running its own radio go through RadioModel
+//              (connect*FromWindow), the connection that window shares.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatNetworkSetupPages.h"
 #include "gui/StyleConstants.h"
@@ -1974,14 +1978,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (pgxl->isConnected()) {
-            pgxl->disconnect();
+            m_model->disconnectPgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(PGXL): host or port not set; fill in the fields first";
                 return;
             }
-            pgxl->connectToPgxl(host, port);
+            m_model->connectPgxlFromWindow(host, port);
         }
     } else {
         // TGXL row (rowIdx == 0).
@@ -1991,14 +1995,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (tgxl->isConnected()) {
-            tgxl->disconnect();
+            m_model->disconnectTgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(TGXL): host or port not set; fill in the fields first";
                 return;
             }
-            tgxl->connectToTgxl(host, port);
+            m_model->connectTgxlFromWindow(host, port);
         }
     }
 }
