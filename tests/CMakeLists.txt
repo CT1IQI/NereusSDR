@@ -8286,6 +8286,11 @@ target_compile_definitions(tst_container_controls_refresh PRIVATE NEREUS_BUILD_T
 # filter / AM and FM squelch, Meter Styles S-meter, Logs, VAX level.
 nereus_add_test(tst_setup_controls_connected)
 target_compile_definitions(tst_setup_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# tst_controls_connected, nearly every case a window of its own: 64 s at
+# load 20 to 28 and past the 120 s limit in a loaded run; five entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_controls_connected
+    ENV NEREUS_CONTROLS_CONNECTED_GROUP GROUPS menus controls meters overlay)
 # R3 unfinished controls, Task 1 (R-R3-49, R-R3-21): the one list of
 # unbuilt features, every surface hidden through it in local and remote
 # windows, saved values kept, a saved Voice Rec/Play control kept.
@@ -8559,8 +8564,13 @@ target_compile_definitions(tst_remote_window_harness PRIVATE NEREUS_BUILD_TESTS)
 # Load findings 4: about 37 s on a quiet machine, past the 120 s limit under
 # 150 busy loops (200 s at load 180); six entries of the same binary (the
 # limit is not raised; groups in the test's main()).
+# 2026-10-11: twelve entries. The entry left with the slice access and
+# transmit cases had grown to half the binary's time (109 s of 218 s at
+# load 18 to 20) and past the limit in a loaded run; those cases are the
+# last six groups.
 nereus_split_test(tst_remote_window_harness
-    ENV NEREUS_REMOTE_WINDOW_HARNESS_GROUP GROUPS connect disconnect links setup radio)
+    ENV NEREUS_REMOTE_WINDOW_HARNESS_GROUP GROUPS connect disconnect links setup radio
+        letters refusals take badges access show)
 
 # Remote-window parity Task 18 (R-R3-09, R-R3-24, R-R3-34, R-R3-49): a
 # control drawn on a pan acts on that pan, in a local window and a remote
@@ -8606,6 +8616,12 @@ nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and
 # HostingSliceActions::hasTakeBackForTest.
 target_compile_definitions(tst_desktop_station_window PRIVATE NEREUS_BUILD_TESTS)
+# Every case a hosting window of its own: 95 s by itself at load 18 to 28
+# and past the 120 s limit in a loaded run; nine entries of the same binary
+# (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_desktop_station_window
+    ENV NEREUS_DESKTOP_STATION_WINDOW_GROUP GROUPS host listen keying layout placed
+        select pending badges)
 nereus_add_test(tst_receive_layout_store)
 nereus_add_test(tst_receive_layout_hydration)
 nereus_add_test(tst_receive_layout_runtime)
