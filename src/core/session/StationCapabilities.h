@@ -59,6 +59,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Core speaker: coreSpeakerVersion, after radioSpeakerVersion
 //               and before coreBuildInfo (native audio plan Task 21,
 //               R-AUD-25). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -694,6 +696,13 @@ struct StationCapabilities {
     /// A media peer may declare version 1 and subscribe to a receiver-scoped
     /// mini display with displayRole="mini". Absent means a normal pan.
     int miniDisplayVersion = 0;
+    /// R-DISP-RETUNE: a media peer may declare version 1 in its start, and
+    /// each spectrum context it is sent then carries `pictureGeneration`,
+    /// which names the picture the context's frames continue (the media
+    /// document's "The picture a context continues"). Sent only to a peer
+    /// whose hello declared spectrumPicture 1, at minor 11 with media on;
+    /// absent reads as 0: an older Core, whose contexts state no picture.
+    int spectrumPictureVersion = 0;
     /// R-IOS-26 / R-R3-49 (iPhone app plan Task 22, remote-window parity
     /// Task 20): 1 means the Core runs FreeDV Reporter itself, registered
     /// with its own callsign, grid square and message and listing its own

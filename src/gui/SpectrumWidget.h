@@ -11,6 +11,22 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : R-DISP-RETUNE (third wave): setRemoteSpectrumContext takes
+//                 the Core's word on whether a context continues the picture
+//                 shown (coreCarriedOn) in place of the span asked. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 : R-DISP-RETUNE: RemoteContextPicture and
+//                 remoteContextPicture(): a context for the picture moved
+//                 in frequency is told apart from a new picture. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 : setWaterfallGlideForTest(), so a native test can hold
+//                 the GPU waterfall's glide at a set point between two
+//                 rows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-11 : m_wfRowsSinceUpload, waterfallRectForTest() and
+//                 setWaterfallLiveForTest() for the GPU waterfall's ring
+//                 seam, paused glide and whole-ring upload. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 : R-DISP-HOLD: remoteContextKeptPicture() and
 //                 remoteCodecForTest(). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -509,14 +525,47 @@ public:
     /// normalise shift follow it, and the context's frame rate (the rate the
     /// Core actually sends, after the display budget) times the peak hold,
     /// blob and noise-floor decay.
+    /// R-DISP-RETUNE: `coreCarriedOn` is the Core's own word on whether
+    /// this context continues the picture the pan shows (its
+    /// `pictureGeneration` is the one of the context shown), and it alone
+    /// decides: true is the picture shown, moved or not; false is a new
+    /// picture whatever its numbers. The pan compares no spans or centers
+    /// to tell a move from a new picture. Without it (a Core that states no
+    /// picture) the rule is the one before the moved picture: a context
+    /// that differs only in its dBm range or frame rate is the picture
+    /// shown and anything else is a new one.
     void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                   double sourceCentreHz, double sampleRateHz,
-                                  int grantedFftSize = 0);
+                                  int grantedFftSize = 0,
+                                  std::optional<bool> coreCarriedOn = std::nullopt);
     /// R-DISP-HOLD: whether the last context was for the picture the pan
     /// already showed (same receiver and source geometry, same view, same
     /// sample counts and wide row), so the pan kept its last frame, peak
     /// hold, blobs and pending waterfall row. A new picture empties them.
-    bool remoteContextKeptPicture() const { return m_remoteContextKeptPicture; }
+    bool remoteContextKeptPicture() const
+    {
+        return m_remoteContextPicture == RemoteContextPicture::Same;
+    }
+    /// R-DISP-RETUNE: what the last context was to the picture the pan
+    /// already showed.
+    enum class RemoteContextPicture {
+        /// Anything else: the pan starts again, as it always did.
+        New,
+        /// The Core says this context continues the picture shown, and
+        /// something the pan holds per pixel changed with it (a retune or a
+        /// pan drag moved the stream center, the view center or both). Only
+        /// a Core that states the picture can say so; the pan derives no
+        /// move of its own. The Core's averaged trace carried
+        /// on, so the drawn trace stays, at the frequency it was captured
+        /// at, until the keyframe; the waterfall history and its queued rows
+        /// keep their frequencies; the noise floor estimate is untouched.
+        /// The peak hold and the blobs empty: they are held per pixel and
+        /// every pixel now shows another frequency.
+        Moved,
+        /// R-DISP-HOLD: the picture the pan already showed.
+        Same,
+    };
+    RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture);
@@ -1077,6 +1126,17 @@ public:
     // native test can tell spectrum rows of a grabbed frame from the
     // frequency scale and waterfall rows below them.
     QRect spectrumRectForTest() const { return spectrumLayout().spectrum; }
+    // The waterfall's rect in the same layout, so a native test can find
+    // the waterfall's first and last rows in a grabbed frame.
+    QRect waterfallRectForTest() const { return spectrumLayout().waterfall; }
+    // Pauses or resumes the waterfall, as scrolling back on the time scale
+    // and its LIVE button do.
+    void setWaterfallLiveForTest(bool live) { setWaterfallLive(live); }
+    // Holds the GPU waterfall's glide at `rows` (0 = at rest on the newest
+    // row, 1 = a whole row short of it) in place of the clock, so a native
+    // test can draw a frame at a chosen point between two rows. A negative
+    // value hands the glide back to the clock.
+    void setWaterfallGlideForTest(float rows) { m_wfGlideRowsForTest = rows; }
 
     // Which rows of the GPU dynamic overlay texture (device pixels, from
     // the top) renderGpuFrame() clears and uploads. The texture covers the
@@ -3065,7 +3125,7 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
-    bool m_remoteContextKeptPicture{false};
+    RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
     bool m_remoteWidebandAvailable{false};
     bool m_remoteWidebandActive{false};
     double m_remoteWidebandAdcRateHz{0.0};
@@ -3094,6 +3154,8 @@ private:
     quint64 m_remoteRowsPushed{0};
     QVector<float> m_lastRemoteRowPushed;
     bool m_waterfallTickerPausedForTest{false};
+    // setWaterfallGlideForTest(): negative leaves the glide to the clock.
+    float m_wfGlideRowsForTest{-1.0f};
     void onWaterfallTick();
     void drainRemoteWaterfallRows();
     QVector<float> reprojectedToView(const QVector<float>& pixelsDbm,
@@ -3860,6 +3922,9 @@ private:
     int  m_wfGpuTexH{0};
     bool m_wfTexFullUpload{true};
     int  m_wfLastUploadedRow{-1};
+    // Rows pushed since the last GPU frame took the texture's rows, counted
+    // up to the ring's height: at that many the whole ring is sent.
+    int  m_wfRowsSinceUpload{0};
 
     // ---- Overlay GPU resources ----
     QRhiGraphicsPipeline*       m_ovPipeline{nullptr};

@@ -5926,6 +5926,13 @@ target_compile_definitions(tst_display_extras PRIVATE
 nereus_add_test(tst_daemon_display_keep
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# R-DISP-RETUNE: a remote pan's picture carries on through a retune. The
+# Core relabels the running spectrum source, the averaged trace goes on, the
+# peak hold and blobs empty, the noise floor and waterfall levels continue,
+# and frames keep coming while the operator tunes.
+nereus_add_test(tst_daemon_display_retune
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -8536,6 +8543,21 @@ target_include_directories(tst_ice_transport_lifetime PRIVATE
     "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
     "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
     "${libdatachannel_SOURCE_DIR}/deps/json/include")
+# The library's worker pool takes a queued task when no worker was woken for
+# it (cmake/patches/libdatachannel-0006): a desktop window froze for hours
+# waiting on a certificate task that sat in the queue with every worker
+# asleep.
+nereus_add_test(tst_rtc_thread_pool_idle_recheck CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_rtc_thread_pool_idle_recheck PRIVATE datachannel-static)
+target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
+    "${libdatachannel_SOURCE_DIR}/src"
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libdatachannel_SOURCE_DIR}/include/rtc"
+    "${libdatachannel_SOURCE_DIR}/deps/plog/include"
+    "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib"
+    "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
+    "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
+    "${libdatachannel_SOURCE_DIR}/deps/json/include")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
 # crypto and control vectors, the Core's and the desktop's conformance
 # runners (rendezvous/conformance/v1/), and the Core against the Python
@@ -9815,6 +9837,43 @@ nereus_add_test(tst_remote_media_controller
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold
     fakes/LoopbackTransport.cpp)
+# R-DISP-RETUNE (third wave): the retune functions (the test's
+# kRetuneFunctions) run as their own ctest entry, the same binary with
+# NEREUS_DISPLAY_HOLD_GROUP=retune, and the first entry runs the rest, so
+# neither carries the other's time against the 120 s limit (the whole run
+# takes about 130 s on a quiet Mac). The second entry takes the first's
+# labels, limit and environment, with its own home.
+if(TEST tst_remote_display_hold)
+    get_test_property(tst_remote_display_hold LABELS _rdh_labels)
+    get_test_property(tst_remote_display_hold TIMEOUT _rdh_timeout)
+    get_test_property(tst_remote_display_hold ENVIRONMENT_MODIFICATION _rdh_env_mod)
+    add_test(NAME tst_remote_display_hold_retune COMMAND tst_remote_display_hold)
+    set_tests_properties(tst_remote_display_hold_retune PROPERTIES
+        LABELS "${_rdh_labels}"
+        TIMEOUT ${_rdh_timeout})
+    if(_rdh_env_mod)
+        set_property(TEST tst_remote_display_hold_retune
+            PROPERTY ENVIRONMENT_MODIFICATION ${_rdh_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_rdh_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_display_hold_retune")
+        file(MAKE_DIRECTORY "${_rdh_home}")
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "HOME=${_rdh_home}")
+        if(APPLE)
+            set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_rdh_home}")
+        endif()
+    endif()
+    set_property(TEST tst_remote_display_hold APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=rest")
+    set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=retune")
+endif()
 # R-R3-21: its real-session cases take about 115 s alone on a quiet Mac
 # (repeatedAudioRestartsBackOff waits out the 1, 2, 4, 4 s retry backoff),
 # too close to the default 120 s, and a loaded machine stretches them.
@@ -10096,6 +10155,21 @@ endif()
 # NereusSDR-original.
 if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_dynamic_overlay_clear NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
+# ── GPU waterfall draws nothing across its ring seam ─────────────────────
+# The waterfall texture is a ring that repeats down its height, sampled
+# through a linear filter at a position that glides between rows. The glide
+# reached one row past the oldest, and the repeat gave it the newest: the
+# bottom line of the waterfall flashed each new row as it arrived. A paused
+# waterfall ran the same glide and jumped a row whenever one arrived
+# underneath. Also holds the glide at set points and measures the four-row
+# blend: the grain of noise rows stays level through the glide, and one
+# bright row lands on the lines around it in the blend's shares. Grabs real
+# GPU frames, so it needs a native window and carries the `gpu` label; skips
+# where no QRhi comes up. NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_waterfall_ring_seam NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()
 
 # The same rule without a GPU, on every platform CI runs: every combination

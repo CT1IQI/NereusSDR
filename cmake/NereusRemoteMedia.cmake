@@ -276,6 +276,8 @@ function(nereus_add_remote_media_dependency)
 
     _nereus_apply_vendor_patch("${_dc_build_source}"
         "libdatachannel-0005-defer-dtls-startup.patch")
+    _nereus_apply_vendor_patch("${_dc_build_source}"
+        "libdatachannel-0006-recheck-pool-queue-while-idle.patch")
 
     # These are function-scope normal variables. They configure only the
     # nested project and leave the parent cache, BUILD_SHARED_LIBS, and later

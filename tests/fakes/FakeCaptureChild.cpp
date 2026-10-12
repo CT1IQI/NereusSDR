@@ -25,6 +25,12 @@
 //               scenario marks a disable with a "Probe off" AsioCaps
 //               record.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-11: pcm-record builds no ring, so the window cannot be Ready
+//               before it reads the record.  Three scenarios act on a
+//               ProbeEnable instead of a clock (pcm-record-, crash- and
+//               input-lost-on-probe-enable), so a test that turns the
+//               probe on once it has seen Ready fixes the order.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -36,6 +42,7 @@
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
 
+#include <cstdio>
 #include <QCoreApplication>
 #include <QFile>
 #include <QtEndian>
@@ -69,15 +76,17 @@ constexpr double kTwoPi = 6.283185307179586;
 constexpr int kToneFrames = 480;
 
 enum class Scenario {
-    Ready, HangOpen, NoHello, PermissionThenReady, CrashAfterReady,
+    Ready, HangOpen, HangOpenAfterStep, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
-    PcmRecord, Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing
+    PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
+    Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
 {
     if (name == QLatin1String("ready")) { return Scenario::Ready; }
     if (name == QLatin1String("hang-open")) { return Scenario::HangOpen; }
+    if (name == QLatin1String("hang-open-after-step")) { return Scenario::HangOpenAfterStep; }
     if (name == QLatin1String("no-hello")) { return Scenario::NoHello; }
     if (name == QLatin1String("permission-then-ready")) { return Scenario::PermissionThenReady; }
     if (name == QLatin1String("crash-after-ready")) { return Scenario::CrashAfterReady; }
@@ -89,6 +98,15 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("probe")) { return Scenario::Probe; }
     if (name == QLatin1String("version-1")) { return Scenario::Version1; }
     if (name == QLatin1String("pcm-record")) { return Scenario::PcmRecord; }
+    if (name == QLatin1String("pcm-record-on-probe-enable")) {
+        return Scenario::PcmRecordOnProbeEnable;
+    }
+    if (name == QLatin1String("crash-on-probe-enable")) {
+        return Scenario::CrashOnProbeEnable;
+    }
+    if (name == QLatin1String("input-lost-on-probe-enable")) {
+        return Scenario::InputLostOnProbeEnable;
+    }
     if (name == QLatin1String("busy")) { return Scenario::Busy; }
     if (name == QLatin1String("busy-while-marked")) { return Scenario::BusyWhileMarked; }
     if (name == QLatin1String("busy-while-marked-then-pending")) {
@@ -330,6 +348,15 @@ private:
             send(P::encodeRingAttached(P::Command{command.generation}));
             break;
         case P::RecordType::ProbeEnable:
+            if (actsOnProbeEnable()) {
+                // A test turns the probe on once it has seen Ready and the
+                // window passes that on at once, so the act always follows
+                // a published Ready; nothing waits a fixed time for it.
+                if (command.probeEnabled) {
+                    actOnProbeEnable();
+                }
+                break;
+            }
             if (m_scenario != Scenario::Probe) {
                 break;
             }
@@ -449,6 +476,12 @@ private:
             m_ignoring = true;
             markHanging();
             return;
+        case Scenario::HangOpenAfterStep:
+            sendStatus(m_generation, P::HelperState::Opening);
+            std::fprintf(stderr, "nereus-audio-capture: open step: devices listed at 12 ms\n");
+            std::fflush(stderr);
+            m_ignoring = true;
+            return;
         case Scenario::PermissionThenReady:
             sendStatus(m_generation, P::HelperState::Permission);
             m_readyAt = Clock::now() + kPermissionHold;
@@ -494,10 +527,12 @@ private:
             }
             return;
         case Scenario::PcmRecord:
+            // No ring is built and no wake is posted: the window's Ready
+            // needs the ring's first wake, so it reads the record first
+            // however the pipe splits the two.
             sendStatus(m_generation, P::HelperState::Opening);
             sendStatus(m_generation, P::HelperState::Ready);
             m_readySent = true;
-            startStreaming();
             send(P::encodePcm(m_generation, 0, 0, m_tone.data(), P::kHelperPcmFrames));
             return;
         case Scenario::Oversize:
@@ -511,6 +546,26 @@ private:
             m_readySent = true;
             startStreaming();
             return;
+        }
+    }
+
+    bool actsOnProbeEnable() const
+    {
+        return m_scenario == Scenario::PcmRecordOnProbeEnable
+            || m_scenario == Scenario::CrashOnProbeEnable
+            || m_scenario == Scenario::InputLostOnProbeEnable;
+    }
+
+    void actOnProbeEnable()
+    {
+        if (m_scenario == Scenario::PcmRecordOnProbeEnable) {
+            send(P::encodePcm(m_generation, 0, 0, m_tone.data(), P::kHelperPcmFrames));
+        } else if (m_scenario == Scenario::CrashOnProbeEnable) {
+            std::_Exit(3);
+        } else if (m_scenario == Scenario::InputLostOnProbeEnable) {
+            m_streaming = false;
+            sendStatus(m_generation, P::HelperState::Failed, P::FailReason::InputLost,
+                       QStringLiteral("fake input stopped"));
         }
     }
 

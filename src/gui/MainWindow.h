@@ -1394,6 +1394,10 @@ private:
     // fits, else the operator picks a pan. Nothing is added or moved for
     // any other slice.
     void revealSliceInWindow(int sliceId);
+    /// The end of every reveal: the slice becomes the one its pan shows,
+    /// and a pan whose view does not hold the slice's frequency moves onto
+    /// it, keeping its span. A view that already holds the slice stays.
+    void showSliceOnItsPan(SliceModel* slice);
     // A placement for a slice this window no longer only listens to is
     // dropped; one it now controls takes the placement as its pan.
     void reconcileListenPlacements();

@@ -8,6 +8,24 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
+//                 word (coreCarriedOn) decides whether a context continues
+//                 the picture shown; the pan's own moved-picture rule and
+//                 the span asked are gone. AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE: setRemoteSpectrumContext
+//                 tells a picture moved in frequency (a retune, a pan drag)
+//                 from a new picture. AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall blends four rows as it
+//                 glides (waterfall.frag, ported from AetherSDR) where it
+//                 mixed two, so its grain no longer pulses once per row;
+//                 the glide can be held at a set point for a native test.
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall no longer draws across
+//                 its ring's seam (the bottom line flashed each new row),
+//                 its glide rests while the waterfall is paused, and a
+//                 ring's worth of rows arriving with no frame drawn sends
+//                 the whole texture. AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF. R-DISP-HOLD: setRemoteSpectrumContext
 //                 keeps the painted frame, peak hold, blobs and waterfall
 //                 rows when the context is for the picture already shown.
@@ -1607,7 +1625,8 @@ void SpectrumWidget::clearRemoteSpectrum()
 
 void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                                double sourceCentreHz, double sampleRateHz,
-                                               int grantedFftSize)
+                                               int grantedFftSize,
+                                               std::optional<bool> coreCarriedOn)
 {
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
@@ -1617,8 +1636,13 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // place. The same picture is the same receiver and source geometry, the
     // same view to the Hz, the same sample counts and the same wide row;
     // only then are values the pan holds per pixel still the same pixels.
+    //
+    // R-DISP-RETUNE: and, where the Core states the picture, one the Core
+    // carried on. A context that matches in every number and starts a new
+    // picture at the Core (its source restarted, say) is a new picture.
     const SpectrumEndpointContext& shown = m_remoteCapture.context();
     const bool samePicture = m_remoteSpectrum && m_remoteCodec.traceSamples != 0
+        && coreCarriedOn.value_or(true)
         && shown.codec.endpointId == context.codec.endpointId
         && shown.codec.traceSamples == context.codec.traceSamples
         && shown.codec.waterfallSamples == context.codec.waterfallSamples
@@ -1634,13 +1658,35 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
         && qFuzzyCompare(m_centerHz, context.exactCentreHz)
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
-    m_remoteContextKeptPicture = samePicture;
+    // R-DISP-RETUNE: the picture shown, carried on at the Core, with
+    // something the pan holds per pixel changed: a retune moved the stream
+    // center under the pan, or a drag moved the view center. The Core's
+    // word decides this and nothing of the pan's does. The pan used to
+    // derive a move from the span it had asked for, the window from the
+    // spans of its requests and the phone from the span answered to within
+    // a bin; three derivations of a rule that is the Core's
+    // (SpectrumEndpoint.cpp, movedPlanePicture), each of which could
+    // disagree with it. Without the Core's word there is no moved picture.
+    const bool movedPicture = !samePicture && coreCarriedOn.value_or(false)
+        && m_remoteSpectrum
+        && shown.codec.endpointId == context.codec.endpointId;
+    m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
+        : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
         m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
         return;
     }
+    // R-DISP-RETUNE: a moved picture and a new picture retire the same
+    // things here. Of what this empties, the peak hold and the blobs must go
+    // for a moved picture too (held per pixel, and every pixel now shows
+    // another frequency); the pending waterfall row and wide row were
+    // captured at the old window and a row of the new one replaces them; and
+    // the drawn trace is put back at once from the last trace the Core sent,
+    // at the frequency it was captured at (refreshRemoteTraceProjection,
+    // R-R3-21). The waterfall history, the queued rows and the noise floor
+    // estimate are not touched by it.
     invalidateRemoteSpectrumFrame();
     const double binWidthBefore = binWidthHz();
     // NereusSDR-original remote wiring: a new codec generation retires live
@@ -7174,6 +7220,14 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
         scanline[x] = dbmToRgb(calibratedPixelsDbm[srcPx]);
     }
 
+#ifdef NEREUS_GPU_SPECTRUM
+    // Rows written since the last GPU frame took the texture's rows, up to
+    // a whole ring; renderGpuFrame() sends the whole ring at that point.
+    if (m_wfRowsSinceUpload < h) {
+        ++m_wfRowsSinceUpload;
+    }
+#endif
+
     traceWaterfallState(calibratedPixelsDbm, scanline, w, now);
 
     // ── Sub-epic E: mirror the just-written row into the history ring ───
@@ -12308,6 +12362,16 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             m_wfTexFullUpload = true;
         }
 
+        // 2026-10-11 KG4VCF: rows keep arriving while no frame is drawn (a
+        // hidden, covered or minimized window). After a ring's worth of them
+        // or more the write row can stand anywhere, even where the last
+        // frame left it, and the walk below would send only the remainder
+        // and leave the rest of the picture as it was before. Send it all.
+        if (m_wfRowsSinceUpload >= m_wfGpuTexH) {
+            m_wfTexFullUpload = true;
+        }
+        m_wfRowsSinceUpload = 0;
+
         if (m_wfTexFullUpload) {
             QImage rgba = m_waterfall.convertToFormat(QImage::Format_RGBA8888);
             batch->uploadTexture(m_wfGpuTex, QRhiTextureUploadEntry(0, 0,
@@ -12373,12 +12437,35 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     const float pushPeriodMs = static_cast<float>(qMax(1, m_wfUpdatePeriodMs));
     const float elapsedMs = static_cast<float>(qMax<qint64>(0, nowMs - m_wfLastPushMs));
     const float pushFrac = qBound(0.0f, elapsedMs / pushPeriodMs, 1.0f);
-    const float effectiveRow = static_cast<float>(m_wfWriteRow) + (1.0f - pushFrac);
-    float rowOffset = (m_wfGpuTexH > 0)
-        ? effectiveRow / static_cast<float>(m_wfGpuTexH) : 0.0f;
+    // 2026-10-11 KG4VCF: the glide rests while the waterfall is paused. A
+    // paused waterfall shows a fixed set of rows, but every row that arrives
+    // underneath still restarts m_wfLastPushMs, and the glide lifted the
+    // paused picture a row and slid it back each time. AetherSDR holds its
+    // scroll offset at zero while paused as well (SpectrumWidget.cpp
+    // waterfallScrollProgressRows() [@aa9336ae]).
+    const float clockGlideRows = m_wfLive ? 1.0f - pushFrac : 0.0f;
+    // A native test may hold the glide at a point of its choosing.
+    const float glideRows = (m_wfGlideRowsForTest >= 0.0f) ? m_wfGlideRowsForTest
+                                                           : clockGlideRows;
+    // 2026-10-11 KG4VCF: the ring row and the glide go to the shader apart,
+    // with the ring's height. "Both texels hold valid data" above is true of
+    // the top of the picture only: at the bottom the glide wants the row
+    // below the oldest, which the ring does not hold, and the texture's
+    // repeat handed it the newest instead. The shader now holds every row it
+    // samples to the rows the ring has (waterfall.frag).
+    //
+    // 2026-10-11 KG4VCF: "the bilinear sampler produces a clean gradient"
+    // above was the cause of a shimmer: a two-row mix is sharp when a row
+    // has just settled and a 50/50 blur half way to the next, so the grain
+    // of a noisy waterfall pulsed once per row, by 29% where a row is one
+    // screen pixel tall. The shader now blends four rows with cubic
+    // B-spline weights, ported from AetherSDR texturedquad.frag
+    // [@a9a83e66], whose softness is close to the same at every point of
+    // the glide. The lag and the clock above are unchanged.
     // Written further down, from the frame plan, only when the waterfall
     // draws (GUI-M1).
-    const float wfUniforms[] = {rowOffset, 0.0f, 0.0f, 0.0f};
+    const float wfUniforms[] = {static_cast<float>(m_wfWriteRow), glideRows,
+                                static_cast<float>(qMax(1, m_wfGpuTexH)), 0.0f};
 
     // ---- Overlay texture (static, only on state change) ----
     {

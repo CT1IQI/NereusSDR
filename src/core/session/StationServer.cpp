@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion 1 for a
+//               minor-11 peer that declared spectrumPicture 1, media on.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Core speaker: radio's coreSpeakerVolume, coreSpeakerMuted,
 //               coreSpeakerDevice, coreSpeakerDevices, coreSpeakerState and
 //               coreSpeakerDetails go only to a peer that declared
@@ -12806,6 +12809,17 @@ bool StationServer::txDisplayAvailable(quint64 epoch) const
         && txDisplayVersion() >= 1;
 }
 
+bool StationServer::spectrumPictureAvailable(quint64 epoch) const
+{
+    // The value rides on the grant shape of the context, which every peer
+    // at minor 11 has.
+    SessionTransport* session = mediaSessionFor(epoch);
+    const auto it = m_peers.constFind(session);
+    return mediaAvailable(epoch) && it != m_peers.cend()
+        && it->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(session, QByteArrayLiteral("spectrumPicture"), 1);
+}
+
 bool StationServer::miniDisplayAvailable(quint64 epoch) const
 {
     SessionTransport* session = mediaSessionFor(epoch);
@@ -13410,6 +13424,12 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // Optional and last: old peers retain their exact descriptor.
             caps.miniDisplayVersion = media && peerDeclares(
                 transport, QByteArrayLiteral("miniDisplay"), 1) ? 1 : 0;
+            // R-DISP-RETUNE: likewise optional, for a minor-11 peer that
+            // declared spectrumPicture 1 (after coreSpeakerVersion and before
+            // coreBuildInfo on the wire); old peers retain their exact
+            // descriptor.
+            caps.spectrumPictureVersion = caps.radioIdentityEntries && media
+                && peerDeclares(transport, QByteArrayLiteral("spectrumPicture"), 1) ? 1 : 0;
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.
