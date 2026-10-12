@@ -6,6 +6,7 @@
 #include "core/NoiseFloorTracker.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -71,6 +72,19 @@ private slots:
         QVERIFY(first->stationAutoAgcNoiseFloorValid());
         QCOMPARE(first->stationAutoAgcNoiseFloorDbm(),
                  static_cast<double>(firstFloor.noiseFloor()));
+
+        // Transmit: not valid at once, as on the headless Core, and it
+        // stays so for the whole of the over.
+        radio.transmitModel().setMox(true);
+        QVERIFY(!first->stationAutoAgcNoiseFloorValid());
+        QVERIFY(!second->stationAutoAgcNoiseFloorValid());
+        QCOMPARE(first->stationAutoAgcNoiseFloorDbm(), -200.0);
+        radio.runAutoAgcTickForTest();
+        QVERIFY(!first->stationAutoAgcNoiseFloorValid());
+        radio.transmitModel().setMox(false);
+        radio.runAutoAgcTickForTest();
+        QVERIFY(first->stationAutoAgcNoiseFloorValid());
+        QVERIFY(second->stationAutoAgcNoiseFloorValid());
 
         // The radio drops.
         radio.setConnectionStateForTest(ConnectionState::Disconnected);
