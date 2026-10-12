@@ -8374,6 +8374,21 @@ target_include_directories(tst_ice_transport_lifetime PRIVATE
     "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
     "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
     "${libdatachannel_SOURCE_DIR}/deps/json/include")
+# The library's worker pool takes a queued task when no worker was woken for
+# it (cmake/patches/libdatachannel-0006): a desktop window froze for hours
+# waiting on a certificate task that sat in the queue with every worker
+# asleep.
+nereus_add_test(tst_rtc_thread_pool_idle_recheck CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_rtc_thread_pool_idle_recheck PRIVATE datachannel-static)
+target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
+    "${libdatachannel_SOURCE_DIR}/src"
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libdatachannel_SOURCE_DIR}/include/rtc"
+    "${libdatachannel_SOURCE_DIR}/deps/plog/include"
+    "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib"
+    "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
+    "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
+    "${libdatachannel_SOURCE_DIR}/deps/json/include")
 # iPhone app plan Task 27 (R-IOS-08, R-IOS-16): the rendezvous wire and its
 # crypto and control vectors, the Core's and the desktop's conformance
 # runners (rendezvous/conformance/v1/), and the Core against the Python
