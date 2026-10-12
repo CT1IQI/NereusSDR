@@ -118,6 +118,12 @@
 //                                    buffer is on Setup > Audio >
 //                                    Microphone, in the PC microphone card.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  Six more ctest entries
+//                                    (TestFunctionGroups): the entry left
+//                                    with the slice access and transmit
+//                                    cases had grown past the 120 s limit
+//                                    under load.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -341,6 +347,24 @@ SliceChooser* openChooser(RemoteWindowHarness& h)
     if (!dashboard || !dashboard->chooserButton()) { return nullptr; }
     dashboard->chooserButton()->click();
     return h.window()->findChild<SliceChooser*>();
+}
+
+// A slice's row in the chooser's list, and a button of its detail by its
+// words, as the operator finds them.
+QPushButton* chooserRowFor(SliceChooser* chooser, int sliceId)
+{
+    for (QPushButton* row : chooser->findChildren<QPushButton*>(QStringLiteral("sliceChooserRow"))) {
+        if (row->property("sliceId").toInt() == sliceId && row->parentWidget()) { return row; }
+    }
+    return nullptr;
+}
+
+QPushButton* chooserActionFor(SliceChooser* chooser, const QString& words)
+{
+    for (QPushButton* button : chooser->findChildren<QPushButton*>()) {
+        if (button->text() == words && button->parentWidget()) { return button; }
+    }
+    return nullptr;
 }
 
 // Optional private offscreen evidence from the same functional fixtures.
@@ -3419,6 +3443,146 @@ private slots:
         QTest::qWait(kSettleMs);
         QCOMPARE(sw->centerFrequency(), kOtherBandHz + offset);
     }
+
+    // The bottom RX area's chooser. Two of this window's slices on one pan,
+    // the view on the first. Choosing the second slice's row shows that
+    // slice: it becomes the slice its pan shows and the view moves onto it,
+    // with the span kept. Nothing is asked of the Core, so the window's RX
+    // slice is unchanged. A row whose slice the view already holds moves
+    // nothing.
+    void remoteChoosingASlicesRowInTheBottomChooserShowsTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("1")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        const int aId = 0;
+        const int bId = 1;
+        QTRY_VERIFY(h.remoteModel()->sliceById(aId) && h.remoteModel()->sliceById(bId));
+        constexpr double kOtherBandHz = 7'150'000.0;
+        h.station().sliceById(bId)->setPanKey(QStringLiteral("pan-0"));
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->panKey(), QStringLiteral("pan-0"));
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->frequency(), kOtherBandHz);
+        PanadapterApplet* pan = stack->panadapter(QStringLiteral("pan-0"));
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(pan && sw);
+        QTRY_VERIFY(pan->associatedSlices().contains(aId) && pan->associatedSlices().contains(bId));
+        auto* applet = h.window()->findChild<RxApplet*>();
+        QVERIFY(applet);
+        QTest::qWait(kSettleMs);
+        const double aHz = h.remoteModel()->sliceById(aId)->frequency();
+        emit applet->sliceActivationRequested(aId);
+        QTRY_COMPARE(pan->activeSliceIndex(), aId);
+        QTRY_COMPARE(h.remoteModel()->activeSlice(), h.remoteModel()->sliceById(aId));
+        sw->setDisplayWindowPreservingHistory(aHz, sw->bandwidth());
+        QTest::qWait(kSettleMs);
+        const double span = sw->bandwidth();
+        QVERIFY(std::abs(sw->centerFrequency() - kOtherBandHz) > span / 2.0);
+
+        SliceChooser* chooser = openChooser(h);
+        QVERIFY(chooser);
+        QPushButton* rowB = chooserRowFor(chooser, bId);
+        QVERIFY(rowB);
+        rowB->click();
+        QTRY_COMPARE(pan->activeSliceIndex(), bId);
+        QTRY_VERIFY2(std::abs(sw->centerFrequency() - kOtherBandHz) <= sw->bandwidth() / 2.0,
+                     qPrintable(QStringLiteral("pan at %1 Hz, slice at %2 Hz")
+                                    .arg(sw->centerFrequency(), 0, 'f', 0)
+                                    .arg(kOtherBandHz, 0, 'f', 0)));
+        QCOMPARE(sw->bandwidth(), span);
+        // Showing a slice selects nothing: Select RX is still its own button.
+        QTest::qWait(kSettleMs);
+        QCOMPARE(h.remoteModel()->activeSlice(), h.remoteModel()->sliceById(aId));
+        QVERIFY(chooserActionFor(chooser, QStringLiteral("Select RX")));
+
+        const double offset = sw->bandwidth() / 4.0;
+        sw->setDisplayWindowPreservingHistory(kOtherBandHz + offset, sw->bandwidth());
+        rowB = chooserRowFor(chooser, bId);
+        QVERIFY(rowB);
+        rowB->click();
+        QTest::qWait(kSettleMs);
+        QCOMPARE(sw->centerFrequency(), kOtherBandHz + offset);
+    }
+
+    // The chooser's Select RX: the slice becomes this window's RX slice and
+    // its pan shows it.
+    void remoteSelectRxInTheBottomChooserShowsTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("1")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        const int aId = 0;
+        const int bId = 1;
+        QTRY_VERIFY(h.remoteModel()->sliceById(aId) && h.remoteModel()->sliceById(bId));
+        constexpr double kOtherBandHz = 7'150'000.0;
+        h.station().sliceById(bId)->setPanKey(QStringLiteral("pan-0"));
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->panKey(), QStringLiteral("pan-0"));
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->frequency(), kOtherBandHz);
+        PanadapterApplet* pan = stack->panadapter(QStringLiteral("pan-0"));
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(pan && sw);
+        QTRY_VERIFY(pan->associatedSlices().contains(bId));
+        auto* applet = h.window()->findChild<RxApplet*>();
+        QVERIFY(applet);
+        QTest::qWait(kSettleMs);
+        const double aHz = h.remoteModel()->sliceById(aId)->frequency();
+        emit applet->sliceActivationRequested(aId);
+        QTRY_COMPARE(h.remoteModel()->activeSlice(), h.remoteModel()->sliceById(aId));
+        sw->setDisplayWindowPreservingHistory(aHz, sw->bandwidth());
+        QTest::qWait(kSettleMs);
+
+        SliceChooser* chooser = openChooser(h);
+        QVERIFY(chooser);
+        chooser->selectSlice(bId);
+        QPushButton* select = chooserActionFor(chooser, QStringLiteral("Select RX"));
+        QVERIFY(select);
+        select->click();
+        QTRY_COMPARE(h.remoteModel()->activeSlice(), h.remoteModel()->sliceById(bId));
+        QTRY_COMPARE(pan->activeSliceIndex(), bId);
+        QTRY_VERIFY(std::abs(sw->centerFrequency() - kOtherBandHz) <= sw->bandwidth() / 2.0);
+    }
+
+    // The chooser's Listen in, for a slice on another band: the pan the
+    // window opens for it shows that band.
+    void remoteListenInTheBottomChooserLandsItsPanOnTheSlice()
+    {
+        RemoteWindowHarness h(sharingOptions(1, QStringLiteral("1")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        const int bId = phonesSliceOnAnotherPan(h, phone);
+        QVERIFY(bId > 0);
+        constexpr double kOtherBandHz = 7'150'000.0;
+        h.station().sliceById(bId)->setFrequency(kOtherBandHz);
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* own = stack->spectrum(QStringLiteral("pan-0"));
+        QVERIFY(own);
+        const double ownCentre = own->centerFrequency();
+
+        SliceChooser* chooser = openChooser(h);
+        QVERIFY(chooser);
+        chooser->selectSlice(bId);
+        QPushButton* listen = chooserActionFor(chooser, QStringLiteral("Listen in"));
+        QVERIFY(listen);
+        listen->click();
+        QTRY_VERIFY(h.station().sliceOwnership()->isListening(QByteArrayLiteral("token:1"), bId));
+        QTRY_COMPARE(stack->currentLayoutId(), QStringLiteral("2v"));
+        SpectrumWidget* opened = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(opened);
+        QTRY_VERIFY2(std::abs(opened->centerFrequency() - kOtherBandHz) <= opened->bandwidth() / 2.0,
+                     qPrintable(QStringLiteral("pan at %1 Hz, slice at %2 Hz")
+                                    .arg(opened->centerFrequency(), 0, 'f', 0)
+                                    .arg(kOtherBandHz, 0, 'f', 0)));
+        QCOMPARE(own->centerFrequency(), ownCentre);
+    }
 };
 
 int main(int argc, char** argv)
@@ -3443,6 +3607,15 @@ int main(int argc, char** argv)
     // _setup and _radio (tests/CMakeLists.txt), each 27 to 41 s at that
     // load; the slice access cases run as tst_remote_window_harness. The
     // limit is not raised.
+    // 2026-10-11: the slice access and transmit cases added since had made
+    // that last entry the longest by far (109 s of the binary's 218 s at
+    // load 18 to 20, and past the limit in a loaded run with every case
+    // still passing). They run as six more entries, _letters, _refusals,
+    // _take, _badges, _access and _show, 11 to 15 s each run two at a time
+    // at load 10 to 18 (the longest of the twelve is _links at 24 s), which
+    // leaves tst_remote_window_harness the case that tunes without slice
+    // access, the evidence capture (skipped unless asked for) and whatever
+    // is added next (3 s).
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_REMOTE_WINDOW_HARNESS_GROUP",
         {{QStringLiteral("connect"),
@@ -3469,7 +3642,35 @@ int main(int argc, char** argv)
            QStringLiteral("olderCoreLeavesAttenuatorControlsDisabledWithAReason"),
            QStringLiteral("windowFollowsTheCoresRadio"),
            QStringLiteral("pureSignalAppletIsDisabledNotHiddenBelowPureSignal3"),
-           QStringLiteral("capabilityChangeRegatesWithoutReconnect")}}});
+           QStringLiteral("capabilityChangeRegatesWithoutReconnect")}},
+         {QStringLiteral("letters"),
+          {QStringLiteral("theFlagsTxButtonMovesTransmitLikeTheLetterRow"),
+           QStringLiteral("remoteTxLettersRespectPhysicalPttOnItsCurrentSlice"),
+           QStringLiteral("remoteTxLetterPendingTakeRejectsChangedAccessIncarnation"),
+           QStringLiteral("remoteStaleTxLetterNeverTakesControlOfAListenedSlice")}},
+         {QStringLiteral("refusals"),
+          {QStringLiteral("remoteTxLettersPreserveCurrentCoreRefusals")}},
+         {QStringLiteral("take"),
+          {QStringLiteral("remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying")}},
+         {QStringLiteral("badges"),
+          {QStringLiteral("remoteTxBadgeTakesTransmitOnASessionTheCoreLetsTransmit"),
+           QStringLiteral("remoteTxBadgeTakeDoesNotOutliveTheLink"),
+           QStringLiteral("remoteTxBadgeAskClosesWhenTheTakeIsAbandoned"),
+           QStringLiteral("remoteContainerMonAndPsaFollowTheTransmitHolder"),
+           QStringLiteral("remoteTxBadgeOnAListenedSliceTakesTheSliceThenTransmit")}},
+         {QStringLiteral("access"),
+          {QStringLiteral("remoteContainerSliceButtonsFollowTheCoresChangeOfControl"),
+           QStringLiteral("remoteLayoutChangeKeepsListeningToASliceOnARemainingPan"),
+           QStringLiteral("remoteListenTheCoreAcceptsShowsTheSliceHere"),
+           QStringLiteral("remotePlacementsFollowTheCoresAccessUpdates"),
+           QStringLiteral("remoteTakeAnsweredBeforeItsAccessUpdateEndsOnTheWindowsPan")}},
+         {QStringLiteral("show"),
+          {QStringLiteral("remoteTakeLandsItsPanOnTheSlice"),
+           QStringLiteral("remoteTakeOfASliceOnAPanThisWindowHasShowsTheSlice"),
+           QStringLiteral("remoteSelectingASliceLetterTakesItsPanToTheSlice"),
+           QStringLiteral("remoteChoosingASlicesRowInTheBottomChooserShowsTheSlice"),
+           QStringLiteral("remoteSelectRxInTheBottomChooserShowsTheSlice"),
+           QStringLiteral("remoteListenInTheBottomChooserLandsItsPanOnTheSlice")}}});
     return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 #include "tst_remote_window_harness.moc"

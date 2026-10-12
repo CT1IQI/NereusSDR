@@ -11,6 +11,17 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : m_wfHistoryRescales, waterfallHistoryForTest() and its
+//                 companions, for the waterfall history's resize tests.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 : R-DISP-RETUNE (third wave): setRemoteSpectrumContext takes
+//                 the Core's word on whether a context continues the picture
+//                 shown (coreCarriedOn) in place of the span asked. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 : R-DISP-RETUNE: RemoteContextPicture and
+//                 remoteContextPicture(): a context for the picture moved
+//                 in frequency is told apart from a new picture. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 : setWaterfallGlideForTest(), so a native test can hold
 //                 the GPU waterfall's glide at a set point between two
 //                 rows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -512,14 +523,47 @@ public:
     /// normalise shift follow it, and the context's frame rate (the rate the
     /// Core actually sends, after the display budget) times the peak hold,
     /// blob and noise-floor decay.
+    /// R-DISP-RETUNE: `coreCarriedOn` is the Core's own word on whether
+    /// this context continues the picture the pan shows (its
+    /// `pictureGeneration` is the one of the context shown), and it alone
+    /// decides: true is the picture shown, moved or not; false is a new
+    /// picture whatever its numbers. The pan compares no spans or centers
+    /// to tell a move from a new picture. Without it (a Core that states no
+    /// picture) the rule is the one before the moved picture: a context
+    /// that differs only in its dBm range or frame rate is the picture
+    /// shown and anything else is a new one.
     void setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                   double sourceCentreHz, double sampleRateHz,
-                                  int grantedFftSize = 0);
+                                  int grantedFftSize = 0,
+                                  std::optional<bool> coreCarriedOn = std::nullopt);
     /// R-DISP-HOLD: whether the last context was for the picture the pan
     /// already showed (same receiver and source geometry, same view, same
     /// sample counts and wide row), so the pan kept its last frame, peak
     /// hold, blobs and pending waterfall row. A new picture empties them.
-    bool remoteContextKeptPicture() const { return m_remoteContextKeptPicture; }
+    bool remoteContextKeptPicture() const
+    {
+        return m_remoteContextPicture == RemoteContextPicture::Same;
+    }
+    /// R-DISP-RETUNE: what the last context was to the picture the pan
+    /// already showed.
+    enum class RemoteContextPicture {
+        /// Anything else: the pan starts again, as it always did.
+        New,
+        /// The Core says this context continues the picture shown, and
+        /// something the pan holds per pixel changed with it (a retune or a
+        /// pan drag moved the stream center, the view center or both). Only
+        /// a Core that states the picture can say so; the pan derives no
+        /// move of its own. The Core's averaged trace carried
+        /// on, so the drawn trace stays, at the frequency it was captured
+        /// at, until the keyframe; the waterfall history and its queued rows
+        /// keep their frequencies; the noise floor estimate is untouched.
+        /// The peak hold and the blobs empty: they are held per pixel and
+        /// every pixel now shows another frequency.
+        Moved,
+        /// R-DISP-HOLD: the picture the pan already showed.
+        Same,
+    };
+    RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
                               const NereusSDR::RemoteSpectrumCapture& capture);
@@ -1053,6 +1097,16 @@ public:
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
     const QImage& liveWaterfallForTest() const { return m_waterfall; }
     int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
+    // The rewind history image itself, and how many times its whole
+    // image has been rescaled to a new width (once per resize that comes to
+    // rest, never once per row while the width is still changing).
+    const QImage& waterfallHistoryForTest() const { return m_waterfallHistory; }
+    int waterfallHistoryWriteRowForTest() const { return m_wfHistoryWriteRow; }
+    int waterfallHistoryOffsetRowsForTest() const { return m_wfHistoryOffsetRows; }
+    quint64 waterfallHistoryRescalesForTest() const { return m_wfHistoryRescales; }
+    bool waterfallHistoryResizePendingForTest() const {
+        return m_historyResizeTimer && m_historyResizeTimer->isActive();
+    }
     // 3D Speed (Task 24) test seams.
     int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
     int  dssFoldCountForTest() const { return m_dssFoldCount; }
@@ -2603,6 +2657,7 @@ private:
     QRect waterfallLiveButtonRect(const QRect& wfRect) const;
     int   waterfallStripWidth() const;
     void  ensureWaterfallHistory();
+    bool  historyResizeSettling() const;
     void  rebuildWaterfallViewport();
     void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
     void  setWaterfallLive(bool live);
@@ -2907,6 +2962,8 @@ private:
     // From AetherSDR SpectrumWidget.h:559 [@2bb3b5c]
     // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
     QTimer*         m_historyResizeTimer{nullptr};
+    // Whole-image rescales of m_waterfallHistory, for the resize tests.
+    quint64         m_wfHistoryRescales{0};
     QTimer          m_displayTimer;
     bool            m_hasNewSpectrum{false};
 
@@ -3065,7 +3122,7 @@ private:
     // remote pan (0 until its first context).
     int m_remoteFftSize{0};
     int m_remoteFps{0};
-    bool m_remoteContextKeptPicture{false};
+    RemoteContextPicture m_remoteContextPicture{RemoteContextPicture::New};
     bool m_remoteWidebandAvailable{false};
     bool m_remoteWidebandActive{false};
     double m_remoteWidebandAdcRateHz{0.0};

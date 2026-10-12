@@ -49,6 +49,7 @@
 
 #include "fakes/FakeAudioBus.h"
 #include "fakes/FakeAudioEngineBackend.h"
+#include "fakes/HeldSettingsWriter.h"
 
 #include <memory>
 #include <vector>
@@ -242,6 +243,8 @@ private slots:
     {
         AppSettings::instance().clear();
     }
+
+    void cleanup() { AppSettings::instance().setBackgroundSaveStartHookForTesting({}); }
 
     // ── JSON ───────────────────────────────────────────────────────────
 
@@ -757,6 +760,63 @@ private slots:
         QCOMPARE(rig.state().playingName, kBuiltInName);
         QVERIFY(!rig.state().desktop);
         QCOMPARE(saved("Speakers/DeviceId"), QStringLiteral("<unset>"));
+    }
+
+    // ── Saves leave the Core's main thread alone ──────────────────────
+    // That thread also sends the receive audio; the settings file is
+    // written on the settings writer thread (AppSettings::saveInBackground).
+
+    void host_levelIsSavedOnTheWriterThread()
+    {
+        CoreRig rig;
+        rig.radio.setCoreSpeakerHost(true);
+        HeldSettingsWriter held;
+
+        rig.radio.setCoreSpeakerVolume(72);
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("audio/Master/Volume")), QStringLiteral("0.720"));
+    }
+
+    void host_muteIsSavedOnTheWriterThread()
+    {
+        CoreRig rig;
+        rig.radio.setCoreSpeakerHost(true);
+        HeldSettingsWriter held;
+
+        rig.radio.setCoreSpeakerMuted(true);
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("audio/Master/Muted")), QStringLiteral("True"));
+    }
+
+    void host_deviceIsSavedOnTheWriterThread()
+    {
+        CoreRig rig;
+        rig.radio.setCoreSpeakerHost(true);
+        HeldSettingsWriter held;
+
+        rig.radio.setCoreSpeakerDevice(coreSpeakerDeviceToJson(kUsbId, kUsbName));
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("audio/Speakers/DeviceId")), kUsbId);
+    }
+
+    void host_detailsAreSavedOnTheWriterThread()
+    {
+        CoreRig rig;
+        rig.radio.setCoreSpeakerHost(true);
+        HeldSettingsWriter held;
+
+        CoreSpeakerDetails asked;
+        asked.bufferFrames = 256;
+        asked.delayMs = 10;
+        asked.sampleRate = 96000;
+        rig.radio.setCoreSpeakerDetails(coreSpeakerDetailsToJson(asked));
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("audio/Speakers/BufferSamples")),
+            QStringLiteral("256"));
     }
 };
 

@@ -8,6 +8,21 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
+//                 settling no longer rescales the whole waterfall history;
+//                 it is resampled into the history's current width and the
+//                 debounce rescales once (jerky dock edge drag). The same
+//                 when paused in scrollback: the viewport rebuild reads the
+//                 history at its own width (historyResizeSettling()).
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
+//                 word (coreCarriedOn) decides whether a context continues
+//                 the picture shown; the pan's own moved-picture rule and
+//                 the span asked are gone. AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE: setRemoteSpectrumContext
+//                 tells a picture moved in frequency (a retune, a pan drag)
+//                 from a new picture. AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. The GPU waterfall blends four rows as it
 //                 glides (waterfall.frag, ported from AetherSDR) where it
 //                 mixed two, so its grain no longer pulses once per row;
@@ -1604,7 +1619,8 @@ void SpectrumWidget::clearRemoteSpectrum()
 
 void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& context,
                                                double sourceCentreHz, double sampleRateHz,
-                                               int grantedFftSize)
+                                               int grantedFftSize,
+                                               std::optional<bool> coreCarriedOn)
 {
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
@@ -1614,8 +1630,13 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
     // place. The same picture is the same receiver and source geometry, the
     // same view to the Hz, the same sample counts and the same wide row;
     // only then are values the pan holds per pixel still the same pixels.
+    //
+    // R-DISP-RETUNE: and, where the Core states the picture, one the Core
+    // carried on. A context that matches in every number and starts a new
+    // picture at the Core (its source restarted, say) is a new picture.
     const SpectrumEndpointContext& shown = m_remoteCapture.context();
     const bool samePicture = m_remoteSpectrum && m_remoteCodec.traceSamples != 0
+        && coreCarriedOn.value_or(true)
         && shown.codec.endpointId == context.codec.endpointId
         && shown.codec.traceSamples == context.codec.traceSamples
         && shown.codec.waterfallSamples == context.codec.waterfallSamples
@@ -1631,13 +1652,35 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
         && m_remoteFftSize == (grantedFftSize > 0 ? grantedFftSize : 0)
         && qFuzzyCompare(m_centerHz, context.exactCentreHz)
         && qFuzzyCompare(m_bandwidthHz, context.exactSpanHz);
-    m_remoteContextKeptPicture = samePicture;
+    // R-DISP-RETUNE: the picture shown, carried on at the Core, with
+    // something the pan holds per pixel changed: a retune moved the stream
+    // center under the pan, or a drag moved the view center. The Core's
+    // word decides this and nothing of the pan's does. The pan used to
+    // derive a move from the span it had asked for, the window from the
+    // spans of its requests and the phone from the span answered to within
+    // a bin; three derivations of a rule that is the Core's
+    // (SpectrumEndpoint.cpp, movedPlanePicture), each of which could
+    // disagree with it. Without the Core's word there is no moved picture.
+    const bool movedPicture = !samePicture && coreCarriedOn.value_or(false)
+        && m_remoteSpectrum
+        && shown.codec.endpointId == context.codec.endpointId;
+    m_remoteContextPicture = samePicture ? RemoteContextPicture::Same
+        : movedPicture ? RemoteContextPicture::Moved : RemoteContextPicture::New;
     if (samePicture) {
         m_remoteCodec = context.codec;
         m_remoteCapture = {context, sourceCentreHz, sampleRateHz};
         m_remoteFps = context.targetFps > 0 ? context.targetFps : 0;
         return;
     }
+    // R-DISP-RETUNE: a moved picture and a new picture retire the same
+    // things here. Of what this empties, the peak hold and the blobs must go
+    // for a moved picture too (held per pixel, and every pixel now shows
+    // another frequency); the pending waterfall row and wide row were
+    // captured at the old window and a row of the new one replaces them; and
+    // the drawn trace is put back at once from the last trace the Core sent,
+    // at the frequency it was captured at (refreshRemoteTraceProjection,
+    // R-R3-21). The waterfall history, the queued rows and the noise floor
+    // estimate are not touched by it.
     invalidateRemoteSpectrumFrame();
     const double binWidthBefore = binWidthHz();
     // NereusSDR-original remote wiring: a new codec generation retires live
@@ -6380,6 +6423,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         && m_waterfallHistory.height() == desiredSize.height()) {
         newHistory = m_waterfallHistory.scaled(
             desiredSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        ++m_wfHistoryRescales;
     }
     if (newHistory.isNull() || newHistory.size() != desiredSize) {
         traceRxHistoryEvent(RxHistoryEvent::HistoryBufferReset, -1, 0, desiredSize);
@@ -6395,10 +6439,34 @@ void SpectrumWidget::ensureWaterfallHistory()
     m_waterfallHistory = newHistory;
 }
 
+// NereusSDR-original. True while the live image has taken a new width and
+// the history, same row capacity, still waits for the resize debounce to
+// rescale it. Rows are then written to and read from the history at its own
+// width; nothing on the row path may rescale it.
+bool SpectrumWidget::historyResizeSettling() const
+{
+    return m_historyResizeTimer
+        && m_historyResizeTimer->isActive()
+        && !m_waterfallHistory.isNull()
+        && m_waterfallHistory.height() == waterfallHistoryCapacityRows()
+        && m_waterfallHistory.width() != m_waterfall.width();
+}
+
 // From AetherSDR SpectrumWidget.cpp:647-668 [@0cd4559]
 void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
 {
-    ensureWaterfallHistory();
+    // NereusSDR differs from AetherSDR here, which calls
+    // ensureWaterfallHistory() for every row. resizeEvent replaces the live
+    // image at once and leaves the history to the 250 ms debounce, so while
+    // a dock edge or the window border is dragged the two widths differ and
+    // that call rescaled the whole history (plot width by up to
+    // kMaxWaterfallHistoryRows rows, 85 MB at 1300 px) on the GUI thread
+    // for every row that arrived, about every 30 ms: the drag was jerky.
+    // While the debounce is pending the history keeps its width and the row
+    // is resampled into it; the debounce rescales once when the drag rests.
+    if (!historyResizeSettling()) {
+        ensureWaterfallHistory();
+    }
     if (m_waterfallHistory.isNull() || rowData == nullptr) {
         return;
     }
@@ -6408,7 +6476,17 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
     auto* row = reinterpret_cast<QRgb*>(
         m_waterfallHistory.bits()
         + m_wfHistoryWriteRow * m_waterfallHistory.bytesPerLine());
-    std::memcpy(row, rowData, m_waterfallHistory.width() * sizeof(QRgb));
+    const int historyWidth = m_waterfallHistory.width();
+    const int rowWidth = m_waterfall.width();
+    if (historyWidth == rowWidth) {
+        std::memcpy(row, rowData, historyWidth * sizeof(QRgb));
+    } else {
+        // Nearest neighbor, as the settle rescale (Qt::FastTransformation).
+        for (int x = 0; x < historyWidth; ++x) {
+            row[x] = rowData[static_cast<int>(
+                static_cast<qint64>(x) * rowWidth / historyWidth)];
+        }
+    }
     if (m_wfHistoryWriteRow >= 0
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
@@ -6442,7 +6520,14 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     // resizeEvent replaces the live image before its debounced history
     // resize. Window/MOX changes can rebuild in that interval; synchronize
     // the source width before copying or indexing any history scanline.
-    ensureWaterfallHistory();
+    // The exception is a resize still settling: paused in scrollback, every
+    // arriving row rebuilds this viewport, and synchronizing here rescaled
+    // the whole history per row for as long as a dock edge was dragged.
+    // The rows are then read at the history's own width (historyWidth
+    // below) and the debounce rescales once.
+    if (!historyResizeSettling()) {
+        ensureWaterfallHistory();
+    }
 
     traceRxHistoryEvent(RxHistoryEvent::ViewportRebuild);
     m_wfHistoryOffsetRows = std::clamp(
@@ -6456,6 +6541,8 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     }
 
     const int rowWidthBytes = m_waterfall.width() * static_cast<int>(sizeof(QRgb));
+    const int historyWidth = m_waterfallHistory.width();
+    const bool sameWidth = historyWidth == m_waterfall.width();
     for (int y = 0; y < m_waterfall.height(); ++y) {
         const int rowIndex = historyRowIndexForAge(m_wfHistoryOffsetRows + y);
         if (rowIndex < 0) {
@@ -6468,16 +6555,26 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
         if (window.bandwidthHz <= 0.0 || bandwidthHz <= 0.0
             || (qFuzzyCompare(window.centerHz, centerHz)
                 && qFuzzyCompare(window.bandwidthHz, bandwidthHz))) {
-            std::memcpy(dst, src, rowWidthBytes);
+            if (sameWidth) {
+                std::memcpy(dst, src, rowWidthBytes);
+            } else {
+                const int width = m_waterfall.width();
+                for (int x = 0; x < width; ++x) {
+                    dst[x] = src[static_cast<int>(
+                        static_cast<qint64>(x) * historyWidth / width)];
+                }
+            }
         } else {
             const double startHz = centerHz - bandwidthHz / 2.0;
             const double capturedStartHz = window.centerHz - window.bandwidthHz / 2.0;
             const int width = m_waterfall.width();
             for (int x = 0; x < width; ++x) {
                 const double hz = startHz + (x + 0.5) * bandwidthHz / width;
+                // In the history row's own pixels, which are the live
+                // image's except while a resize is settling.
                 const double capturedX = (hz - capturedStartHz)
-                                       / window.bandwidthHz * width;
-                if (capturedX >= 0.0 && capturedX < width) {
+                                       / window.bandwidthHz * historyWidth;
+                if (capturedX >= 0.0 && capturedX < historyWidth) {
                     dst[x] = src[int(capturedX)];
                 }
             }

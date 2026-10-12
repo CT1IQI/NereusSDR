@@ -9,6 +9,9 @@
 //   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: the Rotor
 //                applet is shown by default. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. Run as nine ctest entries
+//                (TestFunctionGroups), past the 120 s limit as one under
+//                load. AI-assisted via Anthropic Claude Code.
 
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
@@ -67,7 +70,10 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include "TestFunctionGroups.h"
+
 #include <memory>
+#include <optional>
 
 using namespace NereusSDR;
 
@@ -2151,6 +2157,98 @@ private slots:
         QCOMPARE(sw->centerFrequency(), offCentre);
     }
 
+    // The bottom RX area's chooser in a window that runs its own radio.
+    // Choosing a slice's row shows that slice: its floating pan comes
+    // forward and a view moved off the slice goes back to it, span kept.
+    // It selects nothing; Select RX then makes it the RX slice. A view that
+    // already holds the slice stays where the operator put it.
+    void choosingASlicesRowInTheBottomChooserShowsTheSlice()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = model->addSlice(QStringLiteral("pan-0"));
+        const int bId = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(applyLayout(window, QStringLiteral("2v")));
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SliceModel* a = model->sliceById(aId);
+        SliceModel* b = model->sliceById(bId);
+        constexpr double kOtherBandHz = 7'150'000.0;
+        b->setFrequency(kOtherBandHz);
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(sw);
+        const auto holdsTheSlice = [sw] {
+            return std::abs(sw->centerFrequency() - kOtherBandHz) <= sw->bandwidth() / 2.0;
+        };
+        QTRY_VERIFY(holdsTheSlice());
+        RxApplet* applet = window.findChild<RxApplet*>();
+        QVERIFY(applet);
+        emit applet->sliceActivationRequested(aId);
+        QCOMPARE(model->activeSlice(), a);
+        stack->setActivePan(QStringLiteral("pan-0"));
+        stack->floatPanadapter(QStringLiteral("pan-1"));
+        PanFloatingWindow* floater = stack->floatingWindowForTest(QStringLiteral("pan-1"));
+        QVERIFY(floater);
+        floater->showMinimized();
+        QTRY_VERIFY(floater->isMinimized());
+        constexpr double kSpanHz = 20'000.0;
+        sw->setDisplayWindowPreservingHistory(kOtherBandHz + 60'000.0, kSpanHz);
+        QVERIFY(!holdsTheSlice());
+
+        RxDashboard* dashboard = window.findChild<RxDashboard*>();
+        QVERIFY(dashboard);
+        dashboard->chooserButton()->click();
+        SliceChooser* chooser = window.findChild<SliceChooser*>();
+        QVERIFY(chooser);
+        const auto rowFor = [chooser](int sliceId) -> QPushButton* {
+            for (QPushButton* row :
+                 chooser->findChildren<QPushButton*>(QStringLiteral("sliceChooserRow"))) {
+                if (row->property("sliceId").toInt() == sliceId && row->parentWidget()) {
+                    return row;
+                }
+            }
+            return nullptr;
+        };
+        const auto actionFor = [chooser](const QString& words) -> QPushButton* {
+            for (QPushButton* button : chooser->findChildren<QPushButton*>()) {
+                if (button->text() == words && button->parentWidget()) { return button; }
+            }
+            return nullptr;
+        };
+        QVERIFY(rowFor(bId));
+        rowFor(bId)->click();
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+        QTRY_VERIFY(!floater->isMinimized());
+        QVERIFY2(holdsTheSlice(),
+                 qPrintable(QStringLiteral("pan at %1 Hz, slice at %2 Hz")
+                                .arg(sw->centerFrequency(), 0, 'f', 0)
+                                .arg(kOtherBandHz, 0, 'f', 0)));
+        QCOMPARE(sw->bandwidth(), kSpanHz);
+        QCOMPARE(model->activeSlice(), a);
+
+        // On screen already, off center: the row moves nothing.
+        const double offCenter = kOtherBandHz + kSpanHz / 4.0;
+        sw->setDisplayWindowPreservingHistory(offCenter, kSpanHz);
+        QVERIFY(rowFor(bId));
+        rowFor(bId)->click();
+        QCOMPARE(sw->centerFrequency(), offCenter);
+
+        // Select RX: the RX slice, and its pan back on it.
+        sw->setDisplayWindowPreservingHistory(kOtherBandHz + 60'000.0, kSpanHz);
+        QPushButton* select = actionFor(QStringLiteral("Select RX"));
+        QVERIFY(select);
+        select->click();
+        QCOMPARE(model->activeSlice(), b);
+        QVERIFY(holdsTheSlice());
+        QCOMPARE(sw->bandwidth(), kSpanHz);
+    }
+
     // Slice control plan Task 16 (ruling U3): a click on a pan's background
     // gives that pan keyboard and scroll focus only. The slice this window
     // hears and the slice it tunes stay where they were.
@@ -2817,5 +2915,63 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstDesktopStationWindow)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstDesktopStationWindow test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 95 s by itself at load 18 to 28, every case a hosting window of its
+    // own at about 2 s (one with eight rows 16 s), and past ctest's 120 s
+    // in a loaded run with every case still passing. Eight groups run as
+    // their own ctest entries, tst_desktop_station_window_host, _listen,
+    // _keying, _layout, _placed, _select, _pending and _badges
+    // (tests/CMakeLists.txt), 6 to 11 s each run two at a time at load 10
+    // to 18; the rest as tst_desktop_station_window (9 s). The limit is not
+    // raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_DESKTOP_STATION_WINDOW_GROUP",
+        {{QStringLiteral("host"),
+          {QStringLiteral("hostModeOwnFlagsAndDetach"),
+           QStringLiteral("hostShowsOtherDeviceAsForeignMarker"),
+           QStringLiteral("hostTakeItBackCardStaysWhileItMayBeTriedAgain"),
+           QStringLiteral("hostTakeItBackCardGoesAfterThePhoneReleases"),
+           QStringLiteral("closingTheHostCardForgetsItsTakeBack")}},
+         {QStringLiteral("listen"),
+          {QStringLiteral("hostListensToAnotherDevicesSlice"),
+           QStringLiteral("hostRxAppletFollowsAListenedTab"),
+           QStringLiteral("hostContainerOnAListenedSliceRefusesMute"),
+           QStringLiteral("hostTabFallbackReachesAListenedSlice")}},
+         {QStringLiteral("keying"),
+          {QStringLiteral("appletAndContainerAskWithoutOptimisticKey"),
+           QStringLiteral("hostTuneReleasePressClearsTheButton"),
+           QStringLiteral("hostTwoToneAsksTheTakeQuestion"),
+           QStringLiteral("hostVoxFollowsTheTransmitHolder")}},
+         {QStringLiteral("layout"),
+          {QStringLiteral("layoutChangeKeepsListeningToASliceOnARemainingPan"),
+           QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
+           QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),
+           QStringLiteral("aListenedSliceWhosePanIsGoneKeepsItsOwnShift")}},
+         {QStringLiteral("placed"),
+          {QStringLiteral("aPlacedListenedSliceTunedByItsControllerKeepsItsShiftAndThePansView"),
+           QStringLiteral("aPlacedListenedSlicesEdgeMarkerStaysWhileTheOperatorTunes"),
+           QStringLiteral("aPlacedListenedSliceNeverScrollsAPanWithCtunOff"),
+           QStringLiteral("aPlacedListenedSliceChangingStreamLeavesNoStaleWindow")}},
+         {QStringLiteral("select"),
+          {QStringLiteral("listeningToAnUnseenSliceGrowsTheMainWindow"),
+           QStringLiteral("selectingASliceInAFloatingPanBringsItForward"),
+           QStringLiteral("selectingASliceLetterTakesItsPanToTheSlice"),
+           QStringLiteral("choosingASlicesRowInTheBottomChooserShowsTheSlice"),
+           QStringLiteral("panBackgroundClickNeverChangesTheSlice")}},
+         {QStringLiteral("pending"),
+          {QStringLiteral("hostTxLetterPendingTargetMustStillBeTheSameControlledSlice")}},
+         {QStringLiteral("badges"),
+          {QStringLiteral("hostTxLettersTakeTransmitThenSelectWithoutKeying"),
+           QStringLiteral("hostTxBadgeTakesTransmitThenMakesTheSliceTx"),
+           QStringLiteral("hostTxBadgeOnAListenedSliceTakesTheSliceThenTransmit"),
+           QStringLiteral("hostTxBadgeTakeEndsWithNothingPending"),
+           QStringLiteral("hostTxBadgeOnAListenedSliceAsksOnlyWhatItMust")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
+
 #include "tst_desktop_station_window.moc"

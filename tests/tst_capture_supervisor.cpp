@@ -37,14 +37,32 @@
 //               fireDeadlinesNowForTest() fail nothing until the whole
 //               interval has passed.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-11: a Pcm record is refused before Ready and after it, each
+//               in a case of its own that no timing decides: the one row
+//               used to pass or fail on whether the ring's first wake or
+//               the record reached the supervisor first.  The helper's
+//               exit and its lost input after Ready, and the retry case,
+//               no longer race a 100 ms clock in the fake: it acts on a
+//               ProbeEnable sent here once Ready is seen.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: the scripted helper's start is no longer on any case's
+//               clock but the two that test the hello deadline: 30 s for
+//               the hello and for a case's first wait after a start
+//               (kHelperStartMs), the hang-open cases wait for the fake's
+//               marker in place of a set time and measure from it, the
+//               early open deadline is measured from its arming, and the
+//               permission hold ends when the case says so.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QElapsedTimer>
+#include <QFile>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 
 #include <cstdint>
 #include <cstring>
@@ -75,11 +93,17 @@ using Reason = Status::Reason;
 
 namespace {
 
+// What a case allows a newly started helper before it calls the start
+// failed (FakeCaptureChild.h): the window's hello deadline, and the case's
+// own wait for the first thing that start leads to.
+constexpr int kHelperStartMs = Test::kFakeCaptureChildStartMs;
+
 CaptureSupervisor::Options fakeOptions(const QString& scenario)
 {
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), scenario};
+    options.helloTimeoutMs = kHelperStartMs;                    // 3000 in production
     return options;
 }
 
@@ -171,15 +195,25 @@ private:
 };
 
 // Fires the named deadline early once it is armed (R-R3-36); false if it
-// never armed within timeoutMs.
-bool fireOnceArmed(CaptureSupervisor& supervisor, int deadline, int timeoutMs)
+// never armed within timeoutMs.  *armedForMs, when given, gets an upper
+// bound on how long the deadline had been armed when it was fired: the time
+// since the last poll that found it unarmed, or -1 when the first poll
+// already found it armed.
+bool fireOnceArmed(CaptureSupervisor& supervisor, int deadline, int timeoutMs,
+                   qint64* armedForMs = nullptr)
 {
     QElapsedTimer timer;
     timer.start();
+    qint64 lastUnarmedMs = -1;
     while (timer.elapsed() < timeoutMs) {
+        const qint64 pollMs = timer.elapsed();
         if (supervisor.fireDeadlinesNowForTest(deadline) == deadline) {
+            if (armedForMs != nullptr) {
+                *armedForMs = lastUnarmedMs < 0 ? -1 : timer.elapsed() - lastUnarmedMs;
+            }
             return true;
         }
+        lastUnarmedMs = pollMs;
         QTest::qWait(1);
     }
     return false;
@@ -234,6 +268,64 @@ bool waitProcessGone(qint64 pid, int timeoutMs)
     }
     return true;
 }
+
+// While alive, the hang-open fake creates <dir>/<pid> once it has answered
+// Open and ignores everything after (FakeCaptureChild.h), as in
+// tst_capture_session_demand.  A case waits for that file in place of a set
+// time: the helper really is hanging when the case goes on, and the helper's
+// start is no part of what the case then measures.
+class HangMarkers {
+public:
+    HangMarkers() { qputenv(kVariable, m_dir.path().toLocal8Bit()); }
+    ~HangMarkers() { qunsetenv(kVariable); }
+    HangMarkers(const HangMarkers&) = delete;
+    HangMarkers& operator=(const HangMarkers&) = delete;
+
+    bool isValid() const { return m_dir.isValid(); }
+    bool waitHanging(qint64 pid, int timeoutMs) const
+    {
+        const QString marker = m_dir.filePath(QString::number(pid));
+        QElapsedTimer timer;
+        timer.start();
+        while (!QFile::exists(marker)) {
+            if (timer.elapsed() > timeoutMs) {
+                return false;
+            }
+            QTest::qWait(5);
+        }
+        return true;
+    }
+
+private:
+    static constexpr const char* kVariable = "NEREUS_FAKE_CAPTURE_HANG_DIR";
+    QTemporaryDir m_dir;
+};
+
+// The file whose presence makes the permission-while-marked fake hold
+// Permission (FakeCaptureChild.h); release() removes it.
+class PermissionHold {
+public:
+    PermissionHold()
+        : m_file(m_dir.filePath(QStringLiteral("held")))
+    {
+        QFile file(m_file);
+        m_valid = m_dir.isValid() && file.open(QIODevice::WriteOnly);
+        file.close();
+        qputenv(kVariable, m_file.toLocal8Bit());
+    }
+    ~PermissionHold() { qunsetenv(kVariable); }
+    PermissionHold(const PermissionHold&) = delete;
+    PermissionHold& operator=(const PermissionHold&) = delete;
+
+    bool isValid() const { return m_valid; }
+    bool release() { return QFile::remove(m_file); }
+
+private:
+    static constexpr const char* kVariable = "NEREUS_FAKE_CAPTURE_PERMISSION_FILE";
+    QTemporaryDir m_dir;
+    QString m_file;
+    bool m_valid = false;
+};
 
 // Pulls at about the stream's own pace (240 frames each 5 ms, as the TX
 // worker drains it) until at least `frames` frames were read or the time
@@ -520,7 +612,7 @@ private slots:
         CaptureAudioBus* reader = supervisor.reader();
         Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const Status ready = supervisor.status();
         QVERIFY(ready.generation >= 1);
         QCOMPARE(ready.actualDevice, QStringLiteral("Fake microphone"));
@@ -568,6 +660,8 @@ private slots:
 
     void hangOpenTimesOut()
     {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
         CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open"));
         options.openTimeoutMs = 500;                            // 10000 in production
         CaptureSupervisor supervisor(options);
@@ -576,10 +670,18 @@ private slots:
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         const qint64 pid = waitForPid(supervisor, 3000);
         QVERIFY(pid > 0);
+        // The open deadline runs from the Open, which the helper has
+        // answered once its marker is there.  The upper bound is taken from
+        // that point, so the helper's start is no part of it.
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));
+        QElapsedTimer sinceOpen;
+        sinceOpen.start();
         QVERIFY(waitForState(supervisor, State::Failed, 5000));
         const qint64 elapsed = timer.elapsed();
+        const qint64 afterOpen = sinceOpen.elapsed();
         QCOMPARE(supervisor.status().reason, Reason::Timeout);
-        QVERIFY2(elapsed >= 500 && elapsed < 3000, qPrintable(QString::number(elapsed)));
+        QVERIFY2(elapsed >= 500, qPrintable(QString::number(elapsed)));
+        QVERIFY2(afterOpen < 3000, qPrintable(QString::number(afterOpen)));
         QVERIFY(waitProcessGone(pid, 1000));                    // child killed
         QVERIFY(!supervisor.reader()->isOpen());
 
@@ -593,12 +695,14 @@ private slots:
 
     void shutdownIsBoundedWhileChildHangs()
     {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("hang-open")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         const qint64 pid = waitForPid(supervisor, 3000);
         QVERIFY(pid > 0);
         QVERIFY(waitForState(supervisor, State::Opening, 3000));
-        QTest::qWait(200);                                      // Open sent, child now silent
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));      // Open answered, child now silent
 
         QElapsedTimer timer;
         timer.start();
@@ -616,12 +720,14 @@ private slots:
 
     void destroyingWithHangingChildLeavesNoProcess()
     {
+        HangMarkers markers;
+        QVERIFY(markers.isValid());
         auto supervisor = std::make_unique<CaptureSupervisor>(fakeOptions(QStringLiteral("hang-open")));
         auto lease = supervisor->acquire(CaptureSupervisor::Demand::TestMic);
         const qint64 pid = waitForPid(*supervisor, 3000);
         QVERIFY(pid > 0);
         QVERIFY(waitForState(*supervisor, State::Opening, 3000));
-        QTest::qWait(200);
+        QVERIFY(markers.waitHanging(pid, kHelperStartMs));      // Open answered, child now silent
 
         QElapsedTimer timer;
         timer.start();
@@ -650,26 +756,42 @@ private slots:
         QVERIFY(waitProcessGone(pid, 1000));
     }
 
+    // The fake holds Permission until this case lets it go, which it does
+    // only after more than the whole open deadline has gone by.  The open
+    // still succeeds, so the deadline did not run during the hold; the time
+    // it has left afterwards is the whole deadline less what went by before
+    // the helper asked.
     void permissionPausesOpenDeadline()
     {
-        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("permission-then-ready"));
-        options.openTimeoutMs = 300;                            // the fake holds Permission for 300 ms
+        PermissionHold hold;
+        QVERIFY(hold.isValid());
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("permission-while-marked"));
+        options.openTimeoutMs = 2000;                           // 10000 in production
         CaptureSupervisor supervisor(options);
         Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::PreparingPermission, kHelperStartMs));
+        QTest::qWait(options.openTimeoutMs + 200);              // the hold outlasts the deadline
+        QCOMPARE(supervisor.status().state, State::PreparingPermission);
+        QVERIFY(hold.release());
         QVERIFY(waitFor(supervisor, [](const Status& s) {
             return s.state == State::Ready || s.state == State::Failed;
         }, 5000));
         QCOMPARE(supervisor.status().state, State::Ready);
         QVERIFY(recorder.sawState(State::PreparingPermission));
+        QVERIFY(!recorder.sawState(State::Failed));
         QVERIFY(supervisor.reader()->isOpen());
     }
 
+    // The helper exits while the mic is Ready.  The fake exits in answer
+    // to ProbeEnable, sent here once Ready is seen, so the exit cannot
+    // come first and nothing waits a set time.
     void crashAfterReadyFails()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("crash-after-ready")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("crash-on-probe-enable")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
+        supervisor.setProbeEnabled(true);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::HelperExited);
         QVERIFY(!supervisor.reader()->isOpen());
@@ -687,7 +809,9 @@ private slots:
         // V-HW-8: protocol 2 rejects a protocol 1 helper, as before.
         QTest::newRow("version-1") << QStringLiteral("version-1");
         // R-AUD-17: version 3 audio is in the ring only, and a ring the
-        // helper did not build is refused.
+        // helper did not build is refused.  This fake builds no ring, so
+        // Ready (the helper's Ready and the ring's first wake) cannot come
+        // first; pcmRecordAfterReadyFails covers the record after Ready.
         QTest::newRow("pcm-record") << QStringLiteral("pcm-record");
         QTest::newRow("bad-ring") << QStringLiteral("bad-ring");
     }
@@ -700,18 +824,43 @@ private slots:
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
-        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(supervisor.status().reason, Reason::ProtocolError);
         QVERIFY(!recorder.sawState(State::Ready));
         QVERIFY(waitProcessGone(pid, 1000));
         QVERIFY(!supervisor.reader()->isOpen());
     }
 
+    // R-AUD-17: a Pcm record is refused while the mic is Ready too.  The
+    // fake sends it in answer to ProbeEnable, sent here once Ready is
+    // seen, so the order is fixed and nothing waits a set time.
+    void pcmRecordAfterReadyFails()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("pcm-record-on-probe-enable")));
+        Recorder recorder(supervisor);
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
+        QVERIFY(supervisor.reader()->isOpen());
+        const qint64 pid = supervisor.helperProcessId();
+        QVERIFY(pid > 0);
+        supervisor.setProbeEnabled(true);
+        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QCOMPARE(supervisor.status().reason, Reason::ProtocolError);
+        QVERIFY(recorder.sawState(State::Ready));
+        QVERIFY(waitProcessGone(pid, 1000));
+        QVERIFY(!supervisor.reader()->isOpen());
+        char buffer[64];
+        QCOMPARE(supervisor.reader()->pull(buffer, sizeof(buffer)), qint64(0));
+    }
+
+    // The helper's input stops while the mic is Ready; the order is fixed
+    // the same way as in crashAfterReadyFails.
     void inputLostFails()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost-on-probe-enable")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
+        supervisor.setProbeEnabled(true);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::InputLost);
         QVERIFY(!supervisor.reader()->isOpen());
@@ -725,7 +874,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("busy")));
         Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(supervisor.status().reason, Reason::DeviceInUse);
         QVERIFY(!recorder.sawState(State::Ready));
         QVERIFY(!supervisor.reader()->isOpen());
@@ -739,7 +888,7 @@ private slots:
     {
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const quint64 start = supervisor.requestSerial();
 
         Recorder recorder(supervisor);
@@ -776,7 +925,7 @@ private slots:
         options.stopTimeoutMs = 300;                            // 2000 in production
         CaptureSupervisor supervisor(options);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const qint64 pid = supervisor.helperProcessId();
         QVERIFY(pid > 0);
 
@@ -822,7 +971,7 @@ private slots:
         CaptureSupervisor supervisor(options);
         WarningWatch warned(QStringLiteral("the helper's last open step: devices listed at 12 ms"));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(supervisor.status().reason, Reason::Timeout);
         QCOMPARE(warned.count(), 1);
     }
@@ -834,7 +983,7 @@ private slots:
         CaptureSupervisor supervisor(options);
         WarningWatch warned(QStringLiteral("the helper reported no open step"));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(warned.count(), 1);
     }
 
@@ -847,9 +996,14 @@ private slots:
         QElapsedTimer timer;
         timer.start();
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(fireOnceArmed(supervisor, CaptureSupervisor::OpenDeadline, 900));
+        // The open deadline is armed once the helper has said hello, however
+        // long its start took, so "early" is measured from the arming.
+        qint64 armedForMs = -1;
+        QVERIFY(fireOnceArmed(supervisor, CaptureSupervisor::OpenDeadline, kHelperStartMs,
+                              &armedForMs));
         QCoreApplication::processEvents();
-        QVERIFY2(timer.elapsed() < 1000, qPrintable(QString::number(timer.elapsed())));
+        const qint64 early = armedForMs >= 0 ? armedForMs : timer.elapsed();
+        QVERIFY2(early < 1000, qPrintable(QString::number(early)));
         QCOMPARE(warned.count(), 0);
         QVERIFY(supervisor.status().state != State::Failed);
 
@@ -866,7 +1020,7 @@ private slots:
         CaptureSupervisor supervisor(options);
         WarningWatch warned(QStringLiteral("did not stop within"));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const qint64 pid = supervisor.helperProcessId();
         QVERIFY(pid > 0);
 
@@ -897,7 +1051,7 @@ private slots:
             readerEverOpen = readerEverOpen || supervisor.reader()->isOpen();
         });
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(supervisor.status().reason, Reason::Timeout);
         QVERIFY(!recorder.sawState(State::Ready));
         QVERIFY(!readerEverOpen);
@@ -908,7 +1062,7 @@ private slots:
     {
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
         auto session = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const Status ready = supervisor.status();
         const qint64 pid = supervisor.helperProcessId();
         auto testMic = supervisor.acquire(CaptureSupervisor::Demand::TestMic);
@@ -936,9 +1090,20 @@ private slots:
 
     void retryConfigureAndNewDemandAfterFailure()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost-on-probe-enable")));
+        // The fake loses its input in answer to ProbeEnable, so each
+        // failure follows a Ready seen here.  The probe goes off again at
+        // once: left on, the window would send it at the next generation's
+        // helper Ready, before its own Ready is published.
+        const auto loseInput = [&supervisor]() {
+            supervisor.setProbeEnabled(true);
+            const bool failed = waitForState(supervisor, State::Failed, 3000);
+            supervisor.setProbeEnabled(false);
+            return failed;
+        };
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
+        QVERIFY(loseInput());
         const quint32 first = supervisor.status().generation;
 
         // Same configuration: no new generation.
@@ -952,7 +1117,7 @@ private slots:
         QVERIFY(waitFor(supervisor, [first](const Status& s) {
             return s.state == State::Ready && s.generation > first;
         }, 5000));
-        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QVERIFY(loseInput());
         const quint32 second = supervisor.status().generation;
         QVERIFY(second > first);
 
@@ -964,7 +1129,7 @@ private slots:
             return s.state == State::Ready && s.generation > second;
         }, 5000));
         QCOMPARE(supervisor.status().configuredDevice, QStringLiteral("Other microphone"));
-        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QVERIFY(loseInput());
         const quint32 third = supervisor.status().generation;
 
         // Demand to zero keeps the failure visible; a new demand retries.
@@ -975,7 +1140,7 @@ private slots:
         auto again = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(waitFor(supervisor, [third](const Status& s) {
             return s.state == State::Ready && s.generation > third;
-        }, 5000));
+        }, kHelperStartMs));                                    // a new helper
     }
 
     void retryWithoutDemandClearsFailure()
@@ -995,7 +1160,7 @@ private slots:
     {
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("ready")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         const quint32 first = supervisor.status().generation;
         const qint64 pid = supervisor.helperProcessId();
 
@@ -1029,7 +1194,7 @@ private slots:
         QSignalSpy hits(&supervisor, &CaptureSupervisor::probeHit);
         supervisor.setProbeEnabled(true);                       // before the helper exists
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::TestMic);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         QTRY_VERIFY_WITH_TIMEOUT(hits.size() >= 2, 3000);
         QCOMPARE(hits.at(0).at(0).toLongLong(), qint64(1000));
         QCOMPARE(hits.at(1).at(0).toLongLong(), qint64(1001));
@@ -1086,7 +1251,7 @@ private slots:
         speakers.bytes = 4096;
         open.uses = {speakers};
         supervisor.openAsio(open);
-        QTRY_VERIFY_WITH_TIMEOUT(states.size() >= 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(states.size() >= 1, kHelperStartMs);
         const auto running = qvariant_cast<CaptureProtocol::AsioState>(states.at(0).at(0));
         QCOMPARE(running.serial, quint32(7));
         QVERIFY(running.state == CaptureProtocol::AsioStateKind::Running);
@@ -1125,7 +1290,7 @@ private slots:
         supervisor.describeAsio(QString());
         const qint64 pid = waitForStartedPid(supervisor, 3000);
         QVERIFY(pid > 0);
-        QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(caps.size() >= 1, kHelperStartMs);
         const auto record = qvariant_cast<CaptureProtocol::AsioCapsRecord>(caps.at(0).at(0));
         QCOMPARE(record.drivers, QStringList{QStringLiteral("Fake ASIO")});
         QVERIFY(record.driver.isEmpty());
@@ -1166,7 +1331,7 @@ private slots:
         CaptureSupervisor supervisor(fakeOptions(QStringLiteral("probe")));
         QSignalSpy hits(&supervisor, &CaptureSupervisor::probeHit);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, kHelperStartMs));
         QTest::qWait(300);
         QCOMPARE(hits.size(), 0);
         QCOMPARE(supervisor.status().state, State::Ready);

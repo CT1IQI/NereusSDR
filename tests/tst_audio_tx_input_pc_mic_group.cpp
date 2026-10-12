@@ -122,6 +122,11 @@ using CaptureReason = CaptureSupervisor::Status::Reason;
 
 namespace {
 
+// What a newly started scripted helper is allowed before its start counts
+// as failed: the hello deadline, and each first wait after a start
+// (fakes/FakeCaptureChild.h).
+constexpr int kHelperStartMs = NereusSDR::Test::kFakeCaptureChildStartMs;
+
 // Replaces the engine's capture supervisor with one that runs this binary
 // as the scripted fake helper. Must run before any demand is taken.
 void useFakeHelper(RadioModel& model, const QString& scenario, int openTimeoutMs = 10000)
@@ -129,6 +134,7 @@ void useFakeHelper(RadioModel& model, const QString& scenario, int openTimeoutMs
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), scenario};
+    options.helloTimeoutMs = kHelperStartMs;   // 3000 in production
     options.openTimeoutMs = openTimeoutMs;
     model.audioEngine()->setCaptureSupervisorOptionsForTest(options);
 }
@@ -649,7 +655,8 @@ private slots:
 
         page.testMicButton()->setChecked(true);
         QVERIFY(page.hasTestMicDemand());
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                  kHelperStartMs);
         const qint64 pid = engine->captureHelperProcessIdForTest();
         QVERIFY(pid > 0);
 
@@ -688,12 +695,14 @@ private slots:
         CaptureSupervisor::Options options;
         options.program = QCoreApplication::applicationFilePath();
         options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+        options.helloTimeoutMs = kHelperStartMs;   // 3000 in production
         options.openTimeoutMs = 10000;
         engine->setCaptureSupervisorOptionsForTest(options);
 
         page.testMicButton()->setChecked(true);
         QVERIFY(page.hasTestMicDemand());
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                  kHelperStartMs);
         const qint64 pid = engine->captureHelperProcessIdForTest();
         QVERIFY(pid > 0);
         QTRY_VERIFY(statusLabelOf(&page)->text().startsWith(QStringLiteral("Microphone ready: ")));
@@ -729,7 +738,8 @@ private slots:
         QCOMPARE(delayNow->text(), QStringLiteral("Now -- ms"));
 
         page.testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                  kHelperStartMs);
         QTRY_VERIFY_WITH_TIMEOUT(delayNow->text().endsWith(QStringLiteral(" ms from USB Mic to the radio")),
                                  5000);
         QVERIFY(delayNow->text().startsWith(QStringLiteral("Now ")));
@@ -786,7 +796,8 @@ private slots:
         page.show();
 
         page.testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse,
+                                  kHelperStartMs);
         QLabel* status = statusLabelOf(&page);
         QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("PC mic in use by another program"),
                                   5000);
@@ -860,7 +871,8 @@ private slots:
         page.show();
 
         page.testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().reason, CaptureReason::DeviceInUse,
+                                  kHelperStartMs);
         QTRY_COMPARE_WITH_TIMEOUT(engine->roleStatus(AudioRole::TxInput).reason,
                                   AudioRoleReason::InUse, 5000);
 
@@ -931,7 +943,8 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&page));
 
         page.testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                  kHelperStartMs);
         const qint64 pid = engine->captureHelperProcessIdForTest();
         QVERIFY(pid > 0);
 
@@ -951,7 +964,8 @@ private slots:
         auto page = std::make_unique<AudioTxInputPage>(&model);
 
         page->testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                  kHelperStartMs);
         const qint64 pid = engine->captureHelperProcessIdForTest();
         QVERIFY(pid > 0);
 
@@ -1019,9 +1033,11 @@ private slots:
 
         txPage.testMicButton()->setChecked(true);
         if (endsFailed) {
-            QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Failed, 5000);
+            QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Failed,
+                                      kHelperStartMs);
         } else {
-            QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready, 5000);
+            QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Ready,
+                                      kHelperStartMs);
         }
         for (const QString& text : mustShow) {
             QVERIFY2(shown.contains(text), qPrintable(shown.join(QStringLiteral(" | "))));
@@ -1037,7 +1053,7 @@ private slots:
             txRetry->click();
             QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().state == CaptureState::Failed
                                          && engine->captureStatus().generation > failedGeneration,
-                                     5000);
+                                     kHelperStartMs);
             const CaptureSupervisor::Status retriedFailure = engine->captureStatus();
 
             // Failure before release. The capture design (item 8 of
@@ -1082,7 +1098,8 @@ private slots:
         QPushButton* retry = retryButtonOf(&page);
 
         page.testMicButton()->setChecked(true);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Failed, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, CaptureState::Failed,
+                                  kHelperStartMs);
         QTRY_VERIFY(retry->isEnabled());
         const quint32 firstFailure = engine->captureStatus().generation;
 
@@ -1091,7 +1108,7 @@ private slots:
         retry->click();
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().state == CaptureState::Failed
                                      && engine->captureStatus().generation > firstFailure,
-                                 5000);
+                                 kHelperStartMs);
         const CaptureSupervisor::Status failedBeforeRelease = engine->captureStatus();
         page.testMicButton()->setChecked(false);
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureHelperProcessIdForTest(), qint64(0), 5000);
@@ -1105,7 +1122,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().state == CaptureState::Failed
                                      && engine->captureStatus().generation
                                             > failedBeforeRelease.generation,
-                                 5000);
+                                 kHelperStartMs);
         const quint32 lastFailure = engine->captureStatus().generation;
 
         // Failure after release: Retry and Stop Test in the same turn queue

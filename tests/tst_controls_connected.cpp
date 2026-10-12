@@ -22,6 +22,10 @@
 //   2026-09-25  J.J. Boyd / KG4VCF  R-R3-49 (parity Task 3): the mic profile combo follows the
 //                                    transmit settings gate.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  Run as five ctest entries
+//                                    (TestFunctionGroups), past the 120 s
+//                                    limit as one under load.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -44,7 +48,10 @@
 #include <QTreeWidget>
 #include <QUrl>
 
+#include <optional>
+
 #include "OperatorWording.h"
+#include "TestFunctionGroups.h"
 #include "core/session/IStationLink.h"
 #include "core/AppSettings.h"
 #include "core/BuildIdentity.h"
@@ -994,5 +1001,42 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstControlsConnected)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstControlsConnected test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 64 s by itself at load 20 to 28, nearly every case a window of its
+    // own at 3 to 9 s, and past ctest's 120 s in a loaded run with every
+    // case still passing. Four groups run as their own ctest entries,
+    // tst_controls_connected_menus, _controls, _meters and _overlay
+    // (tests/CMakeLists.txt), 12 to 16 s each run two at a time at load 10
+    // to 18; the rest as tst_controls_connected (5 s). The limit is not
+    // raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_CONTROLS_CONNECTED_GROUP",
+        {{QStringLiteral("menus"),
+          {QStringLiteral("menuEntriesOpenTheirSetupPages"),
+           QStringLiteral("hardwarePageShowsTheAntennaTab"),
+           QStringLiteral("bothDiversityEntriesOpenTheDialog"),
+           QStringLiteral("vfoFlagDiversityEntryAsksForTheDialog"),
+           QStringLiteral("bandMenuGenAndWwvRestoreTheBandMemory"),
+           QStringLiteral("whatsNewOpensTheReleaseNotes")}},
+         {QStringLiteral("controls"),
+          {QStringLiteral("phoneCwControlsReachTheTransmitSettings"),
+           QStringLiteral("phoneCwControlsFollowTheRemoteTransmitGate"),
+           QStringLiteral("containerControlsActOnTheActiveSlice"),
+           QStringLiteral("containerFilterRightClickEditsItsPreset")}},
+         {QStringLiteral("meters"),
+          {QStringLiteral("remoteCpuRowShowsThisComputerWithTheReason"),
+           QStringLiteral("addedMeterItemsGetTheSavedSettings"),
+           QStringLiteral("savedMeterIntervalAppliesAtStartup")}},
+         {QStringLiteral("overlay"),
+          {QStringLiteral("overlayAttOpensTheStepAttenuator"),
+           QStringLiteral("overlayZoomButtonsZoomTheirPan"),
+           QStringLiteral("badgesShowTheHandOnlyWhereAClickOpensSomething")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
+
 #include "tst_controls_connected.moc"

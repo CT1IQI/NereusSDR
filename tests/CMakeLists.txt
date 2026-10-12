@@ -120,6 +120,17 @@ endfunction()
 add_library(nereus_test_sandbox OBJECT EXCLUDE_FROM_ALL TestSandboxInit.cpp)
 target_link_libraries(nereus_test_sandbox PRIVATE Qt6::Core)
 
+# ── Test home guard (2026-10-11) ───────────────────────────────────────
+# TestHomeGuard.cpp ends a test before main() when the settings folder it
+# would use is outside its own test home (NEREUS_TEST_HOME, which
+# nereus_add_test sets beside HOME), or when it has no test home at all.
+# An OBJECT library for the same reason as the sandbox above: its payload
+# is one static constructor. Separate from it because the helper tools
+# below (nereus_pairing_peer, nereus_media_offerer) link the sandbox and
+# are also started by scripts outside ctest, which set no test home.
+add_library(nereus_test_home_guard OBJECT EXCLUDE_FROM_ALL TestHomeGuard.cpp)
+target_link_libraries(nereus_test_home_guard PRIVATE Qt6::Core)
+
 # ── Shared FFTW wisdom cache for tests that start WDSP (2026-09-25) ─────
 # R-R3-49 parity mini-round. A test that starts WDSP in its own process
 # without WDSP's wisdom step (the synchronous test init, DaemonApp's
@@ -242,7 +253,8 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox> ${_extra_sources})
+    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox>
+        $<TARGET_OBJECTS:nereus_test_home_guard> ${_extra_sources})
     # R-R3-49 parity mini-round: a test that starts WDSP without its wisdom
     # step gets the shared FFTW wisdom cache (nereus_test_fftw_wisdom above).
     # Found by the names that start WDSP that way, in the test's own source
@@ -354,19 +366,30 @@ function(nereus_add_test name)
     # file. A test that sets its own profile (AppSettings::setProfileOverride)
     # keeps it, now under its own home; a child process a test starts
     # inherits the same environment, so a test and the daemon it spawns
-    # still share one file. Two cases keep the shared location: Windows,
-    # whose test mode resolves the directory from the known-folder API that
-    # no environment variable redirects, and NATIVE_WINDOW tests on macOS,
-    # where CFFIXED_USER_HOME would also hide the operator's appearance and
-    # locale preferences from the native platform those tests exist to use.
+    # still share one file. Windows keeps the shared location because its
+    # known-folder API is not redirected by this environment variable.
+    # Every macOS test, including NATIVE_WINDOW, needs CFFIXED_USER_HOME:
+    # Qt 6.11 GenericConfigLocation can resolve the real ~/Library/Preferences
+    # even in test mode when only HOME is changed. A native fixture that
+    # clears/removes AppSettings would then modify the operator's settings.
+    # Native tests therefore use isolated platform appearance/locale defaults;
+    # they must not copy the operator's preferences into the test home.
     if(NOT WIN32)
         set(_test_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/${name}")
         file(MAKE_DIRECTORY "${_test_home}")
         set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "HOME=${_test_home}")
-        if(APPLE AND NOT _nat_NATIVE_WINDOW)
+        if(APPLE)
             set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT
                 "CFFIXED_USER_HOME=${_test_home}")
         endif()
+        # NEREUS_TEST_HOME tells the guard in TestHomeGuard.cpp which folder
+        # is this test's home. The guard ends a test before main() when the
+        # settings folder it would use is anywhere else, or when the variable
+        # is missing (a test binary started by hand): the price native-window
+        # tests pay above, default appearance and locale, buys nothing if a
+        # later change can quietly bring the operator's folder back.
+        set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_test_home}")
     endif()
 
     # Per-label build aggregates, so `ctest -L core` has a matching
@@ -404,7 +427,7 @@ function(nereus_split_test name)
     # The test's home is its own; each entry gets another.
     set(_st_env "")
     foreach(_entry IN LISTS _st_ENVIRONMENT)
-        if(NOT _entry MATCHES "^(HOME|CFFIXED_USER_HOME)=")
+        if(NOT _entry MATCHES "^(HOME|CFFIXED_USER_HOME|NEREUS_TEST_HOME)=")
             list(APPEND _st_env "${_entry}")
         endif()
     endforeach()
@@ -422,6 +445,7 @@ function(nereus_split_test name)
             set(_entry_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/${_entry_name}")
             file(MAKE_DIRECTORY "${_entry_home}")
             list(APPEND _entry_env "HOME=${_entry_home}")
+            list(APPEND _entry_env "NEREUS_TEST_HOME=${_entry_home}")
             if(_st_ENVIRONMENT MATCHES "(^|;)CFFIXED_USER_HOME=")
                 list(APPEND _entry_env "CFFIXED_USER_HOME=${_entry_home}")
             endif()
@@ -459,6 +483,10 @@ nereus_add_test(tst_nnr_radio_persistence EXTRA_LABELS models)
 # main thread (which sends the receive audio) does not wait for the disk.
 nereus_add_test(tst_app_settings_background_save EXTRA_LABELS core)
 nereus_add_test(tst_radio_settings_background_save EXTRA_LABELS models)
+# The Core's other timed saves (step attenuator, accessory records) and the
+# control changes that saved at once (TCI, VAX levels, accessory addresses,
+# the Core speaker, spots, radios): the file is written on the writer thread.
+nereus_add_test(tst_control_saves_in_background EXTRA_LABELS core models)
 nereus_add_test(tst_session_property_result fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_ps3_display_adapter EXTRA_LABELS core)
 nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)
@@ -2975,6 +3003,13 @@ target_compile_definitions(tst_bandplan_manager PRIVATE
 # shim references SpectrumWidget::kMaxWaterfallHistoryRows directly so any
 # drift in the cap is caught by the build.
 nereus_add_test(tst_waterfall_scrollback)
+
+# ── Waterfall history through a width drag ───────────────────────────────
+# Dragging a dock edge changes the spectrum's width on every mouse move
+# while rows keep arriving. Counts whole-history rescales (none during the
+# drag, one after the resize debounce) and checks that the rows captured
+# before and during the drag are intact afterward.
+nereus_add_test(tst_waterfall_history_resize_drag)
 
 # ── Task 2.8: WaterfallDefaultsPage changes (NF-AGC, Stop-on-TX, W5 removal) ─
 # NF-AGC setter round-trips, offset clamp, stop-on-TX setter round-trips,
@@ -5809,6 +5844,13 @@ target_compile_definitions(tst_display_extras PRIVATE
 nereus_add_test(tst_daemon_display_keep
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# R-DISP-RETUNE: a remote pan's picture carries on through a retune. The
+# Core relabels the running spectrum source, the averaged trace goes on, the
+# peak hold and blobs empty, the noise floor and waterfall levels continue,
+# and frames keep coming while the operator tunes.
+nereus_add_test(tst_daemon_display_retune
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
@@ -8280,10 +8322,21 @@ target_compile_definitions(tst_controls_that_work PRIVATE NEREUS_BUILD_TESTS)
 # and zoom buttons and the status badges reach their existing features.
 nereus_add_test(tst_controls_connected)
 target_compile_definitions(tst_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# A container's controls follow a change of selected RX, a renamed filter
+# preset and a slice moved to another pan by those events themselves, with
+# no radio connected (so nothing announces on a timer). Its own binary:
+# tst_controls_connected is near the 120 s limit on a loaded machine.
+nereus_add_test(tst_container_controls_refresh)
+target_compile_definitions(tst_container_controls_refresh PRIVATE NEREUS_BUILD_TESTS)
 # ...and the Setup controls: Startup & Preferences, DSP ANF / CW peak
 # filter / AM and FM squelch, Meter Styles S-meter, Logs, VAX level.
 nereus_add_test(tst_setup_controls_connected)
 target_compile_definitions(tst_setup_controls_connected PRIVATE NEREUS_BUILD_TESTS)
+# tst_controls_connected, nearly every case a window of its own: 64 s at
+# load 20 to 28 and past the 120 s limit in a loaded run; five entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_controls_connected
+    ENV NEREUS_CONTROLS_CONNECTED_GROUP GROUPS menus controls meters overlay)
 # R3 unfinished controls, Task 1 (R-R3-49, R-R3-21): the one list of
 # unbuilt features, every surface hidden through it in local and remote
 # windows, saved values kept, a saved Voice Rec/Play control kept.
@@ -8370,6 +8423,21 @@ nereus_add_test(tst_ice_configuration)
 nereus_add_test(tst_ice_transport_lifetime CORE_ONLY EXTRA_LABELS session)
 target_link_libraries(tst_ice_transport_lifetime PRIVATE datachannel-static)
 target_include_directories(tst_ice_transport_lifetime PRIVATE
+    "${libdatachannel_SOURCE_DIR}/src"
+    "${libdatachannel_SOURCE_DIR}/include"
+    "${libdatachannel_SOURCE_DIR}/include/rtc"
+    "${libdatachannel_SOURCE_DIR}/deps/plog/include"
+    "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib"
+    "${libdatachannel_SOURCE_DIR}/deps/libjuice/include"
+    "${libdatachannel_SOURCE_DIR}/deps/libsrtp/include"
+    "${libdatachannel_SOURCE_DIR}/deps/json/include")
+# The library's worker pool takes a queued task when no worker was woken for
+# it (cmake/patches/libdatachannel-0006): a desktop window froze for hours
+# waiting on a certificate task that sat in the queue with every worker
+# asleep.
+nereus_add_test(tst_rtc_thread_pool_idle_recheck CORE_ONLY EXTRA_LABELS session)
+target_link_libraries(tst_rtc_thread_pool_idle_recheck PRIVATE datachannel-static)
+target_include_directories(tst_rtc_thread_pool_idle_recheck PRIVATE
     "${libdatachannel_SOURCE_DIR}/src"
     "${libdatachannel_SOURCE_DIR}/include"
     "${libdatachannel_SOURCE_DIR}/include/rtc"
@@ -8542,8 +8610,13 @@ target_compile_definitions(tst_remote_window_harness PRIVATE NEREUS_BUILD_TESTS)
 # Load findings 4: about 37 s on a quiet machine, past the 120 s limit under
 # 150 busy loops (200 s at load 180); six entries of the same binary (the
 # limit is not raised; groups in the test's main()).
+# 2026-10-11: twelve entries. The entry left with the slice access and
+# transmit cases had grown to half the binary's time (109 s of 218 s at
+# load 18 to 20) and past the limit in a loaded run; those cases are the
+# last six groups.
 nereus_split_test(tst_remote_window_harness
-    ENV NEREUS_REMOTE_WINDOW_HARNESS_GROUP GROUPS connect disconnect links setup radio)
+    ENV NEREUS_REMOTE_WINDOW_HARNESS_GROUP GROUPS connect disconnect links setup radio
+        letters refusals take badges access show)
 
 # Remote-window parity Task 18 (R-R3-09, R-R3-24, R-R3-34, R-R3-49): a
 # control drawn on a pan acts on that pan, in a local window and a remote
@@ -8589,6 +8662,12 @@ nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and
 # HostingSliceActions::hasTakeBackForTest.
 target_compile_definitions(tst_desktop_station_window PRIVATE NEREUS_BUILD_TESTS)
+# Every case a hosting window of its own: 95 s by itself at load 18 to 28
+# and past the 120 s limit in a loaded run; nine entries of the same binary
+# (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_desktop_station_window
+    ENV NEREUS_DESKTOP_STATION_WINDOW_GROUP GROUPS host listen keying layout placed
+        select pending badges)
 nereus_add_test(tst_receive_layout_store)
 nereus_add_test(tst_receive_layout_hydration)
 nereus_add_test(tst_receive_layout_runtime)
@@ -9293,6 +9372,8 @@ if(TEST tst_link_conformance_session)
         set(_lcs_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_connectable")
         file(MAKE_DIRECTORY "${_lcs_home}")
         set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_lcs_home}")
+        set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
             "HOME=${_lcs_home}")
         if(APPLE)
             set_property(TEST tst_link_conformance_session_connectable APPEND PROPERTY ENVIRONMENT
@@ -9336,6 +9417,8 @@ if(TEST tst_link_conformance_session)
         set(_lcs_dcall_home
             "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_datachannel")
         file(MAKE_DIRECTORY "${_lcs_dcall_home}")
+        set_property(TEST tst_link_conformance_session_datachannel APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_lcs_dcall_home}")
         set_property(TEST tst_link_conformance_session_datachannel APPEND PROPERTY
             ENVIRONMENT "HOME=${_lcs_dcall_home}")
         if(APPLE)
@@ -9362,6 +9445,8 @@ if(TEST tst_link_conformance_session)
         set(_lcs_dc_home
             "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_connectable_datachannel")
         file(MAKE_DIRECTORY "${_lcs_dc_home}")
+        set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_lcs_dc_home}")
         set_property(TEST tst_link_conformance_session_connectable_datachannel APPEND PROPERTY
             ENVIRONMENT "HOME=${_lcs_dc_home}")
         if(APPLE)
@@ -9396,6 +9481,8 @@ if(TEST tst_link_conformance_session)
     if(NOT WIN32)
         set(_lcs_rt_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_link_conformance_session_realtime")
         file(MAKE_DIRECTORY "${_lcs_rt_home}")
+        set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_lcs_rt_home}")
         set_property(TEST tst_link_conformance_session_realtime APPEND PROPERTY ENVIRONMENT
             "HOME=${_lcs_rt_home}")
         if(APPLE)
@@ -9657,6 +9744,45 @@ nereus_add_test(tst_remote_media_controller
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold
     fakes/LoopbackTransport.cpp)
+# R-DISP-RETUNE (third wave): the retune functions (the test's
+# kRetuneFunctions) run as their own ctest entry, the same binary with
+# NEREUS_DISPLAY_HOLD_GROUP=retune, and the first entry runs the rest, so
+# neither carries the other's time against the 120 s limit (the whole run
+# takes about 130 s on a quiet Mac). The second entry takes the first's
+# labels, limit and environment, with its own home.
+if(TEST tst_remote_display_hold)
+    get_test_property(tst_remote_display_hold LABELS _rdh_labels)
+    get_test_property(tst_remote_display_hold TIMEOUT _rdh_timeout)
+    get_test_property(tst_remote_display_hold ENVIRONMENT_MODIFICATION _rdh_env_mod)
+    add_test(NAME tst_remote_display_hold_retune COMMAND tst_remote_display_hold)
+    set_tests_properties(tst_remote_display_hold_retune PROPERTIES
+        LABELS "${_rdh_labels}"
+        TIMEOUT ${_rdh_timeout})
+    if(_rdh_env_mod)
+        set_property(TEST tst_remote_display_hold_retune
+            PROPERTY ENVIRONMENT_MODIFICATION ${_rdh_env_mod})
+    endif()
+    if(NEREUS_TESTS_OFFSCREEN AND CMAKE_VERSION VERSION_LESS 3.22)
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "QT_QPA_PLATFORM=offscreen")
+    endif()
+    if(NOT WIN32)
+        set(_rdh_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_display_hold_retune")
+        file(MAKE_DIRECTORY "${_rdh_home}")
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_rdh_home}")
+        set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+            "HOME=${_rdh_home}")
+        if(APPLE)
+            set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+                "CFFIXED_USER_HOME=${_rdh_home}")
+        endif()
+    endif()
+    set_property(TEST tst_remote_display_hold APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=rest")
+    set_property(TEST tst_remote_display_hold_retune APPEND PROPERTY ENVIRONMENT
+        "NEREUS_DISPLAY_HOLD_GROUP=retune")
+endif()
 # R-R3-21: its real-session cases take about 115 s alone on a quiet Mac
 # (repeatedAudioRestartsBackOff waits out the 1, 2, 4, 4 s retry backoff),
 # too close to the default 120 s, and a loaded machine stretches them.
@@ -9688,6 +9814,8 @@ if(TEST tst_remote_media_controller)
     if(NOT WIN32)
         set(_rmc_home "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_remote_media_controller_audio")
         file(MAKE_DIRECTORY "${_rmc_home}")
+        set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
+            "NEREUS_TEST_HOME=${_rmc_home}")
         set_property(TEST tst_remote_media_controller_audio APPEND PROPERTY ENVIRONMENT
             "HOME=${_rmc_home}")
         if(APPLE)

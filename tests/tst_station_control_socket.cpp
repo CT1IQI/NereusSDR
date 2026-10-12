@@ -485,6 +485,9 @@ private slots:
         // macOS resolves the home through CoreFoundation, which ctest points
         // with CFFIXED_USER_HOME (tests/CMakeLists.txt).
         qputenv("CFFIXED_USER_HOME", QFile::encodeName(m_home.path()));
+        // The test home guard (TestHomeGuard.cpp) checks each helper process
+        // against NEREUS_TEST_HOME: the home moved, so the marker moves too.
+        qputenv("NEREUS_TEST_HOME", QFile::encodeName(m_home.path()));
         qunsetenv("XDG_CONFIG_HOME");
         qunsetenv("XDG_DATA_HOME");
         qunsetenv("XDG_CACHE_HOME");
