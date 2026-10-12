@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QRandomGenerator>
+#include <QScopeGuard>
 #include <cmath>
 #include <atomic>
 #include <chrono>
@@ -2355,26 +2356,44 @@ private slots:
     // a packet arrived or its 2 ms wait ran out, as its wait_for does. The
     // same checks then hold with no scheduler in the loop: a run gives the
     // same result every time, whatever the machine's load.
+    // Two more virtual-time rows hold the worker up for 120 ms inside the
+    // tones while the speaker plays on, as a busy host does to the
+    // wall-clock rows. The device plays about 100 ms of silence, the
+    // speaker's timer plays nearly all of it out before the worker is
+    // back, and the checks must still hold: the silence is the host's, and
+    // the tones are measured clear of all of it. On 2026-10-11 they were
+    // not: the 192 kHz wall-clock row measured a window that was about
+    // 240 ms silence (level 0.008 for 0.2), because only the part of a
+    // silence the timer had not yet played out was cut from it.
     void playsOnEverySpeakerFormat_data()
     {
         QTest::addColumn<int>("rate");
         QTest::addColumn<int>("channels");
         QTest::addColumn<bool>("virtualTime");
+        QTest::addColumn<int>("heldFromMs");
+        QTest::addColumn<int>("heldToMs");
         for (const bool virtualTime : {false, true}) {
             const char* suffix = virtualTime ? ", virtual time" : "";
-            QTest::addRow("44.1 kHz stereo%s", suffix) << 44100 << 2 << virtualTime;
-            QTest::addRow("48 kHz stereo%s", suffix) << 48000 << 2 << virtualTime;
-            QTest::addRow("96 kHz stereo%s", suffix) << 96000 << 2 << virtualTime;
-            QTest::addRow("192 kHz stereo%s", suffix) << 192000 << 2 << virtualTime;
-            QTest::addRow("48 kHz mono%s", suffix) << 48000 << 1 << virtualTime;
-            QTest::addRow("44.1 kHz mono%s", suffix) << 44100 << 1 << virtualTime;
+            QTest::addRow("44.1 kHz stereo%s", suffix) << 44100 << 2 << virtualTime << 0 << 0;
+            QTest::addRow("48 kHz stereo%s", suffix) << 48000 << 2 << virtualTime << 0 << 0;
+            QTest::addRow("96 kHz stereo%s", suffix) << 96000 << 2 << virtualTime << 0 << 0;
+            QTest::addRow("192 kHz stereo%s", suffix) << 192000 << 2 << virtualTime << 0 << 0;
+            QTest::addRow("48 kHz mono%s", suffix) << 48000 << 1 << virtualTime << 0 << 0;
+            QTest::addRow("44.1 kHz mono%s", suffix) << 44100 << 1 << virtualTime << 0 << 0;
         }
+        QTest::addRow("192 kHz stereo, virtual time, worker held up in the tones")
+            << 192000 << 2 << true << 1300 << 1420;
+        QTest::addRow("48 kHz mono, virtual time, worker held up in the tones")
+            << 48000 << 1 << true << 1300 << 1420;
     }
     void playsOnEverySpeakerFormat()
     {
         QFETCH(int, rate);
         QFETCH(int, channels);
         QFETCH(bool, virtualTime);
+        QFETCH(int, heldFromMs);
+        QFETCH(int, heldToMs);
+        const bool workerHeld = heldToMs > heldFromMs;
         constexpr quint32 kSsrc = 623;
         constexpr qint64 kToneEndFrame = 72000;      // 1.5 s of two tones,
         constexpr qint64 kOnsetFrame = 96000 + 177;  // then silence, then
@@ -2510,7 +2529,11 @@ private slots:
                     virtualNs += 1'000'000;
                     const int sentBefore = packet;
                     sourceTick();
-                    if (packet != sentBefore || virtualNs - lastPassNs >= 2'000'000) {
+                    // A held worker runs no pass; the source and the
+                    // speaker go on.
+                    const qint64 playMs = (virtualNs - playOriginNs) / 1'000'000;
+                    const bool held = workerHeld && playMs >= heldFromMs && playMs < heldToMs;
+                    if (!held && (packet != sentBefore || virtualNs - lastPassNs >= 2'000'000)) {
                         receiver.runWorkerPassForTest();
                         lastPassNs = virtualNs;
                     }
@@ -2549,64 +2572,37 @@ private slots:
         // block) and the device had run out before the worker next looked.
         // A worker that was awake while the queue ran down, or left less
         // than its target, still fails. On virtual time nothing is the
-        // host's. The tone check below measures 250 ms that hold none of
-        // the host's silence.
+        // host's, but for the rows that hold the worker up as a host does.
+        // The tone check below measures 250 ms that hold none of
+        // the host's silence: all of it as heard (heardFrames), not only
+        // the frames the speaker's timer had yet to play out when the
+        // worker came back (frames, which the dry count holds).
         const int speakerTargetFrames = std::max(2 * (rate / 100), bus->callbackFrames + rate / 100);
         qint64 hostStalledDryFrames = 0;
         std::vector<std::pair<qint64, qint64>> hostStalls; // heard frames [first, end)
-        if (!virtualTime) {
+        if (!virtualTime || workerHeld) {
             for (const auto& e : bus->dryEventsForTesting()) {
                 if (e.wokeAfterDry && e.queuedBeforeStall >= speakerTargetFrames) {
                     hostStalledDryFrames += e.frames;
-                    hostStalls.emplace_back(e.heardFrame, e.heardFrame + e.frames);
+                    hostStalls.emplace_back(e.heardFrame, e.heardFrame + e.heardFrames);
                     qInfo().noquote() << QStringLiteral(
                         "host stall: %1 dry at %2 ms, the worker unscheduled %3 ms with %4 frames "
-                        "queued (target %5)")
+                        "queued (target %5); %6 ms of silence heard")
                         .arg(e.frames).arg(double(e.atFrame) * 1000.0 / rate, 0, 'f', 1)
                         .arg(double(e.stallNs) / 1e6, 0, 'f', 1).arg(e.queuedBeforeStall)
-                        .arg(speakerTargetFrames);
+                        .arg(speakerTargetFrames)
+                        .arg(double(e.heardFrames) * 1000.0 / rate, 0, 'f', 1);
                 }
             }
         }
-        // Played at the device's rate: the tones at their own pitch and
-        // level over the last 250 ms heard before the tones ended (before
-        // any host stall in them).
-        const qint64 toneFrames = rate / 4;
-        qint64 toneEnd = toneHeard.size() / channels;
-        for (bool moved = true; moved;) {
-            moved = false;
-            for (const auto& [first, end] : hostStalls) {
-                if (first < toneEnd && end > toneEnd - toneFrames) {
-                    toneEnd = first;
-                    moved = true;
-                }
-            }
-        }
-        const qint64 toneFirst = toneEnd - toneFrames;
-        QVERIFY(toneFirst > rate / 2);
-        const double leftLow = heardToneAmplitude(toneHeard, channels, 0, 997, rate, toneFirst, toneFrames);
-        const double leftHigh = heardToneAmplitude(toneHeard, channels, 0, 1703, rate, toneFirst, toneFrames);
-        if (channels == 2) {
-            const double rightHigh = heardToneAmplitude(toneHeard, channels, 1, 1703, rate, toneFirst, toneFrames);
-            const double rightLow = heardToneAmplitude(toneHeard, channels, 1, 997, rate, toneFirst, toneFrames);
-            QVERIFY2(std::abs(leftLow - 0.2) < 0.01, qPrintable(QString::number(leftLow)));
-            QVERIFY2(std::abs(rightHigh - 0.2) < 0.01, qPrintable(QString::number(rightHigh)));
-            QVERIFY2(leftHigh < 0.005 && rightLow < 0.005,
-                     qPrintable(QStringLiteral("%1 %2").arg(leftHigh).arg(rightLow)));
-        } else {
-            // (left + right) / 2: each tone at half its level.
-            QVERIFY2(std::abs(leftLow - 0.1) < 0.005, qPrintable(QString::number(leftLow)));
-            QVERIFY2(std::abs(leftHigh - 0.1) < 0.005, qPrintable(QString::number(leftHigh)));
-        }
-
-        // Once playing, the speaker never ran short: any silence it played
-        // for want of audio came before the receiver's first write to it.
-        // R-R3-21: the baseline is the count at that first write, so the
-        // check covers the tones as well as what follows them. Silence the
-        // host caused is not the receiver's (above).
-        QVERIFY(bus->playedDryFramesAtFirstPushForTesting() >= 0);
-        const qint64 receiverDryFrames = bus->playedDryFramesForTesting() - hostStalledDryFrames;
-        if (receiverDryFrames != bus->playedDryFramesAtFirstPushForTesting()) {
+        // What the run held, said once, by whichever check fails first.
+        // The tone check comes first, and a run whose tones read low used
+        // to end there with no word on why (2026-10-11, the 48 kHz mono
+        // row at 0.093 for 0.1, no host stall near its window).
+        bool runExplained = false;
+        const auto explainRun = [&] {
+            if (runExplained) { return; }
+            runExplained = true;
             QStringList events;
             for (const auto& e : bus->dryEventsForTesting()) {
                 events << QStringLiteral("%1 dry at %2 ms (woke after dry %3, queued %4, stall %5 ms)")
@@ -2630,7 +2626,67 @@ private slots:
             qInfo().noquote() << QStringLiteral("largest tick gaps: source %1 ms, speaker %2 ms")
                 .arg(double(maxSourceGapNs) / 1e6, 0, 'f', 1)
                 .arg(double(maxSpeakerGapNs) / 1e6, 0, 'f', 1);
+        };
+        // Played at the device's rate: the tones at their own pitch and
+        // level over the last 250 ms heard before the tones ended (before
+        // any host stall in them).
+        const qint64 toneFrames = rate / 4;
+        qint64 toneEnd = toneHeard.size() / channels;
+        for (bool moved = true; moved;) {
+            moved = false;
+            for (const auto& [first, end] : hostStalls) {
+                if (first < toneEnd && end > toneEnd - toneFrames) {
+                    toneEnd = first;
+                    moved = true;
+                }
+            }
         }
+        const qint64 toneFirst = toneEnd - toneFrames;
+        // Stalls back to the start of playback leave nothing to measure.
+        QVERIFY2(toneFirst > rate / 2,
+                 qPrintable(QStringLiteral("no 250 ms of the tones is clear of the host's silence "
+                                           "(%1 host stalls); this row needs a quiet machine")
+                                .arg(hostStalls.size())));
+        const double leftLow = heardToneAmplitude(toneHeard, channels, 0, 997, rate, toneFirst, toneFrames);
+        const double leftHigh = heardToneAmplitude(toneHeard, channels, 0, 1703, rate, toneFirst, toneFrames);
+        // A check that fails below says what the run held, and a tone check
+        // what it measured.
+        auto explainOnFailure = qScopeGuard([&] { explainRun(); });
+        auto explainTonesOnFailure = qScopeGuard([&] {
+            qint64 silent = 0;
+            for (qint64 f = toneFirst; f < toneEnd; ++f) {
+                if (toneHeard.at(f * channels) == 0.0f) { ++silent; }
+            }
+            qInfo().noquote() << QStringLiteral(
+                "tones measured over %1 to %2 ms of the %3 ms heard when they ended: %4 ms of it "
+                "silent")
+                .arg(double(toneFirst) * 1000.0 / rate, 0, 'f', 1)
+                .arg(double(toneEnd) * 1000.0 / rate, 0, 'f', 1)
+                .arg(double(toneHeard.size() / channels) * 1000.0 / rate, 0, 'f', 1)
+                .arg(double(silent) * 1000.0 / rate, 0, 'f', 1);
+        });
+        if (channels == 2) {
+            const double rightHigh = heardToneAmplitude(toneHeard, channels, 1, 1703, rate, toneFirst, toneFrames);
+            const double rightLow = heardToneAmplitude(toneHeard, channels, 1, 997, rate, toneFirst, toneFrames);
+            QVERIFY2(std::abs(leftLow - 0.2) < 0.01, qPrintable(QString::number(leftLow)));
+            QVERIFY2(std::abs(rightHigh - 0.2) < 0.01, qPrintable(QString::number(rightHigh)));
+            QVERIFY2(leftHigh < 0.005 && rightLow < 0.005,
+                     qPrintable(QStringLiteral("%1 %2").arg(leftHigh).arg(rightLow)));
+        } else {
+            // (left + right) / 2: each tone at half its level.
+            QVERIFY2(std::abs(leftLow - 0.1) < 0.005, qPrintable(QString::number(leftLow)));
+            QVERIFY2(std::abs(leftHigh - 0.1) < 0.005, qPrintable(QString::number(leftHigh)));
+        }
+        explainTonesOnFailure.dismiss();
+
+        // Once playing, the speaker never ran short: any silence it played
+        // for want of audio came before the receiver's first write to it.
+        // R-R3-21: the baseline is the count at that first write, so the
+        // check covers the tones as well as what follows them. Silence the
+        // host caused is not the receiver's (above).
+        QVERIFY(bus->playedDryFramesAtFirstPushForTesting() >= 0);
+        const qint64 receiverDryFrames = bus->playedDryFramesForTesting() - hostStalledDryFrames;
+        if (receiverDryFrames != bus->playedDryFramesAtFirstPushForTesting()) { explainRun(); }
         QCOMPARE(receiverDryFrames, bus->playedDryFramesAtFirstPushForTesting());
 
         // The delay readout at the moment the onset was first heard.
@@ -2652,7 +2708,13 @@ private slots:
         for (qint64 k = roughHeardFrame; k < roughHeardFrame + rate / 50; ++k) {
             peak = std::max(peak, bus->heard.at(k * channels));
         }
-        QVERIFY(peak > 0.3f);
+        // A long host stall near the end of the tones leaves them playing
+        // when the onset is sent, and the first sound heard after that is
+        // then a tone (0.2 at most), not the onset (0.5).
+        QVERIFY2(peak > 0.3f,
+                 qPrintable(QStringLiteral("the first sound heard once the onset was sent peaks at "
+                                           "%1, which is not the onset (%2 host stalls)")
+                                .arg(peak).arg(hostStalls.size())));
         qint64 heardFrame = roughHeardFrame;
         while (bus->heard.at(heardFrame * channels) < peak / 2.0f) { ++heardFrame; }
         const qint64 heardNs = playOriginNs + heardFrame * 1'000'000'000 / rate;
@@ -2680,6 +2742,7 @@ private slots:
             .arg(double(hostSilenceAheadNs) / 1e6, 0, 'f', 3);
         QVERIFY2(std::abs(missMs) <= accuracyMs + kToleranceMs,
                  qPrintable(QStringLiteral("missed by %1 ms, accuracy %2 ms").arg(missMs).arg(accuracyMs)));
+        explainOnFailure.dismiss();
         receiver.stop();
     }
 
