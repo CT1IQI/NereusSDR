@@ -70,6 +70,14 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-08 - Workspace visual review Task 26: the flag fold API
+//                 (isCollapsed, setCollapsed, collapsedChanged), ported
+//                 from AetherSDR src/gui/VfoWidget.h [@3a1f59ea]. Upstream
+//                 has no per-file copyright header. Copyright (C) 2024-2026
+//                 Jeremy (KK7GWY) and AetherSDR contributors. GPLv3; project
+//                 source: https://github.com/ten9876/AetherSDR. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -359,6 +367,8 @@ warren@wpratt.com
 #include <QLineEdit>
 #include <QPointer>
 #include <QMenu>
+#include <QRegion>
+#include <QSet>
 
 #include <array>
 #include <limits>
@@ -416,6 +426,30 @@ public:
     // SpectrumWidget respects this before its per-frame show() pass.
     void setStationPresentationAllowed(bool allowed);
     bool stationPresentationAllowed() const { return m_stationPresentationAllowed; }
+
+    // Flag fold (2026-10-08, ported from AetherSDR's collapsed flag): a click
+    // on the receiver letter folds the flag to its letter and TX badges with
+    // the frequency in a small label beside it; a click on the folded flag
+    // opens it again. Each receiver keeps its own choice in AppSettings under
+    // collapsedSettingsKey(). A client-side preference: nothing is sent to
+    // the radio or the Core.
+    // From AetherSDR src/gui/VfoWidget.h:275-276 [@3a1f59ea]
+    bool isCollapsed() const { return m_collapsed; }
+    void setCollapsed(bool collapsed);
+    // "ReceiverFlag_<index>_Collapsed", index 0 to 3 for receivers A to D.
+    static QString collapsedSettingsKey(int sliceIndex);
+    // The name assistive technology reads for the flag (VfoWidgetAccessible).
+    // From AetherSDR src/gui/VfoWidget.h:283 [@3a1f59ea]
+    QString accessibleSummary() const;
+    // Test seams: the folded flag's frequency label (parented to the
+    // SpectrumWidget, like the close and lock buttons) and its TX badge area.
+    QLabel* collapsedFrequencyLabelForTest() const { return m_collapsedFreqLabel.data(); }
+    QRect collapsedTxBadgeRect() const;
+    // Where this flag shows on the SpectrumWidget, in its coordinates: the
+    // flag, open or folded, its side buttons and the folded frequency label.
+    // Empty while the flag is hidden. The pan keeps its corner badges out of
+    // this area so the flag stays on top of them (PanadapterApplet).
+    QRegion occupiedRegion() const;
     /// iPhone app plan Task 78 (the several-devices design, ruling 8.11):
     /// the radio's own PTT is transmitting on this slice (the Core's
     /// txState keyed, holderSource radioPtt, txSliceId this slice). The TX
@@ -797,6 +831,10 @@ signals:
     // overlay is redrawn in the new colours.
     void activeSliceChanged(bool active);
 
+    // The flag folded or opened (setCollapsed). The hosting SpectrumWidget
+    // listens (addVfoWidget) to place the flag again and redraw its marker.
+    void collapsedChanged(bool collapsed);
+
     // Phase 3F Sub-Epic E Task 4: right-click context menu intent signals.
     // MainWindow listens and routes to SliceModel / FilterPolicyDialog /
     // RadioModel::removeSlice. antennaChangeRequested is fired by the
@@ -833,6 +871,9 @@ protected:
     // menu (Make TX, Antenna >, Sample rate >, Diversity >, Filter policy,
     // Remove slice).
     void contextMenuEvent(QContextMenuEvent* event) override;
+    // Flag fold: keeps a child that other code shows or hides while the
+    // flag is folded hidden, and remembers what it should be on unfold.
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void buildUI();
@@ -1124,6 +1165,22 @@ private:
     QPushButton* m_playBtn{nullptr};
     bool m_locked{false};
     bool m_onLeft{false};  // track flag side for button placement
+
+    // --- Flag fold (AetherSDR collapsed flag) ---
+    // From AetherSDR src/gui/VfoWidget.h:429-441, 749 [@3a1f59ea]
+    bool             m_collapsed{false};
+    QPointer<QLabel> m_collapsedFreqLabel;   // parented to the SpectrumWidget
+    QSet<QWidget*>   m_hiddenBeforeCollapse; // widgets already hidden before collapse
+    bool             m_applyingCollapse{false};
+    static constexpr int kCollapsedW = 34;
+    // Upstream: slice badge (20) + gap (2) + TX badge (16) + padding (6).
+    // Ours: 4 + letter badge (18) + gap (2) + TX badge (18) + 2.
+    static constexpr int kCollapsedH = 44;
+    static constexpr int kCollapsedBadgeTop = 4;
+    static constexpr int kCollapsedBadgeGap = 2;
+    static constexpr int kCollapsedFreqGap = 2;
+    void updateCollapsedFreqLabel();
+    void positionCollapsedFreqLabel();
 
     // --- Task 14a: slice access ---
     QLabel*     m_accessLine{nullptr};

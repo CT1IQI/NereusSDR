@@ -24,6 +24,21 @@
 //   2026-09-30: Fix wave GUI-M4: plain wording for the filters tooltip.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-09 - The status bar's frame rule names the bar, so its labels
+//                are not boxed. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-09 - D25: the filter columns stack when narrow
+//                (SetupFit::FitRow) and keep their own height, the rest of
+//                the tab going below them. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: "Currently selected" and "Not
+//                detected" are the page's secondary text; the workspace
+//                palette's mid is the panel colour, which hid them. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - D25: the tab scrolls in a SetupFit::FitScrollArea, so
+//                columns that fit side by side without a scroll bar are
+//                side by side whatever was shown before. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 //=================================================================
@@ -82,6 +97,8 @@
 #include "models/SliceModel.h"
 #include "models/RadioModel.h"
 #include "HardwareTransmitGate.h"
+#include "gui/setup/SetupFit.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <initializer_list>
 
@@ -97,6 +114,21 @@
 #include <QVBoxLayout>
 
 namespace NereusSDR {
+
+namespace {
+
+// The status bar's secondary text: palette(mid) as before, or with the
+// workspace preview on the secondary text role (the workspace palette's
+// mid is the panel colour, the same as the bar behind it).
+QString secondaryTextColour()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QStringLiteral("palette(mid)");
+    }
+    return WorkspacePreview::roleColourName("#808080", "text-secondary");
+}
+
+} // namespace
 
 // ── Band table helpers ────────────────────────────────────────────────────────
 
@@ -166,7 +198,7 @@ QDoubleSpinBox* AntennaAlexAlex2Tab::makeFreqSpin(double defaultMhz, QWidget* pa
 AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     : QWidget(parent), m_model(model)
 {
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = new SetupFit::FitScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
 
@@ -187,8 +219,11 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     // TODO: add hasAlex2 to BoardCapabilities; for now gate on board model.
     auto* statusFrame = new QFrame(content);
     statusFrame->setFrameShape(QFrame::StyledPanel);
+    // The rule names the bar: a bare "QFrame" selector also matched the
+    // labels inside it (a QLabel is a QFrame) and boxed each one.
+    statusFrame->setObjectName(QStringLiteral("alex2StatusFrame"));
     statusFrame->setStyleSheet(
-        QStringLiteral("QFrame { background: palette(window); border: 1px solid palette(mid); "
+        QStringLiteral("QFrame#alex2StatusFrame { background: palette(window); border: 1px solid palette(mid); "
                        "border-radius: 3px; }"));
 
     auto* statusLayout = new QHBoxLayout(statusFrame);
@@ -204,7 +239,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
 
     m_statusLabel = new QLabel(tr("Alex-2 board: Not detected"), statusFrame);
     m_statusLabel->setStyleSheet(
-        QStringLiteral("QLabel { color: palette(mid); }"));
+        QStringLiteral("QLabel { color: %1; }").arg(secondaryTextColour()));
 
     // Right-aligned "Currently selected" label — Phase H Task 5a.
     // Driven from updateActiveLeds() which mirrors setAlex2HPF/LPF
@@ -217,7 +252,7 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
             .arg(QChar(0x2014), QChar(0x00B7), QChar(0x2014)),
         statusFrame);
     m_selectedLabel->setStyleSheet(
-        QStringLiteral("QLabel { color: palette(mid); font-size: 10px; }"));
+        QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(secondaryTextColour()));
     m_selectedLabel->setToolTip(
         tr("The filters in use, from the panadapter's center frequency."));
 
@@ -228,7 +263,9 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     contentLayout->addWidget(statusFrame);
 
     // ── Two-column body ───────────────────────────────────────────────────────
-    auto* colLayout = new QHBoxLayout();
+    // D25: the two columns stack, HPF first, when they do not fit.
+    auto* colLayout = new SetupFit::FitRow();
+    colLayout->setObjectName(QStringLiteral("alex2ColumnRow"));
     colLayout->setContentsMargins(0, 0, 0, 0);
     colLayout->setSpacing(12);
 
@@ -429,7 +466,9 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     colLayout->addWidget(lpfGroup, 1);
 
     contentLayout->addLayout(colLayout);
-    contentLayout->addStretch();
+    // D25: the groups keep their own height; what is left of the tab goes
+    // below them (a stretch factor of 0 shared it with the groups).
+    contentLayout->addStretch(1);
 
     // ── Live LED driver (Phase 3P-H Task 5a) ─────────────────────────────────
     // Thetis's setAlex2HPF / setAlex2LPF dispatch on the active RX VFO
@@ -502,7 +541,7 @@ void AntennaAlexAlex2Tab::updateBoardCapabilities(bool hasAlex2)
             QStringLiteral("QLabel { background: #666666; border-radius: 5px; }"));
         m_statusLabel->setText(tr("Alex-2 board: Not detected"));
         m_statusLabel->setStyleSheet(
-            QStringLiteral("QLabel { color: palette(mid); }"));
+            QStringLiteral("QLabel { color: %1; }").arg(secondaryTextColour()));
     }
 }
 

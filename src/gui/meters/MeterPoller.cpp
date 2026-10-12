@@ -7,6 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview only: a reading consumer's cached
+//                 readings are replayed to that consumer alone (a callback,
+//                 not readingUpdated), and cachedReading() seeds inert
+//                 previews. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-08 - Task 5b (workspace visual review): addReadingConsumer /
+//                 removeReadingConsumer, so a Longpath needle or bar gets
+//                 readings for its own context on the same timer frame,
+//                 and rxSourceChanged when the slice behind it changes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01  J.J. Boyd / KG4VCF. Resolve remote Max Bin by the slice
@@ -641,6 +651,100 @@ void MeterPoller::setTargetContext(MeterWidget* widget, const QJsonObject& conte
     addTarget(widget);
     if (existing && changed) { replayReadings(widget, context); }
 }
+void MeterPoller::addReadingConsumer(QObject* owner, const QJsonObject& context, const QList<int>& bindings,
+                                     const std::function<void(int, double)>& replay)
+{
+    if (!owner) { return; }
+    removeReadingConsumer(owner);
+    ReadingConsumer consumer;
+    consumer.context = context;
+    consumer.bindings = bindings;
+    consumer.destroyed = connect(owner, &QObject::destroyed, this, [this, owner] { removeReadingConsumer(owner); });
+    m_readingConsumers.insert(owner, consumer);
+    if (m_rxSourceIdentitySource && !m_consumerIdentities.contains(contextKey(context))) {
+        m_consumerIdentities.insert(contextKey(context), m_rxSourceIdentitySource(context));
+    }
+    // Global (TX, PA) readings reach every known context.
+    m_knownContexts[contextKey(context)] = context;
+    if (replay) {
+        for (int b : bindings) {
+            if (const std::optional<double> value = cachedReading(context, b)) { replay(b, *value); }
+        }
+    }
+}
+void MeterPoller::removeReadingConsumer(QObject* owner)
+{
+    const auto it = m_readingConsumers.find(owner);
+    if (it == m_readingConsumers.end()) { return; }
+    disconnect(it->destroyed);
+    const QJsonObject context = it->context;
+    m_readingConsumers.erase(it);
+    // A context nobody uses leaves the poll set. The empty context is the
+    // legacy active RX, which the producers keep publishing regardless.
+    if (!context.isEmpty() && !contextInUse(context)) {
+        m_knownContexts.remove(contextKey(context));
+        m_contextReadings.remove(contextKey(context));
+    }
+    bool consumerLeft = false;
+    for (auto c = m_readingConsumers.cbegin(); c != m_readingConsumers.cend(); ++c) {
+        if (c->context == context) { consumerLeft = true; break; }
+    }
+    if (!consumerLeft) { m_consumerIdentities.remove(contextKey(context)); }
+}
+void MeterPoller::synchronizeConsumerSources()
+{
+    // Mirrors synchronizeRxSource for targets: when the resolved identity
+    // behind a consumer's context changes, the old source's readings and
+    // peak no longer apply. Targets get MeterWidget::resetRxSource from
+    // the same check in pollContextReadings' reset pass.
+    if (!m_rxSourceIdentitySource) { return; }
+    QSet<QByteArray> checked;
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        const QByteArray key = contextKey(it->context);
+        if (checked.contains(key)) { continue; }
+        checked.insert(key);
+        const QByteArray identity = m_rxSourceIdentitySource(it->context);
+        const auto previous = m_consumerIdentities.constFind(key);
+        const bool changed = previous != m_consumerIdentities.cend() && previous.value() != identity;
+        m_consumerIdentities.insert(key, identity);
+        if (changed) {
+            m_contextReadings.remove(key);
+            emit rxSourceChanged(it->context);
+        }
+    }
+}
+bool MeterPoller::contextInUse(const QJsonObject& context) const
+{
+    for (auto it = m_targetContexts.cbegin(); it != m_targetContexts.cend(); ++it) {
+        if (it.value() == context) { return true; }
+    }
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        if (it->context == context) { return true; }
+    }
+    return false;
+}
+std::optional<double> MeterPoller::cachedReading(const QJsonObject& context, int b) const
+{
+    // The values copyCachedReadings seeds a target with.
+    const bool remoteReady = !m_remoteRole || (m_remoteModel && m_remoteModel->isConnected() && m_remoteSnapshotReady && m_remoteSnapshotReady());
+    if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr) {
+        const double value = remoteReady && m_localRxReadingAvailable && !m_inTx
+            ? (m_rxReadingSource ? m_rxReadingSource(context, b)
+                                 : m_contextReadings.value(contextKey(context)).value(b, kNoMeterReadingDbm))
+            : kNoMeterReadingDbm;
+        return std::isfinite(value) ? value : kNoMeterReadingDbm;
+    }
+    if (m_globalReadings.contains(b)) {
+        const bool sameCachedSession = m_cachedSessionId == (m_sessionIdSource ? m_sessionIdSource() : QString());
+        return remoteReady && sameCachedSession && acceptsGlobalReading(context)
+            ? m_globalReadings.value(b) : kNoMeterReadingDbm;
+    }
+    if ((b >= MeterBinding::TxPower && b <= MeterBinding::TxCfcPeak)
+        || (b >= MeterBinding::HwVolts && b <= MeterBinding::HwTemperature)) {
+        return kNoMeterReadingDbm;
+    }
+    return std::nullopt;
+}
 void MeterPoller::setRxReadingSource(std::function<double(const QJsonObject&, int)> source)
 {
     m_rxReadingSource = std::move(source);
@@ -857,6 +961,7 @@ void MeterPoller::invalidateReadings(bool rx, bool tx, bool hardware)
             for (int b = MeterBinding::SignalPeak; b <= MeterBinding::PbSnr; ++b) { target->updateMeterValue(b, kNoMeterReadingDbm); }
             contexts.insert(contextKey(context));
         }
+        for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) { contexts.insert(contextKey(it->context)); }
         contexts.insert(contextKey({}));
         for (const QByteArray& key : contexts) {
             const QJsonObject context = QJsonDocument::fromJson(key).object();
@@ -883,6 +988,7 @@ void MeterPoller::pollContextReadings()
         const QJsonObject context = m_targetContexts.value(target);
         if (synchronizeRxSource(target, context)) { m_contextReadings.remove(contextKey(context)); }
     }
+    synchronizeConsumerSources();
     QSet<QByteArray> visited;
     for (const auto& target : m_targets) {
         if (!target) { continue; }
@@ -898,6 +1004,28 @@ void MeterPoller::pollContextReadings()
             for (const auto& recipient : m_targets) {
                 if (recipient && m_targetContexts.value(recipient) == context) { recipient->updateMeterValue(b, value); }
             }
+            emit readingUpdated(context, b, value);
+        }
+    }
+    // Task 5b: the contexts only non-MeterWidget readers use join the same
+    // frame, with only the RX bindings those readers asked for.
+    QHash<QByteArray, QList<int>> consumerBindings;
+    for (auto it = m_readingConsumers.cbegin(); it != m_readingConsumers.cend(); ++it) {
+        const QByteArray key = contextKey(it->context);
+        m_knownContexts[key] = it->context;
+        if (visited.contains(key)) { continue; }
+        QList<int>& wanted = consumerBindings[key];
+        for (int b : it->bindings) {
+            if (b >= MeterBinding::SignalPeak && b <= MeterBinding::PbSnr && !wanted.contains(b)) { wanted.append(b); }
+        }
+    }
+    for (auto it = consumerBindings.begin(); it != consumerBindings.end(); ++it) {
+        const QJsonObject context = m_knownContexts.value(it.key());
+        std::sort(it->begin(), it->end());
+        for (int b : std::as_const(*it)) {
+            const double v = sourceReady ? m_rxReadingSource(context, b) : kNoMeterReadingDbm;
+            const double value = std::isfinite(v) ? v : kNoMeterReadingDbm;
+            m_contextReadings[it.key()][b] = value;
             emit readingUpdated(context, b, value);
         }
     }

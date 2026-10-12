@@ -54,12 +54,16 @@
 //   2026-09-26  iPhone app plan Task 77 fix round 4: while operate=1 is
 //                 unconfirmed the click sends standby. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10  Workspace look, JJ's D30: OPERATE carries
+//                 kLitWhenOnProperty, so its on sheet draws the lit green.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AmpApplet.h"
 #include "core/session/IStationLink.h"
 #include "gui/OperatorReasonText.h"
 #include "gui/HGauge.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AmplifierModel.h"
 #include "models/RadioModel.h"
@@ -175,6 +179,9 @@ AmpApplet::AmpApplet(RadioModel* model, QWidget* parent)
 
     // From AetherSDR src/gui/AmpApplet.cpp:62-74 [@0cd4559]
     m_operateBtn = new QPushButton(QStringLiteral("OPERATE"), root);
+    // Workspace look (JJ's D30, 2026-10-10): OPERATE on is the lit green.
+    // The property is read only by the workspace look's sheet pass.
+    m_operateBtn->setProperty(WorkspacePreview::kLitWhenOnProperty, true);
     m_operateBtn->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     m_operateBtn->setStyleSheet(
         QStringLiteral(

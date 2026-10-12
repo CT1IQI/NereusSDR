@@ -41,6 +41,10 @@
 //                as the Setup card does; kPcSlider greys while disabled.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-09 - HeaderVolumeStyle::keepFill(): the PC and RADIO volume
+//                sliders keep their filled side in the workspace preview
+//                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "MasterOutputWidget.h"
@@ -48,6 +52,7 @@
 #include "gui/setup/AsioSwitchAllDialog.h"
 #include "gui/setup/AudioDriverList.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/AppIcon.h"
 
 #include "core/AppSettings.h"
@@ -263,6 +268,11 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
     return kIconPx;
 }
 
+void keepFill(QSlider* slider)
+{
+    slider->setProperty(WorkspacePreview::kFilledSliderProperty, true);
+}
+
 } // namespace HeaderVolumeStyle
 
 MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
@@ -316,6 +326,7 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
     m_slider->setRange(0, 100);
     m_slider->setFixedWidth(100);
     m_slider->setFixedHeight(16);
+    HeaderVolumeStyle::keepFill(m_slider);
     m_slider->setStyleSheet(QLatin1String(kSliderStyle));
     m_slider->setAccessibleName(QStringLiteral("Master volume"));
     m_slider->setAccessibleDescription(

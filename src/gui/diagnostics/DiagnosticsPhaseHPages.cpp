@@ -50,9 +50,13 @@
 //                settings. Its picker, question and result are overridable
 //                for tests. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - D25: the settings path wraps instead of widening the page
+//                past the Settings window. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 #include "DiagnosticsPhaseHPages.h"
+#include "gui/setup/SetupFit.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -376,6 +380,9 @@ void ExportImportConfigPage::buildUI()
         QStringLiteral("Path: %1").arg(AppSettings::instance().filePath()));
     m_settingsPathLabel->setStyleSheet(QStringLiteral("color: #c8d8e8;"));
     m_settingsPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // D25: a long path goes to a line of its own rather than widening the
+    // page.
+    m_settingsPathLabel->setWordWrap(true);
     fileLayout->addWidget(m_settingsPathLabel);
 
     auto* allGroup = addSection(QStringLiteral("Full Configuration"));

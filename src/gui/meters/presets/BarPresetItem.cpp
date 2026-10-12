@@ -1,5 +1,11 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-08 - Workspace preview data colours (JJ's decision B): the
+//                 default backdrop reads WorkspacePreview::dataBackground(),
+//                 the role of the container around the meter or the user's
+//                 colour for that container. Ink unchanged; a backdrop the
+//                 user set is kept. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-03 — Responsive object text and measured role fitting by J.J. Boyd
@@ -50,6 +56,7 @@ mw0lge@grange-lane.co.uk
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/styles/WorkspacePreview.h"
 #include <QPainter>
 #include <QJsonDocument>
 #include <algorithm>
@@ -154,8 +161,11 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
     const auto pos=[&](double value) { return g.left+g.width*calibratedPosition(value); };
     p.save(); p.setClipRect(g.face); p.setRenderHint(QPainter::Antialiasing,false);
     QFont font=p.font(); font.setPixelSize(qMax(1,qRound(13*g.scale))); p.setFont(font);
+    // Workspace preview: the default backdrop takes the container's
+    // background; a backdrop the user set is drawn as it is.
+    const QColor backdrop=m_background==QColor(32,32,32) ? WorkspacePreview::dataBackground(m_background,"panel",parent()) : m_background;
     if(layer==Layer::Background) {
-        p.fillRect(g.face,m_background); p.setPen(m_title);
+        p.fillRect(g.face,backdrop); p.setPen(m_title);
         const double start=m_showValue?.32:0,end=m_showPeakValue?.68:1;
         drawObjectText(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale);
     } else if(layer==Layer::OverlayDynamic) {

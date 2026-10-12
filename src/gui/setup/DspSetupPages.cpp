@@ -63,6 +63,16 @@
 //                 the NR3 model, NNR limit and Diagnostics, APF Center Freq
 //                 and Visual Notch. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - D25: the two slider-row labels keep their 80 px column but
+//               widen when their text needs more (SetupFit::widthAtLeast).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - NB2 Mode reads "Sample & Hold" and "Hold & Sample" as
+//               Thetis does: a combo box draws its item text as written, so
+//               the doubled ampersand showed twice. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -111,6 +121,8 @@
 //============================================================================================//
 
 #include "DspSetupPages.h"
+#include "gui/setup/SetupFit.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
@@ -779,7 +791,8 @@ void NrAnfSetupPage::rebuildForActiveSlice()
 
         auto* label = new QLabel(labelText);
         label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 12px; }");
-        label->setFixedWidth(80);
+        // D25: a label longer than the column widens its row, not cut short.
+        SetupFit::widthAtLeast(label, 80);
         row->addWidget(label);
 
         auto* slider = new QSlider(Qt::Horizontal);
@@ -821,7 +834,8 @@ void NrAnfSetupPage::rebuildForActiveSlice()
 
         auto* label = new QLabel(labelText);
         label->setStyleSheet("QLabel { color: #8aa8c0; font-size: 12px; }");
-        label->setFixedWidth(80);
+        // D25: a label longer than the column widens its row, not cut short.
+        SetupFit::widthAtLeast(label, 80);
         row->addWidget(label);
 
         auto* slider = new QSlider(Qt::Horizontal);
@@ -1916,9 +1930,10 @@ NbSnbSetupPage::NbSnbSetupPage(RadioModel* model, QWidget* parent,
     // NB2 Mode — Thetis comboDSPNOBmode.
     auto* nb1Mode = new QComboBox;
     nb1Mode->setProperty("nereusSetupId", "dsp.nbSnb.nb2Mode");
-    // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44434 [v2.10.3.13]).
-    nb1Mode->addItems({tr("Zero"), tr("Sample && Hold"), tr("Mean-Hold"),
-                       tr("Hold && Sample"), tr("Linear Interpolate")});
+    // Item text matches Thetis comboDSPNOBmode verbatim (setup.designer.cs:44550-44555 [v2.10.3.15]).
+    // A combo box item is not a mnemonic text: one "&" draws one "&".
+    nb1Mode->addItems({tr("Zero"), tr("Sample & Hold"), tr("Mean-Hold"),
+                       tr("Hold & Sample"), tr("Linear Interpolate")});
     nb1Mode->setCurrentIndex(slice ? slice->nb2Mode() : 0);
     nb1Mode->setToolTip(tr(
         "Method used to fill in the blanked samples when NB2 triggers.\n"
@@ -2737,6 +2752,8 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent,
 
     // ── Notch table ──────────────────────────────────────────────────────────
     m_notchTable = new QTableWidget(0, 4, mnfGrp);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Resized whenever a notch is added or removed.
+    installQtCocoaAccessibleTableCacheRepair(m_notchTable);
     m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
     m_notchTable->setProperty("nereusSetupId", "dsp.tnf.list");
     // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive

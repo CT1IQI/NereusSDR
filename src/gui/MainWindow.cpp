@@ -11,6 +11,34 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: the window owns the filter that
+//                 arranges while Shift is held and leaves Arrange on Escape
+//                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: added copies of the SIGNAL
+//                 STRENGTH dial are registered as container content.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
+//                 is built by one function the visual preview can call.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Containers > Hidden in both looks, so a container hidden
+//                 with the workspace preview off can come back. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: Containers > Hidden lists every
+//                 hidden container and widget and shows one again where it
+//                 was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-08 - Workspace preview only: the container source menu's slice
+//                 availability comes from the RadioModel. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: legacy container adoption checks
+//                 the store's own key (ContainerWorkspacePreview with the
+//                 switch on). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-08 - Workspace preview only: named workspace profiles, the
+//                 collapsing profile rail left of the title, Ctrl+1..9 and
+//                 Containers > Manage Workspace Profiles. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - J.J. Boyd (KG4VCF). A container's controls follow a change
 //                of selected RX, a renamed filter preset and a slice moved
 //                to another pan by those events themselves; the PureSignal
@@ -27,6 +55,16 @@
 //   2026-10-08 - Rotor control plan Task 4a: cty.dat is the Core's resource,
 //                 loaded once per process (ensureCtyDatLoaded). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Workspace preview only: the Longpath instruments are
+//                 registered as container content. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Workspace preview only: the four-edge container area,
+//                 the right-strip panel toggle and Containers > Align to
+//                 8 px Grid. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-07 - Workspace preview only: Containers > Arrange Workspace
+//                 (Ctrl+Shift+A). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -641,6 +679,17 @@
 //                (refusals toasted), each spot's bearing on its marker, and
 //                auto-turn from every spot tune. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Closing the window detaches the meter poller from the
+//                RadioModel's PA readings and status first, so the model's
+//                teardown no longer reaches this window's meter source
+//                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the zoom bar carries
+//                kVisibleTrackProperty, so its track reads against the bar
+//                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-09 - The zoom bar's comment names JJ's D27 track. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Native audio plan Task 19 (R-AUD-23): the PC speakers
 //                menu's "Sound setup…" opens Setup at Audio, Outputs, and
 //                a pick from it reloads an open Outputs card. J.J. Boyd
@@ -969,6 +1018,11 @@ warren@wpratt.com
 #include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
+#include "containers/EdgeDockStrip.h"
+#include "containers/WorkspaceProfiles.h"
+#include "containers/WorkspaceProfilesDialog.h"
+#include "gui/widgets/ProfileRail.h"
+#include "gui/widgets/ProfileRailDock.h"
 #include "containers/ContainerContentRegistry.h"
 #include "containers/ContainerContentHost.h"
 #include "containers/ContainerWorkspaceStore.h"
@@ -995,6 +1049,12 @@ warren@wpratt.com
 #include "meters/OtherButtonItem.h"
 #include "models/FilterPresetStore.h"
 #include "gui/styles/PopupMenuStyle.h"
+#include "gui/styles/QssTranslator.h"
+#include "gui/styles/WorkspacePalette.h"
+#include "containers/ArrangeHoldFilter.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/instruments/LongpathContent.h"
+#include "gui/instruments/SMeterDialContent.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/SkuUiProfile.h"
 // Remote Daemon R2 Task 12: source-selector wiring below (setSourceSelector).
@@ -1445,6 +1505,11 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     m_titleBar->setRadioModel(m_radioModel);
     m_titleBar->setMenuBar(menuBar());
     setMenuWidget(m_titleBar);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview only: named profiles and the rail. With the
+        // switch off nothing reads or writes the WorkspaceProfiles key.
+        setupWorkspaceProfiles();
+    }
 
     // Wire the MasterOutputWidget device picker → AudioEngine so picking
     // an output device rebuilds the speakers bus. Task 10b exposes only
@@ -1595,6 +1660,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 
     buildStatusBar();
     applyDarkTheme();
+    if (WorkspacePreview::enabled()) {
+        WorkspacePreview::themeSubtree(m_chromeBarWidget);
+    }
 
     // Wire connection state changes to status bar
     connect(m_radioModel, &RadioModel::connectionStateChanged,
@@ -1677,28 +1745,7 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
             this, [this](int percent, const QString& status) {
         // Create dialog on first progress signal
         if (!m_wisdomDialog && percent < 100) {
-            m_wisdomDialog = new QProgressDialog(this);
-            m_wisdomDialog->setWindowTitle(QStringLiteral("NereusSDR: FFTW Wisdom"));
-            m_wisdomDialog->setLabelText(
-                QStringLiteral("Optimizing FFT plans for DSP engine...\n\n"
-                               "This only happens on first run."));
-            m_wisdomDialog->setRange(0, 100);
-            m_wisdomDialog->setValue(0);
-            m_wisdomDialog->setCancelButton(nullptr);
-            m_wisdomDialog->setAutoClose(false);
-            m_wisdomDialog->setMinimumWidth(500);
-            m_wisdomDialog->setMinimumDuration(0);
-            m_wisdomDialog->setWindowModality(Qt::ApplicationModal);
-            m_wisdomDialog->setStyleSheet(QStringLiteral(
-                "QProgressDialog { background: #0f0f1a; }"
-                "QLabel { color: #c8d8e8; font-size: 13px; }"
-                "QProgressBar {"
-                "  text-align: center; font-size: 13px;"
-                "  font-weight: bold; color: #c8d8e8;"
-                "  background: #1a2a3a; border: 1px solid #2e4e6e;"
-                "  border-radius: 3px; min-height: 24px;"
-                "}"
-                "QProgressBar::chunk { background: #00b4d8; }"));
+            m_wisdomDialog = buildWisdomProgressDialog(this);
             m_wisdomDialog->show();
         }
 
@@ -1883,7 +1930,16 @@ MainWindow::~MainWindow()
     // Retire native hosts while their windows and original construction owners
     // still exist. QObject's later child teardown is too late to reparent a
     // parked native applet safely back into this window.
-    if (m_meterPoller) { m_meterPoller->stop(); }
+    if (m_meterPoller) {
+        m_meterPoller->stop();
+        // The poller lets go of the model's PA readings and status now. QObject
+        // destroys the RadioModel child before the poller, and the poller's
+        // destroyed hooks republished binding support from inside that
+        // teardown, into this window's source lambdas, which read the model's
+        // already deleted slices.
+        m_meterPoller->setPaReadingsModel(nullptr);
+        m_meterPoller->setRadioStatus(nullptr);
+    }
     if (m_radioModel && m_radioModel->meterPoller()==m_meterPoller) { m_radioModel->setMeterPoller(nullptr); }
     if (m_containerManager) {
         auto* registry=m_containerManager->contentRegistry();
@@ -7108,11 +7164,24 @@ void MainWindow::buildUI()
 
     // --- Main QSplitter: spectrum (left) + container panel (right) ---
     // AetherSDR pattern: right panel is a proper layout element, not an overlay.
-    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    // Workspace preview: the splitter is the middle row of the four-edge
+    // area, with Longpath-width handles (EdgeDockSplitter sets its own).
+    m_mainSplitter = WorkspacePreview::enabled()
+        ? new EdgeDockSplitter(Qt::Horizontal, this)
+        : new QSplitter(Qt::Horizontal, this);
     m_mainSplitter->setChildrenCollapsible(false);
-    m_mainSplitter->setHandleWidth(3);
+    if (!WorkspacePreview::enabled()) {
+        m_mainSplitter->setHandleWidth(3);
+    }
     m_mainSplitter->setStyleSheet(QStringLiteral(
         "QSplitter::handle { background: #203040; }"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the handle is a border between two panes.
+        // Width stays 3 px; only the colour takes the palette role.
+        m_mainSplitter->setStyleSheet(QStringLiteral(
+            "QSplitter::handle { background: %1; }")
+            .arg(Workspace::WorkspacePalette::glassAndDepth().qss(QStringLiteral("border-subtle"))));
+    }
 
     // Left side: spectrum + zoom bar
     auto* spectrumPane = new QWidget(m_mainSplitter);
@@ -7440,6 +7509,9 @@ void MainWindow::buildUI()
     zoomBar->setValue(768);
     zoomBar->setFixedHeight(20);
     zoomBar->setToolTip(QStringLiteral("Zoom: drag to adjust spectrum bandwidth"));
+    // Workspace preview (JJ's D27): the track is a dark channel with a grey
+    // rim all round so it reads against the bar. No effect with the preview off.
+    zoomBar->setProperty(WorkspacePreview::kVisibleTrackProperty, true);
     zoomBar->setStyleSheet(QStringLiteral(
         "QSlider { background: #0a0a14; }"
         "QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
@@ -7454,13 +7526,31 @@ void MainWindow::buildUI()
     m_mainSplitter->addWidget(spectrumPane);
 
     // Right side: Container #0 will be added by ContainerManager
-    setCentralWidget(m_mainSplitter);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: strips on all four edges around the spectrum.
+        m_edgeDockArea = new EdgeDockArea(m_mainSplitter, spectrumPane, this);
+        setCentralWidget(m_edgeDockArea);
+    } else {
+        setCentralWidget(m_mainSplitter);
+    }
 
     // --- Container Infrastructure (Phase 3G-1) ---
     m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+    if (m_edgeDockArea) {
+        m_containerManager->setEdgeDockArea(m_edgeDockArea);
+    }
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the header source menu enables the open slices.
+        m_containerManager->setSliceAvailability(
+            [this](int sliceId) { return m_radioModel && m_radioModel->sliceById(sliceId) != nullptr; });
+        // Workspace preview: holding Shift alone arranges while it is held,
+        // and Escape leaves Arrange. One filter for this window's containers.
+        auto* arrangeHold = new ArrangeHoldFilter(m_containerManager, this);
+        arrangeHold->setObjectName(QStringLiteral("workspaceArrangeHold"));
+    }
     m_containerManager->setTransmitting(m_radioModel->isTransmitting());
     connect(m_radioModel,&RadioModel::transmittingChanged,m_containerManager,&ContainerManager::setTransmitting);
     connect(m_containerManager, &ContainerManager::workspaceError, this, [this](const QString& error) {
@@ -7468,7 +7558,10 @@ void MainWindow::buildUI()
     });
     // Adopt legacy state exactly once. Existing document placements, including
     // hidden/moved applets, are authoritative on every subsequent startup.
-    if (workspaceStore->loadError().isEmpty() && !AppSettings::instance().contains("ContainerWorkspace")) {
+    // The workspace preview keeps its own key, seeded from the shipped
+    // document; legacy state is adopted only when neither exists.
+    if (workspaceStore->loadError().isEmpty() && !AppSettings::instance().contains(workspaceStore->workspaceKey())
+        && !AppSettings::instance().contains("ContainerWorkspace")) {
         WorkspaceDocument workspace = workspaceStore->snapshot();
         if (workspace.containers.isEmpty()) {
             ContainerDocument main; main.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -7902,7 +7995,8 @@ void MainWindow::buildUI()
     }
 
     // Default splitter sizes on first run: ~80% spectrum, ~20% panel
-    if (!AppSettings::instance().contains(QStringLiteral("MainSplitterSizes"))) {
+    // (Workspace preview: the edge area sizes its strips itself.)
+    if (!m_edgeDockArea && !AppSettings::instance().contains(QStringLiteral("MainSplitterSizes"))) {
         m_mainSplitter->setSizes({1024, 256});
     }
 
@@ -9305,6 +9399,36 @@ void MainWindow::rebuildEditContainerSubmenu()
     }
 }
 
+void MainWindow::rebuildHiddenSubmenu()
+{
+    if (!m_hiddenMenu) {
+        return;
+    }
+    m_hiddenMenu->clear();
+    const QVector<ContainerManager::HiddenItem> items =
+        m_containerManager ? m_containerManager->hiddenItems() : QVector<ContainerManager::HiddenItem>{};
+    if (items.isEmpty()) {
+        m_hiddenMenu->addAction(tr("Nothing hidden"))->setEnabled(false);
+        return;
+    }
+    for (const ContainerManager::HiddenItem& item : items) {
+        QAction* act = m_hiddenMenu->addAction(item.label);
+        act->setToolTip(tr("Show it again where it was"));
+        const QString containerId = item.containerId;
+        const QString entryId = item.entryId;
+        connect(act, &QAction::triggered, this, [this, containerId, entryId]() {
+            if (!m_containerManager) {
+                return;
+            }
+            if (entryId.isEmpty()) {
+                m_containerManager->showHiddenContainer(containerId);
+            } else {
+                m_containerManager->showHiddenEntry(entryId);
+            }
+        });
+    }
+}
+
 void MainWindow::resetDefaultLayout()
 {
     if (!m_containerManager) { return; }
@@ -10378,12 +10502,125 @@ void MainWindow::populateDefaultMeter()
         registry->setAvailable(type, m_appletVis->isAvailable(id));
         registry->attachSingleton(type, m_appletsById.value(id));
     }
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview only: the ported Longpath instruments as
+        // per-instance container content.
+        LongpathContent::Sources sources;
+        sources.poller = m_meterPoller;
+        sources.radio = m_radioModel;
+        sources.sliceForContext = [this](const QJsonObject& context) {
+            return ContainerSourceAdapter::slice(m_radioModel, context,
+                windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), containerSessionId());
+        };
+        sources.spectrumForSlice = [this](SliceModel* s) { return spectrumForSlice(s); };
+        LongpathContent::registerAll(*registry, sources);
+        SMeterDialContent::registerDial(*registry, sources);
+    }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
         showToast(tr("Container layout is read-only: %1").arg(m_containerManager->storageError()), ToastSeverity::Warning, 6000);
     }
     qCDebug(lcMeter) << "Installed default meter layout: S-Meter + Power/SWR + ALC";
     qCDebug(lcContainer) << "Container #0: Meters + RxApplet + TxApplet + PhoneCwApplet + VaxApplet + TciApplet + ClientChainApplet";
+}
+
+// Workspace preview only. The profiles read the live arrangement from
+// the ContainerManager, so this runs after buildUI() reconciled it.
+void MainWindow::setupWorkspaceProfiles()
+{
+    if (!m_containerManager || m_workspaceProfiles) {
+        return;
+    }
+    m_workspaceProfiles = new WorkspaceProfiles(AppSettings::instance(), m_containerManager, this);
+    m_workspaceProfiles->setObjectName(QStringLiteral("workspaceProfiles"));
+    const auto loaded = m_workspaceProfiles->load();
+    if (!loaded.ok()) {
+        qCWarning(lcContainer) << "Workspace profiles:" << loaded.error;
+        showToast(tr("Workspace profiles are read-only: %1").arg(loaded.error),
+                  ToastSeverity::Warning, 6000);
+    }
+    connect(m_workspaceProfiles, &WorkspaceProfiles::profileError, this, [this](const QString& error) {
+        showToast(tr("Workspace profile: %1").arg(error), ToastSeverity::Warning, 6000);
+    });
+    // The rail rests as the active badge just left of the centre title
+    // and fans out on hover, click or Tab. The title label is found by
+    // its text: TitleBar has no accessor for it.
+    QLabel* title = nullptr;
+    for (QLabel* label : m_titleBar->findChildren<QLabel*>(QString(), Qt::FindDirectChildrenOnly)) {
+        if (label->text() == QStringLiteral("NereusSDR")) {
+            title = label;
+            break;
+        }
+    }
+    if (!title) {
+        qCWarning(lcContainer) << "Profile rail: no title label in the status strip";
+        return;
+    }
+    m_profileRailDock = new ProfileRailDock(m_workspaceProfiles, title, this, m_titleBar);
+    m_profileRailDock->show();
+    connectProfileRail();
+    // Ctrl+1 to Ctrl+9 (Cmd on macOS) switch to profile N.
+    for (int n = 1; n <= 9; ++n) {
+        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key(Qt::Key_0 + n)), this);
+        shortcut->setObjectName(QStringLiteral("workspaceProfileShortcut%1").arg(n));
+        connect(shortcut, &QShortcut::activated, this, [this, n]() {
+            const QStringList ids = m_workspaceProfiles->ids();
+            if (n <= ids.size()) {
+                m_workspaceProfiles->switchTo(ids.at(n - 1));
+            }
+        });
+    }
+}
+
+void MainWindow::connectProfileRail()
+{
+    ProfileRail* rail = m_profileRailDock->rail();
+    WorkspaceProfiles* profiles = m_workspaceProfiles;
+    connect(rail, &ProfileRail::newProfileRequested, this, [this, rail, profiles]() {
+        QMenu* menu = WorkspaceProfilesDialog::createNewMenu(profiles, this);
+        const QPointer<QMenu> guard(menu);
+        QWidget* anchor = rail->plusButton();
+        menu->exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
+        if (guard) {
+            guard->deleteLater();
+        }
+    });
+    connect(rail, &ProfileRail::renameRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::renameProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::duplicateRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::duplicateProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::removeRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::removeProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::saveRequested, this, [this, profiles](const QString&) {
+        if (WorkspaceProfilesDialog::saveProfile(profiles, this)) {
+            showToast(tr("Profile saved"), ToastSeverity::Info, 2000);
+        }
+    });
+    connect(rail, &ProfileRail::exportRequested, this, [this, profiles](const QString& id) {
+        WorkspaceProfilesDialog::exportProfile(profiles, this, id);
+    });
+    connect(rail, &ProfileRail::importRequested, this, [this, profiles](const QString&) {
+        WorkspaceProfilesDialog::importProfile(profiles, this);
+    });
+    connect(rail, &ProfileRail::manageRequested, this, &MainWindow::showWorkspaceProfilesDialog);
+}
+
+void MainWindow::showWorkspaceProfilesDialog()
+{
+    if (!m_workspaceProfiles) {
+        return;
+    }
+    if (auto* open = findChild<WorkspaceProfilesDialog*>(QString(), Qt::FindDirectChildrenOnly)) {
+        open->raise();
+        open->activateWindow();
+        return;
+    }
+    auto* dialog = new WorkspaceProfilesDialog(m_workspaceProfiles, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
 }
 
 void MainWindow::buildMenuBar()
@@ -11343,6 +11580,49 @@ void MainWindow::buildMenuBar()
         connect(resetAction, &QAction::triggered, this,
                 &MainWindow::resetDefaultLayout);
     }
+    if (WorkspacePreview::enabled() && m_containerManager) {
+        // Workspace preview: Arrange Workspace shows every header, the
+        // entry headers and the resize handles. Runtime only, not saved.
+        QAction* arrangeAction = containersMenu->addAction(QStringLiteral("&Arrange Workspace"));
+        arrangeAction->setObjectName(QStringLiteral("containersArrangeWorkspace"));
+        arrangeAction->setCheckable(true);
+        arrangeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+        arrangeAction->setShortcutContext(Qt::ApplicationShortcut);
+        connect(arrangeAction, &QAction::toggled, m_containerManager, &ContainerManager::setArrangeMode);
+        connect(m_containerManager, &ContainerManager::arrangeModeChanged, arrangeAction, [arrangeAction](bool on) {
+            QSignalBlocker block(arrangeAction);
+            arrangeAction->setChecked(on);
+        });
+        // Optional 8 px alignment for free and floating containers.
+        QAction* gridAction = containersMenu->addAction(QStringLiteral("Align to 8 px &Grid"));
+        gridAction->setObjectName(QStringLiteral("containersAlignToGrid"));
+        gridAction->setCheckable(true);
+        gridAction->setChecked(m_containerManager->gridAlignment());
+        gridAction->setToolTip(QStringLiteral(
+            "Free and floating containers settle on an 8 px grid when moved. Hold Alt to place freely."));
+        connect(gridAction, &QAction::toggled, m_containerManager, &ContainerManager::setGridAlignment);
+        connect(m_containerManager, &ContainerManager::gridAlignmentChanged, gridAction, [gridAction](bool on) {
+            QSignalBlocker block(gridAction);
+            gridAction->setChecked(on);
+        });
+        // Named arrangements: switch, save and share them.
+        QAction* profilesAction = containersMenu->addAction(QStringLiteral("Manage Workspace &Profiles\u2026"));
+        profilesAction->setObjectName(QStringLiteral("containersManageProfiles"));
+        connect(profilesAction, &QAction::triggered, this, &MainWindow::showWorkspaceProfilesDialog);
+    }
+    if (m_containerManager) {
+        // Both looks, last in this group: everything the header hide
+        // buttons (or Hide container, a closed floating window, or an
+        // applet unticked below) took off the screen, one click from
+        // coming back where it was.
+        m_hiddenMenu = containersMenu->addMenu(QStringLiteral("&Hidden"));
+        m_hiddenMenu->setObjectName(QStringLiteral("containersHidden"));
+        rebuildHiddenSubmenu();
+        if (auto* store = m_containerManager->workspaceStore()) {
+            connect(store, &ContainerWorkspaceStore::committed, this,
+                    [this](quint64) { rebuildHiddenSubmenu(); });
+        }
+    }
 
     containersMenu->addSeparator();
 
@@ -11779,6 +12059,16 @@ void MainWindow::buildStatusBar()
     sb->setStyleSheet(QStringLiteral(
         "QStatusBar { background: #0a0a14; border-top: 1px solid #203040; }"
         "QStatusBar::item { border: none; }"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: the status bar frame in explicit roles; its
+        // children go through WorkspacePreview::themeSubtree at startup.
+        const auto& wp = Workspace::WorkspacePalette::glassAndDepth();
+        sb->setStyleSheet(QStringLiteral(
+            "QStatusBar { background: %1; border-top: 1px solid %2; }"
+            "QStatusBar::item { border: none; }")
+            .arg(wp.qss(QStringLiteral("statusbar-bg")),
+                 wp.qss(QStringLiteral("statusbar-border"))));
+    }
 
     // Wrapper widget for the full-width custom layout. Stored as a
     // member so resizeEvent can read its width for m_chromeBar->relayout().
@@ -11809,7 +12099,7 @@ void MainWindow::buildStatusBar()
         pm.fill(Qt::transparent);
         QPainter painter(&pm);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(QColor(0x40, 0x48, 0x58));
+        painter.setBrush(WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive"));
         painter.setPen(Qt::NoPen);
         for (int i = 0; i < 3; ++i) {
             painter.drawEllipse(0, i * 7, 9, 6);
@@ -11833,7 +12123,7 @@ void MainWindow::buildStatusBar()
         pm.fill(Qt::transparent);
         QPainter pp(&pm);
         pp.setRenderHint(QPainter::Antialiasing);
-        const QColor stroke(255, 255, 255, 210);
+        const QColor stroke = WorkspacePreview::roleColour(QColor(255, 255, 255, 210), "text");
         pp.setPen(QPen(stroke, 1.6));
         const QPointF pts[] = {
             { 0, 22}, { 1, 21}, { 2, 22}, { 3, 19}, { 4, 22},
@@ -14911,7 +15201,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Update axis-lock positions for overlay-docked containers
     if (m_mainSplitter && m_containerManager) {
         // Use the spectrum pane (first splitter child) as reference
-        QWidget* spectrumPane = m_mainSplitter->widget(0);
+        QWidget* spectrumPane = m_edgeDockArea ? m_edgeDockArea->center() : m_mainSplitter->widget(0);
         if (spectrumPane) {
             m_hDelta = spectrumPane->width();
             m_vDelta = spectrumPane->height();
@@ -14983,6 +15273,15 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
         if (label && label->property("isPanelToggle").toBool()) {
+            if (m_edgeDockArea) {
+                // Workspace preview: collapse the right strip, keep its contents.
+                const bool collapse = !m_edgeDockArea->userCollapsed(DockEdge::Right);
+                m_edgeDockArea->setUserCollapsed(DockEdge::Right, collapse);
+                label->setStyleSheet(collapse
+                    ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
+                    : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+                return true;
+            }
             // Toggle QSplitter right pane (index 1) visibility.
             // Save/restore sizes so spectrum expands when panel is hidden.
             if (!m_mainSplitter || m_mainSplitter->count() < 2) {
@@ -15048,7 +15347,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 void MainWindow::applyDarkTheme()
 {
-    setStyleSheet(QStringLiteral(
+    const QString qss(QStringLiteral(
         "QMainWindow { background: #0f0f1a; }"
         "QMenuBar {"
         "  background: #1a2a3a;"
@@ -15068,6 +15367,14 @@ void MainWindow::applyDarkTheme()
         "  color: #8090a0;"
         "  border-top: 1px solid #203040;"
         "}"));
+    if (WorkspacePreview::enabled()) {
+        // Workspace preview: #203040 here is a menu and status-bar
+        // border, so it takes border-subtle.
+        setStyleSheet(QssTranslator::translateWithAmbiguousRole(
+                          qss, QStringLiteral("border-subtle")).qss);
+    } else {
+        setStyleSheet(qss);
+    }
 }
 
 void MainWindow::showConnectionPanel()
@@ -15104,6 +15411,34 @@ void MainWindow::showConnectionPanel()
 // ---------------------------------------------------------------------------
 // Remote-daemon R2 Task 20: the two remaining halves of the remote gate.
 // ---------------------------------------------------------------------------
+
+QProgressDialog* MainWindow::buildWisdomProgressDialog(QWidget* parent)
+{
+    // The WDSP wisdom progress dialog of the wisdomProgress handler above.
+    auto* dialog = new QProgressDialog(parent);
+    dialog->setWindowTitle(QStringLiteral("NereusSDR: FFTW Wisdom"));
+    dialog->setLabelText(
+        QStringLiteral("Optimizing FFT plans for DSP engine...\n\n"
+                       "This only happens on first run."));
+    dialog->setRange(0, 100);
+    dialog->setValue(0);
+    dialog->setCancelButton(nullptr);
+    dialog->setAutoClose(false);
+    dialog->setMinimumWidth(500);
+    dialog->setMinimumDuration(0);
+    dialog->setWindowModality(Qt::ApplicationModal);
+    dialog->setStyleSheet(QStringLiteral(
+        "QProgressDialog { background: #0f0f1a; }"
+        "QLabel { color: #c8d8e8; font-size: 13px; }"
+        "QProgressBar {"
+        "  text-align: center; font-size: 13px;"
+        "  font-weight: bold; color: #c8d8e8;"
+        "  background: #1a2a3a; border: 1px solid #2e4e6e;"
+        "  border-radius: 3px; min-height: 24px;"
+        "}"
+        "QProgressBar::chunk { background: #00b4d8; }"));
+    return dialog;
+}
 
 void MainWindow::openNetworkDiagnostics()
 {
@@ -18188,14 +18523,16 @@ void MainWindow::showFeatureRequestDialogImpl()
     vbox->setContentsMargins(16, 16, 16, 16);
 
     auto* header = new QLabel(QStringLiteral(
-        "<h3 style='color:#c8d8e8;'>AI-Assisted Issue Reporter</h3>"
-        "<p style='color:#8090a0;'>Use any AI assistant to write a detailed bug report or feature request.</p>"
-        "<ol style='color:#c8d8e8;'>"
+        "<h3 style='color:%1;'>AI-Assisted Issue Reporter</h3>"
+        "<p style='color:%2;'>Use any AI assistant to write a detailed bug report or feature request.</p>"
+        "<ol style='color:%1;'>"
         "<li><b>Choose your AI</b> below; the prompt is copied to your clipboard</li>"
         "<li><b>Paste the prompt</b> into the AI chat</li>"
         "<li><b>Describe your idea</b>: edit the [bracketed] section</li>"
         "<li><b>Copy the AI's output</b> and click <b>Submit Your Idea</b></li>"
-        "</ol>"));
+        "</ol>")
+        .arg(WorkspacePreview::roleColourName("#c8d8e8", "text"),
+             WorkspacePreview::roleColourName("#8090a0", "text-secondary")));
     header->setWordWrap(true);
     vbox->addWidget(header);
 

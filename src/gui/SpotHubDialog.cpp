@@ -146,6 +146,15 @@
 //                                    SpotSourceHost::reporterVersion(), not
 //                                    a "NereusSDR/<version>" variant.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF  Spot List crash fix: the table takes
+//                                    the Qt 6.11.0 Cocoa accessibility
+//                                    cache repair
+//                                    (QtCocoaAccessibleTableCache), so a
+//                                    spot arriving after the Cocoa bridge
+//                                    expired its rows no longer
+//                                    dereferences a deleted cell
+//                                    interface. AI tooling: Anthropic
+//                                    Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Rotor control plan Task 8: the Spot
 //                                    List's Bearing column (shown after DX
 //                                    Call) and its right-click menu (Tune,
@@ -158,8 +167,13 @@
 //                                    when the tune happened
 //                                    (setTunedCheck).
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-09  J.J. Boyd / KG4VCF  The console and section titles read
+//                                    WorkspacePreview::roleColourName()
+//                                    (title-text) with the preview on.
+//                                    AI tooling: Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include "core/AppSettings.h"
 #include "core/DxClusterClient.h"
@@ -172,6 +186,7 @@
 #include "core/SpotSourceHost.h"
 #include "core/StationRotorController.h"
 #include "core/WsjtxClient.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/widgets/GuardedSlider.h"
 #include "models/BandFilterProxy.h"
@@ -304,6 +319,15 @@ QString swatchStyle(const QColor& c) {
     return QString(
         "QPushButton { background: %1; border: 2px solid #405060; border-radius: 3px; }"
         "QPushButton:hover { border-color: #c8d8e8; }").arg(c.name());
+}
+
+// A console or section title, blue only for decoration: the header text
+// (title-text, the application sheet's group box titles) with the workspace
+// preview on, today's accent with it off.
+QString sectionTitleStyle(const char* extra = "")
+{
+    return QStringLiteral("QLabel { color: %1; font-weight: bold; %2}")
+        .arg(WorkspacePreview::roleColourName("#00b4d8", "title-text"), QLatin1String(extra));
 }
 
 } // namespace
@@ -858,7 +882,7 @@ void SpotHubDialog::buildClusterTab(QTabWidget* tabs)
     // Console + spot-color row
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("Cluster Console");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -1105,7 +1129,7 @@ void SpotHubDialog::buildRbnTab(QTabWidget* tabs)
     // Console + spot-color row
     auto* rbnConsoleRow = new QHBoxLayout;
     auto* rbnConsoleLabel = new QLabel("RBN Console");
-    rbnConsoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    rbnConsoleLabel->setStyleSheet(sectionTitleStyle());
     rbnConsoleRow->addWidget(rbnConsoleLabel);
     rbnConsoleRow->addStretch();
 
@@ -1439,7 +1463,7 @@ void SpotHubDialog::buildWsjtxTab(QTabWidget* tabs)
     // Decodes label + spot-life slider
     auto* decodeRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("WSJT-X Decodes");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     decodeRow->addWidget(consoleLabel);
     decodeRow->addStretch();
 
@@ -1593,7 +1617,7 @@ void SpotHubDialog::buildSpotCollectorTab(QTabWidget* tabs)
     layout->addWidget(connGroup);
 
     auto* consoleLabel = new QLabel("SpotCollector Spots");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     layout->addWidget(consoleLabel);
 
     m_scConsole = new QPlainTextEdit;
@@ -1732,7 +1756,7 @@ void SpotHubDialog::buildPotaTab(QTabWidget* tabs)
 
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("POTA Activations");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -1801,10 +1825,11 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
         m_freedvIdentityLabel->setTextFormat(Qt::RichText);
         m_freedvIdentityLabel->setWordWrap(true);
         if (call.isEmpty() || gridSquare.isEmpty()) {
-            m_freedvIdentityLabel->setText(
-                "<b style='color:#e6c200;'>No identity set.</b> "
+            m_freedvIdentityLabel->setText(QStringLiteral(
+                "<b style='color:%1;'>No identity set.</b> "
                 "Go to the <b>Settings</b> tab and fill in your callsign "
-                "and grid square before starting FreeDV Reporter.");
+                "and grid square before starting FreeDV Reporter.")
+                .arg(WorkspacePreview::roleColourName("#e6c200", "warn")));
         } else {
             m_freedvIdentityLabel->setText(QString(
                 "Identity: <b>%1</b> / <b>%2</b> (set in Settings tab)")
@@ -2106,7 +2131,7 @@ void SpotHubDialog::buildFreeDvTab(QTabWidget* tabs)
 
     auto* consoleRow = new QHBoxLayout;
     auto* consoleLabel = new QLabel("FreeDV Spots");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     consoleRow->addWidget(consoleLabel);
     consoleRow->addStretch();
 
@@ -2285,7 +2310,7 @@ void SpotHubDialog::buildPskTab(QTabWidget* tabs)
     layout->addWidget(connGroup);
 
     auto* consoleLabel = new QLabel("PSK Reporter Activity");
-    consoleLabel->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    consoleLabel->setStyleSheet(sectionTitleStyle());
     layout->addWidget(consoleLabel);
 
     m_pskConsole = new QPlainTextEdit;
@@ -2495,6 +2520,10 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     // No default sort - insertion order is newest-first.
     m_spotTable->horizontalHeader()->setSortIndicatorShown(false);
 
+    // Spots arrive from the Core at any moment: a new spot, the cap
+    // trimming the oldest, or a band or source pill filtering rows.
+    installQtCocoaAccessibleTableCacheRepair(m_spotTable);
+
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {
         auto srcIdx = m_spotProxyModel->mapToSource(idx);
@@ -2631,7 +2660,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     leftCol->setSpacing(4);
 
     auto* statsTitle = new QLabel("Statistics");
-    statsTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    statsTitle->setStyleSheet(sectionTitleStyle());
     leftCol->addWidget(statsTitle);
 
     auto makeStatRow = [leftCol](const QString& label, const QString& objName) -> QLabel* {
@@ -2731,7 +2760,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     rightCol->setSpacing(4);
 
     auto* knobsTitle = new QLabel("Spot Settings");
-    knobsTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; }");
+    knobsTitle->setStyleSheet(sectionTitleStyle());
     rightCol->addWidget(knobsTitle);
 
     auto* grid = new QGridLayout;
@@ -3019,8 +3048,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
     // tab's source pills remain a secondary filter for fine-grained
     // control without opening this tab.
     auto* visTitle = new QLabel("Show spots from source");
-    visTitle->setStyleSheet("QLabel { color: #00b4d8; font-weight: bold; "
-                            "margin-top: 8px; }");
+    visTitle->setStyleSheet(sectionTitleStyle("margin-top: 8px; "));
     rightCol->addWidget(visTitle);
 
     static const QVector<QPair<QString, QString>> kSourceChecks = {

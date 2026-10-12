@@ -12,6 +12,10 @@
 //               slider takes HeaderVolumeStyle::kPcSlider's own disabled
 //               look. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-11: the volume slider takes HeaderVolumeStyle::keepFill(), so
+//               it keeps its filled side in the workspace preview as the
+//               PC and RADIO volume sliders on the page do. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "CoreSpeakerCard.h"
@@ -220,6 +224,8 @@ void CoreSpeakerCard::buildLayout()
     // The header's PC slider palette, greyed like the radio slider while
     // disabled.
     m_volume->setStyleSheet(QLatin1String(HeaderVolumeStyle::kPcSlider));
+    // Workspace preview only: a speaker volume keeps its filled side.
+    HeaderVolumeStyle::keepFill(m_volume);
     m_volume->setAccessibleName(tr("Core speaker volume"));
     row->addWidget(m_volume);
     m_readout = new QLabel(this);

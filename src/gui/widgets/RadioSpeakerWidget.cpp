@@ -12,6 +12,10 @@
 //   2026-10-06 - Task 6, JJ decision 2 (R-SPK-17, D1): setStacked() for
 //                the header's stacked form. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09 - HeaderVolumeStyle::keepFill() on the RADIO slider: it
+//                keeps its filled side in the workspace preview
+//                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "RadioSpeakerWidget.h"
@@ -71,6 +75,7 @@ RadioSpeakerWidget::RadioSpeakerWidget(RadioModel* model, QWidget* parent)
     m_slider->setRange(0, 100);
     m_slider->setFixedWidth(kSliderWidth);
     m_slider->setFixedHeight(kSliderHeight);
+    HeaderVolumeStyle::keepFill(m_slider);
     m_slider->setStyleSheet(QLatin1String(HeaderVolumeStyle::kRadioSlider));
     m_slider->setAccessibleName(tr("Radio speaker volume"));
     m_slider->setAccessibleDescription(tr("Radio speaker volume, 0 to 100"));

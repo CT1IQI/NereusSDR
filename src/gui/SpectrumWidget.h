@@ -139,6 +139,10 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-09 - Spot list and spot display changes mark the GPU path's
+//                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
+//                 the spot labels follow them. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -299,6 +303,7 @@ mw0lge@grange-lane.co.uk
 
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QRegion>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -1734,6 +1739,11 @@ public:
     void removeVfoWidget(int sliceIndex);
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
+    /// Where this pan's receiver flags show, in this widget's coordinates:
+    /// each flag, open or folded, with its side buttons and folded
+    /// frequency label (VfoWidget::occupiedRegion). PanadapterApplet keeps
+    /// its corner badges out of it so the flags stay on top of them.
+    QRegion receiverFlagRegion() const { return m_receiverFlagRegion; }
     /// A slice this pan shows only as its flag and, off the span, as its own
     /// edge marker, never through the pan's VFO: a listened slice a layout
     /// change placed on this pan. Cleared when its flag is removed.
@@ -2115,7 +2125,7 @@ public:
     void setHoverSpotIndexExternal(int idx) {
         if (m_hoverSpotIndexExternal != idx) {
             m_hoverSpotIndexExternal = idx;
-            update();
+            markOverlayDirty();  // the highlight is in the static overlay
         }
     }
     // 2026-05-12 bench fix (Gap #7).  Per-source panadapter overlay
@@ -2135,21 +2145,27 @@ public:
         // a class of "default-true silently shows" bugs the bench
         // operator hit with FreeDV spots on 2026-05-12.
         m_spotSourceVisible.insert(source, visible);
-        if (current != visible) { update(); }
+        if (current != visible) { markOverlayDirty(); }
     }
     bool isSpotSourceVisible(const QString& source) const {
         return m_spotSourceVisible.value(source, true);
     }
-    void setShowSpots(bool on) { m_showSpots = on; update(); }
+    // The spot labels are drawn into the GPU path's cached static overlay,
+    // so every input to drawSpotMarkers marks it dirty. AetherSDR's
+    // setShowSpots repaints only (SpectrumWidget.h:680 [@1e0718ad]); ours
+    // gates drawSpotMarkers inside the static overlay on m_showSpots, so
+    // the toggle invalidates it too.
+    void setShowSpots(bool on) { m_showSpots = on; markOverlayDirty(); }
     bool showSpots() const { return m_showSpots; }
-    void setSpotFontSize(int px) { m_spotFontSize = px; update(); }
-    void setSpotMaxLevels(int n) { m_spotMaxLevels = n; update(); }
-    void setSpotStartPct(int pct) { m_spotStartPct = pct; update(); }
-    void setSpotOverrideColors(bool on) { m_spotOverrideColors = on; update(); }
-    void setSpotOverrideBg(bool on) { m_spotOverrideBg = on; update(); }
-    void setSpotColor(const QColor& c) { m_spotColor = c; update(); }
-    void setSpotBgColor(const QColor& c) { m_spotBgColor = c; update(); }
-    void setSpotBgOpacity(int pct) { m_spotBgOpacity = pct; update(); }
+    // From AetherSDR src/gui/SpectrumWidget.h:713-722 [@1e0718ad]
+    void setSpotFontSize(int px) { m_spotFontSize = px; markOverlayDirty(); }
+    void setSpotMaxLevels(int n) { m_spotMaxLevels = n; markOverlayDirty(); }
+    void setSpotStartPct(int pct) { m_spotStartPct = pct; markOverlayDirty(); }
+    void setSpotOverrideColors(bool on) { m_spotOverrideColors = on; markOverlayDirty(); }
+    void setSpotOverrideBg(bool on) { m_spotOverrideBg = on; markOverlayDirty(); }
+    void setSpotColor(const QColor& c) { m_spotColor = c; markOverlayDirty(); }
+    void setSpotBgColor(const QColor& c) { m_spotBgColor = c; markOverlayDirty(); }
+    void setSpotBgOpacity(int pct) { m_spotBgOpacity = pct; markOverlayDirty(); }
 
     // Phase 3J-2 + 3R M2: refresh every Display tab knob from AppSettings.
     // Wired to SpotHubDialog::settingsChanged in MainWindow::openSpotHub
@@ -2328,6 +2344,9 @@ public:
     int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
+    /// receiverFlagRegion() changed: a flag moved, folded, opened, showed or
+    /// hid.
+    void receiverFlagRegionChanged();
     /// Task 78: a click on another device's slice label, with what it says.
     void foreignMarkerClicked(int sliceId, const QString& explanation);
     // 3M-5b: emitted when any TX waterfall colormap property changes.
@@ -4085,6 +4104,9 @@ private:
 #else
     bool dssMeshReady() const { return false; }
 #endif
+
+    QRegion m_receiverFlagRegion;
+    void refreshReceiverFlagRegion();
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,
     // dBm scale, waterfall filter/zero-line/timestamp overlays, and

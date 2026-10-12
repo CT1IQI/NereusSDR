@@ -225,6 +225,9 @@
 //   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the mic source badge points
 //                to Settings > Audio > Microphone, the new name of TX Input.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Issue #357: syncDesktopKeyState's
 //                fallback reads the transmit model's TUNE, which the
 //                release press clears, as the hosting window's handler
@@ -331,6 +334,7 @@
 // 15.  SWR protection LED — QLabel indicator (NYI — 3M-3)
 
 #include "TxApplet.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "gui/HGauge.h"
@@ -926,6 +930,8 @@ void TxApplet::buildUI()
         // Right-click → emit txProfileMenuRequested (mirrors Thetis
         // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
+        installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);

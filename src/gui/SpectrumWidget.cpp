@@ -43,6 +43,10 @@
 //                 so stale noise-floor lines no longer show over the
 //                 frequency scale and waterfall after the spectrum gets
 //                 shorter. AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF. Receiver flags that fold are placed
+//                 again when they fold or open, and the pan reports where
+//                 its flags show (receiverFlagRegion) so its corner badges
+//                 stay under them. AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: "Turn beam
 //                 to CALL (330°)" under "Tune to CALL" in the spot menu
 //                 (greyed with the reason with no rotor or no bearing), the
@@ -182,6 +186,14 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-08 J.J. Boyd / KG4VCF - workspace preview data colours:
+//                 the spectrum, waterfall and DSS default backgrounds
+//                 read WorkspacePreview::dataBackground() (navy until a
+//                 choice is made). AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Spot list and spot display changes mark the GPU path's
+//                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
+//                 the spot labels follow them. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -305,6 +317,7 @@
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "SpectrumWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteDisplayPresenter.h"
 
@@ -497,7 +510,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // CPU fallback: dark background
     setAutoFillBackground(true);
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(0x0f, 0x0f, 0x1a));
+    pal.setColor(QPalette::Window, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
     setPalette(pal);
 #endif
 
@@ -4943,7 +4956,7 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
                          m_waterfall.sizeInBytes());
         }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
-        m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        m_waterfall.fill(WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
         // Pin the new waterfall buffer.  Touched every push (write
         // one row's worth of pixels) and every paint (full incremental
         // texture upload to GPU); compression stalls here cause the
@@ -5264,7 +5277,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         const QImage& surf = buildDssImage(
             specRect.size().boundedTo(QSize(kDssFallbackMaxW, kDssFallbackMaxH)),
             0);
-        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+        p.fillRect(specRect, WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"));
         if (!surf.isNull()) {
             p.drawImage(specRect, surf);
         }
@@ -7857,7 +7870,8 @@ const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
     // bgFill: 0x0a0a14 matches both the pass clear colour and the mesh
     // UBO's bgFill field (writeDssMeshUbo()), for the same reason.
     return m_dss.image(px, scaleStripPx, floorDbm, rangeDb, 0.6f,
-                       palette, dssPaletteToken(), QColor(0x0a, 0x0a, 0x14),
+                       palette, dssPaletteToken(),
+                       WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"),
                        dssShape(), m_centerHz / 1.0e6,
                        m_bandwidthHz / 1.0e6);
 }
@@ -9033,6 +9047,10 @@ void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4303-4307 [@0cd4559]
 // Repaint guard added per AetherSDR [@a173272d] PR #2474.
+// From AetherSDR src/gui/SpectrumWidget.cpp:15378-15383 [@1e0718ad]: a
+// visual change marks the overlay dirty. The GPU path draws the spot labels
+// into its cached static overlay; update() alone left them stale until
+// something else invalidated it.
 void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
 {
     const bool visualChange = !spotMarkersVisuallyEqual(m_spotMarkers, markers);
@@ -9040,7 +9058,7 @@ void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
     if (!visualChange) {
         return;
     }
-    update();
+    markOverlayDirty();
 }
 
 // Phase 3J-2 + 3R M2: refresh every Spot Display knob from AppSettings.
@@ -9100,7 +9118,8 @@ void SpectrumWidget::loadSpotDisplaySettings()
             == QStringLiteral("True");
         setSpotSourceVisible(source, visible);
     }
-    update();
+    // The spot labels are in the GPU path's static overlay.
+    markOverlayDirty();
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4497-4633 [@0cd4559]
@@ -12211,7 +12230,7 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     ubo[i++] = 0.0f;                                  // std140 pad
     ubo[i++] = 0.0f;                                  // std140 pad
 
-    const QColor bg(0x0a, 0x0a, 0x14);
+    const QColor bg = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     ubo[i++] = bg.redF();
     ubo[i++] = bg.greenF();
     ubo[i++] = bg.blueF();
@@ -13116,7 +13135,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
-    const QColor clearColor(0x0a, 0x0a, 0x14);
+    const QColor clearColor = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     cb->beginPass(renderTarget(), clearColor, {1.0f, 0});
 
     const QSize outputSize = renderTarget()->pixelSize();
@@ -13540,6 +13559,12 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::activeSliceChanged, this, [this](bool) {
         markOverlayDirty();
     });
+    // Flag fold (workspace visual review Task 26): a folded or opened flag
+    // is placed again at its new width, and its marker redrawn.
+    connect(w, &VfoWidget::collapsedChanged, this, [this](bool) {
+        updateVfoPositions();
+        markOverlayDirty();
+    });
     w->show();
     w->raise();
     return w;
@@ -13557,6 +13582,7 @@ void SpectrumWidget::removeVfoWidget(int sliceIndex)
         // are alive keeps the destruction order ours (issue #113).
         w->destroyFloatingButtons();
         delete w;
+        refreshReceiverFlagRegion();
         update();
     }
 }
@@ -13679,6 +13705,19 @@ void SpectrumWidget::updateVfoPositions()
     // A's frequency readout." Re-asserting the pin here, after the loop, is
     // what makes it survive this pass instead of only the one it was set on.
     raiseFrontVfoWidget();
+    refreshReceiverFlagRegion();
+}
+
+void SpectrumWidget::refreshReceiverFlagRegion()
+{
+    QRegion region;
+    for (VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+        region += vfo->occupiedRegion();
+    }
+    if (region != m_receiverFlagRegion) {
+        m_receiverFlagRegion = region;
+        emit receiverFlagRegionChanged();
+    }
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------

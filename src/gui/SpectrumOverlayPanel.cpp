@@ -70,11 +70,29 @@
 //   2026-09-30 - TX rulings (item 3, JJ): the ATT flyout is held, with the
 //                reason, on a pan whose slice this window only listens to.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace visual review Task 26: on a short pan the zoom
+//                 row (S, B, -, +) moves to just right of the open button
+//                 column instead of covering its lower buttons; it stays at
+//                 the bottom left otherwise. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-09 - The ANT flyout's RX and TX rows and the ATT check box no
+//                 longer draw the flyout's frame again: kPanelStyle stays
+//                 AetherSDR's text, the rows take a scoped rule with no
+//                 background or border and the check box one with no
+//                 border, so its indicator keeps its square. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "StyleConstants.h"
+#include "gui/styles/WorkspaceComponents.h"
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include "core/AntennaLabels.h"
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
@@ -149,6 +167,131 @@ namespace OverlayColors {
         "color: #ffffff; font-size: 11px; font-weight: bold; }";
 } // namespace OverlayColors
 
+// ── Workspace preview styles ─────────────────────────────────────────────────
+// With WorkspacePreview::enabled() the strip and corner buttons keep their
+// geometry, translucency and font sizes and take the Glass and Depth roles:
+// a neutral raised chip, a quiet hover, the selected blue when active. With
+// the switch off each helper returns the OverlayColors string unchanged.
+namespace {
+
+QString wsRgba(const char* role, const char* fallback, int alpha)
+{
+    const QColor c(Workspace::role(role, fallback));
+    return QStringLiteral("rgba(%1, %2, %3, %4)")
+        .arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
+}
+
+// A vertical gradient between two palette roles at one alpha: the
+// buttons float over the spectrum, so they keep their translucency.
+QString wsGrad(const char* topRole, const char* topFallback,
+               const char* bottomRole, const char* bottomFallback, int alpha)
+{
+    return QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2)")
+        .arg(wsRgba(topRole, topFallback, alpha), wsRgba(bottomRole, bottomFallback, alpha));
+}
+
+// Raised (light top, dark bottom), radius 4, light top edge and dark
+// bottom edge; hover lighter; pressed flipped. Sizes and fonts are the
+// legacy ones, so no button moves.
+QString wsMenuBtnStyle(int fontPx, int bgAlpha)
+{
+    return QStringLiteral(
+        "QPushButton { background: %1; "
+        "border: 1px solid %2; border-top-color: %3; border-bottom-color: %4; "
+        "border-radius: %5px; "
+        "color: %6; font-size: %7px; font-weight: bold; }"
+        "QPushButton:hover { background: %8; }"
+        "QPushButton:pressed { background: %9; "
+        "border-top-color: %4; border-bottom-color: %3; }")
+        .arg(wsGrad("raised-top", "#222227", "raised-bottom", "#141417", bgAlpha),
+             Workspace::role("border", "#2c2c31"),
+             Workspace::role("edge-light", "#38383e"),
+             Workspace::role("edge-dark", "#1f1f23"))
+        .arg(Workspace::Components::radiusFor(kBtnH))
+        .arg(Workspace::role("text", "#dcdce1"))
+        .arg(fontPx)
+        .arg(wsGrad("button-alt-hover", "#2f3138", "button", "#1a1a1e", 240),
+             wsGrad("raised-bottom", "#141417", "raised-top", "#222227", bgAlpha));
+}
+
+QString menuBtnNormalStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kMenuBtnNormal);
+    }
+    return wsMenuBtnStyle(11, 240);
+}
+
+QString menuBtnActiveStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kMenuBtnActive);
+    }
+    // The selected state: the glass gradient, its border and a lighter
+    // top edge.
+    return QStringLiteral(
+        "QPushButton { background: %1; "
+        "border: 1px solid %2; border-top-color: %3; border-radius: %4px; "
+        "color: %5; font-size: 11px; font-weight: bold; }")
+        .arg(wsGrad("selected-top", "#2f5f92", "selected-bottom", "#1e3d5f", 230),
+             Workspace::role("selected-border", "#3d78b0"),
+             Workspace::shiftL(QColor(Workspace::role("selected-border", "#3d78b0")), 16))
+        .arg(Workspace::Components::radiusFor(kBtnH))
+        .arg(Workspace::role("selected-text", "#dbe9f8"));
+}
+
+QString panelStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kPanelStyle);
+    }
+    return QStringLiteral(
+        "QWidget { background: %1; "
+        "border: 1px solid %2; border-radius: 3px; }")
+        .arg(wsRgba("panel", "#0c0c0e", 220), Workspace::role("border", "#2c2c31"));
+}
+
+QString labelStyle()
+{
+    if (!WorkspacePreview::enabled()) {
+        return QString::fromLatin1(OverlayColors::kLabelStyle);
+    }
+    return QStringLiteral(
+        "QLabel { background: transparent; border: none; "
+        "color: %1; font-size: 10px; font-weight: bold; }")
+        .arg(Workspace::role("title-text", "#c4c4ca"));
+}
+
+// kPanelStyle (AetherSDR's text, kept byte-exact) is an unnamed QWidget
+// rule, so it reaches every widget inside a flyout. AetherSDR builds its
+// RX ANT row as a bare layout and gives its one row widget (m_loopRow)
+// "QWidget { background: transparent; border: none; }". Ours wraps each
+// antenna row in a QWidget (so setBoardCapabilities hides it as a unit) and
+// the step attenuator has a check box, so each drew the flyout's frame
+// around itself again. They take this rule instead, scoped to the row's
+// own object name so its label and combo keep theirs. The check box drops
+// only the border: its background is what Fusion fills the indicator from,
+// so clearing it would also clear the indicator's square.
+QString clearRowStyle(const QString& objectName)
+{
+    return QStringLiteral("QWidget#%1 { background: transparent; border: none; }").arg(objectName);
+}
+
+QString checkBoxStyle()
+{
+    return labelStyle() + QStringLiteral(" QCheckBox { border: none; }");
+}
+
+// The flyout's own controls go through the scoped pass when shown.
+void themeFlyout(QWidget* flyout)
+{
+    if (WorkspacePreview::enabled()) {
+        WorkspacePreview::themeSubtree(flyout);
+    }
+}
+
+} // namespace
+
 // File-local helpers for opaque styles that diverge from the canonical
 // Style:: helpers (per §A2 exception pattern — verified byte-by-byte):
 
@@ -167,7 +310,7 @@ static QPushButton* makeMenuBtn(const QString& text, QWidget* parent)
 {
     auto* btn = new QPushButton(text, parent);
     btn->setFixedSize(kBtnW, kBtnH);
-    btn->setStyleSheet(OverlayColors::kMenuBtnNormal);
+    btn->setStyleSheet(menuBtnNormalStyle());
     return btn;
 }
 
@@ -194,6 +337,9 @@ SpectrumOverlayPanel::SpectrumOverlayPanel(QWidget* parent)
         "color: #c8d8e8; font-size: 13px; font-weight: bold; }"
         "QPushButton:hover { background: rgba(0, 112, 192, 180); "
         "border: 1px solid #0090e0; }");
+    if (WorkspacePreview::enabled()) {
+        m_collapseBtn->setStyleSheet(wsMenuBtnStyle(13, 240));
+    }
     connect(m_collapseBtn, &QPushButton::clicked, this, &SpectrumOverlayPanel::toggle);
 
     // Button 2: +RX (NYI Phase 3F)
@@ -313,6 +459,12 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     if (obj == parentWidget() && event->type() == QEvent::Resize) {
         repositionZoomButtons();
     }
+    // Task 26: the row's place depends on where the column is, so follow
+    // the column when it moves (MainWindow places it after construction).
+    // This filter is installed on the application, so it sees our own moves.
+    if (obj == this && event->type() == QEvent::Move) {
+        repositionZoomButtons();
+    }
 
     return QWidget::eventFilter(obj, event);
 }
@@ -337,7 +489,7 @@ void SpectrumOverlayPanel::hideFlyout()
         m_activeFlyout = nullptr;
     }
     if (m_activeButton) {
-        m_activeButton->setStyleSheet(OverlayColors::kMenuBtnNormal);
+        m_activeButton->setStyleSheet(menuBtnNormalStyle());
         m_activeButton = nullptr;
     }
 }
@@ -370,6 +522,8 @@ void SpectrumOverlayPanel::updateLayout()
         ? (kPad + kBtnH + kGap + shownCount * (kBtnH + kGap))
         : (kPad + kBtnH + kPad);
     setFixedSize(kPad + kBtnW + kPad, totalH);
+    // Task 26: the column grew or shrank; keep the zoom row clear of it.
+    repositionZoomButtons();
 }
 
 // ── toggle ────────────────────────────────────────────────────────────────────
@@ -389,7 +543,7 @@ void SpectrumOverlayPanel::toggle()
 void SpectrumOverlayPanel::buildBandFlyout()
 {
     m_bandFlyout = new QWidget(parentWidget());
-    m_bandFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_bandFlyout->setStyleSheet(panelStyle());
     m_bandFlyout->hide();
 
     auto* grid = new QGridLayout(m_bandFlyout);
@@ -445,10 +599,11 @@ void SpectrumOverlayPanel::toggleBandFlyout()
     // Flyout: top-aligned with panel (from AetherSDR toggleBandPanel)
     m_bandFlyout->move(x() + width(), y());
     m_bandFlyout->raise();
+    themeFlyout(m_bandFlyout);
     m_bandFlyout->show();
     m_activeFlyout = m_bandFlyout;
     m_activeButton = bandBtn;
-    bandBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    bandBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── ANT flyout ────────────────────────────────────────────────────────────────
@@ -456,7 +611,7 @@ void SpectrumOverlayPanel::toggleBandFlyout()
 void SpectrumOverlayPanel::buildAntFlyout()
 {
     m_antFlyout = new QWidget(parentWidget());
-    m_antFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_antFlyout->setStyleSheet(panelStyle());
     m_antFlyout->hide();
 
     auto* vbox = new QVBoxLayout(m_antFlyout);
@@ -472,14 +627,18 @@ void SpectrumOverlayPanel::buildAntFlyout()
     // can hide them as a unit on HL2/Atlas.
     {
         m_rxAntRow = new QWidget;
+        m_rxAntRow->setObjectName(QStringLiteral("rxAntRow"));
+        m_rxAntRow->setStyleSheet(clearRowStyle(m_rxAntRow->objectName()));
         auto* row = new QHBoxLayout(m_rxAntRow);
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
         auto* lbl = new QLabel("RX Ant:");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_rxAntCmb = new QComboBox;
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
+        installQtCocoaAccessibleTableCacheRepair(m_rxAntCmb->view());
         m_rxAntCmb->setObjectName(QStringLiteral("m_rxAntCmb"));
         // Seed with default labels; setBoardCapabilities replaces once
         // a radio is connected.
@@ -507,14 +666,18 @@ void SpectrumOverlayPanel::buildAntFlyout()
 
     {
         m_txAntRow = new QWidget;
+        m_txAntRow->setObjectName(QStringLiteral("txAntRow"));
+        m_txAntRow->setStyleSheet(clearRowStyle(m_txAntRow->objectName()));
         auto* row = new QHBoxLayout(m_txAntRow);
         row->setContentsMargins(0, 0, 0, 0);
         row->setSpacing(4);
         auto* lbl = new QLabel("TX Ant:");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_txAntCmb = new QComboBox;
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
+        installQtCocoaAccessibleTableCacheRepair(m_txAntCmb->view());
         m_txAntCmb->setObjectName(QStringLiteral("m_txAntCmb"));
         m_txAntCmb->addItems(QStringList{"ANT1", "ANT2", "ANT3"});
         m_txAntCmb->setFixedHeight(kBtnH);
@@ -552,10 +715,11 @@ void SpectrumOverlayPanel::toggleAntFlyout()
     int panelY = y() + antBtnCenterY - m_antFlyout->sizeHint().height() / 2;
     m_antFlyout->move(x() + width(), std::max(0, panelY));
     m_antFlyout->raise();
+    themeFlyout(m_antFlyout);
     m_antFlyout->show();
     m_activeFlyout = m_antFlyout;
     m_activeButton = antBtn;
-    antBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    antBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── Display flyout ────────────────────────────────────────────────────────────
@@ -563,7 +727,7 @@ void SpectrumOverlayPanel::toggleAntFlyout()
 void SpectrumOverlayPanel::buildDisplayFlyout()
 {
     m_displayFlyout = new QWidget(parentWidget());
-    m_displayFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_displayFlyout->setStyleSheet(panelStyle());
     m_displayFlyout->hide();
 
     auto* grid = new QGridLayout(m_displayFlyout);
@@ -797,9 +961,10 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
 
     // "More Display Options →" footer link — B8 Task 24: wired to Setup → Display.
     {
-        auto* moreLbl = new QLabel("<a href=\"#more\" style=\"color: #00b4d8; "
+        auto* moreLbl = new QLabel(QStringLiteral("<a href=\"#more\" style=\"color: %1; "
                                    "text-decoration: none; font-size: 10px;\">"
-                                   "More Display Options &#x2192;</a>");
+                                   "More Display Options &#x2192;</a>")
+                                       .arg(WorkspacePreview::roleColourName("#00b4d8", "accent")));
         moreLbl->setTextFormat(Qt::RichText);
         moreLbl->setTextInteractionFlags(Qt::TextBrowserInteraction);
         moreLbl->setToolTip("Open full display settings in Setup → Display");
@@ -830,10 +995,11 @@ void SpectrumOverlayPanel::toggleDisplayFlyout()
     m_displayFlyout->adjustSize();
     m_displayFlyout->move(x() + width(), y());
     m_displayFlyout->raise();
+    themeFlyout(m_displayFlyout);
     m_displayFlyout->show();
     m_activeFlyout = m_displayFlyout;
     m_activeButton = dispBtn;
-    dispBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    dispBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── VAX flyout ────────────────────────────────────────────────────────────────
@@ -841,7 +1007,7 @@ void SpectrumOverlayPanel::toggleDisplayFlyout()
 void SpectrumOverlayPanel::buildVaxFlyout()
 {
     m_vaxFlyout = new QWidget(parentWidget());
-    m_vaxFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_vaxFlyout->setStyleSheet(panelStyle());
     m_vaxFlyout->hide();
 
     auto* vb = new QVBoxLayout(m_vaxFlyout);
@@ -853,7 +1019,7 @@ void SpectrumOverlayPanel::buildVaxFlyout()
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
         auto* lbl = new QLabel("VAX Ch");
-        lbl->setStyleSheet(OverlayColors::kLabelStyle);
+        lbl->setStyleSheet(labelStyle());
         row->addWidget(lbl);
         m_vaxCmb = new QComboBox;
         m_vaxCmb->setObjectName(QStringLiteral("vaxCombo"));
@@ -1151,10 +1317,11 @@ void SpectrumOverlayPanel::toggleVaxFlyout()
     int panelY = y() + btnCenterY - m_vaxFlyout->sizeHint().height() / 2;
     m_vaxFlyout->move(x() + width(), std::max(0, panelY));
     m_vaxFlyout->raise();
+    themeFlyout(m_vaxFlyout);
     m_vaxFlyout->show();
     m_activeFlyout = m_vaxFlyout;
     m_activeButton = vaxBtn;
-    vaxBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    vaxBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 // ── ATT flyout (R-R3-21) ─────────────────────────────────────────────────────
@@ -1169,7 +1336,7 @@ void SpectrumOverlayPanel::buildAttFlyout()
 {
     m_attFlyout = new QWidget(parentWidget());
     m_attFlyout->setObjectName(QStringLiteral("attFlyout"));
-    m_attFlyout->setStyleSheet(OverlayColors::kPanelStyle);
+    m_attFlyout->setStyleSheet(panelStyle());
     m_attFlyout->hide();
 
     auto* vb = new QVBoxLayout(m_attFlyout);
@@ -1178,14 +1345,14 @@ void SpectrumOverlayPanel::buildAttFlyout()
 
     m_attEnableChk = new QCheckBox(QStringLiteral("Step attenuator"));
     m_attEnableChk->setObjectName(QStringLiteral("attEnableCheck"));
-    m_attEnableChk->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attEnableChk->setStyleSheet(checkBoxStyle());
     m_attEnableChk->setToolTip(QStringLiteral("Use the radio's step attenuator"));
     vb->addWidget(m_attEnableChk);
 
     auto* row = new QHBoxLayout;
     row->setSpacing(4);
     auto* lbl = new QLabel(QStringLiteral("ATT"));
-    lbl->setStyleSheet(OverlayColors::kLabelStyle);
+    lbl->setStyleSheet(labelStyle());
     row->addWidget(lbl);
     m_attSpin = new QSpinBox;
     m_attSpin->setObjectName(QStringLiteral("attSpin"));
@@ -1198,7 +1365,7 @@ void SpectrumOverlayPanel::buildAttFlyout()
     m_attReason = new QLabel;
     m_attReason->setObjectName(QStringLiteral("attReason"));
     m_attReason->setWordWrap(true);
-    m_attReason->setStyleSheet(OverlayColors::kLabelStyle);
+    m_attReason->setStyleSheet(labelStyle());
     m_attReason->setVisible(false);
     vb->addWidget(m_attReason);
 
@@ -1285,10 +1452,11 @@ void SpectrumOverlayPanel::toggleAttFlyout()
     const int panelY = y() + btnCenterY - m_attFlyout->sizeHint().height() / 2;
     m_attFlyout->move(x() + width(), std::max(0, panelY));
     m_attFlyout->raise();
+    themeFlyout(m_attFlyout);
     m_attFlyout->show();
     m_activeFlyout = m_attFlyout;
     m_activeButton = attBtn;
-    attBtn->setStyleSheet(OverlayColors::kMenuBtnActive);
+    attBtn->setStyleSheet(menuBtnActiveStyle());
 }
 
 void SpectrumOverlayPanel::wheelEvent(QWheelEvent* event) { event->accept(); }
@@ -1319,11 +1487,12 @@ void SpectrumOverlayPanel::buildZoomButtons()
         "QPushButton:hover { background: rgba(0, 112, 192, 180); "
         "border: 1px solid #0090e0; }"
         "QPushButton:pressed { background: rgba(0, 144, 224, 200); }";
+    const QString zoomStyle = WorkspacePreview::enabled() ? wsMenuBtnStyle(10, 200) : zBtnStyle;
 
     auto makeZBtn = [&](const QString& text) -> QPushButton* {
         auto* btn = new QPushButton(text, m_zoomStrip);
         btn->setFixedSize(kZBtnW, kZBtnH);
-        btn->setStyleSheet(zBtnStyle);
+        btn->setStyleSheet(zoomStyle);
         return btn;
     };
 
@@ -1366,6 +1535,25 @@ void SpectrumOverlayPanel::repositionZoomButtons()
     int x = kMargin;
     int y = spectrum->height() - kFreqScaleH - m_zoomStrip->height() - kMargin;
     y = std::max(kMargin, y);
+    // Task 26: on a short pan the open button column reaches down to the
+    // row and the row covered its lower buttons (ATT). Then the row moves to
+    // just right of the column at the same height; on a tall pan, or with
+    // the column folded, nothing changes. AetherSDR keeps its zoom grid at
+    // the bottom left with no such check (SpectrumWidget.cpp:11542
+    // positionZoomButtons [@3a1f59ea]).
+    if (!isHidden()) {
+        const QRect row(QPoint(x, y), m_zoomStrip->size());
+        bool covers = false;
+        for (QPushButton* btn : findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (!btn->isHidden() && btn->geometry().translated(pos()).intersects(row)) {
+                covers = true;
+                break;
+            }
+        }
+        if (covers) {
+            x = geometry().right() + 1 + kMargin;
+        }
+    }
     m_zoomStrip->move(x, y);
     m_zoomStrip->raise();
 }

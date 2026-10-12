@@ -74,6 +74,13 @@
 using namespace NereusSDR;
 
 namespace {
+
+// The text Qt shows for a mnemonic-parsed widget text (a buddy label or a
+// button): "&&" draws one ampersand. The descriptions hold the shown text.
+QString shownText(QString text)
+{
+    return text.replace(QStringLiteral("&&"), QStringLiteral("&"));
+}
 // A Core link that offers the radio speaker (radioSpeakerVersion 1).
 class SpeakerLink : public IStationLink {
 public:
@@ -599,7 +606,7 @@ private slots:
             QVERIFY(form != nullptr);
             auto* label = qobject_cast<QLabel*>(form->labelForField(swatch));
             QVERIFY(label != nullptr);
-            QCOMPARE(label->text(), control.value("label").toString());
+            QCOMPARE(shownText(label->text()), control.value("label").toString());
         }
         QCOMPARE(actualKeys, expectedKeys);
         QVERIFY(bySetupId(page, QStringLiteral("appearance.colorsTheme.waterfallLowColor")) == nullptr);
@@ -710,7 +717,7 @@ private slots:
                 && object->property("nereusSetupId").toString() == id) {
                 auto* button = qobject_cast<QAbstractButton*>(object);
                 QVERIFY2(button != nullptr, qPrintable(id));
-                QCOMPARE(button->text(), control.value("label").toString());
+                QCOMPARE(shownText(button->text()), control.value("label").toString());
             }
             if (kind == "integer") {
                 auto* spin = qobject_cast<QSpinBox*>(object);
