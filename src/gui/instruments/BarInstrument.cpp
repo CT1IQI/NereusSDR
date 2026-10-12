@@ -82,6 +82,9 @@
 //                 refits the footer (shared Longpath defect); adds
 //                 clearSecondValue().
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The compact form shows one dash for no reading, as the
+//                 footer of the full form does (upstream drew two).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/BarInstrument.h"
@@ -346,8 +349,11 @@ void BarInstrument::paintOne(QPainter& p, const QRectF& area,
             // SWR im Frequenz-Applet ohne jede Zahl da — eine leere
             // Zeile liest sich als "kaputt", ein Strich als "nichts
             // gemessen".
+            // NereusSDR: one dash, as the footer of the full form and of
+            // the needle shows for no reading (refreshFooter). Upstream
+            // drew two here, so the two forms side by side disagreed.
             const QString text = hasValue ? d.textWithUnit(value)
-                                          : QStringLiteral("\u2014\u2014");
+                                          : QStringLiteral("\u2014");
             const QFont valueFont = Style::monoFont(
                 p.font(), Style::kFontCaption, QFont::DemiBold);
             p.setFont(valueFont);

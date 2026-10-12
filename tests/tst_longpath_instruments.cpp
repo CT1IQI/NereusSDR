@@ -26,6 +26,8 @@
 //   2026-10-11 - The source chip case no longer calls the removed header
 //                 preview seam; its header is shown. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - barFormsShowTheSameTextForNoReading. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <cstring>
 #include <QApplication>
@@ -34,6 +36,9 @@
 #include <QGroupBox>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPaintDevice>
+#include <QPaintEngine>
+#include <QPainter>
 #include <QSignalSpy>
 #include <QStandardItemModel>
 #include <QTimer>
@@ -85,6 +90,75 @@ QString vfoRowText(const QWidget& w)
         if (l->text().count(QStringLiteral("<font")) == 2) { return l->text(); }
     }
     return {};
+}
+
+// A paint device that keeps the text drawn on it and nothing else.
+class TextObserverEngine final : public QPaintEngine {
+public:
+    TextObserverEngine() : QPaintEngine(AllFeatures) {}
+    QStringList texts;
+    bool begin(QPaintDevice* device) override
+    {
+        setPaintDevice(device);
+        setActive(true);
+        return true;
+    }
+    bool end() override
+    {
+        setActive(false);
+        return true;
+    }
+    void updateState(const QPaintEngineState&) override {}
+    Type type() const override { return User; }
+    void drawPixmap(const QRectF&, const QPixmap&, const QRectF&) override {}
+    void drawImage(const QRectF&, const QImage&, const QRectF&, Qt::ImageConversionFlags) override {}
+    void drawPath(const QPainterPath&) override {}
+    void drawPolygon(const QPointF*, int, PolygonDrawMode) override {}
+    void drawTextItem(const QPointF&, const QTextItem& item) override { texts.append(item.text()); }
+};
+class TextObserverDevice final : public QPaintDevice {
+public:
+    explicit TextObserverDevice(QSize size) : m_size(size) {}
+    QPaintEngine* paintEngine() const override { return &m_engine; }
+    const QStringList& texts() const { return m_engine.texts; }
+
+protected:
+    int metric(PaintDeviceMetric metric) const override
+    {
+        switch (metric) {
+        case PdmWidth: return m_size.width();
+        case PdmHeight: return m_size.height();
+        case PdmDpiX: case PdmDpiY: case PdmPhysicalDpiX: case PdmPhysicalDpiY: return 96;
+        case PdmDepth: return 32;
+        case PdmDevicePixelRatio: return 1;
+        case PdmDevicePixelRatioScaled: return int(devicePixelRatioFScale());
+        default: return QPaintDevice::metric(metric);
+        }
+    }
+
+private:
+    QSize m_size;
+    mutable TextObserverEngine m_engine;
+};
+
+// The text a bar draws at `size` (its footer is a child widget and draws
+// its own).
+QStringList textsDrawnBy(BarInstrument& bar, QSize size)
+{
+    TextObserverDevice device(size);
+    QPainter painter(&device);
+    bar.paintInto(painter, size, false);
+    painter.end();
+    return device.texts();
+}
+
+// The value at the right of an instrument's footer: the last label in it.
+QString footerValueText(const QWidget& instrument)
+{
+    const auto* footer = instrument.findChild<InstrumentFooter*>();
+    if (!footer || !footer->layout() || footer->layout()->count() == 0) { return {}; }
+    const auto* value = qobject_cast<QLabel*>(footer->layout()->itemAt(footer->layout()->count() - 1)->widget());
+    return value ? value->text() : QString();
 }
 
 } // namespace
@@ -163,6 +237,50 @@ private slots:
         bar.resize(bar.sizeHint());
         settle();
         QVERIFY(footer->isVisible());
+    }
+
+    void barFormsShowTheSameTextForNoReading()
+    {
+        // Forward power large beside reflected power and SWR slim: with
+        // nothing measured the full form's footer and the compact form's
+        // value line show the same single dash, the one the needle's
+        // footer shows too.
+        const QString dash(QChar(0x2014));
+        BarInstrument full;
+        QVERIFY(full.setPrimary(MeterBinding::TxSwr));
+        BarInstrument compact;
+        compact.setCompact(true);
+        QVERIFY(compact.setPrimary(MeterBinding::TxSwr));
+        QVERIFY(compact.setSecondary(MeterBinding::TxPower));
+        NeedleInstrument needle;
+        QVERIFY(needle.setPrimary(MeterBinding::SignalPeak));
+        const QSize slim(320, compact.sizeHint().height());
+
+        const auto compactPlaceholders = [&] {
+            QStringList drawn = textsDrawnBy(compact, slim);
+            // What is left beside the two names is the two values.
+            const int before = drawn.size();
+            drawn.removeAll(readingFor(MeterBinding::TxSwr)->thetisName());
+            drawn.removeAll(readingFor(MeterBinding::TxPower)->thetisName());
+            return before - drawn.size() == 2 ? drawn : QStringList{QStringLiteral("names not drawn")};
+        };
+        QVERIFY(!full.hasValue() && !compact.hasValue() && !compact.hasSecondValue());
+        QCOMPARE(footerValueText(full), dash);
+        QCOMPARE(footerValueText(needle), dash);
+        QCOMPARE(compactPlaceholders(), (QStringList{dash, dash}));
+
+        // With readings each shows its value; cleared, the dash again.
+        full.onReading(MeterBinding::TxSwr, 1.25);
+        compact.onReading(MeterBinding::TxSwr, 1.25);
+        compact.onReading(MeterBinding::TxPower, 50.0);
+        const QString swr = readingFor(MeterBinding::TxSwr)->textWithUnit(1.25);
+        QVERIFY(swr != dash);
+        QCOMPARE(footerValueText(full), swr);
+        QCOMPARE(compactPlaceholders(), (QStringList{swr, readingFor(MeterBinding::TxPower)->textWithUnit(50.0)}));
+        full.clearValue();
+        compact.clearValue();
+        QCOMPARE(footerValueText(full), dash);
+        QCOMPARE(compactPlaceholders(), (QStringList{footerValueText(full), footerValueText(full)}));
     }
 
     void barFooterMakesRoomForTheSecondTrough()
