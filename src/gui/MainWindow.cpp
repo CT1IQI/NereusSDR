@@ -718,6 +718,12 @@
 //                the slice meter pump takes each flag's reading from its
 //                own pan (maxBinSpectrumFor), as a window on a Core does.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Reset Default Layout puts the Main Panel's applets back in
+//                the first-launch order, the S-Meter first and showing; it
+//                kept the order they had, which could leave the S-Meter
+//                last or hidden. The S-Meter has a check box in the
+//                Containers menu's applet list. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -2402,6 +2408,21 @@ QHash<int, VfoWidget::SliceAccess> windowSliceAccess(const QList<SliceChooser::R
         access.insert(row.sliceId, SliceChooser::flagAccessFor(row));
     }
     return access;
+}
+
+// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
+// second at the time it is placed, every other applet after the ones
+// already there. The first launch and Reset Default Layout both place
+// through this, so a reset draws what a first launch draws.
+void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry)
+{
+    if (entry.typeId == QLatin1String("applet:s_meter")) {
+        contents.prepend(entry);
+    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
+        contents.insert(qMin(1, contents.size()), entry);
+    } else {
+        contents.append(entry);
+    }
 }
 
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
@@ -7584,10 +7605,7 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                auto entry = contentRegistry->makeEntry(descriptor.typeId);
-                if (descriptor.typeId == "applet:s_meter") { c.contents.prepend(entry); }
-                else if (descriptor.typeId == "applet:mod_monitor") { c.contents.insert(qMin(1,c.contents.size()),entry); }
-                else { c.contents.append(entry); }
+                placeFirstLaunchApplet(c.contents, contentRegistry->makeEntry(descriptor.typeId));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -9435,9 +9453,30 @@ void MainWindow::resetDefaultLayout()
     if (auto* store=m_containerManager->workspaceStore()) {
         WorkspaceDocument document=store->snapshot();
         ContainerDocument main; main.id=document.mainContainerId; main.name=tr("Main Panel"); main.layout=ContentLayout::VerticalStack;
+        QVector<ContentEntry> retained;
         for (const auto& c : document.containers) { for (const auto& entry : c.contents) {
-            if (entry.typeId.startsWith("applet:")) { auto retained=entry; retained.returnLocation.reset(); main.contents.append(retained); }
+            if (entry.typeId.startsWith("applet:")) { retained.append(entry); retained.last().returnLocation.reset(); }
         } }
+        // The applets come back in the first-launch order, each with the
+        // entry it had (its id and settings). The S-Meter shows again: it
+        // has no row in the Applets menu, and left last in the panel or
+        // hidden a reset did not bring it back. Every other applet keeps
+        // the shown or hidden state the Applets menu gave it.
+        if (auto* registry=m_containerManager->contentRegistry()) {
+            for (const auto& descriptor : registry->descriptors()) {
+                if (!descriptor.singleton) { continue; }
+                ContentEntry entry;
+                bool found=false;
+                for (int i=0;i<retained.size();++i) {
+                    if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
+                }
+                if (!found) { entry=registry->makeEntry(descriptor.typeId); }
+                if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
+                placeFirstLaunchApplet(main.contents, entry);
+            }
+        }
+        // Applet records no descriptor names (and a duplicate placement) stay recoverable.
+        main.contents += retained;
         document.containers={main};
         m_containerManager->commitWorkspace(document,document.revision); return;
     }
@@ -10331,6 +10370,11 @@ void MainWindow::populateDefaultMeter()
     // menu entry stays available for users who want to force-show or
     // permanently hide it. Defaulting to true here means new G2 users see
     // PS immediately without having to discover the menu toggle.
+    // The S-Meter has a check box with the other applets, first as it is
+    // first in the panel (JJ, 2026-10-12). Its view is the panel's analog
+    // meter, attached to the registry in populateDefaultMeter().
+    m_appletVis->registerApplet(QStringLiteral("SMeter"),
+                                QStringLiteral("S-Meter"),      true);
     m_appletVis->registerApplet(QStringLiteral("Rx"),
                                 QStringLiteral("RX"),           true);
     m_appletVis->registerApplet(QStringLiteral("Display"),
@@ -10499,6 +10543,8 @@ void MainWindow::populateDefaultMeter()
     }
     for (const QString& id : m_appletVis->registeredIds()) {
         const QString type = ContainerContentRegistry::appletTypeForVisibilityId(id);
+        // The S-Meter's view was attached above; it is no AppletWidget.
+        if (type == QLatin1String("applet:s_meter")) { continue; }
         registry->setAvailable(type, m_appletVis->isAvailable(id));
         registry->attachSingleton(type, m_appletsById.value(id));
     }
