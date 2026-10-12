@@ -29,6 +29,9 @@
 //               ASIO between Windows audio and the older drivers, outside
 //               the mic helper (which hosts the driver itself).  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the older drivers are listed on demand outside the mic
+//               helper, so PortAudio does not start at launch. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioBackendRegistry.h"
@@ -134,9 +137,14 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
         backends.push_back(std::make_shared<AsioBackend>());
     }
     constexpr bool kIncludeReplacedHostApis = false;
-    backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
-                                                          currentOlderDriverPlatform(),
-                                                          kIncludeReplacedHostApis));
+    auto olderDrivers = std::make_shared<PortAudioBackend>(&listPortAudioDevices,
+                                                           currentOlderDriverPlatform(),
+                                                           kIncludeReplacedHostApis);
+    // PortAudio starts on first need, never at launch: listed once
+    // something asks for the older drivers.  The mic helper starts
+    // PortAudio itself, for an open on them.
+    olderDrivers->setListsOnDemand(!context.helper);
+    backends.push_back(std::move(olderDrivers));
 #else
     // R-AUD-01, Linux: PipeWire, then PulseAudio, then the older drivers.
     // The Core has no desktop session, so it registers neither: it plays
@@ -195,9 +203,12 @@ std::vector<std::shared_ptr<IAudioEngineBackend>> makeSystemAudioBackends(const 
         includeReplacedHostApis = false;
     }
 #endif
-    backends.push_back(std::make_shared<PortAudioBackend>(&listPortAudioDevices,
-                                                          currentOlderDriverPlatform(),
-                                                          includeReplacedHostApis));
+    auto olderDrivers = std::make_shared<PortAudioBackend>(&listPortAudioDevices,
+                                                           currentOlderDriverPlatform(),
+                                                           includeReplacedHostApis);
+    // As on Windows: listed, and PortAudio started, on first need.
+    olderDrivers->setListsOnDemand(!context.helper);
+    backends.push_back(std::move(olderDrivers));
 #endif
     return backends;
 }

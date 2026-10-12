@@ -14,6 +14,9 @@
 //               under a LongHold and makes its records after the lock is
 //               released. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: PortAudio starts on first need: listing an on-demand
+//               backend, or making a stream. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PortAudioBackend.h"
@@ -171,6 +174,11 @@ QList<AudioDeviceInfo> PortAudioBackend::enumerate()
     QList<AudioDeviceInfo> devices;
     m_defaultOutput.reset();
     m_defaultInput.reset();
+    if (m_listsOnDemand) {
+        // The first need of the older drivers' devices: PortAudio starts
+        // here, on the catalog's thread, never at launch.
+        PortAudioLibrary::ensureStarted();
+    }
     const QList<PortAudioDeviceRecord> records = m_list ? m_list() : QList<PortAudioDeviceRecord>{};
     for (const PortAudioDeviceRecord& record : records) {
         if (!offered(record.hostApi)) {
@@ -228,6 +236,9 @@ std::unique_ptr<IAudioBus> PortAudioBackend::createOutput(const AudioStreamReque
         config.bufferSamples = request.bufferFrames;
     }
     config.exclusiveMode = request.exclusive;
+    // A stream on the older drivers is a first need too (the host API
+    // lookup below reads PortAudio).
+    PortAudioLibrary::ensureStarted();
     if (!hostApi.isEmpty()) {
         for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
             if (api.name == hostApi) {

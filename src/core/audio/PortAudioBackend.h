@@ -24,6 +24,8 @@
 //               host API; the listing and Rescan hold PortAudioLibrary's
 //               lock. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: setListsOnDemand(): PortAudio starts on first need. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -95,11 +97,20 @@ public:
     // test run.
     void rescan() override;
 
+    // PortAudio starts on first need, not at launch.  With on-demand
+    // listing the catalog lists this engine only once something asks for
+    // the older drivers, and listing it is what starts PortAudio.  Off (the
+    // mic helper, which starts PortAudio itself): listed with the rest, and
+    // listing starts nothing.
+    void setListsOnDemand(bool onDemand) { m_listsOnDemand = onDemand; }
+    bool listsOnDemand() const override { return m_listsOnDemand; }
+
 private:
     bool offered(const QString& hostApi) const;
 
     PortAudioListFn m_list;
     QStringList m_hostApis;
+    bool m_listsOnDemand = false;   // set before the catalog starts
     std::optional<QString> m_defaultOutput;   // from the last enumerate()
     std::optional<QString> m_defaultInput;
 };

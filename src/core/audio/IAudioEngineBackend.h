@@ -22,6 +22,8 @@
 //   2026-10-09: native audio plan Task 17 (R-AUD-07, R-AUD-19 to R-AUD-22):
 //               AudioStreamRequest carries the role it plays.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: listsOnDemand(). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -95,6 +97,10 @@ public:
     // AudioEngine then closes a role's stream before opening its next one
     // on the same engine; otherwise the next opens first and replaces it.
     virtual bool opensOneStreamAtATime() const { return false; }
+    // True for an engine whose devices are listed only once something asks
+    // for them (IAudioDeviceCatalog::wantOlderDrivers): listing it starts a
+    // library that is slow to start and that most setups never use.
+    virtual bool listsOnDemand() const { return false; }
 };
 
 } // namespace NereusSDR

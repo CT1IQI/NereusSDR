@@ -48,6 +48,9 @@
 //               first list slower than kStartWaitMs is told from an empty
 //               system. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: wantOlderDrivers(): an engine listed on demand is listed
+//               only once something asks for it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -99,6 +102,7 @@ public:
     std::optional<AudioDeviceInfo> defaultDevice(AudioBackendId id,
                                                  AudioDeviceDirection direction) const override;
     void rescanOlderDrivers() override;
+    void wantOlderDrivers() override;
     // False from start() until a list is in that every backend answered
     // (one skipped because an earlier call into it has not returned is not
     // an answer); false while stopped.  start() itself returns with it
@@ -129,8 +133,14 @@ private:
     void adoptDefault(int index, AudioDeviceDirection direction, std::optional<QString> id);
     const BackendSnapshot* snapshotFor(AudioBackendId id) const;
     QString busyBackendName() const;
+    // A read of an on-demand engine's devices asks for them.
+    void askForOnDemand(AudioBackendId id) const;
+    void listOnDemandEngines() const;
 
     std::vector<std::shared_ptr<IAudioEngineBackend>> m_backends;
+    // Kept across runs: the engines listed on demand (the older drivers)
+    // have been asked for.  Set from the getters, so behind a pointer.
+    std::shared_ptr<std::atomic<bool>> m_onDemandWanted = std::make_shared<std::atomic<bool>>(false);
     // One per backend, kept across runs: a backend a thread left behind by
     // stop() is still inside is skipped (listed as not running) until that
     // call returns.

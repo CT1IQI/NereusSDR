@@ -58,6 +58,9 @@
 //               (remote playback) tells the bus's clock matcher its packet
 //               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: open() starts PortAudio when it is not running (first
+//               need). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PortAudioBus.h"
@@ -365,6 +368,9 @@ void PortAudioBus::setConfig(const PortAudioConfig& cfg) {
 }
 
 bool PortAudioBus::open(const AudioFormat& format) {
+    // PortAudio starts on first need, never at launch; an open is one.
+    // Nothing when it is running already, and in a test run.
+    PortAudioLibrary::ensureStarted();
     // R-AUD-06: held for the whole open; the callback never takes it.
     // Within its bound: a driver call that has not returned (Rescan's
     // restart of PortAudio) fails the open, and its owner retries later.
