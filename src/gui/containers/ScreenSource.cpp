@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original list of the screens the containers code consults.
 // Modification history (NereusSDR):
+//   2026-10-12 - desktopSize(). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Created by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-10-11 - Among several screens with one serial, the one a window
@@ -107,6 +109,18 @@ ScreenInfo ScreenSource::screenFor(const QRect& rect) const
 bool ScreenSource::onAnyScreen(const QRect& rect) const
 {
     return screenHolding(rect).has_value();
+}
+
+QSize ScreenSource::desktopSize() const
+{
+    QRect all;
+    const QVector<ScreenInfo> present = screens();
+    for (const ScreenInfo& screen : present) {
+        if (screen.geometry.isValid()) {
+            all = all.united(screen.geometry);
+        }
+    }
+    return all.isValid() ? all.size() : QSize();
 }
 
 ScreenSource* ScreenSource::system()

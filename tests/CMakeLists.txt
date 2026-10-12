@@ -659,6 +659,8 @@ nereus_add_test(tst_workspace_arrange_drag)
 nereus_add_test(tst_workspace_arrange_drag_native NATIVE_WINDOW)
 # Workspace look: Pop Out in the body menu, the pin on a window's header, and Return to where a container came from (offscreen).
 nereus_add_test(tst_workspace_popout_return)
+# A drag never resizes a floating container's window, and a window is never larger than its screen (offscreen).
+nereus_add_test(tst_container_drag_keeps_size)
 nereus_add_test(tst_workspace_live_input)
 # Each case builds a MainWindow; 43 cases ran past the 120 s limit under
 # load. Four entries of the same binary (the limit is not raised; groups in
