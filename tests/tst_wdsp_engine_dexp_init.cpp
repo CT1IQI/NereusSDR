@@ -19,7 +19,7 @@
 //   [v2.10.3.13].  pdexp[1] is non-null after createTxChannel returns
 //   AND back to nullptr after destroyTxChannel.
 //
-// Test cases (4):
+// Test cases (6):
 //   1. createTxChannel_initialisesDexp           - pdexp[0] non-null after create
 //   2. destroyTxChannel_allowsRecreate           - destroy then re-create still
 //                                                  populates pdexp[0] (proves
@@ -30,6 +30,13 @@
 //   4. pumpDexp_isNoOpWithoutWdspEngineWire      - pumpDexp degrades safely
 //                                                  on directly-constructed
 //                                                  TxChannel (no segfault)
+//   5. rxZeroResizeAndReopen_keepDexpWorking     - issue #414: RX 0 opened before
+//                                                  TX 5, then resized, closed
+//                                                  and reopened; the DEXP stays
+//                                                  in WDSP's table and working
+//   6. txReconnect_makesAFreshWorkingDexp        - issue #414: TX 5 destroyed
+//                                                  and created again beside a
+//                                                  live RX 0
 //
 // Source references (cited for traceability; logic lives in WdspEngine.cpp):
 //   wdsp/cmaster.c:130-157 [v2.10.3.13]  - Thetis create_dexp call site
@@ -62,6 +69,10 @@
 //                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-09 - Issue #365: production TX channel id, DEXP slot is the
 //                 transmitter id, RX-after-TX regression.  J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
+//   2026-10-12 - Issue #414: RX 0 opened first, then resized and reopened,
+//                 and a TX reconnect beside a live RX 0.  J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
 // =================================================================
@@ -97,6 +108,41 @@ using namespace NereusSDR;
 // id 1 hid that, because 1 happened to fit.
 static constexpr int kTxChannelId = WdspEngine::kTxChannelId;
 static constexpr int kDexpId = TxChannel::kDexpId;
+
+#ifdef HAVE_WDSP
+// How many of WDSP's DEXP slots hold an object.  Counts every slot of the
+// table (Thetis wdsp/dexp.c:29 [v2.10.3.15]: `DEXP pdexp[4];`) instead of trusting the
+// index the code under test uses, so a DEXP stored outside the table shows
+// up as a count of zero.
+static int dexpSlotsInUse()
+{
+    int used = 0;
+    for (int slot = 0; slot < TxChannel::kWdspDexpSlots; ++slot) {
+        if (pdexp[slot] != nullptr) {
+            ++used;
+        }
+    }
+    return used;
+}
+
+// True when the DEXP detector runs on the blocks the TX worker hands it:
+// its peak falls on silence and rises on a half-scale block.  The peak is
+// the detector's smoothed level (Thetis wdsp/dexp.c:307-309 [v2.10.3.15]), which only
+// moves when xdexp runs on a live DEXP object.  512 doubles is the DEXP
+// buffer createTxChannel sizes for its default 256-frame input block.
+static bool dexpFollowsAudio(TxChannel* tx)
+{
+    const std::vector<double> silence(512, 0.0);
+    const std::vector<double> halfScale(512, 0.5);
+    for (int i = 0; i < 40; ++i) {
+        tx->pumpDexp(silence.data());
+    }
+    const double quiet = tx->getDexpPeakSignal();
+    tx->pumpDexp(halfScale.data());
+    const double loud = tx->getDexpPeakSignal();
+    return loud > 0.05 && quiet < loud / 10.0;
+}
+#endif
 
 class TstWdspEngineDexpInit : public QObject {
     Q_OBJECT
@@ -210,6 +256,98 @@ private slots:
         engine.destroyTxChannel(kTxChannelId);
 #ifdef HAVE_WDSP
         QVERIFY(pdexp[kDexpId] == nullptr);
+#endif
+    }
+
+    // ── Test 5: issue #414, RX 0 open first, then resized and reopened ──────
+    //
+    // The order that survives the connect in release 2026.10.0 and crashes
+    // later: RX channel 0 is open before TX channel 5 creates its DEXP.  That
+    // release stored the DEXP at pdexp[5]; in its Windows build that cell was
+    // RX 0's output buffer pointer (rxa[0].outbuff).  WDSP frees and replaces
+    // that buffer with zeroed memory when RX 0's DSP buffer size changes
+    // (Thetis wdsp/RXA.c:770-771 [v2.10.3.15]) and when RX 0 closes and
+    // reopens (RXA.c:597 and :35 [v2.10.3.15]), so the next xdexp entered a
+    // zeroed critical section.
+    // The first mode change after a connect does the resize: RxChannel
+    // starts at 4096 and the per-mode default is 64.
+    //
+    // The DEXP must sit in a slot of WDSP's own table, stay the same object
+    // through every one of those RX 0 events, and keep following the audio.
+    void rxZeroResizeAndReopen_keepDexpWorking() {
+        WdspEngine engine;
+        engine.m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        RxChannel* rx = engine.createRxChannel(0);
+        QVERIFY(rx != nullptr);
+        TxChannel* tx = engine.createTxChannel(kTxChannelId);
+        QVERIFY(tx != nullptr);
+#ifdef HAVE_WDSP
+        QVERIFY2(dexpSlotsInUse() == 1,
+                 "create_dexp must store the TX DEXP inside pdexp[0..3]; a "
+                 "slot past the table is other WDSP memory (issue #414)");
+        DEXP const created = pdexp[kDexpId];
+        QVERIFY(created != nullptr);
+        QVERIFY(dexpFollowsAudio(tx));
+
+        // The first mode change after a connect: DSP buffer 4096 -> 64.
+        rx->setDspBufferSizeSamples(64);
+        QCOMPARE(rx->dspBlockSize(), 64);
+        QCOMPARE(pdexp[kDexpId], created);
+        QVERIFY(dexpFollowsAudio(tx));
+
+        // RX 0 closed, then opened again (receiver count change, reconnect).
+        engine.destroyRxChannel(0);
+        QCOMPARE(pdexp[kDexpId], created);
+        QVERIFY(dexpFollowsAudio(tx));
+        rx = engine.createRxChannel(0);
+        QVERIFY(rx != nullptr);
+        QCOMPARE(pdexp[kDexpId], created);
+        QVERIFY(dexpFollowsAudio(tx));
+        QCOMPARE(dexpSlotsInUse(), 1);
+#endif
+
+        engine.destroyRxChannel(0);
+        engine.destroyTxChannel(kTxChannelId);
+#ifdef HAVE_WDSP
+        QCOMPARE(dexpSlotsInUse(), 0);
+#endif
+    }
+
+    // ── Test 6: issue #414, a TX reconnect beside a live RX 0 ───────────────
+    //
+    // A disconnect destroys the TX channel and its DEXP; the next connect
+    // creates both again while RX 0 may still be open.  No DEXP object is
+    // left in the table between the two, and the new one follows the audio.
+    void txReconnect_makesAFreshWorkingDexp() {
+        WdspEngine engine;
+        engine.m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        RxChannel* rx = engine.createRxChannel(0);
+        QVERIFY(rx != nullptr);
+        TxChannel* tx = engine.createTxChannel(kTxChannelId);
+        QVERIFY(tx != nullptr);
+#ifdef HAVE_WDSP
+        QCOMPARE(dexpSlotsInUse(), 1);
+        QVERIFY(dexpFollowsAudio(tx));
+#endif
+
+        engine.destroyTxChannel(kTxChannelId);
+#ifdef HAVE_WDSP
+        QCOMPARE(dexpSlotsInUse(), 0);
+#endif
+
+        tx = engine.createTxChannel(kTxChannelId);
+        QVERIFY(tx != nullptr);
+#ifdef HAVE_WDSP
+        QCOMPARE(dexpSlotsInUse(), 1);
+        QVERIFY(dexpFollowsAudio(tx));
+#endif
+
+        engine.destroyTxChannel(kTxChannelId);
+        engine.destroyRxChannel(0);
+#ifdef HAVE_WDSP
+        QCOMPARE(dexpSlotsInUse(), 0);
 #endif
     }
 
