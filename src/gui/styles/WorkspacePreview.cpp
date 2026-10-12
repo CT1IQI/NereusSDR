@@ -53,6 +53,9 @@
 //                 object (Workspace::LookStyle): the default button's rim
 //                 and the current cell's outline. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - enabled() is on unless NEREUS_WORKSPACE_PREVIEW is "0"
+//                 (enabledFromEnvironmentValue()). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -727,9 +730,16 @@ bool enabled()
 {
     std::optional<bool>& state = switchState();
     if (!state.has_value()) {
-        state = qEnvironmentVariable("NEREUS_WORKSPACE_PREVIEW") == QLatin1String("1");
+        state = enabledFromEnvironmentValue(qEnvironmentVariable("NEREUS_WORKSPACE_PREVIEW"));
     }
     return *state;
+}
+
+bool enabledFromEnvironmentValue(const QString& value)
+{
+    // On by default: only "0" turns the look off. Unset and empty (both
+    // an empty string here), "1" and anything else are on.
+    return value != QLatin1String("0");
 }
 
 void setEnabledForTest(bool on)
