@@ -67,6 +67,13 @@ Advanced, and each control appears on one page only.
 
 ### Fixes
 
+- The Power Genius XL connection no longer drops and redials by itself, on
+  Windows often exactly 90 seconds after connecting. NereusSDR asked the
+  amplifier for its status again before it had answered the last request (a
+  30-second keepalive request landing on top of the meter poll, or the poll
+  outrunning a slow amplifier), and the amplifier closed the connection.
+  Now one status request waits for the answer to the one before. The Tuner
+  Genius XL connection follows the same rule; it had not been seen to drop.
 - With the S-meter set to Max Bin, each slice's flag shows its own signal. In
   a window running its own radio, every flag showed the reading of whichever
   pan was clicked last.

@@ -34,10 +34,14 @@
 //   2026-10-01  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
 //                 (TGXL tune lane fix round): autotuneSent, every `autotune`
 //                 this computer sends the tuner, whoever asked for it.
+//   2026-10-12  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//                 one `status` in flight (m_statusGate), as on the
+//                 amplifier link.
 // =================================================================
 #pragma once
 
 #include "core/NereusCoreExport.h"
+#include "core/GeniusStatusGate.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
@@ -131,6 +135,8 @@ public:
                                         quint64 attemptGeneration);
     void testInjectFailureForSocketAttempt(quint64 attemptGeneration);
     void testSetIdentityTimeoutMs(int ms) { m_identityTimeoutMs = ms > 0 ? ms : 1; }
+    // Test-only: how long an unanswered `status` holds back the next one.
+    void testSetStatusReplyWaitMs(int ms) { m_statusGate.setReplyWaitMsForTesting(ms); }
 
 public slots:
     void connectToTgxl(const QString& host, quint16 port = 9010);
@@ -229,6 +235,13 @@ private:
 
     QTcpSocket* m_socket{nullptr};
     QTimer     m_pollTimer;       // 1/sec status poll
+    // One `status` in flight: the poll does not ask again while the tuner
+    // has not answered the one before. The vendor's own program never does
+    // (TunerGeniusDesktop, 9,598 polls in
+    // captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng), and the
+    // amplifier, which speaks the same protocol, closed its link on it
+    // (bench 2026-10-12, PgxlConnection.h).
+    GeniusStatusGate m_statusGate;
     QByteArray m_readBuf;
     quint32    m_seq{0};
     bool       m_connected{false};
