@@ -48,6 +48,11 @@
 //               answers log at debug; an S-frame logs at info only when
 //               its state changes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: One `status` in flight (sendCommand, statusAnswerPending):
+//               the amplifier closed the link when the keepalive's or the
+//               poll's `status` reached it before its answer to the one
+//               before. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
@@ -578,13 +583,29 @@ quint32 PgxlConnection::sendCommand(const QString& cmd) {
     if (m_identityAdmissionRequired && !m_connected) {
         return 0;
     }
+    // One `status` in flight (PgxlConnection.h): the poll, the keepalive
+    // and any other caller wait for the amplifier's answer to the one
+    // before. Nothing is queued; the next poll asks.
+    if (cmd == QLatin1String("status") && statusAnswerPending()) {
+        return 0;
+    }
     return writeProtocolCommand(cmd);
+}
+
+bool PgxlConnection::statusAnswerPending() const
+{
+    return m_statusInFlightSeq != 0 && m_statusInFlightTimer.isValid()
+        && m_statusInFlightTimer.elapsed() < m_statusReplyWaitMs;
 }
 
 quint32 PgxlConnection::writeProtocolCommand(const QString& cmd)
 {
     quint32 seq = ++m_seq;
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
+    if (cmd == QLatin1String("status")) {
+        m_statusInFlightSeq = seq;
+        m_statusInFlightTimer.start();
+    }
     m_socket->write(line.toUtf8());
     qCDebug(lcPgxl) << "sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
@@ -622,6 +643,9 @@ void PgxlConnection::onConnected(quint64 attemptGeneration) {
     // socket. Confirmed by lsof showing TCP ESTABLISHED to 9008 while
     // m_connected=false. Same bug pattern existed in TgxlConnection.
     m_gotVersion = false;
+    // A `status` the last connection never answered holds nothing back on
+    // this one.
+    m_statusInFlightSeq = 0;
     clearIdentityAttempt();
     if (m_identityAdmissionRequired) {
         // Bound TCP, V, info and the Core's approval together: a peer that
@@ -1093,6 +1117,12 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
             uint hexCode = hexStr.toUInt(&hexOk, 16);
 
             QString body = line.mid(pipe2 + 1).trimmed();
+
+            // The answer to the `status` in flight, whatever it says: the
+            // next one may go.
+            if (rseq == m_statusInFlightSeq) {
+                m_statusInFlightSeq = 0;
+            }
 
             // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
             if (hexOk && hexCode != 0) {

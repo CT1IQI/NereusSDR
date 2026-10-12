@@ -11,6 +11,9 @@
 // Modification history (NereusSDR):
 //   2026-10-09  Created by J.J. Boyd (KG4VCF), with AI-assisted
 //                 transformation via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. The Power Genius case answers the handshake's
+//                 `status` before sending the next (one in flight).
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -102,15 +105,18 @@ void AmpLogVolumeTest::pgxlRepeatsLogAtDebug()
     QCOMPARE(countOf(cat, QtInfoMsg, QStringLiteral("cmd: \"status\"")), 0);
     QCOMPARE(countOf(cat, QtDebugMsg, QStringLiteral("cmd: \"status\"")), 1);
 
+    // The handshake's `status` is answered first: the next one waits for
+    // that (one `status` in flight, 2026-10-12).
+    conn.injectLineForTesting(QStringLiteral("R2|0|state=IDLE temp=30.0"));
     conn.sendCommand(QStringLiteral("status"));
     conn.ping(QStringLiteral("auto"));
     conn.sendCommand(QStringLiteral("operate=1"));
     QCOMPARE(countOf(cat, QtInfoMsg, QStringLiteral("cmd: \"status\"")), 0);
+    QCOMPARE(countOf(cat, QtDebugMsg, QStringLiteral("cmd: \"status\"")), 2);
     QCOMPARE(countOf(cat, QtInfoMsg, QStringLiteral("cmd: \"ping\"")), 0);
     QCOMPARE(countOf(cat, QtInfoMsg, QStringLiteral("cmd: \"operate=1\"")), 1);
 
-    // Poll answers: success at debug, a refusal stays a warning.
-    conn.injectLineForTesting(QStringLiteral("R2|0|state=IDLE temp=30.0"));
+    // Poll answers: success (R2 above) at debug, a refusal stays a warning.
     conn.injectLineForTesting(QStringLiteral("R3|50000015|refused"));
     QCOMPARE(countOf(cat, QtInfoMsg, QStringLiteral("RX R-frame")), 0);
     QCOMPARE(countOf(cat, QtDebugMsg, QStringLiteral("RX R-frame")), 1);

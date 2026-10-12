@@ -41,6 +41,10 @@
 //   2026-09-30: Fix round 1: asSetupToken offers a name saved with
 //               spaces as one word. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: One `status` in flight (m_statusInFlightSeq): the
+//               amplifier closed the link when a second one reached it
+//               before its answer to the first. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -49,6 +53,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QMap>
 #include <QString>
@@ -142,6 +147,8 @@ public:
     void testInjectFailureForSocketAttempt(quint64 attemptGeneration);
     void testSetIdentityTimeoutMs(int ms) { m_identityTimeoutMs = ms > 0 ? ms : 1; }
     bool testAutoPingActive() const { return m_pingTimer.isActive(); }
+    // Test-only: how long an unanswered `status` holds back the next one.
+    void testSetStatusReplyWaitMs(int ms) { m_statusReplyWaitMs = ms > 0 ? ms : 1; }
 
 public slots:
     void connectToPgxl(const QString& host, quint16 port = 9008);
@@ -259,6 +266,19 @@ private:
     // the invalid-descriptor errors a reused socket gave after a timeout).
     QTcpSocket* m_socket{nullptr};
     QTimer     m_pollTimer;
+    // One `status` in flight. The amplifier closes the link when a `status`
+    // reaches it before it has answered the one before (bench, firmware
+    // 3.9.9, 2026-10-12: four closes in twelve minutes, each 30 to 175 ms
+    // after such a send; three were the keepalive's `status` landing 1 to
+    // 23 ms after the poll's, one was the poll outrunning a slow amp).
+    // m_statusInFlightSeq is the unanswered `status`, 0 when there is none;
+    // after kStatusReplyWaitMs the answer counts as lost and the next
+    // `status` goes, so a dropped reply never silences the meters.
+    static constexpr int kStatusReplyWaitMs = 2000;
+    int           m_statusReplyWaitMs{kStatusReplyWaitMs};
+    quint32       m_statusInFlightSeq{0};
+    QElapsedTimer m_statusInFlightTimer;
+    bool statusAnswerPending() const;
     QByteArray m_readBuf;
     quint32    m_seq{0};
     bool       m_connected{false};
