@@ -402,11 +402,18 @@ struct AccessoryPagesTests {
         let (model, station) = try await connected()
         let accessories = model.main.accessories
         await station.deliverAccessories()
-        #expect(await settle { accessories.tunerGenius?.antenna == 1 })
+        // The session's own snapshot already holds a tuner, not connected and
+        // on antenna 1, so the antenna alone does not say the fake's tuner
+        // has reached the page. A tap before it has is refused by the page
+        // itself, as not connected, and never reaches the Core.
+        #expect(await settle { accessories.tunerGenius?.antenna == 1 && accessories.tunerAntennaReason == nil })
         let words = "The radio is on the air. Try again when it stops."
         station.refuseNext("setTgxlAntenna", reason: words)
         accessories.setTunerAntenna(3)
-        #expect(await settle { accessories.notes[.tunerGenius] == words })
+        // Any note ends the wait, and the expectation shows the words the
+        // page got.
+        _ = await settle { accessories.notes[.tunerGenius] != nil }
+        #expect(accessories.notes[.tunerGenius] == words)
         #expect(accessories.tunerGenius?.antenna == 1)
         accessories.dismissNote(.tunerGenius)
         #expect(accessories.notes[.tunerGenius] == nil)
