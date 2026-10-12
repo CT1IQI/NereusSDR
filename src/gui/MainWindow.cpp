@@ -733,6 +733,10 @@
 //                the radio's second firmware number where it reported one
 //                (RadioInfo::firmwareText). J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-12 - The hardware line of a window with no connection of its own
+//                takes the model's firmware text, which carries the number
+//                a Core sent (RadioModel::firmwareText). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -17596,9 +17600,10 @@ void MainWindow::onConnectionStateChanged()
                 ? QString::fromLatin1(boardCodeName(conn->radioInfo().boardType))
                 : m_radioModel->model();
             // A connection of our own knows the radio's second firmware
-            // number; the station's version string is the first alone.
+            // number; without one the model has the station's, where the
+            // Core sent it.
             const QString firmware = conn != nullptr
-                ? conn->radioInfo().firmwareText() : m_radioModel->version();
+                ? conn->radioInfo().firmwareText() : m_radioModel->firmwareText();
             m_stationBlock->setHardwareLine(code, QStringLiteral("v%1").arg(firmware));
             // The second row's text (and hence StationBlock's sizeHint)
             // just changed (Task A8 fix round 1 finding 4).

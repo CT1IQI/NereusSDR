@@ -44,6 +44,13 @@
 //   2026-10-12 - The Firmware readout shows the radio's second firmware
 //                number where it reported one. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The Firmware readout takes the model's text
+//                (RadioModel::firmwareText), which in a window on a Core
+//                carries the number the Core sent. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Refresh an already-open radio and firmware readout when
+//                the model identity changes, including a second firmware
+//                number alone. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "RadioStatusPage.h"
@@ -352,6 +359,17 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
         h->addLayout(v);
     }
 
+    if (m_model) {
+        connect(m_model, &RadioModel::infoChanged,
+                this, &RadioStatusPage::refreshRadioIdentity);
+        connect(m_model, &RadioModel::currentRadioChanged,
+                this, &RadioStatusPage::refreshRadioIdentity);
+    }
+    refreshRadioIdentity();
+}
+
+void RadioStatusPage::refreshRadioIdentity()
+{
     // Populate from model if available
     if (m_model) {
         QString radioStr = m_model->model();
@@ -359,15 +377,11 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
             radioStr = m_model->name();
         }
         m_radioLabel->setText(radioStr.isEmpty() ? QStringLiteral("–") : radioStr);
-        // version() is the firmware's first number alone, as a Core sends
-        // it to its windows. The model's record of the same radio adds the
-        // second number where the radio reported one.
-        const QString version = m_model->version();
-        const RadioInfo& info = m_model->currentRadioInfo();
-        const bool recordIsThisRadio =
-            info.firmwareVersion > 0 && version == QString::number(info.firmwareVersion);
-        m_firmwareLabel->setText(version.isEmpty() ? QStringLiteral("–")
-                                 : recordIsThisRadio ? info.firmwareText() : version);
+        // version() is the firmware's first number alone. The model adds
+        // the second where the radio reported one: its own radio's, or in a
+        // window on a Core the one the Core sent.
+        const QString firmware = m_model->firmwareText();
+        m_firmwareLabel->setText(firmware.isEmpty() ? QStringLiteral("–") : firmware);
     }
 }
 

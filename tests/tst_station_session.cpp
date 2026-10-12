@@ -6268,8 +6268,9 @@ void TstStationSession::remoteModelResolvesTheCoresRadio()
     QCOMPARE(remote.currentRadioInfo().protocol, ProtocolVersion::Protocol2);
     QCOMPARE(remote.currentRadioInfo().address, QHostAddress(QStringLiteral("192.168.1.50")));
     QCOMPARE(remote.currentRadioInfo().firmwareVersion, 27);
-    // The link carries the first firmware number only: the window's own
-    // radio's second number is not left beside the Core's first.
+    // These capabilities carry the first firmware number alone, as an older
+    // Core's do: the window's own radio's second number is not left beside
+    // the Core's first.
     QCOMPARE(remote.currentRadioInfo().firmwareBetaVersion, 0);
     QCOMPARE(remote.currentRadioInfo().macAddress, QStringLiteral("AA:BB:CC:DD:EE:46"));
     QCOMPARE(remote.currentRadioInfo().boardType, HPSDRHW::Saturn);
