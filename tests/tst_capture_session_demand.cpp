@@ -12,6 +12,12 @@
 // Modification history (NereusSDR):
 //   2026-09-22: J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-11: a newly started scripted helper gets 30 s for its hello
+//               and for the first wait after its start
+//               (kFakeCaptureChildStartMs, fakes/FakeCaptureChild.h),
+//               so a busy computer cannot fail a case that is not about
+//               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -71,11 +77,17 @@ namespace {
 // file, below) and ends the helper itself once the order is proven.
 constexpr int kHangingHelperDeadlineMs = 30000;
 
+// What a newly started scripted helper is allowed before its start counts
+// as failed: the hello deadline, and each first wait after a start
+// (fakes/FakeCaptureChild.h).
+constexpr int kHelperStartMs = NereusSDR::Test::kFakeCaptureChildStartMs;
+
 CaptureSupervisor::Options fakeOptions(const QString& scenario)
 {
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), scenario};
+    options.helloTimeoutMs = kHelperStartMs;   // 3000 in production
     return options;
 }
 
@@ -285,7 +297,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(engine.captureStatus().state, State::Opening, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(engine.captureHelperProcessIdForTest() > 0, 10000);
         const qint64 pid = engine.captureHelperProcessIdForTest();
-        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(pid), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(pid), kHelperStartMs);
         QVERIFY(hangingHelperStillRunning(engine, pid));
         QVERIFY(!sawCaptureState(statusSpy, State::Failed));
         QVERIFY(!engine.isPcMicOverrideActive());
@@ -334,7 +346,7 @@ private slots:
         QSignalSpy statusSpy(&engine, &AudioEngine::captureStatusChanged);
         CaptureSupervisor::Lease lease =
             engine.acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
-        QTRY_COMPARE_WITH_TIMEOUT(engine.captureStatus().state, State::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine.captureStatus().state, State::Ready, kHelperStartMs);
         QVERIFY(statusSpy.count() > 0);
         QVERIFY(engine.isPcMicOverrideActive());
         QTRY_VERIFY_WITH_TIMEOUT(engine.pcMicInputLevel() > 0.1f, 2000);
@@ -410,7 +422,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Opening, 5000);
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureHelperProcessIdForTest() > 0, 10000);
         const qint64 firstPid = engine->captureHelperProcessIdForTest();
-        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(firstPid), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(firstPid), kHelperStartMs);
         QVERIFY(hangingHelperStillRunning(*engine, firstPid));
 
         QElapsedTimer timer;
@@ -436,7 +448,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureHelperProcessIdForTest() > 0, 10000);
         const qint64 secondPid = engine->captureHelperProcessIdForTest();
         QVERIFY(secondPid != firstPid);
-        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(secondPid), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(markers.hanging(secondPid), kHelperStartMs);
         QVERIFY(hangingHelperStillRunning(*engine, secondPid));
         QVERIFY(!sawCaptureState(statusSpy, State::Failed));
 
@@ -462,7 +474,7 @@ private slots:
         RadioModel& model = harness->model();
         AudioEngine* const engine = model.audioEngine();
         QCOMPARE(model.transmitModel().micSource(), MicSource::Pc);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Ready, kHelperStartMs);
         const qint64 pid = engine->captureHelperProcessIdForTest();
         QVERIFY(pid > 0);
 
@@ -476,7 +488,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(processIsGone(pid), 5000);
 
         model.transmitModel().setMicSource(MicSource::Pc);
-        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Ready, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Ready, kHelperStartMs);
 
         model.disconnectFromRadio();
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state, State::Closed, 5000);
