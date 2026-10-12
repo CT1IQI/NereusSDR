@@ -7302,6 +7302,9 @@ nereus_add_test(tst_pgxl_connection_ping)
 # Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
 # pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
 nereus_add_test(tst_tgxl_connection_ping)
+# One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
+# for the answer, a refusal or a lost answer frees it, a new connection asks.
+nereus_add_test(tst_tgxl_connection_status_pacing)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
