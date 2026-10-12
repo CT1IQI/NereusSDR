@@ -49,15 +49,18 @@
 //               amplifier closed the link when a second one reached it
 //               before its answer to the first. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: The in-flight bookkeeping moved to GeniusStatusGate,
+//               shared with the tuner link. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
 #include "core/NereusCoreExport.h"
+#include "core/GeniusStatusGate.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QByteArray>
-#include <QElapsedTimer>
 #include <QHash>
 #include <QMap>
 #include <QList>
@@ -157,7 +160,7 @@ public:
     void testSetIdentityTimeoutMs(int ms) { m_identityTimeoutMs = ms > 0 ? ms : 1; }
     bool testAutoPingActive() const { return m_pingTimer.isActive(); }
     // Test-only: how long an unanswered `status` holds back the next one.
-    void testSetStatusReplyWaitMs(int ms) { m_statusReplyWaitMs = ms > 0 ? ms : 1; }
+    void testSetStatusReplyWaitMs(int ms) { m_statusGate.setReplyWaitMsForTesting(ms); }
 
 public slots:
     void connectToPgxl(const QString& host, quint16 port = 9008);
@@ -280,14 +283,10 @@ private:
     // 3.9.9, 2026-10-12: four closes in twelve minutes, each 30 to 175 ms
     // after such a send; three were the keepalive's `status` landing 1 to
     // 23 ms after the poll's, one was the poll outrunning a slow amp).
-    // m_statusInFlightSeq is the unanswered `status`, 0 when there is none;
-    // after kStatusReplyWaitMs the answer counts as lost and the next
-    // `status` goes, so a dropped reply never silences the meters.
-    static constexpr int kStatusReplyWaitMs = 2000;
-    int           m_statusReplyWaitMs{kStatusReplyWaitMs};
-    quint32       m_statusInFlightSeq{0};
-    QElapsedTimer m_statusInFlightTimer;
-    bool statusAnswerPending() const;
+    // The gate holds the unanswered `status`; after its wait the answer
+    // counts as lost and the next `status` goes, so a dropped reply never
+    // silences the meters.
+    GeniusStatusGate m_statusGate;
     QByteArray m_readBuf;
     quint32    m_seq{0};
     bool       m_connected{false};

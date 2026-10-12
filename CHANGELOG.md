@@ -72,7 +72,8 @@ Advanced, and each control appears on one page only.
   amplifier for its status again before it had answered the last request (a
   30-second keepalive request landing on top of the meter poll, or the poll
   outrunning a slow amplifier), and the amplifier closed the connection.
-  Now one status request waits for the answer to the one before.
+  Now one status request waits for the answer to the one before. The Tuner
+  Genius XL connection follows the same rule; it had not been seen to drop.
 - Tuning from a remote console no longer makes the receive audio stutter. The
   Core saved its settings file half a second after a tuning step, on the same
   thread that sends the audio, and nothing was sent until the disk finished

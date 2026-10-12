@@ -57,6 +57,9 @@
 //               poll's `status` reached it before its answer to the one
 //               before. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: The in-flight bookkeeping moved to GeniusStatusGate,
+//               shared with the tuner link. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
@@ -595,16 +598,10 @@ quint32 PgxlConnection::sendCommand(const QString& cmd) {
     // One `status` in flight (PgxlConnection.h): the poll, the keepalive
     // and any other caller wait for the amplifier's answer to the one
     // before. Nothing is queued; the next poll asks.
-    if (cmd == QLatin1String("status") && statusAnswerPending()) {
+    if (cmd == QLatin1String("status") && m_statusGate.answerPending()) {
         return 0;
     }
     return writeProtocolCommand(cmd);
-}
-
-bool PgxlConnection::statusAnswerPending() const
-{
-    return m_statusInFlightSeq != 0 && m_statusInFlightTimer.isValid()
-        && m_statusInFlightTimer.elapsed() < m_statusReplyWaitMs;
 }
 
 quint32 PgxlConnection::writeProtocolCommand(const QString& cmd)
@@ -612,8 +609,7 @@ quint32 PgxlConnection::writeProtocolCommand(const QString& cmd)
     quint32 seq = ++m_seq;
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
     if (cmd == QLatin1String("status")) {
-        m_statusInFlightSeq = seq;
-        m_statusInFlightTimer.start();
+        m_statusGate.sent(seq);
     }
     m_socket->write(line.toUtf8());
     noteWire(/*sent=*/true, line.trimmed());
@@ -656,7 +652,7 @@ void PgxlConnection::onConnected(quint64 attemptGeneration) {
     m_gotVersion = false;
     // A `status` the last connection never answered holds nothing back on
     // this one.
-    m_statusInFlightSeq = 0;
+    m_statusGate.reset();
     clearIdentityAttempt();
     if (m_identityAdmissionRequired) {
         // Bound TCP, V, info and the Core's approval together: a peer that
@@ -1169,9 +1165,7 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
 
             // The answer to the `status` in flight, whatever it says: the
             // next one may go.
-            if (rseq == m_statusInFlightSeq) {
-                m_statusInFlightSeq = 0;
-            }
+            m_statusGate.answered(rseq);
 
             // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
             if (hexOk && hexCode != 0) {
