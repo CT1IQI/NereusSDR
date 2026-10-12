@@ -37,6 +37,14 @@
 //               fireDeadlinesNowForTest() fail nothing until the whole
 //               interval has passed.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-11: a Pcm record is refused before Ready and after it, each
+//               in a case of its own that no timing decides: the one row
+//               used to pass or fail on whether the ring's first wake or
+//               the record reached the supervisor first.  The helper's
+//               exit and its lost input after Ready, and the retry case,
+//               no longer race a 100 ms clock in the fake: it acts on a
+//               ProbeEnable sent here once Ready is seen.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -665,11 +673,15 @@ private slots:
         QVERIFY(supervisor.reader()->isOpen());
     }
 
+    // The helper exits while the mic is Ready.  The fake exits in answer
+    // to ProbeEnable, sent here once Ready is seen, so the exit cannot
+    // come first and nothing waits a set time.
     void crashAfterReadyFails()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("crash-after-ready")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("crash-on-probe-enable")));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        supervisor.setProbeEnabled(true);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::HelperExited);
         QVERIFY(!supervisor.reader()->isOpen());
@@ -687,7 +699,9 @@ private slots:
         // V-HW-8: protocol 2 rejects a protocol 1 helper, as before.
         QTest::newRow("version-1") << QStringLiteral("version-1");
         // R-AUD-17: version 3 audio is in the ring only, and a ring the
-        // helper did not build is refused.
+        // helper did not build is refused.  This fake builds no ring, so
+        // Ready (the helper's Ready and the ring's first wake) cannot come
+        // first; pcmRecordAfterReadyFails covers the record after Ready.
         QTest::newRow("pcm-record") << QStringLiteral("pcm-record");
         QTest::newRow("bad-ring") << QStringLiteral("bad-ring");
     }
@@ -707,11 +721,36 @@ private slots:
         QVERIFY(!supervisor.reader()->isOpen());
     }
 
-    void inputLostFails()
+    // R-AUD-17: a Pcm record is refused while the mic is Ready too.  The
+    // fake sends it in answer to ProbeEnable, sent here once Ready is
+    // seen, so the order is fixed and nothing waits a set time.
+    void pcmRecordAfterReadyFails()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("pcm-record-on-probe-enable")));
+        Recorder recorder(supervisor);
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(supervisor.reader()->isOpen());
+        const qint64 pid = supervisor.helperProcessId();
+        QVERIFY(pid > 0);
+        supervisor.setProbeEnabled(true);
+        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QCOMPARE(supervisor.status().reason, Reason::ProtocolError);
+        QVERIFY(recorder.sawState(State::Ready));
+        QVERIFY(waitProcessGone(pid, 1000));
+        QVERIFY(!supervisor.reader()->isOpen());
+        char buffer[64];
+        QCOMPARE(supervisor.reader()->pull(buffer, sizeof(buffer)), qint64(0));
+    }
+
+    // The helper's input stops while the mic is Ready; the order is fixed
+    // the same way as in crashAfterReadyFails.
+    void inputLostFails()
+    {
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost-on-probe-enable")));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        supervisor.setProbeEnabled(true);
         QVERIFY(waitForState(supervisor, State::Failed, 3000));
         QCOMPARE(supervisor.status().reason, Reason::InputLost);
         QVERIFY(!supervisor.reader()->isOpen());
@@ -936,9 +975,20 @@ private slots:
 
     void retryConfigureAndNewDemandAfterFailure()
     {
-        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost")));
+        CaptureSupervisor supervisor(fakeOptions(QStringLiteral("input-lost-on-probe-enable")));
+        // The fake loses its input in answer to ProbeEnable, so each
+        // failure follows a Ready seen here.  The probe goes off again at
+        // once: left on, the window would send it at the next generation's
+        // helper Ready, before its own Ready is published.
+        const auto loseInput = [&supervisor]() {
+            supervisor.setProbeEnabled(true);
+            const bool failed = waitForState(supervisor, State::Failed, 3000);
+            supervisor.setProbeEnabled(false);
+            return failed;
+        };
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
-        QVERIFY(waitForState(supervisor, State::Failed, 5000));
+        QVERIFY(waitForState(supervisor, State::Ready, 5000));
+        QVERIFY(loseInput());
         const quint32 first = supervisor.status().generation;
 
         // Same configuration: no new generation.
@@ -952,7 +1002,7 @@ private slots:
         QVERIFY(waitFor(supervisor, [first](const Status& s) {
             return s.state == State::Ready && s.generation > first;
         }, 5000));
-        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QVERIFY(loseInput());
         const quint32 second = supervisor.status().generation;
         QVERIFY(second > first);
 
@@ -964,7 +1014,7 @@ private slots:
             return s.state == State::Ready && s.generation > second;
         }, 5000));
         QCOMPARE(supervisor.status().configuredDevice, QStringLiteral("Other microphone"));
-        QVERIFY(waitForState(supervisor, State::Failed, 3000));
+        QVERIFY(loseInput());
         const quint32 third = supervisor.status().generation;
 
         // Demand to zero keeps the failure visible; a new demand retries.

@@ -44,8 +44,32 @@ struct DaemonSpectrumSourceConfig {
     int decimation{1};
 };
 
+/// What DaemonSpectrumSource::update() does with a change of the center alone.
+/// R-DISP-RETUNE: `Restart` is the default and what every caller that
+/// measures gets (the auto-AGC noise floor, level calibration): the source
+/// restarts and its input history is emptied, so no frame under the new
+/// center holds a sample from before the move. `Relabel` is the display's
+/// choice: the running source takes the new center as a label and carries
+/// on, and for up to one FFT length its frames mix samples from both sides
+/// of the move.
+enum class DaemonSpectrumCenterMove {
+    Restart,
+    Relabel,
+};
+
+/// What DaemonSpectrumSource::update() did to a source it accepted.
+/// R-DISP-RETUNE: `relabeled` is true when only the center changed and the
+/// running source took it as a new label, without a restart; what it
+/// published under `fromGeneration` is then continued by `toGeneration`.
+/// Otherwise the source restarted and `toGeneration` continues nothing.
+struct DaemonSpectrumSourceUpdate {
+    bool relabeled{false};
+    quint64 fromGeneration{0};
+    quint64 toGeneration{0};
+};
+
 /// A complete, unreduced FFT frame.  `generation` changes on every accepted
-/// activate/update so consumers can discard a previous frequency context.
+/// activate/update so consumers can tell a previous frequency context.
 /// `producedAtNs` is a monotonic producer timestamp, not wall-clock time.
 struct DaemonSpectrumFrame {
     MediaSourceKey source;
@@ -82,10 +106,28 @@ public:
                   const DaemonSpectrumSourceConfig& config);
 
     /// Applies a validated source context and increments its generation.
-    /// A changed RF/FFT context drops queued input and resets the engine's
-    /// overlap history before the new generation accepts I/Q.
+    ///
+    /// R-DISP-RETUNE: when the caller passes DaemonSpectrumCenterMove::Relabel,
+    /// the center is the only field that differs and the source is running,
+    /// the source is relabeled, not restarted. It stays
+    /// active, queued I/Q and the engine's overlap history are kept, nothing
+    /// is counted as dropped, and the next frame is published on the normal
+    /// cadence with the new center and generation. A frame published before
+    /// the call and not yet taken is discarded, so no consumer is handed the
+    /// old center after the move.
+    ///
+    /// Any other change (sample rate, FFT size, window, decimation, bin
+    /// target, queue size, frame rate), and every change under the default
+    /// DaemonSpectrumCenterMove::Restart, restarts the source: it accepts no
+    /// I/Q until its engine has taken the configuration, and a changed
+    /// center, sample rate, FFT size, window or decimation drops queued
+    /// input and the engine's overlap history first.
+    ///
+    /// `result`, when given, says which of the two happened.
     bool update(const MediaSourceKey& key,
-                const DaemonSpectrumSourceConfig& config);
+                const DaemonSpectrumSourceConfig& config,
+                DaemonSpectrumCenterMove centerMove = DaemonSpectrumCenterMove::Restart,
+                DaemonSpectrumSourceUpdate* result = nullptr);
 
     /// Changes only the engine's output frame rate and whether transforms
     /// follow it. Both set how far the FFT window advances between frames,
@@ -178,6 +220,8 @@ private:
                               const DaemonSpectrumSourceConfig& config);
     static bool inputHistoryIsCompatible(const DaemonSpectrumSourceConfig& before,
                                          const DaemonSpectrumSourceConfig& after);
+    static bool onlyCenterDiffers(const DaemonSpectrumSourceConfig& before,
+                                  const DaemonSpectrumSourceConfig& after);
     static void applyEngineConfig(FFTEngine* engine,
                                   const DaemonSpectrumSourceConfig& config);
     static void enqueueIq(FFTEngine* engine,

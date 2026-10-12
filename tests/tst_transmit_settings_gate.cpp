@@ -312,6 +312,7 @@ void TstTransmitSettingsGate::olderCoreOffersNoTransmitSettings()
     // display entries stay absent. Accessory transmit is separately appended.
     QVERIFY(!names.contains(QByteArrayLiteral("setupDescriptionVersion")));
     QVERIFY(!names.contains(QByteArrayLiteral("miniDisplayVersion")));
+    QVERIFY(!names.contains(QByteArrayLiteral("spectrumPictureVersion")));
     QCOMPARE(names.indexOf(QByteArrayLiteral("accessoryTxVersion")),
              first + originalBlock.size());
     QCOMPARE(updates.at(first + originalBlock.size()).kind, MirrorWireKind::Int64);

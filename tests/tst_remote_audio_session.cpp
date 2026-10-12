@@ -173,13 +173,16 @@ double toneAmplitude(const QVector<float>& samples, int channel, double hz,
 // capabilities are present. Check the entire negotiated start shape after
 // removing only its fresh connection ID, and require the legacy audio
 // control shape separately.
+// R-DISP-RETUNE: the start also declares spectrumPictureVersion, which this
+// Core offers every peer whose hello declares spectrumPicture.
 QJsonObject modernStartWithoutConnection(bool audioProfile)
 {
     QJsonObject start{{QStringLiteral("op"), QStringLiteral("start")},
                       {QStringLiteral("mediaRelayRoutingVersion"), 1},
                       {QStringLiteral("mediaTunnelVersion"), 1},
                       {QStringLiteral("miniDisplayVersion"), 1},
-                      {QStringLiteral("remoteIqVersion"), 1}};
+                      {QStringLiteral("remoteIqVersion"), 1},
+                      {QStringLiteral("spectrumPictureVersion"), 1}};
     if (audioProfile) { start.insert(QStringLiteral("audioProfileVersion"), 1); }
     return start;
 }

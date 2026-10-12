@@ -653,6 +653,9 @@
 //                its pan shows, and a pan whose view does not hold the slice
 //                moves onto it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11 - The bottom RX chooser's rows: the row of a slice this
+//                window plays reveals it (SliceChooser::showRequested).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - The Power Genius OPERATE click on an app that runs its own
 //                radio reaches the amp again (setPgxlOperateFromApplet); it
 //                was refused wherever the app did not share its accessories.
@@ -3173,6 +3176,12 @@ void MainWindow::ensureSliceChooser()
                 [this](int id) { runSliceChooserAction(SliceChooserAction::StopListening, id); });
         connect(m_sliceChooser, &SliceChooser::selectRequested, this,
                 [this](int id) { runSliceChooserAction(SliceChooserAction::Select, id); });
+        // The row of a slice this window plays: shown as a selected slice
+        // is (rulings U1 and U2), with no change to the RX slice.
+        connect(m_sliceChooser, &SliceChooser::showRequested, this,
+                [this](int id) {
+            if (windowControlsSlice(id) || windowListensTo(id)) { revealSliceInWindow(id); }
+        });
         connect(m_sliceChooser, &SliceChooser::newSliceRequested, this,
                 [this]() { runSliceChooserAction(SliceChooserAction::NewSlice, -1); });
         // Task 14a: a flag that sent the request shows the answer too.
