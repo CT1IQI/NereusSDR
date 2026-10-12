@@ -675,6 +675,8 @@ nereus_add_test(tst_workspace_preview_default)
 nereus_add_test(tst_workspace_no_lock)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
 nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
+# Workspace look: Reset Default Layout redraws the look as a first launch does (real MainWindow offscreen).
+nereus_add_test(tst_workspace_reset_layout fakes/RemoteWindowHarness.cpp)
 # A container's stylesheet border stays on the container (antenna switch toast,
 # floating pan title bar, VAX first-run rows), offscreen.
 nereus_add_test(tst_widget_style_scoping)
