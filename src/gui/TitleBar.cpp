@@ -81,11 +81,25 @@
 //                 segment less than it asks for, and returns to side by
 //                 side past kSideBySideReturnSpare. J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-07 - ConnectionSegment::setPulsePausedForTest(), a test seam for
+//                 the workspace visual preview tool (tests/visual/).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - The connection segment's dot, latency, rates and audio pip
+//                 read WorkspacePreview::statusColour() (the status colour
+//                 choice). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-08 - The indicator tones are the product; the pulse's dimmer
+//                 step of Connected and Link lost mixes the bright tone with
+//                 titlebar-mid, and setPulsePausedForTest() can hold either
+//                 step. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "TitleBar.h"
 
 #include "StyleConstants.h"
+#include "styles/WorkspacePreview.h"
+#include "styles/WorkspaceStyle.h"
 #include "widgets/AppIcon.h"
 #include "widgets/MasterOutputWidget.h"
 #include "widgets/RadioSpeakerWidget.h"
@@ -111,6 +125,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QHostAddress>
+
+#include <cmath>
 
 namespace NereusSDR {
 
@@ -221,6 +237,20 @@ ConnectionSegment::ConnectionSegment(QWidget* parent)
         emit diagnosticsRequested();
     });
     updateRoutePopup();
+}
+
+void ConnectionSegment::setPulsePausedForTest(bool paused, bool brightStep)
+{
+    if (paused) {
+        m_pulseTimer.stop();
+        m_pulseOn = brightStep;
+    } else if (m_state == ConnectionState::Connected   ||
+               m_state == ConnectionState::Probing     ||
+               m_state == ConnectionState::Connecting  ||
+               m_state == ConnectionState::LinkLost) {
+        m_pulseTimer.start();
+    }
+    update();
 }
 
 void ConnectionSegment::setState(ConnectionState s)
@@ -512,40 +542,72 @@ void ConnectionSegment::frameTick()
     update();
 }
 
+// Workspace preview: the status colours take Longpath's indicator tones
+// (statusColour()), and each pulse keeps a brighter and a dimmer step.
+// The tones make Connected's two steps one colour (live) and Link lost's
+// one colour (measured), so their dimmer step is the bright tone mixed
+// with the title bar's own middle tone, titlebar-mid (kTitleGradMid):
+// the same hue, darker, from colours the palette already holds. With the
+// switch off every step is the legacy colour.
+namespace {
+// About the legacy pulse's step: #3fcf6a is 81 % of #5fff8a's value.
+constexpr double kPulseDimMix = 0.25;
+
+QColor pulseDimStep(const QColor& legacyDim, const char* role)
+{
+    const QColor bright = WorkspacePreview::statusColour(legacyDim, role);
+    if (!WorkspacePreview::enabled()) {
+        return bright;
+    }
+    const QColor bar = WorkspacePreview::roleColour(legacyDim, "titlebar-mid");
+    const auto mix = [](int a, int b) {
+        return static_cast<int>(std::lround(a * (1.0 - kPulseDimMix) + b * kPulseDimMix));
+    };
+    return QColor(mix(bright.red(), bar.red()), mix(bright.green(), bar.green()),
+                  mix(bright.blue(), bar.blue()), bright.alpha());
+}
+} // namespace
+
 QColor ConnectionSegment::stateDotColor() const
 {
+    using WorkspacePreview::statusColour;
     switch (m_state) {
         case ConnectionState::Connected:
             // m_pulseOn alternates → slow green pulse encoding streaming activity
-            return m_pulseOn ? QColor("#5fff8a") : QColor("#3fcf6a");
+            return m_pulseOn ? statusColour(QColor("#5fff8a"), "live")
+                             : pulseDimStep(QColor("#3fcf6a"), "ok");
         case ConnectionState::Probing:
         case ConnectionState::Connecting:
-            return m_pulseOn ? QColor("#5fa8ff") : QColor("#3f78cf");
+            return m_pulseOn ? statusColour(QColor("#5fa8ff"), "accent")
+                             : statusColour(QColor("#3f78cf"), "sel-hover");
         case ConnectionState::LinkLost:
-            return m_pulseOn ? QColor("#ff8c00") : QColor("#cf6c00");
+            return m_pulseOn ? statusColour(QColor("#ff8c00"), "measured")
+                             : pulseDimStep(QColor("#cf6c00"), "warn");
         case ConnectionState::Disconnected:
-            return QColor("#ff4040");
+            return statusColour(QColor("#ff4040"), "danger");
     }
-    return QColor("#607080");
+    return statusColour(QColor("#607080"), "text-scale");
 }
 
 QColor ConnectionSegment::rttColor(int rttMs) const
 {
-    if (rttMs < 0)    { return QColor("#607080"); }
-    if (rttMs < 50)   { return QColor("#5fff8a"); }
-    if (rttMs < 150)  { return QColor("#ffd700"); }
-    return QColor("#ff6060");
+    using WorkspacePreview::statusColour;
+    if (rttMs < 0)    { return statusColour(QColor("#607080"), "text-scale"); }
+    if (rttMs < 50)   { return statusColour(QColor("#5fff8a"), "ok"); }
+    if (rttMs < 150)  { return statusColour(QColor("#ffd700"), "warn"); }
+    return statusColour(QColor("#ff6060"), "danger");
 }
 
 QColor ConnectionSegment::audioPipColor(AudioEngine::FlowState s) const
 {
+    using WorkspacePreview::statusColour;
     switch (s) {
-        case AudioEngine::FlowState::Healthy:  return QColor("#5fa8ff");
-        case AudioEngine::FlowState::Underrun: return QColor("#ffd700");
-        case AudioEngine::FlowState::Stalled:  return QColor("#ff6060");
-        case AudioEngine::FlowState::Dead:     return QColor("#404858");
+        case AudioEngine::FlowState::Healthy:  return statusColour(QColor("#5fa8ff"), "accent");
+        case AudioEngine::FlowState::Underrun: return statusColour(QColor("#ffd700"), "warn");
+        case AudioEngine::FlowState::Stalled:  return statusColour(QColor("#ff6060"), "danger");
+        case AudioEngine::FlowState::Dead:     return statusColour(QColor("#404858"), "text-inactive");
     }
-    return QColor("#404858");
+    return statusColour(QColor("#404858"), "text-inactive");
 }
 
 QRect ConnectionSegment::rttRect() const
@@ -565,7 +627,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
 
     // Background
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor("#0f1420"));
+    p.setBrush(WorkspacePreview::roleColour(QColor("#0f1420"), "inset"));
     p.drawRoundedRect(rect(), 3, 3);
 
     p.setFont(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
@@ -580,7 +642,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
 
     const QString remoteText = remoteTextForWidth(width() - x - 6);
     if (!remoteText.isEmpty()) {
-        p.setPen(QColor("#c8d8e8"));
+        p.setPen(WorkspacePreview::roleColour(QColor("#c8d8e8"), "text"));
         p.drawText(x, textY, p.fontMetrics().elidedText(
             remoteText, Qt::ElideRight, width() - x - 6));
         m_lastRttX1 = x;
@@ -590,7 +652,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     }
 
     if (m_state == ConnectionState::Disconnected) {
-        p.setPen(QColor("#607080"));
+        p.setPen(WorkspacePreview::roleColour(QColor("#607080"), "text-scale"));
         p.drawText(x, textY, tr("Disconnected — click to connect"));
         m_lastRttX1 = m_lastRttX2 = 0;
         m_lastPipX1 = m_lastPipX2 = 0;
@@ -608,7 +670,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     // to the audio pip. asprintf with a leading "\xe2\x96\xb2" prefix
     // gets misinterpreted as Latin-1 codepoints on the macOS compile
     // path, rendering as garbage rather than a triangle.
-    p.setPen(QColor("#a0d8a0"));
+    p.setPen(WorkspacePreview::statusColour(QColor("#a0d8a0"), "ok"));
     const QString tx = QChar(0x25B2) + QString::asprintf(" %.1f Mbps", m_txMbps);
     p.drawText(x, textY, tx);
     x += p.fontMetrics().horizontalAdvance(tx) + 10;
@@ -636,7 +698,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     // = downloading I/Q from the radio.
     //
     // QChar(0x25BC) for the same reason as the up-triangle above.
-    p.setPen(QColor("#a0d8a0"));
+    p.setPen(WorkspacePreview::statusColour(QColor("#a0d8a0"), "ok"));
     const QString rx = QChar(0x25BC) + QString::asprintf(" %.1f Mbps", m_rxMbps);
     p.drawText(x, textY, rx);
     x += p.fontMetrics().horizontalAdvance(rx) + 10;
@@ -709,6 +771,13 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     setStyleSheet(QStringLiteral("TitleBar { background: %1; border-bottom: 1px solid %2; }")
                   .arg(QLatin1String(Style::kStatusBarBg),
                        QLatin1String(Style::kBorderSubtle)));
+    const bool workspaceLook = WorkspacePreview::enabled();
+    if (workspaceLook) {
+        // Workspace preview: the same strip in the Glass and Depth roles.
+        setStyleSheet(QStringLiteral("TitleBar { background: %1; border-bottom: 1px solid %2; }")
+                      .arg(Workspace::role("statusbar-bg", Style::kStatusBarBg),
+                           Workspace::role("border-subtle", Style::kBorderSubtle)));
+    }
 
     m_hbox = new QHBoxLayout(this);
     m_hbox->setContentsMargins(kMarginLeft, kMarginTop, kMarginRight, kMarginBottom);
@@ -735,6 +804,10 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     // App-name label. From AetherSDR TitleBar.cpp:102.
     appName->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }")
                            .arg(QLatin1String(Style::kAccent)));
+    if (workspaceLook) {
+        appName->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 14px; font-weight: bold; }")
+                               .arg(Workspace::role("accent", Style::kAccent)));
+    }
     appName->setAlignment(Qt::AlignCenter);
     m_hbox->addWidget(appName);
 
@@ -758,6 +831,13 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
     m_utcLabel->setStyleSheet(QStringLiteral(
         "QLabel { color: #8aa8c0; font-size: 11px;"
         " font-family: 'SF Mono', Menlo, monospace; }"));
+    if (workspaceLook) {
+        // A number: the workspace monospace chain (monoFont's families).
+        m_utcLabel->setStyleSheet(QStringLiteral(
+            "QLabel { color: %1; font-size: 11px; font-family: %2; }")
+            .arg(Workspace::role("text-secondary", "#8aa8c0"),
+                 QLatin1String(Workspace::kMonoQssFamilies)));
+    }
     m_hbox->addWidget(m_utcLabel);
     m_hbox->addSpacing(kUtcToMasterGap);
 
@@ -811,6 +891,16 @@ TitleBar::TitleBar(AudioEngine* audio, QWidget* parent)
         "QPushButton { background: #3a2a00; border: 1px solid #806020; "
         "border-radius: 4px; padding: 0; }"
         "QPushButton:hover { background: #504000; border-color: #a08030; }"));
+    if (workspaceLook) {
+        m_featureBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background: %1; border: 1px solid %2; "
+            "border-radius: 4px; padding: 0; }"
+            "QPushButton:hover { background: %3; border-color: %4; }")
+            .arg(Workspace::role("measured-bg", "#3a2a00"),
+                 Workspace::role("measured-border", "#806020"),
+                 Workspace::shiftL(QColor(Workspace::role("measured-bg", "#3a2a00")), 10),
+                 Workspace::role("warn", "#a08030")));
+    }
     connect(m_featureBtn, &QPushButton::clicked,
             this, &TitleBar::featureRequestClicked);
     m_hbox->addWidget(m_featureBtn);
@@ -835,6 +925,21 @@ void TitleBar::setMenuBar(QMenuBar* mb)
              QLatin1String(Style::kOverlayBorder),
              QLatin1String(Style::kTextPrimary),
              QLatin1String(Style::kBlueBg)));
+    if (WorkspacePreview::enabled()) {
+        mb->setStyleSheet(QStringLiteral(
+            "QMenuBar { background: transparent; color: %1; font-size: 12px; }"
+            "QMenuBar::item { padding: 4px 8px; }"
+            "QMenuBar::item:selected { background: %2; color: %7; }"
+            "QMenu { background: %3; color: %5; border: 1px solid %4; }"
+            "QMenu::item:selected { background: %6; color: %7; }")
+            .arg(Workspace::role("title-text", Style::kTitleText),
+                 Workspace::role("button-hover", Style::kBorderSubtle),
+                 Workspace::role("panel", Style::kAppBg),
+                 Workspace::role("overlay-border", Style::kOverlayBorder),
+                 Workspace::role("text", Style::kTextPrimary),
+                 Workspace::role("selected-top", Style::kBlueBg),
+                 Workspace::role("selected-text", "#ffffff")));
+    }
     mb->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
     m_menuBar = mb;
     // Insert at position 0 (before the first stretch).

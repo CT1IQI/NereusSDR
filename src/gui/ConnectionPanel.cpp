@@ -13,6 +13,17 @@
 //                 Claude Code.
 //                 Structural pattern follows AetherSDR (ten9876/AetherSDR,
 //                 GPLv3).
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): test seam that skips starting
+//               discovery (setDiscoveryStartSkippedForTest), for offscreen
+//               tests and the visual preview. AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-10  J.J. Boyd (KG4VCF): the state pill's sheet comes from
+//               pillStyleSheet(), one place per state, so the workspace
+//               look's translation and its test read what a row shows.
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -96,6 +107,8 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ConnectionPanel.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "AddCustomRadioDialog.h"
 #include "models/RadioModel.h"
 #include "core/AppSettings.h"
@@ -135,6 +148,12 @@ namespace NereusSDR {
 //   QT_LOGGING_RULES="*.timing.debug=true"   (covers nereus.setup.timing too)
 Q_LOGGING_CATEGORY(lcConnPanelTiming, "nereus.connpanel.timing")
 
+namespace {
+// setDiscoveryStartSkippedForTest(): the constructor does not start
+// discovery. False in the app.
+bool g_discoveryStartSkippedForTest = false;
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Color constants — from ucRadioList.cs ~:1115 (adapted to dark theme)
 // ucRadioList uses light background; NereusSDR uses dark background.
@@ -152,6 +171,11 @@ static const char* kPillOnlineColor    = "#39c167";   // green  — last seen < 
 static const char* kPillStaleColor     = "#d39c2a";   // amber  — last seen 60 s – 5 min
 static const char* kPillOfflineColor   = "#c14848";   // red    — last seen > 5 min / never
 static const char* kPillConnectedColor = "#39c167";   // green  — currently connected
+// With the workspace look on these are translated by meaning
+// (StylesheetColourTable.cpp, "The connection light"): connected and online
+// are ok, offline is danger, and stale is the decided warn colour (settled
+// 2026-10-10, listed to JJ for veto). With the look off they draw as
+// written here.
 
 // ---------------------------------------------------------------------------
 // StatePill — pure static threshold function (Phase 3Q Task 5 Step 3)
@@ -273,7 +297,9 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
     }
 
     // Start discovery automatically when panel opens
-    disc->startDiscovery();
+    if (!g_discoveryStartSkippedForTest) {
+        disc->startDiscovery();
+    }
 
     if (m_radioTable->rowCount() == 0) {
         setStatusText(QStringLiteral("Searching for radios..."));
@@ -289,6 +315,11 @@ ConnectionPanel::ConnectionPanel(RadioModel* model, QWidget* parent)
         << "ConnectionPanel ctor total elapsed (ms):" << ctorTimer.elapsed()
         << "of which buildUI():" << buildUiMs
         << "rows:" << m_radioTable->rowCount();
+}
+
+void ConnectionPanel::setDiscoveryStartSkippedForTest(bool skipped)
+{
+    g_discoveryStartSkippedForTest = skipped;
 }
 
 ConnectionPanel::~ConnectionPanel()
@@ -322,6 +353,8 @@ void ConnectionPanel::buildUI()
     auto* radioLayout = new QVBoxLayout(radioGroup);
 
     m_radioTable = new QTableWidget(0, ColCount, this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Discovery adds radios; Edit and Forget remove rows.
+    installQtCocoaAccessibleTableCacheRepair(m_radioTable);
 
     // Column headers — mapping clsDiscoveredRadioPicker.cs columns (~:99) to 8-col layout.
     // Phase 3Q Task 5: ColMac replaced by ColLastSeen; MAC moves to detail panel.
@@ -434,6 +467,8 @@ void ConnectionPanel::buildUI()
     auto* modelLabel = new QLabel(QStringLiteral("Radio Model:"), m_detailGroup);
     modelLabel->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-weight: bold; }"));
     m_modelCombo = new QComboBox(m_detailGroup);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled for each selected radio.
+    installQtCocoaAccessibleTableCacheRepair(m_modelCombo->view());
     m_modelCombo->setMinimumWidth(200);
     m_modelCombo->setStyleSheet(QStringLiteral(
         "QComboBox { background: #1a2a3a; color: #c8d8e8; border: 1px solid #304050;"
@@ -736,6 +771,26 @@ void ConnectionPanel::refreshLastSeenColumn()
     }
 }
 
+// The sheet of the state-pill circle for one state.
+QString ConnectionPanel::pillStyleSheet(StatePill pill)
+{
+    const char* pillColor = kPillOfflineColor;
+    switch (pill) {
+        case StatePill::Online:    pillColor = kPillOnlineColor;    break;
+        case StatePill::Stale:     pillColor = kPillStaleColor;     break;
+        case StatePill::Offline:   pillColor = kPillOfflineColor;   break;
+        case StatePill::Connected: pillColor = kPillConnectedColor; break;
+    }
+    return QString::fromLatin1(
+        "QWidget {"
+        "  background-color: %1;"
+        "  border-radius: 7px;"
+        "  max-width: 14px; max-height: 14px;"
+        "  min-width: 14px; min-height: 14px;"
+        "  margin: 4px;"
+        "}").arg(QString::fromLatin1(pillColor));
+}
+
 // Paint a small coloured circle into the state-pill cell. Embedding a
 // QFrame widget via setCellWidget bypasses both the table's stylesheet
 // `color: ...` rule (which overrode setForeground) and any QIcon mode
@@ -749,23 +804,9 @@ void ConnectionPanel::setPillIconForRow(int row, const QString& mac)
     const StatePill pill = isConnected
         ? StatePill::Connected
         : statePillForLastSeen(m_lastSeenMs.value(mac, 0LL), now);
-    const char* pillColor = kPillOfflineColor;
-    switch (pill) {
-        case StatePill::Online:    pillColor = kPillOnlineColor;    break;
-        case StatePill::Stale:     pillColor = kPillStaleColor;     break;
-        case StatePill::Offline:   pillColor = kPillOfflineColor;   break;
-        case StatePill::Connected: pillColor = kPillConnectedColor; break;
-    }
 
     auto* pillWidget = new QWidget();
-    pillWidget->setStyleSheet(QString::fromLatin1(
-        "QWidget {"
-        "  background-color: %1;"
-        "  border-radius: 7px;"
-        "  max-width: 14px; max-height: 14px;"
-        "  min-width: 14px; min-height: 14px;"
-        "  margin: 4px;"
-        "}").arg(QString::fromLatin1(pillColor)));
+    pillWidget->setStyleSheet(pillStyleSheet(pill));
     auto* container = new QWidget();
     auto* layout = new QHBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -800,16 +841,19 @@ void ConnectionPanel::setStatusText(const QString& text)
 // The pill color is derived from the radio's last-seen timestamp (m_lastSeenMs).
 void ConnectionPanel::applyRowColor(int row, const RadioInfo& info)
 {
+    // Workspace preview: the row states take the status roles;
+    // roleColour() returns the legacy colour with the switch off.
+    using WorkspacePreview::roleColour;
     QColor bg;
-    QColor fg{0xc8, 0xd8, 0xe8};
+    QColor fg = roleColour(QColor{0xc8, 0xd8, 0xe8}, "text");
 
     if (info.inUse) {
-        bg = kColorOnlineInUse;
-        fg = QColor{0xe0, 0xc0, 0x80};
+        bg = roleColour(kColorOnlineInUse, "measured-bg");
+        fg = roleColour(QColor{0xe0, 0xc0, 0x80}, "measured");
     } else {
         // Radios in m_discoveredRadios are always "online" — seen in last scan.
-        bg = kColorOnlineFree;
-        fg = QColor{0x80, 0xe0, 0x80};
+        bg = roleColour(kColorOnlineFree, "ok-bg");
+        fg = roleColour(QColor{0x80, 0xe0, 0x80}, "ok");
     }
 
     for (int col = 0; col < ColCount; ++col) {
@@ -934,8 +978,9 @@ void ConnectionPanel::upsertRowForInfo(const RadioInfo& info, bool online)
         for (int col = 0; col < ColCount; ++col) {
             QTableWidgetItem* cell = m_radioTable->item(row, col);
             if (cell) {
-                cell->setBackground(kColorOffline);
-                cell->setForeground(QColor{0x60, 0x60, 0x70});
+                cell->setBackground(WorkspacePreview::roleColour(kColorOffline, "badge-off-bg"));
+                cell->setForeground(
+                    WorkspacePreview::roleColour(QColor{0x60, 0x60, 0x70}, "text-inactive"));
             }
         }
         if (QTableWidgetItem* inUse = m_radioTable->item(row, ColInUse)) {
@@ -1054,8 +1099,9 @@ void ConnectionPanel::onRadioLost(const QString& macAddress)
         for (int col = 0; col < ColCount; ++col) {
             QTableWidgetItem* cell = m_radioTable->item(row, col);
             if (cell) {
-                cell->setBackground(kColorOffline);
-                cell->setForeground(QColor{0x60, 0x60, 0x70});
+                cell->setBackground(WorkspacePreview::roleColour(kColorOffline, "badge-off-bg"));
+                cell->setForeground(
+                    WorkspacePreview::roleColour(QColor{0x60, 0x60, 0x70}, "text-inactive"));
             }
         }
         if (QTableWidgetItem* inUse = m_radioTable->item(row, ColInUse)) {

@@ -28,9 +28,23 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
 //                the readouts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-09 - D25: the top and bottom rows of groups stack when the window
+//                is too narrow for them side by side (SetupFit::FitRow), and
+//                the cards area takes the page's height, so stacked cards
+//                scroll down to the bottom of the window. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Workspace preview only: the top status bar is a panel on
+//                the page (the container's surface, its edge and secondary
+//                captions), and "No issues found" is the decided ok. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - D25: the cards scroll in a SetupFit::FitScrollArea, so
+//                rows that fit side by side without a scroll bar are side
+//                by side whatever was shown before. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
+#include "gui/setup/SetupFit.h"
 
 #include "models/RadioModel.h"
 #include "core/PaTempUnit.h"
@@ -40,6 +54,7 @@
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/PttSource.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -52,6 +67,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QScrollArea>
+
+#include <memory>
 
 namespace NereusSDR {
 
@@ -124,19 +141,22 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     // ── Top status bar ────────────────────────────────────────────────────
     auto* statusBar = new QFrame(this);
     statusBar->setFrameShape(QFrame::StyledPanel);
+    // A panel, not a state: with the workspace preview on it takes the
+    // surface and edge of the page around it.
     statusBar->setStyleSheet(QStringLiteral(
         "QFrame {"
-        "  background: #0a1a10;"
+        "  background: %2;"
         "  border: 1px solid %1;"
         "  border-radius: 4px;"
         "}"
-    ).arg(QLatin1String(Style::kGreenBorder)));
+    ).arg(WorkspacePreview::roleColourName(Style::kGreenBorder, "border"),
+          WorkspacePreview::roleColourName("#0a1a10", "panel")));
     statusBar->setFixedHeight(Style::kStatusBarH);
     buildStatusBar(statusBar);
     outer->addWidget(statusBar);
 
     // ── Scroll area for cards ─────────────────────────────────────────────
-    auto* scroll = new QScrollArea(this);
+    auto* scroll = new SetupFit::FitScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
@@ -148,7 +168,9 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->setContentsMargins(0, 0, 0, 0);
 
     // ── Top row: 3 cards ──────────────────────────────────────────────────
-    auto* topRow = new QHBoxLayout;
+    // D25: the cards stack in reading order when they do not fit.
+    auto* topRow = new SetupFit::FitRow;
+    topRow->setObjectName(QStringLiteral("radioStatusTopRow"));
     topRow->setSpacing(6);
 
     auto* paCard = new QFrame(this);
@@ -169,7 +191,8 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->addLayout(topRow);
 
     // ── Bottom row: 2 cards ───────────────────────────────────────────────
-    auto* botRow = new QHBoxLayout;
+    auto* botRow = new SetupFit::FitRow;
+    botRow->setObjectName(QStringLiteral("radioStatusBottomRow"));
     botRow->setSpacing(6);
 
     auto* connCard = new QFrame(this);
@@ -186,7 +209,17 @@ RadioStatusPage::RadioStatusPage(RadioModel* model, QWidget* parent)
     cardsLayout->addStretch();
 
     scroll->setWidget(cardsContainer);
-    outer->addWidget(scroll);
+    // D25: the cards area takes the page's height in place of the trailing
+    // stretch, so stacked cards scroll down inside it to the bottom of the
+    // window rather than inside a box with an empty band below it.
+    outer->addWidget(scroll, 1);
+    {
+        const int last = contentLayout()->count() - 1;
+        if (QLayoutItem* s = contentLayout()->itemAt(last); s != nullptr && s->spacerItem() != nullptr) {
+            std::unique_ptr<QLayoutItem> stretch(contentLayout()->takeAt(last));
+        }
+        contentLayout()->setStretchFactor(outer, 1);
+    }
 
     // Setup description version 15: the readouts' ids.
     const std::pair<QLabel*, const char*> readouts[] = {
@@ -256,7 +289,8 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
     auto makeCol = [&](const QString& label) -> QLabel* {
         auto* lbl = new QLabel(label, bar);
         lbl->setStyleSheet(QStringLiteral("font-size: 10px; color: %1;")
-                               .arg(QLatin1String(Style::kGreenText)));
+                               .arg(WorkspacePreview::roleColourName(Style::kGreenText,
+                                                                     "text-secondary")));
         return lbl;
     };
 
@@ -937,7 +971,7 @@ void RadioStatusPage::refreshHygieneRows()
 
     if (issues.isEmpty()) {
         auto* item = new QListWidgetItem(QStringLiteral("No issues found. Settings are valid."));
-        item->setForeground(QColor(QLatin1String(Style::kGreenText)));
+        item->setForeground(WorkspacePreview::statusColour(QColor(QLatin1String(Style::kGreenText)), "ok"));
         m_issueList->addItem(item);
         return;
     }

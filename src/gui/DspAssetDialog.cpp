@@ -2,6 +2,7 @@
 // NereusSDR-original bounded station DSP asset manager.
 
 #include "DspAssetDialog.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/dsp/DspAssetService.h"
@@ -214,6 +215,8 @@ void DspAssetDialog::buildUi()
             auto* rowLayout = new QHBoxLayout(row);
             rowLayout->setContentsMargins(0, 0, 0, 0);
             m_slotSelectors[slot] = new QComboBox(row);
+            // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the installed models change.
+            installQtCocoaAccessibleTableCacheRepair(m_slotSelectors[slot]->view());
             m_slotSelectors[slot]->setObjectName(
                 slot == 0 ? QStringLiteral("nnrStandardAssetCombo")
                           : QStringLiteral("nnrPremiumAssetCombo"));
@@ -236,6 +239,8 @@ void DspAssetDialog::buildUi()
     }
 
     m_table = new QTableWidget(this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Resized from each asset list reply.
+    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setObjectName(QStringLiteral("dspAssetTable"));
     m_table->setColumnCount(6);
     m_table->setHorizontalHeaderLabels(
@@ -1102,6 +1107,8 @@ Nr3ModelPicker::Nr3ModelPicker(RadioModel* radio, DspAssetService* service, QWid
 
     auto* row = new QHBoxLayout();
     m_combo = new QComboBox(this);
+    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the installed models change.
+    installQtCocoaAccessibleTableCacheRepair(m_combo->view());
     m_combo->setObjectName(QStringLiteral("nr3ModelCombo"));
     m_combo->setToolTip(tr("The NR3 model the Core uses for every receiver."));
     m_modelsButton = new QPushButton(tr("Models…"), this);

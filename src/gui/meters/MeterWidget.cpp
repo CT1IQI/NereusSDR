@@ -41,6 +41,15 @@
 //                 binding's items are drawn dimmed with the reason as their
 //                 tooltip (setBindingUnavailable). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview data colours: the default background
+//                 and the unavailable veil read
+//                 WorkspacePreview::dataBackground() (navy until a choice
+//                 is made). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-08 - JJ's data colour decision: the default background is the
+//                 container's, the user's colour when the container has
+//                 one, and is redrawn when the container's changes. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -84,6 +93,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/LegacyContainerImporter.h"
 #include "MeterItem.h"
@@ -161,7 +171,7 @@ MeterWidget::MeterWidget(QWidget* parent)
     // CPU fallback: dark background
     setAutoFillBackground(true);
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(0x0f, 0x0f, 0x1a));
+    pal.setColor(QPalette::Window, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel"));
     setPalette(pal);
 #endif
 
@@ -466,7 +476,7 @@ void MeterWidget::paintEvent(QPaintEvent* event)
 #else
     Q_UNUSED(event);
     QPainter p(this);
-    p.fillRect(rect(), QColor(0x0f, 0x0f, 0x1a));
+    p.fillRect(rect(), WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", this));
     drawItems(p);
 #endif
 }
@@ -704,7 +714,7 @@ void MeterWidget::drawUnavailableVeils(QPainter& p) const
         const QRect rect(static_cast<int>(item->x() * w), static_cast<int>(item->y() * h),
                          static_cast<int>(item->itemWidth() * w),
                          static_cast<int>(item->itemHeight() * h));
-        p.fillRect(rect, QColor(0x0f, 0x0f, 0x1a, 170));
+        p.fillRect(rect, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a, 170), "panel", this));
     }
 }
 
@@ -764,6 +774,17 @@ QString MeterWidget::unavailableReasonAt(const QPointF& pos) const
 
 bool MeterWidget::event(QEvent* event)
 {
+    // Workspace preview: the default background follows the container
+    // around the meter (dataBackground()); a container that changes its
+    // background re-polishes its children, and a meter can move into
+    // another container.
+    if ((event->type() == QEvent::StyleChange || event->type() == QEvent::ParentChange)
+        && WorkspacePreview::enabled()) {
+#ifdef NEREUS_GPU_SPECTRUM
+        m_bgDirty = true;
+#endif
+        update();
+    }
     if (event->type() == QEvent::ToolTip) {
         auto* help = static_cast<QHelpEvent*>(event);
         const QString reason = unavailableReasonAt(help->pos());
@@ -1077,7 +1098,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
         }
 
         if (m_bgDirty) {
-            m_bgImage.fill(QColor(0x0f, 0x0f, 0x1a));
+            m_bgImage.fill(WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", this));
             QPainter p(&m_bgImage);
             p.setRenderHint(QPainter::Antialiasing, false);
             for (MeterItem* item : m_items) {
@@ -1174,7 +1195,7 @@ void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
-    const QColor clearColor(0x0f, 0x0f, 0x1a);
+    const QColor clearColor = WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", this);
     cb->beginPass(renderTarget(), clearColor, {1.0f, 0});
 
     const QSize outputSize = renderTarget()->pixelSize();

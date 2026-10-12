@@ -31,6 +31,12 @@
 //                 telemetry bindings treat the sentinel as no reading
 //                 (isHardwareTelemetryBinding). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview data colours (JJ's decision B):
+//                 NeedleItem's default background reads
+//                 WorkspacePreview::dataBackground(), the role of the
+//                 container around its meter or the user's colour for that
+//                 container. Ink unchanged. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -125,6 +131,7 @@ mw0lge@grange-lane.co.uk
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
 #include "MeterItem.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
 
 #include <QPainter>
@@ -1661,7 +1668,7 @@ void NeedleItem::paintBackground(QPainter& p, int widgetW, int widgetH)
     const float ph = static_cast<float>(rect.height());
 
     // Background fill — from AetherSDR SMeterWidget.cpp line 197
-    p.fillRect(rect, QColor(0x0f, 0x0f, 0x1a));
+    p.fillRect(rect, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "panel", parent()));
 
     // From AetherSDR: cx = width*0.5, radius = width*0.85
     // cy = height + radius - height*0.65

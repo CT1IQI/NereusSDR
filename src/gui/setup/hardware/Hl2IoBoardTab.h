@@ -37,6 +37,9 @@
 //                 monitor reads RadioModel::hl2LinkFigures(), so a remote
 //                 window shows the Core's HL2 link ("From the Core").
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Test seams for the throttle line's three states
+//                 (showThrottleStateForTest, throttleStatusSheetForTest).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim mi0bot Console/setup.cs header (lines 1-50) ===
@@ -184,6 +187,10 @@ public:
     QString ep2RateTextForTest() const;
     QString throttleStatusTextForTest() const;
     QString throttleEventTextForTest() const;
+    // Shows one of the throttle line's three states (no reading,
+    // throttled, not throttled) and reads the sheet it ends up with.
+    void showThrottleStateForTest(std::optional<bool> throttled) { showThrottleState(throttled); }
+    QString throttleStatusSheetForTest() const;
     // Triggers one manual pass through updateBwDisplay().
     void pollBandwidthNowForTest();
 

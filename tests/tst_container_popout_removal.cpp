@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-09 - Workspace preview rows, hidden objects in a shell.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - New. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 // =================================================================
@@ -36,6 +38,7 @@
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/FloatingContainer.h"
+#include "gui/styles/WorkspacePreview.h"
 
 using namespace NereusSDR;
 
@@ -66,8 +69,10 @@ struct PoppedOut {
     QString shellId;
     QString entryId;
 
-    PoppedOut()
+    explicit PoppedOut(bool look = false)
     {
+        // Workspace preview: the rows below run in both looks.
+        WorkspacePreview::setEnabledForTest(look);
         root.resize(1000, 700);
         manager.setWorkspaceAdapter(&store, &registry);
         WorkspaceDocument d;
@@ -94,6 +99,10 @@ struct PoppedOut {
         shellId = store.snapshot().containers.last().id;
         QCoreApplication::processEvents();
     }
+    ~PoppedOut() { WorkspacePreview::setEnabledForTest(false); }
+    PoppedOut(const PoppedOut&) = delete;
+    PoppedOut& operator=(const PoppedOut&) = delete;
+
     bool hasDocument(const QString& id) const
     {
         for (const auto& c : store.snapshot().containers) {
@@ -144,13 +153,21 @@ class TstContainerPopoutRemoval : public QObject
     Q_OBJECT
 
 private slots:
+    void settingsRemoveFromTheShellMenu_data()
+    {
+        QTest::addColumn<bool>("look");
+        QTest::newRow("today") << false;
+        QTest::newRow("workspace") << true;
+    }
+
     // JJ, 2026-10-09: pop a container out, open Container Settings from
     // its right-click menu, remove the container and Apply. The dialog
     // was a child of the shell, which the removal deleted while the
     // dialog was still open: "pointer being freed was not allocated".
     void settingsRemoveFromTheShellMenu()
     {
-        PoppedOut w;
+        QFETCH(bool, look);
+        PoppedOut w(look);
         QVERIFY(!w.shellId.isEmpty());
         QPointer<ContainerWidget> shell = w.manager.container(w.shellId);
         QVERIFY(shell);
@@ -233,10 +250,15 @@ private slots:
 
     void emptiedShellCloses_data()
     {
+        QTest::addColumn<bool>("look");
         QTest::addColumn<QString>("action");
-        for (const char* action : { "hideContainer", "returnShell", "returnEntry", "moveEntry",
-                                    "settingsRemoveObject" }) {
-            QTest::newRow(action) << QString::fromLatin1(action);
+        for (bool look : { false, true }) {
+            for (const char* action : { "hideContainer", "returnShell", "hideEntry", "returnEntry",
+                                        "moveEntry", "settingsRemoveObject" }) {
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(
+                    QLatin1String(look ? "workspace" : "today"), QLatin1String(action))))
+                    << look << QString::fromLatin1(action);
+            }
         }
     }
 
@@ -244,8 +266,9 @@ private slots:
     // returned, leaves the screen; it is never left open and empty.
     void emptiedShellCloses()
     {
+        QFETCH(bool, look);
         QFETCH(QString, action);
-        PoppedOut w;
+        PoppedOut w(look);
         QVERIFY(!w.shellId.isEmpty());
         QPointer<ContainerWidget> shell = w.manager.container(w.shellId);
         QVERIFY(shell);
@@ -256,6 +279,8 @@ private slots:
             emit shell->hideContainerRequested();
         } else if (action == QLatin1String("returnShell")) {
             emit shell->returnContainerRequested();
+        } else if (action == QLatin1String("hideEntry")) {
+            QVERIFY(arrange.setEntryVisible(w.entryId, false).ok);
         } else if (action == QLatin1String("returnEntry")) {
             QVERIFY(arrange.returnEntry(w.entryId).ok);
         } else if (action == QLatin1String("moveEntry")) {
@@ -319,6 +344,24 @@ private slots:
         QVERIFY(!w.hasDocument(w.shellId));
         QVERIFY(shell.isNull());
         QVERIFY2(blankShells(w.store).isEmpty(), qPrintable(blankShells(w.store).join(QLatin1Char(','))));
+    }
+
+    // Hiding a shell's last object hides the shell in both looks; showing
+    // it again brings the shell back with it.
+    void hiddenShellReturnsWithItsObject()
+    {
+        PoppedOut w;
+        QVERIFY(!w.shellId.isEmpty());
+        ContainerArrangeController arrange(w.store, &w.manager);
+        QVERIFY(arrange.setEntryVisible(w.entryId, false).ok);
+        drain();
+        QPointer<ContainerWidget> shell = w.manager.container(w.shellId);
+        QVERIFY(shell);
+        QVERIFY(!shell->window()->isVisible());
+        QVERIFY(arrange.setEntryVisible(w.entryId, true).ok);
+        drain();
+        QVERIFY(shell);
+        QVERIFY(shell->window()->isVisible());
     }
 };
 

@@ -990,6 +990,8 @@ endif()
 # Source files
 # --------------------------------------------------------------------------
 set(CORE_SOURCES
+    src/core/antenna/AmateurBands.cpp
+    src/core/antenna/AmateurBands.h
     src/core/cat/CatModelAdapter.cpp
     src/core/cat/CatSettings.cpp
     src/core/cat/CatSession.cpp
@@ -1773,6 +1775,48 @@ set(GUI_SOURCES
     src/gui/PsaIndicatorWidget.h
     src/gui/PsForm.cpp
     src/gui/TitleBar.cpp
+    src/gui/styles/QssTranslator.cpp
+    src/gui/styles/QssTranslator.h
+    src/gui/styles/StylesheetColourTable.cpp
+    src/gui/styles/StylesheetColourTable.h
+    src/gui/styles/WorkspaceComponents.cpp
+    src/gui/styles/WorkspaceComponents.h
+    src/gui/styles/WorkspaceLookStyle.cpp
+    src/gui/styles/WorkspaceLookStyle.h
+    src/gui/styles/WorkspacePalette.cpp
+    src/gui/styles/WorkspacePalette.h
+    src/gui/styles/WorkspacePreview.cpp
+    src/gui/styles/WorkspacePreview.h
+    src/gui/styles/WorkspaceStyle.cpp
+    src/gui/styles/WorkspaceStyle.h
+    src/gui/instruments/BarInstrument.cpp
+    src/gui/instruments/BarInstrument.h
+    src/gui/instruments/FrequencyInstrument.cpp
+    src/gui/instruments/FrequencyInstrument.h
+    src/gui/instruments/InstrumentFooter.cpp
+    src/gui/instruments/InstrumentFooter.h
+    src/gui/instruments/InstrumentPainter.cpp
+    src/gui/instruments/InstrumentPainter.h
+    src/gui/instruments/InstrumentSpine.cpp
+    src/gui/instruments/InstrumentSpine.h
+    src/gui/instruments/InstrumentStyle.h
+    src/gui/instruments/LongpathContent.cpp
+    src/gui/instruments/LongpathContent.h
+    src/gui/instruments/SMeterDialContent.cpp
+    src/gui/instruments/SMeterDialContent.h
+    src/gui/instruments/NeedleInstrument.cpp
+    src/gui/instruments/NeedleInstrument.h
+    src/gui/instruments/PeakHold.h
+    src/gui/instruments/ReadingSource.cpp
+    src/gui/instruments/ReadingSource.h
+    src/gui/widgets/BandwidthFilterPane.cpp
+    src/gui/widgets/BandwidthFilterPane.h
+    src/gui/widgets/PillStyle.cpp
+    src/gui/widgets/PillStyle.h
+    src/gui/widgets/ProfileRail.cpp
+    src/gui/widgets/ProfileRail.h
+    src/gui/widgets/ProfileRailDock.cpp
+    src/gui/widgets/ProfileRailDock.h
     src/gui/RelayBar.cpp
     src/gui/SMeterWidget.cpp
     src/gui/VintageMeterFace.cpp
@@ -1878,6 +1922,8 @@ set(GUI_SOURCES
     src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
+    src/gui/QtCocoaAccessibleTableCache.cpp
+    src/gui/QtCocoaAccessibleTableCache.h
     src/gui/FreeDVReporterDialog.cpp
     src/gui/FreeDVReporterDialog.h
     src/gui/LanScanDialog.cpp
@@ -1893,6 +1939,8 @@ set(GUI_SOURCES
     src/gui/containers/ContainerContentRegistry.cpp
     src/gui/containers/ContainerArrangeController.h
     src/gui/containers/ContainerArrangeController.cpp
+    src/gui/containers/ArrangeHoldFilter.h
+    src/gui/containers/ArrangeHoldFilter.cpp
     src/gui/containers/ContainerEditSession.h
     src/gui/containers/ContainerEditSession.cpp
     src/gui/containers/OwnedMenu.h
@@ -1908,6 +1956,16 @@ set(GUI_SOURCES
     src/gui/containers/ContainerWorkspaceStore.h
     src/gui/containers/ContainerWorkspaceStore.cpp
     src/gui/containers/ContainerWidget.cpp
+    src/gui/containers/WorkspaceHeader.h
+    src/gui/containers/WorkspaceHeader.cpp
+    src/gui/containers/EdgeDockStrip.h
+    src/gui/containers/EdgeDockStrip.cpp
+    src/gui/containers/WorkspaceProfiles.h
+    src/gui/containers/WorkspaceProfiles.cpp
+    src/gui/containers/WorkspaceProfilesDialog.h
+    src/gui/containers/WorkspaceProfilesDialog.cpp
+    src/gui/containers/ScreenSource.h
+    src/gui/containers/ScreenSource.cpp
     src/gui/containers/FloatingContainer.cpp
     src/gui/containers/ContainerManager.cpp
     src/gui/containers/ContainerButtonDispatcher.cpp
@@ -2057,6 +2115,7 @@ set(GUI_SOURCES
     src/gui/setup/SpectrumPeaksPage.cpp
     src/gui/setup/MultimeterPage.cpp
     src/gui/setup/SetupHelpers.cpp
+    src/gui/setup/SetupFit.cpp
     src/gui/setup/TransmitSetupPages.cpp
     src/gui/setup/AppearanceSetupPages.cpp
     src/gui/setup/CatNetworkSetupPages.cpp

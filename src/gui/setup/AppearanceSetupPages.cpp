@@ -71,7 +71,7 @@ void ColorsThemePage::buildUI()
     m_traceFillColorBtn->setToolTip(QStringLiteral(
         "Click to choose the spectrum trace line and fill color. "
         "The color picker lets you adjust alpha for the fill opacity."));  // a QColorDialog
-    specForm->addRow(QStringLiteral("Trace & Fill Color:"), m_traceFillColorBtn);
+    specForm->addRow(QStringLiteral("Trace && Fill Color:"), m_traceFillColorBtn);
 
     // Grid Color — moved from Display → Grid & Scales "Colors" group (G9).
     m_gridColorBtn = makeBtn(specGroup,
@@ -331,6 +331,8 @@ void MeterStylesPage::buildUI()
         const int face = m_faceCombo->itemData(index).toInt();
         AppSettings::instance().setValue(QStringLiteral("SMeter_FaceStyle"),
                                          SMeterWidget::faceStyleKey(static_cast<Face>(face)));
+        // Added dials with no face of their own follow this face.
+        SMeterSetupFace::instance().notify(face);
         emit sMeterFaceChanged(face);
     });
     connect(m_peakHoldToggle, &QCheckBox::toggled, this, [this](bool on) {
