@@ -84,6 +84,12 @@
 // 2026-09-29: load finding: the nothing-happens checks wait for the link's
 // own flush bound (SessionWait.h), not a number picked by hand. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11: test flaw: coreHereServesThisComputersApps dials an address
+// this computer can reach (reachableOwnAddress), not its first non-loopback
+// one. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11: reachableOwnAddress moved to ReachableOwnAddress.h, which
+// tst_station_tci_server now shares. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 
 #include <QtTest>
 
@@ -116,6 +122,7 @@
 #include <QWheelEvent>
 
 #include "OperatorWording.h"
+#include "ReachableOwnAddress.h"
 #include "core/PgxlConnection.h"
 #include "core/ConnectionDiagnostics.h"
 #include "core/FaultLog.h"
@@ -2045,13 +2052,9 @@ void RemotePeripheralsTest::coreHereServesThisComputersApps()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const quint16 port = freeLoopbackPort();
-    QString stationAddress;
-    for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
-        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback()) {
-            stationAddress = address.toString();
-            break;
-        }
-    }
+    // 2026-10-11: an address this computer can reach, not the first one it
+    // has (reachableOwnAddress).
+    const QString stationAddress = TestNetwork::reachableOwnAddress();
     // The Core keeps its station switch (off), so it wins at connect.
     AppSettings::instance().clear();
     AppSettings::instance().setValue(QStringLiteral("StationTci_Enabled"), QStringLiteral("False"));

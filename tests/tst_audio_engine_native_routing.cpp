@@ -47,6 +47,12 @@
 //   2026-10-10: final review fix round 3 (R-AUD-06): a late answer from
 //               a Rescan the timer finished does not end the next Rescan.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: a newly started scripted helper gets 30 s for its hello
+//               and for the first wait after its start
+//               (kFakeCaptureChildStartMs, fakes/FakeCaptureChild.h),
+//               so a busy computer cannot fail a case that is not about
+//               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -115,11 +121,17 @@ AudioDeviceConfig savedChoice(AudioEngineKind engine, const QString& id, const Q
     return cfg;
 }
 
+// What a newly started scripted helper is allowed before its start counts
+// as failed: the hello deadline, and each first wait after a start
+// (fakes/FakeCaptureChild.h).
+constexpr int kHelperStartMs = NereusSDR::Test::kFakeCaptureChildStartMs;
+
 CaptureSupervisor::Options fakeHelper(const QString& scenario)
 {
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), scenario};
+    options.helloTimeoutMs = kHelperStartMs;   // 3000 in production
     return options;
 }
 
@@ -634,7 +646,7 @@ private slots:
         CaptureSupervisor::Lease lease =
             rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
         QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
-                                  CaptureSupervisor::Status::State::Ready, 10000);
+                                  CaptureSupervisor::Status::State::Ready, kHelperStartMs);
         QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
         QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).playingName, QStringLiteral("Desk mic"));
         QCOMPARE(rig.engine->captureStatus().configuredDevice, QStringLiteral("Desk mic"));
@@ -1071,7 +1083,7 @@ private slots:
         CaptureSupervisor::Lease lease =
             rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
         QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
-                                  CaptureSupervisor::Status::State::Ready, 10000);
+                                  CaptureSupervisor::Status::State::Ready, kHelperStartMs);
         const quint32 first = rig.engine->captureStatus().generation;
         rig.engine->start();
         QCoreApplication::processEvents();
@@ -1104,7 +1116,7 @@ private slots:
         CaptureSupervisor::Lease lease =
             rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
         QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
-                                  CaptureSupervisor::Status::State::Ready, 10000);
+                                  CaptureSupervisor::Status::State::Ready, kHelperStartMs);
         QCOMPARE(rig.engine->roleStatus(AudioRole::TxInput).state, AudioRoleState::Playing);
         QCoreApplication::processEvents();
         QVERIFY(rig.native->outputRequests().empty());

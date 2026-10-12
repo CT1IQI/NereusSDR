@@ -625,6 +625,10 @@
 //                and the speakers role, with the desktop rule; a remote
 //                window's follow the Core (coreSpeakerVersion 1). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - setPgxlOperateFromApplet: this computer's own Power Genius
+//                OPERATE and STANDBY, for an app that runs its own radio
+//                whether or not it shares the amplifier. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3835,6 +3839,15 @@ public:
     // that does not own its accessories, while the radio is on the air, and
     // while the Core is not connected to the amp; nothing is sent then.
     bool setPgxlOperateForStation(bool on, QString* reason);
+    // This computer's own applet's OPERATE or STANDBY: the same line through
+    // the same PgxlConnection, for any app that runs its own radio. It does
+    // not ask for the station amplifier object, which only a Core that
+    // shares its accessories has (enableStationAccessoryIdentity); the
+    // local click was routed through setPgxlOperateForStation and so did
+    // nothing on a desktop app. Refused in a remote window, on the air,
+    // while the tuner tunes or the amp is switching (pgxlSwitchRefusal),
+    // and while this app is not connected to the amp; nothing is sent then.
+    bool setPgxlOperateFromApplet(bool on, QString* reason);
     // A window's Scan LAN: as scanTgxlLanForStation, for Power Genius
     // announcements (StationPgxlController::expectedProduct()). Nothing is
     // sent to any device.

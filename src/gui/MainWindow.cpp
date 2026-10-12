@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - J.J. Boyd (KG4VCF). A container's controls follow a change
+//                of selected RX, a renamed filter preset and a slice moved
+//                to another pan by those events themselves; the PureSignal
+//                status, announced ten times a second, had been what
+//                refreshed them. AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). Issue #357: a hosting window's TUNE
 //                (TX applet and container) reads the transmit model's TUNE,
 //                which the release press clears, so it goes back to "TUNE"
@@ -663,6 +668,14 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - The bottom RX chooser's rows: the row of a slice this
 //                window plays reveals it (SliceChooser::showRequested).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The Power Genius OPERATE click on an app that runs its own
+//                radio reaches the amp again (setPgxlOperateFromApplet); it
+//                was refused wherever the app did not share its accessories.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Max Bin per slice in a window that runs its own radio:
+//                the slice meter pump takes each flag's reading from its
+//                own pan (maxBinSpectrumFor), as a window on a Core does.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -2077,6 +2090,26 @@ QStringList MainWindow::windowPanIds() const
     return ids;
 }
 
+SpectrumWidget* MainWindow::maxBinSpectrumFor(const SliceModel* slice) const
+{
+    if (!slice || !m_panStack || slice->streamIndex() < 0
+        || markerOnlyPlacement(slice->sliceIndex())) {
+        return nullptr;
+    }
+    // Core's primary slice may have no panKey. Use its actual
+    // window host, as subscriptions do, never the active pan.
+    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
+    SliceModel* displayed = pan
+        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
+    // Co-hosted slices may measure the same receiver trace;
+    // a marker for a different receiver may not borrow it.
+    if (!displayed || displayed->streamIndex() != slice->streamIndex()
+        || displayed->streamEpoch() != slice->streamEpoch()) {
+        return nullptr;
+    }
+    return pan->spectrumWidget();
+}
+
 QString MainWindow::windowPanFor(const SliceModel* slice) const
 {
     if (!slice || !m_panStack) { return QString(); }
@@ -2107,6 +2140,8 @@ void MainWindow::rehostSliceView(SliceModel* slice)
     }
     m_vfoWidgetsBySlice.remove(id);
     if (dest) { createSliceFlag(slice, dest); }
+    // A container's PEAK and CTUN light from the pan its slice is on.
+    refreshContainerControls();
 }
 
 void MainWindow::revealSliceInWindow(int sliceId)
@@ -7904,6 +7939,18 @@ void MainWindow::buildUI()
         if (NotchModel* notches = m_radioModel->notchModel()) {
             connect(notches, &NotchModel::globalEnabledChanged, this, refresh);
         }
+        // A container set to follow the selected RX shows the newly
+        // selected slice at once. With a radio connected the PureSignal
+        // status, announced ten times a second, used to be the only thing
+        // that refreshed it.
+        connect(m_radioModel, &RadioModel::activeSliceChanged, this, refresh);
+        if (SliceOwnership* ownership = m_radioModel->sliceOwnership()) {
+            connect(ownership, &SliceOwnership::activeRxChanged, this, refresh);
+        }
+        // And the filter buttons a preset's new name, for the same reason.
+        if (FilterPresetStore* presets = m_radioModel->filterPresetStore()) {
+            connect(presets, &FilterPresetStore::presetsChanged, this, refresh);
+        }
     }
     watchSlicesForContainers();
 
@@ -7926,11 +7973,7 @@ void MainWindow::buildUI()
     // can broadcast unit-mode changes to all live MeterItems.
     m_radioModel->setContainerManager(m_containerManager);
     const auto cachedMaxBin = MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
-        if (!slice || !m_panStack || slice->streamIndex() < 0 || markerOnlyPlacement(slice->sliceIndex())) { return nullptr; }
-        PanadapterApplet* pan=m_panStack->panadapter(windowPanFor(slice));
-        SliceModel* displayed=pan ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
-        if (!displayed || displayed->streamIndex()!=slice->streamIndex() || displayed->streamEpoch()!=slice->streamEpoch()) { return nullptr; }
-        return pan->spectrumWidget();
+        return maxBinSpectrumFor(slice);
     });
     m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
     m_meterPoller->setRxSourceIdentitySource([this](const QJsonObject& context) {
@@ -8302,6 +8345,9 @@ void MainWindow::buildUI()
             // model changed even when the destination pan does not exist
             // yet and no flag could be built.
             rebuildFftRouting();
+            // A container's PEAK and CTUN light from the pan its slice is
+            // on, which has just changed.
+            refreshContainerControls();
         });
     });
 
@@ -9534,22 +9580,7 @@ void MainWindow::populateDefaultMeter()
                     return m_stationClient && m_stationClient->isHandshakeComplete();
                 },
                 MeterPoller::panMaxBinSourceForSlice([this](const SliceModel* slice) -> SpectrumWidget* {
-                    if (!slice || !m_panStack || slice->streamIndex() < 0
-                        || markerOnlyPlacement(slice->sliceIndex())) {
-                        return nullptr;
-                    }
-                    // Core's primary slice may have no panKey. Use its actual
-                    // window host, as subscriptions do, never the active pan.
-                    PanadapterApplet* pan = m_panStack->panadapter(windowPanFor(slice));
-                    SliceModel* displayed = pan
-                        ? m_radioModel->sliceById(pan->activeSliceIndex()) : nullptr;
-                    // Co-hosted slices may measure the same receiver trace;
-                    // a marker for a different receiver may not borrow it.
-                    if (!displayed || displayed->streamIndex() != slice->streamIndex()
-                        || displayed->streamEpoch() != slice->streamEpoch()) {
-                        return nullptr;
-                    }
-                    return pan->spectrumWidget();
+                    return maxBinSpectrumFor(slice);
                 }));
             // R-R3-13 / R-R3-49 (parity Task 15): the ADC and AGC meters
             // read the Core's slice readings when it sends them.
@@ -9602,6 +9633,15 @@ void MainWindow::populateDefaultMeter()
             }
             return SliceMeterPump::MeterSource::SignalAverage;
         });
+        // 2026-10-11: Max Bin per slice. The pump wrote the engine's one
+        // display-0 value, the active pan's, to every slice, so with
+        // several slices every flag showed the same number. Each flag now
+        // reads its own slice's passband on its own pan's trace, as a
+        // window on a Core already does (setRemoteRadioModel above).
+        pump->setMaxBinSource(MeterPoller::panMaxBinSourceForSlice(
+            [this](const SliceModel* slice) -> SpectrumWidget* {
+                return maxBinSpectrumFor(slice);
+            }));
     }
 
     // 2026-05-22 spectrum-calibration fix (Fix 1 from the S-meter / spectrum
@@ -17483,8 +17523,15 @@ void MainWindow::onConnectionStateChanged()
                 // for OPERATE is `operate=1` (key=value), not bare `operate`.
                 // PGXL rejected `operate` / `standby` with error 50000016
                 // every click.
+                // 2026-10-11: setPgxlOperateForStation refused this click on
+                // every app that does not share its accessories (all but
+                // nereusd), so OPERATE did nothing there.
                 QString reason;
-                m_radioModel->setPgxlOperateForStation(wantOperate, &reason);
+                if (!m_radioModel->setPgxlOperateFromApplet(wantOperate, &reason)) {
+                    qCWarning(lcConnection) << "Power Genius"
+                                            << (wantOperate ? "OPERATE" : "STANDBY")
+                                            << "not sent:" << reason;
+                }
             });
 
             // R-R3-47 / R-R3-22: the gauges no longer come from here. The

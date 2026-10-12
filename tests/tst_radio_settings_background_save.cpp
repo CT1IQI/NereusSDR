@@ -90,6 +90,43 @@ private slots:
         QCOMPARE(savedDouble(prefix + "NnrAlpha"), 2.75);
     }
 
+    // A control change elsewhere on the Core saves in the background too
+    // and replaces the timed save before it reaches the disk. Its result is
+    // the timed save's result: a failure is shown and tried again.
+    void aFailedLaterSaveAnswersForTheTimedSaveItReplaced()
+    {
+        auto& settings = AppSettings::instance();
+        RadioModel radio;
+        auto* slice = radio.sliceById(radio.addSlice());
+        QVERIFY(slice);
+        slice->setSettingsRadioIdentity("AA:BB:CC:DD:EE:24");
+        const QString prefix = slice->nnrSettingsPrefix();
+        const auto entered = std::make_shared<QSemaphore>();
+        const auto release = std::make_shared<QSemaphore>();
+        settings.setBackgroundSaveStartHookForTesting([entered, release] {
+            entered->release();
+            release->acquire();
+        });
+        const auto letGo = qScopeGuard([release] { release->release(8); });
+        QSignalSpy errorChanged(&radio, &RadioModel::settingsSaveErrorChanged);
+
+        slice->setNnrAlpha(2.75);
+        QTRY_VERIFY_WITH_TIMEOUT(entered->available() > 0, kTimedSaveWaitMs);
+        // A directory at the file's path refuses the write that follows.
+        QVERIFY(QDir().mkpath(settings.filePath()));
+        // Also on a failed check, so the next test finds no directory there.
+        const auto tidy = qScopeGuard([&settings] { QDir().rmdir(settings.filePath()); });
+        settings.saveInBackground();
+        release->release(8);
+
+        QTRY_COMPARE_WITH_TIMEOUT(errorChanged.size(), 1, kTimedSaveWaitMs);
+        QVERIFY(!radio.settingsSaveError().isEmpty());
+        QVERIFY(QDir().rmdir(settings.filePath()));
+        radio.flushPendingSettingsSave();
+        QVERIFY(radio.settingsSaveError().isEmpty());
+        QCOMPARE(savedDouble(prefix + "NnrAlpha"), 2.75);
+    }
+
     void aFlushWhileTheTimedSaveIsWithTheWriterWritesTheFileItself()
     {
         auto& settings = AppSettings::instance();

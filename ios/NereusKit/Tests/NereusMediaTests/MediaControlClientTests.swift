@@ -1885,7 +1885,10 @@ import Testing
         #expect(rig.recorder.mediaConnectedCalls == 2)
     }
 
-    @Test func onASessionTheRedialScheduleWaitsForTheMediaConnection() async throws {
+    // The wait for the client to have told the session has no deadline of
+    // its own; the time limit only ends a test whose client never does.
+    @Test(.timeLimit(.minutes(1)))
+    func onASessionTheRedialScheduleWaitsForTheMediaConnection() async throws {
         let station = ScriptedStation()
         let clock = ManualLinkClock()
         let session = StationSession(endpoint: StationEndpoint(host: "shack.example.net"), trust: station.trust,
@@ -1913,11 +1916,26 @@ import Testing
         await recorder.settle { transport.pending.contains { $0.contains("\"op\":\"start\"") } }
         #expect(transport.pending.contains { $0.contains("\"op\":\"start\"") })
 
-        // The media connection comes up: now the schedule starts over.
+        // The media connection comes up: now the schedule starts over. The
+        // client hears of it on a task of its own and then tells the
+        // session, so that comes when the computer gets to it: wait for
+        // the client's count of connections it has finished bringing up.
+        let handled = await client.mediaUpHandled
         try #require(recorder.peers.last).become(.connected)
-        await recorder.settle { false }
+        var done = await client.mediaUpHandled
+        while done == handled {
+            do {
+                try await Task.sleep(for: .milliseconds(20))
+            } catch {
+                // The test's time limit canceled it.
+                break
+            }
+            done = await client.mediaUpHandled
+        }
+        #expect(done > handled, "the client did not finish bringing media up")
         await transport.dropLink()
-        #expect(await session.state == .waitingToRetry(seconds: 1))
+        let state = await session.state
+        #expect(state == .waitingToRetry(seconds: 1))
         let peer = try #require(recorder.peers.last)
         await recorder.settle { peer.isClosed }
         #expect(peer.isClosed, "the lost session retired the peer")

@@ -721,6 +721,9 @@ private:
     // Start (or restart) the debounced save when it is enabled, a radio's
     // settings are loaded, and the radio is not transmitting.
     void scheduleSave();
+    // Puts this radio's values in the settings store without writing the
+    // file. False when saveSettings()'s gate refuses `mac`.
+    bool storeSettings(const QString& mac);
 
     // Push a new ATT value to hardware + emit signal.  Used by auto-att
     // paths that bypass setAttenuation() (which also stores per-band state).

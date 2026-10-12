@@ -63,6 +63,10 @@
 //                second ADC's 0-31 dB field (kRx2StepAttMaxDb,
 //                rx2MaxAttenuation), so no RX2 value wraps on the wire.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The Core's debounced save hands the file to the settings
+//                writer thread; the teardown save and flushPendingSave()
+//                still write it before returning.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -147,7 +151,12 @@ StepAttenuatorController::StepAttenuatorController(QObject* parent)
     m_saveTimer.setSingleShot(true);
     m_saveTimer.setInterval(kSaveDebounceMs);
     connect(&m_saveTimer, &QTimer::timeout, this, [this]() {
-        saveSettings(m_loadedMac);
+        // The file is written on the settings writer thread: this timer
+        // fires on the Core's main thread, which also sends the receive
+        // audio and must not wait for the disk.
+        if (storeSettings(m_loadedMac)) {
+            AppSettings::instance().saveInBackground();
+        }
     });
 }
 
@@ -2315,6 +2324,13 @@ void StepAttenuatorController::onDdcMappingChanged()
 
 void StepAttenuatorController::saveSettings(const QString& mac)
 {
+    if (storeSettings(mac)) {
+        AppSettings::instance().save();
+    }
+}
+
+bool StepAttenuatorController::storeSettings(const QString& mac)
+{
     // Issue #259 gate: refuse to save until loadSettings has populated this
     // controller for the same MAC. Without this, the teardownConnection
     // that runs INSIDE RadioModel::connectToRadio (when a previous m_connection
@@ -2329,7 +2345,7 @@ void StepAttenuatorController::saveSettings(const QString& mac)
     // m_transmitModel.persistToSettings block at the matching site in
     // RadioModel::teardownConnection().
     if (mac.isEmpty() || m_loadedMac != mac) {
-        return;
+        return false;
     }
 
     auto& s = AppSettings::instance();
@@ -2447,7 +2463,7 @@ void StepAttenuatorController::saveSettings(const QString& mac)
             QString::number(m_txAttByBand[static_cast<size_t>(b)]));
     }
 
-    s.save();
+    return true;
 }
 
 void StepAttenuatorController::loadSettings(const QString& mac)

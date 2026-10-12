@@ -23,6 +23,11 @@
 // and the noise floor carry on; the peak hold and the blobs empty.
 //
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF  The fast spin tests end each step on the
+//                                    frames it waits for, not on a count of
+//                                    frames in a fixed time, which fell
+//                                    under load.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the Core
 //                                    states the picture; what a pan and a
 //                                    mini display draw through a fast spin,
@@ -81,13 +86,19 @@ namespace {
 // The dBm window's headroom and whole-dB rounding, as the rule states them.
 constexpr double kHeadroomDb = 10.0;
 
-// The fast spin tests: the fewest frames of the spin's own contexts that must
-// be drawn, pinned below what was measured. Measured on macOS, three runs:
-// the pan drew 57, 57 and 58 of the 71 frames of the spin's contexts that
-// reached the window in 30 steps; the mini display was given 22, 23 and 27
-// in 16 steps. Before the window drew what it was sent, both were 0.
-constexpr qsizetype kPanSpinFramesDrawnFloor = 40;
-constexpr int kMiniSpinFramesFloor = 12;
+// The fast spin tests: how long a step waits for a frame the Core is to send,
+// or the window is to draw. A step ends on those frames, not on how many of
+// them a fixed wait happened to hold. The Core makes no frame within 5 ms of
+// the one before it (FFTEngine::processFrame), so when its spectrum thread
+// is kept waiting and then takes several blocks of samples at once, the
+// frames due inside that catch-up are never made. Among the other tests of a
+// parallel run that left steps with no frame of the spin to deliver: a count
+// of frames drawn in 30 steps, pinned at 40, came out at 34 and at 38.
+// (A quiet Mac, three runs: the pan drew 57, 57 and 58 of the 71 frames of
+// the spin's contexts that reached the window in 30 steps; the mini display
+// was given 22, 23 and 27 in 16 steps. Before the window drew what it was
+// sent, both were 0.)
+constexpr int kSpinFrameWaitMs = 10'000;
 
 class DisplayTransport final : public IMediaTransport {
 public:
@@ -141,6 +152,15 @@ public:
         holding = false;
         mark();
         return releaseMarked();
+    }
+    // The context generation of the newest spectrum frame this end was given
+    // to send for an endpoint, held or not.
+    std::optional<quint32> newestSent(quint32 endpoint) const
+    {
+        for (auto it = sent.crbegin(); it != sent.crend(); ++it) {
+            if (it->endpoint == endpoint) { return it->generation; }
+        }
+        return std::nullopt;
     }
     bool sendRtp(const QByteArray&) override { return active; }
     bool isReady() const override { return active; }
@@ -1176,6 +1196,10 @@ private slots:
     // frames undelayed the Core is always one context ahead of the window
     // and no frame can ever be one of a context the window knows.)
     //
+    // A step is not over until the Core has sent a frame of the context it
+    // made for it, so every step after the first delivers one of the step
+    // before, on any machine (kSpinFrameWaitMs).
+    //
     // The Core states the picture: every context of the spin continues the
     // picture the pan shows, so the window takes each for drawing though its
     // request has since changed, and draws its frames at the frequencies
@@ -1230,9 +1254,14 @@ private slots:
         const int askedBefore = f.panAsks();
         const qsizetype sentBefore = f.coreMedia->sent.size();
         const qsizetype drawnBefore = drawn.size();
+        // The pan is the only display here: every frame is its endpoint's.
+        QVERIFY(!f.coreMedia->sent.isEmpty());
+        const quint32 panEndpoint = f.coreMedia->sent.last().endpoint;
+        const bool drawsTheSpin = statesPicture && !newPictureEachStep;
         int contextsAccepted = 0;
         int stepsBlank = 0;
         int stepsWithAFrame = 0;
+        int stepsGivenAFrameOfTheSpin = 0;
         qsizetype deliveredOfTheOldContext = 0;
         qsizetype deliveredOfTheSpin = 0;
         double worstCarrierPixels = 0.0;
@@ -1245,6 +1274,9 @@ private slots:
             f.coreMedia->mark();
         };
         for (int step = 1; step <= kSteps; ++step) {
+            // The context of the Core's newest frame: the one it made for
+            // the step before.
+            const std::optional<quint32> newestAtStep = f.coreMedia->newestSent(panEndpoint);
             const double stepWidth = newPictureEachStep && step % 2 == 1 ? width - 600.0 : width;
             f.widget->setDisplayWindowPreservingHistory(
                 startCenter + direction * step * kStepHz, stepWidth);
@@ -1255,14 +1287,34 @@ private slots:
                      qPrintable(QStringLiteral("step %1 was not asked").arg(step)));
             // Then the frames the Core sent before it heard of this step.
             const qsizetype drawnAtStep = drawn.size();
+            qsizetype givenOfTheSpin = 0;
             for (const DisplayTransport::Frame& frame : f.coreMedia->releaseMarked()) {
                 if (frame.generation == generationBefore) {
                     ++deliveredOfTheOldContext;
                 } else {
                     ++deliveredOfTheSpin;
+                    ++givenOfTheSpin;
                 }
             }
             for (int turn = 0; turn < 8; ++turn) { f.feed(); QTest::qWait(10); }
+            if (givenOfTheSpin > 0) {
+                ++stepsGivenAFrameOfTheSpin;
+                // A frame of a context that continues the picture is drawn,
+                // however long this machine takes over it.
+                if (drawsTheSpin) {
+                    QVERIFY2(f.run([&] { return drawn.size() != drawnAtStep; }, kSpinFrameWaitMs),
+                             qPrintable(QStringLiteral("step %1 was given %2 frame(s) of the "
+                                                       "spin's contexts and drew none")
+                                            .arg(step).arg(givenOfTheSpin)));
+                }
+            }
+            // The step ends when the Core has sent a frame of the context it
+            // made for this step: the next step has one to deliver, however
+            // few frames the Core makes on this machine.
+            QVERIFY2(f.run([&] { return f.coreMedia->newestSent(panEndpoint) != newestAtStep; },
+                           kSpinFrameWaitMs),
+                     qPrintable(QStringLiteral("the Core sent no frame of the context for step %1")
+                                    .arg(step)));
             if (drawn.size() != drawnAtStep) { ++stepsWithAFrame; }
             if (f.widget->remoteCodecForTest().contextGeneration != generationBefore) {
                 ++contextsAccepted;
@@ -1318,14 +1370,15 @@ private slots:
         QVERIFY2(worstCarrierPixels <= 2.0,
                  qPrintable(QStringLiteral("the carrier was drawn %1 pixels from its frequency")
                                 .arg(worstCarrierPixels, 0, 'f', 2)));
-        if (statesPicture && !newPictureEachStep) {
-            QVERIFY2(drawnOfTheSpin >= kPanSpinFramesDrawnFloor,
-                     qPrintable(QStringLiteral("%1 frames of the spin's contexts were drawn of "
-                                               "%2 that reached the window")
-                                    .arg(drawnOfTheSpin).arg(deliveredOfTheSpin)));
-            QVERIFY2(stepsWithAFrame >= kSteps - 1,
-                     qPrintable(QStringLiteral("%1 of %2 steps drew a frame")
-                                    .arg(stepsWithAFrame).arg(kSteps)));
+        // Every step after the first delivered a frame of the context the
+        // Core made for the step before it.
+        QCOMPARE(stepsGivenAFrameOfTheSpin, kSteps - 1);
+        if (drawsTheSpin) {
+            // Each of those steps drew one (verified step by step above).
+            QVERIFY2(stepsWithAFrame >= stepsGivenAFrameOfTheSpin,
+                     qPrintable(QStringLiteral("%1 steps drew a frame of the %2 that were given "
+                                               "one of the spin's contexts")
+                                    .arg(stepsWithAFrame).arg(stepsGivenAFrameOfTheSpin)));
             QCOMPARE(ending, SpectrumWidget::RemoteContextPicture::Moved);
         } else {
             QVERIFY2(drawnInSpin <= deliveredOfTheOldContext,
@@ -1362,8 +1415,17 @@ private slots:
         QVERIFY(f.start());
         QSignalSpy miniFrames(f.window.get(), &RemoteMediaController::miniDisplayFrame);
         QSignalSpy unavailable(f.window.get(), &RemoteMediaController::miniDisplayUnavailable);
+        // The pan's frames come first: the mini display's endpoint is the
+        // other one.
+        QVERIFY(f.run([&f] { return !f.coreMedia->sent.isEmpty(); }));
+        const quint32 panEndpoint = f.coreMedia->sent.last().endpoint;
         f.window->setMiniDisplaySlices({f.sliceId});
         QVERIFY(f.run([&] { f.plan(); return miniFrames.size() >= 30; }));
+        std::optional<quint32> miniEndpoint;
+        for (const DisplayTransport::Frame& frame : f.coreMedia->sent) {
+            if (frame.endpoint != panEndpoint) { miniEndpoint = frame.endpoint; }
+        }
+        QVERIFY(miniEndpoint);
         SliceModel* const slice = f.remote.sliceById(f.sliceId);
         QVERIFY(slice);
         const double start = slice->frequency();
@@ -1391,9 +1453,11 @@ private slots:
         unavailable.clear();
         const int askedBefore = f.miniAsks();
         const qsizetype sentBefore = f.coreMedia->sent.size();
+        const std::optional<quint32> generationBefore = f.coreMedia->newestSent(*miniEndpoint);
         int framesAtAnEarlierStep = 0;
         int framesElsewhere = 0;
         int stepsWithAFrame = 0;
+        int stepsGivenAFrameOfTheSpin = 0;
         double worstCarrierSamples = 0.0;
         f.coreMedia->holding = true;
         f.onMiniAsk = [&f] {
@@ -1401,13 +1465,41 @@ private slots:
             f.coreMedia->mark();
         };
         for (int step = 1; step <= kSteps; ++step) {
+            // The context of the Core's newest frame for the mini display:
+            // the one it made for the step before.
+            const std::optional<quint32> newestAtStep = f.coreMedia->newestSent(*miniEndpoint);
             slice->setFrequency(start + direction * step * kStepHz);
             f.stationLink->setHoldsOutgoing(false);
             QVERIFY2(f.run([&] { f.plan(); return f.miniAsks() >= askedBefore + step; }, 10'000),
                      qPrintable(QStringLiteral("step %1 was not asked").arg(step)));
             const qsizetype framesAtStep = miniFrames.size();
-            f.coreMedia->releaseMarked();
+            qsizetype givenOfTheSpin = 0;
+            for (const DisplayTransport::Frame& frame : f.coreMedia->releaseMarked()) {
+                if (frame.endpoint == *miniEndpoint && frame.generation != generationBefore) {
+                    ++givenOfTheSpin;
+                }
+            }
             for (int turn = 0; turn < 8; ++turn) { f.feed(); QTest::qWait(10); }
+            if (givenOfTheSpin > 0) {
+                ++stepsGivenAFrameOfTheSpin;
+                // A frame of a context that continues the picture is given
+                // to the mini display, however long this machine takes.
+                if (statesPicture) {
+                    QVERIFY2(f.run([&] { return miniFrames.size() != framesAtStep; },
+                                   kSpinFrameWaitMs),
+                             qPrintable(QStringLiteral("step %1 delivered %2 frame(s) of the "
+                                                       "spin's contexts and the mini display "
+                                                       "was given none")
+                                            .arg(step).arg(givenOfTheSpin)));
+                }
+            }
+            // The step ends when the Core has sent the mini display a frame
+            // of the context it made for this step: the next step has one
+            // to deliver, however few frames the Core makes on this machine.
+            QVERIFY2(f.run([&] { return f.coreMedia->newestSent(*miniEndpoint) != newestAtStep; },
+                           kSpinFrameWaitMs),
+                     qPrintable(QStringLiteral("the Core sent the mini display no frame of "
+                                               "the context for step %1").arg(step)));
             if (miniFrames.size() != framesAtStep) { ++stepsWithAFrame; }
             for (qsizetype i = framesAtStep; i < miniFrames.size(); ++i) {
                 const QList<QVariant>& frame = miniFrames.at(i);
@@ -1454,14 +1546,20 @@ private slots:
             .arg(stepsWithAFrame).arg(worstCarrierSamples, 0, 'f', 2);
         QCOMPARE(asksInSpin, kSteps);
         QCOMPARE(framesElsewhere, 0);
+        // Every step after the first delivered a frame of the context the
+        // Core made for the step before it.
+        QCOMPARE(stepsGivenAFrameOfTheSpin, kSteps - 1);
         if (statesPicture) {
             QCOMPARE(blankedInSpin, 0);
-            QVERIFY2(framesAtAnEarlierStep >= kMiniSpinFramesFloor,
+            // Each of those steps gave the mini display one (verified step
+            // by step above), at the center of an earlier step.
+            QVERIFY2(stepsWithAFrame >= stepsGivenAFrameOfTheSpin,
+                     qPrintable(QStringLiteral("%1 steps gave a frame of the %2 that delivered "
+                                               "one of the spin's contexts")
+                                    .arg(stepsWithAFrame).arg(stepsGivenAFrameOfTheSpin)));
+            QVERIFY2(framesAtAnEarlierStep >= stepsGivenAFrameOfTheSpin,
                      qPrintable(QStringLiteral("%1 frames were given in the spin")
                                     .arg(framesAtAnEarlierStep)));
-            QVERIFY2(stepsWithAFrame >= kSteps - 2,
-                     qPrintable(QStringLiteral("%1 of %2 steps gave a frame")
-                                    .arg(stepsWithAFrame).arg(kSteps)));
             QVERIFY2(worstCarrierSamples <= 2.0,
                      qPrintable(QStringLiteral("the carrier was %1 samples from its frequency")
                                     .arg(worstCarrierSamples, 0, 'f', 2)));

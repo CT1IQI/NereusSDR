@@ -53,8 +53,10 @@ import Testing
         #expect(await rig.session.state == .ready)
     }
 
+    /// Waits for a refusal to reach the recorder, which reads the session's
+    /// events on a task of its own, and returns the refusals it holds.
     private func refused(_ rig: Rig) async -> [Refusal] {
-        await rig.recorder.settle { events in
+        await rig.recorder.handled { events in
             events.contains { if case .refused = $0 { return true } else { return false } }
         }
         return rig.recorder.refusals
@@ -1091,7 +1093,7 @@ import Testing
         ]))
         await transport.deliver(delta)
         #expect(await rig.session.state == .ready)
-        await rig.recorder.settle { $0.contains(.message(delta)) }
+        await rig.recorder.handled { $0.contains(.message(delta)) }
         #expect(rig.recorder.messages.last == delta)
         #expect(transport.pending.isEmpty)
     }

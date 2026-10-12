@@ -23,6 +23,8 @@
 #include "core/RotorConnection.h"
 #include "core/StationRotorController.h"
 
+#include "fakes/HeldSettingsWriter.h"
+
 #include <QElapsedTimer>
 #include <QLoggingCategory>
 #include <QPointer>
@@ -165,6 +167,7 @@ private slots:
 
     void cleanup()
     {
+        AppSettings::instance().setBackgroundSaveStartHookForTesting({});
         m_ctl.reset();
         RotctldProcess::setBinaryOverrideForTesting(std::nullopt);
         AppSettings::instance().clear();
@@ -883,6 +886,49 @@ private slots:
         QVERIFY(!m_ctl->setRotorPresets(QStringLiteral("No heading here"), &why));
         QCOMPARE(why, QStringLiteral("That heading is not a number."));
         QCOMPARE(m_ctl->presets(), QStringLiteral("Europe\t45"));
+    }
+
+    // ── Saves leave the Core's main thread alone ────────────────────
+    // That thread also sends the receive audio; the settings file is
+    // written on the settings writer thread (AppSettings::saveInBackground).
+
+    void aRotorSetupIsSavedOnTheWriterThread()
+    {
+        make();
+        HeldSettingsWriter held;
+
+        QString why;
+        QVERIFY2(m_ctl->configureRotor(gs232b(), &why), qPrintable(why));
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("Rotor/Driver")),
+            QString::number(static_cast<int>(RotorDriver::Gs232b)));
+    }
+
+    void forgettingTheRotorSetupIsSavedOnTheWriterThread()
+    {
+        make();
+        QString why;
+        QVERIFY2(m_ctl->configureRotor(gs232b(), &why), qPrintable(why));
+        QVERIFY(AppSettings::instance().save());
+        HeldSettingsWriter held;
+
+        QVERIFY2(m_ctl->configureRotor(RotorConfig{}, &why), qPrintable(why));
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("Rotor/Driver")), QStringLiteral("<unset>"));
+    }
+
+    void rotorPresetsAreSavedOnTheWriterThread()
+    {
+        make();
+        HeldSettingsWriter held;
+
+        QString why;
+        QVERIFY2(m_ctl->setRotorPresets(QStringLiteral("Europe\t45"), &why), qPrintable(why));
+
+        NEREUS_VERIFY_SAVED_IN_BACKGROUND(
+            held, held.onDisk(QStringLiteral("Rotor/Presets")), QStringLiteral("Europe\t45"));
     }
 };
 

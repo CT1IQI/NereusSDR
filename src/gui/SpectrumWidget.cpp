@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
+//                 settling no longer rescales the whole waterfall history;
+//                 it is resampled into the history's current width and the
+//                 debounce rescales once (jerky dock edge drag). The same
+//                 when paused in scrollback: the viewport rebuild reads the
+//                 history at its own width (historyResizeSettling()).
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
 //                 word (coreCarriedOn) decides whether a context continues
 //                 the picture shown; the pan's own moved-picture rule and
@@ -6416,6 +6423,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         && m_waterfallHistory.height() == desiredSize.height()) {
         newHistory = m_waterfallHistory.scaled(
             desiredSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        ++m_wfHistoryRescales;
     }
     if (newHistory.isNull() || newHistory.size() != desiredSize) {
         traceRxHistoryEvent(RxHistoryEvent::HistoryBufferReset, -1, 0, desiredSize);
@@ -6431,10 +6439,34 @@ void SpectrumWidget::ensureWaterfallHistory()
     m_waterfallHistory = newHistory;
 }
 
+// NereusSDR-original. True while the live image has taken a new width and
+// the history, same row capacity, still waits for the resize debounce to
+// rescale it. Rows are then written to and read from the history at its own
+// width; nothing on the row path may rescale it.
+bool SpectrumWidget::historyResizeSettling() const
+{
+    return m_historyResizeTimer
+        && m_historyResizeTimer->isActive()
+        && !m_waterfallHistory.isNull()
+        && m_waterfallHistory.height() == waterfallHistoryCapacityRows()
+        && m_waterfallHistory.width() != m_waterfall.width();
+}
+
 // From AetherSDR SpectrumWidget.cpp:647-668 [@0cd4559]
 void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
 {
-    ensureWaterfallHistory();
+    // NereusSDR differs from AetherSDR here, which calls
+    // ensureWaterfallHistory() for every row. resizeEvent replaces the live
+    // image at once and leaves the history to the 250 ms debounce, so while
+    // a dock edge or the window border is dragged the two widths differ and
+    // that call rescaled the whole history (plot width by up to
+    // kMaxWaterfallHistoryRows rows, 85 MB at 1300 px) on the GUI thread
+    // for every row that arrived, about every 30 ms: the drag was jerky.
+    // While the debounce is pending the history keeps its width and the row
+    // is resampled into it; the debounce rescales once when the drag rests.
+    if (!historyResizeSettling()) {
+        ensureWaterfallHistory();
+    }
     if (m_waterfallHistory.isNull() || rowData == nullptr) {
         return;
     }
@@ -6444,7 +6476,17 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
     auto* row = reinterpret_cast<QRgb*>(
         m_waterfallHistory.bits()
         + m_wfHistoryWriteRow * m_waterfallHistory.bytesPerLine());
-    std::memcpy(row, rowData, m_waterfallHistory.width() * sizeof(QRgb));
+    const int historyWidth = m_waterfallHistory.width();
+    const int rowWidth = m_waterfall.width();
+    if (historyWidth == rowWidth) {
+        std::memcpy(row, rowData, historyWidth * sizeof(QRgb));
+    } else {
+        // Nearest neighbor, as the settle rescale (Qt::FastTransformation).
+        for (int x = 0; x < historyWidth; ++x) {
+            row[x] = rowData[static_cast<int>(
+                static_cast<qint64>(x) * rowWidth / historyWidth)];
+        }
+    }
     if (m_wfHistoryWriteRow >= 0
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
@@ -6478,7 +6520,14 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     // resizeEvent replaces the live image before its debounced history
     // resize. Window/MOX changes can rebuild in that interval; synchronize
     // the source width before copying or indexing any history scanline.
-    ensureWaterfallHistory();
+    // The exception is a resize still settling: paused in scrollback, every
+    // arriving row rebuilds this viewport, and synchronizing here rescaled
+    // the whole history per row for as long as a dock edge was dragged.
+    // The rows are then read at the history's own width (historyWidth
+    // below) and the debounce rescales once.
+    if (!historyResizeSettling()) {
+        ensureWaterfallHistory();
+    }
 
     traceRxHistoryEvent(RxHistoryEvent::ViewportRebuild);
     m_wfHistoryOffsetRows = std::clamp(
@@ -6492,6 +6541,8 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
     }
 
     const int rowWidthBytes = m_waterfall.width() * static_cast<int>(sizeof(QRgb));
+    const int historyWidth = m_waterfallHistory.width();
+    const bool sameWidth = historyWidth == m_waterfall.width();
     for (int y = 0; y < m_waterfall.height(); ++y) {
         const int rowIndex = historyRowIndexForAge(m_wfHistoryOffsetRows + y);
         if (rowIndex < 0) {
@@ -6504,16 +6555,26 @@ void SpectrumWidget::rebuildWaterfallViewport(double centerHz, double bandwidthH
         if (window.bandwidthHz <= 0.0 || bandwidthHz <= 0.0
             || (qFuzzyCompare(window.centerHz, centerHz)
                 && qFuzzyCompare(window.bandwidthHz, bandwidthHz))) {
-            std::memcpy(dst, src, rowWidthBytes);
+            if (sameWidth) {
+                std::memcpy(dst, src, rowWidthBytes);
+            } else {
+                const int width = m_waterfall.width();
+                for (int x = 0; x < width; ++x) {
+                    dst[x] = src[static_cast<int>(
+                        static_cast<qint64>(x) * historyWidth / width)];
+                }
+            }
         } else {
             const double startHz = centerHz - bandwidthHz / 2.0;
             const double capturedStartHz = window.centerHz - window.bandwidthHz / 2.0;
             const int width = m_waterfall.width();
             for (int x = 0; x < width; ++x) {
                 const double hz = startHz + (x + 0.5) * bandwidthHz / width;
+                // In the history row's own pixels, which are the live
+                // image's except while a resize is settling.
                 const double capturedX = (hz - capturedStartHz)
-                                       / window.bandwidthHz * width;
-                if (capturedX >= 0.0 && capturedX < width) {
+                                       / window.bandwidthHz * historyWidth;
+                if (capturedX >= 0.0 && capturedX < historyWidth) {
                     dst[x] = src[int(capturedX)];
                 }
             }
