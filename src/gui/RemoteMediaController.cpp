@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-12: A display the Core ended because its slice was removed is
+//               not asked for again while the removal is on its way (at most
+//               kPanWaitingGraceMs); the removal retires the binding. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -1008,6 +1012,14 @@ struct RemoteMediaController::Private {
         QJsonObject acceptedRequest;
         int observedStream = -1;
         quint64 observedStreamEpoch = 0;
+        /// The Core ended this display because its slice left the Core
+        /// (kRetireReasonSliceRemoved). The removal itself reaches this
+        /// window's slice list after that word, so until it does the slice
+        /// still looks alive here, and asking again would ask for a receiver
+        /// that is gone. The removal retires the binding. Should it not
+        /// arrive within kPanWaitingGraceMs the display is asked for after
+        /// all, so the pan gets the Core's own answer and never sits blank.
+        bool sliceLeftCore = false;
         quint32 revision = 0;
         quint32 acceptedRevision = 0;
         quint32 contextRevision = 0;
@@ -5885,6 +5897,14 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         setPanStatus(item.panId, status);
         if (!self) { return; }
         if (binding.pending || binding.refusedIdentity == identity) { continue; }
+        if (binding.sliceLeftCore) {
+            // The Core said this display's slice is gone; the slice is
+            // still on this window's list for the moment. Nothing is asked
+            // for it while the removal is on its way: the same grace in
+            // which a waiting pan says nothing (statusFor, above).
+            if (now - binding.waitingSinceMs < kPanWaitingGraceMs) { continue; }
+            binding.sliceLeftCore = false;
+        }
         if (binding.askAgain && binding.acceptedRequest != target) {
             binding.askAgain = false; // A new request supersedes it.
         }
@@ -6784,6 +6804,13 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 binding.sliceLeftReceiver = true;
                 binding.receiverMoveHeldSinceMs = -1;
             }
+            // The Core ends a removed slice's display before the removal
+            // reaches this window's list, so the plan below still finds the
+            // slice. As the "rejected" path of a Core with no display budget
+            // does (below), that is the operator's own change and is not
+            // asked for again: the removal retires the binding. The wording
+            // is SpectrumEndpoint.h's, the constant the Core sends.
+            binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
             if (widget) { widget->invalidateRemoteSpectrumFrame(); }
             if (!self) { return; }

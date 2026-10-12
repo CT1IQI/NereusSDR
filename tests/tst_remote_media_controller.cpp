@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  A receiver removed on the Core is not
+//                                    asked for a display again (a Core with
+//                                    a display budget).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF  Check cross-DLL signal metadata and
 //                                    explicitly simulate VAX availability
 //                                    in microphone pause fixtures.
@@ -3641,6 +3645,221 @@ private slots:
         QCoreApplication::sendEvent(widget, &wheel);
         QTRY_COMPARE(station.streamCentreHz(stream), centre - 30000);
         QCOMPARE(notices.size(), 0);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A receiver that leaves the Core takes its display with it, and the
+    // window does not ask the Core for that display again. It used to: the
+    // Core's word that the display had ended could arrive before the word
+    // that the slice was gone, the window planned at once with the slice
+    // still on its list, and the Core refused the new request ("This
+    // display's receiver is not on the Core.").
+    void removedReceiverIsNotAskedForADisplayAgain()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceA = station.addSlice();
+        QVERIFY(station.sliceById(sliceA));
+        station.sliceById(sliceA)->setFrequency(14200000.0);
+        const int sliceB = station.addSlice();
+        QVERIFY(station.sliceById(sliceB));
+        station.sliceById(sliceB)->setFrequency(7150000.0);
+        const int streamA = station.sliceById(sliceA)->streamIndex();
+        const int streamB = station.sliceById(sliceB)->streamIndex();
+        QVERIFY(streamA >= 0 && streamB >= 0 && streamA != streamB);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        // A Core with a display budget, roomy enough to refuse nothing.
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        auto* second = stack.addPanadapter(QStringLiteral("second"));
+        stack.setActivePan(QStringLiteral("first"));
+        first->setActiveSliceIndex(sliceA);
+        first->spectrumWidget()->setDisplayWindowPreservingHistory(
+            station.streamCentreHz(streamA), 48000);
+        second->setActiveSliceIndex(sliceB);
+        second->spectrumWidget()->setDisplayWindowPreservingHistory(
+            station.streamCentreHz(streamB), 48000);
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        // As the main window does: a slice that is removed leaves every pan.
+        connect(&remote, &RadioModel::sliceRemoved, &stack, [&stack](int sliceIndex) {
+            for (PanadapterApplet* applet : stack.allApplets()) {
+                if (applet) { applet->removeSlice(sliceIndex); }
+            }
+        });
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(daemon.activeEndpointCount(), 2);
+        QTRY_COMPARE(gui.activeEndpointCount(), 2);
+        // Let the planner settle: both displays accepted, nothing pending.
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 2);
+        QTest::qWait(300);
+        outbound.clear();
+        inbound.clear();
+
+        station.removeSlice(sliceB);
+        QTRY_VERIFY(!remote.sliceById(sliceB));
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QTRY_COMPARE(gui.activeEndpointCount(), 1);
+        // Well past the window's 100 ms planning tick.
+        QTest::qWait(500);
+
+        // The Core ends the display once and says why: its receiver was
+        // removed. That is the word the window waits on.
+        const QList<QJsonObject> answers =
+            controlsFor(inbound, QStringLiteral("allocation-result"));
+        QVERIFY(!answers.isEmpty());
+        QCOMPARE(answers.first().value(QStringLiteral("reason")).toString(),
+                 QString::fromLatin1(kRetireReasonSliceRemoved));
+        for (const QJsonObject& asked : controlsFor(outbound, QStringLiteral("subscribe"))) {
+            QVERIFY2(asked.value(QStringLiteral("sliceId")).toInt() != sliceB,
+                     "the window asked for the removed receiver's display");
+        }
+        for (const QJsonObject& answer : answers) {
+            QVERIFY2(answer.value(QStringLiteral("reason")).toString()
+                         != QStringLiteral("This display's receiver is not on the Core."),
+                     "the Core refused a display request for the removed receiver");
+        }
+        // The first pan's display was never touched.
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 0);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // The other side of the wait above: the Core says a display ended
+    // because its slice was removed, and the removal never reaches this
+    // window. The pan does not sit blank for good. Once the grace in which a
+    // waiting pan says nothing is over, the display is asked for after all,
+    // and the Core's answer decides.
+    void displayEndedForARemovedSliceIsAskedForAfterTheGrace()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        QVERIFY(station.sliceById(sliceId));
+        station.sliceById(sliceId)->setFrequency(14200000.0);
+        const int stream = station.sliceById(sliceId)->streamIndex();
+        QVERIFY(stream >= 0);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        PanadapterApplet* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(sliceId);
+        applet->spectrumWidget()->setDisplayWindowPreservingHistory(
+            station.streamCentreHz(stream), 48000);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 nowMs = 0;
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            }, [&nowMs] { return nowMs; }, 10'000);
+        QSignalSpy outbound(&server, &StationServer::mediaControlReceived);
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.remoteDisplayBudgetLimits().has_value());
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        QTRY_COMPARE(gui.activeEndpointCount(), 1);
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 1);
+        // Let the planner settle: the display accepted, nothing pending.
+        QTest::qWait(300);
+        const QJsonObject accepted = lastControl(inbound, QStringLiteral("allocation-result"));
+        QVERIFY(accepted.value(QStringLiteral("accepted")).toBool());
+        QTimer* subscriptionTimer = nullptr;
+        for (QTimer* timer : gui.findChildren<QTimer*>()) {
+            if (timer->interval() == 100) { subscriptionTimer = timer; break; }
+        }
+        QVERIFY(subscriptionTimer);
+        const int asksBefore = countControl(outbound, QStringLiteral("subscribe"));
+        const int answersBefore = countControl(inbound, QStringLiteral("allocation-result"));
+
+        // The Core's word that the display ended, as DaemonMediaController
+        // sends it for a removed slice: nothing held, and the reason. The
+        // slice stays on both lists.
+        QJsonObject ended = accepted;
+        ended.insert(QStringLiteral("accepted"), false);
+        ended.insert(QStringLiteral("reason"), QString::fromLatin1(kRetireReasonSliceRemoved));
+        ended.insert(QStringLiteral("acceptedRevision"), 0);
+        ended.insert(QStringLiteral("applicationBytesPerSecond"), 0);
+        ended.insert(QStringLiteral("spectrumSampleUnitsPerSecond"), 0);
+        ended.insert(QStringLiteral("messagesPerSecond"), 0);
+        QVERIFY(server.sendMediaControl(ended, server.mediaSessionEpoch()));
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")),
+                     answersBefore + 1);
+        QVERIFY(remote.sliceById(sliceId) != nullptr);
+
+        // Inside the grace: nothing is asked, and the pan says nothing.
+        nowMs = RemoteMediaController::kPanWaitingGraceMs - 1;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QTest::qWait(250);
+        QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), asksBefore);
+        QVERIFY2(applet->remoteDisplayStatus().isEmpty(),
+                 qPrintable(applet->remoteDisplayStatus()));
+
+        // The grace is over and the slice is still here: ask.
+        nowMs = RemoteMediaController::kPanWaitingGraceMs;
+        QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        QTRY_COMPARE(countControl(outbound, QStringLiteral("subscribe")), asksBefore + 1);
+        QCOMPARE(lastControl(outbound, QStringLiteral("subscribe"))
+                     .value(QStringLiteral("sliceId")).toInt(), sliceId);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
