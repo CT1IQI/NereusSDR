@@ -812,6 +812,34 @@ private slots:
 
         model.injectConnectionForTest(nullptr);
     }
+
+    // A combined selection (codec::alex::combinesRxBandFilters) that holds
+    // the 6 m BPF/LNA with another band's filter: the 6 m switches take the
+    // LNA out and leave the other filter, where the BPF/LNA alone becomes
+    // the bypass as before.
+    void sixMetreLnaSwitches_takeTheLnaOutOfACombinedSelection()
+    {
+        using codec::alex::applyAlex1HpfSwitches;
+        static constexpr quint8 k20m = 0x01;
+        static constexpr quint8 k20mAnd6m = k20m | k6mLna;
+        codec::alex::Alex1HpfSwitches sw;
+        sw.disable6mLnaOnTx = false;
+        QCOMPARE(applyAlex1HpfSwitches(k20mAnd6m, HPSDRHW::OrionMKII, false, false, sw), k20mAnd6m);
+
+        sw.disable6mLnaOnRx = true;
+        QCOMPARE(applyAlex1HpfSwitches(k20mAnd6m, HPSDRHW::OrionMKII, false, false, sw), k20m);
+        QCOMPARE(applyAlex1HpfSwitches(k6mLna, HPSDRHW::OrionMKII, false, false, sw), kBypass);
+
+        sw.disable6mLnaOnRx = false;
+        sw.disable6mLnaOnTx = true;
+        QCOMPARE(applyAlex1HpfSwitches(k20mAnd6m, HPSDRHW::OrionMKII, false, false, sw), k20mAnd6m);
+        QCOMPARE(applyAlex1HpfSwitches(k20mAnd6m, HPSDRHW::OrionMKII, /*keyed*/true, false, sw), k20m);
+        QCOMPARE(applyAlex1HpfSwitches(k6mLna, HPSDRHW::OrionMKII, /*keyed*/true, false, sw), kBypass);
+
+        // The master bypass replaces the whole selection, as it always has.
+        sw.hpfBypass = true;
+        QCOMPARE(applyAlex1HpfSwitches(k20mAnd6m, HPSDRHW::OrionMKII, false, false, sw), kBypass);
+    }
 };
 
 QTEST_MAIN(TestAlexHpfSwitches)

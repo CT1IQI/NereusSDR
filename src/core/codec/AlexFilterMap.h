@@ -36,6 +36,11 @@
 //                Minimum / Maximum) and the neighbour rule (setup.cs
 //                udAlex*LPF*_ValueChanged) shared by the tab and the Core.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - combinesRxBandFilters: the Anvelina Pro 3 passes nothing in
+//                bypass and takes several band filters at once (measured),
+//                and the 6 m LNA switches take the LNA out of such a
+//                selection. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -265,6 +270,34 @@ quint8 computeAlex2Hpf(double freqMhz, const AlexHpfEdges& edges) noexcept;
 //     {
 //         setAlex2HPF(rx2_dds_freq_mhz);
 bool usesAlex2Hpf(NereusSDR::HPSDRModel model) noexcept;
+
+// True for a radio whose receive band-pass board passes nothing in bypass
+// and passes each band through its own filter with several selected at
+// once. Slices on different bands sharing an input then get all of their
+// filters together, where the other radios take the bypass
+// (RadioModel::republishAlexAdcSlices).
+//
+// NereusSDR-original; not from Thetis, which sends the Anvelina Pro 3 the
+// ANAN-7000DLE's words and has one receiver per filter board. A bench
+// measurement, not a specification: an Anvelina Pro 3 (J.J. Boyd, KG4VCF,
+// 2026-10-11, firmware 22, Protocol 2), receivers on 40 m and 20 m sharing
+// input 1, levels from the radio's own I/Q in dBFS rms for the two:
+//   Alex0 receive half 0x1000, the bypass          -99.2 / -99.8
+//   0x0000, nothing selected                       -99.8 / -99.6
+//   0x0010, the 5.5 to 11 MHz filter               -53.0 / -94.7
+//   0x0002, the 11 to 22 MHz filter                -82.5 / -59.2
+//   0x0012, both filters                           -53.5 / -59.4
+//   0x1012, both filters and the bypass            -56.2 / -64.9
+// The bypass passed nothing with every value tried in Alex1's receive half
+// and in Alex0's low-pass half. Bit names from the Anvelina gateware, which
+// clocks the word out to the filter board unchanged:
+//   From n1gp-Anvelina_PROIII SPI.v:38-50 [@8e86a61]
+//     Bit 01 - 13 MHz HPF
+//     Bit 04 - 9.5 MHz HPF
+//     Bit 12 - HPF BYPASS
+// Input 1's board is the one measured. Input 2's has the same layout in the
+// gateware (SPI.v:56-68, the "_2" bits) and is taken to behave the same.
+bool combinesRxBandFilters(NereusSDR::HPSDRModel model) noexcept;
 
 // Frequency → Alex TRANSMIT low-pass select bits (bank 10 C4 in the P1 packet,
 // or bytes 1428-1431 in the P2 CmdHighPriority packet).
@@ -516,6 +549,10 @@ struct Alex1HpfSwitches {
 //   if (alex6bphpf_bypass || disable_6m_lna_on_rx || (_mox && disable_6m_lna_on_tx))
 //   { NetworkIO.SetAlexHPFBits(0x20); // Bypass HPF
 // (setBPF1ForOrionIISaturn: console.cs:7050).
+// A combined selection (combinesRxBandFilters) that holds the BPF/LNA with
+// other filters loses the BPF/LNA and keeps the others: the bypass passes
+// nothing on the radio that combines. NereusSDR-original; Thetis never
+// selects two rows.
 
 // The PureSignal arm exists only in the band-pass function, which Thetis
 // runs for Orion MkII, Saturn and HermesC10 alone (usesBpf1Preselector,

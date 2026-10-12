@@ -76,6 +76,41 @@ private slots:
         QVERIFY(alex.adcState(0).reasonText.contains("multi-band"));
     }
 
+    // A radio whose band filters combine (codec::alex::combinesRxBandFilters):
+    // slices on more than one band leave the chain filtered, every band
+    // named.
+    void auto_mode_multi_band_stays_filtered_where_the_filters_combine()
+    {
+        AlexController alex;
+        alex.setBandFiltersCombine(0, true);
+        QVERIFY(alex.bandFiltersCombine(0));
+        QVERIFY(!alex.bandFiltersCombine(1));
+        std::array<Band, 5> slicesOnAdc {Band::Band20m, Band::Band40m, Band::Band10m, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, slicesOnAdc);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("40m + 20m + 10m"));
+
+        // The other chain was not told so, and bypasses.
+        alex.notifySlicesOnAdc(1, slicesOnAdc);
+        QCOMPARE(alex.adcState(1).effective, AlexController::BpfEffective::Bypass);
+
+        // The operator's bypass and a wideband view bypass as on any radio.
+        alex.setBpfMode(0, AlexController::BpfMode::ForceBypass);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Bypass);
+        alex.setBpfMode(0, AlexController::BpfMode::Auto);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        alex.setWidebandActive(0, true);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::WidebandLocked);
+        alex.setWidebandActive(0, false);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+
+        // Switched off, the same slices bypass, and the change is announced.
+        QSignalSpy changed(&alex, &AlexController::bpfStateChanged);
+        alex.setBandFiltersCombine(0, false);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Bypass);
+        QCOMPARE(changed.count(), 1);
+    }
+
     void bpf_mode_persists_per_adc_per_mac()
     {
         const QString testMac = QStringLiteral("00:11:22:33:44:55");

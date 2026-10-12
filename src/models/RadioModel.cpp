@@ -1110,6 +1110,11 @@
 //                resampled to the mix rate (it was mixed at 192 kHz on a
 //                Protocol 2 radio). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - Receive filters on the Anvelina Pro 3: slices on different
+//                bands sharing an input get all of their band filters
+//                together, in place of a bypass that passes nothing on that
+//                radio (republishAlexAdcSlices). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -23989,6 +23994,13 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 //     cover the case where three slices share one ADC across three bands.
 // Operators who prefer a filtered chain over a wide one keep BpfMode::
 // ForceBand.
+//
+// One radio is known not to fit "bypass is correct under either reading":
+// on the Anvelina Pro 3 the bypass passes nothing at all, and several band
+// filters selected together pass each band at the level it has behind its
+// own filter (measured; codec::alex::combinesRxBandFilters). There the Auto
+// policy selects the filter of every slice counted on the chain, and the
+// chain stays Filtered.
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
@@ -24108,6 +24120,11 @@ void RadioModel::republishAlexAdcSlices()
     // for the board's ladder, as before.
     const bool alex2Chain = codec::alex::usesAlex2Hpf(m_hardwareProfile.model);
     const codec::alex::AlexHpfEdges edges = m_alexHpfEdges;
+    // The radio whose band filters combine, where a band difference on a
+    // chain selects every band's filter in place of the bypass (below, at
+    // hpfBitsFor). Never the OC-matrix path, whose identities are pin masks.
+    const bool combineBandFilters = !ocFilterPath
+        && codec::alex::combinesRxBandFilters(m_hardwareProfile.model);
     const auto preselectorFor = [alexBoard, alex2Chain, edges](int chain, double hz) {
         return (chain == 1 && alex2Chain)
             ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges)
@@ -24387,6 +24404,10 @@ void RadioModel::republishAlexAdcSlices()
     // a chain with nothing on it and which clears any state left over from a
     // previously connected two-chain radio.
     for (int adc = 0; adc < kAdcCount; ++adc) {
+        // Set first, so the one recompute that reports this pass's slices
+        // already knows whether a band difference bypasses or combines.
+        m_alexController.setBandFiltersCombine(adc, combineBandFilters);
+        if (!currentParticipants()) { return; }
         m_alexController.notifySlicesOnAdc(adc, bands[adc]);
         if (!currentParticipants()) { return; }
     }
@@ -24398,7 +24419,8 @@ void RadioModel::republishAlexAdcSlices()
     // prbpfilter2's HPF nibble.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
-    auto hpfBitsFor = [this, &counts, &lowestHz, &preselectorFor, chainCount](int adc) -> int {
+    auto hpfBitsFor = [this, &counts, &lowestHz, &preselectors, &preselectorFor, chainCount,
+                       combineBandFilters](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -24436,6 +24458,27 @@ void RadioModel::republishAlexAdcSlices()
         //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
         // With the Alex tab's rows, and on chain 1 the Alex-2 bank where
         // Thetis sets it (preselectorFor above).
+        //
+        // Where the radio's band filters combine, Auto over more than one
+        // filter selects them all: the relay bits are one per filter, so
+        // the selections are added (0x04 for 40 m and 0x01 for 20 m go out
+        // as Alex0's receive half 0x0012, the word measured at
+        // codec::alex::combinesRxBandFilters). A slice with no filter of
+        // its own (below the lowest row, or a row set to bypass) brings the
+        // bypass, which is left out while another slice has a filter: it
+        // passes nothing there, and with two filters it cost them 3 to 5 dB.
+        // Force filter keeps one filter, as the operator asked.
+        // NereusSDR-original; Thetis never selects two rows.
+        if (combineBandFilters && st.mode == AlexController::BpfMode::Auto
+            && counts[adc] > 1) {
+            static constexpr quint8 kBypassBits = 0x20;
+            quint8 selection = 0;
+            for (int i = 0; i < counts[adc]; ++i) {
+                selection |= preselectors[adc][i];
+            }
+            const quint8 filters = static_cast<quint8>(selection & ~kBypassBits);
+            return int(filters != 0 ? filters : selection);
+        }
         return int(preselectorFor(adc, lowestHz[adc]));
     };
 

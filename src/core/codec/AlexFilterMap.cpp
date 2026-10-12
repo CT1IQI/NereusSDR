@@ -36,6 +36,11 @@
 //                Minimum / Maximum) and the neighbour rule (setup.cs
 //                udAlex*LPF*_ValueChanged) shared by the tab and the Core.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - combinesRxBandFilters: the Anvelina Pro 3 passes nothing in
+//                bypass and takes several band filters at once (measured),
+//                and the 6 m LNA switches take the LNA out of such a
+//                selection. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -376,6 +381,12 @@ bool usesAlex2Hpf(NereusSDR::HPSDRModel model) noexcept
     }
 }
 
+// A bench measurement, quoted at the declaration. Only the radio measured.
+bool combinesRxBandFilters(NereusSDR::HPSDRModel model) noexcept
+{
+    return model == NereusSDR::HPSDRModel::ANVELINAPRO3;
+}
+
 // From Thetis console.cs:7177-7243 [v2.10.3.15]
 // Decision rationale: spec §6.3.1
 //
@@ -702,9 +713,13 @@ quint8 applyAlex1HpfSwitches(quint8 selected, NereusSDR::HPSDRHW board,
     // The per-row 6 m bypass (alex6bphpf_bypass) is the row's own, applied
     // where the row is selected (selectAlexHpfRow).
     static constexpr quint8 k6mBpfLna = 0x40;
-    if (selected == k6mBpfLna
+    if ((selected & k6mBpfLna) != 0
         && (switches.disable6mLnaOnRx || (keyed && switches.disable6mLnaOnTx))) {
-        return kBypass;
+        // The BPF/LNA alone becomes the bypass, as above. In a combined
+        // selection (combinesRxBandFilters) it is taken out and the other
+        // bands' filters stay.
+        const quint8 others = static_cast<quint8>(selected & ~k6mBpfLna);
+        return others != 0 ? others : kBypass;
     }
     return selected;
 }

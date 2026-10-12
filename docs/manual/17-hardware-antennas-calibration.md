@@ -94,6 +94,7 @@ Read **Current state > Effective** and **Reason**, then choose **BPF mode**:
 | Choice | Routing policy |
 | --- | --- |
 | Auto - Filter when single-band, bypass when multi-band | Allows the controller to use a band filter for a single-band chain and bypass for a multi-band requirement. |
+| Auto - Filter every band in use | Shown in place of the row above on the Anvelina Pro 3, whose filter board passes no signal in bypass. Slices on different bands sharing the chain get all of their band filters at once, and the chain stays filtered. |
 | Force filter (TX-bound band) | Requests filtering for the transmit-bound band. Check the effective result for the chain's current receivers. |
 | Force bypass - Always wideband | Requests wideband bypass; it can expose the ADC to signals normally excluded by a BPF. |
 
