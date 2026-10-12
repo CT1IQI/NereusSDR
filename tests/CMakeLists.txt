@@ -655,6 +655,8 @@ nereus_add_test(tst_visual_preview_quiet_layout visual/PreviewData.cpp)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
+# The filter pane draws every frame as it did before its cost work (offscreen).
+nereus_add_test(tst_bandwidth_filter_pane_paint)
 
 if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
