@@ -115,12 +115,12 @@ substitute the product calendar version into that protocol field.
 `~/.config/NereusSDR/NereusSDR.settings`). PascalCase keys; booleans are the
 strings `"True"` / `"False"`.
 
-* Radio-authoritative, never persisted: antenna selection.
 * Saved and sent to the radio on connect, as Thetis does: ADC attenuation and
   preamp (console.cs:2174-2179), per-band TX power (console.cs:3089-3093,
   4903-4910, 17528-17542). Connecting never keys.
 * Per-MAC under `hardware/<mac>/...`: sample rate, active RX count.
-* Client-authoritative, persisted: VFO, mode, filter, DSP settings, layout, UI
+* Client-authoritative, persisted: VFO, mode, filter, DSP settings, RX and TX
+  antenna per receiver (`Slice<N>/RxAntenna`, `Slice<N>/TxAntenna`), layout, UI
   and display preferences.
 
 GUI↔model sync: model setters emit, the connection sends; guard echo loops with
