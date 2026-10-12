@@ -43,9 +43,10 @@
 //                Claude Code.
 //   2026-10-11 - receiveBypassSelection: on the Anvelina Pro 3 a receive
 //                bypass goes out as the five ordinary band filters together
-//                (measured), from the filter policy and from the HPF Bypass
-//                switch. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                Claude Code.
+//                (measured), from the filter policy, from the HPF Bypass
+//                switch, and from a row's own bypass and the Alex-2 master
+//                bypass (rowBypass). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -208,7 +209,12 @@ struct AlexHpfEdges {
 // The row selection: the first row whose edges hold `freqMhz` gives its
 // filter (or 0x20 when its bypass is checked); no row gives 0x20. Compared
 // in whole hertz, as Thetis compares the decimal spinner values.
-quint8 selectAlexHpfRow(double freqMhz, const AlexHpfRows& rows) noexcept;
+//
+// `rowBypass` is what a checked row sends: Thetis's 0x20, or
+// receiveBypassSelection (below) for the radio whose bypass passes nothing.
+// A frequency no row holds is 0x20 either way. NereusSDR-original.
+quint8 selectAlexHpfRow(double freqMhz, const AlexHpfRows& rows,
+                        quint8 rowBypass = 0x20) noexcept;
 
 // Frequency → legacy Alex HIGH-PASS select bits (bank 10 C3 in the P1 packet,
 // or bytes 1432-1435 in the P2 CmdHighPriority packet).
@@ -246,8 +252,10 @@ quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board);
 // The same with the Alex tab's saved rows: the high-pass ladder's rows
 // (setAlexHPF) or, on the band-pass boards, the BPF1 rows
 // (setBPF1ForOrionIISaturn), each with its own per-row bypass.
+// `rowBypass` as at selectAlexHpfRow.
 quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board,
-                            const AlexHpfEdges& edges) noexcept;
+                            const AlexHpfEdges& edges,
+                            quint8 rowBypass = 0x20) noexcept;
 
 // The Alex-2 (second ADC) high-pass word with the saved rows and the
 // Alex-2 master bypass:
@@ -259,7 +267,9 @@ quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board,
 //         return;
 //     }
 // followed by the six rows over udAlex2*HPF* and chkAlex2*BPHPF.
-quint8 computeAlex2Hpf(double freqMhz, const AlexHpfEdges& edges) noexcept;
+// `rowBypass` as at selectAlexHpfRow; the master bypass sends it too.
+quint8 computeAlex2Hpf(double freqMhz, const AlexHpfEdges& edges,
+                       quint8 rowBypass = 0x20) noexcept;
 
 // True for the radios on which Thetis sets the Alex-2 high-pass from RX2:
 //   From Thetis console.cs:15435-15444 [v2.10.3.15] (UpdateRX2DDSFreq)
@@ -326,9 +336,10 @@ bool combinesRxBandFilters(NereusSDR::HPSDRModel model) noexcept;
 //
 // Used where the filter policy reports a bypass (Force bypass, and extended
 // view, which also comes and goes for a moment when a slice takes a new
-// stream) and for the Alex tab's HPF Bypass switch. A slice alone below the
-// lowest row keeps Thetis's 0x20: the five rows would not pass it either,
-// and the bypass was not measured there.
+// stream), for the Alex tab's HPF Bypass switch, and for a filter row's own
+// Bypass box and the Alex-2 master bypass (selectAlexHpfRow's rowBypass). A
+// slice alone below the lowest row keeps Thetis's 0x20: the five rows would
+// not pass it either, and the bypass was not measured there.
 quint8 receiveBypassSelection(NereusSDR::HPSDRModel model) noexcept;
 
 // Frequency → Alex TRANSMIT low-pass select bits (bank 10 C4 in the P1 packet,

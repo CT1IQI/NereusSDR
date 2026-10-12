@@ -43,9 +43,10 @@
 //                Claude Code.
 //   2026-10-11 - receiveBypassSelection: on the Anvelina Pro 3 a receive
 //                bypass goes out as the five ordinary band filters together
-//                (measured), from the filter policy and from the HPF Bypass
-//                switch. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                Claude Code.
+//                (measured), from the filter policy, from the HPF Bypass
+//                switch, and from a row's own bypass and the Alex-2 master
+//                bypass (rowBypass). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -328,30 +329,35 @@ AlexHpfEdges AlexHpfEdges::thetisDefaults() noexcept
 //   else
 //   {
 //       NetworkIO.SetAlexHPFBits(0x20); // Bypass HPF
-quint8 selectAlexHpfRow(double freqMhz, const AlexHpfRows& rows) noexcept
+// `rowBypass` is that 0x20 on every radio but the one whose bypass passes
+// nothing (receiveBypassSelection).
+quint8 selectAlexHpfRow(double freqMhz, const AlexHpfRows& rows,
+                        quint8 rowBypass) noexcept
 {
     const qint64 hz = toHz(freqMhz);
     for (size_t i = 0; i < rows.size(); ++i) {
         const AlexHpfRow& row = rows[i];
         if (hz >= toHz(row.startMhz) && hz <= toHz(row.endMhz)) {
-            return row.bypass ? kBypassBits : kRowBits[i];
+            return row.bypass ? rowBypass : kRowBits[i];
         }
     }
     return kBypassBits;
 }
 
 quint8 computeRxPreselector(double freqMhz, NereusSDR::HPSDRHW board,
-                            const AlexHpfEdges& edges) noexcept
+                            const AlexHpfEdges& edges, quint8 rowBypass) noexcept
 {
-    return selectAlexHpfRow(freqMhz, usesBpf1Preselector(board) ? edges.bpf1 : edges.hpf);
+    return selectAlexHpfRow(freqMhz, usesBpf1Preselector(board) ? edges.bpf1 : edges.hpf,
+                            rowBypass);
 }
 
-quint8 computeAlex2Hpf(double freqMhz, const AlexHpfEdges& edges) noexcept
+quint8 computeAlex2Hpf(double freqMhz, const AlexHpfEdges& edges,
+                       quint8 rowBypass) noexcept
 {
     if (edges.alex2Bypass) {
-        return kBypassBits;
+        return rowBypass;
     }
-    return selectAlexHpfRow(freqMhz, edges.alex2);
+    return selectAlexHpfRow(freqMhz, edges.alex2, rowBypass);
 }
 
 // From Thetis setup.cs:6190-6205 [v2.10.3.15] (quoted in the header)

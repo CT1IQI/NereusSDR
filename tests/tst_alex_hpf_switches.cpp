@@ -926,6 +926,67 @@ private slots:
 
         model.injectConnectionForTest(nullptr);
     }
+
+    // A filter row's own Bypass box (Alex-1 Filters, the 5.5 to 11 MHz
+    // row) on that radio: the slice in the row gets the five filters, alone
+    // or sharing the input, where the radio's own bypass would leave it
+    // deaf. Off the row nothing changes.
+    void rowBypass_onTheAnvelina_reachesTheWireAsFiveFilters()
+    {
+        static constexpr quint8 kFive = 0x10 | 0x08 | 0x04 | 0x01 | 0x02;
+        const QString rowKey =
+            QStringLiteral("hardware/%1/alex/bpf1/9_5MHz/enabled").arg(kMac);
+        ConnectedP2 conn;
+        RadioModel model;
+        SliceModel* a = g2CoreWithSlice(model, conn, double(k40mHz), HPSDRHW::OrionMKII);
+        QVERIFY(a);
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        conn.setHardwareProfile(model.hardwareProfile());
+        model.requestDdcAssignment();
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), quint8(0x04));
+
+        AppSettings::instance().setValue(rowKey, QStringLiteral("True"));
+        model.applyAlexHpfSwitchSettings();
+        QVERIFY(model.alexHpfEdges().bpf1[2].bypass);
+        QCOMPARE(p2Alex0Hpf(conn), kFive);
+
+        // A second slice on 20 m shares the input: the five hold its row.
+        const int id = model.addSlice();
+        SliceModel* b = model.sliceById(id);
+        QVERIFY(b);
+        b->setFrequency(14200000.0);
+        model.requestDdcAssignment();
+        QCOMPARE(p2Alex0Hpf(conn), kFive);
+
+        // The first slice leaves the bypassed row for 80 m: two ordinary rows.
+        a->setFrequency(3800000.0);
+        model.requestDdcAssignment();
+        QCOMPARE(p2Alex0Hpf(conn), quint8(0x08 | 0x01));
+
+        AppSettings::instance().setValue(rowKey, QStringLiteral("False"));
+        model.applyAlexHpfSwitchSettings();
+        model.injectConnectionForTest(nullptr);
+    }
+
+    // The same box on an ANAN-G2 is Thetis's 0x20, as before.
+    void rowBypass_onTheG2_isStillTheBypass()
+    {
+        const QString rowKey =
+            QStringLiteral("hardware/%1/alex/bpf1/9_5MHz/enabled").arg(kMac);
+        ConnectedP2 conn;
+        RadioModel model;
+        SliceModel* a = g2CoreWithSlice(model, conn, double(k40mHz));
+        QVERIFY(a);
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), quint8(0x04));
+        AppSettings::instance().setValue(rowKey, QStringLiteral("True"));
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), kBypass);
+        AppSettings::instance().setValue(rowKey, QStringLiteral("False"));
+        model.applyAlexHpfSwitchSettings();
+        model.injectConnectionForTest(nullptr);
+    }
 };
 
 QTEST_MAIN(TestAlexHpfSwitches)

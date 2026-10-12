@@ -1116,7 +1116,8 @@
 //                radio (republishAlexAdcSlices). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - The same radio: a bypass the filter policy reports (Force
-//                bypass, extended view) goes out as the five ordinary band
+//                bypass, extended view), a filter row's own bypass and the
+//                Alex-2 master bypass go out as the five ordinary band
 //                filters together. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
 // =================================================================
@@ -24138,10 +24139,13 @@ void RadioModel::republishAlexAdcSlices()
     const quint8 receiveBypass = ocFilterPath
         ? quint8(0x20)
         : codec::alex::receiveBypassSelection(m_hardwareProfile.model);
-    const auto preselectorFor = [alexBoard, alex2Chain, edges](int chain, double hz) {
+    // A row's own Bypass box and the Alex-2 master bypass send the same
+    // (receiveBypass); a frequency no row holds stays 0x20.
+    const auto preselectorFor = [alexBoard, alex2Chain, edges, receiveBypass](int chain,
+                                                                              double hz) {
         return (chain == 1 && alex2Chain)
-            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges)
-            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges);
+            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges, receiveBypass)
+            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges, receiveBypass);
     };
     auto addToChain = [&bands, &preselectors, &counts, &lowestHz, &preselectorFor,
                         ocFilterPath, this](
