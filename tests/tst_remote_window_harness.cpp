@@ -118,6 +118,12 @@
 //                                    buffer is on Setup > Audio >
 //                                    Microphone, in the PC microphone card.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  Six more ctest entries
+//                                    (TestFunctionGroups): the entry left
+//                                    with the slice access and transmit
+//                                    cases had grown past the 120 s limit
+//                                    under load.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -3601,6 +3607,15 @@ int main(int argc, char** argv)
     // _setup and _radio (tests/CMakeLists.txt), each 27 to 41 s at that
     // load; the slice access cases run as tst_remote_window_harness. The
     // limit is not raised.
+    // 2026-10-11: the slice access and transmit cases added since had made
+    // that last entry the longest by far (109 s of the binary's 218 s at
+    // load 18 to 20, and past the limit in a loaded run with every case
+    // still passing). They run as six more entries, _letters, _refusals,
+    // _take, _badges, _access and _show, 11 to 15 s each run two at a time
+    // at load 10 to 18 (the longest of the twelve is _links at 24 s), which
+    // leaves tst_remote_window_harness the case that tunes without slice
+    // access, the evidence capture (skipped unless asked for) and whatever
+    // is added next (3 s).
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_REMOTE_WINDOW_HARNESS_GROUP",
         {{QStringLiteral("connect"),
@@ -3627,7 +3642,35 @@ int main(int argc, char** argv)
            QStringLiteral("olderCoreLeavesAttenuatorControlsDisabledWithAReason"),
            QStringLiteral("windowFollowsTheCoresRadio"),
            QStringLiteral("pureSignalAppletIsDisabledNotHiddenBelowPureSignal3"),
-           QStringLiteral("capabilityChangeRegatesWithoutReconnect")}}});
+           QStringLiteral("capabilityChangeRegatesWithoutReconnect")}},
+         {QStringLiteral("letters"),
+          {QStringLiteral("theFlagsTxButtonMovesTransmitLikeTheLetterRow"),
+           QStringLiteral("remoteTxLettersRespectPhysicalPttOnItsCurrentSlice"),
+           QStringLiteral("remoteTxLetterPendingTakeRejectsChangedAccessIncarnation"),
+           QStringLiteral("remoteStaleTxLetterNeverTakesControlOfAListenedSlice")}},
+         {QStringLiteral("refusals"),
+          {QStringLiteral("remoteTxLettersPreserveCurrentCoreRefusals")}},
+         {QStringLiteral("take"),
+          {QStringLiteral("remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying")}},
+         {QStringLiteral("badges"),
+          {QStringLiteral("remoteTxBadgeTakesTransmitOnASessionTheCoreLetsTransmit"),
+           QStringLiteral("remoteTxBadgeTakeDoesNotOutliveTheLink"),
+           QStringLiteral("remoteTxBadgeAskClosesWhenTheTakeIsAbandoned"),
+           QStringLiteral("remoteContainerMonAndPsaFollowTheTransmitHolder"),
+           QStringLiteral("remoteTxBadgeOnAListenedSliceTakesTheSliceThenTransmit")}},
+         {QStringLiteral("access"),
+          {QStringLiteral("remoteContainerSliceButtonsFollowTheCoresChangeOfControl"),
+           QStringLiteral("remoteLayoutChangeKeepsListeningToASliceOnARemainingPan"),
+           QStringLiteral("remoteListenTheCoreAcceptsShowsTheSliceHere"),
+           QStringLiteral("remotePlacementsFollowTheCoresAccessUpdates"),
+           QStringLiteral("remoteTakeAnsweredBeforeItsAccessUpdateEndsOnTheWindowsPan")}},
+         {QStringLiteral("show"),
+          {QStringLiteral("remoteTakeLandsItsPanOnTheSlice"),
+           QStringLiteral("remoteTakeOfASliceOnAPanThisWindowHasShowsTheSlice"),
+           QStringLiteral("remoteSelectingASliceLetterTakesItsPanToTheSlice"),
+           QStringLiteral("remoteChoosingASlicesRowInTheBottomChooserShowsTheSlice"),
+           QStringLiteral("remoteSelectRxInTheBottomChooserShowsTheSlice"),
+           QStringLiteral("remoteListenInTheBottomChooserLandsItsPanOnTheSlice")}}});
     return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 #include "tst_remote_window_harness.moc"
