@@ -23,10 +23,14 @@
 //                 the widgets beside it. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 
+//   2026-10-12 - Include label text and font metrics in no-shrink diagnostics.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include <QtTest/QtTest>
 
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QLabel>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QStyle>
@@ -199,11 +203,20 @@ struct Placed {
     QString name;
     QSize size;
     bool visible = false;
+    QString detail;
 };
 
 void collect(QWidget* w, const QString& path, QHash<QString, Placed>& out)
 {
-    out.insert(path, Placed{ nameOf(w), w->size(), w->isVisible() });
+    QString detail;
+    if (auto* label = qobject_cast<QLabel*>(w)) {
+        detail = QStringLiteral("text=%1 font=%2 hint=%3x%4 min=%5x%6 parent=%7x%8")
+            .arg(label->text(), label->font().toString())
+            .arg(label->sizeHint().width()).arg(label->sizeHint().height())
+            .arg(label->minimumWidth()).arg(label->minimumHeight())
+            .arg(label->parentWidget()->width()).arg(label->parentWidget()->height());
+    }
+    out.insert(path, Placed{ nameOf(w), w->size(), w->isVisible(), detail });
     int i = 0;
     for (QObject* o : w->children()) {
         if (auto* c = qobject_cast<QWidget*>(o)) {
@@ -498,6 +511,8 @@ private slots:
                     found << QStringLiteral("%1 %2: %3 px tall, %4 in today's look")
                                  .arg(it.key(), it->name).arg(it->size.height())
                                  .arg(before->size.height());
+                    qInfo().noquote() << "NEIGHBOUR classic" << before->detail
+                                     << "workspace" << it->detail;
                 }
             }
         }

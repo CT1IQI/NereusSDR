@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Preserve the AM carrier row with the workspace text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
 //                exists: greyed on Windows with the PC Mic route, a saved
 //                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
@@ -139,6 +141,7 @@
 #include "models/RadioModel.h"
 #include "models/TransmitModel.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/UnbuiltFeatures.h"
 
 #include <QButtonGroup>
@@ -593,6 +596,12 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         auto* lbl = new QLabel(QStringLiteral("AM Car:"), page);
         lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(40);
+        if (WorkspacePreview::enabled()) {
+            // Larger gauge text makes Phone the tallest stacked page, so
+            // it no longer gets the hidden FM page's spare row height.
+            // Keep the AM row as tall as the existing adjacent control.
+            lbl->setMinimumHeight(m_dexpBtn->minimumHeight());
+        }
         row->addWidget(lbl);
 
         m_amCarSlider = new QSlider(Qt::Horizontal, page);
