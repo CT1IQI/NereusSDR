@@ -261,7 +261,9 @@ public:
     /// own filter with several selected at once. In Auto, slices on more
     /// than one band then leave this chain Filtered, with every band named,
     /// and RadioModel sends all of their filters together. The operator's
-    /// Force bypass and a wideband view bypass as on any radio. Recomputes.
+    /// Force bypass and a wideband view report the bypass as on any radio;
+    /// RadioModel sends that radio the five band filters for it
+    /// (codec::alex::receiveBypassSelection). Recomputes.
     void setBandFiltersCombine(int adc, bool on);
     bool bandFiltersCombine(int adc) const;
 

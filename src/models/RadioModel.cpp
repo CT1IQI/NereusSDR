@@ -1115,6 +1115,10 @@
 //                together, in place of a bypass that passes nothing on that
 //                radio (republishAlexAdcSlices). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The same radio: a bypass the filter policy reports (Force
+//                bypass, extended view) goes out as the five ordinary band
+//                filters together. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -24001,6 +24005,9 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 // own filter (measured; codec::alex::combinesRxBandFilters). There the Auto
 // policy selects the filter of every slice counted on the chain, and the
 // chain stays Filtered.
+// A bypass the policy still reports there (Force bypass, extended view) goes
+// out as the five ordinary band filters together, the nearest thing to a
+// bypass that board has (codec::alex::receiveBypassSelection).
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
@@ -24125,6 +24132,12 @@ void RadioModel::republishAlexAdcSlices()
     // hpfBitsFor). Never the OC-matrix path, whose identities are pin masks.
     const bool combineBandFilters = !ocFilterPath
         && codec::alex::combinesRxBandFilters(m_hardwareProfile.model);
+    // What a bypass the policy reports goes out as on receive: 0x20, or on
+    // that radio, whose bypass passes nothing, the five ordinary band
+    // filters together (measured; codec::alex::receiveBypassSelection).
+    const quint8 receiveBypass = ocFilterPath
+        ? quint8(0x20)
+        : codec::alex::receiveBypassSelection(m_hardwareProfile.model);
     const auto preselectorFor = [alexBoard, alex2Chain, edges](int chain, double hz) {
         return (chain == 1 && alex2Chain)
             ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges)
@@ -24420,7 +24433,7 @@ void RadioModel::republishAlexAdcSlices()
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
     auto hpfBitsFor = [this, &counts, &lowestHz, &preselectors, &preselectorFor, chainCount,
-                       combineBandFilters](int adc) -> int {
+                       combineBandFilters, receiveBypass](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -24442,7 +24455,11 @@ void RadioModel::republishAlexAdcSlices()
             // From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]:
             //   prbpfilter->_Bypass  = (bits & 0x20) != 0;
             //   prbpfilter2->_Bypass = (bits & 0x20) != 0;
-            return 0x20;
+            // On the radio whose bypass passes nothing, the five band
+            // filters go out in its place (receiveBypass above). The chain
+            // still reports the bypass: Force bypass and extended view mean
+            // what they did, and the WIDE badge stays. NereusSDR-original.
+            return int(receiveBypass);
         }
 
         // Filtered. Select from the LOWEST frequency on the chain, which is

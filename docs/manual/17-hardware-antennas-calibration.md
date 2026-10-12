@@ -96,7 +96,7 @@ Read **Current state > Effective** and **Reason**, then choose **BPF mode**:
 | Auto - Filter when single-band, bypass when multi-band | Allows the controller to use a band filter for a single-band chain and bypass for a multi-band requirement. |
 | Auto - Filter every band in use | Shown in place of the row above on the Anvelina Pro 3, whose filter board passes no signal in bypass. Slices on different bands sharing the chain get all of their band filters at once, and the chain stays filtered. |
 | Force filter (TX-bound band) | Requests filtering for the transmit-bound band. Check the effective result for the chain's current receivers. |
-| Force bypass - Always wideband | Requests wideband bypass; it can expose the ADC to signals normally excluded by a BPF. |
+| Force bypass - Always wideband | Requests wideband bypass; it can expose the ADC to signals normally excluded by a BPF. On the Anvelina Pro 3, whose filter board passes no signal in bypass, it selects the five HF band filters together (160 m to 10 m) in place of the bypass, so the HF bands are heard; 6 m and anything below 1.5 MHz are not passed. Extended view and the Alex tab's HPF Bypass switch do the same on that radio. |
 
 Choose **Apply** to submit the choice, or **Cancel** to leave it unchanged.
 In a remote window, Apply sends the policy to the Core; a send refusal stays

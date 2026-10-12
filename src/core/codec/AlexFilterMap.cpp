@@ -41,6 +41,11 @@
 //                and the 6 m LNA switches take the LNA out of such a
 //                selection. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11 - receiveBypassSelection: on the Anvelina Pro 3 a receive
+//                bypass goes out as the five ordinary band filters together
+//                (measured), from the filter policy and from the HPF Bypass
+//                switch. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -387,6 +392,15 @@ bool combinesRxBandFilters(NereusSDR::HPSDRModel model) noexcept
     return model == NereusSDR::HPSDRModel::ANVELINAPRO3;
 }
 
+// A bench measurement, quoted at the declaration. The rows are kRowBits'
+// first five, the band-pass bank without its 6 m BPF/LNA.
+quint8 receiveBypassSelection(NereusSDR::HPSDRModel model) noexcept
+{
+    static constexpr quint8 kFiveBandFilters =
+        kRowBits[0] | kRowBits[1] | kRowBits[2] | kRowBits[3] | kRowBits[4];
+    return combinesRxBandFilters(model) ? kFiveBandFilters : kBypassBits;
+}
+
 // From Thetis console.cs:7177-7243 [v2.10.3.15]
 // Decision rationale: spec §6.3.1
 //
@@ -698,8 +712,11 @@ quint8 applyAlex1HpfSwitches(quint8 selected, NereusSDR::HPSDRHW board,
     //   if (alex_hpf_bypass)
     //   {
     //       NetworkIO.SetAlexHPFBits(0x20); // Bypass HPF
+    // switches.receiveBypass is that 0x20 on every radio but the one whose
+    // bypass passes nothing, where it is the five band filters
+    // (receiveBypassSelection), keyed or not.
     if (switches.hpfBypass) {
-        return kBypass;
+        return switches.receiveBypass;
     }
     // The 6 m branch, where the band's selection is the BPF/LNA (0x40):
     //   From Thetis console.cs:6931-6936 [v2.10.3.15] (setAlexHPF), and the
