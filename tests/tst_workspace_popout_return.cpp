@@ -16,6 +16,10 @@
 //                 clears the home as Pop Out and Return do. The timer
 //                 that closes a menu left open ends with its lookup. J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A window widened by its right edge is at its content's
+//                 height when the drag ends, with no scroll bar and nothing
+//                 still asking for another height. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - A window's resize corner sits exactly in its corner and
 //                 its edge zones draw nothing over the outline; a window
 //                 whose height follows its content has no corner. J.J.
@@ -28,12 +32,15 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <memory>
 #include "core/AppSettings.h"
 #include "gui/containers/ContainerArrangeController.h"
+#include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContainerDocumentCodec.h"
 #include "gui/containers/ContainerManager.h"
@@ -1080,14 +1087,32 @@ private slots:
         auto* right = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeRight"));
         auto* bottom = c->findChild<QWidget*>(QStringLiteral("containerResizeEdgeBottom"));
         QVERIFY(right && bottom && right->isVisible() && bottom->isVisible());
+        ContainerContentHost* host = f.manager->contentHost(shellId);
+        QVERIFY(host);
+        auto* scroll = host->findChild<QScrollArea*>();
+        QVERIFY(scroll);
         const int width = shell->width();
+        const int natural = c->naturalHeight();
+        QCOMPARE(shell->height(), natural);
         f.dragHandle(right, QPoint(30, 0));
         QCOMPARE(shell->width(), width + 30);
         QVERIFY(c->autoHeight());
-        QTest::qWait(kPastCommitDelayMs);
+        // The wider bars are taller, and the window is at their height when
+        // the drag ends: no scroll bar, and nothing still asking for another
+        // height (a bar that shows and hides in turn asks without end).
+        QVERIFY(c->naturalHeight() > natural);
+        QCOMPARE(shell->height(), c->naturalHeight());
+        QVERIFY(!scroll->verticalScrollBar()->isVisible());
+        QSignalSpy heightAsked(host, &ContainerContentHost::preferredContentHeightChanged);
+        settle();
+        QCOMPARE(heightAsked.count(), 0);
+        QCOMPARE(shell->height(), c->naturalHeight());
+        // The same once the new width is saved.
+        QTRY_COMPARE(f.document(shellId).geometry.width(), width + 30);
         settle();
         QVERIFY(f.document(shellId).autoHeight);
         QCOMPARE(shell->height(), c->naturalHeight());
+        QVERIFY(!scroll->verticalScrollBar()->isVisible());
 
         const int height = shell->height();
         f.dragHandle(bottom, QPoint(0, 50));

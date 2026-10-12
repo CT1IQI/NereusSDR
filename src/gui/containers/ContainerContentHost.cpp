@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-11 - Workspace preview only: an auto-height stack scales its
+//                 bars by the width without the vertical bar, so a container
+//                 growing to fit them settles. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-11 - The container header mode is Shown or Hidden. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - Workspace preview only: the entry header's options menu
@@ -865,7 +869,19 @@ void ContainerContentHost::projectStackRows()
     if (responsiveBaseHeight <= 0 && headerGap == 0) { return; }
     double scale = 1.0;
     if (responsiveBaseHeight > 0) {
-        const double widthRatio = double(usableWidth) / kBarReferenceWidth;
+        // Workspace preview, auto height: the bars scale by the width the
+        // rows have with no vertical bar. A container growing to fit its
+        // bars is too short for a moment and the bar shows; were the bars
+        // then scaled to the narrower rows they would need less height, the
+        // bar would go, the rows would widen and the bar would show again,
+        // without end, and the container would stay short of its content.
+        int scaleWidth = usableWidth;
+        if (WorkspacePreview::enabled() && m_document.autoHeight) {
+            // What the bar takes from the viewport; nothing when it is
+            // hidden or the style lays it over the content.
+            scaleWidth += qMax(0, m_scroll->maximumViewportSize().width() - m_scroll->viewport()->width());
+        }
+        const double widthRatio = double(scaleWidth) / kBarReferenceWidth;
         const double availableRatio = qMax(0.0, m_scroll->viewport()->height() - fixedHeight) / responsiveBaseHeight;
         const double desiredScale = m_document.autoHeight ? widthRatio : qMin(widthRatio, qMax(1.0, availableRatio));
         // Bound presentation arithmetic to Qt's representable widget extent even
