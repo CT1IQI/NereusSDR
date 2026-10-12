@@ -17,7 +17,9 @@
 //
 // A scene named look-<x> is the Task 1 scene <x> (baseline-<x>, or
 // dialog-<x> for look-dialog-<x>) with the workspace preview switch on;
-// --workspace-preview turns the switch on for any scene.
+// --workspace-preview turns the switch on for any scene. Every other scene
+// runs with the switch off: the binary sets it both ways and never reads
+// NEREUS_WORKSPACE_PREVIEW, whose default in the app is on.
 // --dump-geometry <file> writes the rectangle of every visible widget in
 // the right panel and the first pan's toolbar (window scenes only).
 //
@@ -65,6 +67,9 @@
 //                 settings path wraps onto a line of its own, runs on the
 //                 fixed-name profile too. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-12 - The binary sets the workspace preview switch both ways,
+//                 now that the app's default is on. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -626,16 +631,17 @@ int main(int argc, char** argv)
     }
 
     // A look scene, or --workspace-preview, turns the workspace preview
-    // switch on before anything is themed or constructed.
+    // switch on before anything is themed or constructed. Every other
+    // scene turns it off: the app's default is on (WorkspacePreview.h), and
+    // the baseline-* and dialog-* scenes show the classic look.
     const QString sceneName = args.scene;
     args.scene = baseSceneFor(sceneName);
     bool sceneWantsPreview = false;
     for (const Scene& s : fixedScenes()) {
         sceneWantsPreview = sceneWantsPreview || (s.name == args.scene && s.workspacePreview);
     }
-    if (args.workspacePreview || isLookScene(sceneName) || sceneWantsPreview) {
-        WorkspacePreview::setEnabledForTest(true);
-    }
+    WorkspacePreview::setEnabledForTest(args.workspacePreview || isLookScene(sceneName)
+                                        || sceneWantsPreview);
 
     applyAppTheme(app);
     OffScreenFilter offScreen;

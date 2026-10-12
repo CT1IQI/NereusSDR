@@ -351,6 +351,16 @@ function(nereus_add_test name)
         endif()
     endif()
 
+    # The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0"
+    # (src/gui/styles/WorkspacePreview.h). The suite was written against
+    # the classic look, so every test starts with the look off; a test of
+    # the new look turns it on itself with
+    # WorkspacePreview::setEnabledForTest(true). ctest sets the variable
+    # over whatever the caller exported. nereus_split_test() carries it to
+    # its entries, and the sweep at the end of this file gives it to the
+    # entries registered by hand.
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+
     # Each test gets its own settings location (R-R3-21). TestSandboxInit.cpp
     # puts every test binary in QStandardPaths test mode, but test mode is one
     # shared directory under $HOME (~/.qttest/config on Linux,
@@ -656,6 +666,9 @@ nereus_add_test(tst_workspace_live_input)
 nereus_split_test(tst_workspace_live_input
     ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
 nereus_add_test(tst_workspace_profiles)
+# The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0": the rule
+# on its own, with no process environment (offscreen).
+nereus_add_test(tst_workspace_preview_default)
 # The workspace look has no Lock setting; with the look off Lock is unchanged (offscreen).
 nereus_add_test(tst_workspace_no_lock)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
@@ -10708,6 +10721,21 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# A second ctest entry of a test binary registered by hand (add_test with
+# COMMAND tst_...) builds its own environment and does not pass through
+# nereus_add_test(), so it takes the classic look here (see
+# NEREUS_WORKSPACE_PREVIEW in nereus_add_test()). Entries that run no test
+# binary (the patch checks, the traversal harness) are left alone.
+get_property(_nereus_dir_tests DIRECTORY PROPERTY TESTS)
+foreach(_entry IN LISTS _nereus_dir_tests)
+    if(_entry MATCHES "^tst_")
+        get_test_property(${_entry} ENVIRONMENT _entry_env)
+        if(NOT _entry_env MATCHES "(^|;)NEREUS_WORKSPACE_PREVIEW=")
+            set_property(TEST ${_entry} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+        endif()
+    endif()
+endforeach()
 
 # Workspace visual preview tool (not a test): tests/visual/.
 add_subdirectory(visual)

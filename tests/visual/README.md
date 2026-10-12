@@ -208,9 +208,11 @@ All of them have `look-` pairs.
 `dialog-*` scene) pose the same state as the scene they are named after
 with the workspace preview switch on, so they show the proposed Longpath
 look (the Glass and Depth palette in `src/gui/styles/WorkspacePalette`).
-The binary sets the switch itself for a `look-*` scene; `--workspace-preview`
-sets it for any scene. In the app the switch is the environment variable
-`NEREUS_WORKSPACE_PREVIEW=1`; with it unset nothing changes, and the
+The binary sets the switch itself: on for a `look-*` scene, and for any
+scene with `--workspace-preview`; off for every other scene. It never reads
+the environment. In the app the look is on by default and the environment
+variable `NEREUS_WORKSPACE_PREVIEW=0` turns it off (unset, empty, `1` and
+any other value leave it on). With the switch off nothing changes, and the
 `baseline-*` and `dialog-*` scenes stay pixel-identical (check with
 `--verify --against`).
 

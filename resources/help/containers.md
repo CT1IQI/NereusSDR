@@ -54,10 +54,10 @@ legacy object keeps its place and configuration for later recovery.
 
 ## With the workspace look on
 
-This section applies only when the workspace look is on (the preview started
-with `NEREUS_WORKSPACE_PREVIEW=1`). What "Headers, locks and sources" says about
-headers and **Lock** describes the app with the look off, where nothing has
-changed; with the look on, read this section in its place.
+This section applies when the workspace look is on, which it is unless the app
+was started with `NEREUS_WORKSPACE_PREVIEW=0`. What "Headers, locks and sources"
+says about headers and **Lock** describes the app with the look off, where
+nothing has changed; with the look on, read this section in its place.
 
 **Headers.** Each container's header is either shown or hidden; there is no
 hover choice. The eye button on the header switches it: an open eye means the
