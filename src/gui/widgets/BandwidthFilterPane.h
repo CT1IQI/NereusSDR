@@ -75,13 +75,25 @@
 //   2026-10-08 - hoverCursor(): native cursor shapes in place of
 //                 Qt::SizeAllCursor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 - Paint cost, nothing visible changed: traceBand(), kept
+//                 colors, pens, fonts and working lists, and the kept
+//                 ground picture (see the .cpp). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include <QColor>
+#include <QFont>
+#include <QFontMetrics>
+#include <QImage>
+#include <QPen>
+#include <QPolygonF>
 #include <QString>
 #include <QWidget>
+
+#include <array>
+#include <optional>
 
 namespace NereusSDR {
 
@@ -143,6 +155,15 @@ public:
     /// dann 40 Punkte hoch. Kleiner ziehen darf man weiterhin.
     QSize sizeHint() const override;
 
+    /// NereusSDR: the rows a new trace can change, which is all that
+    /// setTrace() asks to have repainted (see the .cpp).
+    QRect traceBand() const;
+
+    /// NereusSDR: the pixel factor of the kept ground picture, 0 while
+    /// there is none. Only for tests: a frame check proves nothing about
+    /// the kept picture unless it was in use.
+    int keptGroundScaleForTest() const { return m_base.isNull() ? 0 : m_baseKey.scale; }
+
 signals:
     // Beim Ziehen einer Kante. Die Breite darf sich aendern.
     void filterChanged(int low, int high);
@@ -158,6 +179,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* ev) override;
     void mouseReleaseEvent(QMouseEvent* ev) override;
     void leaveEvent(QEvent*) override;
+    void changeEvent(QEvent* ev) override;
 
 private:
     enum class Zone { None, LowEdge, Body, HighEdge };
@@ -189,6 +211,78 @@ private:
     int    m_dragStartLow{0};
     int    m_dragStartHigh{0};
     Zone   m_hover{Zone::None};
+
+    // NereusSDR: what paintEvent needs on every paint and what changes
+    // seldom or never, kept between paints (2026-10-11, paint cost; see
+    // the .cpp). None of it changes a pixel.
+
+    // The role colors and the pens made from them (resolveColors).
+    struct Colors {
+        QColor insetBg;
+        QColor grid;
+        QColor gridLine;
+        QColor accent;
+        QColor passTop;
+        QColor passBottom;
+        QColor border;
+        QColor traceLine;
+        QColor fillTop;
+        QColor fillBottom;
+        QColor innerTop;
+        QColor innerBottom;
+        std::array<QPen, 3> glowPens;
+        QPen   linePen;
+        QPen   avgPen;
+        QColor edge;
+        QPen   edgePen;
+        QPen   handlePen;
+        QPen   handlePenActive;
+        QColor tick;
+        QColor handleTop;
+        QColor handleBottom;
+        QColor handleTopActive;
+        QColor handleBottomActive;
+        QColor faint;
+        QColor ink;
+        QColor labelText;
+    };
+    void resolveColors();
+    Colors m_colors;
+
+    // The fonts made from the widget's font, and their metrics
+    // (resolveFonts).
+    void resolveFonts();
+    QFont m_fontBase;
+    QFont m_valueFont;
+    QFont m_smallFont;
+    QFont m_capsFont;
+    std::optional<QFontMetrics> m_valueMetrics;
+    std::optional<QFontMetrics> m_capsMetrics;
+
+    // Working lists of paintEvent.
+    QVector<int>   m_marks;
+    QVector<float> m_sortScratch;
+    QPolygonF      m_poly;
+    QPolygonF      m_avgPoly;
+
+    // The ground under the curve as a kept picture, and what it was
+    // drawn for (stampBase).
+    struct BaseKey {
+        QSize size;
+        int scale{0};
+        QImage::Format format{QImage::Format_Invalid};
+        double vfoHz{0.0};
+        int spanHz{0};
+        int low{0};
+        int high{0};
+        bool operator==(const BaseKey& other) const = default;
+    };
+    void paintBase(QPainter& p, const QRect& r, const QVector<int>& marks, int xl, int xh) const;
+    int  baseLayerScale(const QPainter& p, QImage::Format* format) const;
+    void stampBase(QPainter& p, int scale, QImage::Format format,
+                   const QRect& r, const QVector<int>& marks, int xl, int xh);
+    QImage  m_base;
+    BaseKey m_baseKey;
 
     // From Longpath src/gui/widgets/BandwidthFilterPane.h:164 [@551576e3]
     // Fangbereich an den Kanten. Groesser als die gezeichnete Pille,

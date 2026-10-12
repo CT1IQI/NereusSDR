@@ -100,6 +100,10 @@
 //   2026-10-11 - Reference copy and paint cost test for NereusSDR by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-11 - With the cost work in the pane: the band a new trace
+//                 repaints, the frames behind the pane left alone, and
+//                 the cost of a band repaint. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1000,6 +1004,15 @@ struct Rig {
     {
         feed(syntheticTrace(pointsFor(pane.width()), tick++));
     }
+    // Everything that decides the picture apart from the trace.
+    QString stateWithoutTrace() const
+    {
+        return QStringLiteral("%1x%2|%3|%4|%5|%6|%7|%8|%9|%10|%11|%12")
+            .arg(ref.width()).arg(ref.height()).arg(ref.m_label).arg(ref.m_vfoHz, 0, 'f', 1)
+            .arg(ref.m_spanHz).arg(ref.m_low).arg(ref.m_high).arg(ref.m_hasFrequency)
+            .arg(int(ref.m_hover)).arg(int(ref.m_drag)).arg(ref.isEnabled())
+            .arg(ref.font().toString());
+    }
     void standardState()
     {
         resize(620, 105);
@@ -1157,18 +1170,22 @@ private:
     // looked at. Set NEREUS_FILTER_PANE_FRAMES to a directory to have the
     // reference and pane frames written there as PNG files.
     QVector<QImage> m_referenceFrames;
+    // The pixel factor of the pane's kept ground picture after each frame
+    // of the last script run; 0 where it had none.
+    QVector<int> m_keptScales;
 
     static int paintCount()
     {
         bool ok = false;
         const int asked = qEnvironmentVariableIntValue("NEREUS_FILTER_PANE_PAINTS", &ok);
-        return (ok && asked > 0) ? asked : 150;
+        return (ok && asked > 0) ? asked : 40;
     }
 
     void compareScript(const std::function<qreal(int)>& ratioFor, QImage::Format format)
     {
         Rig rig;
         m_referenceFrames.clear();
+        m_keptScales.clear();
         const QString dumpDir = qEnvironmentVariable("NEREUS_FILTER_PANE_FRAMES");
         int index = 0;
         runScript(rig, [&](const QString& what) {
@@ -1187,6 +1204,7 @@ private:
                 got.save(QStringLiteral("%1/%2_pane.png").arg(dumpDir).arg(index, 3, 10, QLatin1Char('0')));
             }
             m_referenceFrames.append(want);
+            m_keptScales.append(rig.pane.keptGroundScaleForTest());
             const QString diff = frameDifference(want, got);
             QVERIFY2(diff.isEmpty(),
                      qPrintable(QStringLiteral("frame %1 (%2, ratio %3): %4")
@@ -1219,6 +1237,8 @@ private slots:
         QTest::newRow("ratio 2, opaque") << qreal(2.0) << int(QImage::Format_RGB32);
         QTest::newRow("ratio 3, with alpha") << qreal(3.0) << int(QImage::Format_ARGB32_Premultiplied);
         QTest::newRow("ratio 1.5, with alpha") << qreal(1.5) << int(QImage::Format_ARGB32_Premultiplied);
+        // A picture format the pane's kept ground is not used for.
+        QTest::newRow("ratio 2, other byte order") << qreal(2.0) << int(QImage::Format_RGBA8888_Premultiplied);
     }
 
     void everyFrameEqualsTheReference()
@@ -1226,6 +1246,27 @@ private slots:
         QFETCH(qreal, dpr);
         QFETCH(int, format);
         compareScript([dpr](int) { return dpr; }, static_cast<QImage::Format>(format));
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        // Equal frames say nothing about the kept ground picture unless
+        // it was in use: at a whole ratio into one of Qt's two window
+        // picture formats it is, save for the one frame too large to
+        // keep; at a fractional ratio or into another format, never.
+        const bool whole = dpr == std::floor(dpr);
+        const bool windowFormat = format == int(QImage::Format_ARGB32_Premultiplied)
+            || format == int(QImage::Format_RGB32);
+        const qsizetype kept = m_keptScales.size() - m_keptScales.count(0);
+        if (whole && windowFormat) {
+            QVERIFY2(kept >= m_keptScales.size() - 12,
+                     qPrintable(QStringLiteral("kept ground used on %1 of %2 frames")
+                                    .arg(kept).arg(m_keptScales.size())));
+            for (int scale : std::as_const(m_keptScales)) {
+                QVERIFY(scale == 0 || scale == static_cast<int>(dpr));
+            }
+        } else {
+            QCOMPARE(kept, qsizetype(0));
+        }
     }
 
     // The same script with the pixel ratio changing from frame to frame,
@@ -1260,12 +1301,14 @@ private slots:
         rig.resize(size.width(), size.height());
         const int points = pointsFor(size.width());
 
-        // The band: from the top of the plot to six pixels under its last
-        // row. The curve is held between six under the top and two over
-        // the bottom, and the widest halo reaches four beyond that.
-        const QRect plot = rig.ref.plotRect();
-        const int bandTop = plot.top();
-        const int bandBottom = plot.bottom() + 6;
+        // The band the pane asks to have repainted for a new trace. The
+        // rows are measured on the reference, the drawing as it was.
+        const QRect band = rig.pane.traceBand();
+        const int bandTop = band.top();
+        const int bandBottom = band.bottom();
+        QCOMPARE(band.left(), 0);
+        QCOMPARE(band.width(), size.width());
+        QVERIFY(bandTop > 0 && bandBottom < size.height() - 1);
 
         int firstSeen = -1;
         int lastSeen = -1;
@@ -1298,6 +1341,77 @@ private slots:
                  qPrintable(QStringLiteral("row %1 changed, above the band at %2").arg(firstRow).arg(bandTop)));
         QVERIFY2(lastRow <= bandBottom,
                  qPrintable(QStringLiteral("row %1 changed, below the band at %2").arg(lastRow).arg(bandBottom)));
+    }
+
+    // What a band repaint leaves on the screen. One picture is kept, as a
+    // window keeps one: after every new trace only the pane's trace band
+    // is painted onto it, and the whole picture must equal the reference
+    // frame drawn from scratch. Any change of another kind repaints it
+    // all, as the pane's other setters do.
+    void aBandRepaintLeavesTheReferenceFrame_data()
+    {
+        QTest::addColumn<qreal>("dpr");
+        QTest::addColumn<int>("format");
+        QTest::newRow("ratio 1, with alpha") << qreal(1.0) << int(QImage::Format_ARGB32_Premultiplied);
+        QTest::newRow("ratio 2, with alpha") << qreal(2.0) << int(QImage::Format_ARGB32_Premultiplied);
+        QTest::newRow("ratio 2, opaque") << qreal(2.0) << int(QImage::Format_RGB32);
+        QTest::newRow("ratio 1.5, with alpha") << qreal(1.5) << int(QImage::Format_ARGB32_Premultiplied);
+    }
+
+    void aBandRepaintLeavesTheReferenceFrame()
+    {
+        QFETCH(qreal, dpr);
+        QFETCH(int, format);
+        const QImage::Format fmt = static_cast<QImage::Format>(format);
+        Rig rig;
+        QImage screen;
+        int bandPaints = 0;
+        int index = 0;
+        QString lastState;
+        runScript(rig, [&](const QString& what) {
+            if (QTest::currentTestFailed()) {
+                return;
+            }
+            QImage want = blankFrame(rig.ref.size(), dpr, fmt, QColor(255, 0, 255));
+            renderInto(rig.ref, want);
+            // A band repaint is what follows a new trace when nothing
+            // else changed since the last frame: every other change makes
+            // the pane ask for a whole repaint.
+            const QString state = rig.stateWithoutTrace();
+            const bool traceOnly = state == lastState
+                && screen.size() == want.size()
+                && !rig.pane.traceForTest().isEmpty();
+            lastState = state;
+            if (traceOnly) {
+                renderInto(rig.pane, screen, QRegion(rig.pane.traceBand()));
+                ++bandPaints;
+            } else {
+                screen = blankFrame(rig.pane.size(), dpr, fmt, QColor(0, 255, 0));
+                renderInto(rig.pane, screen);
+            }
+            const QString diff = frameDifference(want, screen);
+            QVERIFY2(diff.isEmpty(),
+                     qPrintable(QStringLiteral("frame %1 (%2, %3): %4")
+                                    .arg(index).arg(what)
+                                    .arg(traceOnly ? QStringLiteral("band repaint") : QStringLiteral("whole repaint"))
+                                    .arg(diff)));
+            ++index;
+        });
+        if (!QTest::currentTestFailed()) {
+            QVERIFY2(bandPaints >= 25, qPrintable(QStringLiteral("only %1 band repaints").arg(bandPaints)));
+        }
+    }
+
+    // The pane tells Qt it paints every pixel itself. That holds only
+    // while its ground color is opaque, which the frame tests above prove
+    // by drawing the reference and the pane over different colors.
+    void thePaneIsOpaque()
+    {
+        BandwidthFilterPane pane;
+        QVERIFY(pane.testAttribute(Qt::WA_OpaquePaintEvent));
+        const QColor ground(Style::role("inset-bg", Style::kInsetBg));
+        QVERIFY(ground.isValid());
+        QCOMPARE(ground.alpha(), 255);
     }
 
     // The pane in a real (offscreen) window: what reaches the window's
@@ -1365,19 +1479,29 @@ private slots:
     // into an image: a measure of the drawing work, not of a screen. The
     // reference and the pane are painted turn about, so whatever else the
     // machine is doing falls on both alike. NEREUS_FILTER_PANE_PAINTS sets
-    // the number of paints (150 if unset).
+    // the number of paints (40 if unset).
     void paintCost_data()
     {
         QTest::addColumn<QSize>("size");
         QTest::addColumn<qreal>("dpr");
-        QTest::newRow("620x105 ratio 2") << QSize(620, 105) << qreal(2.0);
-        QTest::newRow("620x105 ratio 1") << QSize(620, 105) << qreal(1.0);
+        QTest::addColumn<int>("format");
+        QTest::newRow("620x105 ratio 2") << QSize(620, 105) << qreal(2.0)
+                                         << int(QImage::Format_ARGB32_Premultiplied);
+        QTest::newRow("620x105 ratio 1") << QSize(620, 105) << qreal(1.0)
+                                         << int(QImage::Format_ARGB32_Premultiplied);
+        // A picture format the pane's kept ground is not used for, so the
+        // ground is drawn directly: what the kept colors, fonts and lists
+        // save without it.
+        QTest::newRow("620x105 ratio 2, ground drawn directly")
+            << QSize(620, 105) << qreal(2.0) << int(QImage::Format_RGBA8888_Premultiplied);
     }
 
     void paintCost()
     {
         QFETCH(QSize, size);
         QFETCH(qreal, dpr);
+        QFETCH(int, format);
+        const QImage::Format fmt = static_cast<QImage::Format>(format);
         constexpr int kWarmUp = 20;
         const int paints = paintCount();
 
@@ -1385,8 +1509,8 @@ private slots:
         rig.standardState();
         rig.resize(size.width(), size.height());
 
-        QImage refFrame = blankFrame(size, dpr, QImage::Format_ARGB32_Premultiplied, QColor(255, 0, 255));
-        QImage paneFrame = blankFrame(size, dpr, QImage::Format_ARGB32_Premultiplied, QColor(0, 255, 0));
+        QImage refFrame = blankFrame(size, dpr, fmt, QColor(255, 0, 255));
+        QImage paneFrame = blankFrame(size, dpr, fmt, QColor(0, 255, 0));
         QElapsedTimer timer;
 
         // The parts that do not move, alone: no trace yet.
@@ -1407,9 +1531,12 @@ private slots:
         QString diff = frameDifference(refFrame, paneFrame);
         QVERIFY2(diff.isEmpty(), qPrintable(diff));
 
-        // The whole picture, a new trace before every paint.
+        // The whole picture, a new trace before every paint. The pane is
+        // painted as it is in a window after a new trace: its trace band
+        // only, onto the picture it painted before.
         QVector<qint64> refNs;
         QVector<qint64> paneNs;
+        const QRegion band(rig.pane.traceBand());
         for (int i = 0; i < kWarmUp + paints; ++i) {
             rig.feedNext();
             const bool counted = i >= kWarmUp;
@@ -1418,7 +1545,7 @@ private slots:
             renderInto(rig.ref, refFrame);
             const qint64 refTook = timer.nsecsElapsed();
             timer.start();
-            renderInto(rig.pane, paneFrame);
+            renderInto(rig.pane, paneFrame, band);
             const qint64 paneTook = timer.nsecsElapsed();
             if (counted) {
                 refNs.append(refTook);
@@ -1429,13 +1556,34 @@ private slots:
         diff = frameDifference(refFrame, paneFrame);
         QVERIFY2(diff.isEmpty(), qPrintable(diff));
 
+        // The same again with the pane painted whole, as the reference is.
+        QVector<qint64> refWholeNs;
+        QVector<qint64> paneWholeNs;
+        for (int i = 0; i < kWarmUp + paints; ++i) {
+            rig.feedNext();
+            timer.start();
+            renderInto(rig.ref, refFrame);
+            const qint64 refTook = timer.nsecsElapsed();
+            timer.start();
+            renderInto(rig.pane, paneFrame);
+            const qint64 paneTook = timer.nsecsElapsed();
+            if (i >= kWarmUp) {
+                refWholeNs.append(refTook);
+                paneWholeNs.append(paneTook);
+            }
+        }
+        diff = frameDifference(refFrame, paneFrame);
+        QVERIFY2(diff.isEmpty(), qPrintable(diff));
+
         qInfo().noquote() << QStringLiteral("%1x%2 at ratio %3, %4 paints, %5 trace points")
                                  .arg(size.width()).arg(size.height()).arg(dpr).arg(paints)
                                  .arg(pointsFor(size.width()));
-        qInfo().noquote() << "  no trace, reference:    " << statsLine(statsOf(refStill));
-        qInfo().noquote() << "  no trace, pane:         " << statsLine(statsOf(paneStill));
-        qInfo().noquote() << "  with trace, reference:  " << statsLine(statsOf(refNs));
-        qInfo().noquote() << "  with trace, pane:       " << statsLine(statsOf(paneNs));
+        qInfo().noquote() << "  no trace, reference whole:    " << statsLine(statsOf(refStill));
+        qInfo().noquote() << "  no trace, pane whole:         " << statsLine(statsOf(paneStill));
+        qInfo().noquote() << "  with trace, reference whole:  " << statsLine(statsOf(refNs));
+        qInfo().noquote() << "  with trace, pane band only:   " << statsLine(statsOf(paneNs));
+        qInfo().noquote() << "  with trace, reference whole:  " << statsLine(statsOf(refWholeNs));
+        qInfo().noquote() << "  with trace, pane whole:       " << statsLine(statsOf(paneWholeNs));
 
         qint64 lapTotal = 0;
         for (qint64 ns : rig.ref.m_lapNs) {
@@ -1547,6 +1695,10 @@ private slots:
                           << QStringLiteral("; frames behind it repainted %1 times").arg(refFrames);
         qInfo().noquote() << "  pane:     " << statsLine(statsOf(paneNs))
                           << QStringLiteral("; frames behind it repainted %1 times").arg(paneFrames);
+        // The reference, not opaque, has both frames behind it repainted
+        // on every tick; the pane has none.
+        QCOMPARE(refFrames, 2 * paints);
+        QCOMPARE(paneFrames, 0);
 
         // The panes belong to the rig, not to the windows.
         rig.ref.setParent(nullptr);

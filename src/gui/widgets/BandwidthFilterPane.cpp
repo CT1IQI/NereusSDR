@@ -94,6 +94,14 @@
 //                 Qt::SizeAllCursor, which crashes Qt 6.11.0 on macOS.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-11 - Paint cost, nothing visible changed: the pane is marked
+//                 opaque, a new trace repaints only the plot band, the
+//                 role colors, pens, fonts and working lists are kept
+//                 between paints, and the ground under the curve is
+//                 stamped from a kept picture where that is exact.
+//                 tst_bandwidth_filter_pane_paint holds every frame
+//                 against a copy of the drawing as it was. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/widgets/BandwidthFilterPane.h"
@@ -102,10 +110,12 @@
 
 #include <QLinearGradient>
 #include <QMouseEvent>
+#include <QPaintEngine>
 #include <QPainter>
 #include <QPainterPath>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace NereusSDR {
@@ -121,6 +131,28 @@ namespace {
 constexpr int kPadX      = 6;
 constexpr int kPadTop    = 30;
 constexpr int kPadBottom = 20;
+
+// NereusSDR: how far under the plot a new trace can change a pixel. The
+// curve is held between six rows under the plot's top and two over its
+// last row (top and bot in paintEvent), and the widest halo stroke (8.0)
+// reaches four rows beyond the curve, so two under the plot's last row.
+// Six leaves room to spare. tst_bandwidth_filter_pane_paint measures the
+// reach and fails if a trace ever changes a row outside the band.
+constexpr int kTraceBandBelow = 6;
+
+// NereusSDR: the largest whole pixel ratio the kept ground picture is
+// made for, and the most device pixels it may hold (6 MB at four bytes
+// each; a 620x105 pane on a Retina screen is a sixth of that). Beyond
+// either the ground is drawn directly, as it always was.
+constexpr int kBaseLayerMaxScale = 4;
+constexpr qint64 kBaseLayerMaxPixels = 1500000;
+
+// From Longpath src/gui/widgets/BandwidthFilterPane.cpp:462 [@551576e3]
+// NereusSDR: the halo passes of paintEvent ("Hof, dann Linie"), widest
+// and palest first. At file scope so the pens are made once
+// (resolveColors) and not on every paint.
+struct GlowPass { double width; int alpha; };
+constexpr std::array<GlowPass, 3> kGlow = {{ {8.0, 14}, {4.0, 30}, {2.5, 60} }};
 
 // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:39 [@551576e3]
 // Eine Zahl auf der Achse: Megahertz mit drei Nachkommastellen, wie in
@@ -176,6 +208,105 @@ BandwidthFilterPane::BandwidthFilterPane(QWidget* parent)
     setMinimumHeight(84);
     setMinimumWidth(180);
     setMouseTracking(true);
+    // NereusSDR: paintEvent fills the whole rect with the opaque inset
+    // ground before anything else, in every state, so nothing behind the
+    // pane needs repainting first. Set where the color is resolved.
+    resolveColors();
+}
+
+// NereusSDR-original. The role colors, and everything made from them
+// alone, looked up once and again when the widget's palette or style
+// changes. The values and the arithmetic are those paintEvent used on
+// every paint; the cites are on the drawing that uses them.
+void BandwidthFilterPane::resolveColors()
+{
+    Colors& c = m_colors;
+    c.insetBg = QColor(Style::role("inset-bg", Style::kInsetBg));
+    c.grid = QColor(Style::role("spectrum-grid", Style::kSpectrumGrid));
+    c.grid.setAlpha(28);
+    c.gridLine = c.grid;
+    c.gridLine.setAlpha(44);
+    c.accent = QColor(Style::role("accent", Style::kAccent));
+    c.passTop = c.accent;
+    c.passTop.setAlpha(54);
+    c.passBottom = c.accent;
+    c.passBottom.setAlpha(24);
+    c.border = QColor(Style::role("border", Style::kBorder));
+    c.traceLine = QColor(Style::role("measured", Style::kAmberText));
+    c.fillTop = c.traceLine;
+    c.fillTop.setAlpha(96);
+    c.fillBottom = c.traceLine;
+    c.fillBottom.setAlpha(0);
+    c.innerTop = c.traceLine;
+    c.innerTop.setAlpha(150);
+    c.innerBottom = c.traceLine;
+    c.innerBottom.setAlpha(64);
+    for (size_t i = 0; i < kGlow.size(); ++i) {
+        QColor glow(c.traceLine);
+        glow.setAlpha(kGlow[i].alpha);
+        QPen glowPen(glow, kGlow[i].width);
+        glowPen.setJoinStyle(Qt::RoundJoin);
+        glowPen.setCapStyle(Qt::RoundCap);
+        c.glowPens[i] = glowPen;
+    }
+    c.linePen = QPen(c.traceLine, 0.75);
+    c.faint = QColor(Style::role("text-scale", Style::kTextScale));
+    QColor avg(c.faint);
+    avg.setAlpha(60);
+    c.avgPen = QPen(avg, 1.0);
+    c.edge = c.accent.lighter(140);
+    c.edgePen = QPen(c.edge, 1);
+    c.handlePen = QPen(c.edge, 1.0);
+    c.handlePenActive = QPen(c.edge, 1.5);
+    c.tick = c.edge;
+    c.tick.setAlphaF(0.85f);
+    c.handleTop = QColor(Style::kGlassBtnTop);
+    c.handleBottom = QColor(Style::kGlassBtnBot);
+    c.handleTopActive = QColor(Style::kGlassSelTop);
+    c.handleBottomActive = QColor(Style::kGlassSelBot);
+    c.ink = QColor(Style::role("text", Style::kTextPrimary));
+    c.labelText = QColor(Style::role("text-secondary", Style::kTextSecondary));
+
+    // The kept ground picture was drawn with the old colors.
+    m_base = QImage();
+    // Opaque only while the ground color has no transparency: otherwise
+    // what is behind the pane would show and must be painted first.
+    setAttribute(Qt::WA_OpaquePaintEvent, c.insetBg.isValid() && c.insetBg.alpha() == 255);
+}
+
+// NereusSDR-original. The three fonts and their metrics, made again only
+// when the widget's font is another one.
+void BandwidthFilterPane::resolveFonts()
+{
+    if (m_valueMetrics.has_value() && m_fontBase == font()) {
+        return;
+    }
+    m_fontBase = font();
+    m_valueFont = Style::monoFont(m_fontBase, Style::kFontSmall);
+    m_smallFont = Style::monoFont(m_fontBase, Style::kFontCaption);
+    m_capsFont = Style::capsFont(m_fontBase, 8);
+    m_valueMetrics.emplace(m_valueFont);
+    m_capsMetrics.emplace(m_capsFont);
+}
+
+// NereusSDR-original.
+void BandwidthFilterPane::changeEvent(QEvent* ev)
+{
+    if (ev->type() == QEvent::PaletteChange || ev->type() == QEvent::StyleChange) {
+        resolveColors();
+    }
+    QWidget::changeEvent(ev);
+}
+
+// NereusSDR-original. The rows a new trace can change: the plot and a
+// few rows under it (kTraceBandBelow). Nothing above the plot's first row
+// and nothing lower than that depends on the trace or on the average
+// line: the label strip, the chips and the axis numbers are drawn from
+// the filter, the label, the VFO and the span alone.
+QRect BandwidthFilterPane::traceBand() const
+{
+    const QRect r = plotRect();
+    return QRect(0, r.top(), width(), r.height() + kTraceBandBelow).intersected(rect());
 }
 
 // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:88 [@551576e3]
@@ -267,7 +398,10 @@ void BandwidthFilterPane::setTrace(const QVector<float>& dbm)
             m_trace[i] = m_trace[i] * (1.0f - a) + in[i] * a;
         }
     }
-    update();
+    // NereusSDR: only the rows the curve can reach, where Longpath repaints
+    // the whole pane (update()). Still one paint per trace, so the average
+    // line, which moves a step on every paint, keeps its speed.
+    update(traceBand());
 }
 
 // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:175 [@551576e3]
@@ -394,6 +528,120 @@ using Style::paintGlassChip;
 
 } // namespace
 
+// From Longpath src/gui/widgets/BandwidthFilterPane.cpp:286 [@551576e3]
+// NereusSDR: the first part of Longpath's paintEvent, everything under
+// the curve: ground, grid, passband strip and VFO line. Its own function
+// so that it can be drawn either straight onto the pane or once into the
+// kept picture (stampBase). The drawing is Longpath's, line for line.
+// [original inline comments from BandwidthFilterPane.cpp:286, :320-323
+// and :340]
+void BandwidthFilterPane::paintBase(QPainter& p, const QRect& r,
+                                    const QVector<int>& marks, int xl, int xh) const
+{
+    const Colors& c = m_colors;
+
+    // ── Grund: versenkt ─────────────────────────────────────────────
+    p.fillRect(rect(), c.insetBg);
+    paintInsetTop(p, rect());
+    p.setPen(QColor(255, 255, 255, 6));
+    p.drawLine(0, height() - 1, width() - 1, height() - 1);
+
+    p.setPen(c.grid);
+    for (int hz : marks) {
+        const int x = hzToX(hz);
+        p.drawLine(x, r.top() - 6, x, r.bottom());
+    }
+
+    // ── Der Durchlass als Glasstreifen ──────────────────────────────
+    //
+    // Von oben bis unten (Betreiber 2026-09-17), als Verlauf: oben
+    // etwas dichter, unten leiser, mit einer Lichtkante am oberen
+    // Rand. Er liegt UNTER der Kurve — die Kurve ist die Messung, der
+    // Streifen nur das Fenster, durch das man sie hoert.
+    {
+        QLinearGradient pass(0, 0, 0, height());
+        pass.setColorAt(0.0, c.passTop);
+        pass.setColorAt(1.0, c.passBottom);
+        p.fillRect(QRect(xl, 0, std::max(1, xh - xl), height()), pass);
+        p.setPen(QColor(255, 255, 255, 26));
+        p.drawLine(xl + 1, 0, xh - 1, 0);
+    }
+
+    // Die Nulllinie ist die VFO-Frequenz.
+    {
+        const int x0 = hzToX(0);
+        p.setPen(c.border);
+        p.drawLine(x0, r.top() - 6, x0, r.bottom());
+    }
+}
+
+// NereusSDR-original. Whether the ground may be stamped from a kept
+// picture on this painter, and at how many device pixels per Qt pixel;
+// 0 means draw it directly.
+//
+// The stamp is used only where it is exact, not merely close: the painter
+// maps Qt pixels to device pixels by a whole factor and a whole-pixel
+// shift, nothing else (no fractional pixel ratio, no scaled or rotated
+// preview), and it draws into an 8-bit image of the two formats Qt's
+// window pictures use. The kept picture then has the same format and the
+// same factor, so every pixel in it is computed exactly as it would be on
+// the pane, and it is copied, not blended.
+int BandwidthFilterPane::baseLayerScale(const QPainter& p, QImage::Format* format) const
+{
+    const QTransform t = p.deviceTransform();
+    if (t.type() > QTransform::TxScale) {
+        return 0;
+    }
+    const qreal s = t.m11();
+    const int k = static_cast<int>(s);
+    if (k < 1 || k > kBaseLayerMaxScale || static_cast<qreal>(k) != s || t.m22() != s) {
+        return 0;
+    }
+    if (static_cast<qint64>(width()) * height() * k * k > kBaseLayerMaxPixels) {
+        return 0;
+    }
+    if (t.dx() != std::floor(t.dx()) || t.dy() != std::floor(t.dy())) {
+        return 0;
+    }
+    const QPaintEngine* engine = p.paintEngine();
+    const QPaintDevice* device = (engine != nullptr) ? engine->paintDevice() : nullptr;
+    if (device == nullptr || device->devType() != QInternal::Image) {
+        return 0;
+    }
+    const QImage::Format f = static_cast<const QImage*>(device)->format();
+    if (f != QImage::Format_RGB32 && f != QImage::Format_ARGB32_Premultiplied) {
+        return 0;
+    }
+    *format = f;
+    return k;
+}
+
+// NereusSDR-original. The ground from the kept picture, which is drawn
+// again (by paintBase, the same code that draws it directly) whenever the
+// size, the pixel factor, the format, the VFO, the span or a filter edge
+// is another one; resolveColors drops it when the colors change.
+void BandwidthFilterPane::stampBase(QPainter& p, int scale, QImage::Format format,
+                                    const QRect& r, const QVector<int>& marks, int xl, int xh)
+{
+    const BaseKey key{size(), scale, format, m_vfoHz, m_spanHz, m_low, m_high};
+    if (m_base.isNull() || !(key == m_baseKey)) {
+        m_base = QImage(size() * scale, format);
+        m_base.setDevicePixelRatio(scale);
+        QPainter layer(&m_base);
+        layer.setRenderHint(QPainter::Antialiasing, false);
+        paintBase(layer, r, marks, xl, xh);
+        layer.end();
+        // Stamped one device pixel for one image pixel, below.
+        m_base.setDevicePixelRatio(1.0);
+        m_baseKey = key;
+    }
+    p.save();
+    p.scale(1.0 / scale, 1.0 / scale);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    p.drawImage(QPoint(0, 0), m_base);
+    p.restore();
+}
+
 // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:279 [@551576e3]
 void BandwidthFilterPane::paintEvent(QPaintEvent*)
 {
@@ -401,12 +649,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     p.setRenderHint(QPainter::Antialiasing, false);
 
     const QRect r = plotRect();
-
-    // ── Grund: versenkt ─────────────────────────────────────────────
-    p.fillRect(rect(), QColor(Style::role("inset-bg", Style::kInsetBg)));
-    paintInsetTop(p, rect());
-    p.setPen(QColor(255, 255, 255, 6));
-    p.drawLine(0, height() - 1, width() - 1, height() - 1);
+    const Colors& c = m_colors;
+    resolveFonts();
 
     // ── Die Marken der Achse: auf RUNDEN Frequenzen ─────────────────
     //
@@ -420,7 +664,10 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     // dieselbe Liste, damit die Zahlen etwas zum Festhalten haben.
     const int stepHz = (m_spanHz <= 6000) ? 1000
                      : (m_spanHz <= 24000) ? 2000 : 5000;
-    QVector<int> marks;
+    // NereusSDR: the list is a member, emptied and filled again, so no
+    // paint allocates one.
+    QVector<int>& marks = m_marks;
+    marks.resize(0);
     {
         const double first = std::ceil((m_vfoHz - m_spanHz / 2.0) / stepHz) * stepHz;
         for (double f = first; f <= m_vfoHz + m_spanHz / 2.0; f += stepHz) {
@@ -428,39 +675,18 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         }
     }
 
-    QColor grid(Style::role("spectrum-grid", Style::kSpectrumGrid));
-    grid.setAlpha(28);
-    p.setPen(grid);
-    for (int hz : marks) {
-        const int x = hzToX(hz);
-        p.drawLine(x, r.top() - 6, x, r.bottom());
-    }
-
-    // ── Der Durchlass als Glasstreifen ──────────────────────────────
-    //
-    // Von oben bis unten (Betreiber 2026-09-17), als Verlauf: oben
-    // etwas dichter, unten leiser, mit einer Lichtkante am oberen
-    // Rand. Er liegt UNTER der Kurve — die Kurve ist die Messung, der
-    // Streifen nur das Fenster, durch das man sie hoert.
     const int xl = hzToX(m_low);
     const int xh = hzToX(m_high);
-    const QColor accent(Style::role("accent", Style::kAccent));
-    {
-        QLinearGradient pass(0, 0, 0, height());
-        QColor c0(accent); c0.setAlpha(54);
-        QColor c1(accent); c1.setAlpha(24);
-        pass.setColorAt(0.0, c0);
-        pass.setColorAt(1.0, c1);
-        p.fillRect(QRect(xl, 0, std::max(1, xh - xl), height()), pass);
-        p.setPen(QColor(255, 255, 255, 26));
-        p.drawLine(xl + 1, 0, xh - 1, 0);
-    }
 
-    // Die Nulllinie ist die VFO-Frequenz.
-    {
-        const int x0 = hzToX(0);
-        p.setPen(QColor(Style::role("border", Style::kBorder)));
-        p.drawLine(x0, r.top() - 6, x0, r.bottom());
+    // NereusSDR: ground, grid, strip and VFO line (paintBase). They change
+    // only with the size, the VFO, the span and the filter, so where a
+    // stamp is exact they come from a kept picture.
+    QImage::Format baseFormat = QImage::Format_Invalid;
+    const int baseScale = baseLayerScale(p, &baseFormat);
+    if (baseScale > 0) {
+        stampBase(p, baseScale, baseFormat, r, marks, xl, xh);
+    } else {
+        paintBase(p, r, marks, xl, xh);
     }
 
     // ── Das Signal ──────────────────────────────────────────────────
@@ -480,18 +706,26 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     // Linie zusammenfaellt und die Skala zwischen zwei Baendern
     // vergleichbar bleibt — aber ein lautes Signal bekommt den Platz, den
     // es braucht, plus 3 dB Luft, damit der Gipfel nicht am Rahmen klebt.
-    const QColor traceLine(Style::role("measured", Style::kAmberText));
     const int top = r.top() + 6;
     const int bot = r.bottom() - 2;
     if (m_trace.size() >= 2 && bot > top) {
-        QVector<float> sorted = m_trace;
-        std::sort(sorted.begin(), sorted.end());
-        const float lo = sorted.at(sorted.size() / 10);
-        const float spitze = sorted.constLast();
+        // From Longpath src/gui/widgets/BandwidthFilterPane.cpp:368 [@551576e3]
+        // NereusSDR: Longpath sorts a copy of the whole trace to read two
+        // values from it, the one a tenth of the way up and the largest.
+        // Those two are found here without ordering the rest, in a list
+        // kept between paints; they are the same two values.
+        QVector<float>& sorted = m_sortScratch;
+        sorted = m_trace;
+        const auto tenth = sorted.begin() + sorted.size() / 10;
+        std::nth_element(sorted.begin(), tenth, sorted.end());
+        const float lo = *tenth;
+        const float spitze = *std::max_element(tenth, sorted.end());
         const float hi = std::max(lo + 40.0f, spitze + 3.0f);
         const double yScale = (bot - top) / static_cast<double>(hi - lo);
 
-        QPolygonF poly;
+        // NereusSDR: the point list is a member, emptied and filled again.
+        QPolygonF& poly = m_poly;
+        poly.resize(0);
         poly.reserve(m_trace.size() + 2);
         poly << QPointF(r.left(), bot);
         for (int i = 0; i < m_trace.size(); ++i) {
@@ -510,9 +744,9 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         // haben (2026-09-17: bei elf Punkten Abstand beruehrten sich
         // alle drei) — eine Linie ohne Zahl ist immer noch ein Raster.
         {
-            p.setFont(Style::monoFont(font(), Style::kFontCaption));
-            QColor gridLine(grid); gridLine.setAlpha(44);
-            const QColor gridText(Style::role("text-scale", Style::kTextScale));
+            p.setFont(m_smallFont);
+            const QColor& gridLine = c.gridLine;
+            const QColor& gridText = c.faint;
             const int spacing = (bot - top) / 4;
             const bool roomForAll = spacing >= 14;
             const bool roomForOne = spacing >= 10;
@@ -541,10 +775,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         // ── Verlauf unter der ganzen Kurve ──────────────────────────
         {
             QLinearGradient grad(0, top, 0, bot);
-            QColor c0(traceLine); c0.setAlpha(96);
-            QColor c1(traceLine); c1.setAlpha(0);
-            grad.setColorAt(0.0, c0);
-            grad.setColorAt(1.0, c1);
+            grad.setColorAt(0.0, c.fillTop);
+            grad.setColorAt(1.0, c.fillBottom);
             p.setPen(Qt::NoPen);
             p.setBrush(grad);
             p.drawPath(tracePath);
@@ -560,10 +792,8 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
             p.save();
             p.setClipRect(QRect(xlF, top, std::max(1, xhF - xlF), bot - top + 1));
             QLinearGradient inner(0, top, 0, bot);
-            QColor i0(traceLine); i0.setAlpha(150);
-            QColor i1(traceLine); i1.setAlpha(64);
-            inner.setColorAt(0.0, i0);
-            inner.setColorAt(1.0, i1);
+            inner.setColorAt(0.0, c.innerTop);
+            inner.setColorAt(1.0, c.innerBottom);
             p.setPen(Qt::NoPen);
             p.setBrush(inner);
             p.drawPath(tracePath);
@@ -578,20 +808,15 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
         // und kraeftig. Drei, seit die Stuetzstellen dicht genug
         // liegen, dass keine Zacke zum Klumpen wird.
         {
-            struct GlowPass { double width; int alpha; };
-            static const GlowPass kGlow[] = { {8.0, 14}, {4.0, 30}, {2.5, 60} };
+            // NereusSDR: the widths and alphas are kGlow at the top of the
+            // file; the three pens are made from them in resolveColors.
             p.setBrush(Qt::NoBrush);
-            for (const GlowPass& g : kGlow) {
-                QColor glow(traceLine);
-                glow.setAlpha(g.alpha);
-                QPen glowPen(glow, g.width);
-                glowPen.setJoinStyle(Qt::RoundJoin);
-                glowPen.setCapStyle(Qt::RoundCap);
+            for (const QPen& glowPen : c.glowPens) {
                 p.setPen(glowPen);
                 p.drawPath(tracePath);
             }
         }
-        p.setPen(QPen(traceLine, 0.75));
+        p.setPen(c.linePen);
         p.setBrush(Qt::NoBrush);
         p.drawPath(tracePath);
 
@@ -610,10 +835,10 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
                     m_avgLine[i] = m_avgLine[i] * (1.0f - aa) + m_trace[i] * aa;
                 }
             }
-            QColor avg(Style::role("text-scale", Style::kTextScale));
-            avg.setAlpha(60);
-            p.setPen(QPen(avg, 1.0));
-            QPolygonF ap;
+            p.setPen(c.avgPen);
+            // NereusSDR: the point list is a member, emptied and filled again.
+            QPolygonF& ap = m_avgPoly;
+            ap.resize(0);
             ap.reserve(m_avgLine.size());
             for (int i = 0; i < m_avgLine.size(); ++i) {
                 const double x = r.left()
@@ -631,8 +856,9 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     // Etwas heller als das Auswahlblau, damit sie auf dem Streifen
     // stehen; ueber die ganze Hoehe, weil die Zahlen oben und die
     // Achse unten zu dieser Saeule gehoeren.
-    const QColor edge = accent.lighter(140);
-    p.setPen(QPen(edge, 1));
+    // NereusSDR: the edge color (accent.lighter(140), Longpath :514) and
+    // its pens are made in resolveColors.
+    p.setPen(c.edgePen);
     p.drawLine(xl, 0, xl, height());
     p.drawLine(xh, 0, xh, height());
 
@@ -644,20 +870,19 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     auto drawHandle = [&](int x, bool active) {
         const QRect h(x - 4, r.center().y() - 11, 9, 22);
         QLinearGradient g(0, h.top(), 0, h.bottom());
-        g.setColorAt(0.0, QColor(active ? Style::kGlassSelTop : Style::kGlassBtnTop));
-        g.setColorAt(1.0, QColor(active ? Style::kGlassSelBot : Style::kGlassBtnBot));
+        g.setColorAt(0.0, active ? c.handleTopActive : c.handleTop);
+        g.setColorAt(1.0, active ? c.handleBottomActive : c.handleBottom);
         p.save();
         p.setRenderHint(QPainter::Antialiasing, true);
         p.setPen(QColor(0, 0, 0, 140));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(h.translated(0, 1), 4, 4);        // Schatten
-        p.setPen(QPen(edge, active ? 1.5 : 1.0));
+        p.setPen(active ? c.handlePenActive : c.handlePen);
         p.setBrush(g);
         p.drawRoundedRect(h, 4, 4);
         p.setPen(QColor(255, 255, 255, Style::kGlassLightAlpha + 8));
         p.drawLine(h.left() + 3, h.top() + 1, h.right() - 3, h.top() + 1);   // Lichtkante
-        QColor tick(edge); tick.setAlphaF(0.85f);
-        p.setPen(tick);
+        p.setPen(c.tick);
         p.drawLine(x, h.top() + 6, x, h.bottom() - 6);
         p.restore();
     };
@@ -668,10 +893,11 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     //
     // Zahlen Monospace (Hausstil Regel 4), auf der Schriftleiter: 11
     // fuer Werte, 9 fuer Achse und Marken. Wortmarken als Versalzeile.
-    const QFont value = Style::monoFont(font(), Style::kFontSmall);
-    const QFont small = Style::monoFont(font(), Style::kFontCaption);
-    const QColor faint(Style::role("text-scale", Style::kTextScale));
-    const QColor ink(Style::role("text", Style::kTextPrimary));
+    // NereusSDR: fonts from resolveFonts, colors from resolveColors.
+    const QFont& value = m_valueFont;
+    const QFont& small = m_smallFont;
+    const QColor& faint = c.faint;
+    const QColor& ink = c.ink;
 
     // Eng: zuerst faellt das WORT, dann die Zahl (2026-08-22). Gemessen
     // am Platz zwischen den Griffen, nicht an der Fensterbreite — und
@@ -683,16 +909,17 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     const int labelRoom = xh - xl;
     const bool wordMarks = labelRoom >= 190;
     const QString widthText = widthLabel(m_high - m_low);
-    const int chipW  = QFontMetrics(value).horizontalAdvance(widthText) + 18;
-    const int valueW = std::max(QFontMetrics(value).horizontalAdvance(cutLabel(m_low)),
-                                QFontMetrics(value).horizontalAdvance(cutLabel(m_high)));
+    const QFontMetrics& valueMetrics = *m_valueMetrics;
+    const int chipW  = valueMetrics.horizontalAdvance(widthText) + 18;
+    const int valueW = std::max(valueMetrics.horizontalAdvance(cutLabel(m_low)),
+                                valueMetrics.horizontalAdvance(cutLabel(m_high)));
     const bool numbers = labelRoom >= chipW + 2 * (valueW + 14);
 
     if (wordMarks) {
         // Die Wortmarken folgen dem Seitenband: ohne Vorzeichen muss
         // das Wort sagen, was die Zahl ist. Bei LSB liegt die nahe
         // Kante rechts — links steht also der Audio-HOCHschnitt.
-        p.setFont(Style::capsFont(font(), 8));
+        p.setFont(m_capsFont);
         p.setPen(faint);
         const bool lowerSideband = (m_low < 0 && m_high <= 0);
         p.drawText(QRect(xl + 5, 1, 90, 10),
@@ -731,13 +958,13 @@ void BandwidthFilterPane::paintEvent(QPaintEvent*)
     // Eine Kapsel, kein Knopf: grau, nicht blau — sie ist keine
     // Bedienung, und "Blau ist anfassbar".
     {
-        const QFont cap = Style::capsFont(font(), 8);
-        const QFontMetrics fm(cap);
+        const QFont& cap = m_capsFont;
+        const QFontMetrics& fm = *m_capsMetrics;
         const int tw = fm.horizontalAdvance(m_label) + 14;
         const QRect box(4, 4, tw, 14);
         paintGlassChip(p, box, 7);
         p.setFont(cap);
-        p.setPen(QColor(Style::role("text-secondary", Style::kTextSecondary)));
+        p.setPen(c.labelText);
         p.drawText(box, Qt::AlignCenter, m_label);
     }
 
