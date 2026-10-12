@@ -1102,6 +1102,7 @@ public:
     // rest, never once per row while the width is still changing).
     const QImage& waterfallHistoryForTest() const { return m_waterfallHistory; }
     int waterfallHistoryWriteRowForTest() const { return m_wfHistoryWriteRow; }
+    int waterfallHistoryOffsetRowsForTest() const { return m_wfHistoryOffsetRows; }
     quint64 waterfallHistoryRescalesForTest() const { return m_wfHistoryRescales; }
     bool waterfallHistoryResizePendingForTest() const {
         return m_historyResizeTimer && m_historyResizeTimer->isActive();
@@ -2656,6 +2657,7 @@ private:
     QRect waterfallLiveButtonRect(const QRect& wfRect) const;
     int   waterfallStripWidth() const;
     void  ensureWaterfallHistory();
+    bool  historyResizeSettling() const;
     void  rebuildWaterfallViewport();
     void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
     void  setWaterfallLive(bool live);

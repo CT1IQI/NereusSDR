@@ -214,6 +214,75 @@ private slots:
         }
     }
 
+    // Paused in scrollback, every arriving row rebuilds the picture from
+    // the history. That rebuild must not rescale the history either, and
+    // the paused picture must stay whole through the drag.
+    void widthDragWhilePaused_rescalesOnceAndKeepsThePicture()
+    {
+        constexpr int kRowsBefore = 400;
+        constexpr int kSteps = 40;
+        SpectrumWidget w;
+        prepare(w, 1100, 400, kRowsBefore);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        QVERIFY(w.liveWaterfallForTest().height() < kRowsBefore);
+        const QImage& history = w.waterfallHistoryForTest();
+        const QRgb hot = quarterMiddles(history, historyRowForAge(w, 0))
+            [(kRowsBefore - 1) % 4];
+        const QRgb cold = quarterMiddles(history, historyRowForAge(w, 0))
+            [kRowsBefore % 4];
+        QVERIFY(hot != cold);
+
+        w.setWaterfallLiveForTest(false);
+        const int startWidth = w.liveWaterfallForTest().width();
+        const quint64 rescalesBefore = w.waterfallHistoryRescalesForTest();
+
+        // The paused picture: row y shows the history row of age offset + y.
+        auto pictureMatchesHistory = [&]() {
+            const QImage& live = w.liveWaterfallForTest();
+            const int offset = w.waterfallHistoryOffsetRowsForTest();
+            for (int y = 0; y < live.height(); ++y) {
+                const int shown = hotQuarterOf(quarterMiddles(live, y), hot, cold);
+                const int kept = hotQuarterOf(
+                    quarterMiddles(w.waterfallHistoryForTest(),
+                                   historyRowForAge(w, offset + y)),
+                    hot, cold);
+                if (shown < 0 || shown != kept) {
+                    qWarning() << "picture row" << y << "shows quarter" << shown
+                               << "history holds" << kept;
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        QElapsedTimer clock;
+        clock.start();
+        for (int step = 1; step <= kSteps; ++step) {
+            w.resize(1100 - 3 * step, 400);
+            w.pushWaterfallRowForTest(quarterRow(step % 4));
+            QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), step);
+            if (step % 10 == 0) {
+                QVERIFY(pictureMatchesHistory());
+            }
+        }
+        const qint64 dragMs = clock.elapsed();
+        qInfo().nospace() << "paused width drag: " << kSteps << " steps in "
+                          << dragMs << " ms (" << double(dragMs) / kSteps
+                          << " ms per step)";
+
+        QCOMPARE(w.waterfallHistoryRescalesForTest() - rescalesBefore, quint64(0));
+        QCOMPARE(w.waterfallHistoryForTest().width(), startWidth);
+
+        QTRY_VERIFY(!w.waterfallHistoryResizePendingForTest());
+        QCOMPARE(w.waterfallHistoryRescalesForTest() - rescalesBefore, quint64(1));
+        QCOMPARE(w.waterfallHistoryForTest().width(),
+                 w.liveWaterfallForTest().width());
+        QCOMPARE(w.waterfallHistoryOffsetRowsForTest(), kSteps);
+        QVERIFY(pictureMatchesHistory());
+    }
+
     // A height-only change (a top or bottom dock edge) leaves the history's
     // size alone: no rescale then or later.
     void heightDrag_neverRescalesTheHistory()
