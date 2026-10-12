@@ -136,6 +136,101 @@ private slots:
     }
 
     // -----------------------------------------------------------------------
+    // Track floor holds dB Min a grid step under dB Max
+    // -----------------------------------------------------------------------
+    //
+    // From Thetis setup.cs:7842-7850 [v2.10.3.15] udDisplayGridMin_ValueChanged:
+    //   //[2.10.3.6]MW0LGE limit
+    //   if (udDisplayGridMin.Value > udDisplayGridMax.Value - udDisplayGridStep.Value)
+    //   {
+    //       udDisplayGridMin.Value = udDisplayGridMax.Value - udDisplayGridStep.Value;
+    //       return;
+    //   }
+    // The timer writes SetupForm.DisplayGridMin, so the control's limit holds
+    // the value it asked for. The step here is the 10 dB the grid draws.
+
+    void floor_above_max_minus_step_holds_min_a_step_under_max()
+    {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -40.0f);
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(false);
+
+        // Floor -35 dBm is above dB Max minus the step (-50).
+        w.testApplyNoiseFloor(-35.0f);
+
+        QCOMPARE(w.gridMax(), -40);   // dB Max does not move
+        QCOMPARE(w.gridMin(), -50);   // held at dB Max minus the step
+        QCOMPARE(w.dynamicRange(), 10.0f);
+    }
+
+    void floor_above_max_holds_min_a_step_under_max()
+    {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -40.0f);
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(false);
+
+        // Floor -20 dBm is above dB Max itself (-40).
+        w.testApplyNoiseFloor(-20.0f);
+
+        QCOMPARE(w.gridMax(), -40);
+        QCOMPARE(w.gridMin(), -50);
+        QCOMPARE(w.dynamicRange(), 10.0f);
+    }
+
+    void floor_clear_of_the_limit_moves_min_to_the_floor()
+    {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -40.0f);
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(false);
+
+        // Floor -60 dBm is well under dB Max minus the step: no limit applies.
+        w.testApplyNoiseFloor(-60.0f);
+
+        QCOMPARE(w.gridMin(), -60);
+        QCOMPARE(w.gridMax(), -40);
+    }
+
+    void floor_exactly_on_max_minus_step_is_not_moved_further()
+    {
+        SpectrumWidget w;
+        w.setDbmRange(-140.0f, -40.0f);
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(false);
+
+        // Floor -50 dBm lands exactly on dB Max minus the step. The Thetis
+        // test is "greater than", so the value stands as asked.
+        w.testApplyNoiseFloor(-50.0f);
+
+        QCOMPARE(w.gridMin(), -50);
+        QCOMPARE(w.gridMax(), -40);
+        QCOMPARE(w.dynamicRange(), 10.0f);
+    }
+
+    void maintain_delta_with_floor_above_max_moves_both_ends()
+    {
+        SpectrumWidget w;
+        // Range: max=-40, min=-140, delta=100 dB.
+        w.setDbmRange(-140.0f, -40.0f);
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(true);
+
+        // Floor -20 dBm: both ends move and the delta is kept.
+        w.testApplyNoiseFloor(-20.0f);
+
+        QCOMPARE(w.gridMin(), -20);
+        QCOMPARE(w.gridMax(), 80);
+        QCOMPARE(w.dynamicRange(), 100.0f);
+    }
+
+    // -----------------------------------------------------------------------
     // NoiseFloorEstimator::prime() tests (Task 2.10 dependency)
     // -----------------------------------------------------------------------
 

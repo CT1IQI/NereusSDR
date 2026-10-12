@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF. The grid's noise-floor tracking holds
+//                 dB Min a grid step under dB Max (applyGridFollow), the
+//                 limit Thetis's udDisplayGridMin_ValueChanged applies
+//                 (setup.cs); a floor at or above dB Max no longer leaves
+//                 a zero or negative range. AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
 //                 settling no longer rescales the whole waterfall history;
 //                 it is resampled into the history's current width and the
@@ -3234,8 +3240,30 @@ void SpectrumWidget::applyGridFollow(float nfDbm)
     // From Thetis console.cs:46082 [v2.10.3.13]: only move if delta >= 2 dB
     if (std::abs(oldMin - proposedMin) < 2.0f) { return; }
 
-    const float newMin = proposedMin;
+    float newMin = proposedMin;
     const float newMax = m_maintainNFAdjustDelta ? (newMin + delta) : oldMax;
+
+    // dB Min stays a grid step under dB Max. Thetis's timer writes
+    // SetupForm.DisplayGridMin, and that control's handler limits the value;
+    // setDbmRange() has no such limit, so a floor at or above dB Max left a
+    // zero or negative range here. The 2 dB test above compares the set
+    // point as asked, as the timer does; the limit is applied after it, as
+    // the control does. dB Max does not move.
+    // From Thetis setup.cs:7842-7850 [v2.10.3.15] udDisplayGridMin_ValueChanged:
+    //   //[2.10.3.6]MW0LGE limit
+    //   if (udDisplayGridMin.Value > udDisplayGridMax.Value - udDisplayGridStep.Value)
+    //   {
+    //       udDisplayGridMin.Value = udDisplayGridMax.Value - udDisplayGridStep.Value;
+    //       return;
+    //   }
+    // udDisplayGridStep is a setting in Thetis (1 to 40 dB, designer value 2,
+    // setup.designer.cs:34777-34804 [v2.10.3.15]). This grid has no stored
+    // step: 10 dB is the step drawGrid draws.
+    static constexpr float kGridFollowStepDb = 10.0f;
+    //[2.10.3.6]MW0LGE limit [original inline comment from setup.cs:7845]
+    if (newMin > newMax - kGridFollowStepDb) {
+        newMin = newMax - kGridFollowStepDb;
+    }
 
     // Update display range directly — do NOT call scheduleSettingsSave() here
     // because the NF-tracking loop fires at 500ms cadence and would flood
