@@ -3,9 +3,10 @@
 //   2026-10-04 — Live stack resize regressions by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-12 - The fixture's screen is taller than the stacks it shows:
-//                 a window is no larger than its screen, and the test
-//                 platform's 800 px screen is shorter than nine bars. J.J.
-//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 a window is no taller than all the screens together,
+//                 and the test platform's one 800 px screen is shorter
+//                 than nine bars. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - A widened auto-height stack comes to rest at its content's
 //                 height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -51,7 +52,8 @@ public:
 };
 
 // One screen tall enough for every stack shown here at its natural height
-// (a window is never larger than its screen's available area).
+// (a window is never taller than all the screens together, and the test
+// platform has one screen of 800 x 800).
 class TallScreen : public ScreenSource {
 public:
     QVector<ScreenInfo> screens() const override { return {primary()}; }

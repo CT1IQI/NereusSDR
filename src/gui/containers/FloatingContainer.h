@@ -10,8 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-12 - setScreenSource, sizeWithin and fittedSize: a floating
-//                 window is never larger than its screen. J.J. Boyd
+//   2026-10-12 - setScreenSource, sizeWithin, fittedSize and
+//                 refreshDesktopLimit: a floating window is never wider or
+//                 taller than all the screens together. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - ensureVisiblePosition reads the screens through a
 //                 ScreenSource and says whether it moved the form, by J.J.
@@ -157,17 +158,19 @@ public:
     bool ensureVisiblePosition(QWidget* anchor, const ScreenSource* screens = nullptr);
     static QRect clampedGeometry(const QRect& geometry, const QRect& available, const QSize& minimum);
 
-    // The screens fittedSize() reads (the application's own when null).
+    // The screens the size limit is read from (the application's own
+    // when null). Sets the limit.
     void setScreenSource(const ScreenSource* screens);
-    // `size`, no larger than `available` and no smaller than `minimum`
-    // (the minimum wins). Unbounded when `available` is not valid.
-    static QSize sizeWithin(const QSize& size, const QRect& available, const QSize& minimum);
-    // The size of `wanted`, no larger than the available area of the screen
-    // holding most of it (the screen nearest its top-left corner when it is
-    // on none) and no smaller than the form's minimum. A floating window is
-    // never larger than its screen: every size the app sets goes through
-    // this or sizeWithin(). The position is not changed.
-    QSize fittedSize(const QRect& wanted) const;
+    // `size`, no larger than `limit` and no smaller than `minimum` (the
+    // minimum wins). Unbounded when `limit` is not valid.
+    static QSize sizeWithin(const QSize& size, const QSize& limit, const QSize& minimum);
+    // `wanted`, no wider and no taller than all the screens together and
+    // no smaller than the form's minimum. A window stretched across
+    // monitors keeps its size; a runaway or absurd saved size does not.
+    QSize fittedSize(const QSize& wanted) const;
+    // Sets the form's maximum size to all the screens together. Called
+    // when the screens are set and whenever one comes, goes or changes.
+    void refreshDesktopLimit();
 
 signals:
     void aboutToClose();

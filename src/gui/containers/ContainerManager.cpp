@@ -7,11 +7,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-12 - A floating window is never larger than its screen: the
-//                 size a document, a remembered place or the content's
-//                 height gives it is fitted to the available area of the
-//                 screen it is shown on, and a remembered size larger than
-//                 that is saved fitted. The height follower leaves a
+//   2026-10-12 - A floating window is never wider or taller than all the
+//                 screens together: the size a document, a remembered
+//                 place or the content's height gives it is fitted to
+//                 that, and each window's maximum size is kept at it as
+//                 screens come, go and change. A window stretched across
+//                 monitors keeps its size, and a remembered size is never
+//                 rewritten from the screens present (a monitor that is
+//                 away must not cost a window its size); the operator's
+//                 next move or resize saves the size shown. The height
+//                 follower leaves a
 //                 window alone while a drag moves it and runs when the
 //                 drag ends. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -385,6 +390,13 @@ ContainerManager::ContainerManager(QWidget* dockParent, QSplitter* splitter,
             Qt::QueuedConnection);
     connect(qApp, &QGuiApplication::screenAdded, this, [this](QScreen *) { screensChanged(); },
             Qt::QueuedConnection);
+    // A floating window's maximum size is all the screens together; it is
+    // kept current as they come, go (screensChanged) and change.
+    connect(qApp, &QGuiApplication::screenAdded, this, &ContainerManager::watchScreen);
+    const QList<QScreen*> present = QGuiApplication::screens();
+    for (QScreen* screen : present) {
+        watchScreen(screen);
+    }
     qCDebug(lcContainer) << "ContainerManager created";
 }
 
@@ -815,18 +827,6 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 || !m_documentGeometry.contains(d.id) || m_documentGeometry.value(d.id) != d.geometry
                 || m_documentPane.value(d.id) != d.geometryPane;
             m_rememberedGeometry[d.id] = d.geometry;
-            if (d.dockMode == DockMode::Floating && d.geometry.isValid()) {
-                // A window is never larger than its screen (one saved at
-                // 28458 x 22355 after growing in a drag could not be
-                // drawn). Fitted to its monitor when that is here; with
-                // the monitor away, to the size that monitor was saved
-                // with. The next save writes the fitted size.
-                const std::optional<ScreenInfo> on = d.screen ? m_screens->matching(*d.screen, d.geometry)
-                                                              : m_screens->screenHolding(d.geometry);
-                const QRect bounds = on ? on->available : (d.screen ? d.screen->geometry : QRect());
-                m_rememberedGeometry[d.id].setSize(
-                    FloatingContainer::sizeWithin(d.geometry.size(), bounds, kPlacementMinimum));
-            }
             if (d.dockMode != DockMode::OverlayDocked) {
                 m_rememberedPane.remove(d.id);
                 m_provisionalPane.remove(d.id);
@@ -996,7 +996,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             if (d.geometry.isValid()) {
                 if (d.dockMode == DockMode::Floating) {
                     if (windowSized) {
-                        form->resize(windowSizeFor(d.geometry, d.screen, form));
+                        form->resize(form->fittedSize(d.geometry.size()));
                     }
                 } else {
                     c->setGeometry(d.geometry);
@@ -1064,8 +1064,8 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             QSize wanted(qMax(target->width(), c->minimumSizeHint().width()), height);
             const bool window = d.dockMode == DockMode::Floating;
             if (window) {
-                // Never larger than the screen the window is on.
-                wanted = form->fittedSize(QRect(form->pos(), wanted));
+                // Never larger than all the screens together.
+                wanted = form->fittedSize(wanted);
             }
             // A drag moves a window and never resizes it; the end of the
             // drag gives it its content's height (followContentHeight).
@@ -1076,8 +1076,8 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
         if (!d.autoHeight && d.dockMode == DockMode::Floating && c->operatorSizesHeight()
             && form->height() < c->naturalHeight() && !c->dragActive()) {
             // Workspace preview: the operator's height, but never less than
-            // the content needs (nor more than its screen has).
-            form->resize(form->fittedSize(QRect(form->pos(), QSize(form->width(), c->naturalHeight()))));
+            // the content needs (nor more than all the screens have).
+            form->resize(form->fittedSize(QSize(form->width(), c->naturalHeight())));
         }
         if (d.dockMode == DockMode::Floating && !preserveGeometry) {
             // At its remembered place when its monitor is here; otherwise on
@@ -1905,8 +1905,8 @@ void ContainerManager::followContentHeight(const QString& id)
     QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
         .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
     if (window && shell) {
-        // Never larger than the screen the window is on.
-        wanted = shell->fittedSize(QRect(shell->pos(), wanted));
+        // Never larger than all the screens together.
+        wanted = shell->fittedSize(wanted);
     }
     if (target->size() != wanted) {
         // Width changes settle through the host's viewport layout;
@@ -2418,13 +2418,22 @@ int ContainerManager::availableHeightFor(const QWidget* target) const
     return m_screens->screenFor(onScreen).available.height();
 }
 
-QSize ContainerManager::windowSizeFor(const QRect& remembered, const std::optional<SavedScreen>& screen,
-                                      const FloatingContainer* form) const
+void ContainerManager::refreshWindowSizeLimits()
 {
-    const std::optional<ScreenInfo> own = screen ? m_screens->matching(*screen, remembered)
-                                                 : m_screens->screenHolding(remembered);
-    const ScreenInfo target = own ? *own : mainWindowScreen();
-    return FloatingContainer::sizeWithin(remembered.size(), target.available, form->minimumSize());
+    for (FloatingContainer* form : std::as_const(m_floatingForms)) {
+        if (form) {
+            form->refreshDesktopLimit();
+        }
+    }
+}
+
+void ContainerManager::watchScreen(QScreen* screen)
+{
+    if (screen) {
+        // A monitor whose resolution or place changed: the limit only.
+        connect(screen, &QScreen::geometryChanged, this, &ContainerManager::refreshWindowSizeLimits,
+                Qt::UniqueConnection);
+    }
 }
 
 std::optional<SavedScreen> ContainerManager::screenForNewWindow(const QRect& geometry) const
@@ -2622,9 +2631,9 @@ void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remem
             form->move(remembered.topLeft());
         }
         const ContainerWidget* c = container(id);
-        if (wasAway && c && !c->autoHeight() && form->size() != windowSizeFor(remembered, screen, form)) {
+        if (wasAway && c && !c->autoHeight() && form->size() != form->fittedSize(remembered.size())) {
             // Back at its own size too, had the other screen been smaller.
-            form->resize(windowSizeFor(remembered, screen, form));
+            form->resize(form->fittedSize(remembered.size()));
         }
         return;
     }
@@ -2638,6 +2647,7 @@ void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remem
 
 void ContainerManager::screensChanged()
 {
+    refreshWindowSizeLimits();
     if (!m_store || m_reconciling || GuiApplication::applicationQuitInProgress()) {
         return;
     }

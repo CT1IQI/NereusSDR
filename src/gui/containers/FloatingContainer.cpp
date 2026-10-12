@@ -7,9 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-12 - fittedSize: a size no larger than the available area of
-//                 the screen a rect is on; restoreGeometry and the height
-//                 put back after a collapse go through it. J.J. Boyd (KG4VCF),
+//   2026-10-12 - A floating window is never wider or taller than all the
+//                 screens together: fittedSize bounds a size to that
+//                 (restoreGeometry and the height put back after a
+//                 collapse go through it), and the window's maximum size
+//                 is kept at it (refreshDesktopLimit). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - ensureVisiblePosition reads the screens through a
 //                 ScreenSource and says whether it moved the form, by J.J.
@@ -156,7 +158,7 @@ void FloatingContainer::onOwnerMinimisedChanged(bool minimised)
         resize(width(), collapsed);
     } else {
         if (m_unminimisedHeight > 0) {
-            resize(fittedSize(QRect(pos(), QSize(width(), m_unminimisedHeight))));
+            resize(fittedSize(QSize(width(), m_unminimisedHeight)));
         }
         m_unminimisedHeight = 0;
     }
@@ -230,44 +232,46 @@ void FloatingContainer::restoreGeometry()
     int w = parts[2].toInt(&ok3);
     int h = parts[3].toInt(&ok4);
     if (ok1 && ok2 && ok3 && ok4) {
-        // A saved size is never larger than the screen it is shown on.
-        setGeometry(QRect(QPoint(x, y), fittedSize(QRect(x, y, w, h))));
+        // A saved size is never larger than all the screens together.
+        setGeometry(QRect(QPoint(x, y), fittedSize(QSize(w, h))));
     }
 }
 
 void FloatingContainer::setScreenSource(const ScreenSource* screens)
 {
     m_screens = screens;
+    refreshDesktopLimit();
 }
 
-QSize FloatingContainer::sizeWithin(const QSize& size, const QRect& available, const QSize& minimum)
+QSize FloatingContainer::sizeWithin(const QSize& size, const QSize& limit, const QSize& minimum)
 {
-    if (!available.isValid()) {
+    if (!limit.isValid()) {
         return size.expandedTo(minimum);
     }
-    return size.boundedTo(available.size()).expandedTo(minimum);
+    return size.boundedTo(limit).expandedTo(minimum);
 }
 
-QSize FloatingContainer::fittedSize(const QRect& wanted) const
+QSize FloatingContainer::fittedSize(const QSize& wanted) const
 {
     const ScreenSource* source = m_screens ? m_screens : ScreenSource::system();
-    std::optional<ScreenInfo> on = source->screenHolding(wanted);
-    if (!on) {
-        // On no screen: the one nearest its top-left corner.
-        qint64 nearest = -1;
-        const QVector<ScreenInfo> present = source->screens();
-        for (const ScreenInfo& screen : present) {
-            const QRect& g = screen.geometry;
-            const qint64 dx = qMax(0, qMax(g.left() - wanted.x(), wanted.x() - g.right()));
-            const qint64 dy = qMax(0, qMax(g.top() - wanted.y(), wanted.y() - g.bottom()));
-            if (nearest < 0 || dx + dy < nearest) {
-                nearest = dx + dy;
-                on = screen;
-            }
-        }
-    }
     // With no screen at all there is nothing to fit to.
-    return sizeWithin(wanted.size(), on ? on->available : QRect(), minimumSize());
+    return sizeWithin(wanted, source->desktopSize(), minimumSize());
+}
+
+void FloatingContainer::refreshDesktopLimit()
+{
+    // The backstop: whatever asks for a size (this app, Qt or the
+    // platform), the window is given no more than all the screens
+    // together. Never less than the form's minimum, and no limit with no
+    // screen. A limit smaller than the size the window has (a monitor
+    // went) resizes it once, inside setMaximumSize.
+    const ScreenSource* source = m_screens ? m_screens : ScreenSource::system();
+    const QSize desktop = source->desktopSize();
+    const QSize limit = desktop.isValid() ? desktop.expandedTo(minimumSize())
+                                          : QSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    if (maximumSize() != limit) {
+        setMaximumSize(limit);
+    }
 }
 
 QRect FloatingContainer::clampedGeometry(const QRect &geometry, const QRect &available,

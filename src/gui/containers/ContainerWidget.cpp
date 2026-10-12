@@ -13,8 +13,9 @@
 //                 one warning per drag naming the sizes and the screen
 //                 (a window dragged across the join of two screens grew
 //                 without bound on Windows). A resize by the grip or an
-//                 edge leaves a window no larger than its screen. J.J.
-//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 edge leaves a window no larger than all the screens
+//                 together. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Workspace preview only: the Options menu of a window says
 //                 Return, as its body menu and header do. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1752,7 +1753,14 @@ bool ContainerWidget::holdDragSize()
         return false;
     }
     QWidget* form = parentWidget();
-    if (!form || form->size() == m_dragHoldSize) {
+    if (!form) {
+        return false;
+    }
+    // What the window can be given: its limits may have moved during the
+    // drag (a monitor unplugged lowers its maximum), and a size it cannot
+    // take is not asked for again and again.
+    const QSize hold = m_dragHoldSize.boundedTo(form->maximumSize()).expandedTo(form->minimumSize());
+    if (form->size() == hold) {
         return false;
     }
     if (!m_dragSizeWarned) {
@@ -1764,14 +1772,14 @@ bool ContainerWidget::holdDragSize()
         qCWarning(lcContainer).noquote().nospace()
             << "Floating container " << m_id << " changed size during a drag: found "
             << form->width() << "x" << form->height() << ", restored "
-            << m_dragHoldSize.width() << "x" << m_dragHoldSize.height() << ", screen "
+            << hold.width() << "x" << hold.height() << ", screen "
             << (screen ? screen->name() : QStringLiteral("none")) << ", devicePixelRatio "
             << form->devicePixelRatioF();
     }
     // The resize below is delivered to this container at once (or later by
     // the platform); the flag keeps that event from asking for another.
     QScopedValueRollback<bool> restoring(m_restoringDragSize, true);
-    form->resize(m_dragHoldSize);
+    form->resize(hold);
     return true;
 }
 
@@ -1869,8 +1877,8 @@ void ContainerWidget::doResize(int w, int h)
 
     if (isFloating()) {
         if (auto* form = qobject_cast<FloatingContainer*>(parentWidget())) {
-            // Never larger than the screen the window is on.
-            form->resize(form->fittedSize(QRect(form->pos(), QSize(w, h))));
+            // Never larger than all the screens together.
+            form->resize(form->fittedSize(QSize(w, h)));
         } else if (parentWidget()) {
             parentWidget()->resize(w, h);
         }

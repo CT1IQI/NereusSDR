@@ -4,10 +4,11 @@
 //                 resizes it (a window dragged across the join of two
 //                 screens grew to 32767 x 25223 on Windows and stopped the
 //                 app); the height follower leaves a dragged window alone;
-//                 a window is never larger than its screen, whatever size
-//                 was saved; and a resize by the grip is still the
-//                 operator's. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                 Claude Code.
+//                 a window is never wider or taller than all the screens
+//                 together, whatever size was saved or asked for, while
+//                 one stretched across two monitors keeps its size; and a
+//                 resize by the grip is still the operator's. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -32,9 +33,14 @@ using namespace NereusSDR;
 namespace {
 
 constexpr int kSaveTimeoutMs = 10000;
-// One monitor with a menu bar and a task bar's worth taken off it.
+// One monitor with a menu bar and a task bar's worth taken off it. With
+// that one monitor, all the screens together are its whole geometry.
 constexpr QRect kScreen(0, 0, 2560, 1440);
 constexpr QRect kAvailable(0, 25, 2560, 1375);
+constexpr QSize kDesktop(2560, 1440);
+// A second monitor to its right, and the two together.
+constexpr QRect kSecondScreen(2560, 0, 1920, 1080);
+constexpr QSize kTwoScreenDesktop(4480, 1440);
 // Clear of the main window (200,100 1400x900), so a drop leaves a window.
 constexpr QRect kWindowRect(1800, 300, 360, 300);
 // The size a window had grown to when the app stopped (Windows, 2026-10-12).
@@ -75,6 +81,10 @@ public:
     QVector<ScreenInfo> list{ScreenInfo{QStringLiteral("Bench"), QStringLiteral("SN-1"), kScreen, kAvailable}};
     QVector<ScreenInfo> screens() const override { return list; }
     ScreenInfo primary() const override { return list.first(); }
+    void addSecond()
+    {
+        list.append(ScreenInfo{QStringLiteral("Side"), QStringLiteral("SN-2"), kSecondScreen, kSecondScreen});
+    }
 };
 
 // Counts the "changed size during a drag" warnings and keeps them out of
@@ -275,7 +285,7 @@ private slots:
         const QSize pressSize = form->size();
         const QPoint pressPos = form->pos();
         const QSize grown(pressSize.width() * 2, pressSize.height() * 2);
-        QVERIFY(grown.width() <= kAvailable.width() && grown.height() <= kAvailable.height());
+        QVERIFY(grown.width() <= kDesktop.width() && grown.height() <= kDesktop.height());
 
         const QPoint grab = handle->mapToGlobal(handle->rect().center());
         press(handle, grab);
@@ -335,42 +345,172 @@ private slots:
         QVERIFY(rig.saved());
     }
 
-    // A window saved at 28458 x 22355 is shown no larger than its screen's
-    // available area, and the next save writes that size.
-    void aSavedAbsurdSizeIsShownWithinItsScreen_data()
+    // A window saved at 28458 x 22355 is shown no wider and no taller than
+    // all the screens together. Its remembered size is not rewritten from
+    // the screens present (a monitor that is away must not cost a window
+    // its size); the operator's next move saves the size shown.
+    void aSavedAbsurdSizeIsShownWithinTheDesktop_data()
     {
         QTest::addColumn<bool>("lookOn");
         QTest::addColumn<bool>("screenSaved");
-        QTest::newRow("look off, no monitor saved") << false << false;
-        QTest::newRow("look off, monitor saved") << false << true;
-        QTest::newRow("look on, no monitor saved") << true << false;
-        QTest::newRow("look on, monitor saved") << true << true;
+        QTest::addColumn<bool>("twoScreens");
+        QTest::newRow("look off, no monitor saved") << false << false << false;
+        QTest::newRow("look off, monitor saved") << false << true << false;
+        QTest::newRow("look on, no monitor saved") << true << false << false;
+        QTest::newRow("look on, monitor saved") << true << true << false;
+        QTest::newRow("look off, two monitors") << false << true << true;
+        QTest::newRow("look on, two monitors") << true << true << true;
     }
-    void aSavedAbsurdSizeIsShownWithinItsScreen()
+    void aSavedAbsurdSizeIsShownWithinTheDesktop()
     {
         QFETCH(bool, lookOn);
         QFETCH(bool, screenSaved);
+        QFETCH(bool, twoScreens);
         WorkspacePreview::setEnabledForTest(lookOn);
         DragRig rig({lookOn, false});
+        if (twoScreens) {
+            rig.screens.addSecond();
+        }
+        const QSize desktop = twoScreens ? kTwoScreenDesktop : kDesktop;
         ContainerDocument saved = rig.floater(false, QRect(kWindowRect.topLeft(), kAbsurdSize));
         if (screenSaved) {
             saved.screen = savedScreenOf(rig.screens.primary());
         }
         QVERIFY(rig.restore(saved));
         QCOMPARE(rig.stored().geometry.size(), kAbsurdSize);
-        const QSize shown = rig.form()->size();
-        QVERIFY2(shown.width() <= kAvailable.width() && shown.height() <= kAvailable.height(),
-                 qPrintable(QStringLiteral("%1x%2").arg(shown.width()).arg(shown.height())));
+        QCOMPARE(rig.form()->size(), desktop);
+        QCOMPARE(rig.form()->maximumSize(), desktop);
         QVERIFY(rig.form()->isVisible());
 
         rig.manager->saveState();
         QVERIFY(rig.saved());
-        const QSize written = rig.stored().geometry.size();
-        QVERIFY2(written.width() <= kAvailable.width() && written.height() <= kAvailable.height(),
-                 qPrintable(QStringLiteral("%1x%2").arg(written.width()).arg(written.height())));
         settle();
-        QCOMPARE(rig.form()->size(), shown);
+        QCOMPARE(rig.form()->size(), desktop);
+
+        QWidget* handle = rig.handle();
+        QVERIFY(handle);
+        const QPoint grab = handle->mapToGlobal(QPoint(40, handle->height() / 2));
+        press(handle, grab);
+        move(handle, grab + QPoint(40, 30));
+        release(handle, grab + QPoint(40, 30));
+        settle();
+        QCOMPARE(rig.form()->size(), desktop);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.stored().geometry.size(), desktop, kSaveTimeoutMs);
+        QVERIFY(rig.saved());
         QCOMPARE(g_sizeWarnings, 0);
+    }
+
+    // A window the operator stretched across two monitors is wider than
+    // either: it comes back at its full size and is saved at it.
+    void aWindowAcrossTwoMonitorsKeepsItsSize_data()
+    {
+        QTest::addColumn<bool>("lookOn");
+        QTest::newRow("look off") << false;
+        QTest::newRow("look on") << true;
+    }
+    void aWindowAcrossTwoMonitorsKeepsItsSize()
+    {
+        QFETCH(bool, lookOn);
+        WorkspacePreview::setEnabledForTest(lookOn);
+        DragRig rig({lookOn, false});
+        rig.screens.addSecond();
+        const QRect spanning(1000, 300, 3000, 600);
+        QVERIFY(spanning.width() > kScreen.width() && spanning.width() > kSecondScreen.width());
+        ContainerDocument saved = rig.floater(false, spanning);
+        saved.screen = savedScreenOf(rig.screens.primary());
+        QVERIFY(rig.restore(saved));
+        QCOMPARE(rig.form()->geometry(), spanning);
+        rig.manager->saveState();
+        QVERIFY(rig.saved());
+        settle();
+        QCOMPARE(rig.stored().geometry, spanning);
+        QCOMPARE(rig.form()->geometry(), spanning);
+
+        // Widened by the grip past one monitor's width: still its own.
+        auto* grip = rig.widget()->findChild<QWidget*>(QStringLiteral("containerResizeGrip"));
+        QVERIFY(grip);
+        const QPoint corner = grip->mapToGlobal(grip->rect().center());
+        press(grip, corner);
+        move(grip, corner + QPoint(200, 0));
+        release(grip, corner + QPoint(200, 0));
+        settle();
+        QCOMPARE(rig.form()->size(), spanning.size() + QSize(200, 0));
+        QVERIFY(rig.saved());
+    }
+
+    // The backstop: whoever resizes the window (here from outside, as the
+    // platform does), it is given no more than all the screens together,
+    // and the limit follows the screens.
+    void theWindowsMaximumSizeIsTheDesktop_data()
+    {
+        QTest::addColumn<bool>("lookOn");
+        QTest::newRow("look off") << false;
+        QTest::newRow("look on") << true;
+    }
+    void theWindowsMaximumSizeIsTheDesktop()
+    {
+        QFETCH(bool, lookOn);
+        WorkspacePreview::setEnabledForTest(lookOn);
+        DragRig rig({lookOn, false});
+        rig.screens.addSecond();
+        QVERIFY(rig.restore(rig.floater(false)));
+        QVERIFY(rig.saved());
+        QWidget* form = rig.form();
+        const QSize before = form->size();
+        QCOMPARE(form->maximumSize(), kTwoScreenDesktop);
+        form->resize(kAbsurdSize);
+        QCOMPARE(form->size(), kTwoScreenDesktop);
+        form->resize(before);
+        settle();
+
+        // During a drag too, and the drag still ends at the press size.
+        QWidget* handle = rig.handle();
+        QVERIFY(handle);
+        const QPoint grab = handle->mapToGlobal(handle->rect().center());
+        press(handle, grab);
+        move(handle, grab + QPoint(40, 30));
+        form->resize(kAbsurdSize);
+        QCOMPARE(form->size(), kTwoScreenDesktop);
+        move(handle, grab + QPoint(60, 40));
+        QCOMPARE(form->size(), before);
+        QCOMPARE(g_sizeWarnings, 1);
+
+        // A monitor goes mid-drag while the window is wider than what is
+        // left: it is given what is left, once, and the hold does not ask
+        // for more on every move after it.
+        form->resize(3000, before.height());
+        release(handle, grab + QPoint(60, 40));
+        settle();
+        QCOMPARE(form->size(), before);
+        const QSize wide(3000, before.height());
+        form->resize(wide);
+        settle();
+        const QPoint again = handle->mapToGlobal(handle->rect().center());
+        g_sizeWarnings = 0;
+        press(handle, again);
+        move(handle, again + QPoint(30, 20));
+        rig.screens.list.removeLast();
+        rig.manager->screensChanged();
+        QCOMPARE(form->maximumSize(), kDesktop);
+        QCOMPARE(form->size(), QSize(kDesktop.width(), before.height()));
+        ResizeCounter resizes;
+        form->installEventFilter(&resizes);
+        move(handle, again + QPoint(40, 30));
+        move(handle, again + QPoint(50, 40));
+        settle();
+        release(handle, again + QPoint(50, 40));
+        settle();
+        form->removeEventFilter(&resizes);
+        QCOMPARE(resizes.count, 0);
+        QCOMPARE(form->size(), QSize(kDesktop.width(), before.height()));
+        QCOMPARE(g_sizeWarnings, 0);
+
+        // The monitor is back: the limit is too.
+        rig.screens.addSecond();
+        rig.manager->screensChanged();
+        QCOMPARE(form->maximumSize(), kTwoScreenDesktop);
+        QVERIFY(form->minimumWidth() <= form->maximumWidth() && form->minimumHeight() <= form->maximumHeight());
+        QVERIFY(rig.saved());
     }
 
     // A window whose height follows its content is not resized while a
@@ -434,8 +574,8 @@ private slots:
     }
 
     // A resize by the corner grip is the operator's: it sticks, it is
-    // saved, a drag afterwards keeps it, and it stops at the screen's
-    // available area.
+    // saved, a drag afterwards keeps it, and it stops at the size of all
+    // the screens together.
     void aResizeByTheGripStillSticks_data() { modes(); }
     void aResizeByTheGripStillSticks()
     {
@@ -480,15 +620,15 @@ private slots:
         QCOMPARE(rig.stored().geometry.size(), resized);
         QCOMPARE(g_sizeWarnings, 0);
 
-        // Pulled far past the screen: no larger than its available area.
+        // Pulled far past the screens: no larger than all of them together.
         const QPoint far = grip->mapToGlobal(grip->rect().center());
         press(grip, far);
         move(grip, far + QPoint(30000, 30000));
-        QCOMPARE(form->size(), kAvailable.size());
+        QCOMPARE(form->size(), kDesktop);
         release(grip, far + QPoint(30000, 30000));
         settle();
-        QCOMPARE(form->size(), kAvailable.size());
-        QTRY_COMPARE_WITH_TIMEOUT(rig.stored().geometry.size(), kAvailable.size(), kSaveTimeoutMs);
+        QCOMPARE(form->size(), kDesktop);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.stored().geometry.size(), kDesktop, kSaveTimeoutMs);
         QVERIFY(rig.saved());
     }
 };

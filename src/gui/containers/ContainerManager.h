@@ -9,8 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-12 - windowSizeFor and followContentHeight. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - followContentHeight, refreshWindowSizeLimits and
+//                 watchScreen. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - windowIsHome's `restoring`: the header rule is for a place
 //                 the app restores, never one the operator just dropped;
 //                 m_documentSizing, sizesWindowDifferently. J.J. Boyd
@@ -153,6 +154,7 @@ mw0lge@grange-lane.co.uk
 #include <functional>
 #include <optional>
 
+class QScreen;
 class QSplitter;
 class QSplitterHandle;
 class QWidget;
@@ -541,11 +543,9 @@ private:
     ScreenInfo mainWindowScreen() const;
     // The usable height of the screen `target` is on.
     int availableHeightFor(const QWidget* target) const;
-    // The size of a window remembered at `remembered` on `screen`, no
-    // larger than the available area of the screen placeFloatingWindow
-    // shows it on (its own when present, else the main window's).
-    QSize windowSizeFor(const QRect& remembered, const std::optional<SavedScreen>& screen,
-                        const FloatingContainer* form) const;
+    // Every floating window's maximum size, set again from the screens.
+    void refreshWindowSizeLimits();
+    void watchScreen(QScreen* screen);
     // Gives a container whose height follows its content that height (a
     // popped-out object's window whose height the operator set only grows
     // to fit). Nothing happens to a window while a drag moves it; the end
