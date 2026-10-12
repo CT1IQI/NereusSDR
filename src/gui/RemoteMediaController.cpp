@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-12: the microphone pump reports, once per stall, a collector
+//               that takes no audio while capture is ready. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (fourth wave): a pan forgets the picture it
 //               shows when its receiver changes stream or stream epoch, so a
 //               late context of that picture is not drawn. J.J. Boyd
@@ -1601,6 +1604,13 @@ struct RemoteMediaController::Private {
     // What the collector had dropped when the line last started or
     // reported: the rest is this key's.
     quint64 micDroppedReported = 0;
+    // 2026-10-12: the collector's frames and wakes when its count last
+    // moved, for the one report of a collector that takes nothing while
+    // capture is ready (-1: not being timed).
+    quint64 micCollectedSeen = 0;
+    quint64 micWakesAtProgress = 0;
+    qint64 micCollectedMovedMs = -1;
+    bool micStallReported = false;
     quint16 micSequence = 0;
     quint32 micTimestamp = 0;
     quint64 micPacketsSent = 0;
@@ -2939,6 +2949,31 @@ void RemoteMediaController::reconcileMicUplink()
             if (got < static_cast<int>(d->micScratch.size())) {
                 break;
             }
+        }
+        // 2026-10-12: a collector thread that takes nothing while capture
+        // is ready leaves the helper's ring unread and the uplink silent.
+        // Said once per stall, with whether the thread still wakes, and
+        // again when it ends.
+        const bool captureReady = d->micCollector->isRunning()
+            && d->model->audioEngine()->captureStatus().state
+                == CaptureSupervisor::Status::State::Ready;
+        const quint64 collected = d->micCollector->collectedFrames();
+        if (!captureReady || d->micCollectedMovedMs < 0 || collected != d->micCollectedSeen) {
+            if (d->micStallReported && captureReady) {
+                qCWarning(lcRemoteMedia) << "Microphone collector is taking audio again after"
+                                         << (nowMs - d->micCollectedMovedMs) << "ms";
+            }
+            d->micStallReported = false;
+            d->micCollectedSeen = collected;
+            d->micWakesAtProgress = d->micCollector->wakes();
+            d->micCollectedMovedMs = captureReady ? nowMs : -1;
+        } else if (!d->micStallReported && nowMs - d->micCollectedMovedMs >= kMicCollectorStallMs) {
+            d->micStallReported = true;
+            const quint64 wakes = d->micCollector->wakes() - d->micWakesAtProgress;
+            qCWarning(lcRemoteMedia) << "Microphone collector took no audio for"
+                                     << (nowMs - d->micCollectedMovedMs)
+                                     << "ms while capture is ready; its thread woke" << wakes
+                                     << "times in that time";
         }
     }
     if (!d->micRunning) {

@@ -1781,6 +1781,10 @@ nereus_add_test(tst_audio_ring_spsc)
 # its oldest, and stop joins without waiting out the wake.
 nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
 
+# The microphone helper's lost-input watch: it counts the blocks the device
+# delivers, so a window that stops reading the ring never loses the input.
+nereus_add_test(tst_capture_input_watch EXTRA_LABELS core)
+
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
 # Input (consumer), and targetNodeName routing. No running daemon required.
