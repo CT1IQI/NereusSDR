@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
+//                 settling no longer rescales the whole waterfall history;
+//                 it is resampled into the history's current width and the
+//                 debounce rescales once (jerky dock edge drag).
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. R-DISP-RETUNE (third wave): the Core's
 //                 word (coreCarriedOn) decides whether a context continues
 //                 the picture shown; the pan's own moved-picture rule and
@@ -6416,6 +6421,7 @@ void SpectrumWidget::ensureWaterfallHistory()
         && m_waterfallHistory.height() == desiredSize.height()) {
         newHistory = m_waterfallHistory.scaled(
             desiredSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        ++m_wfHistoryRescales;
     }
     if (newHistory.isNull() || newHistory.size() != desiredSize) {
         traceRxHistoryEvent(RxHistoryEvent::HistoryBufferReset, -1, 0, desiredSize);
@@ -6434,7 +6440,23 @@ void SpectrumWidget::ensureWaterfallHistory()
 // From AetherSDR SpectrumWidget.cpp:647-668 [@0cd4559]
 void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
 {
-    ensureWaterfallHistory();
+    // NereusSDR differs from AetherSDR here, which calls
+    // ensureWaterfallHistory() for every row. resizeEvent replaces the live
+    // image at once and leaves the history to the 250 ms debounce, so while
+    // a dock edge or the window border is dragged the two widths differ and
+    // that call rescaled the whole history (plot width by up to
+    // kMaxWaterfallHistoryRows rows, 85 MB at 1300 px) on the GUI thread
+    // for every row that arrived, about every 30 ms: the drag was jerky.
+    // While the debounce is pending the history keeps its width and the row
+    // is resampled into it; the debounce rescales once when the drag rests.
+    const bool resizeSettling = m_historyResizeTimer
+        && m_historyResizeTimer->isActive()
+        && !m_waterfallHistory.isNull()
+        && m_waterfallHistory.height() == waterfallHistoryCapacityRows()
+        && m_waterfallHistory.width() != m_waterfall.width();
+    if (!resizeSettling) {
+        ensureWaterfallHistory();
+    }
     if (m_waterfallHistory.isNull() || rowData == nullptr) {
         return;
     }
@@ -6444,7 +6466,17 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
     auto* row = reinterpret_cast<QRgb*>(
         m_waterfallHistory.bits()
         + m_wfHistoryWriteRow * m_waterfallHistory.bytesPerLine());
-    std::memcpy(row, rowData, m_waterfallHistory.width() * sizeof(QRgb));
+    const int historyWidth = m_waterfallHistory.width();
+    const int rowWidth = m_waterfall.width();
+    if (historyWidth == rowWidth) {
+        std::memcpy(row, rowData, historyWidth * sizeof(QRgb));
+    } else {
+        // Nearest neighbor, as the settle rescale (Qt::FastTransformation).
+        for (int x = 0; x < historyWidth; ++x) {
+            row[x] = rowData[static_cast<int>(
+                static_cast<qint64>(x) * rowWidth / historyWidth)];
+        }
+    }
     if (m_wfHistoryWriteRow >= 0
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;

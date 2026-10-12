@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 : m_wfHistoryRescales, waterfallHistoryForTest() and its
+//                 companions, for the waterfall history's resize tests.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 : R-DISP-RETUNE (third wave): setRemoteSpectrumContext takes
 //                 the Core's word on whether a context continues the picture
 //                 shown (coreCarriedOn) in place of the span asked. J.J.
@@ -1094,6 +1097,15 @@ public:
     int  waterfallHistoryRowsForTest() const { return m_wfHistoryRowCount; }
     const QImage& liveWaterfallForTest() const { return m_waterfall; }
     int liveWaterfallWriteRowForTest() const { return m_wfWriteRow; }
+    // The rewind history image itself, and how many times its whole
+    // image has been rescaled to a new width (once per resize that comes to
+    // rest, never once per row while the width is still changing).
+    const QImage& waterfallHistoryForTest() const { return m_waterfallHistory; }
+    int waterfallHistoryWriteRowForTest() const { return m_wfHistoryWriteRow; }
+    quint64 waterfallHistoryRescalesForTest() const { return m_wfHistoryRescales; }
+    bool waterfallHistoryResizePendingForTest() const {
+        return m_historyResizeTimer && m_historyResizeTimer->isActive();
+    }
     // 3D Speed (Task 24) test seams.
     int  effectiveDssRowDividerForTest() const { return effectiveDssRowDivider(); }
     int  dssFoldCountForTest() const { return m_dssFoldCount; }
@@ -2948,6 +2960,8 @@ private:
     // From AetherSDR SpectrumWidget.h:559 [@2bb3b5c]
     // (debounce timer added by unmerged AetherSDR PR #1478 — see plan §authoring-time #2)
     QTimer*         m_historyResizeTimer{nullptr};
+    // Whole-image rescales of m_waterfallHistory, for the resize tests.
+    quint64         m_wfHistoryRescales{0};
     QTimer          m_displayTimer;
     bool            m_hasNewSpectrum{false};
 

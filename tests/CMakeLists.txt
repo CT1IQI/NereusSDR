@@ -2965,6 +2965,13 @@ target_compile_definitions(tst_bandplan_manager PRIVATE
 # drift in the cap is caught by the build.
 nereus_add_test(tst_waterfall_scrollback)
 
+# ── Waterfall history through a width drag ───────────────────────────────
+# Dragging a dock edge changes the spectrum's width on every mouse move
+# while rows keep arriving. Counts whole-history rescales (none during the
+# drag, one after the resize debounce) and checks that the rows captured
+# before and during the drag are intact afterwards.
+nereus_add_test(tst_waterfall_history_resize_drag)
+
 # ── Task 2.8: WaterfallDefaultsPage changes (NF-AGC, Stop-on-TX, W5 removal) ─
 # NF-AGC setter round-trips, offset clamp, stop-on-TX setter round-trips,
 # and smoke test for setActivePeakHoldTxActive + setWaterfallStopOnTx combo.
