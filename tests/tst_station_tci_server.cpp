@@ -30,6 +30,10 @@
 // through LogManager and puts it back the same way, so the process keeps
 // LogManager's filter rules instead of an empty set. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-10-11: test flaw: stationNetworkServedWhileThisComputerIsBlocked
+// dials an address this computer can reach (ReachableOwnAddress.h), not its
+// first non-loopback one. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 #include "MultiDeviceHarness.h"
 
 #include <QtTest/QtTest>
@@ -42,6 +46,7 @@
 #include <QPushButton>
 
 #include "OperatorWording.h"
+#include "ReachableOwnAddress.h"
 #include "core/AppSettings.h"
 #include "core/LogCategories.h"
 #include "core/SliceOwnership.h"
@@ -1450,15 +1455,12 @@ private slots:
     // next retry, with no stop and start of the server.
     void stationNetworkServedWhileThisComputerIsBlocked()
     {
-        QString stationAddress;
-        for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
-            if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback()) {
-                stationAddress = address.toString();
-                break;
-            }
-        }
+        // 2026-10-11: an address this computer can reach, not the first one
+        // it has (reachableOwnAddress).
+        const QString stationAddress = TestNetwork::reachableOwnAddress();
         if (stationAddress.isEmpty()) {
-            QSKIP("No non-loopback IPv4 address on this computer to stand in for the station.");
+            QSKIP("No IPv4 address this computer can reach, other than loopback, to stand in "
+                  "for the station.");
         }
         QTcpServer blocker;
         QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
