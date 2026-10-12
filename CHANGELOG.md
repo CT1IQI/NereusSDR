@@ -67,6 +67,9 @@ Advanced, and each control appears on one page only.
 
 ### Fixes
 
+- With the S-meter set to Max Bin, each slice's flag shows its own signal. In
+  a window running its own radio, every flag showed the reading of whichever
+  pan was clicked last.
 - Tuning from a remote console no longer makes the receive audio stutter. The
   Core saved its settings file half a second after a tuning step, on the same
   thread that sends the audio, and nothing was sent until the disk finished
