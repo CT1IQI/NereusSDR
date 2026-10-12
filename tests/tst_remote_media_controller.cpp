@@ -13,6 +13,13 @@
 //   2026-10-12  J.J. Boyd / KG4VCF  Verify collector pause/resume does not
 //                                    report an intentional pause as a stall.
 //                                    AI-assisted via OpenAI Codex.
+//   2026-10-11  J.J. Boyd / KG4VCF  A slice the Core moves to another
+//                                    receiver: the pan's next ask is for
+//                                    its view on that receiver, in a window
+//                                    whose pan follows at once, one whose
+//                                    pan follows late, and one that never
+//                                    sees the slice move.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (fourth wave): the
 //                                    contexts the window must not draw
 //                                    (another stream, a changed stream or
@@ -193,6 +200,7 @@
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/session/Ps3DisplayCodec.h"
 #include "core/FFTEngine.h"
+#include "core/P2RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/PathRacer.h"
@@ -458,6 +466,11 @@ QJsonObject lastControl(const QSignalSpy& spy, const QString& op)
 constexpr int kStays = 0;
 constexpr int kLeaves = 1;
 constexpr int kLeavesCoreRefuses = 2;
+// sliceMovedToAnotherReceiverAsksForTheViewOnThatReceiver: when the pan
+// follows its slice, and whether this window sees the slice move at all.
+constexpr int kFollowsWithTheUpdate = 0;
+constexpr int kFollowsLate = 1;
+constexpr int kAwayAndBack = 2;
 
 int countControl(const QSignalSpy& spy, const QString& op)
 {
@@ -3132,6 +3145,263 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->renderedPixels().isEmpty()), 10000);
         QVERIFY(clarity->isPaused());
         QCOMPARE(clarity->lastLow(),retainedLow); QCOMPARE(clarity->smoothedFloor(),retainedFloor);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A slice that shares its receiver and changes band is put on another
+    // receiver by the Core, which retires the pan's display on the old one.
+    // The window's next ask for that pan is for the pan's view on the new
+    // receiver. An ask still carrying the view the pan had on the old band
+    // lies outside the new receiver, so the Core reads it as an extended
+    // view: it takes the wideband path and the filter input goes to bypass
+    // until the window's next ask lands. A local window never asks that way.
+    // Found from a signed-in window, 2026-10-11.
+    //
+    // The Core says at once that the display is retired; the slice's new
+    // frequency and receiver come with its next mirrored update, and the
+    // pan follows its slice then. The rows: the pan follows as the update
+    // lands; the pan follows only after the planner has run again; and the
+    // slice is sent away and back between two updates, so this window never
+    // sees it move, and its pan is asked for and drawn again all the same.
+    void sliceMovedToAnotherReceiverAsksForTheViewOnThatReceiver_data()
+    {
+        QTest::addColumn<bool>("budget");
+        QTest::addColumn<int>("scenario");
+        for (const bool budget : {false, true}) {
+            const QByteArray mode = budget ? QByteArrayLiteral(", display budget")
+                                           : QByteArrayLiteral(", no display budget");
+            QTest::newRow(QByteArray("pan follows with the update" + mode).constData())
+                << budget << kFollowsWithTheUpdate;
+            QTest::newRow(QByteArray("pan follows after the planner ran" + mode).constData())
+                << budget << kFollowsLate;
+            QTest::newRow(QByteArray("away and back between updates" + mode).constData())
+                << budget << kAwayAndBack;
+        }
+    }
+    void sliceMovedToAnotherReceiverAsksForTheViewOnThatReceiver()
+    {
+        QFETCH(bool, budget);
+        QFETCH(int, scenario);
+        constexpr double kSixMetersHz = 50'125'000.0;
+        constexpr double kFortyMetersHz = 7'214'100.0;
+        constexpr double kSpanHz = 96'000.0;
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        // A Protocol 2 Core with a wideband ADC path: a view outside the
+        // receiver is one this Core accepts and switches the filters for.
+        P2RadioConnection p2;
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int movedId = station.addSlice();
+        auto* movedSlice = station.sliceById(movedId);
+        QVERIFY(movedSlice);
+        movedSlice->setFrequency(kSixMetersHz);
+        const int oldStream = movedSlice->streamIndex();
+        QVERIFY(oldStream >= 0);
+        const int sharingId = station.addSlice();
+        auto* sharingSlice = station.sliceById(sharingId);
+        QVERIFY(sharingSlice);
+        sharingSlice->setFrequency(kSixMetersHz + 20'000.0);
+        QCOMPARE(sharingSlice->streamIndex(), oldStream);
+        QCOMPARE(movedSlice->streamIndex(), oldStream);
+        int otherStream = -1;
+        if (scenario == kAwayAndBack) {
+            // A receiver on 40 m for the slice to join and leave again.
+            auto* fortySlice = station.sliceById(station.addSlice());
+            QVERIFY(fortySlice);
+            fortySlice->setFrequency(kFortyMetersHz + 20'000.0);
+            otherStream = fortySlice->streamIndex();
+            QVERIFY(otherStream >= 0 && otherStream != oldStream);
+        }
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        station.injectConnectionForTest(&p2);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        station.setLastRadioInfoForTest(info);
+        station.wireWidebandConnectionForTest();
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        if (budget) {
+            QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        }
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("pan"));
+        stack.setActivePan(QStringLiteral("pan"));
+        pan->addSlice(movedId);
+        pan->setActiveSliceIndex(movedId);
+        auto* widget = pan->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(kSixMetersHz, kSpanHz);
+        widget->setVfoFrequency(kSixMetersHz);
+        widget->setConnectionState(ConnectionState::Connected);
+        QVERIFY(widget->extendedViewAllowed());
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        // The window's clock is the test's from the move on, so how long an
+        // ask may wait is stated here and not left to how busy the machine is.
+        QElapsedTimer wallClock;
+        wallClock.start();
+        bool clockHeld = false;
+        qint64 heldClockMs = 0;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            },
+            [&] { return clockHeld ? heldClockMs : wallClock.elapsed(); });
+        QSignalSpy frames(&gui, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy windowControls(&client, &StationClient::mediaControlReceived);
+
+        // Every ask the Core receives for the moved slice, held against the
+        // receiver the Core has that slice on at that moment.
+        bool moved = false;
+        QStringList strays;
+        QList<double> askedCenters;
+        connect(&server, &StationServer::mediaControlReceived, &station,
+                [&](const QJsonObject& control) {
+            if (!moved || control.value(QStringLiteral("op")) != QLatin1String("subscribe")
+                || control.value(QStringLiteral("sliceId")).toInt(-1) != movedId) { return; }
+            const int stream = movedSlice->streamIndex();
+            const double receiverCenter = station.streamCentreHz(stream);
+            const double rate = station.streamSampleRateHz(stream);
+            const double viewCenter = control.value(QStringLiteral("centreHz")).toDouble();
+            const double span = control.value(QStringLiteral("spanHz")).toDouble();
+            askedCenters.append(viewCenter);
+            if (viewCenter - span / 2.0 < receiverCenter - rate / 2.0
+                || viewCenter + span / 2.0 > receiverCenter + rate / 2.0) {
+                strays.append(QStringLiteral("%1 Hz wide at %2 Hz, receiver %3 at %4 Hz")
+                    .arg(span, 0, 'f', 0).arg(viewCenter, 0, 'f', 0)
+                    .arg(stream).arg(receiverCenter, 0, 'f', 0));
+            }
+        });
+        int wideLocks = 0;
+        connect(&station.alexController(), &AlexController::bpfStateChanged, &station,
+                [&wideLocks](int, const AlexController::AlexAdcState& state) {
+            if (state.effective == AlexController::BpfEffective::WidebandLocked) { ++wideLocks; }
+        });
+        const auto strayAsks = [&strays, &wideLocks] {
+            return QStringLiteral("asked for a view outside the slice's receiver: %1 "
+                                  "(filters to the wideband state %2 times)")
+                .arg(strays.join(QStringLiteral("; "))).arg(wideLocks);
+        };
+
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(remote.sliceById(movedId)
+            && remote.sliceById(movedId)->streamIndex() == oldStream);
+        SliceModel* const mirrored = remote.sliceById(movedId);
+        QVERIFY(client.remoteWidebandAvailable());
+        QCOMPARE(client.remoteDisplayBudgetLimits().has_value(), budget);
+        // The window follows its mirrored slice as MainWindow does
+        // (followRemoteSliceFrequency): a slice tuned off the pan takes the
+        // pan's view with it.
+        const auto follow = [widget](double hz) {
+            const double halfSpan = widget->bandwidth() / 2.0;
+            const bool offScreen = hz < widget->centerFrequency() - halfSpan
+                || hz > widget->centerFrequency() + halfSpan;
+            if (!widget->ctunEnabled() || offScreen) {
+                widget->setDisplayWindowPreservingHistory(hz, widget->bandwidth());
+            }
+            widget->setVfoFrequency(hz);
+        };
+        if (scenario != kFollowsLate) {
+            connect(mirrored, &SliceModel::frequencyChanged, widget, follow);
+        }
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, movedSlice->streamIndex()), Q_ARG(QVector<float>, iq));
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= 3), 10000);
+        QCOMPARE(wideLocks, 0);
+        // The Core's word to this window that the pan's display is retired
+        // because its slice left the receiver.
+        const auto retirements = [&windowControls] {
+            int count = 0;
+            for (const auto& call : windowControls) {
+                if (call.at(0).toJsonObject().value(QStringLiteral("reason")).toString()
+                        == QLatin1String(kRetireReasonStreamBindingChanged)) { ++count; }
+            }
+            return count;
+        };
+        QCOMPARE(retirements(), 0);
+
+        heldClockMs = wallClock.elapsed();
+        clockHeld = true;
+        moved = true;
+        if (scenario == kAwayAndBack) {
+            // Onto the 40 m receiver and back onto its own, with no mirrored
+            // update in between: to this window the slice never moved.
+            const quint64 epoch = station.streamEpoch(oldStream);
+            movedSlice->setFrequency(kFortyMetersHz);
+            QCOMPARE(movedSlice->streamIndex(), otherStream);
+            movedSlice->setFrequency(kSixMetersHz);
+            QCOMPARE(movedSlice->streamIndex(), oldStream);
+            QCOMPARE(station.streamEpoch(oldStream), epoch);
+            QTRY_VERIFY(retirements() > 0);
+            gui.planNowForTest();
+            QCOMPARE(mirrored->streamIndex(), oldStream);
+            QCOMPARE(mirrored->streamEpoch(), epoch);
+            // The window waits for word of where the slice went, and no
+            // longer than kReceiverMoveSettleMs: the pan is then asked for
+            // as it stands.
+            heldClockMs += RemoteMediaController::kReceiverMoveSettleMs;
+            gui.planNowForTest();
+            QTRY_VERIFY_WITH_TIMEOUT(!askedCenters.isEmpty(), 10000);
+        } else {
+            // The operator sends the slice to 40 m. It shared its receiver,
+            // so the Core places it on another one.
+            movedSlice->setFrequency(kFortyMetersHz);
+            const int newStream = movedSlice->streamIndex();
+            QVERIFY(newStream >= 0 && newStream != oldStream);
+            QCOMPARE(sharingSlice->streamIndex(), oldStream);
+            if (scenario == kFollowsLate) {
+                // The mirrored slice shows its new receiver and the planner
+                // runs, when told to and on its own tick, before the pan has
+                // followed the slice: the old view is not asked for.
+                QTRY_COMPARE(mirrored->streamIndex(), newStream);
+                QCOMPARE(mirrored->frequency(), kFortyMetersHz);
+                QTRY_VERIFY(retirements() > 0);
+                gui.planNowForTest();
+                QTest::qWait(3 * RemoteMediaController::kPlannerIntervalMs);
+                QVERIFY2(strays.isEmpty(), qPrintable(strayAsks()));
+                QCOMPARE(wideLocks, 0);
+                follow(mirrored->frequency());
+            }
+            // The pan is asked for at its view on the new receiver.
+            QTRY_VERIFY_WITH_TIMEOUT(!askedCenters.isEmpty()
+                && std::abs(askedCenters.last() - kFortyMetersHz) < kSpanHz, 10000);
+        }
+        // It is drawn again, from the receiver the slice is on.
+        const int framesAtAsk = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() > framesAtAsk), 10000);
+        for (int i = 0; i < 12; ++i) {
+            feed();
+            QTest::qWait(25);
+        }
+        QVERIFY2(strays.isEmpty(), qPrintable(strayAsks()));
+        QCOMPARE(wideLocks, 0);
+        QCOMPARE(p2.wbEnableMask(), quint8(0));
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
