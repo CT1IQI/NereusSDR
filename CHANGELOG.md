@@ -82,6 +82,9 @@ Advanced, and each control appears on one page only.
   and presets, the transmit display settings, the radio list, and the
   accessory fault and limit records. Each of these saved the settings file on
   the thread that sends the audio and now hands it to the same writer thread.
+- The Power Genius XL's OPERATE button works again in a NereusSDR window
+  that runs its own radio. Since 2026.10.0 the click was sent only by the
+  headless Core (`nereusd`); in the desktop app it did nothing.
 
 ## [2026.10.0] - 2026-10-05
 

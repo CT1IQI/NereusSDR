@@ -661,6 +661,10 @@
 //   2026-10-11 - The bottom RX chooser's rows: the row of a slice this
 //                window plays reveals it (SliceChooser::showRequested).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The Power Genius OPERATE click on an app that runs its own
+//                radio reaches the amp again (setPgxlOperateFromApplet); it
+//                was refused wherever the app did not share its accessories.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Max Bin per slice in a window that runs its own radio:
 //                the slice meter pump takes each flag's reading from its
 //                own pan (maxBinSpectrumFor), as a window on a Core does.
@@ -17352,8 +17356,15 @@ void MainWindow::onConnectionStateChanged()
                 // for OPERATE is `operate=1` (key=value), not bare `operate`.
                 // PGXL rejected `operate` / `standby` with error 50000016
                 // every click.
+                // 2026-10-11: setPgxlOperateForStation refused this click on
+                // every app that does not share its accessories (all but
+                // nereusd), so OPERATE did nothing there.
                 QString reason;
-                m_radioModel->setPgxlOperateForStation(wantOperate, &reason);
+                if (!m_radioModel->setPgxlOperateFromApplet(wantOperate, &reason)) {
+                    qCWarning(lcConnection) << "Power Genius"
+                                            << (wantOperate ? "OPERATE" : "STANDBY")
+                                            << "not sent:" << reason;
+                }
             });
 
             // R-R3-47 / R-R3-22: the gauges no longer come from here. The
