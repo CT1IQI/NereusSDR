@@ -232,6 +232,8 @@
 //                fallback reads the transmit model's TUNE, which the
 //                release press clears, as the hosting window's handler
 //                does. AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF): approved 6 px workspace-look TX
+//               panel row spacing. AI-assisted via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -340,6 +342,7 @@
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/DexpPeakMeter.h"
 #include "gui/widgets/VfoWidget.h"
 #include "core/AudioEngine.h"
@@ -380,6 +383,8 @@
 namespace NereusSDR {
 
 namespace {
+
+constexpr int kWorkspaceTxRowSpacing = 6;
 
 // R-R3-45: the MON output captions, in one place so a rename is one edit.
 // They match the receiver flag's output buttons (VfoWidget), in capitals
@@ -456,7 +461,7 @@ void TxApplet::buildUI()
     body->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     auto* vbox = new QVBoxLayout(body);
     vbox->setContentsMargins(4, 2, 4, 2);
-    vbox->setSpacing(2);
+    vbox->setSpacing(WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2);
     outer->addWidget(body);
 
     // ── 0. Mic-source badge ── read-only label above the gauges ─────────────
