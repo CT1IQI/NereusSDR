@@ -84,6 +84,9 @@
 // 2026-09-29: load finding: the nothing-happens checks wait for the link's
 // own flush bound (SessionWait.h), not a number picked by hand. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11: test flaw: coreHereServesThisComputersApps dials an address
+// this computer can reach (reachableOwnAddress), not its first non-loopback
+// one. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include <QtTest>
 
@@ -530,6 +533,35 @@ quint16 freeLoopbackPort()
     const quint16 port = reservation.serverPort();
     reservation.close();
     return port;
+}
+
+// An IPv4 address of this computer, other than loopback, that this computer
+// can itself open a TCP connection to; empty when it has none. The first
+// non-loopback address is not always one: an overlay network's interface
+// (ZeroTier bridging the LAN, measured 2026-10-11) can hold an address in
+// the LAN's own range that times out when dialled from this machine, and
+// the station half of coreHereServesThisComputersApps then failed for a
+// reason that was not the Core's.
+QString reachableOwnAddress()
+{
+    QTcpServer probe;
+    if (!probe.listen(QHostAddress::AnyIPv4, 0)) { return {}; }
+    for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
+        if (address.protocol() != QAbstractSocket::IPv4Protocol || address.isLoopback()) {
+            continue;
+        }
+        QTcpSocket socket;
+        socket.connectToHost(address, probe.serverPort());
+        const bool dialled = socket.waitForConnected(500);
+        const bool arrived = probe.waitForNewConnection(500);
+        // Both ends: the dial completes and this listener sees it arrive.
+        // The dial alone is not proof; to the overlay address it completed
+        // from the LAN interface and never arrived here.
+        if (dialled && arrived) {
+            return address.toString();
+        }
+    }
+    return {};
 }
 
 TunerModel::StationConnectionState state(TunerModel::ConnectionPhase phase,
@@ -2045,13 +2077,9 @@ void RemotePeripheralsTest::coreHereServesThisComputersApps()
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const quint16 port = freeLoopbackPort();
-    QString stationAddress;
-    for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
-        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback()) {
-            stationAddress = address.toString();
-            break;
-        }
-    }
+    // 2026-10-11: an address this computer can reach, not the first one it
+    // has (reachableOwnAddress).
+    const QString stationAddress = reachableOwnAddress();
     // The Core keeps its station switch (off), so it wins at connect.
     AppSettings::instance().clear();
     AppSettings::instance().setValue(QStringLiteral("StationTci_Enabled"), QStringLiteral("False"));
