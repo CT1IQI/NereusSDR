@@ -5,6 +5,10 @@
 //              Anthropic Claude Code.
 // 2026-10-06 - Start CAT when the window owns the station even if the Remote
 //              Access listener failed. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-11 - A Local window's model owns its Tuner Genius, Power Genius and
+//              RF-Kit for the windows and phones signed in to it
+//              (enableStationAccessoryIdentity, typed address). J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/cat/CatService.h"
 #include "gui/GuiSessionCoordinator.h"
 
@@ -178,7 +182,14 @@ bool GuiSessionCoordinator::replace(const StationStartupSelection& selection,
     // antenna rotor, as nereusd does, for its windows and any phone it hosts.
     // retireWindow() above destroyed the outgoing model and with it any rotor
     // it held, so the port is never open twice; a remote window holds none.
-    if (!selection.connection.isRemote()) { m_window->radioModel()->enableStationRotor(); }
+    // 2026-10-11: and its Tuner Genius, Power Genius and RF-Kit, so a window
+    // or phone signed in to this desktop gets them as it gets nereusd's
+    // (enableStationAccessoryIdentity makes the rotor too). TypedAddress:
+    // this window's own links are dialed and used as they always were.
+    if (!selection.connection.isRemote()) {
+        m_window->radioModel()->enableStationAccessoryIdentity(
+            StationAccessoryAdmission::TypedAddress);
+    }
     if (m_desktopConfigured && !selection.connection.isRemote()) { installDesktopStation(); }
     if (!self || !installedWindow || m_window.get() != installedWindow) { return false; }
     const quint64 generation = m_generation;

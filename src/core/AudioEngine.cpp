@@ -346,6 +346,11 @@
 //               thread. Structure studied from Thetis cmaster.c:295-296,
 //               565 and aamix.c:185-197, 246-251 [v2.10.3.15]. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the constructor no longer starts PortAudio; it starts on
+//               first need (PortAudioLibrary::ensureStarted), and the older
+//               drivers are listed from the start only for a saved choice on
+//               them. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -422,8 +427,6 @@ AudioFormat toAudioFormat(const AudioDeviceConfig& cfg)
 
 // R-R3-21: process-wide Pa_Initialize / Pa_Terminate calls by any
 // AudioEngine, read by the test seam below.
-std::atomic<int> g_paInitializeCalls{0};
-std::atomic<int> g_paTerminateCalls{0};
 
 // Native audio plan Task 7: the settings prefix of each role.
 QString rolePrefix(AudioRole role)
@@ -494,12 +497,12 @@ int vaxChannelOf(AudioRole role)
 #ifdef NEREUS_BUILD_TESTS
 int AudioEngine::paInitializeCallsForTest()
 {
-    return g_paInitializeCalls.load(std::memory_order_relaxed);
+    return PortAudioLibrary::initializeCalls();
 }
 
 int AudioEngine::paTerminateCallsForTest()
 {
-    return g_paTerminateCalls.load(std::memory_order_relaxed);
+    return PortAudioLibrary::terminateCalls();
 }
 #endif
 
@@ -557,12 +560,15 @@ AudioEngine::AudioEngine(QObject* parent)
 #  endif
 #endif
 
-    // Own the Pa_Initialize/Pa_Terminate pair so the static PortAudioBus
-    // enumeration helpers (hostApis / outputDevicesFor / inputDevicesFor)
-    // can be called at any time from the application. Tests that run
-    // without a real audio subsystem will see Pa_Initialize fail; log and
-    // continue — rxBlockReady / start() degrade to a safe no-op in that
-    // case.
+    // PortAudio starts on first need, never here.  Pa_Initialize walks
+    // every audio device, on this thread, before the window shows: many
+    // seconds on a system that is slow to list them (macOS 27 while Voice
+    // Isolation is re-applied), for a library the Mac's engine never uses
+    // and that Windows and Linux use only for the older drivers.  The
+    // first need starts it (PortAudioLibrary::ensureStarted): a stream on
+    // the older drivers, or their device list.  Until then the static
+    // PortAudioBus enumeration helpers (hostApis / outputDevicesFor /
+    // inputDevicesFor) list nothing.
     //
     // R-R3-21: a test run never initialises PortAudio. On Linux its ALSA
     // host API opens every PCM to probe it, and on macOS it walks
@@ -570,23 +576,10 @@ AudioEngine::AudioEngine(QObject* parent)
     // touch the real audio devices. The device layer counts as ready
     // anyway, so the device paths still reach makeBus, which hands out the
     // test's fake devices or nothing (see setDeviceBusFactoryForTest).
-    if (PortAudioBus::portAudioBarredForTestRun()) {
-        m_paInitialized = false;
-        m_deviceLayerReady = true;
-        qCInfo(lcAudio) << "PortAudio not initialized: test run";
-    } else {
-        // Native audio plan Task 7 fix (R-AUD-06): under PortAudioLibrary's
-        // lock, which Rescan's restart of PortAudio also holds.
-        g_paInitializeCalls.fetch_add(1, std::memory_order_relaxed);
-        if (!PortAudioLibrary::acquire()) {
-            qCWarning(lcAudio) << "PortAudio did not start (the audio subsystem will be inert)";
-            m_paInitialized = false;
-        } else {
-            m_paInitialized = true;
-            qCInfo(lcAudio) << "PortAudio initialized:" << Pa_GetVersionText();
-        }
-        m_deviceLayerReady = m_paInitialized;
-    }
+    m_deviceLayerReady = true;
+    // This engine may come to need PortAudio; the last engine to go gives
+    // it back (the destructor).
+    PortAudioLibrary::addUser();
 
     // Pre-register the TX-monitor mixer slot so txMonitorBlockReady's
     // accumulate() call finds the entry without a main-thread insert/rehash
@@ -677,11 +670,8 @@ AudioEngine::~AudioEngine()
     if (m_captureSupervisor) {
         m_captureSupervisor->shutdown();
     }
-    if (m_paInitialized) {
-        g_paTerminateCalls.fetch_add(1, std::memory_order_relaxed);
-        PortAudioLibrary::release();
-        m_paInitialized = false;
-    }
+    // Pa_Terminate when this was the last engine and PortAudio was started.
+    PortAudioLibrary::removeUser();
 #ifdef HAVE_WDSP
     // The transmit thread built it and has stopped by now: the transmit
     // channel that feeds txMonitorBlockReady goes before this engine does.
@@ -1123,7 +1113,10 @@ std::unique_ptr<IAudioBus> AudioEngine::makeBus(const AudioDeviceConfig& cfg,
             request.deviceId = (!cfg.deviceId.isEmpty() && !cfg.isNone()) ? cfg.deviceId
                                                                           : cfg.deviceName;
             request.hostApi = cfg.driverApi;
-            if (request.hostApi.isEmpty() && cfg.hostApiIndex >= 0 && m_paInitialized) {
+            // A host API saved by its PortAudio index names an older
+            // driver: reading its name is a first need of PortAudio.
+            if (request.hostApi.isEmpty() && cfg.hostApiIndex >= 0
+                && engine == AudioEngineKind::PortAudio && PortAudioLibrary::ensureStarted()) {
                 for (const PortAudioBus::HostApiInfo& api : PortAudioBus::hostApis()) {
                     if (api.index == cfg.hostApiIndex) {
                         request.hostApi = api.name;
@@ -1748,6 +1741,12 @@ bool AudioEngine::ensureCatalogue()
     linkAsioBackend();
     m_defaultEngine = defaultAudioEngine(m_backends);
     m_catalogue = std::make_unique<AudioDeviceCatalog>(m_backends);
+    // The older drivers are listed, and PortAudio started, only on need.
+    // A saved choice on them is one: asked before the start, so the first
+    // list has their devices and the choice is matched as before.
+    if (savedChoicesNeedOlderDrivers()) {
+        m_catalogue->wantOlderDrivers();
+    }
     m_catalogue->start();
     // R-AUD-06 (round 3): the catalogue answers its rescans in the order
     // they were asked, one answer each, so each answer finishes the
@@ -1822,6 +1821,34 @@ AudioDeviceConfig AudioEngine::withDefaultEngine(const AudioDeviceConfig& cfg) c
         out.engine = m_defaultEngine;
     }
     return out;
+}
+
+bool AudioEngine::savedChoicesNeedOlderDrivers() const
+{
+    // A role with nothing saved opens on the default engine.
+    if (m_defaultEngine == AudioEngineKind::PortAudio) {
+        return true;
+    }
+    static constexpr std::array<AudioRole, 7> kRoles{
+        AudioRole::Speakers, AudioRole::Headphones, AudioRole::Vax1, AudioRole::Vax2,
+        AudioRole::Vax3,     AudioRole::Vax4,       AudioRole::TxInput};
+    const AppSettings& s = AppSettings::instance();
+    for (AudioRole role : kRoles) {
+        const QString base = rolePrefix(role) + QLatin1Char('/');
+        // Nothing saved for the role (migrateAudioDeviceKeys' own test).
+        if (!s.contains(base + QStringLiteral("Engine"))
+            && !s.contains(base + QStringLiteral("DriverApi"))
+            && !s.contains(base + QStringLiteral("DeviceName"))) {
+            continue;
+        }
+        // No Engine key is a choice not migrated yet: older drivers until
+        // it is (AudioStreamSupervisor::engineOf).
+        const AudioDeviceConfig saved = AudioDeviceConfig::loadFromSettings(rolePrefix(role));
+        if (saved.engine.value_or(AudioEngineKind::PortAudio) == AudioEngineKind::PortAudio) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void AudioEngine::migrateSavedChoices()

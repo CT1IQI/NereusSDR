@@ -5,6 +5,10 @@
 // Rotor control plan Task 4c: a Local window's model owns the rotor; a window
 // on a remote Core never does. J.J. Boyd (KG4VCF), 2026-10-08, AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-11: a Local window's model owns its Tuner Genius, Power Genius and
+// RF-Kit for the windows and phones signed in to it, at the typed address; a
+// window on a remote Core owns none. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 #include <QtTest/QtTest>
 #include <QApplication>
 #include <QCloseEvent>
@@ -23,7 +27,10 @@
 #include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
 #include "core/StationRotorController.h"
+#include "core/PgxlConnection.h"
 #include "core/RadioConnection.h"
+#include "core/Rf2ksConnection.h"
+#include "core/TgxlConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/WdspEngine.h"
 #include "core/MoxController.h"
@@ -509,7 +516,14 @@ private slots:
         QPointer<StationRotorController> local =
             sessions.window()->radioModel()->stationRotorController();
         QVERIFY(local);
-        QVERIFY(!sessions.window()->radioModel()->stationAccessoryIdentityEnabled());
+        // 2026-10-11: and its Tuner Genius, Power Genius and RF-Kit, which a
+        // signed-in window or phone is offered because of this
+        // (StationServer::accessoryStatusVersion). The links keep the plain
+        // handshake this window always used (TypedAddress).
+        QVERIFY(sessions.window()->radioModel()->stationAccessoryIdentityEnabled());
+        QVERIFY(!sessions.window()->radioModel()->pgxlConnection()->identityAdmissionRequired());
+        QVERIFY(!sessions.window()->radioModel()->tgxlConnection()->identityAdmissionRequired());
+        QVERIFY(!sessions.window()->radioModel()->rfKitConnection()->identityAdmissionRequired());
         QCOMPARE(sessions.window()->radioModel()->findChildren<StationRotorController*>().size(), 1);
 
         // On a remote Core the old rotor is gone with its model, and the
@@ -517,6 +531,7 @@ private slots:
         QVERIFY(sessions.replace(core(QStringLiteral("a")), false));
         QVERIFY(local.isNull());
         QVERIFY(sessions.window()->radioModel()->stationRotorController() == nullptr);
+        QVERIFY(!sessions.window()->radioModel()->stationAccessoryIdentityEnabled());
 
         // Back on this computer's radio, a rotor again from the saved setup.
         QVERIFY(sessions.replace({}, false));

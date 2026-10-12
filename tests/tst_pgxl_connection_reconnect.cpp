@@ -23,6 +23,7 @@
 
 #include <QtTest/QtTest>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include "core/PgxlConnection.h"
@@ -74,6 +75,7 @@ private slots:
     void reconnectAttemptConsumerMayDisconnect();
     void autoReconnectTurnedOffDropsPendingRetry();
     void lateFailureFromReplacedAttemptCannotRetireReplacement();
+    void closeByTheAmpLogsTheLastFrames();
 };
 
 void PgxlConnectionReconnectTest::init()
@@ -415,6 +417,90 @@ void PgxlConnectionReconnectTest::lateFailureFromReplacedAttemptCannotRetireRepl
     QCOMPARE(retries.size(), 0);
     QVERIFY(conn.isConnected());
     QCOMPARE(conn.peerPort(), replacement.serverPort());
+}
+
+namespace {
+QStringList* g_capturedLog = nullptr;
+void captureLog(QtMsgType, const QMessageLogContext&, const QString& message)
+{
+    if (g_capturedLog != nullptr) { g_capturedLog->append(message); }
+}
+} // namespace
+
+// 2026-10-11: the amp closed its control link on a clock and the log said
+// only "The remote host closed the connection". The last frames each way
+// are now written with it.
+void PgxlConnectionReconnectTest::closeByTheAmpLogsTheLastFrames()
+{
+    AppSettings::instance().setValue(QStringLiteral("PGXL_AutoReconnect"), QStringLiteral("False"));
+    QTcpServer amp;
+    QVERIFY(amp.listen(QHostAddress::LocalHost, 0));
+    PgxlConnection conn;
+    QSignalSpy connected(&conn, &PgxlConnection::connected);
+    QSignalSpy disconnected(&conn, &PgxlConnection::disconnected);
+    conn.connectToPgxl(QStringLiteral("127.0.0.1"), amp.serverPort());
+    QTRY_VERIFY_WITH_TIMEOUT(amp.hasPendingConnections(), 3000);
+    QPointer<QTcpSocket> peer = amp.nextPendingConnection();
+    QVERIFY(peer);
+    peer->write("V3.9.9\n");
+    peer->flush();
+    QTRY_COMPARE_WITH_TIMEOUT(connected.count(), 1, 3000);
+
+    // More replies than the trace holds: the oldest fall off the front.
+    for (int i = 0; i < 40; ++i) {
+        peer->write(QByteArrayLiteral("S0|status state=IDLE n=") + QByteArray::number(i) + '\n');
+    }
+    peer->flush();
+    QTRY_VERIFY_WITH_TIMEOUT(conn.recentWireForTesting().contains(
+                                 QStringLiteral("RX S0|status state=IDLE n=39")), 3000);
+    const QStringList held = conn.recentWireForTesting();
+    QCOMPARE(held.size(), 32);
+    QVERIFY(!held.contains(QStringLiteral("RX V3.9.9")));
+
+    // One `status` in flight (2026-10-12): the amp answers the handshake's
+    // (C1 is `info`, C2 `status`), and the poll's next one is the TX frame
+    // the trace must hold.
+    peer->write("R2|0|state=IDLE\n");
+    peer->flush();
+    QTRY_VERIFY_WITH_TIMEOUT(!conn.recentWireForTesting().filter(QRegularExpression(
+                                 QStringLiteral("^TX C\\d+\\|status$"))).isEmpty(), 3000);
+
+    QStringList log;
+    g_capturedLog = &log;
+    const QtMessageHandler previous = qInstallMessageHandler(captureLog);
+    peer->close();   // the amp closes the link
+    const bool dropped = disconnected.count() > 0 || disconnected.wait(3000);
+    qInstallMessageHandler(previous);
+    g_capturedLog = nullptr;
+    QVERIFY(dropped);
+
+    const QString all = log.join(QLatin1Char('\n'));
+    QVERIFY2(all.contains(QStringLiteral("PGXL link closed")), qPrintable(all));
+    QVERIFY2(all.contains(QStringLiteral("after the TCP connect; last 32 frames")), qPrintable(all));
+    QVERIFY2(all.contains(QStringLiteral("RX S0|status state=IDLE n=39")), qPrintable(all));
+    QVERIFY2(all.contains(QRegularExpression(
+                 QStringLiteral("PGXL link trace -\\d+ ms TX C\\d+\\|status"))),
+             qPrintable(all));
+
+    // A close the operator asked for is not traced.
+    PgxlConnection second;
+    QSignalSpy secondConnected(&second, &PgxlConnection::connected);
+    second.connectToPgxl(QStringLiteral("127.0.0.1"), amp.serverPort());
+    QTRY_VERIFY_WITH_TIMEOUT(amp.hasPendingConnections(), 3000);
+    QPointer<QTcpSocket> secondPeer = amp.nextPendingConnection();
+    QVERIFY(secondPeer);
+    secondPeer->write("V3.9.9\n");
+    secondPeer->flush();
+    QTRY_COMPARE_WITH_TIMEOUT(secondConnected.count(), 1, 3000);
+    QStringList quietLog;
+    g_capturedLog = &quietLog;
+    qInstallMessageHandler(captureLog);
+    second.disconnect();
+    QTest::qWait(100);
+    qInstallMessageHandler(previous);
+    g_capturedLog = nullptr;
+    QVERIFY2(!quietLog.join(QLatin1Char('\n')).contains(QStringLiteral("PGXL link trace")),
+             qPrintable(quietLog.join(QLatin1Char('\n'))));
 }
 
 QTEST_GUILESS_MAIN(PgxlConnectionReconnectTest)

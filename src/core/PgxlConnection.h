@@ -41,17 +41,31 @@
 //   2026-09-30: Fix round 1: asSetupToken offers a name saved with
 //               spaces as one word. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-11: Link trace: the last frames each way are kept and
+//               written to the log when the amp closes the link.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-10-12: One `status` in flight (m_statusInFlightSeq): the
+//               amplifier closed the link when a second one reached it
+//               before its answer to the first. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: The in-flight bookkeeping moved to GeniusStatusGate,
+//               shared with the tuner link. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
 #include "core/NereusCoreExport.h"
+#include "core/GeniusStatusGate.h"
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QByteArray>
 #include <QHash>
 #include <QMap>
+#include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace NereusSDR {
 
@@ -113,6 +127,9 @@ public:
     int     keepaliveMissed()  const noexcept { return m_keepaliveMissed; }
     int     reconnectCount()   const noexcept { return m_reconnectAttempts; }
 
+    // Test-only: the link trace, oldest first ("TX C1|info", "RX V3.8.9").
+    QStringList recentWireForTesting() const;
+
     // Test-only: feed a single line into processLine (no newline needed).
     // Used by tst_pgxl_connection_parse. Production code never calls this.
     void injectLineForTesting(const QString& line) { processLine(line, 0); }
@@ -142,6 +159,8 @@ public:
     void testInjectFailureForSocketAttempt(quint64 attemptGeneration);
     void testSetIdentityTimeoutMs(int ms) { m_identityTimeoutMs = ms > 0 ? ms : 1; }
     bool testAutoPingActive() const { return m_pingTimer.isActive(); }
+    // Test-only: how long an unanswered `status` holds back the next one.
+    void testSetStatusReplyWaitMs(int ms) { m_statusGate.setReplyWaitMsForTesting(ms); }
 
 public slots:
     void connectToPgxl(const QString& host, quint16 port = 9008);
@@ -259,6 +278,15 @@ private:
     // the invalid-descriptor errors a reused socket gave after a timeout).
     QTcpSocket* m_socket{nullptr};
     QTimer     m_pollTimer;
+    // One `status` in flight. The amplifier closes the link when a `status`
+    // reaches it before it has answered the one before (bench, firmware
+    // 3.9.9, 2026-10-12: four closes in twelve minutes, each 30 to 175 ms
+    // after such a send; three were the keepalive's `status` landing 1 to
+    // 23 ms after the poll's, one was the poll outrunning a slow amp).
+    // The gate holds the unanswered `status`; after its wait the answer
+    // counts as lost and the next `status` goes, so a dropped reply never
+    // silences the meters.
+    GeniusStatusGate m_statusGate;
     QByteArray m_readBuf;
     quint32    m_seq{0};
     bool       m_connected{false};
@@ -324,6 +352,13 @@ private:
     PgxlIdentityInfo m_identityInfo;
     QMap<QString, QString> m_identityStatus;
     quint32 m_pendingIdentityInfoSeq{0};
+    // Link trace: the last frames each way since the TCP connect. When the
+    // amp closes the link they go to the log with their times, so the log
+    // shows what crossed the wire before the close without a packet capture.
+    struct WireRecord { qint64 ms; bool sent; QString line; };
+    QList<WireRecord> m_recentWire;
+    void noteWire(bool sent, const QString& line);
+    void logRecentWire() const;
 };
 
 }  // namespace NereusSDR

@@ -1119,6 +1119,11 @@
 //                click no longer needs the station amplifier object, which
 //                only a Core that shares its accessories has. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit: enableStationAccessoryIdentity
+//                takes the admission rule, and the window's own Connect and
+//                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1424,6 +1429,7 @@ mw0lge@grange-lane.co.uk
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 #include "core/audio/RadioMicSource.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/audio/VaxTxMicSource.h"
@@ -5985,10 +5991,10 @@ void RadioModel::clearRemoteFourO3AState()
     emit fourO3AStatusChanged();
 }
 
-void RadioModel::enableStationAccessoryIdentity()
+void RadioModel::enableStationAccessoryIdentity(StationAccessoryAdmission admission)
 {
     if (m_role != Role::Local || m_stationTgxl) { return; }
-    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this);
+    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this, admission);
     m_stationTgxl->cancel(!fourO3AEnabled());
     // R-R3-47: the Tuner Genius's faults, recorded on the Core.
     connect(m_stationTgxl, &StationTgxlController::faultObserved, this,
@@ -5997,13 +6003,15 @@ void RadioModel::enableStationAccessoryIdentity()
     });
     // R-R3-47: the Power Genius, likewise identified before it is admitted
     // (and so before onPgxlConnected pairs it).
-    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this);
+    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this,
+                                              admission);
     m_stationPgxl->cancel(!fourO3AEnabled());
     // R-R3-47 / R-R3-22: the amp's and tuner's own settings for a window.
     m_stationPgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     m_stationTgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     // R-R3-47: the RF-Kit too: admitted once its /info names an RF2K-S.
-    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this);
+    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this,
+                                                admission);
     m_stationRfKit->cancel(!rfKitEnabled());
     if (m_stationTciModel) {
         connect(m_stationTciModel, &StationTciModel::stateChanged, m_stationRfKit, [this] {
@@ -6016,6 +6024,69 @@ void RadioModel::enableStationAccessoryIdentity()
     // running its own radio makes it.
     enableStationRotor();
     applyStationBind();
+}
+
+// The window's own Connect and Disconnect (RadioModel.h). Nothing is saved
+// and nothing is refused here: the caller read or typed the address, as it
+// did when it dialed the link itself.
+void RadioModel::connectTgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->start(host, port);
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->connectToTgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectTgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->cancel(!fourO3AEnabled());
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectPgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->start(host, port);
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->connectToPgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectPgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->cancel(!fourO3AEnabled());
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectRfKitFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->start(host, port);
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->connectToAmp(host, port);
+    }
+}
+
+void RadioModel::disconnectRfKitFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->cancel(!rfKitEnabled());
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->disconnect();
+    }
 }
 
 void RadioModel::enableStationRotor()
@@ -26129,6 +26200,9 @@ void RadioModel::wirePcMicConfigProjection()
                 cfg.hostApiIndex = index;
                 cfg.driverApi.clear();
                 if (index >= 0) {
+                    // A host API picked by its PortAudio index is an older
+                    // driver: PortAudio starts here if it has not yet.
+                    PortAudioLibrary::ensureStarted();
                     const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
                     for (const PortAudioBus::HostApiInfo& api : apis) {
                         if (api.index == index) {

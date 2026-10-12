@@ -20,6 +20,10 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: hasListed() and firstListed() (R-AUD-03).  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: an engine listed on demand (the older drivers) is listed
+//               only once something asks for it (wantOlderDrivers, a read
+//               of its devices, Rescan). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/AudioDeviceCatalog.h"
@@ -68,6 +72,9 @@ struct AudioDeviceCatalog::State {
     std::atomic<int> windowsStarted{0};
     std::atomic<int> lastWindowMs{-1};
     std::atomic<int> busyBackend{-1};   // the backend a call is in, or -1
+    // Shared with every run: something has asked for the engines listed
+    // on demand (the older drivers), so they are listed from now on.
+    std::shared_ptr<std::atomic<bool>> onDemandWanted;
     std::uint64_t runId = 0;            // this run, numbered from 1; set before the thread starts
 
     // Guards both pointers.  The catalogue clears them in stop(); a post
@@ -207,6 +214,12 @@ public:
             IAudioEngineBackend& backend = *m_state->backends[i];
             BackendSnapshot snap;
             snap.id = backend.id();
+            if (backend.listsOnDemand() && !m_state->onDemandWanted->load()) {
+                // Not asked for yet: no call into it (listing the older
+                // drivers starts PortAudio).  Not running, no devices.
+                listing.backends.push_back(std::move(snap));
+                continue;
+            }
             if (!claim(i)) {
                 // A thread stop() left behind is still inside this backend.
                 // It is listed as not running, with no devices, until the
@@ -379,6 +392,7 @@ void AudioDeviceCatalog::start()
     m_state->backends = m_backends;
     m_state->claims = m_claims;
     m_state->generations = m_generations;
+    m_state->onDemandWanted = m_onDemandWanted;
     m_state->debounceMs.store(m_debounceMs.load());
     m_state->runId = g_nextRunId.fetch_add(1) + 1;
     m_state->owner = this;
@@ -564,6 +578,7 @@ QList<AudioDeviceInfo> AudioDeviceCatalog::devices(AudioBackendId id,
     if (snap == nullptr) {
         return {};
     }
+    askForOnDemand(id);
     return direction == AudioDeviceDirection::Output ? snap->outputs : snap->inputs;
 }
 
@@ -574,6 +589,7 @@ std::optional<AudioDeviceInfo> AudioDeviceCatalog::defaultDevice(AudioBackendId 
     if (snap == nullptr) {
         return std::nullopt;
     }
+    askForOnDemand(id);
     const bool output = direction == AudioDeviceDirection::Output;
     const QList<AudioDeviceInfo>& list = output ? snap->outputs : snap->inputs;
     const std::optional<QString>& defaultId = output ? snap->defaultOutput : snap->defaultInput;
@@ -592,12 +608,45 @@ bool AudioDeviceCatalog::hasListed() const
 
 void AudioDeviceCatalog::rescanOlderDrivers()
 {
+    // Rescan is the user asking for the older drivers' devices.
+    m_onDemandWanted->store(true);
     if (m_worker == nullptr) {
         return;
     }
     Worker* worker = m_worker;
     QMetaObject::invokeMethod(worker, [worker] { worker->rescanOlderDrivers(); },
                               Qt::QueuedConnection);
+}
+
+void AudioDeviceCatalog::wantOlderDrivers()
+{
+    listOnDemandEngines();
+}
+
+void AudioDeviceCatalog::askForOnDemand(AudioBackendId id) const
+{
+    if (m_onDemandWanted->load()) {
+        return;
+    }
+    for (const std::shared_ptr<IAudioEngineBackend>& backend : m_backends) {
+        if (backend->id() == id && backend->listsOnDemand()) {
+            listOnDemandEngines();
+            return;
+        }
+    }
+}
+
+void AudioDeviceCatalog::listOnDemandEngines() const
+{
+    if (m_onDemandWanted->exchange(true)) {
+        return;   // asked before: listed already, or about to be
+    }
+    // Before start(): the first list has them.  After: one more list.
+    if (m_worker == nullptr) {
+        return;
+    }
+    Worker* worker = m_worker;
+    QMetaObject::invokeMethod(worker, [worker] { worker->relist(); }, Qt::QueuedConnection);
 }
 
 void AudioDeviceCatalog::adoptListing(Listing listing)

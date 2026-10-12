@@ -69,6 +69,16 @@ and returns a false green. There is one `tests_<label>` target per label,
 generated from the same derivation that produces the labels, so the two
 cannot drift apart.
 
+### The workspace look in tests
+
+The app's workspace look is on unless `NEREUS_WORKSPACE_PREVIEW` is `0`
+(`src/gui/styles/WorkspacePreview.h`). The suite was written against the
+classic look, so ctest starts every test with `NEREUS_WORKSPACE_PREVIEW=0`;
+a test of the new look turns it on itself with
+`WorkspacePreview::setEnabledForTest(true)`. A test binary started by hand
+does not get that variable: set it to `0` yourself, or the widgets it
+builds take the new look.
+
 Current distribution:
 
 | Label | Tests |

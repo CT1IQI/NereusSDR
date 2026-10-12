@@ -67,9 +67,21 @@ Advanced, and each control appears on one page only.
 
 ### Fixes
 
+- The Power Genius XL connection no longer drops and redials by itself, on
+  Windows often exactly 90 seconds after connecting. NereusSDR asked the
+  amplifier for its status again before it had answered the last request (a
+  30-second keepalive request landing on top of the meter poll, or the poll
+  outrunning a slow amplifier), and the amplifier closed the connection.
+  Now one status request waits for the answer to the one before. The Tuner
+  Genius XL connection follows the same rule; it had not been seen to drop.
 - With the S-meter set to Max Bin, each slice's flag shows its own signal. In
   a window running its own radio, every flag showed the reading of whichever
   pan was clicked last.
+- A desktop window that other windows or phones sign in to now shares its
+  Tuner Genius XL, Power Genius XL and RF-Kit RF2K-S with them: meters,
+  OPERATE and STANDBY, the tuner controls, connect and disconnect. Before,
+  only a headless Core shared them, and a window signed in to a desktop saw
+  "Updating the Core may help" with nothing to control.
 - Tuning from a remote console no longer makes the receive audio stutter. The
   Core saved its settings file half a second after a tuning step, on the same
   thread that sends the audio, and nothing was sent until the disk finished

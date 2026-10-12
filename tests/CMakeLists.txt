@@ -351,6 +351,16 @@ function(nereus_add_test name)
         endif()
     endif()
 
+    # The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0"
+    # (src/gui/styles/WorkspacePreview.h). The suite was written against
+    # the classic look, so every test starts with the look off; a test of
+    # the new look turns it on itself with
+    # WorkspacePreview::setEnabledForTest(true). ctest sets the variable
+    # over whatever the caller exported. nereus_split_test() carries it to
+    # its entries, and the sweep at the end of this file gives it to the
+    # entries registered by hand.
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+
     # Each test gets its own settings location (R-R3-21). TestSandboxInit.cpp
     # puts every test binary in QStandardPaths test mode, but test mode is one
     # shared directory under $HOME (~/.qttest/config on Linux,
@@ -656,6 +666,9 @@ nereus_add_test(tst_workspace_live_input)
 nereus_split_test(tst_workspace_live_input
     ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
 nereus_add_test(tst_workspace_profiles)
+# The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0": the rule
+# on its own, with no process environment (offscreen).
+nereus_add_test(tst_workspace_preview_default)
 # The workspace look has no Lock setting; with the look off Lock is unchanged (offscreen).
 nereus_add_test(tst_workspace_no_lock)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
@@ -1983,6 +1996,11 @@ nereus_add_test(tst_port_audio_library_lock)
 # Windows adapter files compile only in Windows CI.
 nereus_add_test(tst_wasapi_policy)
 target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
+# PortAudio starts on first need, never at launch: building an AudioEngine
+# starts nothing, and the catalog lists the older drivers only once
+# something asks for them.  Pa_Initialize is a counter; no PortAudio call.
+nereus_add_test(tst_port_audio_on_demand)
+target_compile_definitions(tst_port_audio_on_demand PRIVATE NEREUS_BUILD_TESTS)
 
 # Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
 # with fake engines, the catalogue and the stream supervisor: engine choice,
@@ -7291,6 +7309,9 @@ nereus_add_test(tst_pgxl_connection_ping)
 # Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
 # pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
 nereus_add_test(tst_tgxl_connection_ping)
+# One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
+# for the answer, a refusal or a lost answer frees it, a new connection asks.
+nereus_add_test(tst_tgxl_connection_status_pacing)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
@@ -10710,6 +10731,21 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# A second ctest entry of a test binary registered by hand (add_test with
+# COMMAND tst_...) builds its own environment and does not pass through
+# nereus_add_test(), so it takes the classic look here (see
+# NEREUS_WORKSPACE_PREVIEW in nereus_add_test()). Entries that run no test
+# binary (the patch checks, the traversal harness) are left alone.
+get_property(_nereus_dir_tests DIRECTORY PROPERTY TESTS)
+foreach(_entry IN LISTS _nereus_dir_tests)
+    if(_entry MATCHES "^tst_")
+        get_test_property(${_entry} ENVIRONMENT _entry_env)
+        if(NOT _entry_env MATCHES "(^|;)NEREUS_WORKSPACE_PREVIEW=")
+            set_property(TEST ${_entry} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+        endif()
+    endif()
+endforeach()
 
 # Workspace visual preview tool (not a test): tests/visual/.
 add_subdirectory(visual)

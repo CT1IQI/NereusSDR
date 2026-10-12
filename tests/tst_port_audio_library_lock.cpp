@@ -17,6 +17,8 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: final review fix (R-AUD-03, R-AUD-06): the bounded waits.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: exercise on-demand ownership during stuck-rescan shutdown.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -260,8 +262,16 @@ private slots:
             ~LetGo() { stuck->finish(); }
         } letGo{stuck};
 
+        // The fixture's explicit acquire would keep ensureStarted() from
+        // owning a reference. Give it back so the last engine's shutdown
+        // exercises the on-demand release, rather than skipping it.
+        PortAudioLibrary::release();
+        QCOMPARE(PortAudioLibrary::references(), 0);
         auto engine = std::make_unique<AudioEngine>();
-        QCOMPARE(PortAudioLibrary::references(), 2);   // the engine's own
+        QCOMPARE(PortAudioLibrary::references(), 0);   // construction starts nothing
+        QVERIFY(PortAudioLibrary::ensureStarted());
+        QVERIFY(PortAudioLibrary::startedOnDemand());
+        QCOMPARE(PortAudioLibrary::references(), 1);   // the on-demand reference
         engine->setVaxOutputsAllowed(false);
         engine->setAudioBackendsForTest({native, older});
         engine->rescanOlderDrivers();
@@ -278,15 +288,23 @@ private slots:
         engine.reset();
         const qint64 elapsed = clock.elapsed();
         QVERIFY2(elapsed < AudioDeviceCatalog::kStopWaitMs + 1000, qPrintable(QString::number(elapsed)));
-        QCOMPARE(PortAudioLibrary::references(), 2);   // not terminated under the stuck call
+        QCOMPARE(PortAudioLibrary::references(), 1);   // not terminated under the stuck call
+        QVERIFY(PortAudioLibrary::startedOnDemand());
 
         // The call returns: the catalogue's thread finishes on its own,
-        // and the engine's reference is the one left behind.
+        // and the on-demand reference is the one left behind.
         stuck->finish();
         QTRY_COMPARE_WITH_TIMEOUT(older.use_count(), long(1), 5000);
         QCOMPARE(older->rescanCount(), 1);
         older->setRescanHook({});
-        PortAudioLibrary::release();
+        // A later last user can now release the retained reference and
+        // clear on-demand ownership. Restore the fixture's explicit
+        // reference for cleanupTestCase afterwards.
+        PortAudioLibrary::addUser();
+        PortAudioLibrary::removeUser();
+        QCOMPARE(PortAudioLibrary::references(), 0);
+        QVERIFY(!PortAudioLibrary::startedOnDemand());
+        QVERIFY(PortAudioLibrary::acquire());
         QCOMPARE(PortAudioLibrary::references(), 1);
     }
 };
