@@ -5,10 +5,30 @@
 //                 edge of the main window docks there, with the pointer
 //                 delivered through real windows. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The press, the moves and the release all go through the
+//                 window that took the press, so the header that started
+//                 the drag receives them; before, only the press reached
+//                 it and neither case exercised the drag. Each case now
+//                 checks, with the button still down, that a move was
+//                 handled. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //
-// NATIVE_WINDOW: offscreen tests (tst_workspace_arrange_drag) cover the rule;
-// they cannot prove that the header keeps receiving the pointer once it has
-// left its own native window. These cases put real windows on the desktop.
+// NATIVE_WINDOW: offscreen tests (tst_workspace_arrange_drag) cover the rule
+// by sending every event straight to the header. These cases run it on a
+// real screen: real top-level windows, the main window's real frame
+// geometry with its title bar, and a real new window at the drop place. The
+// pointer is injected at Qt's window-system layer (the QWindow overloads of
+// QTest), above the operating system, so Qt's own routing carries each event
+// from the press window to the widget that took the press.
+//
+// Still checked by hand, because QTest cannot show either: that the
+// operating system keeps delivering the drag to the press window once the
+// pointer has left it, and that leaving the app in the middle of a drag
+// cancels it.
+//
+// QtTest prints "Mouse event at x, y occurs outside target window" for the
+// steps of the first case that pass the main window's right edge
+// (qtestmouse.h). That describes the gesture; it is not a fault.
 #include <QtTest>
 #include <QApplication>
 #include <QMainWindow>
@@ -135,22 +155,38 @@ struct NativeFixture {
     }
 };
 
-// A pointer move to a screen position, delivered through whichever window
-// the widget is in now.
-void moveTo(QWidget* widget, const QPoint& global)
+// The window a press on the widget goes through. A drag's moves and its
+// release go through the same one, wherever the pointer is by then, and Qt
+// hands them to the widget that took the press.
+QWindow* pressWindowOf(QWidget* widget)
 {
-    QWidget* top = widget->window();
-    QTest::mouseMove(top, top->mapFromGlobal(global));
+    return widget->window()->windowHandle();
+}
+
+void pressAt(QWindow* pressWindow, const QPoint& global)
+{
+    QTest::mousePress(pressWindow, Qt::LeftButton, Qt::NoModifier, pressWindow->mapFromGlobal(global));
+}
+
+// A pointer move to a screen position with the button held.
+void moveTo(QWindow* pressWindow, const QPoint& global)
+{
+    QTest::mouseMove(pressWindow, pressWindow->mapFromGlobal(global));
     QTest::qWait(kStepPauseMs);
 }
 
 // The pointer goes from `from` to `to` in steps, as a hand moves it.
-void sweep(QWidget* widget, const QPoint& from, const QPoint& to)
+void sweep(QWindow* pressWindow, const QPoint& from, const QPoint& to)
 {
     constexpr int kSteps = 12;
     for (int step = 1; step <= kSteps; ++step) {
-        moveTo(widget, from + (to - from) * step / kSteps);
+        moveTo(pressWindow, from + (to - from) * step / kSteps);
     }
+}
+
+void releaseAt(QWindow* pressWindow, const QPoint& global)
+{
+    QTest::mouseRelease(pressWindow, Qt::LeftButton, Qt::NoModifier, pressWindow->mapFromGlobal(global));
 }
 
 } // namespace
@@ -172,20 +208,23 @@ private slots:
         QWidget* header = source->workspaceHeader();
         QVERIFY(header && header->isVisible());
         QSignalSpy commits(&f.store, &ContainerWorkspaceStore::committed);
-        const QPoint grabLocal(header->width() / 2, header->height() / 2);
-        const QPoint grab = header->mapToGlobal(grabLocal);
+        const QPoint grab = header->mapToGlobal(QPoint(header->width() / 2, header->height() / 2));
         const QPoint offset = grab - source->mapToGlobal(QPoint(0, 0));
         const QPoint drop = f.window.frameGeometry().topRight() + QPoint(260, 160);
+        QWindow* pressWindow = pressWindowOf(header);
+        QVERIFY(pressWindow);
 
-        QTest::mousePress(header, Qt::LeftButton, Qt::NoModifier, grabLocal);
-        sweep(header, grab, drop);
+        pressAt(pressWindow, grab);
+        sweep(pressWindow, grab, drop);
+        // The container has followed the pointer out of the main window,
+        // held where it was grabbed. Outside there is no landing box.
+        QCOMPARE(source->mapToGlobal(QPoint(0, 0)), drop - offset);
+        QVERIFY(!f.area->dropPreviewVisible());
         // Still a free container of the main window until the button is up.
         QVERIFY(source->isOverlayDocked());
         QCOMPARE(source->window(), &f.window);
-        QVERIFY(f.manager->containerDragActive());
         QCOMPARE(commits.count(), 0);
-        QTest::mouseRelease(header->window(), Qt::LeftButton, Qt::NoModifier,
-                            header->window()->mapFromGlobal(drop));
+        releaseAt(pressWindow, drop);
         settle();
 
         QTRY_VERIFY(source->isFloating());
@@ -213,19 +252,27 @@ private slots:
         QWidget* header = source->workspaceHeader();
         QVERIFY(header && header->isVisible());
         QSignalSpy commits(&f.store, &ContainerWorkspaceStore::committed);
-        const QPoint grabLocal(header->width() / 2, header->height() / 2);
-        const QPoint grab = header->mapToGlobal(grabLocal);
+        const QPoint grab = header->mapToGlobal(QPoint(header->width() / 2, header->height() / 2));
         const QPoint drop = f.area->mapToGlobal(QPoint(12, f.area->height() / 2));
+        QWidget* floatingWindow = source->window();
+        QWidget* parentBefore = source->parentWidget();
+        const QPoint offset = grab - floatingWindow->pos();
+        QWindow* pressWindow = pressWindowOf(header);
+        QVERIFY(pressWindow);
 
-        QTest::mousePress(header, Qt::LeftButton, Qt::NoModifier, grabLocal);
-        sweep(header, grab, drop);
-        // The window followed the pointer and the landing box shows; it is
-        // still a window until the button is up.
+        pressAt(pressWindow, grab);
+        sweep(pressWindow, grab, drop);
+        // The landing box shows while the button is down, and the window
+        // has followed the pointer, held where it was grabbed.
+        QVERIFY(f.area->dropPreviewVisible());
+        QTRY_VERIFY2((floatingWindow->pos() - (drop - offset)).manhattanLength() <= kPlaceTolerancePx,
+                     qPrintable(QStringLiteral("%1,%2").arg(floatingWindow->x()).arg(floatingWindow->y())));
+        // Nothing is docked or moved to another parent before the release.
         QVERIFY(source->isFloating());
-        QTRY_VERIFY(f.area->dropPreviewVisible());
+        QCOMPARE(source->parentWidget(), parentBefore);
+        QCOMPARE(source->window(), floatingWindow);
         QCOMPARE(commits.count(), 0);
-        QTest::mouseRelease(header->window(), Qt::LeftButton, Qt::NoModifier,
-                            header->window()->mapFromGlobal(drop));
+        releaseAt(pressWindow, drop);
         settle();
 
         QTRY_VERIFY(source->isPanelDocked());
