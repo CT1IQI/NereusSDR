@@ -9917,7 +9917,8 @@ nereus_add_test(tst_remote_spectrum_render)
 # Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
 # subscription lifecycle, stale context rejection, and teardown.
 nereus_add_test(tst_remote_media_controller
-    fakes/LoopbackTransport.cpp)
+    fakes/LoopbackTransport.cpp
+    fakes/FakeCaptureChild.cpp)
 # R-DISP-HOLD: the window holds the dBm range it asked the Core for, and a
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold

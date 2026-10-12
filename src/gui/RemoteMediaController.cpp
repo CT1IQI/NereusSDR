@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-12: reset collector stall diagnostics between runs, so an
+//               intentional pause is not counted as a stall. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12: the microphone pump reports, once per stall, a collector
 //               that takes no audio while capture is ready. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -3059,6 +3062,7 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine)
         return;
     }
     if (!d->micCollector || d->micCollectorEngine != engine) {
+        stopMicCollector();
         d->micCollector.reset();
         d->micCollectorEngine = engine;
         d->micCollector = std::make_unique<MicUplinkCollector>(
@@ -3081,6 +3085,11 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine)
 
 void RemoteMediaController::stopMicCollector()
 {
+    // The next run starts its diagnostic clock when capture is ready.
+    d->micCollectedSeen = 0;
+    d->micWakesAtProgress = 0;
+    d->micCollectedMovedMs = -1;
+    d->micStallReported = false;
     if (!d->micCollector) {
         return;
     }
