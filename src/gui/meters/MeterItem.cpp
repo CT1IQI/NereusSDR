@@ -133,6 +133,9 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Keep overflowing regular scale endpoint glyphs within the
+//                 meter canvas in both looks, preserving ticks and fonts.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "MeterItem.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -1182,7 +1185,21 @@ void ScaleItem::paint(QPainter& p, int widgetW, int widgetH)
             p.setPen(m_labelColor);
             const QFontMetrics fm(font);
             const int labelW = fm.horizontalAdvance(label);
-            p.drawText(x - labelW / 2, rect.top() + rect.height() / 3 + fm.ascent(), label);
+            int labelX = x - labelW / 2;
+            if (i == 0 || i == m_majorTicks - 1) {
+                // Endpoint ticks stay at their calibrated position. Move only
+                // an overflowing endpoint's glyphs; interior labels keep their
+                // original centering and the font remains exactly the same.
+                const QFontMetricsF inkMetrics(font, p.device());
+                const QRectF ink = inkMetrics.tightBoundingRect(label);
+                if (i == 0 && labelX + ink.left() < 0) {
+                    labelX = static_cast<int>(std::ceil(-ink.left()));
+                }
+                if (i == m_majorTicks - 1 && labelX + ink.right() > widgetW) {
+                    labelX = static_cast<int>(std::floor(widgetW - ink.right()));
+                }
+            }
+            p.drawText(labelX, rect.top() + rect.height() / 3 + fm.ascent(), label);
 
             // Minor ticks (between major ticks, except after last major)
             if (i < m_majorTicks - 1 && m_minorTicks > 0) {

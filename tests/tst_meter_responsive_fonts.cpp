@@ -11,6 +11,7 @@
 #include <limits>
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/meters/ResponsiveText.h"
+#include "gui/meters/ItemGroup.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/RotatorItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
@@ -64,7 +65,7 @@ private:
 };
 class TextPaintDevice : public QPaintDevice {
 public:
-    TextPaintDevice(QSize size,int dpr):m_size(size),m_dpr(dpr),m_engine(dpr) {}
+    TextPaintDevice(QSize size,int dpr,int logicalDpi=96):m_size(size),m_dpr(dpr),m_logicalDpi(logicalDpi),m_engine(dpr) {}
     QPaintEngine* paintEngine() const override { return &m_engine; }
     const QVector<TextPaintEngine::Text>& texts() const { return m_engine.texts; }
     const QVector<QPainterPath>& strokes() const { return m_engine.strokes; }
@@ -74,7 +75,7 @@ protected:
         switch(key) {
         case PdmWidth: return m_size.width()*m_dpr;
         case PdmHeight: return m_size.height()*m_dpr;
-        case PdmDpiX: case PdmDpiY: case PdmPhysicalDpiX: case PdmPhysicalDpiY: return 96;
+        case PdmDpiX: case PdmDpiY: case PdmPhysicalDpiX: case PdmPhysicalDpiY: return m_logicalDpi;
         case PdmDepth: return 32;
         case PdmDevicePixelRatio: return m_dpr;
         case PdmDevicePixelRatioScaled: return m_dpr*devicePixelRatioFScale();
@@ -84,6 +85,7 @@ protected:
 private:
     QSize m_size;
     int m_dpr;
+    int m_logicalDpi;
     mutable TextPaintEngine m_engine;
 };
 }
@@ -228,6 +230,111 @@ private slots:
                 }
             }
             QCOMPARE(power.serialize(),saved);
+        }
+    }
+    void legacyScaleEndpointsFitWithoutChangingTicks_data()
+    {
+        QTest::addColumn<bool>("workspace");
+        QTest::addColumn<int>("dpr");
+        QTest::addColumn<int>("dpi");
+        QTest::addColumn<int>("endpoint");
+        for (bool workspace : {false, true}) {
+            for (int dpr : {1, 2}) {
+                for (int dpi : {72, 96}) {
+                    for (int endpoint : {120, 2000}) {
+                        const QByteArray name = QStringLiteral("%1-dpr%2-dpi%3-top%4")
+                            .arg(workspace ? QStringLiteral("workspace") : QStringLiteral("classic"))
+                            .arg(dpr).arg(dpi).arg(endpoint).toUtf8();
+                        QTest::newRow(name.constData()) << workspace << dpr << dpi << endpoint;
+                    }
+                }
+            }
+        }
+    }
+    void legacyScaleEndpointsFitWithoutChangingTicks()
+    {
+        QFETCH(bool, workspace);
+        QFETCH(int, dpr);
+        QFETCH(int, dpi);
+        QFETCH(int, endpoint);
+        WorkspacePreview::setEnabledForTest(workspace);
+        std::unique_ptr<ItemGroup> group(ItemGroup::createPowerSwrPreset(QStringLiteral("Power")));
+        QVector<MeterItem*> items = group->items();
+        ScaleItem* powerScale = nullptr;
+        for (MeterItem* item : items) {
+            item->setPowerScale(100);
+            if (item->objectName() == QStringLiteral("PowerScale")) {
+                powerScale = qobject_cast<ScaleItem*>(item);
+            }
+        }
+        QVERIFY(powerScale);
+        QCOMPARE(powerScale->x(), 0.02f);
+        QCOMPARE(powerScale->y(), 0.40f);
+        QCOMPARE(powerScale->itemWidth(), 0.96f);
+        QCOMPARE(powerScale->itemHeight(), 0.12f);
+        if (endpoint == 2000) {
+            // Compatible public-range pose of the owner's1500/2000 scale;
+            // no feature/model code is imported for this endpoint regression.
+            powerScale->setRange(0.0, 2000.0);
+            powerScale->setMajorTicks(5);
+        }
+        QStringList before;
+        for (MeterItem* item : items) {
+            before.append(item->serialize());
+        }
+        std::stable_sort(items.begin(), items.end(), [](const MeterItem* left, const MeterItem* right) {
+            return left->zOrder() < right->zOrder();
+        });
+        TextPaintDevice device(QSize(260, 220), dpr, dpi);
+        QPainter painter(&device);
+        painter.setFont(QApplication::font());
+        QVector<TextPaintEngine::Text> labels;
+        QVector<QPainterPath> ticks;
+        QFont expectedFont;
+        for (MeterItem::Layer layer : {MeterItem::Layer::Background, MeterItem::Layer::OverlayStatic,
+                                      MeterItem::Layer::OverlayDynamic}) {
+            for (MeterItem* item : items) {
+                if (!item->participatesIn(layer)) {
+                    continue;
+                }
+                const int textStart = device.texts().size();
+                const int strokeStart = device.strokes().size();
+                if (item == powerScale) {
+                    expectedFont = painter.font();
+                    expectedFont.setPixelSize(workspace ? 11 : 8);
+                }
+                item->paintForLayer(painter, 260, 220, layer);
+                if (item == powerScale) {
+                    labels = device.texts().mid(textStart);
+                    ticks = device.strokes().mid(strokeStart);
+                }
+            }
+        }
+        painter.end();
+        const QVector<int> tickXs = endpoint == 2000
+            ? QVector<int>{5, 20, 36, 51, 67, 82, 98, 113, 129, 145, 160, 176, 191, 207, 222, 238, 254}
+            : QVector<int>{5, 15, 25, 36, 46, 56, 67, 77, 88, 98, 108, 119, 129, 139, 150, 160, 171, 181, 191, 202, 212, 222, 233, 243, 254};
+        QCOMPARE(ticks.size(), tickXs.size());
+        for (int index = 0; index < ticks.size(); ++index) {
+            const QRectF stroke = ticks.at(index).boundingRect();
+            QCOMPARE(stroke.center().x(), qreal(tickXs.at(index)));
+            QCOMPARE(stroke.center().y(), index % 4 == 0 ? qreal(92) : qreal(90));
+            QCOMPARE(stroke.height(), index % 4 == 0 ? qreal(9) : qreal(5));
+        }
+        QCOMPARE(labels.size(), endpoint == 2000 ? 5 : 7);
+        QCOMPARE(labels.first().value, QStringLiteral("0"));
+        QCOMPARE(labels.last().value, QString::number(endpoint));
+        for (const auto& label : labels) {
+            QCOMPARE(label.font, expectedFont);
+        }
+        for (const auto& label : {labels.first(), labels.last()}) {
+            QVERIFY2(QRectF(0, 0, 260, 220).contains(label.deviceBounds),
+                     qPrintable(label.value + QStringLiteral(" ink %1..%2")
+                        .arg(label.deviceBounds.left()).arg(label.deviceBounds.right())));
+        }
+        const QVector<MeterItem*> storedItems = group->items();
+        for (int index = 0; index < storedItems.size(); ++index) {
+            QCOMPARE(storedItems.at(index)->serialize(), before.at(index));
         }
     }
     void nonfiniteButtonCellsAreNotPainted_data() {
