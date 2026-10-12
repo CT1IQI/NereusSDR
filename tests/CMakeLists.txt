@@ -1316,6 +1316,7 @@ nereus_add_test(tst_slice_agc_advanced)
 # passes against current SliceModel APIs, registered here.
 nereus_add_test(tst_slice_auto_agc)
 nereus_add_test(tst_daemon_agc_source)
+nereus_add_test(tst_desktop_core_auto_agc_floor)
 nereus_add_test(tst_remote_receive_indicators)
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────

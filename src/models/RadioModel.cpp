@@ -1741,6 +1741,10 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
             this, &RadioModel::onBackgroundSettingsSaveFinished);
+    // Keying marks the published Auto AGC noise floor stale at once, as the
+    // headless Core's source does, not up to a tick later.
+    connect(&m_transmitModel, &TransmitModel::moxChanged, this,
+            [this](bool) { publishStationAutoAgcNoiseFloors(); });
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -25244,10 +25248,53 @@ QString RadioModel::lowPassHoldReason(const SliceModel* top,
     return parts.join(QLatin1Char(' '));
 }
 
+namespace {
+// DaemonAgcSource.cpp kFftDbmFloor: what the headless Core publishes with
+// a reading that is not valid.
+constexpr double kStaleAutoAgcNoiseFloorDbm = -200.0;
+} // namespace
+
+// A desktop window acting as Core: each slice's station noise floor, the
+// value a signed-in window or phone shows beside AUTO, from the same tracker
+// this window's own flag reads. The headless Core's DaemonAgcSource writes
+// these fields itself and turns this off.
+void RadioModel::publishStationAutoAgcNoiseFloors()
+{
+    if (!ownsLocalDsp() || m_autoAgcFloorPublishedBySource) {
+        return;
+    }
+    // Not valid by the headless Core's conditions
+    // (DaemonAgcSource::canReceiveFromStream): radio down, transmitting, or
+    // the slice's stream suspended or not running.
+    const bool receiving = isConnected() && !m_transmitModel.isMox();
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const int stream = slice->streamIndex();
+        const bool streamReceives = stream < 0
+            || (!m_suspendedStreams.contains(stream) && streamActive(stream));
+        const NoiseFloorTracker* tracker = noiseFloorTrackerForSlice(slice);
+        const quint64 generation = slice->stationAutoAgcNoiseFloorGeneration();
+        if (receiving && streamReceives && tracker && tracker->isGood()) {
+            slice->setStationAutoAgcNoiseFloor(
+                static_cast<double>(tracker->noiseFloor()), true, generation);
+        } else if (slice->stationAutoAgcNoiseFloorValid()) {
+            // The headless Core's stale value, and a new generation for
+            // whatever is measured next.
+            slice->setStationAutoAgcNoiseFloor(kStaleAutoAgcNoiseFloorDbm, false,
+                                               generation + 1);
+        }
+    }
+}
+
 // The same station-owned tick runs in the desktop local mode and daemon.
 // Source selection is registered separately; there is no GUI dependency.
 void RadioModel::updateAutoAgc()
 {
+    // Before the guards: a dropped radio has to mark the floor stale.
+    publishStationAutoAgcNoiseFloors();
+
     // From Thetis v2.10.3.13 console.cs:46059 — guard: skip if not connected or MOX
     if (!ownsLocalDsp() || !isConnected()) {
         return;
