@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Fit live inset threshold/hold readouts to the actual
+//                 slider range and resolved workspace font/style metrics.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Preserve the AM carrier row with the workspace text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
@@ -128,6 +131,7 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/ComboStyle.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "gui/widgets/InsetValueLabelFit.h"
 #include "core/AppSettings.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
@@ -578,6 +582,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_dexpLabel->setFixedWidth(38);
         m_dexpLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_dexpLabel);
+        new InsetValueLabelFit(m_dexpLabel, m_dexpSlider, QStringLiteral(" dB"), 38);
 
         vbox->addLayout(row);
     }
