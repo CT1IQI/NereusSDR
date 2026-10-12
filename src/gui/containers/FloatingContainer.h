@@ -10,6 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - setScreenSource, sizeWithin and fittedSize: a floating
+//                 window is never larger than its screen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - ensureVisiblePosition reads the screens through a
 //                 ScreenSource and says whether it moved the form, by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -154,6 +157,18 @@ public:
     bool ensureVisiblePosition(QWidget* anchor, const ScreenSource* screens = nullptr);
     static QRect clampedGeometry(const QRect& geometry, const QRect& available, const QSize& minimum);
 
+    // The screens fittedSize() reads (the application's own when null).
+    void setScreenSource(const ScreenSource* screens);
+    // `size`, no larger than `available` and no smaller than `minimum`
+    // (the minimum wins). Unbounded when `available` is not valid.
+    static QSize sizeWithin(const QSize& size, const QRect& available, const QSize& minimum);
+    // The size of `wanted`, no larger than the available area of the screen
+    // holding most of it (the screen nearest its top-left corner when it is
+    // on none) and no smaller than the form's minimum. A floating window is
+    // never larger than its screen: every size the app sets goes through
+    // this or sizeWithin(). The position is not changed.
+    QSize fittedSize(const QRect& wanted) const;
+
 signals:
     void aboutToClose();
 
@@ -178,6 +193,7 @@ private:
     bool m_floating{false};
     bool m_hiddenByMacro{false};
     int  m_unminimisedHeight{0};   // cached height before minimise collapse
+    const ScreenSource* m_screens{nullptr};
 };
 
 } // namespace NereusSDR

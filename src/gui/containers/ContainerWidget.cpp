@@ -7,6 +7,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - A drag moves a floating window and never resizes it: the
+//                 size at the press is put back on every pointer move and
+//                 at the end of the drag when it is found different, with
+//                 one warning per drag naming the sizes and the screen
+//                 (a window dragged across the join of two screens grew
+//                 without bound on Windows). A resize by the grip or an
+//                 edge leaves a window no larger than its screen. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the Options menu of a window says
 //                 Return, as its body menu and header do. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -216,6 +224,8 @@ mw0lge@grange-lane.co.uk
 #include <QGraphicsOpacityEffect>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QScopedValueRollback>
+#include <QScreen>
 #include <algorithm>
 
 namespace NereusSDR {
@@ -675,6 +685,19 @@ void ContainerWidget::resizeEvent(QResizeEvent* event)
     QWidget::resizeEvent(event);
     if (m_groupHeader) {
         placeWorkspaceOverlays();
+    }
+    if (m_dragging && m_dragHoldSize.isValid() && !m_restoringDragSize && !m_dragSizeCheckQueued
+        && !m_dragSizeQueuedRestoreDone) {
+        // The window was resized while a drag moves it (the platform, on a
+        // change of screen). Its size is never set from inside this event:
+        // one check is queued, and the next pointer move checks too.
+        m_dragSizeCheckQueued = true;
+        QMetaObject::invokeMethod(this, [this] {
+            m_dragSizeCheckQueued = false;
+            if (!m_dragSizeQueuedRestoreDone && holdDragSize()) {
+                m_dragSizeQueuedRestoreDone = true;
+            }
+        }, Qt::QueuedConnection);
     }
 }
 
@@ -1554,9 +1577,14 @@ void ContainerWidget::beginDrag(const QPoint& globalPos)
     if (m_groupHeader) {
         m_groupHeader->setCursor(Qt::ClosedHandCursor);
     }
+    m_dragHoldSize = QSize();
+    m_dragSizeWarned = false;
+    m_dragSizeQueuedRestoreDone = false;
     if (isFloating()) {
         m_dragStartPos = globalPos - parentWidget()->pos();
         m_dragOrigin = parentWidget()->pos();
+        // A drag moves the window and never resizes it.
+        m_dragHoldSize = parentWidget()->size();
     } else {
         raise();
         m_dragStartPos = globalPos - pos();
@@ -1572,6 +1600,10 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
     // Workspace preview: the 8 px grid is the one snap aid; Ctrl steps by
     // 10 px with the look off only.
     const bool ctrlSteps = !m_groupHeader && (QApplication::keyboardModifiers() & Qt::ControlModifier);
+    // A size the platform changed since the last move is put back before
+    // this move sends the window's geometry again, and after it.
+    m_dragSizeQueuedRestoreDone = false;
+    holdDragSize();
 
     if (m_arrangeDrag) {
         // Arranging: past the drag distance the manager shows where a
@@ -1589,6 +1621,7 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
         if (moved && moved->pos() != newPos) {
             moved->move(newPos);
         }
+        holdDragSize();
         emit edgeDragMoved(globalPos);
         return;
     }
@@ -1603,6 +1636,7 @@ void ContainerWidget::updateDrag(const QPoint& globalPos)
         if (parentWidget() && parentWidget()->pos() != newPos) {
             parentWidget()->move(newPos);
         }
+        holdDragSize();
     } else {
         // From Thetis ucMeter.cs:346-374 — overlay-docked, clamped
         QPoint newPos = globalPos - m_dragStartPos;
@@ -1642,6 +1676,7 @@ void ContainerWidget::endDrag()
             }
         }
     }
+    endDragSizeHold();
     m_dragging = false;
     m_arrangeDrag = false;
     emit geometryInteractionFinished();
@@ -1668,6 +1703,7 @@ void ContainerWidget::cancelDrag()
     } else {
         move(m_dragOrigin);
     }
+    endDragSizeHold();
     m_dragging = false;
     emit geometryInteractionFinished();
     m_dragStartPos = QPoint();
@@ -1693,6 +1729,9 @@ void ContainerWidget::finishArrangeDrag(bool cancelled, const QPoint& globalPos)
             moved->move(m_dragOrigin);
         }
     }
+    // Before the manager judges the drop: what it places or saves is the
+    // window at its press size.
+    endDragSizeHold();
     m_dragging = false;
     m_dragStartPos = QPoint();
     m_titleBar->unsetCursor();
@@ -1705,6 +1744,42 @@ void ContainerWidget::finishArrangeDrag(bool cancelled, const QPoint& globalPos)
         emit edgeDragFinished(globalPos);
     }
     emit geometryInteractionFinished();
+}
+
+bool ContainerWidget::holdDragSize()
+{
+    if (!m_dragging || !m_dragHoldSize.isValid() || m_restoringDragSize || !isFloating()) {
+        return false;
+    }
+    QWidget* form = parentWidget();
+    if (!form || form->size() == m_dragHoldSize) {
+        return false;
+    }
+    if (!m_dragSizeWarned) {
+        // Once per drag. A floating window dragged across the join of two
+        // screens grew without bound on Windows; this line says what the
+        // size was found at and on which screen.
+        m_dragSizeWarned = true;
+        const QScreen* screen = form->screen();
+        qCWarning(lcContainer).noquote().nospace()
+            << "Floating container " << m_id << " changed size during a drag: found "
+            << form->width() << "x" << form->height() << ", restored "
+            << m_dragHoldSize.width() << "x" << m_dragHoldSize.height() << ", screen "
+            << (screen ? screen->name() : QStringLiteral("none")) << ", devicePixelRatio "
+            << form->devicePixelRatioF();
+    }
+    // The resize below is delivered to this container at once (or later by
+    // the platform); the flag keeps that event from asking for another.
+    QScopedValueRollback<bool> restoring(m_restoringDragSize, true);
+    form->resize(m_dragHoldSize);
+    return true;
+}
+
+void ContainerWidget::endDragSizeHold()
+{
+    holdDragSize();
+    m_dragHoldSize = QSize();
+    m_dragSizeQueuedRestoreDone = false;
 }
 
 void ContainerWidget::endEdgeDrag(bool cancelled, const QPoint& globalPos)
@@ -1793,7 +1868,10 @@ void ContainerWidget::doResize(int w, int h)
     }
 
     if (isFloating()) {
-        if (parentWidget()) {
+        if (auto* form = qobject_cast<FloatingContainer*>(parentWidget())) {
+            // Never larger than the screen the window is on.
+            form->resize(form->fittedSize(QRect(form->pos(), QSize(w, h))));
+        } else if (parentWidget()) {
             parentWidget()->resize(w, h);
         }
     } else {

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - fittedSize: a size no larger than the available area of
+//                 the screen a rect is on; restoreGeometry and the height
+//                 put back after a collapse go through it. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - ensureVisiblePosition reads the screens through a
 //                 ScreenSource and says whether it moved the form, by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -152,7 +156,7 @@ void FloatingContainer::onOwnerMinimisedChanged(bool minimised)
         resize(width(), collapsed);
     } else {
         if (m_unminimisedHeight > 0) {
-            resize(width(), m_unminimisedHeight);
+            resize(fittedSize(QRect(pos(), QSize(width(), m_unminimisedHeight))));
         }
         m_unminimisedHeight = 0;
     }
@@ -226,8 +230,44 @@ void FloatingContainer::restoreGeometry()
     int w = parts[2].toInt(&ok3);
     int h = parts[3].toInt(&ok4);
     if (ok1 && ok2 && ok3 && ok4) {
-        setGeometry(x, y, w, h);
+        // A saved size is never larger than the screen it is shown on.
+        setGeometry(QRect(QPoint(x, y), fittedSize(QRect(x, y, w, h))));
     }
+}
+
+void FloatingContainer::setScreenSource(const ScreenSource* screens)
+{
+    m_screens = screens;
+}
+
+QSize FloatingContainer::sizeWithin(const QSize& size, const QRect& available, const QSize& minimum)
+{
+    if (!available.isValid()) {
+        return size.expandedTo(minimum);
+    }
+    return size.boundedTo(available.size()).expandedTo(minimum);
+}
+
+QSize FloatingContainer::fittedSize(const QRect& wanted) const
+{
+    const ScreenSource* source = m_screens ? m_screens : ScreenSource::system();
+    std::optional<ScreenInfo> on = source->screenHolding(wanted);
+    if (!on) {
+        // On no screen: the one nearest its top-left corner.
+        qint64 nearest = -1;
+        const QVector<ScreenInfo> present = source->screens();
+        for (const ScreenInfo& screen : present) {
+            const QRect& g = screen.geometry;
+            const qint64 dx = qMax(0, qMax(g.left() - wanted.x(), wanted.x() - g.right()));
+            const qint64 dy = qMax(0, qMax(g.top() - wanted.y(), wanted.y() - g.bottom()));
+            if (nearest < 0 || dx + dy < nearest) {
+                nearest = dx + dy;
+                on = screen;
+            }
+        }
+    }
+    // With no screen at all there is nothing to fit to.
+    return sizeWithin(wanted.size(), on ? on->available : QRect(), minimumSize());
 }
 
 QRect FloatingContainer::clampedGeometry(const QRect &geometry, const QRect &available,

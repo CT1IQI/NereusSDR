@@ -7,6 +7,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - A floating window is never larger than its screen: the
+//                 size a document, a remembered place or the content's
+//                 height gives it is fitted to the available area of the
+//                 screen it is shown on, and a remembered size larger than
+//                 that is saved fitted. The height follower leaves a
+//                 window alone while a drag moves it and runs when the
+//                 drag ends. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - Both looks: the header rule judges only a place the app
 //                 restores (start-up, a monitor change, a layout loaded),
 //                 never the place the operator's own drop or resize just
@@ -807,6 +815,18 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
                 || !m_documentGeometry.contains(d.id) || m_documentGeometry.value(d.id) != d.geometry
                 || m_documentPane.value(d.id) != d.geometryPane;
             m_rememberedGeometry[d.id] = d.geometry;
+            if (d.dockMode == DockMode::Floating && d.geometry.isValid()) {
+                // A window is never larger than its screen (one saved at
+                // 28458 x 22355 after growing in a drag could not be
+                // drawn). Fitted to its monitor when that is here; with
+                // the monitor away, to the size that monitor was saved
+                // with. The next save writes the fitted size.
+                const std::optional<ScreenInfo> on = d.screen ? m_screens->matching(*d.screen, d.geometry)
+                                                              : m_screens->screenHolding(d.geometry);
+                const QRect bounds = on ? on->available : (d.screen ? d.screen->geometry : QRect());
+                m_rememberedGeometry[d.id].setSize(
+                    FloatingContainer::sizeWithin(d.geometry.size(), bounds, kPlacementMinimum));
+            }
             if (d.dockMode != DockMode::OverlayDocked) {
                 m_rememberedPane.remove(d.id);
                 m_provisionalPane.remove(d.id);
@@ -832,6 +852,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             c = new ContainerWidget(); c->setId(d.id);
             c->setRxSource(d.config.value("rxSource").toInt(1));
             auto* form = new FloatingContainer(c->rxSource());
+            form->setScreenSource(m_screens);
             form->setProperty("structuredWorkspace", true); form->setId(d.id);
             form->installEventFilter(this); c->installEventFilter(this);
             m_containers[d.id] = c; m_floatingForms[d.id] = form;
@@ -975,7 +996,7 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             if (d.geometry.isValid()) {
                 if (d.dockMode == DockMode::Floating) {
                     if (windowSized) {
-                        form->resize(d.geometry.size());
+                        form->resize(windowSizeFor(d.geometry, d.screen, form));
                     }
                 } else {
                     c->setGeometry(d.geometry);
@@ -1018,44 +1039,13 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             }, Qt::QueuedConnection);
             connect(host, &ContainerContentHost::preferredContentHeightChanged, this,
                     [this, id = d.id, content = QPointer<ContainerContentHost>(host),
-                     view = QPointer<ContainerWidget>(c), shell = QPointer<FloatingContainer>(form)] {
+                     view = QPointer<ContainerWidget>(c)] {
                 if (!m_store || m_reconciling || GuiApplication::applicationQuitInProgress()
                     || !content || !view || container(id) != view.data()
                     || contentHost(id) != content.data()) {
                     return;
                 }
-                const WorkspaceDocument latest = m_store->snapshot();
-                const auto placement = std::find_if(latest.containers.cbegin(), latest.containers.cend(),
-                    [&id](const ContainerDocument& value) { return value.id == id; });
-                if (placement == latest.containers.cend() || placement->dockMode == DockMode::PanelDocked) {
-                    return;
-                }
-                // Workspace preview: a popped-out object's window whose
-                // height the operator set keeps it and only grows to fit.
-                const bool operatorHeight = !placement->autoHeight && view->operatorSizesHeight();
-                if ((!placement->autoHeight && !operatorHeight) || view->sizingHeightNow()) {
-                    return;
-                }
-                QWidget* target = placement->dockMode == DockMode::Floating
-                    ? static_cast<QWidget*>(shell.data()) : view.data();
-                if (!target) {
-                    return;
-                }
-                int height = content->preferredContentHeight() + view->headerExtent();
-                if (const int available = availableHeightFor(target);
-                    placement->layout == ContentLayout::FreeCanvas && available > 0) {
-                    height = qMin(height, available);
-                }
-                if (operatorHeight) {
-                    height = qMax(height, target->height());
-                }
-                const QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
-                    .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
-                if (target->size() != wanted) {
-                    // Width changes settle through the host's viewport layout;
-                    // use live placement rather than replaying saved geometry.
-                    target->resize(wanted);
-                }
+                followContentHeight(id);
             }, Qt::QueuedConnection);
             c->setContent(host);
         }
@@ -1071,13 +1061,23 @@ void ContainerManager::reconcileWorkspace(const WorkspaceDocument& document)
             if (const int available = availableHeightFor(target); d.layout == ContentLayout::FreeCanvas && available > 0) {
                 height = qMin(height, available);
             }
-            target->resize(qMax(target->width(), c->minimumSizeHint().width()),height);
+            QSize wanted(qMax(target->width(), c->minimumSizeHint().width()), height);
+            const bool window = d.dockMode == DockMode::Floating;
+            if (window) {
+                // Never larger than the screen the window is on.
+                wanted = form->fittedSize(QRect(form->pos(), wanted));
+            }
+            // A drag moves a window and never resizes it; the end of the
+            // drag gives it its content's height (followContentHeight).
+            if (!window || !c->dragActive()) {
+                target->resize(wanted);
+            }
         }
         if (!d.autoHeight && d.dockMode == DockMode::Floating && c->operatorSizesHeight()
-            && form->height() < c->naturalHeight()) {
+            && form->height() < c->naturalHeight() && !c->dragActive()) {
             // Workspace preview: the operator's height, but never less than
-            // the content needs.
-            form->resize(form->width(), c->naturalHeight());
+            // the content needs (nor more than its screen has).
+            form->resize(form->fittedSize(QRect(form->pos(), QSize(form->width(), c->naturalHeight()))));
         }
         if (d.dockMode == DockMode::Floating && !preserveGeometry) {
             // At its remembered place when its monitor is here; otherwise on
@@ -1864,6 +1864,57 @@ bool ContainerManager::commitDockMode(const QString& id, DockMode mode)
     return true;
 }
 
+void ContainerManager::followContentHeight(const QString& id)
+{
+    ContainerWidget* view = container(id);
+    ContainerContentHost* content = contentHost(id);
+    FloatingContainer* shell = m_floatingForms.value(id);
+    if (!m_store || m_reconciling || GuiApplication::applicationQuitInProgress() || !view || !content) {
+        return;
+    }
+    const WorkspaceDocument latest = m_store->snapshot();
+    const auto placement = std::find_if(latest.containers.cbegin(), latest.containers.cend(),
+        [&id](const ContainerDocument& value) { return value.id == id; });
+    if (placement == latest.containers.cend() || placement->dockMode == DockMode::PanelDocked) {
+        return;
+    }
+    // Workspace preview: a popped-out object's window whose
+    // height the operator set keeps it and only grows to fit.
+    const bool operatorHeight = !placement->autoHeight && view->operatorSizesHeight();
+    if ((!placement->autoHeight && !operatorHeight) || view->sizingHeightNow()) {
+        return;
+    }
+    const bool window = placement->dockMode == DockMode::Floating;
+    if (window && view->dragActive()) {
+        // A drag moves a window and never resizes it. The end of the drag
+        // runs this again (wireContainer).
+        return;
+    }
+    QWidget* target = window ? static_cast<QWidget*>(shell) : view;
+    if (!target) {
+        return;
+    }
+    int height = content->preferredContentHeight() + view->headerExtent();
+    if (const int available = availableHeightFor(target);
+        placement->layout == ContentLayout::FreeCanvas && available > 0) {
+        height = qMin(height, available);
+    }
+    if (operatorHeight) {
+        height = qMax(height, target->height());
+    }
+    QSize wanted = QSize(qMax(target->width(), view->minimumSizeHint().width()), height)
+        .expandedTo(target->minimumSize()).boundedTo(target->maximumSize());
+    if (window && shell) {
+        // Never larger than the screen the window is on.
+        wanted = shell->fittedSize(QRect(shell->pos(), wanted));
+    }
+    if (target->size() != wanted) {
+        // Width changes settle through the host's viewport layout;
+        // use live placement rather than replaying saved geometry.
+        target->resize(wanted);
+    }
+}
+
 void ContainerManager::wireContainer(ContainerWidget* container)
 {
     connect(container, &ContainerWidget::geometryInteractionStarted, this, [this, container] {
@@ -1878,6 +1929,12 @@ void ContainerManager::wireContainer(ContainerWidget* container)
             const QString id = container->id();
             const bool known = m_interactionStart.contains(id);
             const QRect start = m_interactionStart.take(id);
+            if (known && liveGeometry(id).size() == start.size()) {
+                // A move, not a resize. The height follower left a window
+                // alone while the drag moved it; whatever its content asked
+                // for meanwhile is given now.
+                followContentHeight(id);
+            }
             if (m_dropSettled.remove(id)) {
                 // The drop rule placed it, saved it and reported the end of
                 // the drag (finishArrangeDrop).
@@ -2124,6 +2181,7 @@ ContainerWidget* ContainerManager::createContainer(int rxSource, DockMode mode)
     container->setDockMode(mode);
 
     auto* floatingForm = new FloatingContainer(rxSource);
+    floatingForm->setScreenSource(m_screens);
     floatingForm->setId(container->id());
 
     wireContainer(container);
@@ -2339,6 +2397,11 @@ void ContainerManager::recoverContainer(const QString& id)
 void ContainerManager::setScreenSourceForTest(ScreenSource* source)
 {
     m_screens = source ? source : ScreenSource::system();
+    for (FloatingContainer* form : std::as_const(m_floatingForms)) {
+        if (form) {
+            form->setScreenSource(m_screens);
+        }
+    }
 }
 
 ScreenInfo ContainerManager::mainWindowScreen() const
@@ -2353,6 +2416,15 @@ int ContainerManager::availableHeightFor(const QWidget* target) const
 {
     const QRect onScreen(target->mapToGlobal(QPoint(0, 0)), target->size());
     return m_screens->screenFor(onScreen).available.height();
+}
+
+QSize ContainerManager::windowSizeFor(const QRect& remembered, const std::optional<SavedScreen>& screen,
+                                      const FloatingContainer* form) const
+{
+    const std::optional<ScreenInfo> own = screen ? m_screens->matching(*screen, remembered)
+                                                 : m_screens->screenHolding(remembered);
+    const ScreenInfo target = own ? *own : mainWindowScreen();
+    return FloatingContainer::sizeWithin(remembered.size(), target.available, form->minimumSize());
 }
 
 std::optional<SavedScreen> ContainerManager::screenForNewWindow(const QRect& geometry) const
@@ -2550,9 +2622,9 @@ void ContainerManager::placeFloatingWindow(const QString& id, const QRect& remem
             form->move(remembered.topLeft());
         }
         const ContainerWidget* c = container(id);
-        if (wasAway && c && !c->autoHeight() && form->size() != remembered.size()) {
+        if (wasAway && c && !c->autoHeight() && form->size() != windowSizeFor(remembered, screen, form)) {
             // Back at its own size too, had the other screen been smaller.
-            form->resize(remembered.size());
+            form->resize(windowSizeFor(remembered, screen, form));
         }
         return;
     }
@@ -3085,6 +3157,7 @@ void ContainerManager::restoreState()
         }
 
         auto* floatingForm = new FloatingContainer(container->rxSource());
+        floatingForm->setScreenSource(m_screens);
         floatingForm->setId(container->id());
 
         m_containers.insert(container->id(), container);
