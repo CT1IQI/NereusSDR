@@ -833,8 +833,10 @@ struct ToolsPagesTests {
         #expect(catInvokes(station, StationCat.refreshDevicesVerb).isEmpty)
         cat.setOpen(.channel(2), false)
         cat.setOpen(.ptt, false)
-        // Back: the Core's values, with nothing held from before.
-        #expect(await settle(seconds: 60) { model.connection == .connected })
+        // Back: the Core's values, with nothing held from before. The model
+        // still says connected for a moment after the mirror has lost the
+        // link, so this waits for the new session's whole state as well.
+        #expect(await settle(seconds: 60) { model.connection == .connected && model.mirror.isSnapshotComplete })
         try await station.deliverStationCat()
         #expect(await settle { cat.reason == nil && cat.global != nil })
         #expect(!cat.channel(4).config.tcpEnabled && cat.note(.channel(4)) == nil && cat.note(.channel(1)) == nil)
