@@ -281,6 +281,12 @@
 //                                    words, RadioModel's rotor requests);
 //                                    SpotBeamTurner's are the window's own.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  The C-Tune pin refusals forward the
+//                                    holder's words (sliceHolderWords).
+//                                    SliceAccessMirror's holderWords and
+//                                    receiverHeldReason (a remote window's
+//                                    copy of the pin refusals) are scanned.
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1078,9 +1084,11 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("QString::fromLatin1(kCentreRefusedReason)"),
           QStringLiteral("moved ? QString() : QString::fromLatin1(kCentreRefusedReason)"),
           QStringLiteral("affected.isEmpty() ? QString::fromLatin1(kChangedReason) : QString()"),
-          QStringLiteral("pinReason(planDevice(anchor).name)"),
+          // The holder is named by sliceHolderWords (StationServer.cpp,
+          // scanned there): a name, "the Core" or the plain word for a kind.
+          QStringLiteral("pinReason(sliceHolderWords(anchor))"),
           // Slice control plan Task 8: the same, the anchor not connected.
-          QStringLiteral("awayPinReason(planDevice(anchor).name)"),
+          QStringLiteral("awayPinReason(sliceHolderWords(anchor))"),
           QStringLiteral("olderWindowAskReason(namesOf(check.named))"),
           QStringLiteral("takenOverReason(planDevice(taker).name)"),
           QStringLiteral("sliceMovedReason(planDevice(requester).name, letters)"),
@@ -1589,7 +1597,14 @@ const QList<ReasonSource>& reasonSources()
         // it holds back a change to a slice it only listens to. The slice
         // letter (A to P) and the controller's name, the operator's own
         // word (ruling 4.3).
-        {"src/core/session/SliceAccessMirror.cpp", {QStringLiteral("listenerReason")}, {}, 3,
+        // receiverHeldReason: its copy of the Core's two C-Tune pin
+        // refusals (StationReceivers.cpp, pinReason and awayPinReason),
+        // shown on the held switch of a pan whose receiver another device
+        // holds. holderWords names the holder for both.
+        {"src/core/session/SliceAccessMirror.cpp",
+         {QStringLiteral("listenerReason"), QStringLiteral("holderWords"),
+          QStringLiteral("receiverHeldReason")},
+         {}, 7,
          {QStringLiteral("letter"), QStringLiteral("owner"),
           // Slice control plan Task 17: the controller's kind word.
           QStringLiteral("kind")}},

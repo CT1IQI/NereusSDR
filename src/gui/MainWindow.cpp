@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -6315,6 +6318,10 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
     // peak hold changes on its slice's pan, from the overlay or elsewhere.
     connect(sw, &SpectrumWidget::peakHoldEnabledChanged, this,
             [this](bool) { refreshContainerControls(); });
+    // A Core mirror update is not a CTUN gesture, but it must refresh
+    // container state before an unrelated slice selection does so.
+    connect(sw, &SpectrumWidget::remoteCtunStateChanged, this,
+            [this]() { refreshContainerControls(); });
     connect(sw, &SpectrumWidget::ctunEnabledChanged, this,
             [this, panId, sw](bool enabled) {
         // R-R3-21: a container's CTUN button lights from its slice's pan.

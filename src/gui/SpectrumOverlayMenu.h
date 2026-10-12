@@ -27,6 +27,9 @@
 //                 via Anthropic Claude Code.
 //   2026-10-01 - Completed 3D port history during PR review by
 //                 J.J. Boyd (KG4VCF), with AI assistance via OpenAI Codex.
+//   2026-10-12 - setCtunAvailable takes the reason the C-Tune switch is
+//                 held. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QWidget>
@@ -58,7 +61,9 @@ public:
                    bool heatMap, float refLevel, float dynRange,
                    bool ctunEnabled = true);
 
-    void setCtunAvailable(bool available);
+    // `heldReason`, when C-Tune is available: the receiver's setting is not
+    // this window's to change, and the switch is disabled with these words.
+    void setCtunAvailable(bool available, const QString& heldReason = QString());
     void setCtunState(bool pinned);
 
     // Absolute RF Hz under the cursor at popup time.  The caller sets it

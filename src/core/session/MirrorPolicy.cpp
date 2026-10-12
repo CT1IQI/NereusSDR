@@ -226,6 +226,8 @@
 //   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
 //                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - SliceAccess receiverHolderDeviceId Outbound. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -1095,6 +1097,9 @@ const MirrorPolicy::Entry kEntries[] = {
     { "SliceAccess", "activeRxDeviceIds", MirrorDirection::Outbound },
     { "SliceAccess", "txSelected", MirrorDirection::Outbound },
     { "SliceAccess", "onAir", MirrorDirection::Outbound },
+    // Ruling 6.3: who holds the receiver the slice is on, whose its C-Tune
+    // setting is. A peer that does not know the name ignores it.
+    { "SliceAccess", "receiverHolderDeviceId", MirrorDirection::Outbound },
 
     // iPhone app plan Task 39 (D14, R-IOS-13, txStateVersion 1): the Core's
     // transmitter, read-only. It changes only as the radio keys, unkeys and

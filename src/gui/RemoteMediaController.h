@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: Separate mirrored pin projection from preference requests.
+//               J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: the microphone is collected by a real-time thread while
@@ -661,7 +663,7 @@ private:
     PanDisplayState statusWithGrant(const QString& panId, PanDisplayState status) const;
     void refreshPanGrantStatus(const QString& panId);
     PanDisplayState perPanRefusalStatus(const QString& panId) const;
-    void refreshCtunState();
+    void refreshCtunState(bool restorePreference = true);
     // R-R3-18/19: a C-Tune centre gesture from one pan, at most one request
     // in flight per stream, never a zoom on a stream other receivers share.
     void requestCentreFromGesture(quint32 endpointId, double centreHz);

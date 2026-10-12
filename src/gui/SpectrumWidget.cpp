@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
 //   2026-10-12  J.J. Boyd / KG4VCF. The grid's noise-floor tracking holds
 //                 dB Min a grid step under dB Max (applyGridFollow), the
 //                 limit Thetis's udDisplayGridMin_ValueChanged applies
@@ -200,6 +203,11 @@
 //                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
 //                 the spot labels follow them. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: C-Tune switch held: applyRemoteCtunState takes the reason
+//                 the receiver's C-Tune setting is not this window's to
+//                 change, hands it to the pan menu, and setCtunEnabled then
+//                 changes neither the pan nor its saved setting. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -10361,7 +10369,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                   m_displaySettings->refLevel(),
                                   m_displaySettings->dynamicRange(),
                                   m_ctunEnabled);
-        m_overlayMenu->setCtunAvailable(m_ctunAvailable);
+        m_overlayMenu->setCtunAvailable(m_ctunAvailable, m_ctunHeldReason);
         // Re-seed every popup (not just at construction): the 3D VIEW
         // section reflects whatever the operator last set, and row-span
         // support can change across the widget's lifetime if the GPU mesh
@@ -13540,20 +13548,28 @@ void SpectrumWidget::endPanDrag()
     setCursor(Qt::CrossCursor);
 }
 
-void SpectrumWidget::applyRemoteCtunState(bool available, bool pinned)
+void SpectrumWidget::applyRemoteCtunState(bool available, bool pinned, const QString& heldReason)
 {
+    const bool enabled = available && pinned;
+    const QString reason = available ? heldReason : QString();
+    const bool changed = m_ctunAvailable != available || m_ctunEnabled != enabled
+        || m_ctunHeldReason != reason;
     m_ctunAvailable = available;
-    m_ctunEnabled = available && pinned;
+    m_ctunEnabled = enabled;
+    m_ctunHeldReason = reason;
     if (m_overlayMenu) {
-        m_overlayMenu->setCtunAvailable(available);
+        m_overlayMenu->setCtunAvailable(available, m_ctunHeldReason);
         m_overlayMenu->setCtunState(m_ctunEnabled);
     }
     update();
+    if (changed) {
+        emit remoteCtunStateChanged();
+    }
 }
 
 void SpectrumWidget::setCtunEnabled(bool enabled)
 {
-    if (!m_ctunAvailable) { return; }
+    if (!m_ctunAvailable || !m_ctunHeldReason.isEmpty()) { return; }
     m_ctunPreference = enabled;
     if (m_ctunEnabled == enabled) {
         return;

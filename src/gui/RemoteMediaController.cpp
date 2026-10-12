@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
+//               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-11: R-DISP-RETUNE (fourth wave): a pan forgets the picture it
 //               shows when its receiver changes stream or stream epoch, so a
 //               late context of that picture is not drawn. J.J. Boyd
@@ -219,6 +221,14 @@
 //               is down and count from its return, so a radio dropout no
 //               longer moves media back to the tunnel or starts it over.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: a pan's saved C-Tune setting is no longer sent for a
+//               receiver whose setting is not this window's (a slice it
+//               only listens to, or a receiver another device holds): the
+//               Core refuses that pin every time. The setting waits and
+//               goes in when the receiver becomes this window's, and the
+//               switch is shown held with the Core's reason
+//               (ctunHeldReason). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 
 #include "gui/RemoteMediaController.h"
 #include "core/AppSettings.h"
@@ -1391,6 +1401,20 @@ struct RemoteMediaController::Private {
         bool refused = false;
     };
     QHash<int, CtunState> ctunStreams;
+    // The receiver's C-Tune setting is not always this window's to change:
+    // a slice it only listens to is its controller's (StationServer::
+    // changeRefusal), and a receiver another device holds is that device's
+    // (ruling 6.3), so the Core refuses a pin on either. The Core's words
+    // for why, or empty when the setting is this window's. While it is not,
+    // nothing is asked for, the pan's saved setting waits, and the switch
+    // is shown held with these words. The Core checks in this order too.
+    QString ctunHeldReason(const SliceModel* slice) const
+    {
+        if (slice == nullptr) { return {}; }
+        if (slice->isReadOnlyListener()) { return slice->readOnlyListenerReason(); }
+        const SliceAccessMirror* access = client ? client->sliceAccess() : nullptr;
+        return access != nullptr ? access->receiverHeldReason(slice->sliceIndex()) : QString();
+    }
     // R-R3-18/21: one C-Tune centre request in flight per stream. A gesture
     // runs at mouse or wheel rate; the Core answers each request, and while
     // one is out the newest wanted centre waits here. A refusal drops it, so
@@ -2170,6 +2194,21 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             refreshCtunState();
         });
     }
+    // The pin delta may follow its command result. Budgeted displays do
+    // not re-project CTUN on every planner tick, so observe the mirror
+    // itself. This path only projects: it never restores a preference or
+    // turns a received pin into another request. Sender destruction retires
+    // each watcher when a snapshot replaces its slice.
+    const auto watchCtunPin = [this](int sliceId) {
+        if (SliceModel* slice = d->model->sliceById(sliceId)) {
+            connect(slice, &SliceModel::streamCtunPinnedChanged, this,
+                    [this](bool) { refreshCtunState(false); });
+        }
+    };
+    for (SliceModel* slice : model->slices()) {
+        if (slice) { watchCtunPin(slice->sliceIndex()); }
+    }
+    connect(model, &RadioModel::sliceAdded, this, watchCtunPin);
     connect(client, &StationClient::streamCentreFinished,
             this, &RemoteMediaController::finishCentreRequest);
     connect(client, &QObject::destroyed, this, &RemoteMediaController::stop);
@@ -5948,7 +5987,7 @@ void RemoteMediaController::finishCentreRequest(int sliceId, quint64 streamEpoch
     refreshSubscriptions();
 }
 
-void RemoteMediaController::refreshCtunState()
+void RemoteMediaController::refreshCtunState(bool restorePreference)
 {
     if (!d->model || !d->client || !d->stack) { return; }
     const QPointer<RemoteMediaController> self(this);
@@ -5981,8 +6020,11 @@ void RemoteMediaController::refreshCtunState()
         const bool available = d->client->remoteCtunAvailable()
             && d->model->isConnected() && stream >= 0 && epoch != 0
             && (state.initialized || state.pending || currentContext);
-        if (available && currentContext && !state.initialized && !state.pending
-            && !state.refused
+        // A setting that is another's to change is never asked for: the Core
+        // would refuse it at every sign-in, and the window would tell the
+        // operator of a change nobody made.
+        if (restorePreference && available && currentContext && !state.initialized && !state.pending
+            && !state.refused && d->ctunHeldReason(binding.slice).isEmpty()
             && (state.rejectedContext == 0
                 || isNewerGeneration(binding.context.codec.contextGeneration, state.rejectedContext))) {
             // One hardware stream has one effective pin, even when several
@@ -6020,7 +6062,8 @@ void RemoteMediaController::refreshCtunState()
             || !found->second.slice) { continue; }
         QPointer<SpectrumWidget> widget = found->second.widget;
         const bool pinned = found->second.slice->streamCtunPinned();
-        widget->applyRemoteCtunState(available, pinned);
+        widget->applyRemoteCtunState(available, pinned,
+                                     d->ctunHeldReason(found->second.slice));
         if (!self) { return; }
     }
 }
