@@ -34,6 +34,11 @@
 //   2026-10-09 - Native audio plan Task 22: the card struct is
 //                CoreSpeakerCardInfo, as the Setup widget is CoreSpeakerCard.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - J.J. Boyd (KG4VCF). The accessory, Core speaker, PC mic
+//                 and FreeDV identity changes that saved at once also hand
+//                 the file to the writer thread, and a later background
+//                 save answers for the timed one it replaced. AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-10 — J.J. Boyd (KG4VCF). The timed settings save writes the
 //                 file on AppSettings' writer thread, off the thread that
 //                 sends the Core's receive audio. AI-assisted via Anthropic
@@ -5871,7 +5876,7 @@ void RadioModel::setFourO3AEnabled(bool enabled)
     if (changed) {
         setPeripheralValue(QStringLiteral("FourO3A_Enabled"),
                            enabled ? QStringLiteral("True") : QStringLiteral("False"));
-        AppSettings::instance().save();
+        AppSettings::instance().saveInBackground();
     }
     // Even repeated requests reconcile actual state: enable retries a failed
     // bind; disable unconditionally cancels a pending accessory attempt.
@@ -6397,7 +6402,7 @@ void RadioModel::applyRemoteFreedvSetting(const QString& key, AppSettings& setti
         settings.setValue(QStringLiteral("PskReporter/GridSquare"), grid);
         settings.setValue(QStringLiteral("FreeDvReporter/Callsign"), call);
         settings.setValue(QStringLiteral("FreeDvReporter/GridSquare"), grid);
-        settings.save();
+        settings.saveInBackground();
         // The same existing clients the local Startup and Spot Hub pages
         // update must see a remote settings edit without a restart.
         const QString version = SpotSourceHost::reporterVersion();
@@ -8306,7 +8311,7 @@ bool RadioModel::configureTgxlForStation(const QString& inputHost, quint16 port,
     // signal independently dials a socket; validation precedes every write.
     setPeripheralValue(QStringLiteral("TGXL_ManualIp"), host);
     setPeripheralValue(QStringLiteral("TGXL_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     m_stationTgxl->start(host, port);
     if (reason) { reason->clear(); }
     return true; // Identification has started; connection is a later snapshot.
@@ -8337,7 +8342,7 @@ bool RadioModel::setTgxlAddressForStation(const QString& inputHost, int port, QS
     }
     setPeripheralValue(QStringLiteral("TGXL_ManualIp"), host);
     setPeripheralValue(QStringLiteral("TGXL_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     m_stationTgxl->showSavedEndpoint(host, static_cast<quint16>(port));
     if (reason) { reason->clear(); }
     return true;
@@ -8380,7 +8385,7 @@ bool RadioModel::configurePgxlForStation(const QString& inputHost, quint16 port,
     // settings write on its own dials anything.
     setPeripheralValue(QStringLiteral("PGXL_ManualIp"), host);
     setPeripheralValue(QStringLiteral("PGXL_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     m_stationPgxl->start(host, port);
     if (reason) { reason->clear(); }
     return true;
@@ -8412,7 +8417,7 @@ bool RadioModel::setPgxlAddressForStation(const QString& inputHost, int port, QS
     }
     setPeripheralValue(QStringLiteral("PGXL_ManualIp"), host);
     setPeripheralValue(QStringLiteral("PGXL_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     m_stationPgxl->showSavedEndpoint(host, static_cast<quint16>(port));
     if (reason) { reason->clear(); }
     return true;
@@ -8450,7 +8455,7 @@ bool RadioModel::setPgxlConnectionSettingsForStation(bool autoReconnect, int kee
                       autoReconnect ? QStringLiteral("True") : QStringLiteral("False"));
     settings.setValue(QStringLiteral("PGXL_KeepaliveSec"), QString::number(keepaliveSec));
     settings.setValue(QStringLiteral("PGXL_PingSec"), QString::number(pingSec));
-    settings.save();
+    settings.saveInBackground();
     m_stationPgxl->applyConnectionSettings();
     if (reason) { reason->clear(); }
     return true;
@@ -8957,7 +8962,7 @@ bool RadioModel::setRfKitEnabledForStation(bool enabled, QString* reason)
         return false;
     }
     setRfKitEnabled(enabled);
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     if (reason) { reason->clear(); }
     return true;
 }
@@ -8990,7 +8995,7 @@ bool RadioModel::configureRfKitForStation(const QString& inputHost, quint16 port
     // Both fields are saved by one accepted command, validated first.
     setPeripheralValue(QStringLiteral("RfKit_ManualIp"), host);
     setPeripheralValue(QStringLiteral("RfKit_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     applyRfKitOperatorSettings();
     m_stationRfKit->start(host, port);
     if (reason) { reason->clear(); }
@@ -9084,7 +9089,7 @@ bool RadioModel::setRfKitAddressForStation(const QString& inputHost, int port, Q
     }
     setPeripheralValue(QStringLiteral("RfKit_ManualIp"), host);
     setPeripheralValue(QStringLiteral("RfKit_ManualPort"), QString::number(port));
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     m_stationRfKit->showSavedEndpoint(host, static_cast<quint16>(port));
     if (reason) { reason->clear(); }
     return true;
@@ -21165,7 +21170,7 @@ void RadioModel::setCoreSpeakerVolume(int volume)
             static_cast<float>(volume) / static_cast<float>(kCoreSpeakerMaxVolume);
         AppSettings& settings = AppSettings::instance();
         settings.setValue(masterVolumeKey(), QString::number(linear, 'f', 3));
-        settings.save();
+        settings.saveInBackground();
         // R-AUD-28: the master level scales only the speakers push.
         m_audioEngine->setVolume(linear);
     }
@@ -21188,7 +21193,7 @@ void RadioModel::setCoreSpeakerMuted(bool muted)
     if (m_role != Role::Remote) {
         AppSettings& settings = AppSettings::instance();
         settings.setValue(masterMutedKey(), muted ? QStringLiteral("True") : QStringLiteral("False"));
-        settings.save();
+        settings.saveInBackground();
         // R-AUD-28: the master mute gates only the speakers push.
         m_audioEngine->setMasterMuted(muted);
     }
@@ -21225,7 +21230,7 @@ void RadioModel::setCoreSpeakerDevice(const QString& json)
     cfg.firstChannel = 1;
     cfg.engine = m_audioEngine->defaultEngine();
     cfg.saveToSettings(coreSpeakerPrefix());
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     if (m_coreSpeakerWaiting) {
         m_coreSpeakerWaiting = false;
         m_audioEngine->setSpeakersWaitForPick(false);
@@ -21280,7 +21285,7 @@ void RadioModel::setCoreSpeakerDetails(const QString& json)
         cfg.engine = m_audioEngine->defaultEngine();
     }
     cfg.saveToSettings(coreSpeakerPrefix());
-    AppSettings::instance().save();
+    AppSettings::instance().saveInBackground();
     AudioDeviceConfig inEffect = cfg;
     if (m_coreSpeakerWaiting) {
         inEffect.deviceId = QString::fromLatin1(kAudioDeviceNone);
@@ -25907,8 +25912,11 @@ void RadioModel::scheduleSettingsSaveRetry()
 void RadioModel::onBackgroundSettingsSaveFinished(quint64 ticket, bool saved,
                                                   const QString& error)
 {
-    // Another RadioModel's save, or one a later flush took over from.
-    if (ticket == 0 || ticket != m_backgroundSettingsSaveTicket) {
+    // Nothing awaited (a later flush took over), or a save older than the
+    // one awaited. A later save answers for this one: it replaced it before
+    // it reached the disk (a control change elsewhere that saved in the
+    // background) and wrote every value this one held.
+    if (m_backgroundSettingsSaveTicket == 0 || ticket < m_backgroundSettingsSaveTicket) {
         return;
     }
     m_backgroundSettingsSaveTicket = 0;
@@ -26062,7 +26070,7 @@ void RadioModel::wirePcMicConfigProjection()
 
     const auto commit = [this](const AudioDeviceConfig& cfg) {
         cfg.saveToSettings(QStringLiteral("audio/TxInput"));
-        AppSettings::instance().save();
+        AppSettings::instance().saveInBackground();
         m_audioEngine->setTxInputConfig(cfg);
     };
     connect(&m_transmitModel, &TransmitModel::pcMicHostApiIndexChanged, this,

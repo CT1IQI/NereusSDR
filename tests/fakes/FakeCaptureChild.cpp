@@ -31,6 +31,9 @@
 //               input-lost-on-probe-enable), so a test that turns the
 //               probe on once it has seen Ready fixes the order.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: permission-while-marked holds Permission until the test
+//               removes a file, in place of a set time.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -79,7 +82,8 @@ enum class Scenario {
     Ready, HangOpen, HangOpenAfterStep, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
     PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
-    Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing
+    Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing,
+    PermissionWhileMarked
 };
 
 std::optional<Scenario> scenarioFromName(const QString& name)
@@ -113,6 +117,9 @@ std::optional<Scenario> scenarioFromName(const QString& name)
         return Scenario::BusyWhileMarkedThenPending;
     }
     if (name == QLatin1String("bad-ring")) { return Scenario::BadRing; }
+    if (name == QLatin1String("permission-while-marked")) {
+        return Scenario::PermissionWhileMarked;
+    }
     return std::nullopt;
 }
 
@@ -334,6 +341,7 @@ private:
             m_streaming = false;
             m_readySent = false;
             m_readyAt.reset();
+            m_permissionHeld = false;
             m_matcher.reset();
             break;
         case P::RecordType::AttachRing:
@@ -395,6 +403,7 @@ private:
                 m_readySent = false;
                 m_probeOn = false;
                 m_readyAt.reset();
+                m_permissionHeld = false;
                 sendStatus(m_generation, P::HelperState::Stopped);
             }
             break;
@@ -485,6 +494,10 @@ private:
         case Scenario::PermissionThenReady:
             sendStatus(m_generation, P::HelperState::Permission);
             m_readyAt = Clock::now() + kPermissionHold;
+            return;
+        case Scenario::PermissionWhileMarked:
+            sendStatus(m_generation, P::HelperState::Permission);
+            m_permissionHeld = true;
             return;
         case Scenario::Stale: {
             sendStatus(m_generation, P::HelperState::Opening);
@@ -602,6 +615,15 @@ private:
             sendStatus(m_generation, P::HelperState::Ready);
             startStreaming();
         }
+        // permission-while-marked: the test ends the hold by removing the
+        // file, so the hold is as long as the test needs and no longer.
+        if (m_permissionHeld
+            && !QFile::exists(qEnvironmentVariable("NEREUS_FAKE_CAPTURE_PERMISSION_FILE"))) {
+            m_permissionHeld = false;
+            sendStatus(m_generation, P::HelperState::Opening);
+            sendStatus(m_generation, P::HelperState::Ready);
+            startStreaming();
+        }
         if (!m_streaming) {
             return;
         }
@@ -655,6 +677,7 @@ private:
     Clock::time_point m_streamStart;
     Clock::time_point m_nextPcm;
     std::optional<Clock::time_point> m_readyAt;
+    bool m_permissionHeld = false;                  // permission-while-marked
     std::vector<float> m_tone;
     bool m_readySent = false;
     bool m_probeOn = false;

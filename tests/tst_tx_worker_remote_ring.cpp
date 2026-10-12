@@ -77,6 +77,12 @@
 //   2026-10-03: run the scripted capture child in this test executable so
 //               sharded builds do not need a sibling test. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-11: a newly started scripted helper gets 30 s for its hello
+//               and for the first wait after its start
+//               (kFakeCaptureChildStartMs, fakes/FakeCaptureChild.h),
+//               so a busy computer cannot fail a case that is not about
+//               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -801,10 +807,12 @@ void TestTxWorkerRemoteRing::radioAdmissionRefusesReentrantSourceSelectionWithRe
     CaptureSupervisor::Options options;
     options.program = QCoreApplication::applicationFilePath();
     options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+    options.helloTimeoutMs = NereusSDR::Test::kFakeCaptureChildStartMs;   // 3000 in production
     model->audioEngine()->setCaptureSupervisorOptionsForTest(options);
     auto lease = model->audioEngine()->acquireCaptureDemand(CaptureSupervisor::Demand::LocalSession);
     QTRY_COMPARE_WITH_TIMEOUT(model->audioEngine()->captureStatus().state,
-                             CaptureSupervisor::Status::State::Ready, 8000);
+                             CaptureSupervisor::Status::State::Ready,
+                             NereusSDR::Test::kFakeCaptureChildStartMs);
     QVERIFY(model->audioEngine()->isCaptureReaderOpen());
     RemoteKeying::MicUplink noMic;
     noMic.carriesMic = [](const QByteArray&) { return false; };

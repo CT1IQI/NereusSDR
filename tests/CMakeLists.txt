@@ -483,6 +483,10 @@ nereus_add_test(tst_nnr_radio_persistence EXTRA_LABELS models)
 # main thread (which sends the receive audio) does not wait for the disk.
 nereus_add_test(tst_app_settings_background_save EXTRA_LABELS core)
 nereus_add_test(tst_radio_settings_background_save EXTRA_LABELS models)
+# The Core's other timed saves (step attenuator, accessory records) and the
+# control changes that saved at once (TCI, VAX levels, accessory addresses,
+# the Core speaker, spots, radios): the file is written on the writer thread.
+nereus_add_test(tst_control_saves_in_background EXTRA_LABELS core models)
 nereus_add_test(tst_session_property_result fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_ps3_display_adapter EXTRA_LABELS core)
 nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)
@@ -2988,6 +2992,13 @@ target_compile_definitions(tst_bandplan_manager PRIVATE
 # shim references SpectrumWidget::kMaxWaterfallHistoryRows directly so any
 # drift in the cap is caught by the build.
 nereus_add_test(tst_waterfall_scrollback)
+
+# ── Waterfall history through a width drag ───────────────────────────────
+# Dragging a dock edge changes the spectrum's width on every mouse move
+# while rows keep arriving. Counts whole-history rescales (none during the
+# drag, one after the resize debounce) and checks that the rows captured
+# before and during the drag are intact afterward.
+nereus_add_test(tst_waterfall_history_resize_drag)
 
 # ── Task 2.8: WaterfallDefaultsPage changes (NF-AGC, Stop-on-TX, W5 removal) ─
 # NF-AGC setter round-trips, offset clamp, stop-on-TX setter round-trips,
