@@ -1757,6 +1757,8 @@ endif()
 if(APPLE)
     nereus_add_test(tst_core_audio_backend)
 endif()
+# 2026-10-12: J.J. Boyd / OpenAI Codex; portable off-device query diagnostics.
+nereus_add_test(tst_native_audio_query_trace)
 
 # Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
 # and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
