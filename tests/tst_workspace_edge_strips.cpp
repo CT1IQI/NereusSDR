@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original workspace preview four-edge strip regressions.
 // Modification history (NereusSDR):
+//   2026-10-12 - Seed the baseline panel split at the 260 px container
+//                 floor before raising its content minimum, matching
+//                 production ordering. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-10-07 - Strip placement, Move to Edge, the drop preview and the
 //                 edge drag commit and cancel for the workspace preview by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -277,7 +281,8 @@ private slots:
     // the spectrum and the Main Panel come out the same size as today and
     // the spectrum area is pixel-comparable with the baseline. "Today" is
     // the switch-off layout itself: a 3 px-handle QSplitter of spectrum
-    // and a panel with the container's minimum, setSizes({1024, 256}).
+    // and a panel initially at the 260 px container floor, setSizes({1024,
+    // 256}), followed by the queued content minimum raise.
     void rightStripTakesTodaysPanelWidthExactly()
     {
         EdgeFixture f;
@@ -295,7 +300,7 @@ private slots:
         auto* spectrum = new QWidget(splitter);
         spectrum->setMinimumWidth(f.center->minimumWidth());
         auto* panel = new QWidget(splitter);
-        panel->setMinimumWidth(minimum);
+        panel->setMinimumWidth(ContainerWidget::kMinContainerWidth);
         splitter->addWidget(spectrum);
         splitter->addWidget(panel);
         splitter->setSizes({EdgeDockArea::kMigratedTotalShare - EdgeDockArea::kMigratedPanelShare,
@@ -308,15 +313,22 @@ private slots:
             settle();
             today.resize(f.area->width(), 800);
             splitter->setGeometry(today.rect());
+            // Today's initial split precedes the queued content minimum
+            // raise (ContainerManager); a larger settled minimum floors
+            // that split rather than changing its initial proportions.
+            panel->setMinimumWidth(ContainerWidget::kMinContainerWidth);
             splitter->setSizes({EdgeDockArea::kMigratedTotalShare - EdgeDockArea::kMigratedPanelShare,
                                 EdgeDockArea::kMigratedPanelShare});
+            panel->setMinimumWidth(minimum);
+            splitter->refresh();
             settle();
             const QString at = QStringLiteral("at %1 px").arg(width);
             // No padding: the Main Panel's content is the whole strip.
             QCOMPARE(main->width(), right->width());
             QVERIFY2(main->width() == panel->width(),
-                     qPrintable(QStringLiteral("panel %1 vs today's %2 %3")
-                                    .arg(main->width()).arg(panel->width()).arg(at)));
+                     qPrintable(QStringLiteral("panel %1 vs today's %2 %3 (minimum %4, declared %5, hint %6)")
+                                    .arg(main->width()).arg(panel->width()).arg(at)
+                                    .arg(minimum).arg(main->minimumWidth()).arg(main->minimumSizeHint().width())));
             // The handle on the spectrum side is today's 3 px.
             QSplitterHandle* handle = f.middle->handle(f.middle->indexOf(right));
             QVERIFY(handle != nullptr && handle->isVisible());

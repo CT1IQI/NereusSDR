@@ -120,6 +120,8 @@ mw0lge@grange-lane.co.uk
 // Modification history (NereusSDR):
 //   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Separate workspace power tick ink without changing fitted fonts.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "gui/styles/WorkspacePreview.h"
 #include "CompositePresetItem.h"
@@ -597,6 +599,8 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
     }
     if(c["showHistory"].toBool() && channel.dynamics.hasReading()) { p.fillRect(QRectF(pos(channel.dynamics.minHistory()),top,pos(channel.dynamics.maxHistory())-pos(channel.dynamics.minHistory()),base-top),color(c,"historyColor")); }
     p.setPen(QPen(color(m_config,"lowColor"),2)); p.drawLine(QPointF(left,base),QPointF(right,base));
+    struct TickLabel { QRectF box; QRectF ink; QString value; QFont font; };
+    QVector<TickLabel> workspaceLabels;
     for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it) {
         const double raw=c["normalisePower"].toBool() ? it.key()*m_powerScale/100.0 : it.key(); const double x=pos(raw);
         p.drawLine(QPointF(x,base),QPointF(x,base-10*scale)); QRectF label(x-22*scale,base-30*scale,44*scale,18*scale);
@@ -614,10 +618,44 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
             const double halfInk=metrics.horizontalAdvance(value)/2;
             const double center=qBound(r.left()+halfInk+2,x,r.right()-halfInk-2);
             label.moveCenter(QPointF(center,label.center().y()));
-            p.setFont(fitted); p.drawText(label,Qt::AlignCenter,value);
+            // Preserve the original font propagation between fitted labels.
+            // Actual ink includes italic bearings, unlike horizontal advance.
+            const QRectF ink=metrics.tightBoundingRect(value).translated(label.center().x()-metrics.horizontalAdvance(value)/2,0);
+            workspaceLabels.append({label,ink,value,fitted});
+            p.setFont(fitted);
         } else {
             if(it==channel.calibration.begin()) { label.moveLeft(left); } else if(it.key()==channel.calibration.lastKey()) { label.moveRight(right); }
             drawObjectText(p,label,value,size);
+        }
+    }
+    if(!workspaceLabels.isEmpty()) {
+        constexpr double kMinimumTickInkGap=1.0;
+        const auto move=[](TickLabel& label,double shift) {
+            label.box.translate(shift,0); label.ink.translate(shift,0);
+        };
+        for(int i=0;i<workspaceLabels.size();++i) {
+            TickLabel& label=workspaceLabels[i];
+            if(label.ink.left()<r.left()) { move(label,std::ceil(r.left()-label.ink.left())); }
+            if(label.ink.right()>r.right()) { move(label,-std::ceil(label.ink.right()-r.right())); }
+            if(i>0) {
+                const double overlap=workspaceLabels[i-1].ink.right()+kMinimumTickInkGap-label.ink.left();
+                if(overlap>0) { move(label,std::ceil(overlap)); }
+            }
+        }
+        // If a conflict reaches the right edge, keep the endpoint whole and
+        // move only the preceding labels whose ink it would then crowd.
+        TickLabel& last=workspaceLabels.last();
+        if(last.ink.right()>r.right()) {
+            move(last,-std::ceil(last.ink.right()-r.right()));
+            for(int i=workspaceLabels.size()-2;i>=0;--i) {
+                const double overlap=workspaceLabels[i].ink.right()+kMinimumTickInkGap-workspaceLabels[i+1].ink.left();
+                if(overlap>0) { move(workspaceLabels[i],-std::ceil(overlap)); }
+            }
+        }
+        // Whole logical-pixel shifts retain Qt's original fractional baseline
+        // rounding; labels already clear of neighbors keep their rectangles.
+        for(const TickLabel& label:workspaceLabels) {
+            p.setFont(label.font); p.drawText(label.box,Qt::AlignCenter,label.value);
         }
     }
     if(channel.dynamics.hasReading()) {

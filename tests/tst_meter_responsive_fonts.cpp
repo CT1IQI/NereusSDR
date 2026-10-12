@@ -204,33 +204,111 @@ private slots:
             QCOMPARE(item->serialize(),saved);
         }
     }
+    void workspaceRescaledPowerTicksRemainWholeAndSeparate_data() {
+        QTest::addColumn<QFont>("owningFont");
+        QTest::addColumn<int>("dpr");
+        QTest::addColumn<int>("dpi");
+        const QFont defaultFont=QApplication::font();
+        QFont courier=defaultFont; courier.setFamily(QStringLiteral("Courier"));
+        courier.setWeight(QFont::Normal); courier.setItalic(false);
+        QFont courierBoldItalic=courier; courierBoldItalic.setWeight(QFont::Bold); courierBoldItalic.setItalic(true);
+        const QVector<QFont> fonts{defaultFont,courier,courierBoldItalic};
+        const QStringList names{"default","courier","courier-bold-italic"};
+        for(int fontIndex=0;fontIndex<fonts.size();++fontIndex) {
+            for(int dpr:{1,2}) {
+                for(int dpi:{72,96}) {
+                    const QByteArray name=QStringLiteral("%1-dpr%2-dpi%3").arg(names[fontIndex]).arg(dpr).arg(dpi).toLatin1();
+                    QTest::newRow(name.constData()) << fonts[fontIndex] << dpr << dpi;
+                }
+            }
+        }
+    }
     void workspaceRescaledPowerTicksRemainWholeAndSeparate() {
-        WorkspacePreview::setEnabledForTest(true);
+        QFETCH(QFont,owningFont);
+        QFETCH(int,dpr);
+        QFETCH(int,dpi);
         CompositePresetItem power(CompositePresetItem::Face::PowerSwr);
         // The current100-percent denominator gives the same five-character
         // widths as the owner's forthcoming2000W top-scale calibration.
         power.setPowerScale(1667);
         const QString saved=power.serialize();
-        for(int dpr:{1,2}) {
-            TextPaintDevice device(QSize(260,144),dpr); QPainter painter(&device);
-            power.paint(painter,260,144); painter.end();
+        const auto powerTicks=[](const TextPaintDevice& device) {
             QVector<TextPaintEngine::Text> ticks;
             for(const auto& text:device.texts()) {
                 bool numeric=false; text.value.toDouble(&numeric);
                 if(numeric && text.bounds.center().y()<72) { ticks.append(text); }
             }
-            QCOMPARE(ticks.size(),6);
-            QStringList values; for(const auto& tick:ticks) { values.append(tick.value); }
-            QCOMPARE(values,QStringList({"0","83.35","166.7","833.5","1667","2000"}));
-            for(int i=0;i<ticks.size();++i) {
-                QVERIFY2(QRectF(0,0,260,72).contains(ticks[i].deviceBounds),qPrintable(ticks[i].value));
-                for(int j=i+1;j<ticks.size();++j) {
-                    QVERIFY2(!ticks[i].deviceBounds.adjusted(-1,0,1,0).intersects(ticks[j].deviceBounds),
-                             qPrintable(ticks[i].value+" overlaps "+ticks[j].value));
-                }
-            }
-            QCOMPARE(power.serialize(),saved);
+            return ticks;
+        };
+        // The unchanged classic renderer supplies an independent fitted-font
+        // and calibrated-stroke baseline; fitting and placement are not copied
+        // into this paint-device oracle.
+        WorkspacePreview::setEnabledForTest(false);
+        TextPaintDevice classic(QSize(260,144),dpr,dpi); QPainter classicPainter(&classic);
+        classicPainter.setFont(owningFont); power.paint(classicPainter,260,144); classicPainter.end();
+        const QVector<TextPaintEngine::Text> baseline=powerTicks(classic);
+        QCOMPARE(baseline.size(),6);
+        WorkspacePreview::setEnabledForTest(true);
+        TextPaintDevice device(QSize(260,144),dpr,dpi); QPainter painter(&device);
+        painter.setFont(owningFont); power.paint(painter,260,144); painter.end();
+        const QVector<TextPaintEngine::Text> ticks=powerTicks(device);
+        QCOMPARE(ticks.size(),6);
+        QStringList values; for(const auto& tick:ticks) { values.append(tick.value); }
+        QCOMPARE(values,QStringList({"0","83.35","166.7","833.5","1667","2000"}));
+        bool baselineInteriorsSeparate=true;
+        for(int i=1;i<baseline.size()-2;++i) {
+            baselineInteriorsSeparate=baselineInteriorsSeparate &&
+                !baseline[i].deviceBounds.adjusted(-1,0,1,0).intersects(baseline[i+1].deviceBounds);
         }
+        for(int i=0;i<ticks.size();++i) {
+            const QFont& font=ticks[i].font;
+            const qreal pixels=font.pixelSize()>0?font.pixelSize():font.pointSizeF()*QFontMetricsF(font,&device).fontDpi()/72.0;
+            QVERIFY(pixels>=11.0);
+            QCOMPARE(font.family(),owningFont.family());
+            QCOMPARE(font.weight(),owningFont.weight());
+            QCOMPARE(font.italic(),owningFont.italic());
+            const QFont& baselineFont=baseline[i].font;
+            const qreal baselinePixels=baselineFont.pixelSize()>0?baselineFont.pixelSize():baselineFont.pointSizeF()*QFontMetricsF(baselineFont,&classic).fontDpi()/72.0;
+            if(baselinePixels>=11.0) { QCOMPARE(font,baselineFont); }
+            if(baselineInteriorsSeparate && i>0 && i<ticks.size()-1) {
+                QCOMPARE(ticks[i].deviceBounds,baseline[i].deviceBounds);
+            }
+            QVERIFY2(QRectF(0,0,260,72).contains(ticks[i].deviceBounds),qPrintable(ticks[i].value));
+            for(int j=i+1;j<ticks.size();++j) {
+                QVERIFY2(!ticks[i].deviceBounds.adjusted(-1,0,1,0).intersects(ticks[j].deviceBounds),
+                         qPrintable(ticks[i].value+" overlaps "+ticks[j].value));
+            }
+        }
+        QCOMPARE(device.strokes().size(),classic.strokes().size());
+        for(int i=0;i<device.strokes().size();++i) { QCOMPARE(device.strokes()[i],classic.strokes()[i]); }
+        // Native design calibration: the bars retain their base and every tick.
+        QCOMPARE(device.strokes().size(),13);
+        const QVector<qreal> powerXs{18,60,102,144,186,239.76};
+        const QVector<qreal> swrXs{18,74,130,186,239.76};
+        for(int i=0;i<powerXs.size();++i) {
+            const QRectF stroke=device.strokes()[i+1].boundingRect();
+            QVERIFY(qAbs(stroke.center().x()-powerXs[i])<0.000001);
+            QCOMPARE(stroke.center().y(),qreal(53));
+        }
+        for(int i=0;i<swrXs.size();++i) {
+            const QRectF stroke=device.strokes()[i+8].boundingRect();
+            QVERIFY(qAbs(stroke.center().x()-swrXs[i])<0.000001);
+            QCOMPARE(stroke.center().y(),qreal(125));
+        }
+        QCOMPARE(power.serialize(),saved);
+        power.pushBindingValue(power.bindingId(),2300.0);
+        // Let the existing display smoothing settle; the scale never clamps
+        // the raw reading or its numeric output to the final2000W tick.
+        for(qint64 now=0;now<=2000;now+=100) { power.advanceMeter(now); }
+        QCOMPARE(power.value(),2300.0);
+        TextPaintDevice readout(QSize(260,144),dpr,dpi); QPainter readoutPainter(&readout);
+        readoutPainter.setFont(owningFont); power.paint(readoutPainter,260,144); readoutPainter.end();
+        const auto numeric=std::find_if(readout.texts().cbegin(),readout.texts().cend(),[](const auto& text) {
+            return text.value==QStringLiteral("2300.0 W");
+        });
+        QVERIFY(numeric!=readout.texts().cend());
+        QVERIFY(QRectF(0,0,260,144).contains(numeric->deviceBounds));
+        QCOMPARE(power.serialize(),saved);
     }
     void legacyScaleEndpointsFitWithoutChangingTicks_data()
     {
