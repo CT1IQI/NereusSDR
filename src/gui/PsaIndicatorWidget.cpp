@@ -16,6 +16,9 @@
 //                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 //   2026-10-04 — Live Core status and passive numeric correction readouts,
 //                 by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+//   2026-10-11 — A status update restyles the banner only when its
+//                 color changes; J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 //   2026-05-06 — Phase 3M-4 Task 10: created by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude
@@ -520,11 +523,16 @@ void PsaIndicatorWidget::applyBackground(QLabel* label, const QColor& bg)
     label->setPalette(p);
     label->setAutoFillBackground(true);
 
-    label->setStyleSheet(QStringLiteral(
+    const QString style = QStringLiteral(
         "QLabel { background-color: %1; color: #101010; "
         "padding: 1px 6px; border-radius: 3px; "
         "font-weight: bold; font-size: 11px; }")
-        .arg(bg.name()));
+        .arg(bg.name());
+    // Qt polishes and repaints a widget on every setStyleSheet(), the same
+    // text or not, and this runs on every status update.
+    if (label->styleSheet() != style) {
+        label->setStyleSheet(style);
+    }
 }
 
 } // namespace NereusSDR

@@ -23,6 +23,9 @@
 //                 radio is on the air the arming buttons and the settings
 //                 grey with the reason. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-11 - A status update restyles the correction light only when
+//                 its color changes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  PSForm.cs
@@ -1018,9 +1021,14 @@ void PsForm::refreshFacadeStatus()
         const QString colour = status.correctionsApplied
             ? correcting ? QStringLiteral("#00FF00") : QStringLiteral("#FFFF00")
             : QStringLiteral("black");
-        m_lblCo->setStyleSheet(QStringLiteral(
+        const QString style = QStringLiteral(
             "QLabel { background-color: %1; border: 1px inset; "
-            "min-width: 12px; min-height: 12px; }").arg(colour));
+            "min-width: 12px; min-height: 12px; }").arg(colour);
+        // Qt polishes and repaints a widget on every setStyleSheet(), the
+        // same text or not, and this runs on every status update.
+        if (m_lblCo->styleSheet() != style) {
+            m_lblCo->setStyleSheet(style);
+        }
     }
     refreshSaveRestoreButtons();
 }
