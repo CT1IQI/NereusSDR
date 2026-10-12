@@ -40,6 +40,9 @@
 //                 also sends the receive audio, no longer waits for the
 //                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-12 - A saved radio keeps the second firmware number its
+//                 discovery reply carried (firmwareBetaVersion). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1323,6 +1326,8 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
     setValue(prefix + QStringLiteral("protocol"),
              QString::number(static_cast<int>(info.protocol)));
     setValue(prefix + QStringLiteral("firmwareVersion"), QString::number(info.firmwareVersion));
+    setValue(prefix + QStringLiteral("firmwareBetaVersion"),
+             QString::number(info.firmwareBetaVersion));
     setValue(prefix + QStringLiteral("pinToMac"),        pinToMac   ? QStringLiteral("True") : QStringLiteral("False"));
     setValue(prefix + QStringLiteral("autoConnect"),     autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
     setValue(prefix + QStringLiteral("lastSeen"),
@@ -1421,6 +1426,9 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
                                       QStringLiteral("1")).toInt());
     sr.info.firmwareVersion = value(prefix + QStringLiteral("firmwareVersion"),
                                     QStringLiteral("0")).toInt();
+    // Absent in a radio saved before 2026-10-12: none reported.
+    sr.info.firmwareBetaVersion = value(prefix + QStringLiteral("firmwareBetaVersion"),
+                                        QStringLiteral("0")).toInt();
 
     // Saved-only flags
     sr.pinToMac    = (value(prefix + QStringLiteral("pinToMac"),

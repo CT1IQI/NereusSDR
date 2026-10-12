@@ -10,6 +10,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-09-30: RADE reason: the remote window declares radeReason.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12: a remote window's stored radio holds no second firmware
+// number. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // tests/tst_station_session.cpp  (NereusSDR)
 // =================================================================
@@ -6252,6 +6254,12 @@ void TstStationSession::coreSendsRadioIdentityOnlyFromMinorEleven()
 void TstStationSession::remoteModelResolvesTheCoresRadio()
 {
     RadioModel remote(RadioModel::Role::Remote);
+    // A radio this window ran itself, with a second firmware number.
+    RadioInfo own;
+    own.boardType = HPSDRHW::OrionMKII;
+    own.firmwareVersion = 22;
+    own.firmwareBetaVersion = 14;
+    remote.setLastRadioInfoForTest(own);
 
     // The Core's model wins when it matches the board.
     remote.applyStationCapabilities(g21kCaps());
@@ -6260,6 +6268,9 @@ void TstStationSession::remoteModelResolvesTheCoresRadio()
     QCOMPARE(remote.currentRadioInfo().protocol, ProtocolVersion::Protocol2);
     QCOMPARE(remote.currentRadioInfo().address, QHostAddress(QStringLiteral("192.168.1.50")));
     QCOMPARE(remote.currentRadioInfo().firmwareVersion, 27);
+    // The link carries the first firmware number only: the window's own
+    // radio's second number is not left beside the Core's first.
+    QCOMPARE(remote.currentRadioInfo().firmwareBetaVersion, 0);
     QCOMPARE(remote.currentRadioInfo().macAddress, QStringLiteral("AA:BB:CC:DD:EE:46"));
     QCOMPARE(remote.currentRadioInfo().boardType, HPSDRHW::Saturn);
     QCOMPARE(remote.transmitModel().hpsdrModel(), HPSDRModel::ANAN_G2_1K);

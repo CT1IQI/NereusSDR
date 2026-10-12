@@ -41,6 +41,9 @@
 //                rows that fit side by side without a scroll bar are side
 //                by side whatever was shown before. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The Firmware readout shows the radio's second firmware
+//                number where it reported one. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RadioStatusPage.h"
@@ -356,8 +359,15 @@ void RadioStatusPage::buildStatusBar(QFrame* bar)
             radioStr = m_model->name();
         }
         m_radioLabel->setText(radioStr.isEmpty() ? QStringLiteral("–") : radioStr);
-        m_firmwareLabel->setText(m_model->version().isEmpty()
-                                     ? QStringLiteral("–") : m_model->version());
+        // version() is the firmware's first number alone, as a Core sends
+        // it to its windows. The model's record of the same radio adds the
+        // second number where the radio reported one.
+        const QString version = m_model->version();
+        const RadioInfo& info = m_model->currentRadioInfo();
+        const bool recordIsThisRadio =
+            info.firmwareVersion > 0 && version == QString::number(info.firmwareVersion);
+        m_firmwareLabel->setText(version.isEmpty() ? QStringLiteral("–")
+                                 : recordIsThisRadio ? info.firmwareText() : version);
     }
 }
 
