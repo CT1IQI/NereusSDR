@@ -107,6 +107,10 @@
 //                 background follows the container's (the user's colour
 //                 when set).  NereusSDR-native; no upstream equivalent.
 // =================================================================
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "SMeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -824,7 +828,7 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     // -- Tick drawing helpers -------------------------------------------------
     QFont tickFont = font();
-    tickFont.setPixelSize(qMax(10, h / 10));
+    tickFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(10, h / 10)));
     tickFont.setBold(true);
     p.setFont(tickFont);
     const QFontMetrics tfm(tickFont);
@@ -1030,12 +1034,12 @@ void SMeterWidget::paintClassic(QPainter& p)
 
     // -- Text readout -- all top-aligned on the same baseline -----------------
     QFont srcFont = font();
-    srcFont.setPixelSize(qMax(9, h / 14));
+    srcFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(9, h / 14)));
     const QFontMetrics sfm(srcFont);
     const int topY = sfm.height() + 2;
 
     QFont valFont = font();
-    valFont.setPixelSize(qMax(13, h / 8));
+    valFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(13, h / 8)));
     valFont.setBold(true);
     const QFontMetrics vfm(valFont);
 
@@ -1099,9 +1103,10 @@ void SMeterWidget::paintVintage(QPainter& p)
     // (the user's colour when set) shows at the corners and beside a
     // centred plate.
     const QColor surround(Qt::transparent);
-    const QString key = QString("%1x%2@%3|%4|%5|%6")
+    const QString key = QString("%1x%2@%3|%4|%5|%6|%7")
         .arg(width()).arg(height()).arg(dpr)
-        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width());
+        .arg(static_cast<int>(m_faceStyle)).arg(scaleKey).arg(bounds.width())
+        .arg(WorkspacePreview::enabled());
 
     if (key != m_faceCacheKey || m_faceCache.isNull()) {
         VintageScale scale;

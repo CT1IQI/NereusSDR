@@ -1,3 +1,7 @@
+// Modification history (NereusSDR):
+//   2026-10-12 - Track the approved workspace text minimum in paint caches.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #pragma once
 
 // =================================================================
@@ -359,6 +363,7 @@ using SpectrumBaseClass = QWidget;
 #endif
 
 class TestDssRowTee;
+class TestWorkspaceSpectrumFontMinimum;
 
 namespace NereusSDR {
 
@@ -451,6 +456,7 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
 class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
     friend class ::TestDssRowTee;
+    friend class ::TestWorkspaceSpectrumFontMinimum;
 
     // Phase 3Q-8: animated dim factor for the disconnect overlay.
     // 1.0 = no dim (connected), 0.4 = 60% dim (disconnected, after 800 ms fade).
@@ -2826,7 +2832,7 @@ private:
     // top — they all derive their Y from these helpers.  drawBandPlan
     // itself paints below this carve-out using r.bottom() directly so the
     // strip still lands at the panel bottom.
-    int bandPlanStripHeight() const;
+    int bandPlanStripHeight(const QPaintDevice* device = nullptr) const;
 
     // 1-Hz-bandwidth normalisation shift — returns -10*log10(binWidthHz)
     // when m_dispNormalize is on, 0 otherwise.  Applied inside dbmToY /
@@ -3949,6 +3955,7 @@ private:
     QRhiTexture*                m_ovGpuTex{nullptr};
     QRhiSampler*                m_ovSampler{nullptr};
     QImage m_overlayStatic;
+    bool   m_readableTextCache{false};
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 

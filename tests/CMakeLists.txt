@@ -698,6 +698,7 @@ nereus_add_test(tst_visual_preview_quiet_layout visual/PreviewData.cpp)
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
 # The filter pane draws every frame as it did before its cost work (offscreen).
 nereus_add_test(tst_bandwidth_filter_pane_paint)
+nereus_add_test(tst_workspace_spectrum_font_minimum)
 
 if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp

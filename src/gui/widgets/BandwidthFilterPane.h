@@ -81,6 +81,10 @@
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Track the approved workspace text minimum in paint caches.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #pragma once
 
 #include <QColor>
@@ -252,6 +256,7 @@ private:
     // The fonts made from the widget's font, and their metrics
     // (resolveFonts).
     void resolveFonts();
+    bool m_readableFonts{false};
     QFont m_fontBase;
     QFont m_valueFont;
     QFont m_smallFont;

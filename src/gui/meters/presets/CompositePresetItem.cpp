@@ -117,6 +117,11 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+#include "gui/styles/WorkspacePreview.h"
 #include "CompositePresetItem.h"
 #include "AnanFaceRenderer.h"
 #include "../ResponsiveText.h"
@@ -200,9 +205,9 @@ AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,
     double readoutFont=qMax(12.0,fontSize*outer.width()/720),readoutHeight=0;
     double nameHeight=0,valueHeight=0,peakHeight=0;
     for(int pass=0;pass<5;++pass) {
-        QFont font=QGuiApplication::font(); font.setBold(true); font.setItalic(false); font.setPixelSize(qMax(12,qRound(readoutFont)));
-        QFont heading=font; heading.setPixelSize(qMax(11,qRound(readoutFont*.75)));
-        QFont peak=font; peak.setPixelSize(qMax(11,qRound(readoutFont*.7)));
+        QFont font=QGuiApplication::font(); font.setBold(true); font.setItalic(false); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(12,qRound(readoutFont))));
+        QFont heading=font; heading.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(11,qRound(readoutFont*.75))));
+        QFont peak=font; peak.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(11,qRound(readoutFont*.7))));
         nameHeight=QFontMetricsF(heading).height(); valueHeight=QFontMetricsF(font).height();
         peakHeight=showPeak?QFontMetricsF(peak).height():0;
         const double cell=nameHeight+valueHeight+peakHeight+4;
@@ -391,8 +396,8 @@ int CompositePresetItem::preferredFaceHeight() const {
     if(m_face==Face::SignalText) {
         // NereusSDR stack presentation reserves separate lines without rewriting
         // the imported face height or the user's chosen font.
-        QFont font; font.setPixelSize(m_config["fontSize"].toInt());
-        QFont peakFont; peakFont.setPixelSize(14);
+        QFont font; font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt()));
+        QFont peakFont; peakFont.setPixelSize(WorkspacePreview::readableTextPixelSize(14));
         const int lines=int(m_config["showTitle"].toBool())+int(m_config["showReadout"].toBool());
         height=qMax(height,lines*QFontMetrics(font).height()+
             (m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0)+12);
@@ -402,7 +407,7 @@ int CompositePresetItem::preferredFaceHeight() const {
 QSize CompositePresetItem::minimumFaceSize() const {
     int width=m_face==Face::Anan || m_face==Face::Cross || m_face==Face::Contest?360:260;
     if(m_face==Face::SignalText) {
-        QFont font; font.setPixelSize(m_config["fontSize"].toInt()); const QFontMetrics metrics(font);
+        QFont font; font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt())); const QFontMetrics metrics(font);
         if(m_config["showTitle"].toBool()) { width=qMax(width,metrics.horizontalAdvance(m_config["title"].toString())+8); }
         if(m_config["showReadout"].toBool()) {
             for(double value:{m_config["minValue"].toDouble(),m_config["maxValue"].toDouble()}) { width=qMax(width,metrics.horizontalAdvance(signalReadout(value))+16); }
@@ -459,9 +464,9 @@ int CompositePresetItem::ananReadoutCount() const {
 }
 double CompositePresetItem::ananReadoutCellWidth(double outerWidth) const {
     const double pixels=qMax(12.0,m_config["fontSize"].toDouble()*outerWidth/720);
-    QFont value=QGuiApplication::font(); value.setBold(true); value.setItalic(false); value.setPixelSize(qMax(12,qRound(pixels)));
-    QFont heading=value; heading.setPixelSize(qMax(11,qRound(pixels*.75)));
-    QFont peak=value; peak.setPixelSize(qMax(11,qRound(pixels*.7)));
+    QFont value=QGuiApplication::font(); value.setBold(true); value.setItalic(false); value.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(12,qRound(pixels))));
+    QFont heading=value; heading.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(11,qRound(pixels*.75))));
+    QFont peak=value; peak.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(11,qRound(pixels*.7))));
     const QFontMetricsF values(value),headings(heading),peaks(peak);
     double width=0;
     for(int i=0;i<m_channels.size();++i) {
@@ -594,8 +599,26 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
     p.setPen(QPen(color(m_config,"lowColor"),2)); p.drawLine(QPointF(left,base),QPointF(right,base));
     for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it) {
         const double raw=c["normalisePower"].toBool() ? it.key()*m_powerScale/100.0 : it.key(); const double x=pos(raw);
-        p.drawLine(QPointF(x,base),QPointF(x,base-10*scale)); QRectF label(x-22*scale,base-30*scale,44*scale,18*scale); if(it==channel.calibration.begin()) { label.moveLeft(left); } else if(it.key()==channel.calibration.lastKey()) { label.moveRight(right); }
-        drawObjectText(p,label,QString::number(raw,'g',4),size);
+        p.drawLine(QPointF(x,base),QPointF(x,base-10*scale)); QRectF label(x-22*scale,base-30*scale,44*scale,18*scale);
+        const QString value=QString::number(raw,'g',4);
+        if (WorkspacePreview::enabled()) {
+            // The endpoint slot used to move a full22px inward. Long rescaled
+            // values then collided with the next tick. Keep each value at its
+            // calibrated x and move only enough to keep the actual glyphs in
+            // the outer face. The font still fits the original slot, so text
+            // already >=11px retains its final size exactly.
+            const QFont fitted=fitObjectText(p.font(),size,value,label,false,Qt::TextSingleLine,p.device());
+            const QFontMetricsF metrics(fitted,p.device());
+            const double width=qMax(44*scale,metrics.horizontalAdvance(value)+4);
+            label.setWidth(width); label.moveCenter(QPointF(x,label.center().y()));
+            const double halfInk=metrics.horizontalAdvance(value)/2;
+            const double center=qBound(r.left()+halfInk+2,x,r.right()-halfInk-2);
+            label.moveCenter(QPointF(center,label.center().y()));
+            p.setFont(fitted); p.drawText(label,Qt::AlignCenter,value);
+        } else {
+            if(it==channel.calibration.begin()) { label.moveLeft(left); } else if(it.key()==channel.calibration.lastKey()) { label.moveRight(right); }
+            drawObjectText(p,label,value,size);
+        }
     }
     if(channel.dynamics.hasReading()) {
         if(c["peakHold"].toBool()) { p.setPen(QPen(color(m_config,"highColor"),3)); p.drawLine(QPointF(pos(channel.dynamics.maxHistory()),top),QPointF(pos(channel.dynamics.maxHistory()),base)); }
@@ -611,7 +634,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
     const double aspect=m_face==Face::Cross ? .782 : .512;
     const double width=qMax(0.0,qMin(outer.width()-24*scale,(outer.height()-73*scale)/aspect));
     const QRectF r(outer.center().x()-width/2,outer.top()+25*scale,width,width*aspect);
-    QFont font=p.font();
+    QFont font=WorkspacePreview::readableFont(p.font(), p.device());
     if(background) {
         p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { drawObjectText(p,QRectF(outer.left()+4*scale,outer.top()+2*scale,outer.width()-8*scale,22*scale),m_config["title"].toString(),size); }
     }
@@ -675,7 +698,8 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
                 }
             }
             p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawPath(arc);
-            const double y=outer.bottom()-44*scale-(m_face==Face::Anan && i==1 ? 16*scale : 0);
+            const double y=outer.bottom()-44*scale-(m_face==Face::Anan && i==1 ? 16*scale : 0)
+                + (WorkspacePreview::enabled() ? 2*scale : 0);
             if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*i/m_channels.size()+4*scale,y,outer.width()/m_channels.size()-8*scale,18*scale),channel.name+" ("+channel.units+")",size); }
             continue;
         }
@@ -718,10 +742,10 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     static const QImage art(QStringLiteral(":/meters/anan-approved-clean.jpg"));
     static const QImage hubs(QStringLiteral(":/meters/anan-approved-hubs.jpg"));
     const auto text=[&](const QRectF& box,const QString& value,double size,QColor ink,Qt::Alignment alignment=Qt::AlignCenter,int minimumPixels=1) {
-        QFont font=p.font(); font.setBold(true); font.setItalic(false); font.setPixelSize(qMax(1,qRound(size)));
+        QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setBold(true); font.setItalic(false); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(size))));
         const QFontMetricsF metrics(font);
         const double factor=qMin(1.0,qMin(box.width()/qMax(1.0,metrics.horizontalAdvance(value)),box.height()/qMax(1.0,metrics.height())));
-        font.setPixelSize(qMax(minimumPixels,qFloor(size*factor))); p.setFont(font); p.setPen(ink); p.drawText(box,alignment,value);
+        font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(minimumPixels,qFloor(size*factor)))); p.setFont(font); p.setPen(ink); p.drawText(box,alignment,value);
     };
     const auto included=[&](int i) { return ananChannelIncluded(i); };
     const auto active=[&](int i) {
@@ -893,7 +917,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
                     const int pixels=qMax(1,qRound(nominalPixels*fit));
                     if(i!=0 && pixels==previousPixels) { continue; }
                     previousPixels=pixels;
-                    QFont font(QStringLiteral("Arial")); font.setBold(true); font.setPixelSize(pixels);
+                    QFont font = WorkspacePreview::readableFont(QFont(QStringLiteral("Arial")), p.device()); font.setBold(true); font.setPixelSize(WorkspacePreview::readableTextPixelSize(pixels));
                     inkPath=QPainterPath(); inkPath.addText(QPointF(0,0),font,label); inkBounds=inkPath.boundingRect();
                     const double halfWidth=i==0?source.width()*scale*fontRatio*fit/2:inkBounds.width()/2;
                     const double halfHeight=i==0?source.height()*scale*fontRatio*fit/2:inkBounds.height()/2;
@@ -1071,7 +1095,7 @@ void CompositePresetItem::paint(QPainter& p,int width,int height) { paintForLaye
 void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) {
     const QRectF r=pixelRect(width,height); p.save(); p.setClipRect(r); p.setRenderHint(QPainter::Antialiasing,true);
     if((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool())) { p.setOpacity(.25); }
-    QFont font=p.font(); font.setPixelSize(m_config["fontSize"].toInt()); p.setFont(font);
+    QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt())); p.setFont(font);
     const double textScale=m_face==Face::Anan?1:objectTextScale(r,{m_face==Face::Cross || m_face==Face::Contest?360.:260.,
         m_face==Face::PowerSwr?144.:m_face==Face::Cross?260.:m_face==Face::Contest?280.:m_face==Face::Eye?180.:120.});
     const double textSize=m_config["fontSize"].toInt()*textScale;

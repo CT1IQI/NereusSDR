@@ -59,6 +59,11 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+#include "gui/styles/WorkspacePreview.h"
 #include "RotatorItem.h"
 
 // From Thetis clsRotatorItem (MeterManager.cs:15042+)
@@ -383,7 +388,7 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             const float ty = cy + radius_text * std::sin(rad);
 
             QFont font;
-            font.setPixelSize(std::max(7, static_cast<int>(h * 0.06f)));
+            font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             font.setBold(deg == 0);
             p.setFont(font);
             // From Thetis MeterManager.cs:35275 — "N" drawn in red (bigBlobColour = red)
@@ -391,7 +396,17 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
             p.setBrush(Qt::NoBrush);
 
             const int fw = std::max(12, static_cast<int>(h * 0.12f));
-            p.drawText(QRectF(tx - fw / 2.0f, ty - fw / 2.0f, fw, fw),
+            const QFontMetrics metrics(font,p.device());
+            const int textWidth=WorkspacePreview::enabled() ? std::max(fw,metrics.horizontalAdvance(card)+2) : fw;
+            const int textHeight=WorkspacePreview::enabled() ? std::max(fw,metrics.height()) : fw;
+            QRectF textBox(tx-textWidth/2.0f,ty-textHeight/2.0f,textWidth,textHeight);
+            if(WorkspacePreview::enabled()) {
+                if(textBox.left()<compassRect.left()) {textBox.moveLeft(compassRect.left());}
+                if(textBox.right()>compassRect.right()+1) {textBox.moveRight(compassRect.right()+1);}
+                if(textBox.top()<compassRect.top()) {textBox.moveTop(compassRect.top());}
+                if(textBox.bottom()>compassRect.bottom()+1) {textBox.moveBottom(compassRect.bottom()+1);}
+            }
+            p.drawText(textBox,
                        Qt::AlignCenter, card);
         }
     } else {
@@ -411,13 +426,23 @@ void RotatorItem::paintCompassFace(QPainter& p, const QRect& compassRect)
                 const float ty = cy + radius_text * std::sin(rad);
 
                 QFont font;
-                font.setPixelSize(std::max(7, static_cast<int>(h * 0.06f)));
+                font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
                 p.setFont(font);
                 p.setPen(m_outerTextColour);
                 p.setBrush(Qt::NoBrush);
 
                 const int fw = std::max(14, static_cast<int>(h * 0.14f));
-                p.drawText(QRectF(tx - fw / 2.0f, ty - fw / 2.0f, fw, fw),
+                const QFontMetrics metrics(font,p.device());
+                const int textWidth=WorkspacePreview::enabled() ? std::max(fw,metrics.horizontalAdvance(QString::number(deg))+2) : fw;
+                const int textHeight=WorkspacePreview::enabled() ? std::max(fw,metrics.height()) : fw;
+                QRectF textBox(tx-textWidth/2.0f,ty-textHeight/2.0f,textWidth,textHeight);
+                if(WorkspacePreview::enabled()) {
+                    if(textBox.left()<compassRect.left()) {textBox.moveLeft(compassRect.left());}
+                    if(textBox.right()>compassRect.right()+1) {textBox.moveRight(compassRect.right()+1);}
+                    if(textBox.top()<compassRect.top()) {textBox.moveTop(compassRect.top());}
+                    if(textBox.bottom()>compassRect.bottom()+1) {textBox.moveBottom(compassRect.bottom()+1);}
+                }
+                p.drawText(textBox,
                            Qt::AlignCenter, QString::number(deg));
             } else {
                 p.setBrush(m_smallBlobColour);
@@ -478,14 +503,24 @@ void RotatorItem::paintElevationArc(QPainter& p, const QRect& eleRect)
             const float ty = cy + radius_text * std::sin(rad);
 
             QFont font;
-            font.setPixelSize(std::max(7, static_cast<int>(h * 0.06f)));
+            font.setPixelSize(WorkspacePreview::readableTextPixelSize(std::max(7, static_cast<int>(h * 0.06f))));
             p.setFont(font);
             p.setPen(m_outerTextColour);
             p.setBrush(Qt::NoBrush);
 
             // From Thetis MeterManager.cs:35526: plotText((90 - deg).ToString(), ...)
             const int fw = std::max(14, static_cast<int>(h * 0.14f));
-            p.drawText(QRectF(tx - fw / 2.0f, ty - fw / 2.0f, fw, fw),
+            const QFontMetrics metrics(font,p.device());
+            const int textWidth=WorkspacePreview::enabled() ? std::max(fw,metrics.horizontalAdvance(QString::number(90 - deg))+2) : fw;
+            const int textHeight=WorkspacePreview::enabled() ? std::max(fw,metrics.height()) : fw;
+            QRectF textBox(tx-textWidth/2.0f,ty-textHeight/2.0f,textWidth,textHeight);
+            if(WorkspacePreview::enabled()) {
+                if(textBox.left()<eleRect.left()) {textBox.moveLeft(eleRect.left());}
+                if(textBox.right()>eleRect.right()+1) {textBox.moveRight(eleRect.right()+1);}
+                if(textBox.top()<eleRect.top()) {textBox.moveTop(eleRect.top());}
+                if(textBox.bottom()>eleRect.bottom()+1) {textBox.moveBottom(eleRect.bottom()+1);}
+            }
+            p.drawText(textBox,
                        Qt::AlignCenter, QString::number(90 - deg));
         } else {
             p.setBrush(m_smallBlobColour);
@@ -591,26 +626,39 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         if (m_showValue) {
             const int fontSize = std::max(7, static_cast<int>(h * 0.07f));
             QFont font;
-            font.setPixelSize(fontSize);
+            font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
             p.setPen(m_outerTextColour);
             p.setBrush(Qt::NoBrush);
 
             const int labelSize  = std::max(7, static_cast<int>(fontSize * 0.65f));
-            const int fwLarge    = std::max(20, static_cast<int>(w * 0.22f));
-            const int fhLarge    = std::max(10, static_cast<int>(h * 0.09f));
+            QFont captionFont;
+            captionFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
+            const QFontMetrics valueMetrics(font,p.device()), captionMetrics(captionFont,p.device());
+            const QString reading=QStringLiteral("%1°").arg(degrees_az, 0, 'f', 1);
+            const int fwLarge = WorkspacePreview::enabled()
+                ? std::max(std::max(20,static_cast<int>(w*.22f)),
+                           std::max(valueMetrics.horizontalAdvance(reading),captionMetrics.horizontalAdvance(QStringLiteral("azimuth")))+2)
+                : std::max(20, static_cast<int>(w * 0.22f));
+            const int fhLarge = WorkspacePreview::enabled()
+                ? std::max(std::max(10,static_cast<int>(h*.09f)),std::max(valueMetrics.height(),captionMetrics.height()))
+                : std::max(10, static_cast<int>(h * 0.09f));
 
             if (m_mode == RotatorMode::Both) {
                 // From Thetis MeterManager.cs:35364-35371
-                const float tx  = static_cast<float>(compassRect.left()) + w * 0.75f;
-                const float ty1 = static_cast<float>(compassRect.top())  + h * 0.575f;
-                const float ty2 = static_cast<float>(compassRect.top())  + h * 0.7f;
+                const float tx = WorkspacePreview::enabled()
+                    ? std::min(static_cast<float>(compassRect.left())+w*.75f,static_cast<float>(compassRect.right()+1-fwLarge))
+                    : static_cast<float>(compassRect.left()) + w * 0.75f;
+                const float ty1 = static_cast<float>(compassRect.top())
+                    + (WorkspacePreview::enabled() ? std::min(h*.575f,h-4*fhLarge-6) : h*.575f);
+                const float ty2 = WorkspacePreview::enabled() ? ty1+fhLarge+2
+                    : static_cast<float>(compassRect.top()) + h * 0.7f;
                 p.drawText(QRectF(tx, ty1, fwLarge, fhLarge),
                            Qt::AlignLeft | Qt::AlignVCenter,
                            QStringLiteral("%1°").arg(degrees_az, 0, 'f', 1));
                 QFont labelFont;
-                labelFont.setPixelSize(labelSize);
+                labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
                 p.setFont(labelFont);
                 p.drawText(QRectF(tx, ty2, fwLarge, fhLarge),
                            Qt::AlignLeft | Qt::AlignVCenter,
@@ -624,7 +672,7 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
                            Qt::AlignCenter,
                            QStringLiteral("%1°").arg(degrees_az, 0, 'f', 1));
                 QFont labelFont;
-                labelFont.setPixelSize(labelSize);
+                labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
                 p.setFont(labelFont);
                 p.drawText(QRectF(tx - fwLarge / 2.0f, ty2, fwLarge, fhLarge),
                            Qt::AlignCenter,
@@ -689,15 +737,23 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
         if (m_showValue) {
             const int fontSize  = std::max(7, static_cast<int>(h * 0.07f));
             const int labelSize = std::max(7, static_cast<int>(fontSize * 0.65f));
-            const int fw        = std::max(20, static_cast<int>(w * 0.22f));
-            const int fh        = std::max(10, static_cast<int>(h * 0.09f));
-
             QFont font;
-            font.setPixelSize(fontSize);
+            font.setPixelSize(WorkspacePreview::readableTextPixelSize(fontSize));
             font.setBold(true);
             p.setFont(font);
             p.setPen(m_outerTextColour);
             p.setBrush(Qt::NoBrush);
+            QFont captionFont;
+            captionFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
+            const QFontMetrics valueMetrics(font,p.device()), captionMetrics(captionFont,p.device());
+            const QString reading=QStringLiteral("%1°").arg(degrees_ele, 0, 'f', 1);
+            const int fw = WorkspacePreview::enabled()
+                ? std::max(std::max(20,static_cast<int>(w*.22f)),
+                           std::max(valueMetrics.horizontalAdvance(reading),captionMetrics.horizontalAdvance(QStringLiteral("elevation")))+2)
+                : std::max(20,static_cast<int>(w*.22f));
+            const int fh = WorkspacePreview::enabled()
+                ? std::max(std::max(10,static_cast<int>(h*.09f)),std::max(valueMetrics.height(),captionMetrics.height()))
+                : std::max(10,static_cast<int>(h*.09f));
 
             if (m_mode == RotatorMode::Ele) {
                 // From Thetis MeterManager.cs:35560-35564
@@ -708,21 +764,24 @@ void RotatorItem::paintHeading(QPainter& p, const QRect& compassRect)
                            Qt::AlignCenter,
                            QStringLiteral("%1°").arg(degrees_ele, 0, 'f', 1));
                 QFont labelFont;
-                labelFont.setPixelSize(labelSize);
+                labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
                 p.setFont(labelFont);
                 p.drawText(QRectF(tx, ty2, fw, fh),
                            Qt::AlignCenter,
                            QStringLiteral("elevation"));
             } else {
                 // BOTH mode — From Thetis MeterManager.cs:35567-35569
-                const float tx  = static_cast<float>(compassRect.left()) + w * 0.75f;
-                const float ty1 = static_cast<float>(compassRect.top())  + h * 0.825f;
-                const float ty2 = ty1 + fh;
+                const float tx = WorkspacePreview::enabled()
+                    ? std::min(static_cast<float>(compassRect.left())+w*.75f,static_cast<float>(compassRect.right()+1-fw))
+                    : static_cast<float>(compassRect.left()) + w * 0.75f;
+                const float ty1 = static_cast<float>(compassRect.top())
+                    + (WorkspacePreview::enabled() ? std::min(h*.825f,h-2*fh-2) : h*.825f);
+                const float ty2 = ty1 + fh + (WorkspacePreview::enabled() ? 2 : 0);
                 p.drawText(QRectF(tx, ty1, fw, fh),
                            Qt::AlignLeft | Qt::AlignVCenter,
                            QStringLiteral("%1°").arg(degrees_ele, 0, 'f', 1));
                 QFont labelFont;
-                labelFont.setPixelSize(labelSize);
+                labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(labelSize));
                 p.setFont(labelFont);
                 p.drawText(QRectF(tx, ty2, fw, fh),
                            Qt::AlignLeft | Qt::AlignVCenter,

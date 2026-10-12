@@ -9,6 +9,10 @@
 #include <QWidget>
 #include <QMouseEvent>
 #include <limits>
+#include "gui/styles/WorkspacePreview.h"
+#include "gui/meters/ResponsiveText.h"
+#include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/RotatorItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/HistoryGraphItem.h"
@@ -25,7 +29,7 @@ namespace {
 // using the renderer's private layout arithmetic as the readability oracle.
 class TextPaintEngine : public QPaintEngine {
 public:
-    struct Text { QString value; double pixels; QRectF bounds; QFont font; };
+    struct Text { QString value; double pixels; QRectF bounds; QFont font; QRectF deviceBounds; };
     QVector<Text> texts;
     QVector<QPainterPath> strokes;
     QVector<QImage> images;
@@ -44,7 +48,10 @@ public:
     void drawTextItem(const QPointF& point,const QTextItem& item) override {
         QPainterPath ink; ink.addText(point,item.font(),item.text());
         const QRectF inkMapped=state->transform().mapRect(ink.boundingRect());
-        texts.append({item.text(),QFontMetricsF(item.font()).height(),QRectF(inkMapped.topLeft()/m_dpr,inkMapped.size()/m_dpr),item.font()});
+        const QRectF deviceInk=QFontMetricsF(item.font(),paintDevice()).tightBoundingRect(item.text()).translated(point);
+        const QRectF deviceMapped=state->transform().mapRect(deviceInk);
+        texts.append({item.text(),QFontMetricsF(item.font()).height(),QRectF(inkMapped.topLeft()/m_dpr,inkMapped.size()/m_dpr),item.font(),
+                      QRectF(deviceMapped.topLeft()/m_dpr,deviceMapped.size()/m_dpr)});
     }
 private:
     void recordStroke(const QPainterPath& path) {
@@ -82,7 +89,147 @@ private:
 }
 class TestResponsiveMeterFonts : public QObject {
     Q_OBJECT
+private:
+    bool m_originalWorkspaceLook{false};
 private slots:
+    void initTestCase() {
+        m_originalWorkspaceLook = WorkspacePreview::enabled();
+    }
+    void init() {
+        // Existing responsive-geometry tests exercise the unchanged classic
+        // renderer. Workspace minimums are checked explicitly below.
+        WorkspacePreview::setEnabledForTest(false);
+    }
+    void cleanupTestCase() {
+        WorkspacePreview::setEnabledForTest(m_originalWorkspaceLook);
+    }
+    void workspaceMinimumSurvivesFittingAndPreservesPointUnits() {
+        TextPaintDevice device(QSize(260,120),1);
+        QFont original(QStringLiteral("Arial"));
+        original.setPointSizeF(9.0);
+        original.setItalic(true);
+        original.setWeight(QFont::DemiBold);
+        WorkspacePreview::setEnabledForTest(true);
+        // This device is 96 DPI: 9 pt is already 12 px and stays exactly 9 pt.
+        const QFont unchanged = fitObjectText(original,9.0,QStringLiteral("Full reading"),
+                                             QRectF(0,0,260,120),true,Qt::TextSingleLine,&device);
+        QCOMPARE(unchanged,original);
+        const QFont minimum = fitObjectText(original,6.0,QStringLiteral("1236 W"),
+                                           QRectF(0,0,1,1),true,Qt::TextSingleLine,&device);
+        const double pixels = minimum.pixelSize()>0 ? minimum.pixelSize()
+            : minimum.pointSizeF()*QFontMetricsF(minimum,&device).fontDpi()/72.0;
+        QVERIFY(pixels>=11.0);
+        QCOMPARE(minimum.family(),original.family());
+        QCOMPARE(minimum.weight(),original.weight());
+        QCOMPARE(minimum.italic(),original.italic());
+        // Fitting does not mutate the owning configured font.
+        QCOMPARE(original.pointSizeF(),9.0);
+    }
+    void workspacePaintedFontsHaveMinimumAndLeaveRecordsIntact() {
+        using Face=CompositePresetItem::Face;
+        for(Face kind:{Face::PowerSwr,Face::Cross,Face::Eye,Face::History,Face::SignalText,Face::Clock,Face::Contest,Face::Anan}) {
+            CompositePresetItem face(kind);
+            const QString before=face.serialize();
+            const QSize size=kind==Face::Cross?QSize(360,260):kind==Face::Contest?QSize(360,280):kind==Face::PowerSwr?QSize(260,144):kind==Face::Eye?QSize(260,180):QSize(260,120);
+            for(int dpr:{1,2}) {
+                WorkspacePreview::setEnabledForTest(false);
+                TextPaintDevice classic(size,dpr); QPainter beforePaint(&classic);
+                face.paint(beforePaint,size.width(),size.height()); beforePaint.end();
+                WorkspacePreview::setEnabledForTest(true);
+                TextPaintDevice workspace(size,dpr); QPainter afterPaint(&workspace);
+                face.paint(afterPaint,size.width(),size.height()); afterPaint.end();
+                QVERIFY2(!workspace.texts().isEmpty(),qPrintable(face.typeId()));
+                for(const auto& text:workspace.texts()) {
+                    const double pixels=text.font.pixelSize()>0?text.font.pixelSize():text.font.pointSizeF()*96.0/72.0;
+                    QVERIFY2(pixels>=11.0,qPrintable(face.typeId()+" "+text.value+" "+QString::number(pixels)));
+                    const auto original=std::find_if(classic.texts().cbegin(),classic.texts().cend(),
+                        [&](const auto& initial) { return initial.value==text.value; });
+                    if(original!=classic.texts().cend()) {
+                        const double originalPixels=original->font.pixelSize()>0?original->font.pixelSize():original->font.pointSizeF()*96.0/72.0;
+                        if(originalPixels>=11.0) { QCOMPARE(text.font,original->font); }
+                    }
+                }
+                QCOMPARE(face.serialize(),before);
+                WorkspacePreview::setEnabledForTest(false);
+                TextPaintDevice restored(size,dpr); QPainter restoredPaint(&restored);
+                face.paint(restoredPaint,size.width(),size.height()); restoredPaint.end();
+                QCOMPARE(restored.texts().size(),classic.texts().size());
+                for(int index=0;index<classic.texts().size();++index) {
+                    const auto& initial=classic.texts()[index];
+                    const auto& roundTrip=restored.texts()[index];
+                    QCOMPARE(roundTrip.font,initial.font);
+                    // Clocks can cross a second; the fonts and stored record
+                    // remain stable without freezing station or system time.
+                }
+            }
+        }
+        TextOverlayItem overlay; overlay.setText1(QStringLiteral("1236 W"));
+        overlay.setText2(QStringLiteral("SWR 1.12")); overlay.setFontSize1(6.0f); overlay.setFontSize2(6.0f);
+        SignalTextItem signal; signal.setValue(-123.4); signal.setShowPeakValue(true); signal.setPeakHold(true);
+        VfoDisplayItem vfo; RotatorItem rotator; HistoryGraphItem history; DialItem dial;
+        for(MeterItem* item:{static_cast<MeterItem*>(&overlay),static_cast<MeterItem*>(&signal),static_cast<MeterItem*>(&vfo),static_cast<MeterItem*>(&rotator),static_cast<MeterItem*>(&history),static_cast<MeterItem*>(&dial)}) {
+            WorkspacePreview::setEnabledForTest(true);
+            const QString before=item->serialize();
+            TextPaintDevice device(QSize(260,120),1); QPainter painter(&device);
+            item->paint(painter,260,120); painter.end();
+            QVERIFY(!device.texts().isEmpty());
+            for(const auto& text:device.texts()) {
+                const double pixels=text.font.pixelSize()>0?text.font.pixelSize():text.font.pointSizeF()*96.0/72.0;
+                QVERIFY2(pixels>=11.0,qPrintable(text.value));
+            }
+            QCOMPARE(item->serialize(),before);
+        }
+    }
+    void workspaceSupportedPrimitiveTextFitsItsCanvas() {
+        WorkspacePreview::setEnabledForTest(true);
+        RotatorItem rotor; rotor.setMode(RotatorItem::RotatorMode::Both); rotor.setShowValue(true);
+        rotor.setValue(359.9); rotor.setElevation(90);
+        HistoryGraphItem history;
+        for(MeterItem* item:{static_cast<MeterItem*>(&rotor),static_cast<MeterItem*>(&history)}) {
+            const QString saved=item->serialize();
+            for(int dpr:{1,2}) {
+                TextPaintDevice device(QSize(260,120),dpr); QPainter painter(&device);
+                item->paint(painter,260,120); painter.end();
+                QVERIFY(!device.texts().isEmpty());
+                bool elevation=false,azimuth=false;
+                for(const auto& text:device.texts()) {
+                    QVERIFY2(QRectF(0,0,260,120).contains(text.deviceBounds),qPrintable(text.value+" "+QString::number(text.deviceBounds.left())+","+QString::number(text.deviceBounds.top())+" "+QString::number(text.deviceBounds.width())+"x"+QString::number(text.deviceBounds.height())));
+                    elevation=elevation || text.value==QStringLiteral("elevation");
+                    azimuth=azimuth || text.value==QStringLiteral("azimuth");
+                }
+                if(item==&rotor) { QVERIFY(elevation); QVERIFY(azimuth); }
+            }
+            QCOMPARE(item->serialize(),saved);
+        }
+    }
+    void workspaceRescaledPowerTicksRemainWholeAndSeparate() {
+        WorkspacePreview::setEnabledForTest(true);
+        CompositePresetItem power(CompositePresetItem::Face::PowerSwr);
+        // The current100-percent denominator gives the same five-character
+        // widths as the owner's forthcoming2000W top-scale calibration.
+        power.setPowerScale(1667);
+        const QString saved=power.serialize();
+        for(int dpr:{1,2}) {
+            TextPaintDevice device(QSize(260,144),dpr); QPainter painter(&device);
+            power.paint(painter,260,144); painter.end();
+            QVector<TextPaintEngine::Text> ticks;
+            for(const auto& text:device.texts()) {
+                bool numeric=false; text.value.toDouble(&numeric);
+                if(numeric && text.bounds.center().y()<72) { ticks.append(text); }
+            }
+            QCOMPARE(ticks.size(),6);
+            QStringList values; for(const auto& tick:ticks) { values.append(tick.value); }
+            QCOMPARE(values,QStringList({"0","83.35","166.7","833.5","1667","2000"}));
+            for(int i=0;i<ticks.size();++i) {
+                QVERIFY2(QRectF(0,0,260,72).contains(ticks[i].deviceBounds),qPrintable(ticks[i].value));
+                for(int j=i+1;j<ticks.size();++j) {
+                    QVERIFY2(!ticks[i].deviceBounds.adjusted(-1,0,1,0).intersects(ticks[j].deviceBounds),
+                             qPrintable(ticks[i].value+" overlaps "+ticks[j].value));
+                }
+            }
+            QCOMPARE(power.serialize(),saved);
+        }
+    }
     void nonfiniteButtonCellsAreNotPainted_data() {
         QTest::addColumn<float>("ratio");
         QTest::newRow("finite-ratio-overflow") << std::numeric_limits<float>::max();
