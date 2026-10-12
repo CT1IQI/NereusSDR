@@ -351,6 +351,9 @@
 //               drivers are listed from the start only for a saved choice on
 //               them. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: retain a TX input choice migrated during the setter's first
+//               device setup, including its supervisor and GUI projection.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -3318,13 +3321,15 @@ void AudioEngine::setTxInputConfig(const AudioDeviceConfig& cfg)
     // Until it has handled the mic once, the choice also goes straight to
     // the capture supervisor, as before.
     const bool supervised = m_deviceLayerReady && ensureAudioDevices(DeviceStart::MicOnly);
+    // First device setup may migrate the saved choice and learn its native
+    // identity. Use that effective choice, not the original legacy argument.
     if (supervised) {
-        m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(cfg));
+        m_streamSupervisor->setChoice(AudioRole::TxInput, withDefaultEngine(m_txInputConfig));
     }
     if (m_captureSupervisor && !(supervised && m_micHandledBySupervisor)) {
-        m_captureSupervisor->configure(cfg);
+        m_captureSupervisor->configure(m_txInputConfig);
     }
-    emit txInputConfigChanged(cfg);
+    emit txInputConfigChanged(m_txInputConfig);
 }
 
 void AudioEngine::setVaxConfig(int channel, const AudioDeviceConfig& cfg)
