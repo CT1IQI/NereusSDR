@@ -19,6 +19,11 @@
 //                                    by command, the log's backlog, the
 //                                    status bar's indicator.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  A local window is told the rule a
+//                                    refused change broke; the general
+//                                    sentence only when CatService names
+//                                    none. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "core/cat/CatControl.h"
@@ -212,10 +217,13 @@ void LocalCatControl::reconfigureChannel(int channel, const CatEndpointConfig& c
     if (!m_service) {
         return;
     }
-    const bool accepted = m_service->reconfigureChannel(channel, config);
+    // The rule the change broke, when CatService names one.
+    QString specific;
+    const bool accepted = m_service->reconfigureChannel(channel, config, &specific);
     if (done) {
         // The local page's own words, the same the Core sends.
         done(accepted, accepted ? QString()
+                       : !specific.isEmpty() ? specific
                                 : QStringLiteral("Configuration refused: check address, port, "
                                                  "format and exclusive device assignment."));
     }
@@ -227,9 +235,11 @@ void LocalCatControl::reconfigureGlobal(const CatGlobalConfig& config, ResultCal
     if (!m_service) {
         return;
     }
-    const bool accepted = m_service->reconfigureGlobal(config);
+    QString specific;
+    const bool accepted = m_service->reconfigureGlobal(config, &specific);
     if (done) {
         done(accepted, accepted ? QString()
+                       : !specific.isEmpty() ? specific
                                 : QStringLiteral("Configuration refused: check PTT source, "
                                                  "sampled inputs and device assignment."));
     }

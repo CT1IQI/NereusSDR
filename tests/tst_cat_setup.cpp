@@ -9,6 +9,8 @@
 // 2026-10-09 "Always recenter VFOs" sits in the option rows' indicator
 //            column, both looks. J.J. Boyd (KG4VCF), AI-assisted via
 //            Anthropic Claude Code.
+// 2026-10-12 A local window is told the rule a refused setting broke.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -184,6 +186,31 @@ private slots:
         QCOMPARE(control<QComboBox>(ptt,"catPttBaud")->currentText(),QString("14400"));
         QCOMPARE(control<QSpinBox>(ptt,"catPttBits")->value(),5);
         QCOMPARE(service.channelConfig(1).serialDataBits,5); QCOMPARE(service.globalConfig().pttSerialDataBits,5);
+    }
+    void localWindowIsToldTheRuleARefusedSettingBroke() {
+        RadioModel model; CatService& service=*model.catService(); CatControl* cat=model.catControl(); QVERIFY(cat && !cat->remote());
+        int answers=0; bool accepted=true; QString reason;
+        const auto answer=[&](bool ok,const QString& why) { ++answers; accepted=ok; reason=why; };
+        CatEndpointConfig one=service.channelConfig(1); one.serialEnabled=true;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("This serial port has no device")));
+        cat->reconfigureChannel(1,one,answer); QCOMPARE(answers,1); QVERIFY(!accepted); QCOMPARE(reason,QString("This serial port has no device. Choose a device, then turn the port on."));
+        one.serialDevice=QStringLiteral("shared-device"); cat->reconfigureChannel(1,one,answer); QCOMPARE(answers,2); QVERIFY(accepted); QVERIFY(reason.isEmpty());
+        CatEndpointConfig two=service.channelConfig(2); two.serialEnabled=true; two.serialDevice=QStringLiteral("shared-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT 2 refused: serial device")));
+        cat->reconfigureChannel(2,two,answer); QCOMPARE(answers,3); QVERIFY(!accepted); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        CatGlobalConfig global=service.globalConfig(); global.pttEnabled=true;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("Input PTT has no input source")));
+        cat->reconfigureGlobal(global,answer); QCOMPARE(answers,4); QVERIFY(!accepted); QCOMPARE(reason,QString("Input PTT has no input source. Choose a source, then turn it on."));
+        global.pttDeviceSource=QStringLiteral("Physical"); global.pttUseDsr=true; global.pttSerialDevice=QStringLiteral("shared-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT PTT refused: serial device")));
+        cat->reconfigureGlobal(global,answer); QCOMPARE(answers,5); QVERIFY(!accepted); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        // No rule to name (a port the Core does not have): the general sentence.
+        cat->reconfigureChannel(5,one,answer); QCOMPARE(answers,6); QVERIFY(!accepted); QCOMPARE(reason,QString("Configuration refused: check address, port, format and exclusive device assignment."));
+        // The pages show it: a listener turned on with no port, and Input PTT turned on with no source.
+        CatTcpIpPage tcp(&model); control<QSpinBox>(tcp,"cat3Port")->setValue(0);
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("Invalid CAT listener address")));
+        control<QCheckBox>(tcp,"cat3Enabled")->setChecked(true); QVERIFY(!control<QCheckBox>(tcp,"cat3Enabled")->isChecked());
+        QCOMPARE(control<QLabel>(tcp,"cat3Status")->text(),QString("Invalid CAT listener address or port."));
     }
     void testerCallbacksCannotLeaveDormantState() {
         RadioModel model; model.addSlice(); CatService& service=*model.catService(); service.startConfigured();
