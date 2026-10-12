@@ -54,6 +54,10 @@
 //   2026-10-09 - D25: the button row stacks when narrow (SetupFit::FitRow)
 //                 and the diagnostics line wraps. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-11 -- Connect and Disconnect in a window running its own radio
+//                 go through RadioModel (connectRfKitFromWindow), the
+//                 connection that window shares. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RfKitPage.h"
@@ -601,7 +605,7 @@ void RfKitPage::onConnectClicked()
         return;
     }
     if (m_model->rfKitConnection()) {
-        m_model->rfKitConnection()->connectToAmp(
+        m_model->connectRfKitFromWindow(
             m_hostEdit->text(),
             static_cast<quint16>(m_portSpin->value()));
     }
@@ -621,7 +625,7 @@ void RfKitPage::onDisconnectClicked()
         return;
     }
     if (m_model->rfKitConnection()) {
-        m_model->rfKitConnection()->disconnect();
+        m_model->disconnectRfKitFromWindow();
     }
 }
 

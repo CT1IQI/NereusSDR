@@ -718,6 +718,11 @@
 //                the slice meter pump takes each flag's reading from its
 //                own pan (maxBinSpectrumFor), as a window on a Core does.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The tuner, amplifier and RF-Kit applets' own Connect and
+//                Disconnect go through RadioModel (connect*FromWindow), so a
+//                window that shares its accessories has one connection per
+//                device. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -10188,7 +10193,7 @@ void MainWindow::populateDefaultMeter()
             Rf2ksConnection* conn = m_radioModel->rfKitConnection();
             if (!conn) { return; }
             if (conn->isConnected()) {
-                conn->disconnect();
+                m_radioModel->disconnectRfKitFromWindow();
             } else {
                 // Per-radio peripherals refactor (2026-05-26): host/port
                 // live under hardware/<mac>/peripherals/.  When no radio
@@ -10201,7 +10206,7 @@ void MainWindow::populateDefaultMeter()
                         QStringLiteral("RfKit_ManualPort"),
                         QStringLiteral("8080")).toUInt());
                 if (!host.isEmpty()) {
-                    conn->connectToAmp(host, port);
+                    m_radioModel->connectRfKitFromWindow(host, port);
                 }
             }
         });
@@ -17733,7 +17738,7 @@ void MainWindow::onConnectionStateChanged()
                 PgxlConnection* pgxl = m_radioModel->pgxlConnection();
                 if (!pgxl) { return; }
                 if (pgxl->isConnected()) {
-                    pgxl->disconnect();
+                    m_radioModel->disconnectPgxlFromWindow();
                 } else {
                     // PR #279 review #5 (2026-05-23): use the same
                     // PGXL_ManualIp / PGXL_ManualPort keys that
@@ -17756,7 +17761,7 @@ void MainWindow::onConnectionStateChanged()
                             QStringLiteral("PGXL_ManualPort"),
                             QStringLiteral("9008")).toUInt());
                     if (!ip.isEmpty()) {
-                        pgxl->connectToPgxl(ip, port);
+                        m_radioModel->connectPgxlFromWindow(ip, port);
                     }
                 }
             });
@@ -17807,7 +17812,7 @@ void MainWindow::onConnectionStateChanged()
                 TgxlConnection* tgxl = m_radioModel->tgxlConnection();
                 if (!tgxl) { return; }
                 if (tgxl->isConnected()) {
-                    tgxl->disconnect();
+                    m_radioModel->disconnectTgxlFromWindow();
                 } else {
                     // Per-radio peripherals refactor (2026-05-26): keys
                     // scoped under hardware/<mac>/peripherals/.
@@ -17818,7 +17823,7 @@ void MainWindow::onConnectionStateChanged()
                             QStringLiteral("TGXL_ManualPort"),
                             QStringLiteral("9010")).toUInt());
                     if (!ip.isEmpty()) {
-                        tgxl->connectToTgxl(ip, port);
+                        m_radioModel->connectTgxlFromWindow(ip, port);
                     }
                 }
             });

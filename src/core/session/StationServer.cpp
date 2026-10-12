@@ -13088,7 +13088,9 @@ int StationServer::remoteRotorControlVersion() const
     // 0 otherwise. nereusd always does (enableStationAccessoryIdentity makes
     // it); Task 4c: so does a desktop running its own radio, whose hosted
     // Core serves its phones (GuiSessionCoordinator calls
-    // enableStationRotor for every window in the Local role).
+    // enableStationAccessoryIdentity for every window in the Local role,
+    // since 2026-10-11 with that window's Tuner Genius, Power Genius and
+    // RF-Kit).
     return !m_radioModel.isNull() && m_radioModel->stationRotorController() != nullptr ? 1 : 0;
 }
 

@@ -626,6 +626,13 @@
 //                OPERATE and STANDBY, for an app that runs its own radio
 //                whether or not it shares the amplifier. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit with the windows and
+//                phones signed in to it: enableStationAccessoryIdentity
+//                takes how the device is admitted, and the window's own
+//                Connect and Disconnect go through the controllers
+//                (connect*FromWindow, disconnect*FromWindow). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -729,6 +736,7 @@
 #include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
 #include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
 #include "core/StationNetwork.h"  // StationBind (R-R3-22 station listeners)
+#include "core/StationAccessoryAdmission.h"
 #include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
@@ -3778,13 +3786,32 @@ public:
     // R3 station-owned accessory lifecycle. Installed by DaemonApp before
     // radio startup, independently of the temporary receive-only policy.
     // Makes the rotor too, through enableStationRotor().
-    void enableStationAccessoryIdentity();
+    // 2026-10-11: a desktop window running its own radio installs it too
+    // (GuiSessionCoordinator), with TypedAddress, so the windows and phones
+    // signed in to it get its Tuner Genius, Power Genius and RF-Kit as
+    // nereusd's clients get the Core's. Its links behave on the wire as
+    // they did in a window with no controller.
+    void enableStationAccessoryIdentity(
+        StationAccessoryAdmission admission = StationAccessoryAdmission::Identified);
     bool stationAccessoryIdentityEnabled() const { return m_stationTgxl != nullptr; }
+    // The Connect and Disconnect of the window that runs the radio (its
+    // Tuner, Amplifier and RF-Kit applets and its Setup pages). One owner
+    // per device: with the station controllers installed the dial and the
+    // hang-up go through them, so every window and client of this Core sees
+    // the same connection; without them (a model nobody installed them on)
+    // the link is dialed directly, as before. Local role only; a remote
+    // window asks its Core (IStationLink) instead.
+    void connectTgxlFromWindow(const QString& host, quint16 port);
+    void disconnectTgxlFromWindow();
+    void connectPgxlFromWindow(const QString& host, quint16 port);
+    void disconnectPgxlFromWindow();
+    void connectRfKitFromWindow(const QString& host, quint16 port);
+    void disconnectRfKitFromWindow();
     // Rotor control plan Task 4c: the antenna rotor alone (cty.dat, the
     // controller from the saved Rotor/* settings, rotorModel() bound to it).
-    // nereusd reaches it through enableStationAccessoryIdentity(); a desktop
-    // running its own radio calls it by itself, without the Tuner Genius,
-    // Power Genius or RF-Kit controllers. Local role only; a second call
+    // nereusd and a desktop running its own radio reach it through
+    // enableStationAccessoryIdentity(); a model with no station accessories
+    // may call it by itself. Local role only; a second call
     // makes nothing. The controller lives as long as this model: a switch to
     // a remote Core replaces the whole model, which closes the rotor's port.
     void enableStationRotor();

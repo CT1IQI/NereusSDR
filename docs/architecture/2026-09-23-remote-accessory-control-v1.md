@@ -65,6 +65,33 @@ round a Core refused them there with the on-air reason; a window written
 for that still works, it simply never sees that refusal now). The version
 numbers do not change.
 
+## Which Cores own accessories
+
+Two kinds of Core own the three accessories and offer everything in this
+document: `nereusd`, and a desktop window that runs its own radio (since
+2026-10-11), for the windows and phones signed in to it. Both run the same
+station controllers and answer the same commands with the same refusals;
+the on-air rule is applied where the transmitter is. A window on a remote
+Core owns none and asks its Core.
+
+They differ in one thing, how the device at the address is admitted:
+
+- `nereusd` identifies the device first ("How the Core identifies the PGXL"
+  and "How the Core identifies the RF2K-S" below; the Tuner Genius as the
+  Power Genius). Its address is typed from somewhere else, so nothing is
+  sent to a device that has not shown what it is.
+- A desktop window uses what answers at the typed address, as it did before
+  it shared its accessories: the plain handshake (the banner completes it;
+  the answer to `info` is not waited for), no announcement waited for, no
+  device name asked of an RF-Kit. An accessory that connected to that
+  window before connects the same way now. On such a Core `deviceModel`,
+  `deviceSerial` and `deviceNickname` may be empty, and the phase goes from
+  `connecting` to `connected` without `identifying`.
+
+The window that runs the radio dials and hangs up through the same
+controller a client's `configure*` and `disconnect*` reach, so there is one
+connection per device and every window shows it.
+
 ## Wire conventions
 
 A non-Qt client needs only these rules.
