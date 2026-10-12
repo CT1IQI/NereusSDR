@@ -76,6 +76,23 @@ private slots:
         QVERIFY(alex.adcState(0).reasonText.contains("multi-band"));
     }
 
+    // The entries are filter selections, so two are a difference even when
+    // their bands share a name: WWV on 5 and on 15 MHz sit in different
+    // filters. Each band is named once.
+    void auto_mode_two_selections_under_one_band_name_bypass()
+    {
+        AlexController alex;
+        std::array<Band, 5> slicesOnAdc {Band::WWV, Band::WWV, Band::Count, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, slicesOnAdc);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Bypass);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("BYPASS (multi-band: WWV)"));
+
+        // Where the filters combine, both are selected and the chain filters.
+        alex.setBandFiltersCombine(0, true);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("WWV"));
+    }
+
     // A radio whose band filters combine (codec::alex::combinesRxBandFilters):
     // slices on more than one band leave the chain filtered, every band
     // named.

@@ -48,6 +48,10 @@
 //                more than one band where the radio's band filters combine.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - recomputeBpf: Auto counts the chain's filter selections,
+//                not its band names, so two filters under one name (WWV
+//                on 5 and 15 MHz) are a band difference. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Alex.cs header (lines 1-23) ===
@@ -256,22 +260,29 @@ void AlexController::recomputeBpf(int adc)
         // 2+ distinct bands -> BYPASS (multi-band attenuation trade-off),
         // or every band's filter at once where the radio's filters combine.
         // Phase 3F Task 13 — NereusSDR-original; no Thetis port.
+        //
+        // The entries are one per filter selection the chain's slices need
+        // (notifySlicesOnAdc), so two entries are two selections even under
+        // one band name: WWV on 5 and on 15 MHz, or general-coverage slices
+        // either side of a filter edge. Counted by entry, each band named
+        // once.
         std::set<Band> uniqueBands;
+        int selections = 0;
         for (Band b : m_slicesPerAdc[adc]) {
-            if (b != Band::Count) { uniqueBands.insert(b); }
+            if (b != Band::Count) { uniqueBands.insert(b); ++selections; }
         }
 
-        if (uniqueBands.empty()) {
+        if (selections == 0) {
             s.effective = BpfEffective::Filtered;
             s.reasonText = QStringLiteral("%1 (idle)").arg(bandLabel(s.currentBpfBand));
-        } else if (uniqueBands.size() == 1) {
+        } else if (selections == 1) {
             s.currentBpfBand = *uniqueBands.begin();
             s.effective = BpfEffective::Filtered;
             s.reasonText = bandLabel(s.currentBpfBand);
         } else if (m_bandFiltersCombine[adc]) {
-            // 2+ distinct bands where the band filters combine: every one
-            // is selected, so each slice hears through its own band's
-            // filter (setBandFiltersCombine).
+            // 2+ selections where the band filters combine: every one is
+            // made, so each slice hears through its own band's filter
+            // (setBandFiltersCombine).
             s.currentBpfBand = *uniqueBands.begin();
             s.effective = BpfEffective::Filtered;
             QStringList bandList;

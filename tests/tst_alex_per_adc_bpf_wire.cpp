@@ -684,6 +684,78 @@ private slots:
         delete mock;
     }
 
+    // ── One band name, two filters ───────────────────────────────────────
+    //
+    // WWV on 5 MHz and on 15 MHz share a band name but not a filter (the
+    // 2.1 to 5.5 MHz and 11 to 22 MHz rows), and so do two general-coverage
+    // slices either side of a row edge. The chain needs two selections at
+    // once, so it is a band difference like any other: it was taken for one
+    // band, and the higher slice was left behind the lower slice's filter.
+    void two_filters_under_one_band_name_are_a_band_difference_data()
+    {
+        QTest::addColumn<double>("lowHz");
+        QTest::addColumn<double>("highHz");
+        QTest::newRow("WWV 5 and 15 MHz")              << 5000000.0 << 15000000.0;
+        QTest::newRow("general coverage 6.1 and 11.8") << 6100000.0 << 11800000.0;
+    }
+    void two_filters_under_one_band_name_are_a_band_difference()
+    {
+        QFETCH(double, lowHz);
+        QFETCH(double, highHz);
+        QCOMPARE(bandFromFrequency(lowHz), bandFromFrequency(highHz));
+        QVERIFY(codec::alex::computeRxPreselector(lowHz / 1e6, HPSDRHW::Saturn)
+                != codec::alex::computeRxPreselector(highHz / 1e6, HPSDRHW::Saturn));
+
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(lowHz);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(highHz);
+
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Bypass);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, 0x20);
+
+        // Back inside one filter, the chain filters again.
+        model.slices().at(b)->setFrequency(lowHz + 20000.0);
+        QCOMPARE(model.alexController().adcState(0).effective,
+                 AlexController::BpfEffective::Filtered);
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0,
+                 int(codec::alex::computeRxPreselector(lowHz / 1e6, HPSDRHW::Saturn)));
+
+        delete mock;
+    }
+
+    // Where the band filters combine (the Anvelina Pro 3, below), the same
+    // two slices get both filters and the chain stays filtered.
+    void two_filters_under_one_band_name_combine_on_the_anvelina()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        model.configureStreamPool(5, 5, 192000);
+        auto* mock = new MockConnection();
+        model.injectConnectionForTest(mock);
+        DetachConnection detach{&model};
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(5000000.0);    // WWV, 2.1 to 5.5 MHz row
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(15000000.0);   // WWV, 11 to 22 MHz row
+
+        const AlexController::AlexAdcState& st = model.alexController().adcState(0);
+        QCOMPARE(st.effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(st.reasonText, QStringLiteral("WWV"));
+        QCOMPARE(mock->bpfCalls.last().hpfBitsAdc0, 0x08 | 0x01);
+
+        delete mock;
+    }
+
     // ── Anvelina Pro 3: the band filters combine ─────────────────────────
     //
     // Measured on an Anvelina Pro 3 (J.J. Boyd, KG4VCF, 2026-10-11,

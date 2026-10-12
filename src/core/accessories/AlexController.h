@@ -272,6 +272,9 @@ public:
     /// Phase 3F: called by RadioModel when the slice list on this ADC changes
     /// (slice add/remove/retune-cross-band). Drives the auto-mode recompute.
     /// Use Band::Count as the sentinel for "no slice in this position".
+    /// One entry per filter selection the slices need, named by its band:
+    /// slices that share a filter are one entry, and two entries are two
+    /// selections even when their bands are the same (WWV on 5 and 15 MHz).
     void notifySlicesOnAdc(int adc, const std::array<Band, 5>& slicesOnAdc);
 
     // ── Per-band antenna selection (1, 2, or 3) ──────────────────────────────
