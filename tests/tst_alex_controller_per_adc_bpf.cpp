@@ -128,6 +128,49 @@ private slots:
         QCOMPARE(changed.count(), 1);
     }
 
+    // What the combined selection costs the chain's slices follows the bands
+    // (setCombineNote), and only while Auto holds more than one selection
+    // where the filters combine.
+    void combine_note_follows_the_bands()
+    {
+        AlexController alex;
+        alex.setBandFiltersCombine(0, true);
+        const std::array<Band, 5> two {Band::Band40m, Band::Band6m, Band::Count, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, two);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("40m + 6m"));
+
+        QSignalSpy changed(&alex, &AlexController::bpfStateChanged);
+        const QString note = QStringLiteral("6m LNA in: HF reads low");
+        alex.setCombineNote(0, note);
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(alex.adcState(0).effective, AlexController::BpfEffective::Filtered);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("40m + 6m (6m LNA in: HF reads low)"));
+        alex.setCombineNote(0, note);
+        QCOMPARE(changed.count(), 1);   // the same note again says nothing
+        QCOMPARE(alex.adcState(1).reasonText.contains(QStringLiteral("LNA")), false);
+
+        // Not over the operator's bypass, a wideband view or one selection.
+        alex.setBpfMode(0, AlexController::BpfMode::ForceBypass);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("BYPASS (operator override)"));
+        alex.setBpfMode(0, AlexController::BpfMode::Auto);
+        alex.setWidebandActive(0, true);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("BYPASS (wideband active)"));
+        alex.setWidebandActive(0, false);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("40m + 6m (6m LNA in: HF reads low)"));
+        const std::array<Band, 5> one {Band::Band6m, Band::Count, Band::Count, Band::Count, Band::Count};
+        alex.notifySlicesOnAdc(0, one);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("6m"));
+
+        // Nor where the filters do not combine.
+        alex.notifySlicesOnAdc(0, two);
+        alex.setBandFiltersCombine(0, false);
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("BYPASS (multi-band: 40m + 6m)"));
+
+        alex.setBandFiltersCombine(0, true);
+        alex.setCombineNote(0, QString());
+        QCOMPARE(alex.adcState(0).reasonText, QStringLiteral("40m + 6m"));
+    }
+
     void bpf_mode_persists_per_adc_per_mac()
     {
         const QString testMac = QStringLiteral("00:11:22:33:44:55");

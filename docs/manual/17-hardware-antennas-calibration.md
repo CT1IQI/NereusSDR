@@ -98,6 +98,20 @@ Read **Current state > Effective** and **Reason**, then choose **BPF mode**:
 | Force filter (TX-bound band) | Requests filtering for the transmit-bound band. Check the effective result for the chain's current receivers. |
 | Force bypass - Always wideband | Requests wideband bypass; it can expose the ADC to signals normally excluded by a BPF. On the Anvelina Pro 3, whose filter board passes no signal in bypass, it selects the five HF band filters together (160 m to 10 m) in place of the bypass, so the HF bands are heard; 6 m and anything below 1.5 MHz are not passed. Extended view, the Alex tab's HPF Bypass switch, a filter row's own bypass and the Alex-2 master bypass do the same on that radio. |
 
+On the Anvelina Pro 3 in Auto, a 6 m slice that shares a chain with other
+bands keeps its **6m BPF/LNA**. The other band filters stay in beside it, so
+every HF slice on the chain still hears, but its meter and panadapter read
+about 10 to 20 dB lower while the 6m BPF/LNA is in (measured 8 to 21 dB on
+80, 40 and 20 m). The **12/10m BPF** is left out while the 6m BPF/LNA is in,
+because the board is unstable with both selected, so a 10 m or 12 m slice
+sharing with a 6 m slice has no filter and may hear little or nothing. The
+chain indicator says so after its bands, for example **40m + 6m (6m LNA in:
+HF reads low)** or **10m + 6m (6m LNA in: 10m filter out)**. Its tooltip and
+this dialog's **Shared input** line name the slices. Slices on the other
+receive chain are not affected. With **Disable 6m LNA on RX** on, the 6m
+BPF/LNA is out, the 12/10m BPF stays in, and it is the 6 m slice that hears
+nothing while it shares the chain.
+
 Choose **Apply** to submit the choice, or **Cancel** to leave it unchanged.
 In a remote window, Apply sends the policy to the Core; a send refusal stays
 in the dialog with its reason. Older/unavailable Core state can leave the mode

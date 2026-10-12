@@ -47,6 +47,10 @@
 //                switch, and from a row's own bypass and the Alex-2 master
 //                bypass (rowBypass). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - combineRxBandSelections: on the Anvelina Pro 3 the 6 m
+//                BPF/LNA and the 12/10 m row never go out together
+//                (measured: unstable); the BPF/LNA stays. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -341,6 +345,45 @@ bool combinesRxBandFilters(NereusSDR::HPSDRModel model) noexcept;
 // slice alone below the lowest row keeps Thetis's 0x20: the five rows would
 // not pass it either, and the bypass was not measured there.
 quint8 receiveBypassSelection(NereusSDR::HPSDRModel model) noexcept;
+
+// The selection for a chain whose slices need several rows at once, on the
+// radio whose band filters combine (combinesRxBandFilters). `selections` is
+// the slices' selections added. NereusSDR-original; Thetis never selects
+// two rows. Two rules, from the same bench (2026-10-11, receive only: all
+// 64 combinations of the six rows, twice, receivers on 20 m, 80 m, 6 m and
+// 40 m sharing input 1).
+//
+// The bypass is left out while a row is among them: it passes nothing, and
+// it cost two filters 3 to 5 dB (0x1012 at combinesRxBandFilters).
+//
+// The 6 m BPF/LNA (0x40) and the 12/10 m row (0x02) never go out together:
+// with both selected the board was unstable. The 6 m receiver's level, from
+// the radio's own I/Q in dBFS, both passes:
+//   the BPF/LNA with any of the other four rows     -80.0 to -80.3
+//   0x000C, the BPF/LNA and the 12/10 m row         -78.4 / -78.4
+//   0x001C, those two and the 40 m row              -64.1 / -65.2
+//   0x000E, those two and the 20 m row              -41.4 / -41.4
+// and at 0x000E the strongest signal on the 20, 80 and 40 m receivers stood
+// over 50, 60 and 70 dB above the noise, against 29 to 43 dB with no
+// BPF/LNA.
+// The BPF/LNA is the one that stays (the maintainer's ruling, 2026-10-11),
+// so a slice in the 12/10 m row has no filter of its own while a 6 m slice
+// shares its input. What it hears then was not measured.
+//
+// With the BPF/LNA in, the other rows pass their bands at a lower level.
+// Noise floor in dBFS on 20 / 80 / 40 m:
+//   each band behind its own row alone               -69.3 / -61.7 / -63.2
+//   its own row and the BPF/LNA, first pass          -77.2 / -81.8 / -74.6
+//   the same, second pass                            -80.0 / -83.1 / -77.5
+// Signals fell with the noise: the strongest on each receiver stood 31 to
+// 42 dB over it behind the 80, 40 and 20 m rows with the BPF/LNA (0x003A,
+// 0x007A) and 29 to 43 dB behind the same rows without (0x0032, 0x0036,
+// 0x0076).
+//
+// `lnaStays` is false where the BPF/LNA is taken out of the selection after
+// this (Disable 6m LNA on RX, applyAlex1HpfSwitches): the 12/10 m row then
+// stays.
+quint8 combineRxBandSelections(quint8 selections, bool lnaStays) noexcept;
 
 // Frequency → Alex TRANSMIT low-pass select bits (bank 10 C4 in the P1 packet,
 // or bytes 1428-1431 in the P2 CmdHighPriority packet).

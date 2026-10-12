@@ -62,6 +62,10 @@
 //                band filters at once (the Anvelina Pro 3).
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - setCombineNote: what sharing the 6 m BPF/LNA costs the
+//                chain's slices, after the bands in reasonText.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/HPSDR/Alex.cs header (lines 1-23) ===
@@ -267,6 +271,14 @@ public:
     void setBandFiltersCombine(int adc, bool on);
     bool bandFiltersCombine(int adc) const;
 
+    /// Where the band filters combine: what the combined selection costs
+    /// the chain's slices, in a few words ("6m LNA in: other bands read
+    /// low"), shown after the bands in reasonText while Auto holds more
+    /// than one selection. Empty when it costs nothing. RadioModel decides
+    /// it with the selection (codec::alex::combineRxBandSelections).
+    /// Recomputes.
+    void setCombineNote(int adc, const QString& note);
+
     /// Mark that a wideband stream is active on this ADC.
     /// Recomputes BPF (wideband forces effective=WidebandLocked).
     void setWidebandActive(int adc, bool on);
@@ -423,6 +435,7 @@ private:
     std::array<SwitchBypass, 2> m_switchBypass {SwitchBypass::None, SwitchBypass::None};
     std::array<QString, 2> m_switchBypassDetail;
     std::array<bool, 2> m_bandFiltersCombine {false, false};
+    std::array<QString, 2> m_combineNote;
     // Phase 3F: slice band per ADC — sentinel Band::Count means "no slice in this slot".
     // Initialized in ctor so all slots start at Band::Count (not Band::Band160m = 0).
     std::array<std::array<Band, 5>, 2> m_slicesPerAdc;

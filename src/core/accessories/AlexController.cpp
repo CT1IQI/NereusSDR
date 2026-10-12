@@ -48,6 +48,10 @@
 //                more than one band where the radio's band filters combine.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - setCombineNote: what sharing the 6 m BPF/LNA costs the
+//                chain's slices, after the bands in reasonText.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - recomputeBpf: Auto counts the chain's filter selections,
 //                not its band names, so two filters under one name (WWV
 //                on 5 and 15 MHz) are a band difference. NereusSDR-original.
@@ -200,6 +204,15 @@ bool AlexController::bandFiltersCombine(int adc) const
     return m_bandFiltersCombine[adc];
 }
 
+// NereusSDR-original. RadioModel words it (republishAlexAdcSlices).
+void AlexController::setCombineNote(int adc, const QString& note)
+{
+    if (adc < 0 || adc >= 2) { return; }
+    if (m_combineNote[adc] == note) { return; }
+    m_combineNote[adc] = note;
+    recomputeBpf(adc);
+}
+
 // Plan Task 14 re-review N4 (Phase 3F design section 16.4.1): WIDE means
 // the chain is bypassed on the wire. An Alex tab switch can put the bypass
 // there over a filtered band, so the chain's state has to know about it.
@@ -288,6 +301,10 @@ void AlexController::recomputeBpf(int adc)
             QStringList bandList;
             for (Band b : uniqueBands) { bandList << bandLabel(b); }
             s.reasonText = bandList.join(QStringLiteral(" + "));
+            // What the combined selection costs them (setCombineNote).
+            if (!m_combineNote[adc].isEmpty()) {
+                s.reasonText += QStringLiteral(" (%1)").arg(m_combineNote[adc]);
+            }
         } else {
             // 2+ distinct bands on this ADC -> BYPASS
             s.effective = BpfEffective::Bypass;

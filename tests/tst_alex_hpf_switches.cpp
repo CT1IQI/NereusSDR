@@ -969,6 +969,50 @@ private slots:
         model.injectConnectionForTest(nullptr);
     }
 
+    // Disable 6m LNA on RX on that radio, with 6 m sharing the input. The
+    // 12/10 m row stays out only while the BPF/LNA is in
+    // (codec::alex::combineRxBandSelections): with the switch on the
+    // BPF/LNA comes out in the connection, the 12/10 m row is sent, and the
+    // chain says it is the 6 m slice that has no filter.
+    void sixMeterLnaOnRx_onTheAnvelina_bringsThe10mRowBack()
+    {
+        static constexpr quint8 k10mRow = 0x02;
+        ConnectedP2 conn;
+        RadioModel model;
+        SliceModel* a = g2CoreWithSlice(model, conn, 28400000.0, HPSDRHW::OrionMKII);
+        QVERIFY(a);
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        conn.setHardwareProfile(model.hardwareProfile());
+        const int id = model.addSlice();
+        SliceModel* b = model.sliceById(id);
+        QVERIFY(b);
+        b->setFrequency(double(k6mHz));
+        model.requestDdcAssignment();
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), k6mLna);   // the BPF/LNA alone
+        QCOMPARE(model.rxFilter0Reason(), QStringLiteral("10m + 6m (6m LNA in: 10m filter out)"));
+
+        setSwitch("disable6mLnaOnRx", true);
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), k10mRow);
+        QCOMPARE(model.rxFilter0Effective(), int(AlexController::BpfEffective::Filtered));
+        QCOMPARE(model.rxFilter0Reason(),
+                 QStringLiteral("10m + 6m (6m LNA off on RX: 6m filter out)"));
+        const QString reason = model.rxFilter0LowPassReason();
+        QVERIFY2(reason.contains(QStringLiteral("Disable 6m LNA on RX is on, so the 6m BPF/LNA "
+                                                "is out and slice %1 on 6m hears nothing")
+                                     .arg(b->sliceLetter())),
+                 qPrintable(reason));
+        QVERIFY2(!reason.contains(QStringLiteral("12/10m BPF")), qPrintable(reason));
+
+        setSwitch("disable6mLnaOnRx", false);
+        model.applyAlexHpfSwitchSettings();
+        QCOMPARE(p2Alex0Hpf(conn), k6mLna);
+        QCOMPARE(model.rxFilter0Reason(), QStringLiteral("10m + 6m (6m LNA in: 10m filter out)"));
+
+        model.injectConnectionForTest(nullptr);
+    }
+
     // The same box on an ANAN-G2 is Thetis's 0x20, as before.
     void rowBypass_onTheG2_isStillTheBypass()
     {

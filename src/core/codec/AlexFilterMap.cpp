@@ -47,6 +47,10 @@
 //                switch, and from a row's own bypass and the Alex-2 master
 //                bypass (rowBypass). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - combineRxBandSelections: on the Anvelina Pro 3 the 6 m
+//                BPF/LNA and the 12/10 m row never go out together
+//                (measured: unstable); the BPF/LNA stays. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis console.cs header (lines 1-50) ===
@@ -405,6 +409,21 @@ quint8 receiveBypassSelection(NereusSDR::HPSDRModel model) noexcept
     static constexpr quint8 kFiveBandFilters =
         kRowBits[0] | kRowBits[1] | kRowBits[2] | kRowBits[3] | kRowBits[4];
     return combinesRxBandFilters(model) ? kFiveBandFilters : kBypassBits;
+}
+
+// Bench measurements and the maintainer's ruling, quoted at the declaration.
+quint8 combineRxBandSelections(quint8 selections, bool lnaStays) noexcept
+{
+    static constexpr quint8 k12And10mRow = kRowBits[4];
+    static constexpr quint8 k6mBpfLna    = kRowBits[5];
+    quint8 rows = static_cast<quint8>(selections & ~kBypassBits);
+    if (rows == 0) {
+        return selections;
+    }
+    if (lnaStays && (rows & k6mBpfLna) != 0) {
+        rows = static_cast<quint8>(rows & ~k12And10mRow);
+    }
+    return rows;
 }
 
 // From Thetis console.cs:7177-7243 [v2.10.3.15]
