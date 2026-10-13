@@ -19,6 +19,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 : Owner-thread ASIO output snapshots without role locks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09  J.J. Boyd / KG4VCF  hasCaptureDemand(): the capture
 //                                    supervisor's hasDemand().
 //                                    AI-assisted via Anthropic Claude Code.
@@ -357,6 +359,7 @@
 // =================================================================
 
 #include "AudioEngine.h"
+#include <QDateTime>
 #include "core/settings/SettingsScope.h"
 
 #include "AppSettings.h"
@@ -3052,6 +3055,46 @@ AudioDelayParts AudioEngine::delayPartsNow(AudioRole role) const
 std::optional<AudioFormat> AudioEngine::roleFormatNow(AudioRole role) const
 {
     return readOutputNow(role).format;
+}
+
+std::optional<AudioEngine::AsioOutputSnapshot> AudioEngine::asioOutputSnapshotNow(AudioRole role) const
+{
+    const bool ownerThread = QThread::currentThread() == thread();
+    if (!ownerThread || (role != AudioRole::Speakers && role != AudioRole::Headphones)) {
+        return std::nullopt;
+    }
+    Q_ASSERT(ownerThread);
+    // Same owner/lifetime invariant as readOutputNow(): only this thread
+    // replaces/frees a role bus. These direct ASIO getters neither lock the
+    // role nor process events; no bus or matcher pointer is retained.
+    const IAudioBus* current = roleBusLocked(role);
+    if (current == nullptr) {
+        return std::nullopt;
+    }
+    const QString backend = current->backendName();
+    if (backend != QStringLiteral("ASIO") || !current->isOpen()) {
+        return std::nullopt;
+    }
+    const std::optional<DeviceRateMatcherStats> stats = current->matcherStats();
+    if (!stats) {
+        return std::nullopt;
+    }
+    const std::size_t index = roleIndex(role);
+    AsioOutputSnapshot snapshot;
+    snapshot.capturedUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    snapshot.capturedNs = audioProbeNowNs();
+    snapshot.backend = backend;
+    snapshot.openDeviceId = m_roleOpenDeviceId[index];
+    snapshot.instanceId = current->instanceId();
+    // The existing generation advances on supervised open/close. The
+    // immutable instanceId also catches legacy replacement/address reuse.
+    snapshot.roleGeneration = m_roleBusGeneration[index];
+    snapshot.moxObserved = moxState();
+    // AsioOutputBus returns its API input format, not its negotiated driver
+    // rate. Queue/fill below stay in output frames; never convert with this.
+    snapshot.busInputFormat = current->negotiatedFormat();
+    snapshot.matcher = *stats;
+    return snapshot;
 }
 
 double AudioEngine::speakersDelayNowMs() const
