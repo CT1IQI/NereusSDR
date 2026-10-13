@@ -1030,6 +1030,162 @@ private slots:
         tci.stop();
     }
 
+    // 2026-10-12: an app set to the second receiver (WSJT-X on receiver 2)
+    // keys with trx:1,true,tci;. Once the Core admits the key the app is
+    // told trx:1,true; and is not told trx:1,false; until the key ends.
+    // The key's broadcast said trx:0,true; trx:1,false;, contradicting the
+    // accepted key. WSJT-X treats false as the key ending, skips release,
+    // and can time out on its next key. The observed silent audio cycle is
+    // an inference from the logs and UI chain, not fully traced here.
+    // Thetis sends one line, for the receiver that transmits
+    // (TCIServer.cs:1443-1472 [v2.10.3.15], MoxChange).
+    void anAppOnTheSecondReceiverIsNotToldItsKeyEndedWhileItIsOn_data()
+    {
+        QTest::addColumn<int>("stereoMode");
+        QTest::addColumn<float>("expectedSampleScale");
+        QTest::newRow("left") << static_cast<int>(TciServer::TxStereoInputMode::Left)
+                             << 1.0f / 1024.0f;
+        QTest::newRow("right") << static_cast<int>(TciServer::TxStereoInputMode::Right)
+                              << -1.0f / 2048.0f;
+        QTest::newRow("both") << static_cast<int>(TciServer::TxStereoInputMode::Both)
+                             << 1.0f / 4096.0f;
+    }
+
+    void anAppOnTheSecondReceiverIsNotToldItsKeyEndedWhileItIsOn()
+    {
+        QFETCH(int, stereoMode);
+        QFETCH(float, expectedSampleScale);
+        RadioModel remote(RadioModel::Role::Remote);
+        // Two slices mirrored from the Core, transmit on the second: the
+        // Core's choice arrives as the slice's flag (StationClient).
+        QVERIFY(remote.addSliceWithStationId(0) >= 0);
+        QVERIFY(remote.addSliceWithStationId(1) >= 0);
+        QVERIFY(remote.sliceById(1) != nullptr);
+        remote.sliceById(1)->setTxSlice(true);
+        TciServer tci(&remote);
+        FakeCoreTransmit core;
+        QVector<float> submitted;
+        submitted.reserve(512);
+        QVector<float> expectedMono;
+        expectedMono.reserve(256);
+        for (int frame = 0; frame < 256; ++frame) {
+            submitted << float(frame + 1) / 1024.0f << -float(frame + 1) / 2048.0f;
+            // Independent oracle: left n/1024, right -n/2048, and their
+            // average n/4096. No production fold helper computes this.
+            expectedMono << float(frame + 1) * expectedSampleScale;
+        }
+        QVector<float> forwarded;
+        int forwardedRate = 0;
+        int forwardedChannels = 0;
+        TciServer::RemoteTransmit forward = core.forwarder();
+        forward.audio = [&forwarded, &forwardedRate, &forwardedChannels](
+                            const float* pcm, int frames, int channels, int rate) {
+            forwardedRate = rate;
+            forwardedChannels = channels;
+            for (int sample = 0; sample < frames * channels; ++sample) {
+                forwarded << pcm[sample];
+            }
+        };
+        tci.setRemoteTransmit(std::move(forward));
+        const QByteArray audioFrame = TciBinaryFrame::buildStreamPayload(
+            1, 12000, static_cast<int>(TciSampleType::Float32), static_cast<int>(submitted.size()),
+            static_cast<int>(TciStreamType::TxAudioStream), 2, submitted.constData());
+        QVERIFY(tci.start(0));
+        // start() loads the saved mode, so pin the tested mode afterwards.
+        tci.setTxStereoInputMode(static_cast<TciServer::TxStereoInputMode>(stereoMode));
+        QWebSocket wsjtx;
+        QWebSocket logger;
+        QSignalSpy wsjtxText(&wsjtx, &QWebSocket::textMessageReceived);
+        QSignalSpy loggerText(&logger, &QWebSocket::textMessageReceived);
+        QVERIFY(connectClient(wsjtx, tci.port()));
+        QVERIFY(connectClient(logger, tci.port()));
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("ready;")), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(loggerText).contains(QStringLiteral("ready;")), 3000);
+        wsjtxText.clear();
+        loggerText.clear();
+
+        wsjtx.sendTextMessage(QStringLiteral("trx:1,true,tci;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.keys, 1, 3000);
+        // A receiver 1 packet before admission must not reach the microphone
+        // line. The following query is a socket-order barrier, without a sleep.
+        wsjtx.sendBinaryMessage(audioFrame);
+        const QString queryAnswer = QStringLiteral("rx_channel_enable:1,0,true;");
+        int answersBefore = int(texts(wsjtxText).count(queryAnswer));
+        wsjtx.sendTextMessage(QStringLiteral("rx_channel_enable:1,0;"));
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).count(queryAnswer) > answersBefore, 3000);
+        QVERIFY(forwarded.isEmpty());
+        core.accept(7);
+        QCOMPARE(tci.remoteKeyEpoch(), 7u);
+        QCOMPARE(tci.activeTxClientCount(), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("trx:1,true;")), 3000);
+        // Every app hears the receiver that transmits, and only that one.
+        QTRY_VERIFY_WITH_TIMEOUT(texts(loggerText).contains(QStringLiteral("trx:1,true;")), 3000);
+        QTest::qWait(300);   // past the update gap: nothing more is due
+        QVERIFY(!texts(wsjtxText).contains(QStringLiteral("trx:1,false;")));
+        QVERIFY(!texts(loggerText).contains(QStringLiteral("trx:1,false;")));
+        QVERIFY(!texts(loggerText).contains(QStringLiteral("trx:0,true;")));
+
+        // The admitted app's receiver 1 stereo input is forwarded as the
+        // chosen mono channel, with exact nonzero PCM for every frame.
+        wsjtx.sendBinaryMessage(audioFrame);
+        QTRY_COMPARE_WITH_TIMEOUT(forwarded, expectedMono, 3000);
+        QCOMPARE(forwardedChannels, 1);
+        QCOMPARE(forwardedRate, 12000);
+        QCOMPARE(tci.peekTxRingSize(), 0);
+
+        // Its release ends the key, and then both receivers are told.
+        wsjtxText.clear();
+        loggerText.clear();
+        wsjtx.sendTextMessage(QStringLiteral("trx:1,false;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.unkeys, QList<quint32>{7u}, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("trx:1,false;")), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(loggerText).contains(QStringLiteral("trx:0,false;")), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(loggerText).contains(QStringLiteral("trx:1,false;")), 3000);
+        QCOMPARE(tci.activeTxClientCount(), 0);
+        wsjtx.sendBinaryMessage(audioFrame);
+        answersBefore = int(texts(wsjtxText).count(queryAnswer));
+        wsjtx.sendTextMessage(QStringLiteral("rx_channel_enable:1,0;"));
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).count(queryAnswer) > answersBefore, 3000);
+        QCOMPARE(forwarded, expectedMono);
+
+        // A later refusal also keeps the same nonzero packet out, even
+        // though this app previously held the audio lock.
+        wsjtxText.clear();
+        wsjtx.sendTextMessage(QStringLiteral("trx:1,true,tci;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.keys, 2, 3000);
+        core.refuse(kProgramNeedsTransmit);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("trx:1,false;")), 3000);
+        wsjtx.sendBinaryMessage(audioFrame);
+        answersBefore = int(texts(wsjtxText).count(queryAnswer));
+        wsjtx.sendTextMessage(QStringLiteral("rx_channel_enable:1,0;"));
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).count(queryAnswer) > answersBefore, 3000);
+        QCOMPARE(forwarded, expectedMono);
+        QCOMPARE(tci.activeTxClientCount(), 0);
+
+        // Transmit on the first slice, and the app still keys the second
+        // receiver: it is answered for the receiver it keyed, every app
+        // hears receiver 0 transmit, and nobody is told receiver 1 is off.
+        remote.sliceById(1)->setTxSlice(false);
+        remote.sliceById(0)->setTxSlice(true);
+        wsjtxText.clear();
+        loggerText.clear();
+        wsjtx.sendTextMessage(QStringLiteral("trx:1,true,tci;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.keys, 3, 3000);
+        core.accept(8);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("trx:1,true;")), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(loggerText).contains(QStringLiteral("trx:0,true;")), 3000);
+        QTest::qWait(300);
+        QVERIFY(!texts(wsjtxText).contains(QStringLiteral("trx:1,false;")));
+        QVERIFY(!texts(loggerText).contains(QStringLiteral("trx:1,false;")));
+        QVERIFY(!texts(loggerText).contains(QStringLiteral("trx:1,true;")));
+        wsjtx.sendTextMessage(QStringLiteral("trx:1,false;"));
+        QTRY_COMPARE_WITH_TIMEOUT(core.unkeys, (QList<quint32>{7u, 8u}), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(texts(wsjtxText).contains(QStringLiteral("trx:1,false;")), 3000);
+        wsjtx.close();
+        logger.close();
+        tci.stop();
+    }
+
     // The Core ending this window's key on its own (a safety stop or a
     // take) releases the lock here, and sends no unkey of its own.
     void theCoreEndingTheKeyReleasesTheLock()

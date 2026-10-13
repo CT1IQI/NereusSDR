@@ -33,6 +33,10 @@ public:
     virtual ~SetupPage() = default;
 
     QString pageTitle() const { return m_title; }
+
+    // The title every Setup page draws above its content. A page that is
+    // not a SetupPage (RF-Kit's tabbed page) draws its title with this too.
+    static QLabel* makePageTitle(const QString& title, QWidget* parent = nullptr);
     virtual void syncFromModel();
 
     // R-R3-21: a receive page can hold a transmit section. SetupDialog pushes

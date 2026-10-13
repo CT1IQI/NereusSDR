@@ -1134,6 +1134,11 @@
 //                click no longer needs the station amplifier object, which
 //                only a Core that shares its accessories has. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit: enableStationAccessoryIdentity
+//                takes the admission rule, and the window's own Connect and
+//                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1439,6 +1444,7 @@ mw0lge@grange-lane.co.uk
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 #include "core/audio/RadioMicSource.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/audio/VaxTxMicSource.h"
@@ -1756,6 +1762,10 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
             this, &RadioModel::onBackgroundSettingsSaveFinished);
+    // Keying marks the published Auto AGC noise floor stale at once, as the
+    // headless Core's source does, not up to a tick later.
+    connect(&m_transmitModel, &TransmitModel::moxChanged, this,
+            [this](bool) { publishStationAutoAgcNoiseFloors(); });
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -5996,10 +6006,10 @@ void RadioModel::clearRemoteFourO3AState()
     emit fourO3AStatusChanged();
 }
 
-void RadioModel::enableStationAccessoryIdentity()
+void RadioModel::enableStationAccessoryIdentity(StationAccessoryAdmission admission)
 {
     if (m_role != Role::Local || m_stationTgxl) { return; }
-    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this);
+    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this, admission);
     m_stationTgxl->cancel(!fourO3AEnabled());
     // R-R3-47: the Tuner Genius's faults, recorded on the Core.
     connect(m_stationTgxl, &StationTgxlController::faultObserved, this,
@@ -6008,13 +6018,15 @@ void RadioModel::enableStationAccessoryIdentity()
     });
     // R-R3-47: the Power Genius, likewise identified before it is admitted
     // (and so before onPgxlConnected pairs it).
-    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this);
+    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this,
+                                              admission);
     m_stationPgxl->cancel(!fourO3AEnabled());
     // R-R3-47 / R-R3-22: the amp's and tuner's own settings for a window.
     m_stationPgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     m_stationTgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     // R-R3-47: the RF-Kit too: admitted once its /info names an RF2K-S.
-    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this);
+    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this,
+                                                admission);
     m_stationRfKit->cancel(!rfKitEnabled());
     if (m_stationTciModel) {
         connect(m_stationTciModel, &StationTciModel::stateChanged, m_stationRfKit, [this] {
@@ -6027,6 +6039,69 @@ void RadioModel::enableStationAccessoryIdentity()
     // running its own radio makes it.
     enableStationRotor();
     applyStationBind();
+}
+
+// The window's own Connect and Disconnect (RadioModel.h). Nothing is saved
+// and nothing is refused here: the caller read or typed the address, as it
+// did when it dialed the link itself.
+void RadioModel::connectTgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->start(host, port);
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->connectToTgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectTgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->cancel(!fourO3AEnabled());
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectPgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->start(host, port);
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->connectToPgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectPgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->cancel(!fourO3AEnabled());
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectRfKitFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->start(host, port);
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->connectToAmp(host, port);
+    }
+}
+
+void RadioModel::disconnectRfKitFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->cancel(!rfKitEnabled());
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->disconnect();
+    }
 }
 
 void RadioModel::enableStationRotor()
@@ -22561,7 +22636,7 @@ void RadioModel::pushTxFrequencyFromTxSlice()
         return;
     }
 
-    const quint64 txFreqHz = txFrequencyForSlice(slice);
+    const quint64 txFreqHz = txNcoFrequencyForSlice(slice);
 
     // Recomputed rather than read from RadioModel::xitOffset(). The XIT that
     // went into txFreqHz is the BOUND SLICE's, which is what this line is
@@ -25443,10 +25518,53 @@ QString RadioModel::sharedLnaReason(const QList<const SliceModel*>& lna,
     return parts.join(QLatin1Char(' '));
 }
 
+namespace {
+// DaemonAgcSource.cpp kFftDbmFloor: what the headless Core publishes with
+// a reading that is not valid.
+constexpr double kStaleAutoAgcNoiseFloorDbm = -200.0;
+} // namespace
+
+// A desktop window acting as Core: each slice's station noise floor, the
+// value a signed-in window or phone shows beside AUTO, from the same tracker
+// this window's own flag reads. The headless Core's DaemonAgcSource writes
+// these fields itself and turns this off.
+void RadioModel::publishStationAutoAgcNoiseFloors()
+{
+    if (!ownsLocalDsp() || m_autoAgcFloorPublishedBySource) {
+        return;
+    }
+    // Not valid by the headless Core's conditions
+    // (DaemonAgcSource::canReceiveFromStream): radio down, transmitting, or
+    // the slice's stream suspended or not running.
+    const bool receiving = isConnected() && !m_transmitModel.isMox();
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const int stream = slice->streamIndex();
+        const bool streamReceives = stream < 0
+            || (!m_suspendedStreams.contains(stream) && streamActive(stream));
+        const NoiseFloorTracker* tracker = noiseFloorTrackerForSlice(slice);
+        const quint64 generation = slice->stationAutoAgcNoiseFloorGeneration();
+        if (receiving && streamReceives && tracker && tracker->isGood()) {
+            slice->setStationAutoAgcNoiseFloor(
+                static_cast<double>(tracker->noiseFloor()), true, generation);
+        } else if (slice->stationAutoAgcNoiseFloorValid()) {
+            // The headless Core's stale value, and a new generation for
+            // whatever is measured next.
+            slice->setStationAutoAgcNoiseFloor(kStaleAutoAgcNoiseFloorDbm, false,
+                                               generation + 1);
+        }
+    }
+}
+
 // The same station-owned tick runs in the desktop local mode and daemon.
 // Source selection is registered separately; there is no GUI dependency.
 void RadioModel::updateAutoAgc()
 {
+    // Before the guards: a dropped radio has to mark the floor stale.
+    publishStationAutoAgcNoiseFloors();
+
     // From Thetis v2.10.3.13 console.cs:46059 — guard: skip if not connected or MOX
     if (!ownsLocalDsp() || !isConnected()) {
         return;
@@ -26281,6 +26399,9 @@ void RadioModel::wirePcMicConfigProjection()
                 cfg.hostApiIndex = index;
                 cfg.driverApi.clear();
                 if (index >= 0) {
+                    // A host API picked by its PortAudio index is an older
+                    // driver: PortAudio starts here if it has not yet.
+                    PortAudioLibrary::ensureStarted();
                     const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
                     for (const PortAudioBus::HostApiInfo& api : apis) {
                         if (api.index == index) {
@@ -27981,6 +28102,31 @@ static bool isLsbFamily(DSPMode mode) noexcept
     return mode == DSPMode::LSB || mode == DSPMode::CWL || mode == DSPMode::DIGL;
 }
 
+// Existing Tune generator frequency, shared by its NCO compensation.
+// From Thetis console.cs:18211,30082-30085 [v2.10.3.15].
+static double signedTuneToneHz(DSPMode mode) noexcept
+{
+    constexpr double kCwPitch = 600.0;
+    return isLsbFamily(mode) ? -kCwPitch : +kCwPitch;
+}
+
+quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
+{
+    if (!slice) {
+        return 0;
+    }
+    const quint64 dialHz = txFrequencyForSlice(slice);
+    if (!m_isTuning) {
+        return dialHz;
+    }
+    // Retunes and delayed connect seeds must keep the same compensation
+    // as setTune. Use the saved mode that chose the active generator tone.
+    // From Thetis console.cs:31782-31783,31820-31868 [v2.10.3.15].
+    const qint64 adjustedHz = static_cast<qint64>(dialHz)
+        - static_cast<qint64>(signedTuneToneHz(m_savedTxDspMode));
+    return adjustedHz < 0 ? 0 : static_cast<quint64>(adjustedHz);
+}
+
 bool RadioModel::tuneCycleCurrent(quint64 serial) const
 {
     return serial == m_tuneCycleSerial && (!m_tuneCycleGuarded
@@ -28241,9 +28387,8 @@ void RadioModel::setTune(bool on)
         //   the correct sideband. This ordering is preserved here.
         //
         // cw_pitch: from Thetis console.cs:18182 [v2.10.3.13] — private int cw_pitch = 600;
-        static constexpr double kCwPitch = 600.0;
         const DSPMode modeBeforeSwap = m_savedTxDspMode;
-        const double signedFreq = isLsbFamily(modeBeforeSwap) ? -kCwPitch : +kCwPitch;
+        const double signedFreq = signedTuneToneHz(modeBeforeSwap);
 
         // ── SET TUNE TONE ──────────────────────────────────────────────────────
         // Cite: console.cs:30038-30040 [v2.10.3.13]:
@@ -28461,11 +28606,7 @@ void RadioModel::setTune(bool on)
             // Dial plus XIT, not the raw dial: Thetis applies the TUNE offset
             // to tx_freq, which already carries XIT
             // (console.cs:31782-31783 then 31845-31860 [v2.10.3.15]).
-            const quint64 dialHz = txFrequencyForSlice(tuneSlice);
-            const qint64 adjustedTxHz =
-                static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
-            const quint64 wireHz =
-                (adjustedTxHz < 0) ? 0 : static_cast<quint64>(adjustedTxHz);
+            const quint64 wireHz = txNcoFrequencyForSlice(tuneSlice);
             auto* conn = m_connection;
             const QPointer<RadioConnection> tuneConnection(conn);
             QMetaObject::invokeMethod(this, [this, serial, tuneConnection, wireHz]() {

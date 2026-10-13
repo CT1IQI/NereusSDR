@@ -8,6 +8,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
+//   2026-10-12  J.J. Boyd / KG4VCF. The grid's noise-floor tracking holds
+//                 dB Min a grid step under dB Max (applyGridFollow), the
+//                 limit Thetis's udDisplayGridMin_ValueChanged applies
+//                 (setup.cs); a floor at or above dB Max no longer leaves
+//                 a zero or negative range. AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. A row arriving while a resize is still
 //                 settling no longer rescales the whole waterfall history;
 //                 it is resampled into the history's current width and the
@@ -43,6 +52,10 @@
 //                 so stale noise-floor lines no longer show over the
 //                 frequency scale and waterfall after the spectrum gets
 //                 shorter. AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd / KG4VCF. Receiver flags that fold are placed
+//                 again when they fold or open, and the pan reports where
+//                 its flags show (receiverFlagRegion) so its corner badges
+//                 stay under them. AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: "Turn beam
 //                 to CALL (330°)" under "Tune to CALL" in the spot menu
 //                 (greyed with the reason with no rotor or no bearing), the
@@ -182,6 +195,19 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-08 J.J. Boyd / KG4VCF - workspace preview data colours:
+//                 the spectrum, waterfall and DSS default backgrounds
+//                 read WorkspacePreview::dataBackground() (navy until a
+//                 choice is made). AI-assisted via Anthropic Claude Code.
+//   2026-10-09 - Spot list and spot display changes mark the GPU path's
+//                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
+//                 the spot labels follow them. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: C-Tune switch held: applyRemoteCtunState takes the reason
+//                 the receiver's C-Tune setting is not this window's to
+//                 change, hands it to the pan menu, and setCtunEnabled then
+//                 changes neither the pan nor its saved setting. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // =================================================================
@@ -304,7 +330,12 @@
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "SpectrumWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteDisplayPresenter.h"
 
@@ -497,7 +528,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     // CPU fallback: dark background
     setAutoFillBackground(true);
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, QColor(0x0f, 0x0f, 0x1a));
+    pal.setColor(QPalette::Window, WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
     setPalette(pal);
 #endif
 
@@ -3221,8 +3252,30 @@ void SpectrumWidget::applyGridFollow(float nfDbm)
     // From Thetis console.cs:46082 [v2.10.3.13]: only move if delta >= 2 dB
     if (std::abs(oldMin - proposedMin) < 2.0f) { return; }
 
-    const float newMin = proposedMin;
+    float newMin = proposedMin;
     const float newMax = m_maintainNFAdjustDelta ? (newMin + delta) : oldMax;
+
+    // dB Min stays a grid step under dB Max. Thetis's timer writes
+    // SetupForm.DisplayGridMin, and that control's handler limits the value;
+    // setDbmRange() has no such limit, so a floor at or above dB Max left a
+    // zero or negative range here. The 2 dB test above compares the set
+    // point as asked, as the timer does; the limit is applied after it, as
+    // the control does. dB Max does not move.
+    // From Thetis setup.cs:7842-7850 [v2.10.3.15] udDisplayGridMin_ValueChanged:
+    //   //[2.10.3.6]MW0LGE limit
+    //   if (udDisplayGridMin.Value > udDisplayGridMax.Value - udDisplayGridStep.Value)
+    //   {
+    //       udDisplayGridMin.Value = udDisplayGridMax.Value - udDisplayGridStep.Value;
+    //       return;
+    //   }
+    // udDisplayGridStep is a setting in Thetis (1 to 40 dB, designer value 2,
+    // setup.designer.cs:34777-34804 [v2.10.3.15]). This grid has no stored
+    // step: 10 dB is the step drawGrid draws.
+    static constexpr float kGridFollowStepDb = 10.0f;
+    //[2.10.3.6]MW0LGE limit [original inline comment from setup.cs:7845]
+    if (newMin > newMax - kGridFollowStepDb) {
+        newMin = newMax - kGridFollowStepDb;
+    }
 
     // Update display range directly — do NOT call scheduleSettingsSave() here
     // because the NF-tracking loop fires at 500ms cadence and would flood
@@ -3400,12 +3453,12 @@ void SpectrumWidget::drawTextOverlay(QPainter& p, const QRect& specRect,
 {
     if (text.isEmpty()) { return; }
 
-    QFont font = p.font();
-    font.setPixelSize(11);
+    QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
     font.setBold(true);
     p.setFont(font);
 
-    const QFontMetrics fm(font);
+    const QFontMetrics fm(font, p.device());
     const int pad  = 6;
     const int tw   = fm.horizontalAdvance(text) + pad * 2;
     const int th   = fm.height() + pad;
@@ -4943,7 +4996,7 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
                          m_waterfall.sizeInBytes());
         }
         m_waterfall = QImage(wfW, wfH, QImage::Format_RGB32);
-        m_waterfall.fill(QColor(0x0f, 0x0f, 0x1a));
+        m_waterfall.fill(WorkspacePreview::dataBackground(QColor(0x0f, 0x0f, 0x1a), "app-bg"));
         // Pin the new waterfall buffer.  Touched every push (write
         // one row's worth of pixels) and every paint (full incremental
         // texture upload to GPU); compression stalls here cause the
@@ -5081,8 +5134,8 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
         }
         const QString fpsText = QStringLiteral("%1 fps")
                                     .arg(m_fpsDisplayValue, 0, 'f', 1);
-        QFont ff = p.font();
-        ff.setPixelSize(11);
+        QFont ff = WorkspacePreview::readableFont(p.font(), p.device());
+        ff.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
         p.setFont(ff);
         p.setPen(m_gridTextColor);
         const int tw = p.fontMetrics().horizontalAdvance(fpsText);
@@ -5264,7 +5317,7 @@ void SpectrumWidget::drawSpectrum(QPainter& p, const QRect& specRect)
         const QImage& surf = buildDssImage(
             specRect.size().boundedTo(QSize(kDssFallbackMaxW, kDssFallbackMaxH)),
             0);
-        p.fillRect(specRect, QColor(0x0a, 0x0a, 0x14));
+        p.fillRect(specRect, WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"));
         if (!surf.isNull()) {
             p.drawImage(specRect, surf);
         }
@@ -5478,8 +5531,8 @@ void SpectrumWidget::paintPeakBlobs(QPainter& p, const QRect& specRect)
     // painter inherits Qt's default ~9 pt fallback, so the blob dBm
     // labels rendered visibly smaller than they used to.  Set the
     // canonical 11 px explicitly here.
-    QFont blobFont = p.font();
-    blobFont.setPixelSize(11);
+    QFont blobFont = WorkspacePreview::readableFont(p.font(), p.device());
+    blobFont.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
     p.setFont(blobFont);
 
     for (const auto& blob : m_peakBlobs.blobs()) {
@@ -5628,8 +5681,8 @@ void SpectrumWidget::paintNoiseFloorOverlay(QPainter& p, const QRect& specRect)
     // F1 format only; Thetis omits the "dBm" suffix (the dBm scale is
     // adjacent on the spectrum strip).
     const QString nfText = QString::number(static_cast<double>(lerp), 'f', 1);
-    QFont nfFont = p.font();
-    nfFont.setPixelSize(11);
+    QFont nfFont = WorkspacePreview::readableFont(p.font(), p.device());
+    nfFont.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
     nfFont.setBold(true);
     p.setFont(nfFont);
     p.setPen(textCol);
@@ -5740,8 +5793,8 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
                               ? QDateTime::currentDateTimeUtc()
                               : QDateTime::currentDateTime();
         const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
-        QFont f = p.font();
-        f.setPixelSize(10);
+        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
         p.setFont(f);
         p.setPen(QColor(200, 220, 255));
         const int pad = 4;
@@ -5763,8 +5816,8 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         return;
     }
 
-    QFont font = p.font();
-    font.setPixelSize(10);
+    QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
     p.setFont(font);
     // From Thetis display.cs:2003 — grid_text_color (now configurable).
     p.setPen(m_gridTextColor);
@@ -5864,10 +5917,10 @@ void SpectrumWidget::drawDbmScale(QPainter& p, const QRect& specRect)
     p.drawPolygon(dnTri);
 
     // ── dBm labels ───────────────────────────────────────────────────────
-    QFont f = p.font();
-    f.setPointSize(7);
+    QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+    f.setPointSize(7); f = WorkspacePreview::readableFont(f, p.device());
     p.setFont(f);
-    const QFontMetrics fm(f);
+    const QFontMetrics fm(f, p.device());
 
     const int labelTop = specRect.top() + kDbmArrowH + 4;
     const float stepDb = NereusSDR::DbmStrip::adaptiveStepDb(m_dynamicRange);
@@ -5971,10 +6024,10 @@ void SpectrumWidget::drawDbmScaleLabels(QPainter& p, const QRect& specRect,
 
     // ── dBm labels — full-height LINEAR axis: topDbm at the top, topDbm-rangeDb
     //    at the baseline, evenly spaced across specRect.height(). ──────────
-    QFont f = p.font();
-    f.setPointSize(7);
+    QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+    f.setPointSize(7); f = WorkspacePreview::readableFont(f, p.device());
     p.setFont(f);
-    const QFontMetrics fm(f);
+    const QFontMetrics fm(f, p.device());
 
     const int labelTop = specRect.top() + kDbmArrowH + 4;
 
@@ -6037,7 +6090,7 @@ void SpectrumWidget::drawBandPlan(QPainter& p, const QRect& specRect)
 
     const double startMhz = m_centerHz / 1.0e6 - (m_bandwidthHz / 2.0) / 1.0e6;
     const double endMhz   = m_centerHz / 1.0e6 + (m_bandwidthHz / 2.0) / 1.0e6;
-    const int    bandH    = m_bandPlanFontSize + 4;
+    const int    bandH    = bandPlanStripHeight(p.device());
     const int    bandY    = specRect.bottom() - bandH + 1;
 
     const auto& segments = m_bandPlanMgr->segments();
@@ -6076,8 +6129,8 @@ void SpectrumWidget::drawBandPlan(QPainter& p, const QRect& specRect)
 
         // Label: mode + lowest license class allowed (only if there's room).
         if (x2 - x1 > 20) {
-            QFont f = p.font();
-            f.setPointSize(m_bandPlanFontSize);
+            QFont f = font();
+            f.setPointSize(m_bandPlanFontSize); f = WorkspacePreview::readableFont(f, p.device());
             f.setBold(true);
             p.setFont(f);
 
@@ -6134,8 +6187,8 @@ void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
                         : QColor(0xc0, 0x20, 0x20));  // bright red when paused
     p.drawRoundedRect(liveRect, 3, 3);
 
-    QFont liveFont = p.font();
-    liveFont.setPointSize(7);
+    QFont liveFont = WorkspacePreview::readableFont(p.font(), p.device());
+    liveFont.setPointSize(7); liveFont = WorkspacePreview::readableFont(liveFont, p.device());
     liveFont.setBold(true);
     p.setFont(liveFont);
     p.setPen(m_wfLive ? QColor(0xb0, 0xb0, 0xb0) : Qt::white);
@@ -6149,11 +6202,11 @@ void SpectrumWidget::drawTimeScale(QPainter& p, const QRect& wfRect)
         return;
     }
 
-    QFont f = p.font();
-    f.setPointSize(7);
+    QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+    f.setPointSize(7); f = WorkspacePreview::readableFont(f, p.device());
     f.setBold(false);
     p.setFont(f);
-    const QFontMetrics fm(f);
+    const QFontMetrics fm(f, p.device());
 
     constexpr float kStepSec = 5.0f;
     for (float sec = 0; sec <= totalSec; sec += kStepSec) {
@@ -6224,12 +6277,30 @@ std::pair<int, int> SpectrumWidget::visibleBinRange(int binCount) const
     return NereusSDR::SpectrumReducer::visibleBinRange(binCount, cfg);
 }
 
-int SpectrumWidget::bandPlanStripHeight() const
+int SpectrumWidget::bandPlanStripHeight(const QPaintDevice* device) const
 {
     // Mirrors drawBandPlan's height calc (display.cpp:3280):
     //   bandH = m_bandPlanFontSize + 4 when a bandplan manager is bound.
-    return (m_bandPlanMgr && m_bandPlanFontSize > 0)
-           ? (m_bandPlanFontSize + 4) : 0;
+    if (!m_bandPlanMgr || m_bandPlanFontSize <= 0) {
+        return 0;
+    }
+    QFont originalFont = font();
+    originalFont.setPointSize(m_bandPlanFontSize);
+    originalFont.setBold(true);
+    const QPaintDevice* metricDevice = device ? device : this;
+#ifdef NEREUS_GPU_SPECTRUM
+    // GPU strip painting uses this image's DPI. Hit/clip geometry must use
+    // the same device once the overlay exists, not the QWidget's screen DPI.
+    if (!device && !m_overlayStatic.isNull()) {
+        metricDevice = &m_overlayStatic;
+    }
+#endif
+    const QFont labelFont = WorkspacePreview::readableFont(originalFont, metricDevice);
+    const int originalHeight = m_bandPlanFontSize + 4;
+    // Keep classic geometry, and existing readable labels, unchanged. When
+    // the workspace floor grows the label, all consumers reserve its metrics.
+    return labelFont == originalFont ? originalHeight
+        : qMax(originalHeight, QFontMetrics(labelFont, metricDevice).height() + 2);
 }
 
 // 1-Hz-bandwidth normalisation shift.  When m_dispNormalize is on, every
@@ -7857,7 +7928,8 @@ const QImage& SpectrumWidget::buildDssImage(const QSize& px, int scaleStripPx)
     // bgFill: 0x0a0a14 matches both the pass clear colour and the mesh
     // UBO's bgFill field (writeDssMeshUbo()), for the same reason.
     return m_dss.image(px, scaleStripPx, floorDbm, rangeDb, 0.6f,
-                       palette, dssPaletteToken(), QColor(0x0a, 0x0a, 0x14),
+                       palette, dssPaletteToken(),
+                       WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg"),
                        dssShape(), m_centerHz / 1.0e6,
                        m_bandwidthHz / 1.0e6);
 }
@@ -8046,13 +8118,12 @@ void SpectrumWidget::drawForeignMarkers(QPainter& p, const QRect& specRect, cons
     if (m_foreignMarkers.isEmpty()) {
         return;
     }
-    const int bandPlanH = (m_bandPlanMgr && m_bandPlanFontSize > 0)
-                          ? (m_bandPlanFontSize + 4) : 0;
+    const int bandPlanH = bandPlanStripHeight(p.device());
     const int specBottom = specRect.bottom() - bandPlanH;
-    QFont labelFont = p.font();
-    labelFont.setPixelSize(10);
+    QFont labelFont = WorkspacePreview::readableFont(p.font(), p.device());
+    labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
     labelFont.setBold(true);
-    const QFontMetrics fm(labelFont);
+    const QFontMetrics fm(labelFont, p.device());
     static constexpr int kTriHalf = 6;
     static constexpr int kTriH = 10;
     static constexpr int kLabelPadX = 4;
@@ -8148,8 +8219,7 @@ void SpectrumWidget::drawSliceMarker(QPainter& p, const QRect& specRect,
     // translucent passband colour bleeds through the gaps and visually sits
     // "in front of" the bandplan strip).  Same height calc as drawBandPlan:
     // bandH = m_bandPlanFontSize + 4 when a bandplan manager is bound.
-    const int bandPlanH = (m_bandPlanMgr && m_bandPlanFontSize > 0)
-                          ? (m_bandPlanFontSize + 4) : 0;
+    const int bandPlanH = bandPlanStripHeight(p.device());
     const int specBottomClipped = specRect.bottom() - bandPlanH;
     const int specHeightClipped = std::max(0, specBottomClipped - specRect.top());
 
@@ -8295,11 +8365,11 @@ void SpectrumWidget::drawOffScreenArrow(QPainter& p, const QRect& specRect, bool
     double mhz = hz / 1.0e6;
     QString label = QString::number(mhz, 'f', 4);
 
-    QFont font = p.font();
-    font.setPixelSize(11);
+    QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
     font.setBold(true);
     p.setFont(font);
-    QFontMetrics fm(font);
+    QFontMetrics fm(font,p.device());
 
     int arrowY = specRect.top() + specRect.height() / 2 - kArrowH / 2
         + row * (kArrowH + kRowGap);
@@ -8349,12 +8419,12 @@ void SpectrumWidget::drawCursorInfo(QPainter& p, const QRect& specRect)
     // doc comment for why the Hz alternative was retired.
     QString label = formatCursorFreq(hz);
 
-    QFont font = p.font();
-    font.setPixelSize(11);
+    QFont font = WorkspacePreview::readableFont(p.font(), p.device());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
     font.setBold(true);
     p.setFont(font);
 
-    QFontMetrics fm(font);
+    QFontMetrics fm(font,p.device());
     int textW = fm.horizontalAdvance(label) + 12;
     int textH = fm.height() + 6;
 
@@ -9033,6 +9103,10 @@ void SpectrumWidget::drawNotchMarkers(QPainter& p, const QRect& specRect)
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4303-4307 [@0cd4559]
 // Repaint guard added per AetherSDR [@a173272d] PR #2474.
+// From AetherSDR src/gui/SpectrumWidget.cpp:15378-15383 [@1e0718ad]: a
+// visual change marks the overlay dirty. The GPU path draws the spot labels
+// into its cached static overlay; update() alone left them stale until
+// something else invalidated it.
 void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
 {
     const bool visualChange = !spotMarkersVisuallyEqual(m_spotMarkers, markers);
@@ -9040,7 +9114,7 @@ void SpectrumWidget::setSpotMarkers(const QVector<SpotMarker>& markers)
     if (!visualChange) {
         return;
     }
-    update();
+    markOverlayDirty();
 }
 
 // Phase 3J-2 + 3R M2: refresh every Spot Display knob from AppSettings.
@@ -9100,7 +9174,8 @@ void SpectrumWidget::loadSpotDisplaySettings()
             == QStringLiteral("True");
         setSpotSourceVisible(source, visible);
     }
-    update();
+    // The spot labels are in the GPU path's static overlay.
+    markOverlayDirty();
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4497-4633 [@0cd4559]
@@ -9112,11 +9187,11 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
         return;
     }
 
-    QFont spotFont = p.font();
-    spotFont.setPixelSize(m_spotFontSize);
+    QFont spotFont = WorkspacePreview::readableFont(p.font(), p.device());
+    spotFont.setPixelSize(WorkspacePreview::readableTextPixelSize(m_spotFontSize));
     spotFont.setBold(true);
     p.setFont(spotFont);
-    const QFontMetrics fm(spotFont);
+    const QFontMetrics fm(spotFont, p.device());
 
     // Starting Y position based on percentage setting
     const int startY = specRect.top() + specRect.height() * m_spotStartPct / 100;
@@ -9256,9 +9331,9 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
     // Draw cluster badges for overflow groups
     if (!overflowGroups.isEmpty()) {
         QFont badgeFont = spotFont;
-        badgeFont.setPixelSize(m_spotFontSize - 2);
+        badgeFont.setPixelSize(WorkspacePreview::readableTextPixelSize(m_spotFontSize - 2));
         p.setFont(badgeFont);
-        const QFontMetrics bfm(badgeFont);
+        const QFontMetrics bfm(badgeFont, p.device());
 
         for (auto it = overflowGroups.constBegin(); it != overflowGroups.constEnd(); ++it) {
             const auto& spots = it.value();
@@ -9301,7 +9376,7 @@ void SpectrumWidget::drawSpotMarkers(QPainter& p, const QRect& specRect)
         p.setFont(spotFont);  // restore spot font
     }
 
-    p.setFont(QFont());  // restore default
+    p.setFont(WorkspacePreview::readableFont(QFont(), p.device()));  // restore default
 }
 
 // From AetherSDR src/gui/SpectrumWidget.cpp:4635-4672 [@0cd4559]
@@ -9411,8 +9486,7 @@ void SpectrumWidget::drawTxFilterOverlay(QPainter& p, const QRect& specRect)
     // gaps and visually sit "in front of" the bandplan strip).  Mirrors the
     // height calculation in drawBandPlan: bandH = m_bandPlanFontSize + 4 when a
     // bandplan manager is bound, else 0.
-    const int bandPlanH = (m_bandPlanMgr && m_bandPlanFontSize > 0)
-                          ? (m_bandPlanFontSize + 4) : 0;
+    const int bandPlanH = bandPlanStripHeight(p.device());
     const int filterBottom = specRect.bottom() - bandPlanH;
     const int filterH      = std::max(0, filterBottom - specRect.top());
     if (filterH <= 0) {
@@ -9443,8 +9517,8 @@ void SpectrumWidget::drawTxFilterOverlay(QPainter& p, const QRect& specRect)
                                   .arg(m_txFilterHigh);
         const QColor labelColor(0xff, 0xaa, 0x70);  // kTxFilterOverlayLabel
         p.save();
-        QFont f = p.font();
-        f.setPixelSize(9);
+        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(9));
         p.setFont(f);
         p.setPen(labelColor);
         // 8 px left-pad from the left edge, 4 px top-pad.
@@ -9564,8 +9638,8 @@ void SpectrumWidget::drawImdOverlay(QPainter& p, const QRect& specRect)
     // which the current mockup doesn't model), then label/val1/val2.
     const auto t = m_imdOverlay->formatReadout();
     p.setPen(QColor("#cfe1f0"));
-    QFont mono(QStringLiteral("Menlo"));
-    mono.setPointSize(9);
+    QFont mono = WorkspacePreview::readableFont(QFont(QStringLiteral("Menlo")), p.device());
+    mono.setPointSize(9); mono = WorkspacePreview::readableFont(mono, p.device());
     mono.setStyleHint(QFont::Monospace);
     p.setFont(mono);
 
@@ -9656,8 +9730,8 @@ void SpectrumWidget::paintHighSwrOverlay(QPainter& p)
         ? QStringLiteral("HIGH SWR\n\nPOWER FOLD BACK")
         : QStringLiteral("HIGH SWR");
 
-    QFont f = p.font();
-    f.setPointSize(48);
+    QFont f = WorkspacePreview::readableFont(p.font(), p.device());
+    f.setPointSize(48); f = WorkspacePreview::readableFont(f, p.device());
     f.setBold(true);
     p.setFont(f);
     p.setPen(kRed);
@@ -10314,7 +10388,7 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                                   m_displaySettings->refLevel(),
                                   m_displaySettings->dynamicRange(),
                                   m_ctunEnabled);
-        m_overlayMenu->setCtunAvailable(m_ctunAvailable);
+        m_overlayMenu->setCtunAvailable(m_ctunAvailable, m_ctunHeldReason);
         // Re-seed every popup (not just at construction): the 3D VIEW
         // section reflects whatever the operator last set, and row-span
         // support can change across the widget's lifetime if the GPU mesh
@@ -12211,7 +12285,7 @@ void SpectrumWidget::writeDssMeshUbo(QRhiResourceUpdateBatch* batch,
     ubo[i++] = 0.0f;                                  // std140 pad
     ubo[i++] = 0.0f;                                  // std140 pad
 
-    const QColor bg(0x0a, 0x0a, 0x14);
+    const QColor bg = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     ubo[i++] = bg.redF();
     ubo[i++] = bg.greenF();
     ubo[i++] = bg.blueF();
@@ -12357,6 +12431,12 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
 
 void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 {
+    const bool readableText = WorkspacePreview::enabled();
+    if (m_readableTextCache != readableText) {
+        m_readableTextCache = readableText;
+        markOverlayDirty();
+    }
+
     // 2026-05-26 KG4VCF perf instrumentation: time the whole GPU
     // render path (texture uploads + draw-call submission) so the
     // in-spectrum overlay can show avg/max paint cost and the gap
@@ -12681,8 +12761,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 }
                 const QString fpsText =
                     QStringLiteral("%1 fps").arg(m_fpsDisplayValue, 0, 'f', 1);
-                QFont ff = p.font();
-                ff.setPixelSize(11);
+                QFont ff = WorkspacePreview::readableFont(p.font(), p.device());
+                ff.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
                 p.setFont(ff);
                 p.setPen(m_gridTextColor);
                 const int tw = p.fontMetrics().horizontalAdvance(fpsText);
@@ -12707,11 +12787,11 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
                 const auto stats =
                     PerfMonitor::instance().lastSnapshot();
                 const QStringList lines = perfOverlayLines();
-                QFont pf = p.font();
-                pf.setPixelSize(11);
+                QFont pf = WorkspacePreview::readableFont(p.font(), p.device());
+                pf.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
                 pf.setFamily(QStringLiteral("Menlo"));
                 p.setFont(pf);
-                const QFontMetrics fm(pf);
+                const QFontMetrics fm(pf,p.device());
                 const int lineH = fm.height();
                 int maxW = 0;
                 for (const QString& s : lines) {
@@ -13116,7 +13196,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     cb->resourceUpdate(batch);
 
     // ---- Begin render pass ----
-    const QColor clearColor(0x0a, 0x0a, 0x14);
+    const QColor clearColor = WorkspacePreview::dataBackground(QColor(0x0a, 0x0a, 0x14), "app-bg");
     cb->beginPass(renderTarget(), clearColor, {1.0f, 0});
 
     const QSize outputSize = renderTarget()->pixelSize();
@@ -13493,20 +13573,28 @@ void SpectrumWidget::endPanDrag()
     setCursor(Qt::CrossCursor);
 }
 
-void SpectrumWidget::applyRemoteCtunState(bool available, bool pinned)
+void SpectrumWidget::applyRemoteCtunState(bool available, bool pinned, const QString& heldReason)
 {
+    const bool enabled = available && pinned;
+    const QString reason = available ? heldReason : QString();
+    const bool changed = m_ctunAvailable != available || m_ctunEnabled != enabled
+        || m_ctunHeldReason != reason;
     m_ctunAvailable = available;
-    m_ctunEnabled = available && pinned;
+    m_ctunEnabled = enabled;
+    m_ctunHeldReason = reason;
     if (m_overlayMenu) {
-        m_overlayMenu->setCtunAvailable(available);
+        m_overlayMenu->setCtunAvailable(available, m_ctunHeldReason);
         m_overlayMenu->setCtunState(m_ctunEnabled);
     }
     update();
+    if (changed) {
+        emit remoteCtunStateChanged();
+    }
 }
 
 void SpectrumWidget::setCtunEnabled(bool enabled)
 {
-    if (!m_ctunAvailable) { return; }
+    if (!m_ctunAvailable || !m_ctunHeldReason.isEmpty()) { return; }
     m_ctunPreference = enabled;
     if (m_ctunEnabled == enabled) {
         return;
@@ -13540,6 +13628,12 @@ VfoWidget* SpectrumWidget::addVfoWidget(int sliceIndex)
     connect(w, &VfoWidget::activeSliceChanged, this, [this](bool) {
         markOverlayDirty();
     });
+    // Flag fold (workspace visual review Task 26): a folded or opened flag
+    // is placed again at its new width, and its marker redrawn.
+    connect(w, &VfoWidget::collapsedChanged, this, [this](bool) {
+        updateVfoPositions();
+        markOverlayDirty();
+    });
     w->show();
     w->raise();
     return w;
@@ -13557,6 +13651,7 @@ void SpectrumWidget::removeVfoWidget(int sliceIndex)
         // are alive keeps the destruction order ours (issue #113).
         w->destroyFloatingButtons();
         delete w;
+        refreshReceiverFlagRegion();
         update();
     }
 }
@@ -13679,6 +13774,19 @@ void SpectrumWidget::updateVfoPositions()
     // A's frequency readout." Re-asserting the pin here, after the loop, is
     // what makes it survive this pass instead of only the one it was set on.
     raiseFrontVfoWidget();
+    refreshReceiverFlagRegion();
+}
+
+void SpectrumWidget::refreshReceiverFlagRegion()
+{
+    QRegion region;
+    for (VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+        region += vfo->occupiedRegion();
+    }
+    if (region != m_receiverFlagRegion) {
+        m_receiverFlagRegion = region;
+        emit receiverFlagRegionChanged();
+    }
 }
 
 // ---- Phase 3Q-8: disconnect overlay ----------------------------------------

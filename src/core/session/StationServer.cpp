@@ -1014,6 +1014,9 @@
 //               Claude Code.
 //   2026-10-10: txReadingsVersion 4: the six transmit peak readings. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: each slice access entry names the holder of the receiver
+//               its slice is on (receiverHolderDeviceId). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -3784,6 +3787,12 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         const SliceModel* slice = m_radioModel->sliceById(sliceId);
         fields.txSelected = slice != nullptr && slice->txSliceMarked();
         fields.onAir = sliceTransmitting(sliceId);
+        // Ruling 6.3: the receiver's C-Tune setting is its holder's, and a
+        // pin from anyone else is refused (handleReceiverCommand). Naming
+        // the holder here lets a window know that before it asks.
+        const QByteArray holder =
+            slice != nullptr ? ownership->anchorOf(slice->streamIndex()) : QByteArray();
+        fields.receiverHolderDeviceId = holder.isEmpty() ? QString() : wireIdOf(holder);
         return fields;
     }, this);
     connect(m_sliceAccessSet, &SliceAccessSet::accessCreated, this,
@@ -13088,7 +13097,9 @@ int StationServer::remoteRotorControlVersion() const
     // 0 otherwise. nereusd always does (enableStationAccessoryIdentity makes
     // it); Task 4c: so does a desktop running its own radio, whose hosted
     // Core serves its phones (GuiSessionCoordinator calls
-    // enableStationRotor for every window in the Local role).
+    // enableStationAccessoryIdentity for every window in the Local role,
+    // since 2026-10-11 with that window's Tuner Genius, Power Genius and
+    // RF-Kit).
     return !m_radioModel.isNull() && m_radioModel->stationRotorController() != nullptr ? 1 : 0;
 }
 

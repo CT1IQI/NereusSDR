@@ -33,15 +33,35 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02: Restored pinned upstream comments during integration.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-09 - The section titles read WorkspacePreview::roleColourName()
+//                 (title-text) with the preview on. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the C-Tune switch on a receiver whose setting is another's
+//                 to change is shown disabled with the reason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayMenu.h"
+
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
 
 namespace NereusSDR {
+
+namespace {
+
+// The section titles are blue only for decoration: the header text
+// (title-text, the application sheet's group box titles) with the
+// workspace preview on, today's accent with it off.
+QString sectionTitleColour()
+{
+    return WorkspacePreview::roleColourName("#00b4d8", "title-text");
+}
+
+} // namespace
 
 SpectrumOverlayMenu::SpectrumOverlayMenu(QWidget* parent)
     : QWidget(parent)
@@ -98,7 +118,7 @@ void SpectrumOverlayMenu::buildUI()
 
     // --- Waterfall section ---
     auto* wfLabel = new QLabel(QStringLiteral("Waterfall"), this);
-    wfLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8;"));
+    wfLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1;").arg(sectionTitleColour()));
     layout->addWidget(wfLabel);
 
     // Color scheme
@@ -151,7 +171,7 @@ void SpectrumOverlayMenu::buildUI()
 
     // --- Spectrum section ---
     auto* specLabel = new QLabel(QStringLiteral("Spectrum"), this);
-    specLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    specLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1; margin-top: 6px;").arg(sectionTitleColour()));
     layout->addWidget(specLabel);
 
     // Pan fill
@@ -179,7 +199,7 @@ void SpectrumOverlayMenu::buildUI()
 
     // --- Display Range section ---
     auto* rangeLabel = new QLabel(QStringLiteral("Display Range"), this);
-    rangeLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    rangeLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1; margin-top: 6px;").arg(sectionTitleColour()));
     layout->addWidget(rangeLabel);
 
     // Ref level
@@ -216,7 +236,7 @@ void SpectrumOverlayMenu::buildUI()
 
     // --- Tuning Mode section ---
     auto* tuneLabel = new QLabel(QStringLiteral("Tuning"), this);
-    tuneLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    tuneLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1; margin-top: 6px;").arg(sectionTitleColour()));
     layout->addWidget(tuneLabel);
 
     m_ctunCheck = new QCheckBox(QStringLiteral("CTUN (independent pan)"), this);
@@ -234,7 +254,7 @@ void SpectrumOverlayMenu::buildUI()
     // Ctrl + right-click stays the primary add gesture; this row is the
     // discoverable one for an operator who does not know the chord.
     auto* notchLabel = new QLabel(QStringLiteral("Notch"), this);
-    notchLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    notchLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1; margin-top: 6px;").arg(sectionTitleColour()));
     layout->addWidget(notchLabel);
 
     auto* notchRow = new QHBoxLayout;
@@ -265,7 +285,7 @@ void SpectrumOverlayMenu::buildUI()
     // ours is this QWidget popup -- a second competing surface would show
     // the operator two menus in sequence on one right-click.
     auto* dssLabel = new QLabel(QStringLiteral("3D VIEW"), this);
-    dssLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: #00b4d8; margin-top: 6px;"));
+    dssLabel->setStyleSheet(QStringLiteral("font-weight: bold; color: %1; margin-top: 6px;").arg(sectionTitleColour()));
     layout->addWidget(dssLabel);
 
     // ── Spectrum render mode (2D waterfall vs 3DSS) ───────────────────────
@@ -490,9 +510,14 @@ void SpectrumOverlayMenu::setValues(int wfColorGain, int wfBlackLevel, bool auto
     m_ctunCheck->blockSignals(false);
 }
 
-void SpectrumOverlayMenu::setCtunAvailable(bool available)
+void SpectrumOverlayMenu::setCtunAvailable(bool available, const QString& heldReason)
 {
-    m_ctunCheck->setEnabled(available);
+    const bool held = available && !heldReason.isEmpty();
+    m_ctunCheck->setEnabled(available && !held);
+    if (held) {
+        m_ctunCheck->setToolTip(heldReason);
+        return;
+    }
     m_ctunCheck->setToolTip(available
         ? QStringLiteral("Keep the receive window fixed while tuning within it")
         : QStringLiteral("C-Tune requires a connected Core with remote C-Tune support"));

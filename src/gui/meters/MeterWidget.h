@@ -1,3 +1,7 @@
+// Modification history (NereusSDR):
+//   2026-10-12 - Track the approved workspace text minimum in paint caches.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #pragma once
 #include <optional>
 
@@ -283,6 +287,7 @@ private:
     QRhiTexture*                m_ovGpuTex{nullptr};
     QRhiSampler*                m_ovSampler{nullptr};
     QImage m_overlayStatic;
+    bool   m_readableTextCache{false};
     bool   m_overlayStaticDirty{true};
     QImage m_overlayDynamic;
     bool   m_overlayDynamicDirty{true};

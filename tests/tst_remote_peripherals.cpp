@@ -84,6 +84,9 @@
 // 2026-09-29: load finding: the nothing-happens checks wait for the link's
 // own flush bound (SessionWait.h), not a number picked by hand. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09: the 4O3A page carries its page title above its tabs, as
+// every Setup page and the RF-Kit page do. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
 // 2026-10-11: test flaw: coreHereServesThisComputersApps dials an address
 // this computer can reach (reachableOwnAddress), not its first non-loopback
 // one. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -156,6 +159,7 @@
 #include "gui/setup/PgxlInterlockPage.h"
 #include "gui/setup/TgxlAdvancedPage.h"
 #include "gui/SetupDialog.h"
+#include "gui/SetupPage.h"
 #include "gui/LanScanDialog.h"
 #include "gui/RelayBar.h"
 #include "gui/PgxlSaveRebootDialog.h"
@@ -587,6 +591,7 @@ private slots:
     void remoteTgxlDraftUsesStationLinkAndSurvivesUnrelatedSnapshots();
     void unknownCapabilityKeepsRemoteTgxlInert();
     void remoteParentPageExposesOnlyStationBackedControls();
+    void pageTitleSitsAboveTheTabsAsOnSetupPages();
     void remoteMasterShowsPendingAndRefusalWithoutLocalActivation();
     void coreTunerErrorsAreShownInUserWords();
     void remoteAmpAndRfKitAppletsFollowTheCore();
@@ -673,6 +678,45 @@ void RemotePeripheralsTest::remoteParentPageExposesOnlyStationBackedControls()
     QVERIFY(actualPage);
     QVERIFY(actualPage->isEnabled());
     QVERIFY(actualPage->findChild<PeripheralsPage*>()->isEnabled());
+}
+
+// The 4O3A page carries a page title above its tabs, drawn as every Setup
+// page draws its own (its General tab strip sat at the top of the page).
+// A remote window with no Core attached: the page opens nothing.
+void RemotePeripheralsTest::pageTitleSitsAboveTheTabsAsOnSetupPages()
+{
+    RadioModel model(RadioModel::Role::Remote);
+    FourO3APage page(&model);
+    page.resize(900, 650);
+    page.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&page));
+    QTabWidget* tabs = nullptr;
+    for (QTabWidget* t : page.findChildren<QTabWidget*>()) {
+        if (t->parentWidget() == &page) {
+            tabs = t;
+        }
+    }
+    QVERIFY(tabs != nullptr);
+    QLabel* title = nullptr;
+    for (QLabel* label : page.findChildren<QLabel*>()) {
+        if (label->text() == QStringLiteral("4O3A") && label->parentWidget() == &page) {
+            title = label;
+        }
+    }
+    QVERIFY2(title != nullptr, "no 4O3A page title");
+    QVERIFY(title->isVisible());
+    QVERIFY(title->geometry().bottom() < tabs->geometry().top());
+    SetupPage reference(QStringLiteral("Reference"));
+    QLabel* referenceTitle = nullptr;
+    for (QLabel* label : reference.findChildren<QLabel*>()) {
+        if (label->text() == QStringLiteral("Reference")) {
+            referenceTitle = label;
+        }
+    }
+    QVERIFY(referenceTitle != nullptr);
+    QCOMPARE(title->styleSheet(), referenceTitle->styleSheet());
+    QVERIFY(!model.pgxlConnection()->isConnected());
+    QVERIFY(!model.tgxlConnection()->isConnected());
 }
 
 void RemotePeripheralsTest::remoteMasterShowsPendingAndRefusalWithoutLocalActivation()

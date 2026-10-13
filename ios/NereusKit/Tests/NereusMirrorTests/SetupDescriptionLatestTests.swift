@@ -359,7 +359,7 @@ import Testing
         await rig.connect()
         let enable = try rig.control("hardware.hl2Io.cl2Enable")
         let turning = Task { await rig.dispatcher.edit(enable, in: "hardware", to: .bool(true)) }
-        #expect(await rig.route.waitForCount(1, unless: turning))
+        try #require(await rig.route.waitForCount(1, unless: turning))
         guard case .settingsWrite(let first) = rig.route.sent[0].message else { Issue.record("no write"); return }
         #expect(first.key == Self.enableKey)
         #expect(first.properties.first?.value == .utf8("True"))
@@ -373,7 +373,7 @@ import Testing
         for (value, text) in [(24.576, "24.576"), (116.0, "116")] {
             let writing = Task { await rig.dispatcher.edit(frequency, in: "hardware", to: .decimal(value)) }
             count += 1
-            #expect(await rig.route.waitForCount(count, unless: writing))
+            try #require(await rig.route.waitForCount(count, unless: writing))
             guard case .settingsWrite(let write) = rig.route.sent[count - 1].message else { Issue.record("no write"); return }
             #expect(write.key == Self.frequencyKey)
             #expect(write.properties.first?.value == .utf8(text))
@@ -385,7 +385,7 @@ import Testing
         let refusal = "Choose a CL2 frequency from 1 to 200 MHz."
         let refused = Task { await rig.dispatcher.edit(frequency, in: "hardware", to: .decimal(150.5)) }
         count += 1
-        #expect(await rig.route.waitForCount(count, unless: refused))
+        try #require(await rig.route.waitForCount(count, unless: refused))
         guard case .settingsWrite(let write) = rig.route.sent[count - 1].message else { Issue.record("no write"); return }
         rig.settings.apply(.settingsReject(.init(key: write.key, properties: [.init(name: "value", value: .utf8("116"))],
                                                  reason: refusal)))

@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Fit live inset threshold/hold readouts to the actual
+//                 slider range and resolved workspace font/style metrics.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -225,10 +228,15 @@
 //   2026-10-06  J.J. Boyd / KG4VCF  R-SPK-21: the mic source badge points
 //                to Settings > Audio > Microphone, the new name of TX Input.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
+//               repair on a live item view (QtCocoaAccessibleTableCache).
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-08  J.J. Boyd / KG4VCF  Issue #357: syncDesktopKeyState's
 //                fallback reads the transmit model's TUNE, which the
 //                release press clears, as the hosting window's handler
 //                does. AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF): approved 6 px workspace-look TX
+//               panel row spacing. AI-assisted via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -331,12 +339,15 @@
 // 15.  SWR protection LED — QLabel indicator (NYI — 3M-3)
 
 #include "TxApplet.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "TxEqDialog.h"
 #include "TxCfcDialog.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "gui/widgets/InsetValueLabelFit.h"
 #include "gui/widgets/VfoWidget.h"
 #include "core/AudioEngine.h"
 #include "core/ControlRanges.h"
@@ -376,6 +387,8 @@
 namespace NereusSDR {
 
 namespace {
+
+constexpr int kWorkspaceTxRowSpacing = 6;
 
 // R-R3-45: the MON output captions, in one place so a rename is one edit.
 // They match the receiver flag's output buttons (VfoWidget), in capitals
@@ -452,7 +465,7 @@ void TxApplet::buildUI()
     body->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     auto* vbox = new QVBoxLayout(body);
     vbox->setContentsMargins(4, 2, 4, 2);
-    vbox->setSpacing(2);
+    vbox->setSpacing(WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2);
     outer->addWidget(body);
 
     // ── 0. Mic-source badge ── read-only label above the gauges ─────────────
@@ -641,8 +654,8 @@ void TxApplet::buildUI()
         m_takeTransmitBtn->setObjectName(QStringLiteral("TxTakeTransmitButton"));
         m_takeTransmitBtn->setAccessibleName(QStringLiteral("Take transmit"));
         m_takeTransmitBtn->setToolTip(
-            QStringLiteral("Ask to take transmit from the device that has it, so MOX and "
-                           "TUNE work here."));
+            QStringLiteral("Take transmit for this window, from the device that has it or "
+                           "when no device does, so MOX, TUNE and programs transmit from here."));
         m_takeTransmitBtn->setVisible(false);
         connect(m_takeTransmitBtn, &QPushButton::clicked, this,
                 &TxApplet::takeTransmitRequested);
@@ -718,6 +731,7 @@ void TxApplet::buildUI()
         m_voxLvlLabel->setFixedWidth(38);
         m_voxLvlLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxLvlLabel);
+        new InsetValueLabelFit(m_voxLvlLabel, m_voxSlider, QStringLiteral(" dB"), 38);
 
         m_voxDlySlider = new QSlider(Qt::Horizontal, this);
         // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
@@ -734,6 +748,7 @@ void TxApplet::buildUI()
         m_voxDlyLabel->setFixedWidth(42);
         m_voxDlyLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxDlyLabel);
+        new InsetValueLabelFit(m_voxDlyLabel, m_voxDlySlider, QStringLiteral(" ms"), 42);
 
         vbox->addLayout(row);
     }
@@ -926,6 +941,8 @@ void TxApplet::buildUI()
         // Right-click → emit txProfileMenuRequested (mirrors Thetis
         // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
+        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
+        installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);

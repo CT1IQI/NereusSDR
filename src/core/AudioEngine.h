@@ -289,6 +289,9 @@
 //               clock matcher checks the matcher's room itself; the
 //               comments say so. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: PortAudio no longer starts in the constructor (it starts on
+//               first need); m_paInitialized is gone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1051,8 +1054,8 @@ public:
     {
         m_deviceBusFactoryForTest = std::move(factory);
     }
-    // R-R3-21: how many times any AudioEngine in this process has called
-    // Pa_Initialize / Pa_Terminate. A test run calls neither
+    // R-R3-21: how many times this process has called Pa_Initialize /
+    // Pa_Terminate through PortAudioLibrary. A test run calls neither
     // (PortAudioBus::portAudioBarredForTestRun).
     static int paInitializeCallsForTest();
     static int paTerminateCallsForTest();
@@ -1643,6 +1646,9 @@ private:
     // for a role with nothing saved), and the in-memory choices it changed.
     void migrateSavedChoices();
     bool audioDevicesApply() const;
+    // A saved device choice is on the older drivers, or they are the
+    // default engine: their devices are listed from the catalog's start.
+    bool savedChoicesNeedOlderDrivers() const;
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
     AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
@@ -2137,13 +2143,9 @@ private:
     FlowState m_flowState{FlowState::Dead};
     int       m_successiveUnderruns{0};
 
-    // Was Pa_Initialize() actually successful? Guards the matching
-    // Pa_Terminate() in the destructor so unit tests that construct
-    // AudioEngine without a real audio subsystem don't hit a spurious
-    // terminate.
-    bool m_paInitialized{false};
-    // The device paths may run: PortAudio came up, or this is a test run,
-    // where makeBus supplies only the test's fake devices (R-R3-21).
+    // The device paths may run.  Set in the constructor; PortAudio is not
+    // part of it (it starts on first need).  In a test run makeBus supplies
+    // only the test's fake devices (R-R3-21).
     bool m_deviceLayerReady{false};
     bool m_running{false};
     // High-water mark of slice ids registered with MasterMixer: ids

@@ -629,6 +629,13 @@
 //                OPERATE and STANDBY, for an app that runs its own radio
 //                whether or not it shares the amplifier. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit with the windows and
+//                phones signed in to it: enableStationAccessoryIdentity
+//                takes how the device is admitted, and the window's own
+//                Connect and Disconnect go through the controllers
+//                (connect*FromWindow, disconnect*FromWindow). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -732,6 +739,7 @@
 #include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
 #include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
 #include "core/StationNetwork.h"  // StationBind (R-R3-22 station listeners)
+#include "core/StationAccessoryAdmission.h"
 #include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
@@ -3173,6 +3181,13 @@ public:
     void setContainerManager(class ContainerManager* cm) { m_containerManager = cm; }
     QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
 
+    /// True while a source of its own (the headless Core's DaemonAgcSource)
+    /// writes each slice's station Auto AGC noise floor. Otherwise this
+    /// model writes it on the Auto AGC tick from the slice's registered
+    /// tracker, so a window signed in to a desktop window's Core reads the
+    /// floor that desktop window shows.
+    void setAutoAgcFloorPublishedBySource(bool on) { m_autoAgcFloorPublishedBySource = on; }
+
     // 3M-1a G.1: expose MoxController so MainWindow can wire
     // StepAttenuatorController::onMoxHardwareFlipped (F.2 connect) after
     // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
@@ -3437,6 +3452,11 @@ public:
     /// that needs "where is this slice transmitting" should come here
     /// rather than re-derive the offset.
     quint64 txFrequencyForSlice(const SliceModel* slice) const;
+
+    /// The radio NCO and TX analyzer's baseband origin. During Tune this
+    /// subtracts the existing signed tone from dial+XIT, so the tone lands
+    /// on txFrequencyForSlice(). Other transmit modes keep dial+XIT.
+    quint64 txNcoFrequencyForSlice(const SliceModel* slice) const;
 
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
@@ -3786,13 +3806,32 @@ public:
     // R3 station-owned accessory lifecycle. Installed by DaemonApp before
     // radio startup, independently of the temporary receive-only policy.
     // Makes the rotor too, through enableStationRotor().
-    void enableStationAccessoryIdentity();
+    // 2026-10-11: a desktop window running its own radio installs it too
+    // (GuiSessionCoordinator), with TypedAddress, so the windows and phones
+    // signed in to it get its Tuner Genius, Power Genius and RF-Kit as
+    // nereusd's clients get the Core's. Its links behave on the wire as
+    // they did in a window with no controller.
+    void enableStationAccessoryIdentity(
+        StationAccessoryAdmission admission = StationAccessoryAdmission::Identified);
     bool stationAccessoryIdentityEnabled() const { return m_stationTgxl != nullptr; }
+    // The Connect and Disconnect of the window that runs the radio (its
+    // Tuner, Amplifier and RF-Kit applets and its Setup pages). One owner
+    // per device: with the station controllers installed the dial and the
+    // hang-up go through them, so every window and client of this Core sees
+    // the same connection; without them (a model nobody installed them on)
+    // the link is dialed directly, as before. Local role only; a remote
+    // window asks its Core (IStationLink) instead.
+    void connectTgxlFromWindow(const QString& host, quint16 port);
+    void disconnectTgxlFromWindow();
+    void connectPgxlFromWindow(const QString& host, quint16 port);
+    void disconnectPgxlFromWindow();
+    void connectRfKitFromWindow(const QString& host, quint16 port);
+    void disconnectRfKitFromWindow();
     // Rotor control plan Task 4c: the antenna rotor alone (cty.dat, the
     // controller from the saved Rotor/* settings, rotorModel() bound to it).
-    // nereusd reaches it through enableStationAccessoryIdentity(); a desktop
-    // running its own radio calls it by itself, without the Tuner Genius,
-    // Power Genius or RF-Kit controllers. Local role only; a second call
+    // nereusd and a desktop running its own radio reach it through
+    // enableStationAccessoryIdentity(); a model with no station accessories
+    // may call it by itself. Local role only; a second call
     // makes nothing. The controller lives as long as this model: a switch to
     // a remote Core replaces the whole model, which closes the rotor's port.
     void enableStationRotor();
@@ -6476,6 +6515,7 @@ private:
     // is down (no link, or stationLinkReady() false).
     bool remoteCoreLinkDown() const;
     void updateAutoAgc();
+    void publishStationAutoAgcNoiseFloors();
 
     // RADE end-of-over callsigns (MoxController::setEndOfOverTail). Starts
     // the tail when this release is an operator's and the transmitter runs
@@ -8116,6 +8156,7 @@ private:
 
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
+    bool m_autoAgcFloorPublishedBySource{false};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
     QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.

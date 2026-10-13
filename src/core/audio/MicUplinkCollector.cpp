@@ -6,6 +6,8 @@
 // Modification history (NereusSDR):
 //   2026-10-10: created.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: collectOnce() counts its wakes and frames.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/MicUplinkCollector.h"
@@ -93,6 +95,7 @@ int MicUplinkCollector::collectOnce()
     if (!m_source) {
         return 0;
     }
+    m_wakes.fetch_add(1, std::memory_order_relaxed);
     int total = 0;
     for (int pull = 0; pull < kMaxPullsPerWake; ++pull) {
         const int got = std::min(m_source(m_scratch.data(), kPullFrames), kPullFrames);
@@ -105,6 +108,9 @@ int MicUplinkCollector::collectOnce()
         if (got < kPullFrames) {
             break;
         }
+    }
+    if (total > 0) {
+        m_collected.fetch_add(static_cast<quint64>(total), std::memory_order_relaxed);
     }
     return total;
 }

@@ -93,6 +93,11 @@
 //               or taken again since the notice answers "That can no
 //               longer be taken back." J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-12: the C-Tune pin refusal names the receiver's holder as the
+//               other slice refusals do (sliceHolderWords); on a Core no
+//               desktop hosts it left the Core's own position unnamed.
+//               J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -605,10 +610,14 @@ bool StationServer::handleReceiverCommand(SessionTransport* transport, const Ses
                 // operator reads as this computer's own.
                 const bool notConnected = anchor != SliceOwnership::stationDevice()
                     && liveTransportFor(anchor) == nullptr;
+                // The holder as the other slice refusals name it
+                // (sliceHolderWords): the Core's own position has no entry
+                // among the connected devices on a Core no desktop hosts,
+                // and its name alone left the sentence without one.
                 if (notConnected) {
-                    refusal = awayPinReason(planDevice(anchor).name);
+                    refusal = awayPinReason(sliceHolderWords(anchor));
                 } else {
-                    refusal = pinReason(planDevice(anchor).name);
+                    refusal = pinReason(sliceHolderWords(anchor));
                 }
             }
         }

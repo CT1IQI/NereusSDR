@@ -10,9 +10,20 @@
 //                 Claude Code.
 //   2026-09-22 — Accept owning PS3 curves with independent coordinates and
 //                 series visibility; J.J. Boyd (KG4VCF), OpenAI Codex.
+//   2026-10-09 - JJ's D22: with the workspace preview on, the chart takes
+//                 its container's background through
+//                 WorkspacePreview::dataBackground(); grid, traces, labels
+//                 and legend unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "AmpViewChart.h"
+
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QFontMetrics>
 #include <QPainter>
@@ -174,7 +185,7 @@ void AmpViewChart::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.fillRect(rect(), QColor(kBackground));
+    painter.fillRect(rect(), WorkspacePreview::dataBackground(QColor(kBackground), "app-bg", this));
 
     const QRectF plot(kLeft, kTop, width() - kLeft - kRight,
                       height() - kTop - kBottom);
@@ -193,10 +204,13 @@ void AmpViewChart::paintEvent(QPaintEvent*)
     }
     painter.drawRect(plot);
 
-    QFont labels = painter.font();
-    labels.setPointSizeF(labels.pointSizeF() * 0.85);
+    QFont labels = WorkspacePreview::readableFont(painter.font(), painter.device());
+    if (labels.pointSizeF() > 0) {
+        labels.setPointSizeF(labels.pointSizeF() * 0.85);
+    }
+    labels = WorkspacePreview::readableFont(labels, painter.device());
     painter.setFont(labels);
-    const QFontMetrics metrics(labels);
+    const QFontMetrics metrics(labels,painter.device());
     painter.setPen(QColor(kLabel));
 
     const double magnitudeMax = magYMax();

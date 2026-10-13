@@ -352,6 +352,42 @@ private slots:
         QTRY_VERIFY(!mox->isMox());
     }
 
+    // 2026-10-12: with nobody holding transmit a program's key is refused
+    // until this window takes it, so the window says so and offers Take
+    // transmit then too; the take is made at once, with no question (there
+    // is no holder to show or to ask), and never keys.
+    void theWindowTakesTransmitAtOnceWhenNobodyHoldsIt()
+    {
+        Core core;
+        allowTransmit(core);
+        CoreTx coreTx(core.model.get());
+        Window w;
+        QVERIFY(core.server->deviceStore()->add(w.record()));
+        QVERIFY(w.connectTo(core));
+        QTRY_VERIFY(w.client.transmitTakeAvailable());
+        MoxController* mox = core.model->moxController();
+        TransmitState& tx = *w.client.transmitState();
+        QVERIFY(tx.holderDeviceId().isEmpty());
+        QVERIFY(!w.client.transmitHeldElsewhere());
+        QVERIFY(w.client.transmitTakeOffered());
+        const QString line = w.client.transmitHolderText();
+        QCOMPARE(line, QStringLiteral("No device has transmit. MOX and TUNE take it here. A "
+                                      "program needs Take transmit first."));
+        QVERIFY(OperatorWording::isPlain(line));
+
+        MultiDeviceController controller(&w.client, &w.host);
+        QSignalSpy taken(&controller, &MultiDeviceController::transmitTaken);
+        controller.askTakeTransmit();
+        QVERIFY(controller.openDialog() == nullptr);
+        QTRY_VERIFY(heldBy(core, w.key->fingerprint()));
+        QTRY_VERIFY(w.client.holdsTransmitHere());
+        QTRY_COMPARE(taken.count(), 1);
+        QVERIFY(controller.openDialog() == nullptr);
+        QVERIFY(!w.client.transmitTakeOffered());
+        QCOMPARE(w.client.transmitHolderText(), QStringLiteral("This computer holds transmit."));
+        QVERIFY(!mox->isMox());  // a take never keys
+    }
+
     // While the holder is on the air the question is the red "Unkey and
     // take over"; a question the Core asks (what the window showed no
     // longer holds) is the same shape and answers confirm.proceed.

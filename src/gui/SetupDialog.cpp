@@ -205,6 +205,7 @@
 // =================================================================
 
 #include "SetupDialog.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "SetupPage.h"
 #include "UnbuiltFeatures.h"
 #include "core/AppSettings.h"
@@ -498,6 +499,10 @@ SetupDialog::SetupDialog(RadioModel* model, QWidget* parent)
 
     // R-R3-21: leaf tooltips for remote-unavailable pages from the start.
     refreshTransmitPresentation();
+
+    // Workspace preview: the scoped stylesheet pass runs each time the
+    // dialog is shown (preview scaffolding; nothing with the switch off).
+    WorkspacePreview::themeOnShow(this);
 }
 
 // ── showEvent ─────────────────────────────────────────────────────────────────
@@ -1377,7 +1382,7 @@ void SetupDialog::buildTree()
         QFont f = item->font(0);
         f.setBold(true);
         item->setFont(0, f);
-        item->setForeground(0, QColor("#8aa8c0"));
+        item->setForeground(0, WorkspacePreview::roleColour(QColor("#8aa8c0"), "title-text"));
         return item;
     };
 

@@ -12,9 +12,19 @@
 //              what Thetis's options do, their defaults come from
 //              TciProtocol.h, and Forget follows Duplicate as in Thetis.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-09 - D25: the Peripherals grid (960 px) cannot fit the Settings
+//              window, so it scrolls sideways inside its own frame
+//              (SetupFit::SidewaysFrame) instead of being squeezed. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11 - The Peripherals rows' Connect and Disconnect in a window
+//              running its own radio go through RadioModel
+//              (connect*FromWindow), the connection that window shares.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatNetworkSetupPages.h"
+#include "gui/setup/SetupFit.h"
 #include "gui/StyleConstants.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/LanScanDialog.h"
 #include "gui/OperatorReasonText.h"
 #include "core/AppSettings.h"
@@ -1136,12 +1146,14 @@ void CatTciServerPage::refreshTciStatusDisplay()
     if (m_statusLabel) {
         if (m_tciServerRunning) {
             m_statusLabel->setText(
-                tr("<span style='color:#3DD068'>●</span> Running (%1 %2)")
+                tr("<span style='color:%3'>●</span> Running (%1 %2)")
                     .arg(m_tciClientCount)
-                    .arg(m_tciClientCount == 1 ? tr("client") : tr("clients")));
+                    .arg(m_tciClientCount == 1 ? tr("client") : tr("clients"))
+                    .arg(WorkspacePreview::statusColourName("#3DD068", "ok")));
         } else {
             m_statusLabel->setText(
-                tr("<span style='color:#D04040'>●</span> Stopped"));
+                tr("<span style='color:%1'>●</span> Stopped")
+                    .arg(WorkspacePreview::statusColourName("#D04040", "danger")));
         }
         m_statusLabel->setTextFormat(Qt::RichText);
     }
@@ -1285,7 +1297,12 @@ PeripheralsPage::PeripheralsPage(RadioModel* model, QWidget* parent)
              QStringLiteral("PGXL_ManualPort"),
              9008);
 
-    outer->addWidget(group);
+    // D25: six columns that cannot fit the Settings window scroll sideways
+    // inside their own frame; they were squeezed below their minimum widths.
+    auto* groupFrame = new SetupFit::SidewaysFrame(this);
+    groupFrame->setObjectName(QStringLiteral("peripheralsTableFrame"));
+    groupFrame->setWidget(group);
+    outer->addWidget(groupFrame);
 
     // Footnote text (from design spec §5.3).
     auto* note = new QLabel(
@@ -1974,14 +1991,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (pgxl->isConnected()) {
-            pgxl->disconnect();
+            m_model->disconnectPgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(PGXL): host or port not set; fill in the fields first";
                 return;
             }
-            pgxl->connectToPgxl(host, port);
+            m_model->connectPgxlFromWindow(host, port);
         }
     } else {
         // TGXL row (rowIdx == 0).
@@ -1991,14 +2008,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (tgxl->isConnected()) {
-            tgxl->disconnect();
+            m_model->disconnectTgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(TGXL): host or port not set; fill in the fields first";
                 return;
             }
-            tgxl->connectToTgxl(host, port);
+            m_model->connectTgxlFromWindow(host, port);
         }
     }
 }

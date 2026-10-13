@@ -6,6 +6,13 @@
 //            AI-assisted via Anthropic Claude Code.
 // 2026-10-07 Remote reasons and the log window follow CatControl.
 //            J.J. Boyd / KG4VCF, AI tooling: Claude Code.
+// 2026-10-09 "Always recenter VFOs" sits in the option rows' indicator
+//            column, both looks. J.J. Boyd (KG4VCF), AI-assisted via
+//            Anthropic Claude Code.
+// 2026-10-12 A local window is told the rule a refused setting broke.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12 The serial and Input PTT Enable ticks wait for what they need.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <memory>
 #include <QCheckBox>
@@ -22,6 +29,7 @@
 #include <QTemporaryDir>
 #include <QScrollArea>
 #include <QScrollBar>
+#include "GridHeaderAlignment.h"
 #include "gui/setup/CatNetworkSetupPages.h"
 #include "gui/setup/CatLogWindow.h"
 #include "gui/applets/CatApplet.h"
@@ -181,11 +189,123 @@ private slots:
         QCOMPARE(control<QSpinBox>(ptt,"catPttBits")->value(),5);
         QCOMPARE(service.channelConfig(1).serialDataBits,5); QCOMPARE(service.globalConfig().pttSerialDataBits,5);
     }
+    void localWindowIsToldTheRuleARefusedSettingBroke() {
+        RadioModel model; CatService& service=*model.catService(); CatControl* cat=model.catControl(); QVERIFY(cat && !cat->remote());
+        int answers=0; bool accepted=true; QString reason;
+        const auto answer=[&](bool ok,const QString& why) { ++answers; accepted=ok; reason=why; };
+        CatEndpointConfig one=service.channelConfig(1); one.serialEnabled=true;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("This serial port has no device")));
+        cat->reconfigureChannel(1,one,answer); QCOMPARE(answers,1); QVERIFY(!accepted); QCOMPARE(reason,QString("This serial port has no device. Choose a device, then turn the port on."));
+        one.serialDevice=QStringLiteral("shared-device"); cat->reconfigureChannel(1,one,answer); QCOMPARE(answers,2); QVERIFY(accepted); QVERIFY(reason.isEmpty());
+        CatEndpointConfig two=service.channelConfig(2); two.serialEnabled=true; two.serialDevice=QStringLiteral("shared-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT 2 refused: serial device")));
+        cat->reconfigureChannel(2,two,answer); QCOMPARE(answers,3); QVERIFY(!accepted); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        CatGlobalConfig global=service.globalConfig(); global.pttEnabled=true;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("Input PTT has no input source")));
+        cat->reconfigureGlobal(global,answer); QCOMPARE(answers,4); QVERIFY(!accepted); QCOMPARE(reason,QString("Input PTT has no input source. Choose a source, then turn it on."));
+        global.pttDeviceSource=QStringLiteral("Physical"); global.pttUseDsr=true; global.pttSerialDevice=QStringLiteral("shared-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT PTT refused: serial device")));
+        cat->reconfigureGlobal(global,answer); QCOMPARE(answers,5); QVERIFY(!accepted); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        // No rule to name (a port the Core does not have): the general sentence.
+        cat->reconfigureChannel(5,one,answer); QCOMPARE(answers,6); QVERIFY(!accepted); QCOMPARE(reason,QString("Configuration refused: check address, port, format and exclusive device assignment."));
+        // The pages show it: a listener turned on with no port, and Input PTT turned on with no source.
+        CatTcpIpPage tcp(&model); control<QSpinBox>(tcp,"cat3Port")->setValue(0);
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("Invalid CAT listener address")));
+        control<QCheckBox>(tcp,"cat3Enabled")->setChecked(true); QVERIFY(!control<QCheckBox>(tcp,"cat3Enabled")->isChecked());
+        QCOMPARE(control<QLabel>(tcp,"cat3Status")->text(),QString("Invalid CAT listener address or port."));
+    }
+    void serialEnableWaitsForADevice() {
+        const QString waits=QStringLiteral("Choose a device first.");
+        RadioModel model; CatService& service=*model.catService(); CatSerialPortsPage page(&model);
+        auto* enabled=control<QCheckBox>(page,"cat1Enabled"); auto* device=control<QComboBox>(page,"cat1Device"); QVERIFY(enabled && device && device->lineEdit());
+        if (!model.catControl()->platform().serial) {
+            // No serial port support: the section is off with its own reason, and the tick adds none.
+            QVERIFY(!enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty()); return;
+        }
+        // Nothing in the Device box: the tick cannot be ticked, and says why.
+        QVERIFY(device->currentText().trimmed().isEmpty()); QVERIFY(!enabled->isChecked()); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),waits);
+        for (int channel=2;channel<=4;++channel) { auto* other=page.findChild<QCheckBox*>(QStringLiteral("cat%1Enabled").arg(channel)); QVERIFY(other && !other->isEnabled()); QCOMPARE(other->toolTip(),waits); }
+        // It follows the box as a device is typed, before the typing is finished.
+        device->lineEdit()->setText(QStringLiteral("   ")); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),waits);
+        device->lineEdit()->setText(QStringLiteral("/dev/typed")); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        QVERIFY(!control<QCheckBox>(page,"cat2Enabled")->isEnabled());
+        device->lineEdit()->clear(); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),waits);
+        // A device picked, then the port turned on: nothing is refused.
+        device->setCurrentText(QStringLiteral("/dev/picked")); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(device->lineEdit(),"editingFinished",Qt::DirectConnection)); QCOMPARE(service.channelConfig(1).serialDevice,QString("/dev/picked"));
+        QVERIFY(enabled->isEnabled()); enabled->setChecked(true); QVERIFY(service.channelConfig(1).serialEnabled); QVERIFY(enabled->isChecked());
+        // A port that is on can always be turned off, whatever the box holds.
+        QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        device->lineEdit()->clear(); QVERIFY(enabled->isChecked()); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        page.syncFromModel(); QCOMPARE(device->currentText(),QString("/dev/picked")); QVERIFY(enabled->isEnabled());
+        enabled->setChecked(false); QVERIFY(!service.channelConfig(1).serialEnabled); QVERIFY(enabled->isEnabled());
+        // A change from elsewhere: the tick follows the device the page then shows.
+        auto* second=control<QCheckBox>(page,"cat2Enabled"); CatEndpointConfig two=service.channelConfig(2); two.serialDevice=QStringLiteral("/dev/elsewhere");
+        QVERIFY(service.reconfigureChannel(2,two)); QCOMPARE(control<QComboBox>(page,"cat2Device")->currentText(),QString("/dev/elsewhere")); QVERIFY(second->isEnabled()); QVERIFY(second->toolTip().isEmpty());
+        two.serialDevice.clear(); QVERIFY(service.reconfigureChannel(2,two)); QVERIFY(!second->isEnabled()); QCOMPARE(second->toolTip(),waits);
+    }
+    void inputPttEnableWaitsForItsSourceInputAndDevice() {
+        const QString noSource=QStringLiteral("Choose an input source first."); const QString noInput=QStringLiteral("Tick the CTS or the DSR input first."); const QString noDevice=QStringLiteral("Enter the separate physical device first.");
+        RadioModel model; CatService& service=*model.catService(); CatPttSetupPage page(&model);
+        auto* enabled=control<QCheckBox>(page,"catPttEnabled"); auto* source=control<QComboBox>(page,"catPttSource"); auto* cts=control<QCheckBox>(page,"catPttCts"); auto* dsr=control<QCheckBox>(page,"catPttDsr"); auto* device=control<QLineEdit>(page,"catPttDevice");
+        QVERIFY(enabled && source && cts && dsr && device);
+        if (!model.catControl()->platform().serial) {
+            // No serial port support: the section is off with its own reason, and the tick adds none.
+            QVERIFY(!enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty()); return;
+        }
+        // Each missing thing in turn, the first one named.
+        QVERIFY(!enabled->isChecked()); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noSource);
+        source->setCurrentText(QStringLiteral("Physical")); QCOMPARE(service.globalConfig().pttDeviceSource,QString("Physical")); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noInput);
+        dsr->setChecked(true); QVERIFY(service.globalConfig().pttUseDsr); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noDevice);
+        device->setText(QStringLiteral("  ")); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noDevice);
+        // It follows the device as it is typed, before the typing is finished.
+        device->setText(QStringLiteral("ptt-device")); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        device->clear(); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noDevice);
+        // A CAT port as the source needs no device of its own.
+        source->setCurrentText(QStringLiteral("CAT2")); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        dsr->setChecked(false); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noInput);
+        cts->setChecked(true); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        source->setCurrentText(QStringLiteral("None")); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noSource);
+        // Everything there: it can be ticked, and nothing is refused.
+        source->setCurrentText(QStringLiteral("Physical")); device->setText(QStringLiteral("ptt-device")); QVERIFY(QMetaObject::invokeMethod(device,"editingFinished",Qt::DirectConnection));
+        QCOMPARE(service.globalConfig().pttSerialDevice,QString("ptt-device")); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        enabled->setChecked(true); QVERIFY(service.globalConfig().pttEnabled); QVERIFY(enabled->isChecked());
+        // While it is ticked it can always be unticked, whatever the page then shows.
+        QVERIFY(enabled->isEnabled()); device->clear(); QVERIFY(enabled->isChecked()); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        page.syncFromModel(); QCOMPARE(device->text(),QString("ptt-device")); QVERIFY(enabled->isChecked()); QVERIFY(enabled->isEnabled()); QVERIFY(enabled->toolTip().isEmpty());
+        enabled->setChecked(false); QVERIFY(!service.globalConfig().pttEnabled); QVERIFY(enabled->isEnabled());
+        // A change from elsewhere: the tick follows what the page then shows.
+        CatGlobalConfig global=service.globalConfig(); global.pttUseCts=false; QVERIFY(service.reconfigureGlobal(global)); QVERIFY(!cts->isChecked()); QVERIFY(!enabled->isEnabled()); QCOMPARE(enabled->toolTip(),noInput);
+    }
+    void unavailablePageReasonWinsOverWhatEnableWaitsFor() {
+        // A window with no Core: both ticks are off with the page's reason, not with what they wait for.
+        RadioModel remote(RadioModel::Role::Remote); const QString reason=remote.catControl()->unavailableReason(); QVERIFY(!reason.isEmpty()); QVERIFY(!remote.catControl()->available());
+        CatSerialPortsPage serial(&remote); CatPttSetupPage ptt(&remote);
+        for (int channel=1;channel<=4;++channel) { auto* tick=serial.findChild<QCheckBox*>(QStringLiteral("cat%1Enabled").arg(channel)); QVERIFY(tick && !tick->isEnabled()); QCOMPARE(tick->toolTip(),reason); }
+        auto* pttTick=control<QCheckBox>(ptt,"catPttEnabled"); QVERIFY(pttTick && !pttTick->isEnabled()); QCOMPARE(pttTick->toolTip(),reason);
+        // Typing in the boxes changes neither.
+        control<QComboBox>(serial,"cat1Device")->lineEdit()->setText(QStringLiteral("/dev/typed")); QCOMPARE(control<QCheckBox>(serial,"cat1Enabled")->toolTip(),reason); QVERIFY(!control<QCheckBox>(serial,"cat1Enabled")->isEnabled());
+        control<QLineEdit>(ptt,"catPttDevice")->setText(QStringLiteral("ptt-device")); QCOMPARE(pttTick->toolTip(),reason); QVERIFY(!pttTick->isEnabled());
+    }
     void testerCallbacksCannotLeaveDormantState() {
         RadioModel model; model.addSlice(); CatService& service=*model.catService(); service.startConfigured();
         connect(&service,&CatService::messageLogged,&model,[&](int,bool inbound,const QByteArray&) { if (inbound) { service.stopAll(); } });
         QCOMPARE(service.testCommand(1,"FA00014074000;"),QByteArray("?;")); QVERIFY(service.sessionIds(1).isEmpty());
         QVERIFY(model.sliceById(0)->frequency()!=14074000.0); QVERIFY(!service.isStarted());
+    }
+    // The disabled "Always recenter VFOs" row draws its indicator where the
+    // option rows above it draw theirs (it sat about 2 px left of them).
+    // Builds the page only; nothing starts listening.
+    void alwaysRecenterIndicatorSitsInItsColumn_data() { QTest::addColumn<bool>("workspace"); QTest::newRow("today")<<false; QTest::newRow("workspace")<<true; }
+    void alwaysRecenterIndicatorSitsInItsColumn() {
+        QFETCH(bool,workspace); GridHeaderAlignment::AppLook look(workspace);
+        RadioModel model; CatOptionsSetupPage page(&model); look.apply(&page); page.resize(900,650); page.show(); QVERIFY(QTest::qWaitForWindowExposed(&page));
+        for (int i=0;i<4;++i) { QCoreApplication::sendPostedEvents(nullptr,QEvent::LayoutRequest); QCoreApplication::processEvents(); }
+        QCheckBox* recenter=nullptr; for (QCheckBox* box:page.findChildren<QCheckBox*>()) { if (box->text()==QStringLiteral("Always recenter VFOs")) { recenter=box; } }
+        auto* above=control<QCheckBox>(page,"catLimitPower"); QVERIFY(recenter && above);
+        const auto indicator=[&page](const QCheckBox* box) { QStyleOptionButton option; option.initFrom(box); const QRect r=box->style()->subElementRect(QStyle::SE_CheckBoxIndicator,&option,box); return QRect(box->mapTo(&page,r.topLeft()),r.size()); };
+        QCOMPARE(indicator(recenter).left(),indicator(above).left()); QCOMPARE(indicator(recenter).size(),indicator(above).size());
+        QCOMPARE(recenter->height(),above->height());
     }
     void optionsRoundTripAndTesterHasRealEffectsWithoutSessions() {
         RadioModel model; model.addSlice(); model.sliceOwnership()->setOwner(0,SliceOwnership::stationDevice()); CatService& service=*model.catService(); service.startConfigured();

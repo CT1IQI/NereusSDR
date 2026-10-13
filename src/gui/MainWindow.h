@@ -9,6 +9,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
+//                 is built by one function the visual preview can call.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Containers > Hidden in both looks. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - Workspace preview only: Containers > Hidden lists every
+//                 hidden container and widget and shows one again where it
+//                 was. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-08 - Workspace preview only: workspace profiles, the
+//                 collapsing profile rail and Ctrl+1..9. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - J.J. Boyd (KG4VCF). maxBinSpectrumFor: the one rule for
 //                which pan's trace measures a slice's Max Bin. AI-assisted
 //                via Anthropic Claude Code.
@@ -18,6 +30,9 @@
 //                AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - J.J. Boyd (KG4VCF). The Rotor applet (rotor control plan
 //                 Task 6). AI-assisted via Anthropic Claude Code.
+//   2026-10-07 - Workspace preview only: the four-edge container area
+//                 member. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
@@ -261,6 +276,10 @@ class PanadapterStack;
 class ClarityController;
 class PanClarityRegistry;
 class ContainerManager;
+class EdgeDockArea;
+class ProfileRail;
+class ProfileRailDock;
+class WorkspaceProfiles;
 class MeterWidget;
 class MeterPoller;
 class TitleBar;
@@ -385,6 +404,12 @@ signals:
     void setupDialogCreated(NereusSDR::SetupDialog* dialog);
 
 public:
+    // Workspace preview only: the profile rail, collapsed to the active
+    // badge just left of the title in the top status strip.
+    ProfileRailDock* profileRailDock() const { return m_profileRailDock; }
+    WorkspaceProfiles* workspaceProfiles() const { return m_workspaceProfiles; }
+    void showWorkspaceProfilesDialog();
+
     /// Ruling U1 and U2's reveal (revealSliceInWindow), for tests.
     void revealSliceInWindowForTest(int sliceId) { revealSliceInWindow(sliceId); }
 
@@ -422,6 +447,10 @@ public:
     /// indirectly through applyPanLayout, which needs a constructed
     /// MainWindow the test harness cannot build.
     static QStringList panIdsForLayout(const QString& layoutId);
+    /// The FFTW wisdom progress dialog, styled and set up but not shown
+    /// (the wisdomProgress handler shows it). Public so the visual
+    /// preview can build the real dialog without generating wisdom.
+    static QProgressDialog* buildWisdomProgressDialog(QWidget* parent);
     /// Parity Task 18: how many pans Pan Layout and +PAN offer. The slice
     /// limit is RadioModel::maxSlices(), which is the Core's advertised
     /// limit in a remote window and the board's own locally, capped by the
@@ -1740,6 +1769,13 @@ private:
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};
     QSplitter* m_mainSplitter{nullptr};
+    // Workspace preview only: the four-edge area around the spectrum.
+    EdgeDockArea* m_edgeDockArea{nullptr};
+    // Workspace preview only: named profiles and their rail.
+    WorkspaceProfiles* m_workspaceProfiles{nullptr};
+    ProfileRailDock* m_profileRailDock{nullptr};
+    void setupWorkspaceProfiles();
+    void connectProfileRail();
     int m_hDelta{0};
     int m_vDelta{0};
 
@@ -1752,6 +1788,10 @@ private:
     // or manage already-created containers from the menu bar.
     QMenu* m_editContainerMenu{nullptr};
     void rebuildEditContainerSubmenu();
+    // Containers > Hidden (both looks), rebuilt on every workspace
+    // commit.
+    QMenu* m_hiddenMenu{nullptr};
+    void rebuildHiddenSubmenu();
     void resetDefaultLayout();
 
     // Meter system (Phase 3G-2)

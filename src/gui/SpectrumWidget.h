@@ -1,3 +1,7 @@
+// Modification history (NereusSDR):
+//   2026-10-12 - Track the approved workspace text minimum in paint caches.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #pragma once
 
 // =================================================================
@@ -11,6 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Export signal addresses for Windows DLL consumers.
+//               J.J. Boyd / KG4VCF, AI-assisted via OpenAI Codex.
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
 //   2026-10-11 : localSpectrumSourceForTest(), so a test can tell which
 //                 receiver's frame a pan drew. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -142,6 +151,15 @@
 //                 Copyright (C) 2024-2026 Jeremy (KK7GWY) and
 //                 AetherSDR contributors. GPLv3; project source:
 //                 https://github.com/ten9876/AetherSDR
+//   2026-10-09 - Spot list and spot display changes mark the GPU path's
+//                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
+//                 the spot labels follow them. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: C-Tune switch held: applyRemoteCtunState takes the reason
+//                 the receiver's C-Tune setting is not this window's to
+//                 change (ctunHeldReason), and setCtunEnabled then changes
+//                 nothing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // =================================================================
@@ -299,9 +317,11 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "gui/RemoteSpectrumCapture.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QRegion>
 #include <QWidget>
 #include <QVector>
 #include <QImage>
@@ -357,6 +377,7 @@ using SpectrumBaseClass = QWidget;
 #endif
 
 class TestDssRowTee;
+class TestWorkspaceSpectrumFontMinimum;
 
 namespace NereusSDR {
 
@@ -446,9 +467,10 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
 //   20px  - frequency scale bar
 //
 // From gpu-waterfall.md lines 274-289
-class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
+class NEREUS_GUI_EXPORT SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
     friend class ::TestDssRowTee;
+    friend class ::TestWorkspaceSpectrumFontMinimum;
 
     // Phase 3Q-8: animated dim factor for the disconnect overlay.
     // 1.0 = no dim (connected), 0.4 = 60% dim (disconnected, after 800 ms fade).
@@ -1718,7 +1740,13 @@ public:
     bool ctunAvailable() const { return m_ctunAvailable; }
     // Core's effective stream state must not emit a gesture or overwrite the
     // per-pan preference restored when a new station stream is acquired.
-    void applyRemoteCtunState(bool available, bool pinned);
+    // `heldReason` is not empty when the receiver's C-Tune setting is not
+    // this window's to change (another holder's receiver, or a slice it
+    // only listens to): the pan shows the receiver's setting, its switch is
+    // disabled with these words, and setCtunEnabled changes nothing.
+    void applyRemoteCtunState(bool available, bool pinned, const QString& heldReason = QString());
+    // Why the C-Tune switch is held; empty when it is free or unavailable.
+    QString ctunHeldReason() const { return m_ctunHeldReason; }
     void recenterOnVfo();
     // R-R3-18/19: true while centerChanged comes from a zoom (wheel zoom or
     // frequency-scale drag) re-centring the view on the VFO, not from the
@@ -1739,6 +1767,11 @@ public:
     void removeVfoWidget(int sliceIndex);
     VfoWidget* vfoWidget(int sliceIndex) const;
     void updateVfoPositions();
+    /// Where this pan's receiver flags show, in this widget's coordinates:
+    /// each flag, open or folded, with its side buttons and folded
+    /// frequency label (VfoWidget::occupiedRegion). PanadapterApplet keeps
+    /// its corner badges out of it so the flags stay on top of them.
+    QRegion receiverFlagRegion() const { return m_receiverFlagRegion; }
     /// A slice this pan shows only as its flag and, off the span, as its own
     /// edge marker, never through the pan's VFO: a listened slice a layout
     /// change placed on this pan. Cleared when its flag is removed.
@@ -2120,7 +2153,7 @@ public:
     void setHoverSpotIndexExternal(int idx) {
         if (m_hoverSpotIndexExternal != idx) {
             m_hoverSpotIndexExternal = idx;
-            update();
+            markOverlayDirty();  // the highlight is in the static overlay
         }
     }
     // 2026-05-12 bench fix (Gap #7).  Per-source panadapter overlay
@@ -2140,21 +2173,27 @@ public:
         // a class of "default-true silently shows" bugs the bench
         // operator hit with FreeDV spots on 2026-05-12.
         m_spotSourceVisible.insert(source, visible);
-        if (current != visible) { update(); }
+        if (current != visible) { markOverlayDirty(); }
     }
     bool isSpotSourceVisible(const QString& source) const {
         return m_spotSourceVisible.value(source, true);
     }
-    void setShowSpots(bool on) { m_showSpots = on; update(); }
+    // The spot labels are drawn into the GPU path's cached static overlay,
+    // so every input to drawSpotMarkers marks it dirty. AetherSDR's
+    // setShowSpots repaints only (SpectrumWidget.h:680 [@1e0718ad]); ours
+    // gates drawSpotMarkers inside the static overlay on m_showSpots, so
+    // the toggle invalidates it too.
+    void setShowSpots(bool on) { m_showSpots = on; markOverlayDirty(); }
     bool showSpots() const { return m_showSpots; }
-    void setSpotFontSize(int px) { m_spotFontSize = px; update(); }
-    void setSpotMaxLevels(int n) { m_spotMaxLevels = n; update(); }
-    void setSpotStartPct(int pct) { m_spotStartPct = pct; update(); }
-    void setSpotOverrideColors(bool on) { m_spotOverrideColors = on; update(); }
-    void setSpotOverrideBg(bool on) { m_spotOverrideBg = on; update(); }
-    void setSpotColor(const QColor& c) { m_spotColor = c; update(); }
-    void setSpotBgColor(const QColor& c) { m_spotBgColor = c; update(); }
-    void setSpotBgOpacity(int pct) { m_spotBgOpacity = pct; update(); }
+    // From AetherSDR src/gui/SpectrumWidget.h:713-722 [@1e0718ad]
+    void setSpotFontSize(int px) { m_spotFontSize = px; markOverlayDirty(); }
+    void setSpotMaxLevels(int n) { m_spotMaxLevels = n; markOverlayDirty(); }
+    void setSpotStartPct(int pct) { m_spotStartPct = pct; markOverlayDirty(); }
+    void setSpotOverrideColors(bool on) { m_spotOverrideColors = on; markOverlayDirty(); }
+    void setSpotOverrideBg(bool on) { m_spotOverrideBg = on; markOverlayDirty(); }
+    void setSpotColor(const QColor& c) { m_spotColor = c; markOverlayDirty(); }
+    void setSpotBgColor(const QColor& c) { m_spotBgColor = c; markOverlayDirty(); }
+    void setSpotBgOpacity(int pct) { m_spotBgOpacity = pct; markOverlayDirty(); }
 
     // Phase 3J-2 + 3R M2: refresh every Display tab knob from AppSettings.
     // Wired to SpotHubDialog::settingsChanged in MainWindow::openSpotHub
@@ -2333,6 +2372,9 @@ public:
     int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
+    /// receiverFlagRegion() changed: a flag moved, folded, opened, showed or
+    /// hid.
+    void receiverFlagRegionChanged();
     /// Task 78: a click on another device's slice label, with what it says.
     void foreignMarkerClicked(int sliceId, const QString& explanation);
     // 3M-5b: emitted when any TX waterfall colormap property changes.
@@ -2445,6 +2487,10 @@ signals:
 
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
+
+    // Mirrored presentation changed, without an operator gesture. Keep
+    // container lights and availability current without sending a pin.
+    void remoteCtunStateChanged();
 
     // R-R3-21 (R3 unfinished controls fix wave M3): peak hold was turned
     // on or off, so a container's Peak button lights at once.
@@ -2812,7 +2858,7 @@ private:
     // top — they all derive their Y from these helpers.  drawBandPlan
     // itself paints below this carve-out using r.bottom() directly so the
     // strip still lands at the panel bottom.
-    int bandPlanStripHeight() const;
+    int bandPlanStripHeight(const QPaintDevice* device = nullptr) const;
 
     // 1-Hz-bandwidth normalisation shift — returns -10*log10(binWidthHz)
     // when m_dispNormalize is on, 0 otherwise.  Applied inside dbmToY /
@@ -3437,6 +3483,7 @@ private:
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)
     bool   m_ctunPreference{true};
     bool   m_ctunAvailable{true};
+    QString m_ctunHeldReason;   // see applyRemoteCtunState()
     enum class VfoOffScreen { None, Left, Right };
     VfoOffScreen m_vfoOffScreen{VfoOffScreen::None};
     void drawOffScreenIndicator(QPainter& p, const QRect& specRect, const QRect& wfRect);
@@ -3935,6 +3982,7 @@ private:
     QRhiTexture*                m_ovGpuTex{nullptr};
     QRhiSampler*                m_ovSampler{nullptr};
     QImage m_overlayStatic;
+    bool   m_readableTextCache{false};
     bool   m_overlayStaticDirty{true};
     bool   m_overlayNeedsUpload{true};
 
@@ -4090,6 +4138,9 @@ private:
 #else
     bool dssMeshReady() const { return false; }
 #endif
+
+    QRegion m_receiverFlagRegion;
+    void refreshReceiverFlagRegion();
 
     // Invalidate the GPU-path cached overlay texture so grid, labels,
     // dBm scale, waterfall filter/zero-line/timestamp overlays, and

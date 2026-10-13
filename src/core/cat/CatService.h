@@ -65,6 +65,9 @@ Added extended CAT commands for APF funtions - May 2017.
 // 2026-10-06 - AI and ZZAI change automatic information for this run only;
 //              the saved Setup checkbox sets it at start, as Thetis does.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - A refused setting hands back the rule it broke, for the page
+//              or the connected app to show. J.J. Boyd (KG4VCF), AI-assisted
+//              via Anthropic Claude Code.
 #pragma once
 #include "core/NereusCoreExport.h"
 #include "CatModelAdapter.h"
@@ -94,8 +97,10 @@ public:
     explicit CatService(RadioModel& model, QObject* parent = nullptr);
     ~CatService() override;
     bool applyChannelConfig(int, const CatEndpointConfig&);
-    bool reconfigureChannel(int, const CatEndpointConfig&);
-    bool reconfigureGlobal(const CatGlobalConfig&);
+    // `reason`: when a change is refused for a cause the operator can act
+    // on, the sentence that says it; empty on success and on any other refusal.
+    bool reconfigureChannel(int, const CatEndpointConfig&, QString* reason = nullptr);
+    bool reconfigureGlobal(const CatGlobalConfig&, QString* reason = nullptr);
     QByteArray testCommand(int, const QByteArray&);
     CatEndpointConfig channelConfig(int) const;
     void startConfigured();

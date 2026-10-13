@@ -351,6 +351,16 @@ function(nereus_add_test name)
         endif()
     endif()
 
+    # The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0"
+    # (src/gui/styles/WorkspacePreview.h). The suite was written against
+    # the classic look, so every test starts with the look off; a test of
+    # the new look turns it on itself with
+    # WorkspacePreview::setEnabledForTest(true). ctest sets the variable
+    # over whatever the caller exported. nereus_split_test() carries it to
+    # its entries, and the sweep at the end of this file gives it to the
+    # entries registered by hand.
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+
     # Each test gets its own settings location (R-R3-21). TestSandboxInit.cpp
     # puts every test binary in QStandardPaths test mode, but test mode is one
     # shared directory under $HOME (~/.qttest/config on Linux,
@@ -621,12 +631,60 @@ nereus_add_test(tst_container_application_quit)
 # shells an emptied container leaves (offscreen; JJ crash 2026-10-09).
 nereus_add_test(tst_container_popout_removal)
 nereus_add_test(tst_container_position_restore)
+# Containers keep the place the operator gave them: restore before the pane
+# has its size, a small pane, anchoring, operator moves (offscreen).
+nereus_add_test(tst_container_remembered_place)
+# Floating and popped-out windows remember their monitor, and no two
+# default placements share a spot (offscreen, fake screens).
+nereus_add_test(tst_container_window_monitors)
+# Free containers across a quit and a start of the real MainWindow, both looks (offscreen).
+nereus_add_test(tst_mainwindow_container_restart fakes/RemoteWindowHarness.cpp)
 nereus_add_test(tst_container_follow_selected_rx)
 nereus_add_test(tst_container_stack_responsive)
 nereus_add_test(tst_container_preview_scroll_native NATIVE_WINDOW)
+# A scrolled docked stack shows no black band over its GPU
+# meters on the composited window (own-window capture; native only).
+nereus_add_test(tst_container_strip_scroll_native NATIVE_WINDOW)
 nereus_add_test(tst_container_workspace_integration)
 nereus_add_test(tst_container_meter_native NATIVE_WINDOW)
 nereus_add_test(tst_container_chrome NATIVE_WINDOW)
+nereus_add_test(tst_workspace_header_modes)
+nereus_add_test(tst_workspace_edge_strips)
+# Holding Shift alone arranges, Escape leaves Arrange; the look-off window has neither (offscreen).
+nereus_add_test(tst_workspace_arrange_hold fakes/RemoteWindowHarness.cpp)
+# While arranging, one drag rule for every container: dock in an edge zone, free over the pane, pop out outside the main window (offscreen).
+nereus_add_test(tst_workspace_arrange_drag)
+# The same rule between native windows: a free container dragged out of the main window, a window dragged onto an edge.
+# Needs real windows and the desktop; run by hand with JJ's OK only.
+nereus_add_test(tst_workspace_arrange_drag_native NATIVE_WINDOW)
+# Workspace look: Pop Out in the body menu, the pin on a window's header, and Return to where a container came from (offscreen).
+nereus_add_test(tst_workspace_popout_return)
+# A drag never resizes a floating container's window, and a window is never larger than its screen (offscreen).
+nereus_add_test(tst_container_drag_keeps_size)
+nereus_add_test(tst_workspace_live_input)
+# Each case builds a MainWindow; 43 cases ran past the 120 s limit under
+# load. Four entries of the same binary (the limit is not raised; groups in
+# the test's main()).
+nereus_split_test(tst_workspace_live_input
+    ENV NEREUS_WORKSPACE_LIVE_INPUT_GROUP GROUPS hidden duplicate profiles)
+nereus_add_test(tst_workspace_profiles)
+# The workspace look is on unless NEREUS_WORKSPACE_PREVIEW is "0": the rule
+# on its own, with no process environment (offscreen).
+nereus_add_test(tst_workspace_preview_default)
+# The workspace look has no Lock setting; with the look off Lock is unchanged (offscreen).
+nereus_add_test(tst_workspace_no_lock)
+# The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
+nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
+# Workspace look: Reset Default Layout redraws the look as a first launch does (real MainWindow offscreen).
+nereus_add_test(tst_workspace_reset_layout fakes/RemoteWindowHarness.cpp)
+# A container's stylesheet border stays on the container (antenna switch toast,
+# floating pan title bar, VAX first-run rows), offscreen.
+nereus_add_test(tst_widget_style_scoping)
+# The meter poller publishes nothing while MainWindow's RadioModel is destroyed (real MainWindow offscreen).
+nereus_add_test(tst_mainwindow_meter_teardown fakes/RemoteWindowHarness.cpp)
+nereus_add_test(tst_longpath_instruments)
+# Workspace preview: added copies of the SIGNAL STRENGTH dial (per-copy settings, own source).
+nereus_add_test(tst_smeter_dial_content)
 nereus_add_test(tst_container_document)
 nereus_add_test(tst_container_workspace_store)
 nereus_add_test(tst_container_edit_session)
@@ -634,9 +692,17 @@ nereus_add_test(tst_container_exchange)
 nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
 nereus_add_test(tst_container_preview NATIVE_WINDOW)
 nereus_add_test(tst_free_canvas NATIVE_WINDOW)
+# The free canvas minimum follows its views where they are now (offscreen).
+nereus_add_test(tst_free_canvas_extent)
+# The visual preview waits for a quiet layout, not a fixed time, before it
+# freezes, feeds and grabs (offscreen; tests/visual/PreviewData.cpp).
+nereus_add_test(tst_visual_preview_quiet_layout visual/PreviewData.cpp)
 # R-R3-49: container title bar and filter passband use native hand cursors
 # (Qt 6.11.0 crashes drawing SizeAllCursor on macOS).
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
+# The filter pane draws every frame as it did before its cost work (offscreen).
+nereus_add_test(tst_bandwidth_filter_pane_paint)
+nereus_add_test(tst_workspace_spectrum_font_minimum)
 
 if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
@@ -1268,6 +1334,7 @@ nereus_add_test(tst_slice_agc_advanced)
 # passes against current SliceModel APIs, registered here.
 nereus_add_test(tst_slice_auto_agc)
 nereus_add_test(tst_daemon_agc_source)
+nereus_add_test(tst_desktop_core_auto_agc_floor)
 nereus_add_test(tst_remote_receive_indicators)
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — EMNR (NR2) ────────────────────────
@@ -1719,6 +1786,10 @@ nereus_add_test(tst_audio_ring_spsc)
 # its oldest, and stop joins without waiting out the wake.
 nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
 
+# The microphone helper's lost-input watch: it counts the blocks the device
+# delivers, so a window that stops reading the ring never loses the input.
+nereus_add_test(tst_capture_input_watch EXTRA_LABELS core)
+
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
 # Input (consumer), and targetNodeName routing. No running daemon required.
@@ -1932,6 +2003,11 @@ nereus_add_test(tst_port_audio_library_lock)
 # Windows adapter files compile only in Windows CI.
 nereus_add_test(tst_wasapi_policy)
 target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
+# PortAudio starts on first need, never at launch: building an AudioEngine
+# starts nothing, and the catalog lists the older drivers only once
+# something asks for them.  Pa_Initialize is a counter; no PortAudio call.
+nereus_add_test(tst_port_audio_on_demand)
+target_compile_definitions(tst_port_audio_on_demand PRIVATE NEREUS_BUILD_TESTS)
 
 # Native audio Task 7 (R-AUD-02, R-AUD-06, R-AUD-15, R-AUD-34): AudioEngine
 # with fake engines, the catalogue and the stream supervisor: engine choice,
@@ -2952,6 +3028,65 @@ target_compile_definitions(tst_ui_capability_gating PRIVATE NEREUS_BUILD_TESTS)
 # Gates issue #98 regression (dark-on-dark popup menus on Ubuntu 25.10
 # GNOME). NEREUS_SOURCE_ROOT lets the test resolve paths relative to
 # the source tree regardless of build directory.
+nereus_add_test(tst_workspace_qss_translator)
+nereus_add_test(tst_qss_translator_forms)
+# Painted chrome, palettes and rich text reach roles through one helper.
+nereus_add_test(tst_workspace_role_colour)
+# The status and data colour choices behind the preview switch.
+nereus_add_test(tst_workspace_colour_choice)
+# JJ's decided control look behind the preview switch: sliders, check
+# boxes and radios, lit buttons, corner radii and scroll bars.
+nereus_add_test(tst_workspace_decided_controls)
+# The remaining dialog, menu and control colours behind the preview
+# switch: one selection colour, the decided slider and group box
+# indicator, the spin arrows, meaning colours, action buttons.
+nereus_add_test(tst_workspace_dialog_colours)
+# The workspace preview: the PC and RADIO speaker volume fill, the visible
+# zoom track, plot backgrounds that follow their container (D22), the
+# Longpath reference arrows and the overlay ATT box's checked indicator.
+nereus_add_test(tst_workspace_sliders_plots)
+# The workspace preview: no slider handle is cut off on a Setup page or
+# tab, an applet, the pan overlay or the title bar.
+nereus_add_test(tst_workspace_slider_handles)
+target_compile_definitions(tst_workspace_slider_handles PRIVATE NEREUS_BUILD_TESTS)
+# The workspace preview: every Setup page, tab and dialog the visual
+# preview tool's scenes cover paints only workspace palette colours, user
+# and identity colours excepted. Runs the tool's dialog scenes in-process.
+nereus_add_test(tst_workspace_colour_sweep
+    visual/PreviewScenes.cpp
+    visual/ControlsSheet.cpp
+    visual/PreviewData.cpp
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_colour_sweep PRIVATE NEREUS_BUILD_TESTS)
+# One function walks every dialog and Setup scene (161 scenes, 173 grabs)
+# on one window: measured 2026-10-09 on the M5 Max at 531 s, and 872 s
+# with four preview captures running beside it. QtTest's function watchdog (300 s
+# by default, 240 s on the Linux CI job) would abort it, so this test
+# carries its own, and TIMEOUT is about twice the loaded measurement.
+if(TEST tst_workspace_colour_sweep)
+    set_tests_properties(tst_workspace_colour_sweep PROPERTIES TIMEOUT 1800 PROCESSORS 2)
+    set_property(TEST tst_workspace_colour_sweep APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=1700000")
+endif()
+# The colour round's items by meaning, and the applets' lit states posed
+# after the live pass (OPERATE, PS-A, the tuner antenna, the PureSignal badge).
+nereus_add_test(tst_workspace_settings_colours
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_settings_colours PRIVATE NEREUS_BUILD_TESTS)
+# The default button's rim and the current cell's outline are the selection
+# rim, in the shape the platform style draws.
+nereus_add_test(tst_workspace_default_button
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_workspace_default_button PRIVATE NEREUS_BUILD_TESTS)
+# A DSP parameter popup opened against the screen's lower edge is placed from
+# the size it ends at with the workspace look on, and does not grow after.
+nereus_add_test(tst_dsp_popup_stays_on_screen
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_dsp_popup_stays_on_screen PRIVATE NEREUS_BUILD_TESTS)
+# The workspace preview's live pass reaches every window without a call site.
+nereus_add_test(tst_workspace_live_theming)
+target_compile_definitions(tst_workspace_live_theming PRIVATE NEREUS_BUILD_TESTS)
+
 nereus_add_test(tst_popup_style_coverage)
 target_compile_definitions(tst_popup_style_coverage PRIVATE
     NEREUS_SOURCE_ROOT="${CMAKE_SOURCE_DIR}")
@@ -3682,6 +3817,12 @@ target_compile_definitions(tst_setup_dialog_pa_reset_wiring PRIVATE NEREUS_BUILD
 nereus_add_test(tst_setup_dialog_qt_warnings)
 target_compile_definitions(tst_setup_dialog_qt_warnings PRIVATE NEREUS_BUILD_TESTS)
 
+# Word ampersands in mnemonic-parsed texts (group titles, buttons, tabs, form
+# labels) are written "&&" so Qt shows them instead of underlining the next
+# character. Sweeps every built Setup page and the VAX first-run button.
+nereus_add_test(tst_setup_ampersand_text)
+target_compile_definitions(tst_setup_ampersand_text PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Issues #272 + #301: lazy SetupDialog page construction ──────────────────
 # buildTree() used to construct all 55 setup pages from the SetupDialog ctor,
 # blocking the Qt main thread on every Tools -> Setup open. That stall starved
@@ -3704,6 +3845,23 @@ target_compile_definitions(tst_setup_dialog_lazy_pages PRIVATE NEREUS_BUILD_TEST
 # the stretch (SetupPage::addContent inserts before it, as addSection does).
 nereus_add_test(tst_setup_pages_start_at_top)
 target_compile_definitions(tst_setup_pages_start_at_top PRIVATE NEREUS_BUILD_TESTS)
+
+# D25: every Setup page fits the Settings window. Walks every leaf and tab
+# (Hardware Config posed as a Saturn and as a Hermes Lite 2) at 900 x 650
+# and 820 x 600, in today's look and the workspace look: no page or tab
+# scrolls sideways, no tab strip scrolls away with its page, and no label,
+# check box, radio button, push button or group title is cut short or
+# clipped by a parent. At 1440 x 900 the rows that stacked at 900 x 650 are
+# side by side again.
+nereus_add_test(tst_setup_pages_fit_window)
+target_compile_definitions(tst_setup_pages_fit_window PRIVATE NEREUS_BUILD_TESTS)
+# The matrix is four rows (today and workspace look, 900 x 650 and 820 x 600)
+# since the workspace look doubled it. It took 81.82 s passing and ran past
+# the 120 s default on a loaded Linux runner while still making progress, so
+# it was not a hang; 300 s leaves margin.
+if(TEST tst_setup_pages_fit_window)
+    set_tests_properties(tst_setup_pages_fit_window PROPERTIES TIMEOUT 300)
+endif()
 
 # R-SPK-21 Outputs, R-SPK-22, R-SPK-24 (radio speaker plan Task 9): Setup >
 # Audio > Outputs. Outputs leads Audio (Mixed) and no page shows the old
@@ -6612,6 +6770,31 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
+# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
+# deletes the real cell interfaces of expired native rows while
+# QAccessibleTable keeps their IDs; the next spot insert or trim then
+# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
+# performs that deletion through QAccessible::deleteAccessibleInterface and
+# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
+# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+nereus_add_test(tst_spot_list_accessibility)
+
+# The same Qt 6.11.0 Cocoa accessibility cache repair
+# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
+# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
+# rows after the cell interfaces were deleted the way the Cocoa bridge
+# deletes them, the real FreeDVReporterDialog's proxied station table, and
+# the gate leaving the cache alone on every other platform.
+nereus_add_test(tst_qt_cocoa_accessible_table_cache)
+
+# Workspace visual review (2026-10-08): the visual preview's dialog seams.
+# ConnectionPanel and LanScanDialog start no discovery with their test seam
+# set, MainWindow::buildWisdomProgressDialog builds the FFTW wisdom dialog
+# without wisdom, and a never-dialled remote window opens its diagnostics,
+# connection panel and This Core page without starting its connection.
+nereus_add_test(tst_preview_dialog_seams)
+target_compile_definitions(tst_preview_dialog_seams PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3J-2 Task D3: FreeDVStationModel (live station map) ──────────────
 # Pins the contract that FreeDVStationModel is a QHash<QString sid,
 # FreeDVStation> sink keyed by Socket.IO session ID, with four public
@@ -7133,6 +7316,9 @@ nereus_add_test(tst_pgxl_connection_ping)
 # Tests: pingEmitsPongReceivedOnReply (V1.2.17 handshake + R-frame -> pongReceived);
 # pingTimesOutAfterFiveSeconds (testFlushPingTimeouts() -> pingTimedOut signal).
 nereus_add_test(tst_tgxl_connection_ping)
+# One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
+# for the answer, a refusal or a lost answer frees it, a new connection asks.
+nereus_add_test(tst_tgxl_connection_status_pacing)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
@@ -7382,6 +7568,10 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
+# The bar gauge's scale numbers at the 96 dpi text size (7 points = 9 px):
+# drawn whole with a clear row under them, the gauge 30 px tall where the
+# scale font is 7 px (the Mac) and taller only where it is larger.
+nereus_add_test(tst_hgauge_scale_text)
 nereus_add_test(tst_rf2ks_applet_context_menu)
 nereus_add_test(tst_rfkit_page_master_gate)
 # Rotor control plan Task 7: CAT & Network > Rotor. A remote window lists
@@ -7579,6 +7769,18 @@ nereus_add_test(tst_radio_model_slice_lifecycle)
 # Source: NereusSDR-original (VfoWidget itself is NereusSDR-original).
 # Design: docs/architecture/2026-05-26-phase3f-sub-epic-c-tx-arbiter-lifecycle-plan.md Task 9.
 nereus_add_test(tst_vfo_widget_tx_badge_click)
+
+# Workspace visual review Task 26: the receiver flag folds to its letter and
+# TX badges (AetherSDR's collapsed flag, ported), and the pan's zoom row
+# moves clear of the button column on a short pan.
+# Source: AetherSDR src/gui/VfoWidget.cpp [@3a1f59ea] (fold); NereusSDR-original
+# (zoom row placement).
+nereus_add_test(tst_vfo_flag_fold)
+# The receiver flag takes the workspace look (JJ, 2026-10-11): its sliders,
+# buttons and floating buttons carry the pass's sheets with the look on and
+# are untouched with it off.
+nereus_add_test(tst_vfo_widget_workspace_look)
+nereus_add_test(tst_spectrum_zoom_row_placement)
 
 # Phase 3F Sub-Epic F Task 1: P2 composeCmdGeneral writes packetbuf[23]
 # wideband per-ADC enable mask per Thetis network.c:879 [v2.10.3.15].
@@ -9728,7 +9930,8 @@ nereus_add_test(tst_remote_spectrum_render)
 # Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
 # subscription lifecycle, stale context rejection, and teardown.
 nereus_add_test(tst_remote_media_controller
-    fakes/LoopbackTransport.cpp)
+    fakes/LoopbackTransport.cpp
+    fakes/FakeCaptureChild.cpp)
 # R-DISP-HOLD: the window holds the dBm range it asked the Core for, and a
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold
@@ -10536,3 +10739,21 @@ if(_label_names)
     endforeach()
     message(STATUS "NereusSDR: per-label test targets: ${_label_names}")
 endif()
+
+# A second ctest entry of a test binary registered by hand (add_test with
+# COMMAND tst_...) builds its own environment and does not pass through
+# nereus_add_test(), so it takes the classic look here (see
+# NEREUS_WORKSPACE_PREVIEW in nereus_add_test()). Entries that run no test
+# binary (the patch checks, the traversal harness) are left alone.
+get_property(_nereus_dir_tests DIRECTORY PROPERTY TESTS)
+foreach(_entry IN LISTS _nereus_dir_tests)
+    if(_entry MATCHES "^tst_")
+        get_test_property(${_entry} ENVIRONMENT _entry_env)
+        if(NOT _entry_env MATCHES "(^|;)NEREUS_WORKSPACE_PREVIEW=")
+            set_property(TEST ${_entry} APPEND PROPERTY ENVIRONMENT "NEREUS_WORKSPACE_PREVIEW=0")
+        endif()
+    endif()
+endforeach()
+
+# Workspace visual preview tool (not a test): tests/visual/.
+add_subdirectory(visual)

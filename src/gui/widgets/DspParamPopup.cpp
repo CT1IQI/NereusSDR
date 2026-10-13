@@ -12,6 +12,11 @@
 //                AetherSDR to NereusSDR; otherwise byte-for-byte.
 //                Authored by J.J. Boyd (KG4VCF) with AI-assisted
 //                review via Anthropic Claude Code.
+//   2026-10-10 - showAt() settles the popup's layouts after the show
+//                and places the popup again when that changed its
+//                size, so a popup opened at the screen's lower edge
+//                stays on screen with the workspace look on. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DspParamPopup.h"
@@ -176,18 +181,51 @@ void DspParamPopup::finalize(std::function<void()> onMore, std::function<void()>
     m_layout->addLayout(btnRow);
 }
 
+// NereusSDR: every layout under `w` brought up to date now, innermost
+// first, so a size change a child asked for reaches the window in this
+// call instead of over the next turns of the event loop.
+static void settleLayouts(QWidget* w)
+{
+    const QObjectList kids = w->children();
+    for (QObject* kid : kids) {
+        if (kid->isWidgetType()) {
+            settleLayouts(static_cast<QWidget*>(kid));
+        }
+    }
+    if (QLayout* layout = w->layout()) {
+        layout->activate();
+    }
+}
+
 void DspParamPopup::showAt(const QPoint& globalPos)
 {
     adjustSize();
-    // Position above-right of the click point, keep on screen
-    QPoint pos = globalPos;
-    QRect screen = QApplication::primaryScreen()->availableGeometry();
-    if (pos.x() + width() > screen.right())
-        pos.setX(screen.right() - width());
-    if (pos.y() + height() > screen.bottom())
-        pos.setY(globalPos.y() - height());
-    move(pos);
+    const auto place = [this, globalPos]() {
+        // Position above-right of the click point, keep on screen
+        QPoint pos = globalPos;
+        QRect screen = QApplication::primaryScreen()->availableGeometry();
+        if (pos.x() + width() > screen.right())
+            pos.setX(screen.right() - width());
+        if (pos.y() + height() > screen.bottom())
+            pos.setY(globalPos.y() - height());
+        move(pos);
+    };
+    place();
     show();
+    // NereusSDR: a control can ask for more room when it is shown. With the
+    // workspace look on, the look's pass gives each slider thinner than its
+    // handle a taller minimum on the slider's Show event
+    // (WorkspacePreview.cpp, sliderFit), which leaves the layout to grow
+    // the popup on a later turn of the event loop, after it was placed: a
+    // popup placed against the screen's lower edge then ran past it by the
+    // pixels it grew. So the layouts are settled here and, if that changed
+    // the popup's size, it is placed again from the size it ends at. A
+    // popup whose size holds (the look off) is not moved.
+    const QSize placedSize = size();
+    settleLayouts(this);
+    if (size() != placedSize) {
+        place();
+    }
 }
 
 bool DspParamPopup::event(QEvent* ev)

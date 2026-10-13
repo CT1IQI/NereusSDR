@@ -77,6 +77,12 @@
 //                 segment less than it asks for, and returns to side by
 //                 side past kSideBySideReturnSpare. J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-07 - ConnectionSegment::setPulsePausedForTest(): holds the
+//                 state dot still so the workspace visual preview tool
+//                 (tests/visual/) captures the same pixels on every run.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-08 - setPulsePausedForTest() can hold the brighter step.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/AudioEngine.h"
@@ -145,6 +151,12 @@ public:
     // smoothedRttMs() impl for the rationale. Returns the latest sample
     // if only one sample has been seen, or -1 if no samples at all.
     int                      smoothedRttMs() const noexcept;
+
+    // Test seam: stop the state-dot pulse and hold it in its resting colour
+    // (paused), or resume it as setState() would (unpaused). The visual
+    // preview tool uses it so two captures of one scene match pixel for pixel.
+    // `brightStep` holds the pulse's brighter step instead of its resting one.
+    void setPulsePausedForTest(bool paused, bool brightStep = false);
 
     // Hit-test rect accessors — populated after the first paintEvent.
     // Exposed publicly so callers can verify click regions (e.g. in tests).
