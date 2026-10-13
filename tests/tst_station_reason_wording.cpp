@@ -50,6 +50,12 @@
 // in use compare as they are ("slice removed", "slice stream binding
 // changed"). The last two are plain as written and are scanned anyway.
 //
+//   2026-10-11  J.J. Boyd / KG4VCF  Band filters that combine: RadioModel's
+//                                    sharedLnaReason is scanned, and the
+//                                    note it gives the filter label
+//                                    (AlexController's m_combineNote) is
+//                                    read by sharedLnaNoteWordsArePlain.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-10  J.J. Boyd / KG4VCF  Native audio plan: the Core speaker's
 //                                    and the Windows VAX source's greyed
 //                                    reasons are the window's own.
@@ -890,6 +896,14 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("named(top)"), QStringLiteral("lower.first()"),
           QStringLiteral("joinRangeNames(lower)"), QStringLiteral("off.first()"),
           QStringLiteral("joinRangeNames(off)")}},
+        // Where the band filters combine (the Anvelina Pro 3): what the 6 m
+        // BPF/LNA costs the slices sharing its input, joined to
+        // rxFilter0LowPassReason. The slices are named by letter and band
+        // ("B on 20m"), one or several joined by joinRangeNames.
+        {"src/models/RadioModel.cpp", {QStringLiteral("sharedLnaReason")},
+         {QStringLiteral("%1 on %2")}, 8,
+         {QStringLiteral("named(noFilter)"), QStringLiteral("named(lna)"),
+          QStringLiteral("named(low)")}},
         // RADE reason: a slice's radeReason, why a RADE slice has no
         // working decoder. The slices are named by letter.
         {"src/models/RadioModel.cpp", {QStringLiteral("radeStartReason")}, {}, 6,
@@ -2159,10 +2173,15 @@ const QList<ReasonSource>& propertyTextSources()
         // Band names ("20m"), one or several joined with " + ". On the HL2
         // the slice the filter board is off for, by letter and band ("slice
         // B on WWV"), which RadioModel::republishAlexAdcSlices passes in.
+        // Where the band filters combine, what sharing the 6 m BPF/LNA
+        // costs ("6m LNA in: HF reads low"), which the same function words
+        // and passes in (setCombineNote); sharedLnaNoteWordsArePlain reads
+        // those words.
         {"src/core/accessories/AlexController.cpp", {QStringLiteral("recomputeBpf")}, {}, 3,
          {QStringLiteral("bandLabel(s.currentBpfBand)"),
           QStringLiteral("bandList.join(QStringLiteral(\" + \"))"),
-          QStringLiteral("m_switchBypassDetail[adc]")},
+          QStringLiteral("m_switchBypassDetail[adc]"),
+          QStringLiteral("m_combineNote[adc]")},
          // One band's name alone: the reason when one band is filtered.
          {QStringLiteral("bandLabel(s.currentBpfBand)")}},
         {"src/core/dsp/NnrSettings.h", {QStringLiteral("nnrLimitExplanation")}, {}, 4},
@@ -2787,6 +2806,48 @@ private slots:
             ++checked;
         }
         QCOMPARE(checked, 2);
+    }
+
+    void sharedLnaNoteWordsArePlain()
+    {
+        // The note RadioModel::republishAlexAdcSlices gives
+        // AlexController::setCombineNote, shown after the bands in the
+        // filter label ("80m + 40m + 6m (6m LNA in: HF reads low)"). That
+        // function is far larger than its wording, so the statements that
+        // word the note are read here: what is added to `costs`, and the
+        // note's opening words.
+        static const QRegularExpression republish(QStringLiteral("^republishAlexAdcSlices$"));
+        static const QRegularExpression statement(
+            QStringLiteral("\\b(?:costs\\s*<<|combineNote\\[adc\\]\\s*=)[^;]*;"));
+        static const QRegularExpression literal(
+            QStringLiteral("QStringLiteral\\(\\s*\"([^\"]*)\"\\s*\\)"));
+        static const QRegularExpression letter(QStringLiteral("[A-Za-z]"));
+        const QString code = codeOf(sourcePath(QStringLiteral("src/models/RadioModel.cpp")));
+        const QList<FunctionBody> functions = functionsIn(code, republish);
+        QCOMPARE(functions.size(), 1);
+        QStringList words;
+        QRegularExpressionMatchIterator statements =
+            statement.globalMatch(functions.first().body);
+        while (statements.hasNext()) {
+            QRegularExpressionMatchIterator literals =
+                literal.globalMatch(statements.next().captured(0));
+            while (literals.hasNext()) {
+                // A separator (" + ", ", ") and the "%1: %2" frame have no
+                // words of their own.
+                const QString text = literals.next().captured(1);
+                if (letter.match(QString(text).remove(QRegularExpression(
+                        QStringLiteral("%\\d")))).hasMatch()) {
+                    words.append(text);
+                }
+            }
+        }
+        for (const QString& text : std::as_const(words)) {
+            const QString problem = wordingProblemIn(text);
+            QVERIFY2(problem.isEmpty(),
+                     qPrintable(text + QStringLiteral(" [") + problem + QLatin1Char(']')));
+        }
+        // "HF reads low", "%1 filter out", "6m LNA in", "6m LNA off on RX".
+        QVERIFY2(words.size() >= 4, qPrintable(words.join(QLatin1Char('|'))));
     }
 
     void everyStationPropertyTextIsPlain()

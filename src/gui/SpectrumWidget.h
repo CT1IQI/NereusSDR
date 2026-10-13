@@ -20,6 +20,9 @@
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-11 : localSpectrumSourceForTest(), so a test can tell which
+//                 receiver's frame a pan drew. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 : m_wfHistoryRescales, waterfallHistoryForTest() and its
 //                 companions, for the waterfall history's resize tests.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1108,6 +1111,8 @@ public:
     }
     void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
     int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // The receiver whose frame this pan took last (-1 before the first).
+    int  localSpectrumSourceForTest() const { return m_localSpectrumSource; }
     // R-R3-21: the remote row queue, and the ticker run by hand.
     int  remoteRowQueueDepthForTest() const { return int(m_remoteRowQueue.size()); }
     quint64 remoteRowsDroppedForTest() const { return m_remoteRowsDropped; }
