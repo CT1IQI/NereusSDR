@@ -219,6 +219,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | src/gui/applets/FmApplet.h | Project Files/Source/Console/setup.cs; Project Files/Source/Console/console.cs | full | port | multi-source | applet declaration; pairs with FmApplet.cpp |
 | src/gui/applets/PhoneCwApplet.cpp | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | 38-tone CTCSS standard list |
 | src/gui/applets/PhoneCwApplet.h | Project Files/Source/Console/setup.cs | full | port | thetis-samphire | applet declaration; pairs with PhoneCwApplet.cpp |
+| src/gui/PureSignalInstruments.h | Project Files/Source/Console/PSForm.cs | full [v2.10.3.15] | port | thetis-samphire | Feedback classification boundaries and applied/correcting predicates; native Qt meter geometry and snapshot instruments |
 | src/gui/applets/PureSignalApplet.cpp | Project Files/Source/Console/PSForm.cs | full | port | thetis-samphire | PureSignal feedback/correction control layout (Samphire-authored, /*…*/ header preserved); all controls NYI — wired in 3M-4 |
 | src/gui/applets/PureSignalApplet.h | Project Files/Source/Console/PSForm.cs | full | port | thetis-samphire | applet declaration; pairs with PureSignalApplet.cpp |
 | src/gui/applets/RxApplet.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/console.resx; Project Files/Source/Console/setup.cs | full | port | thetis-samphire | comboPreamp, AGC thresh, step attenuator, tooltips |
@@ -649,3 +650,8 @@ transient lookup, excluded from transport enumeration, AI and GUID registration;
 TX/Tune/TwoTone, VOX enable and PureSignal single/calibration are denied.
 These changes are original adaptation by J.J. Boyd (KG4VCF), AI-assisted via
 OpenAI Codex. Existing source headers, inline comments and constants are retained.
+
+| src/gui/ImdOverlay.h | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Two-tone peak matching and readout; partial matches extend the existing analytical subset without changing aggregate formulas. Verbatim upstream notice added for the previously exempt derivative. |
+| src/gui/ImdOverlay.cpp | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Peak detection/search/EMA/format implementation; independent product presence and static cached formatting retain source geometry/formulas. |
+| src/gui/ImdMeasurementPresenter.cpp | Project Files/Source/Console/display.cs | 5223 [v2.10.3.15] | port | thetis-samphire | Trigger constant for GUI cached acceptance; search/EMA remain in ImdOverlay. GUI status/freshness policy is NereusSDR-original. |
+| src/gui/ImdMeasurementPresenter.h | Project Files/Source/Console/display.cs | paired implementation trigger at 5223 [v2.10.3.15] | port | thetis-samphire | Original GUI cached-frame API paired with the implementation derivative; exact notice preserved on both siblings. |

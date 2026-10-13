@@ -240,6 +240,7 @@
 #include "gui/ReceiverStopNotices.h"
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
+#include "gui/NereusGuiExport.h"
 
 class QProgressDialog;
 class QSplitter;
@@ -327,7 +328,7 @@ class ClientChainApplet;
 // Phase 3J-1 closeout Item 2 (2026-05-12): TciLogWindow viewer.
 class TciLogWindow;
 
-class MainWindow : public QMainWindow {
+class NEREUS_GUI_EXPORT MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
@@ -1077,6 +1078,7 @@ private slots:
     void pushSpectrumCalToPans();
 
 private:
+    friend class ImdPanelTestAccess;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
 #endif
@@ -1652,6 +1654,16 @@ private:
     QPointer<QAction> m_displayDuplexAction;
     void setDisplayDuplexSetting(bool on);
     void applyDisplayDuplex();
+    void wireImdMeasurementForwarding();
+    void refreshImdMeasurementForwarding();
+    void onImdPureSignalStatusChanged();
+    void setImdMeasurementsShown(bool shown);
+    void hideImdMeasurements();
+    void enableImdDisplayDuplex();
+    void refreshImdRailControls();
+    QPointer<class PureSignalSessionFacade> m_imdObservedFacade;
+    bool m_imdStatusBaselineKnown{false};
+    bool m_imdLastCorrectionsApplied{false};
     std::unique_ptr<class LocalTxDisplaySource> m_localTxDisplaySource;
     std::unique_ptr<class RemoteTxDisplaySource> m_remoteTxDisplaySource;
 

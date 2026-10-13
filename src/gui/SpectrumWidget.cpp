@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: cached IMD acceptance
+//                 on finalized local/remote receiver planes and invalidation.
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Repair Nereus visible-pixel IMD mapping and GPU gate-off
+//                 invalidation; preserve the existing detection/EMA math.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -335,6 +340,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include "SpectrumWidget.h"
+#include "gui/PureSignalViewStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/PanadapterStack.h"
 #include "gui/RemoteDisplayPresenter.h"
@@ -557,6 +563,7 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_displayTimer.setTimerType(Qt::PreciseTimer);  // sub-ms accuracy
     m_displayTimer.setSingleShot(false);
     connect(&m_displayTimer, &QTimer::timeout, this, [this]() {
+        checkImdFreshness(QDateTime::currentMSecsSinceEpoch());
         // 2026-05-25 KG4VCF Option B revisit: the original Option B drop
         // of this gate ("always repaint at display cadence") looked great
         // on a healthy system but pegged a CPU core under macOS low-power
@@ -739,8 +746,8 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
     m_disconnectLabel->installEventFilter(this);
 
     // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core.
-    // Owned via QObject parenting; raw pointer mirrors m_bandPlanManager.
-    m_imdOverlay = new ImdOverlay(this);
+    // Presenter-owned helper; the pointer is a non-owning legacy alias.
+    m_imdOverlay = &m_imdPresenter.m_overlay;
 
     // 3D Stacked-Trace Spectrum Plan Task 18: create and bind this
     // widget's DisplaySettingsModel last, after every other member is
@@ -818,6 +825,9 @@ void SpectrumWidget::loadSettings()
     // then wins. "Follow pan 1 until you say otherwise", which is the model
     // chosen on 2026-07-30, expressed in one place.
     //
+    m_imdInspectorVisible = s.value(settingsKey(QStringLiteral("PureSignalImdInspectorVisible"), m_panIndex), QStringLiteral("False")).toString() == QStringLiteral("True");
+    m_imdGuidesVisible = s.value(settingsKey(QStringLiteral("PureSignalImdGuidesVisible"), m_panIndex), QStringLiteral("True")).toString() == QStringLiteral("True");
+    emit imdPresentationChanged();
     // Pan 0 has no fallback to take, and must not: settingsKey(base, 0)
     // returns `base` itself, so recursing would just re-read the same key.
     auto rawValue = [&](const QString& key) -> QString {
@@ -1522,6 +1532,7 @@ void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
                                                 const QVector<float>& binsDbm)
 {
     Q_UNUSED(receiverId);
+    invalidateImdMeasurement(); // Digital TX siphon is before IQ correction and PA.
     if (binsDbm.isEmpty()) { return; }
 
     const int displayWidth = qMax(width() - effectiveStripW(), 800);
@@ -1561,6 +1572,8 @@ void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
 
 void SpectrumWidget::invalidateRemoteSpectrumFrame()
 {
+    invalidateImdMeasurement();
+    m_hasImdRemoteFrame = false;
     traceRxHistoryEvent(RxHistoryEvent::FrameRenewal);
     m_remoteSpectrum = true;
     recomputeExtendedMode();
@@ -1653,6 +1666,11 @@ void SpectrumWidget::setRemoteSpectrumContext(const SpectrumEndpointContext& con
                                                int grantedFftSize,
                                                std::optional<bool> coreCarriedOn)
 {
+    const RemoteSpectrumCapture nextCapture{context, sourceCentreHz, sampleRateHz};
+    if (!(nextCapture == m_remoteCapture)) {
+        invalidateImdMeasurement();
+        m_hasImdRemoteFrame = false;
+    }
     // R-DISP-HOLD: a context for the picture this pan already shows (the
     // Core renewed it for a new dBm range or frame rate, and kept its
     // averaged trace) blanks nothing. The codec context is renewed, so
@@ -1778,9 +1796,14 @@ void SpectrumWidget::onWaterfallTick()
         drainRemoteWaterfallRows();
         return;
     }
+    const bool imdFreshReceiverRow = m_pendingWfPixelsDbmDirty
+        && m_imdPresenter.frame().context.sourceEligible;
+    const quint64 imdAcceptedOrdinal = m_pendingWfImdAcceptedOrdinal;
     m_pendingWfPixelsDbmDirty = false;
+    m_pendingWfImdAcceptedOrdinal = 0;
     if (!m_pendingWfPixelsDbm.isEmpty()) {
-        pushWaterfallRow(m_pendingWfPixelsDbm);
+        pushWaterfallRow(m_pendingWfPixelsDbm, imdFreshReceiverRow,
+                         imdAcceptedOrdinal);
     }
 }
 
@@ -1790,7 +1813,8 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame)
 }
 
 bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
-                                          const RemoteSpectrumCapture& capture)
+                                          const RemoteSpectrumCapture& capture,
+                                          bool measurementCurrent)
 {
     if (!(capture == m_remoteCapture)) { return false; }
     const auto& context = frame.context;
@@ -1814,6 +1838,7 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
     if (!valid(frame.traceDbm, context.traceSamples)
         || !valid(frame.waterfallDbm, context.waterfallSamples)
         || !valid(frame.wideDbm, context.wideSamples)) {
+        invalidateImdMeasurement();
         return false;
     }
     m_renderedPixels = frame.traceDbm;
@@ -1830,6 +1855,18 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
         m_undentedPixels.clear();
     }
     updateReducedSpectrumOverlays();
+    // Only accepted encoder frames advance the measurement; duplicate/old
+    // frames, waterfall replay and retained captures never advance its EMA.
+    quint64 imdAcceptedOrdinal = 0;
+    if (measurementCurrent
+        && (!m_hasImdRemoteFrame || frame.encoderSequence > m_imdRemoteFrameSequence)) {
+        m_hasImdRemoteFrame = true;
+        m_imdRemoteFrameSequence = frame.encoderSequence;
+        acceptImdVisibleSpectrum(frame.encoderSequence, !showsTransmitView());
+        if (m_imdPresenter.frame().context.sourceEligible) {
+            imdAcceptedOrdinal = m_imdAcceptedFrameOrdinal;
+        }
+    }
     if (frame.waterfallAdvance) {
         // R-R3-21: queued, not one overwritten slot, so every row the Core
         // sent is drawn in its own place.
@@ -1837,7 +1874,8 @@ bool SpectrumWidget::updateRemoteSpectrum(const DisplayCodecFrame& frame,
                                  m_remoteExactCentreHz, m_remoteExactSpanHz, capture,
                                  {frame.encoderSequence,
                                   static_cast<int>(RemoteDisplayPresenter::Kind::Frame),
-                                  m_wfDiagnosticSliceId, m_wfDiagnosticStreamEpoch}});
+                                  m_wfDiagnosticSliceId, m_wfDiagnosticStreamEpoch},
+                                 imdAcceptedOrdinal});
         while (m_remoteRowQueue.size() > kMaxRemoteRowQueue) {
             m_remoteRowQueue.removeFirst();
             ++m_remoteRowsDropped;
@@ -1879,7 +1917,8 @@ bool SpectrumWidget::enqueueRemoteWaterfallRow(const QVector<float>& pixelsDbm,
         && qFuzzyCompare(spanHz, m_bandwidthHz)) {
         applyVisualNotchDent(pixels);
     }
-    m_remoteRowQueue.append({std::move(pixels), wideDbm, centreHz, spanHz, capture});
+    m_remoteRowQueue.append({std::move(pixels), wideDbm, centreHz, spanHz,
+                             capture, {}, 0});
     while (m_remoteRowQueue.size() > kMaxRemoteRowQueue) {
         m_remoteRowQueue.removeFirst();
         ++m_remoteRowsDropped;
@@ -1918,6 +1957,7 @@ bool SpectrumWidget::presentRemoteTraceCaptured(const QVector<float>& traceDbm,
                         [](float value) { return std::isfinite(value); })) {
         return false;
     }
+    invalidateImdMeasurement(); // Retained pixels are not a newly measured frame.
     m_remoteTraceCaptured = traceDbm;
     m_remoteTraceCentreHz = centreHz;
     m_remoteTraceSpanHz = spanHz;
@@ -1977,7 +2017,15 @@ void SpectrumWidget::drainRemoteWaterfallRows()
         m_pendingRemoteWide = row.wideDbm;
         m_pendingRemoteCapture = row.capture;
         m_pendingWfRowDiagnostics = row.diagnostics;
-        pushWaterfallRow(row.pixelsDbm);
+        const bool imdRealReceiverRow = row.diagnostics.presentationKind
+                == static_cast<int>(RemoteDisplayPresenter::Kind::Frame)
+            && row.diagnostics.encoderSequence.has_value()
+            && row.capture == m_remoteCapture
+            && qFuzzyCompare(row.centreHz, m_centerHz)
+            && qFuzzyCompare(row.spanHz, m_bandwidthHz)
+            && m_imdPresenter.frame().context.sourceEligible;
+        pushWaterfallRow(row.pixelsDbm, imdRealReceiverRow,
+                         row.imdAcceptedOrdinal);
         m_pendingRemoteWide.clear();
         m_pendingRemoteCapture = {};
         m_pendingWfRowDiagnostics = {};
@@ -2179,6 +2227,7 @@ void SpectrumWidget::setDdcCenterFrequency(double hz)
 {
     if (!qFuzzyCompare(m_ddcCenterHz, hz)) {
         m_ddcCenterHz = hz;
+        invalidateImdMeasurement();
         update();
         // Notify listeners (MainWindow wires this to refresh MaxBin's
         // slice-offset so its scan window follows the slice when the
@@ -2191,6 +2240,7 @@ void SpectrumWidget::setSampleRate(double hz)
 {
     if (!qFuzzyCompare(m_sampleRateHz, hz)) {
         m_sampleRateHz = hz;
+        invalidateImdMeasurement();
         update();
         // Phase 3F Sub-Epic F Tasks 7-10: sample-rate change rebases the
         // extended-mode derivation (operator may have e.g. switched a
@@ -4465,8 +4515,11 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
                                           double windowEnb,
                                           double dbmOffset)
 {
+    if (m_remoteSpectrum) { return; }
+    if (binsLinear.isEmpty()) { invalidateImdMeasurement(); return; }
+    if (m_imdLocalSource != receiverId) { invalidateImdMeasurement(); }
+    m_imdLocalSource = receiverId;
     m_localSpectrumSource = receiverId;
-    if (m_remoteSpectrum || binsLinear.isEmpty()) { return; }
 
     // FFT size change detection.  When the FFTEngine replans (e.g. via
     // auto-zoom on bandwidth change), the per-pixel resolution shifts:
@@ -4746,6 +4799,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     }
 
     updateReducedSpectrumOverlays();
+    acceptImdVisibleSpectrum(++m_imdLocalFrameSequence, receiverId >= 0 && !showsTransmitView());
 
     // Push display-pixel waterfall row -- waterfall AGC + NF-AGC +
     // threshold compute now operate on display pixels per Thetis
@@ -4771,6 +4825,7 @@ void SpectrumWidget::updateSpectrumLinear(int receiverId,
     if (!m_txExternalWaterfall) {
         m_pendingWfPixelsDbm = m_wfRenderedPixels;
         m_pendingWfPixelsDbmDirty = true;
+        m_pendingWfImdAcceptedOrdinal = m_imdAcceptedFrameOrdinal;
     }
     m_hasNewSpectrum = true;
 
@@ -4965,6 +5020,7 @@ SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
 {
     SpectrumBaseClass::resizeEvent(event);
+    invalidateImdMeasurement();
 
     // Keep mouse overlay covering entire widget
     if (m_mouseOverlay) {
@@ -5727,6 +5783,7 @@ void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& wfRect)
         p.setOpacity(savedOpacity);
     }
 
+    m_imdWaterfallGlideRows = 0.0;
     drawWaterfallChrome(p, wfRect);
 }
 
@@ -5804,6 +5861,62 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
                 : (wfRect.right() - textW - pad);
         p.drawText(x, wfRect.top() + 12, stamp);
     }
+    // Current accepted receiver positions mark RF columns, never historical
+    // peak strength. The history marks below identify status edges by row.
+    const ImdMeasurementFrame& imd = m_imdPresenter.frame();
+    if (m_moxOverlay && m_testingIMD
+        && m_showIMDMeasurements && m_displayDuplex
+        && imd.context.sourceEligible
+        && imd.context.contextRevision == m_imdContextRevision) {
+        p.save();
+        p.setClipRect(wfRect);
+        if (m_imdGuidesVisible) {
+            for (int index = 0; index < 6; ++index) {
+                const auto& frequency = imd.expectedFrequencyHz[index];
+                const auto& peak = imd.peaks[index];
+                if (!frequency && !peak) { continue; }
+                const int x = hzToX(frequency ? *frequency : peak->frequencyHz, wfRect);
+                if (x < wfRect.left() || x > wfRect.right()) { continue; }
+                QColor ink = PureSignalViewStyle::product(index);
+                ink.setAlpha(index == static_cast<int>(m_imdSelectedProduct) ? 100 : 48);
+                p.setPen(QPen(ink, 1.0, Qt::DashLine));
+                p.drawLine(x, wfRect.top(), x, wfRect.bottom());
+            }
+        }
+        for (const ImdWaterfallEvent& event : m_imdWaterfallAnnotations.events()) {
+            if (event.contextRevision != m_imdContextRevision) { continue; }
+            const std::optional<qreal> rowY = imdEventY(
+                event.rowSequence, m_imdWaterfallGlideRows);
+            if (!rowY) { continue; }
+            QColor marker = event.correctionsApplied
+                ? QColor(100, 210, 170, 190) : QColor(220, 165, 110, 190);
+            p.setPen(QPen(marker, 1.0));
+            p.drawLine(QPointF(wfRect.left(), wfRect.top() + *rowY),
+                       QPointF(wfRect.right(), wfRect.top() + *rowY));
+            const QString caption = event.correctionsApplied
+                ? tr("Correction applied") : tr("Correction off");
+            QFont captionFont = WorkspacePreview::readableFont(p.font(), p.device());
+            captionFont.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
+            p.setFont(captionFont);
+            const QFontMetrics metrics = p.fontMetrics();
+            const int tagWidth = qMin(metrics.horizontalAdvance(caption) + 28,
+                                      wfRect.width() - 8);
+            if (tagWidth < 24 || wfRect.height() < metrics.height() + 4) { continue; }
+            const int tagHeight = metrics.height() + 4;
+            const qreal tagTop = qBound(qreal(wfRect.top()),
+                wfRect.top() + *rowY - tagHeight / 2.0,
+                qreal(wfRect.bottom() - tagHeight + 1));
+            const QRectF tag(wfRect.left() + 4, tagTop, tagWidth, tagHeight);
+            p.fillRect(tag, WorkspacePreview::roleColour(
+                QColor(10, 15, 25, 224), "panel"));
+            p.setPen(PureSignalViewStyle::text());
+            p.drawText(tag.adjusted(6, 1, -6, -1), Qt::AlignVCenter | Qt::AlignLeft,
+                metrics.elidedText(caption, Qt::ElideRight, tagWidth - 12));
+        }
+        p.restore();
+    }
+
+
 }
 
 // ---- Frequency scale bar ----
@@ -5838,6 +5951,8 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         (m_freqLabelAlign == FreqLabelAlign::Right) ? (Qt::AlignRight | Qt::AlignVCenter) :
                                                        (Qt::AlignHCenter | Qt::AlignVCenter);
 
+    qreal lastNarrowLabelRight = r.left() - 8.0;
+    const qreal narrowLabelRight = std::min<qreal>(r.right(), waterfallLiveButtonRect(QRect(0, r.bottom() + 1, width(), 1)).left() - 6.0);
     double startFreq = std::ceil((m_centerHz - m_bandwidthHz / 2.0) / freqStep) * freqStep;
     for (double f = startFreq; f < m_centerHz + m_bandwidthHz / 2.0; f += freqStep) {
         int x = hzToX(f, r);
@@ -5873,6 +5988,11 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
             lx = textRect.center().x() - labelSize.width() / 2.0;
         } else if (baseFlags & Qt::AlignRight) {
             lx = textRect.right() - labelSize.width();
+        }
+        // Narrow rail/inspector layouts keep readable labels without changing the RF grid.
+        if (r.width() < 520) {
+            if (lx < lastNarrowLabelRight + 8.0 || lx + labelSize.width() > narrowLabelRight) { continue; }
+            lastNarrowLabelRight = lx + labelSize.width();
         }
         const qreal ly = textRect.center().y() - labelSize.height() / 2.0;
         p.drawStaticText(QPointF(lx, ly), cit.value());
@@ -6500,7 +6620,11 @@ void SpectrumWidget::ensureWaterfallHistory()
         traceRxHistoryEvent(RxHistoryEvent::HistoryBufferReset, -1, 0, desiredSize);
         newHistory = QImage(desiredSize, QImage::Format_RGB32);
         newHistory.fill(Qt::black);
+        const bool replacingHistory = !m_waterfallHistory.isNull();
         m_wfHistoryTimestamps = QVector<qint64>(desiredSize.height(), 0);
+        m_wfHistorySequences = QVector<quint64>(desiredSize.height(), 0);
+        m_imdWaterfallAnnotations.clear();
+        if (replacingHistory) { m_imdPendingCorrectionEdge.reset(); }
         m_wfHistoryWindows = QVector<WaterfallRowWindow>(desiredSize.height());
         m_wfHistoryWriteRow = 0;
         m_wfHistoryRowCount = 0;
@@ -6524,7 +6648,8 @@ bool SpectrumWidget::historyResizeSettling() const
 }
 
 // From AetherSDR SpectrumWidget.cpp:647-668 [@0cd4559]
-void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
+void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
+                                      bool imdEligible, quint64 acceptedOrdinal)
 {
     // NereusSDR differs from AetherSDR here, which calls
     // ensureWaterfallHistory() for every row. resizeEvent replaces the live
@@ -6562,9 +6687,24 @@ void SpectrumWidget::appendHistoryRow(const QRgb* rowData, qint64 timestampMs)
         && m_wfHistoryWriteRow < m_wfHistoryTimestamps.size()) {
         m_wfHistoryTimestamps[m_wfHistoryWriteRow] = timestampMs;
         m_wfHistoryWindows[m_wfHistoryWriteRow] = {m_centerHz, m_bandwidthHz};
+        m_wfHistorySequences[m_wfHistoryWriteRow] = ++m_wfNextRowSequence;
     }
     if (m_wfHistoryRowCount < h) {
         ++m_wfHistoryRowCount;
+    }
+    if (m_imdPendingCorrectionEdge && imdEligible
+        && m_imdPendingCorrectionEdge->contextRevision == m_imdContextRevision
+        && acceptedOrdinal > m_imdPendingCorrectionEdge->acceptedOrdinalAtObservation
+        && m_moxOverlay
+        && m_testingIMD && m_showIMDMeasurements && m_displayDuplex) {
+        m_imdWaterfallAnnotations.record(m_wfNextRowSequence,
+            m_imdContextRevision, m_imdPendingCorrectionEdge->correctionsApplied);
+        m_imdPendingCorrectionEdge.reset();
+        markOverlayDirty();
+    }
+    const int oldestIndex = historyRowIndexForAge(m_wfHistoryRowCount - 1);
+    if (oldestIndex >= 0) {
+        m_imdWaterfallAnnotations.expireBefore(m_wfHistorySequences[oldestIndex]);
     }
     if (!m_wfLive) {
         // Auto-bump while paused so the displayed row stays visually fixed
@@ -6738,11 +6878,29 @@ void SpectrumWidget::clearWaterfallHistory()
     m_wfWriteRow = 0;
     std::fill(m_wfHistoryTimestamps.begin(), m_wfHistoryTimestamps.end(), 0);
     std::fill(m_wfHistoryWindows.begin(), m_wfHistoryWindows.end(), WaterfallRowWindow{});
+    std::fill(m_wfHistorySequences.begin(), m_wfHistorySequences.end(), quint64(0));
+    m_imdWaterfallAnnotations.clear();
+    m_imdPendingCorrectionEdge.reset();
     m_wfHistoryWriteRow = 0;
     m_wfHistoryRowCount = 0;
     m_wfHistoryOffsetRows = 0;
     m_wfLive = true;
     markOverlayDirty();
+}
+
+std::optional<qreal> SpectrumWidget::imdEventY(quint64 sequence,
+                                                qreal glideRows) const
+{
+    if (sequence == 0 || sequence > m_wfNextRowSequence
+        || m_wfHistoryRowCount <= 0) { return std::nullopt; }
+    const quint64 age = m_wfNextRowSequence - sequence;
+    if (age >= static_cast<quint64>(m_wfHistoryRowCount)) { return std::nullopt; }
+    const int index = historyRowIndexForAge(static_cast<int>(age));
+    if (index < 0 || m_wfHistorySequences.value(index) != sequence) {
+        return std::nullopt;
+    }
+    return ImdWaterfallAnnotations::visibleRowY(static_cast<int>(age),
+        m_wfHistoryOffsetRows, m_waterfall.height(), glideRows);
 }
 
 // Phase 3F Sub-Epic F Task 6: store the latest per-ADC wideband bins.
@@ -7260,7 +7418,8 @@ void SpectrumWidget::composeWaterfallActiveThresholds(const QVector<float>& wfPi
 // detector + avenger in updateSpectrumLinear().  AGC + NF-AGC + threshold
 // compute iterate display pixels per Thetis Display.cs:6713-6738
 // [v2.10.3.13] (waterfall_data[i] indexed by pixel).
-void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
+void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm,
+                                      bool imdEligible, quint64 acceptedOrdinal)
 {
     if (m_waterfall.isNull() || wfPixelsDbm.isEmpty()) {
         return;
@@ -7355,7 +7514,7 @@ void SpectrumWidget::pushWaterfallRow(const QVector<float>& wfPixelsDbm)
     //   path), so we always use QDateTime::currentMSecsSinceEpoch().
     {
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        appendHistoryRow(scanline, nowMs);
+        appendHistoryRow(scanline, nowMs, imdEligible, acceptedOrdinal);
         if (!m_wfLive) {
             // Paused: don't show the new row — auto-bump in appendHistoryRow
             // already shifted offset, just rebuild the viewport.
@@ -8561,6 +8720,7 @@ void SpectrumWidget::setMoxOverlay(bool isTx)
     // where both grids get written.
 
     m_moxOverlay = isTx;
+    invalidateImdMeasurement();
     //-KG4VCF [v0.5.2] Retire the partial fold on either ownership edge,
     // including DUP with unchanged axes and stop-on-TX with no keyed row.
     m_dssFoldCount = 0;
@@ -8629,6 +8789,7 @@ void SpectrumWidget::setTestingIMD(bool on)
         return;
     }
     m_testingIMD = on;
+    invalidateImdMeasurement();
     if (!on && m_imdOverlay) {
         m_imdOverlay->reset();  // EMA reset, see setMoxOverlay note above.
     }
@@ -8637,7 +8798,7 @@ void SpectrumWidget::setTestingIMD(bool on)
                        << "showImd=" << m_showIMDMeasurements
                        << "duplex=" << m_displayDuplex
                        << " (after setTestingIMD)";
-    update();
+    markOverlayDirty();
 }
 
 void SpectrumWidget::setShowIMDMeasurements(bool on)
@@ -8646,6 +8807,7 @@ void SpectrumWidget::setShowIMDMeasurements(bool on)
         return;
     }
     m_showIMDMeasurements = on;
+    invalidateImdMeasurement();
     if (!on && m_imdOverlay) {
         m_imdOverlay->reset();
     }
@@ -8654,7 +8816,7 @@ void SpectrumWidget::setShowIMDMeasurements(bool on)
                        << "showImd=" << m_showIMDMeasurements
                        << "duplex=" << m_displayDuplex
                        << " (after setShowIMDMeasurements)";
-    update();
+    markOverlayDirty();
 }
 
 void SpectrumWidget::loadTransmitSpan()
@@ -8722,6 +8884,7 @@ void SpectrumWidget::setDisplayDuplex(bool on)
         return;
     }
     m_displayDuplex = on;
+    invalidateImdMeasurement();
     if (m_moxOverlay) {
         resetPeaksForDuplexChange();
         const bool spanWasLoaded = m_txSpanLoaded;
@@ -9532,134 +9695,167 @@ void SpectrumWidget::drawTxFilterOverlay(QPainter& p, const QRect& specRect)
 }
 
 // ---------------------------------------------------------------------------
-// drawImdOverlay()
-//
-// Phase 3M-4 Task 12.  Two-tone IMD overlay: peak markers + readout box.
-// Only called when m_moxOverlay && m_testingIMD && m_showIMDMeasurements
-// && m_displayDuplex.
-//
-// Source-first port of Thetis display.cs [v2.10.3.13]:
-//   :5008       show condition (caller gates this — see paintEvent)
-//   :5283-5298  peak detection (delegated to ImdOverlay::detectPeaks)
-//   :5453-5475  peak ellipse markers
-//   :5512-5560  IMD3/IMD5 sort + findImd labeling (delegated to
-//                  ImdOverlay::labelImdProducts)
-//   :5520       readout box rect (260x180 px, X=50, Y=50, R=14)
-//   :5650-5685  3-column readout text (delegated to
-//                  ImdOverlay::formatReadout)
+// Cached two-tone measurement presentation. The existing Thetis-derived gates
+// and measurement helper remain authoritative; this NereusSDR-original painter
+// draws the approved product identities and optional frequency guides only.
+// Numerical readings live in ImdMeasurementPanel outside the trace.
 // ---------------------------------------------------------------------------
+const ImdMeasurementFrame& SpectrumWidget::imdMeasurementFrame() const
+{
+    return m_imdPresenter.frame();
+}
+
+void SpectrumWidget::setImdInspectorVisible(bool visible)
+{
+    if (m_imdInspectorVisible == visible) { return; }
+    m_imdInspectorVisible = visible;
+    AppSettings::instance().setValue(settingsKey(QStringLiteral("PureSignalImdInspectorVisible"), m_panIndex), visible ? QStringLiteral("True") : QStringLiteral("False"));
+    emit imdPresentationChanged();
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setImdGuidesVisible(bool visible)
+{
+    if (m_imdGuidesVisible == visible) { return; }
+    m_imdGuidesVisible = visible;
+    AppSettings::instance().setValue(settingsKey(QStringLiteral("PureSignalImdGuidesVisible"), m_panIndex), visible ? QStringLiteral("True") : QStringLiteral("False"));
+    emit imdPresentationChanged();
+    markOverlayDirty();
+}
+
+ImdInputContext SpectrumWidget::imdInputContext(quint64 sequence, bool sourceEligible) const
+{
+    const int count = m_renderedPixels.size();
+    return {sequence, m_imdContextRevision, QDateTime::currentMSecsSinceEpoch(),
+        m_centerHz - m_bandwidthHz / 2.0,
+        count > 1 ? m_bandwidthHz / (count - 1) : 0.0,
+        m_moxOverlay, m_testingIMD, m_showIMDMeasurements, m_displayDuplex,
+        sourceEligible};
+}
+
+void SpectrumWidget::invalidateImdMeasurement()
+{
+    ++m_imdContextRevision;
+    m_imdPendingCorrectionEdge.reset();
+    m_imdWaterfallAnnotations.clear();
+    const ImdInputContext context = imdInputContext(0, false);
+    const ImdStatus status = !context.measurementsEnabled ? ImdStatus::Disabled
+        : !context.mox || !context.testing ? ImdStatus::WaitingForTx
+        : !context.duplex ? ImdStatus::DuplexRequired : ImdStatus::WaitingForSpectrum;
+    m_imdPresenter.invalidate(status, context);
+    emit imdMeasurementChanged(m_imdPresenter.frame());
+    markOverlayDirty();
+}
+
+void SpectrumWidget::queueImdCorrectionEdge(bool correctionsApplied)
+{
+    if (!m_moxOverlay || !m_testingIMD || !m_showIMDMeasurements
+        || !m_displayDuplex) { return; }
+    // Several facade edges before a receiver row describe one observed row
+    // position; retain the latest actual predicate and the accepted identity
+    // at observation instead of inventing a position for a queued old row.
+    m_imdPendingCorrectionEdge = PendingImdCorrectionEdge{
+        correctionsApplied, m_imdContextRevision, m_imdAcceptedFrameOrdinal};
+}
+
+qint64 SpectrumWidget::imdFreshnessTimeoutMs() const
+{
+    // Nereus GUI presentation policy, not a protocol or DSP timeout: allow
+    // five expected source intervals and at least one second for ordinary
+    // scheduling/burst gaps. Explicit decoder loss invalidates immediately.
+    constexpr qint64 kMinimumMs = 1000;
+    constexpr qint64 kExpectedIntervals = 5;
+    const qint64 periodMs = m_remoteSpectrum && m_remoteFps > 0
+        ? qMax(1, (1000 + m_remoteFps - 1) / m_remoteFps)
+        : qMax(1, m_displayTimer.interval());
+    return qMax(kMinimumMs, kExpectedIntervals * periodMs);
+}
+
+void SpectrumWidget::checkImdFreshness(qint64 nowMs)
+{
+    const ImdInputContext& context = m_imdPresenter.frame().context;
+    if (context.sourceEligible && context.acceptedAtMs > 0
+        && nowMs - context.acceptedAtMs > imdFreshnessTimeoutMs()) {
+        noteImdReceiverInputLost();
+    }
+}
+
+void SpectrumWidget::noteImdReceiverInputLost()
+{
+    if (!m_moxOverlay || !m_testingIMD || !m_showIMDMeasurements
+        || !m_displayDuplex) { return; }
+    const ImdInputContext& current = m_imdPresenter.frame().context;
+    if (!current.sourceEligible) { return; } // one transition until recovery
+    m_imdPendingCorrectionEdge.reset();
+    ImdInputContext missing = current;
+    missing.sourceEligible = false;
+    missing.acceptedAtMs = 0;
+    m_imdPresenter.invalidate(ImdStatus::WaitingForSpectrum, missing);
+    emit imdMeasurementChanged(m_imdPresenter.frame());
+    markOverlayDirty();
+}
+
+void SpectrumWidget::acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligible)
+{
+    if (m_imdPixelCount != m_renderedPixels.size()) {
+        m_imdPixelCount = m_renderedPixels.size();
+        invalidateImdMeasurement();
+    }
+    const ImdInputContext context = imdInputContext(sequence, sourceEligible);
+    m_imdPresenter.acceptVisibleSpectrum(m_renderedPixels, context);
+    if (sourceEligible && context.mox && context.testing
+        && context.measurementsEnabled && context.duplex
+        && m_renderedPixels.size() >= 2) {
+        ++m_imdAcceptedFrameOrdinal;
+    }
+    emit imdMeasurementChanged(m_imdPresenter.frame());
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setImdSelectedProduct(ImdProduct product)
+{
+    const int index = static_cast<int>(product);
+    if (index < 0 || index >= 6 || m_imdSelectedProduct == product) { return; }
+    m_imdSelectedProduct = product;
+    emit imdPresentationChanged();
+    markOverlayDirty();
+}
+
 void SpectrumWidget::drawImdOverlay(QPainter& p, const QRect& specRect)
 {
-    if (!m_imdOverlay || m_renderedPixels.isEmpty()) {
-        return;
-    }
-
-    // Peak-detect on the visible bin subset so the X coordinates we get
-    // back are bin offsets relative to firstBin.  Mirrors the existing
-    // drawSpectrum bin-to-pixel mapping at line 1564 [SpectrumWidget.cpp].
-    const auto [firstBin, lastBin] = visibleBinRange(m_renderedPixels.size());
-    const int count = lastBin - firstBin + 1;
-    if (count < 2) {
-        return;
-    }
-
-    std::vector<float> visible;
-    visible.reserve(count);
-    for (int i = 0; i < count; ++i) {
-        visible.push_back(m_renderedPixels[firstBin + i]);
-    }
-
-    // From Thetis display.cs:5217 [v2.10.3.13]: trigger_delta = 10 dB.
-    constexpr float kTriggerDelta = 10.0f;
-    const auto peaks = ImdOverlay::detectPeaks(visible, kTriggerDelta);
-
-    Maximum f0L, f0U, imd3L, imd3U, imd5L, imd5U;
-    if (!ImdOverlay::labelImdProducts(peaks,
-                                      f0L, f0U, imd3L, imd3U, imd5L, imd5U)) {
-        // Failure modes (Thetis display.cs:5666-5673 [v2.10.3.13] fallback
-        // text "Peaks not found !") are intentionally silent here — the
-        // user already sees a stale readout box from the previous frame
-        // until peaks return.  A future polish PR can render a hint.
-        return;
-    }
-    m_imdOverlay->updateReadout(f0L, f0U, imd3L, imd3U, imd5L, imd5U);
-
-    // Map bin indices -> pixel X using the same formula as drawSpectrum.
-    const float xStep = static_cast<float>(specRect.width())
-                      / static_cast<float>(count - 1);
-    auto binToPx = [&](int binIdx) {
-        return specRect.left() + static_cast<float>(binIdx) * xStep;
-    };
-    auto dbmToPx = [&](float dbm) {
-        return static_cast<float>(dbmToY(dbm, specRect));
-    };
-
+    const ImdMeasurementFrame& frame = m_imdPresenter.frame();
+    if (!m_showIMDMeasurements || !m_testingIMD || !m_moxOverlay || !m_displayDuplex
+        || !frame.context.sourceEligible || m_imdPixelCount < 2) { return; }
+    // Consume accepted positions only. No matching, smoothing, or fabricated peaks in paint.
     p.save();
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    // From Thetis display.cs:5453-5475 [v2.10.3.13] peak markers.
-    // Ellipse colour palette matches the visual companion mockup at
-    // .superpowers/brainstorm/92020-1778073191/content/imd-overlay.html
-    // (Thetis uses m_bDX2_PeakBlob brush).
-    auto drawMarker = [&](const Maximum& m, const QColor& c, float radius) {
-        const QPointF pt(binToPx(m.x), dbmToPx(m.dBm));
-        p.setPen(QPen(c, 1.6));
-        p.setBrush(Qt::NoBrush);
-        p.drawEllipse(pt, radius, radius);
-    };
-    drawMarker(f0L,   QColor("#ffd24a"), 6.0f);
-    drawMarker(f0U,   QColor("#ffd24a"), 6.0f);
-    drawMarker(imd3L, QColor("#ff8a8a"), 5.0f);
-    drawMarker(imd3U, QColor("#ff8a8a"), 5.0f);
-    drawMarker(imd5L, QColor("#cc6680"), 4.0f);
-    drawMarker(imd5U, QColor("#cc6680"), 4.0f);
-
-    // From Thetis display.cs:5520 [v2.10.3.13]:
-    //   RoundedRectangle rr = new RoundedRectangle();
-    //   rr.Rect = new RectangleF(_two_tone_readings_X_offset, 50, 260, 180);
-    //   rr.RadiusX = 14f; rr.RadiusY = 14f;
-    // _two_tone_readings_X_offset starts at 50 (display.cs:4948 [v2.10.3.13]).
-    // Thetis adjusts the X offset to dodge IMD5 markers (display.cs:5584-5585);
-    // NereusSDR keeps the simple fixed-50 placement for now.
-    constexpr int kBoxX = 50;
-    constexpr int kBoxY = 50;
-    constexpr int kBoxW = 260;
-    constexpr int kBoxH = 180;
-    constexpr int kBoxR = 14;
-    const QRectF box(specRect.left() + kBoxX, specRect.top() + kBoxY,
-                     kBoxW, kBoxH);
-    p.setBrush(QColor(20, 28, 40, 240));
-    p.setPen(QPen(QColor("#5fb0d8"), 1.5));
-    p.drawRoundedRect(box, kBoxR, kBoxR);
-
-    // From Thetis display.cs:5683-5687 [v2.10.3.13] DrawText calls.
-    // 4 columns: "dBm dBc frequency" header (NereusSDR drops the freq
-    // column for now — that requires hz_per_pixel + DDC center plumbing
-    // which the current mockup doesn't model), then label/val1/val2.
-    const auto t = m_imdOverlay->formatReadout();
-    p.setPen(QColor("#cfe1f0"));
-    QFont mono = WorkspacePreview::readableFont(QFont(QStringLiteral("Menlo")), p.device());
-    mono.setPointSize(9); mono = WorkspacePreview::readableFont(mono, p.device());
-    mono.setStyleHint(QFont::Monospace);
-    p.setFont(mono);
-
-    // Header row mirrors display.cs:5683 "dBm        dBc           frequency"
-    // (without the frequency column).
-    p.drawText(QPointF(box.left() + 70, box.top() + 16),
-               QStringLiteral("dBm           dBc"));
-
-    // Label / val1 / val2 columns at the same offsets the Thetis box uses
-    // (display.cs:5684-5686 +10/+64/+114 horizontal stride).
-    const QRectF readingsCol(box.left() + 10, box.top() + 28,
-                             box.width() - 20, box.height() - 36);
-    const QRectF val1Col(box.left() + 64, box.top() + 28,
-                         box.width() - 70, box.height() - 36);
-    const QRectF val2Col(box.left() + 130, box.top() + 28,
-                         box.width() - 130, box.height() - 36);
-    p.drawText(readingsCol, Qt::AlignLeft | Qt::TextDontClip, t.readings);
-    p.drawText(val1Col,     Qt::AlignLeft | Qt::TextDontClip, t.val1);
-    p.drawText(val2Col,     Qt::AlignLeft | Qt::TextDontClip, t.val2);
-
+    p.setClipRect(specRect);
+    p.setRenderHint(QPainter::Antialiasing);
+    for (int index = 0; index < 6; ++index) {
+        const auto& peak = frame.peaks[index];
+        const auto& expected = frame.expectedFrequencyHz[index];
+        if (!peak && !expected) { continue; }
+        const double hz = peak ? peak->frequencyHz : *expected;
+        const double sample = (hz - frame.context.firstSampleHz) / frame.context.sampleStepHz;
+        const double x = specRect.left() + sample * specRect.width() / (m_imdPixelCount - 1);
+        if (x < specRect.left() || x > specRect.right()) { continue; }
+        QColor ink = PureSignalViewStyle::product(index);
+        const bool selected = index == static_cast<int>(m_imdSelectedProduct);
+        const double radius = selected ? 7.0 : 5.0;
+        if (m_imdGuidesVisible) {
+            QColor guide = ink;
+            guide.setAlpha(selected ? 150 : 80);
+            p.setPen(QPen(guide, 1.0, Qt::DashLine));
+            p.drawLine(QPointF(x, specRect.top()), QPointF(x, specRect.bottom()));
+        }
+        const double y = peak ? dbmToY(peak->absoluteDbm, specRect) : specRect.top() + 12.0;
+        p.setPen(QPen(ink, selected ? 2.0 : 1.4, peak ? Qt::SolidLine : Qt::DashLine));
+        p.setBrush(peak ? QBrush(ink) : QBrush(Qt::NoBrush));
+        if (index < 2) {
+            p.drawEllipse(QPointF(x, y), radius, radius);
+        } else if (index < 4) {
+            p.drawPolygon(QPolygonF{QPointF(x, y - radius), QPointF(x + radius, y), QPointF(x, y + radius), QPointF(x - radius, y)});
+        } else { p.drawRect(QRectF(x - radius, y - radius, radius * 2, radius * 2)); }
+    }
     p.restore();
 }
 
@@ -11227,6 +11423,7 @@ void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
     // setMoxOverlay's swap. Everything else routes through here.
     m_centerHz    = centreHz;
     m_bandwidthHz = bandwidthHz;
+    invalidateImdMeasurement();
 
     // A moved or resized view resets this pan's peaks, local or remote.
     // From Thetis display.cs:907-921 [v2.10.3.15] (OnCentreFrequencyChanged,
@@ -12586,6 +12783,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     // the glide. The lag and the clock above are unchanged.
     // Written further down, from the frame plan, only when the waterfall
     // draws (GUI-M1).
+    m_imdWaterfallGlideRows = glideRows;
     const float wfUniforms[] = {static_cast<float>(m_wfWriteRow), glideRows,
                                 static_cast<float>(qMax(1, m_wfGpuTexH)), 0.0f};
 
@@ -12663,7 +12861,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             if (m_txFilterVisible && m_moxOverlay) {
                 drawTxFilterOverlay(p, specRect);
             }
-            // Phase 3M-4 Task 12 — IMD overlay (peak markers + readout box).
+            // Cached IMD overlay (product markers + optional frequency guides).
             // Show condition mirrors paintEvent (CPU path) and Thetis
             // display.cs:5008 [v2.10.3.13] verbatim.
             if (m_moxOverlay && m_testingIMD && m_showIMDMeasurements
@@ -13799,6 +13997,7 @@ void SpectrumWidget::setConnectionState(ConnectionState s)
     const bool wasConnected = (m_connState == ConnectionState::Connected);
     const bool isConnected = (s == ConnectionState::Connected);
     m_connState = s;
+    invalidateImdMeasurement();
 
     if (wasConnected && !isConnected) {
         // Connected → not-Connected: fade dim factor 1.0 → 0.4 over 800 ms.

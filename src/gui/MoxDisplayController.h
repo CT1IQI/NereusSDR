@@ -30,6 +30,8 @@
 //     only; here, the pan hosting the transmit slice.
 //
 // Modification history (NereusSDR):
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Central IMD gate mirrors; unchanged TX source ownership.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
@@ -48,6 +50,7 @@
 
 #pragma once
 
+#include "gui/NereusGuiExport.h"
 #include <QMetaObject>
 #include <QObject>
 #include <QPointer>
@@ -58,12 +61,13 @@ namespace NereusSDR {
 
 class ITxDisplaySource;
 class PanadapterStack;
+class PureSignal;
 class RadioModel;
 class SliceModel;
 class SpectrumWidget;
 class StationClient;
 
-class MoxDisplayController : public QObject {
+class NEREUS_GUI_EXPORT MoxDisplayController : public QObject {
     Q_OBJECT
 
 public:
@@ -84,6 +88,15 @@ public:
     /// transmit view. The fall undoes each on the pan recorded at the rise.
     void setKeyed(bool keyed, int txSliceId);
     bool isKeyed() const { return m_keyed; }
+
+    /// Window-local presentation preference, seeded from the existing saved
+    /// Show Two-tone Measurements key and current/late coordinator state.
+    /// Two-tone truth comes from the local/remote PureSignal session facade.
+    /// Mirror both gates onto all current/new pans; only the keyed host has
+    /// the MOX/DUP gates that make the measurement visible.
+    void setShowIMDMeasurements(bool on);
+    bool showIMDMeasurements() const { return m_showIMDMeasurements; }
+    bool testingIMD() const { return m_testingIMD; }
 
     /// The pan showing the transmit display; empty unless keyed with DUP
     /// off (keyed with DUP on the pan keeps its receive frames).
@@ -135,6 +148,8 @@ public:
 
 signals:
     void keyedChanged(bool keyed);
+    // GUI ownership is committed after rise/fall, including a late slice snapshot.
+    void keyedOwnerCommitted(const QString& panId);
     /// displayDuplex() changed (the setting, or its availability).
     void displayDuplexChanged(bool on);
 
@@ -153,6 +168,9 @@ private:
     void onViewWindowChanged(double centreHz, double bandwidthHz);
     void applyHighSwr();
     void note(const QString& call);
+    void bindMeasurementCoordinator(PureSignal* coordinator);
+    void applyMeasurementGates();
+    void refreshTestingIMD();
 
     QPointer<PanadapterStack> m_pans;
     QPointer<RadioModel> m_model;
@@ -174,6 +192,10 @@ private:
     double m_savedSampleRate{0.0};
     double m_savedDdcHz{0.0};
     QMetaObject::Connection m_viewConnection;
+    QPointer<PureSignal> m_measurementCoordinator;
+    QMetaObject::Connection m_measurementsConnection;
+    bool m_testingIMD{false};
+    bool m_showIMDMeasurements{false};
 
     bool m_highSwr{false};
     bool m_windBackLatched{false};

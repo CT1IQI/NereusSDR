@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See MoxDisplayController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Mirror current local/remote IMD presentation gates to
+//                 existing/new pans and disconnect replaced coordinators.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
@@ -33,6 +36,8 @@
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/MoxController.h"
+#include "core/PureSignal.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "core/session/StationCapabilities.h"
 #include "core/session/StationClient.h"
 #include "core/session/TransmitStateFacade.h"
@@ -65,9 +70,24 @@ MoxDisplayController::MoxDisplayController(PanadapterStack* pans, RadioModel* mo
     , m_pans(pans)
     , m_model(model)
 {
+    m_showIMDMeasurements = AppSettings::instance().value(
+        QStringLiteral("puresignal/showTwoToneMeasurements"), false).toBool();
+    if (pans != nullptr) {
+        connect(pans, &PanadapterStack::countChanged, this,
+                &MoxDisplayController::applyMeasurementGates);
+    }
     // Parity Task 31: a remote window's DUP follows the Core's
     // txDisplayVersion (3 and above).
     if (model != nullptr) {
+        connect(model, &RadioModel::pureSignalCoordinatorReady, this,
+                &MoxDisplayController::bindMeasurementCoordinator);
+        if (PureSignalSessionFacade* facade = model->pureSignalFacade()) {
+            connect(facade, &PureSignalSessionFacade::statusChanged, this,
+                    &MoxDisplayController::refreshTestingIMD);
+        }
+        if (model->pureSignal() != nullptr) {
+            bindMeasurementCoordinator(model->pureSignal());
+        }
         connect(model, &RadioModel::stationTxDisplayVersionChanged, this,
                 &MoxDisplayController::applyDisplayDuplex);
         // The radio coming on resets every receiver's peaks. From Thetis
@@ -87,6 +107,54 @@ MoxDisplayController::MoxDisplayController(PanadapterStack* pans, RadioModel* mo
                         resetPeaksOnEveryPan();
                     }
                 });
+    }
+    refreshTestingIMD();
+}
+
+void MoxDisplayController::bindMeasurementCoordinator(PureSignal* coordinator)
+{
+    if (m_measurementCoordinator == coordinator) {
+        return;
+    }
+    QObject::disconnect(m_measurementsConnection);
+    m_measurementCoordinator = coordinator;
+    if (coordinator != nullptr) {
+        m_measurementsConnection = connect(coordinator, &PureSignal::show2ToneMeasurementsChanged,
+                                           this, &MoxDisplayController::setShowIMDMeasurements);
+    }
+    // PsForm owns this window-local saved preference. The legacy coordinator
+    // getter is an unpersisted mirror, so its startup false cannot reset a
+    // saved true (and a saved false also wins). Use the snapshot only when
+    // there is no saved preference; keep future explicit legacy signals.
+    const QString key = QStringLiteral("puresignal/showTwoToneMeasurements");
+    AppSettings& settings = AppSettings::instance();
+    setShowIMDMeasurements(settings.contains(key) ? settings.value(key).toBool()
+        : coordinator != nullptr && coordinator->show2ToneMeasurements());
+}
+
+void MoxDisplayController::setShowIMDMeasurements(bool on)
+{
+    m_showIMDMeasurements = on;
+    applyMeasurementGates();
+}
+
+void MoxDisplayController::refreshTestingIMD()
+{
+    PureSignalSessionFacade* facade = m_model ? m_model->pureSignalFacade() : nullptr;
+    m_testingIMD = facade != nullptr && facade->twoToneOn();
+    applyMeasurementGates();
+}
+
+void MoxDisplayController::applyMeasurementGates()
+{
+    if (m_pans.isNull()) {
+        return;
+    }
+    for (PanadapterApplet* applet : m_pans->allApplets()) {
+        if (SpectrumWidget* spectrum = applet != nullptr ? applet->spectrumWidget() : nullptr) {
+            spectrum->setTestingIMD(m_testingIMD);
+            spectrum->setShowIMDMeasurements(m_showIMDMeasurements);
+        }
     }
 }
 
@@ -207,6 +275,7 @@ void MoxDisplayController::setKeyed(bool keyed, int txSliceId)
         if (keyed && m_panId.isEmpty()) {
             rise(txSliceId);
             applyHighSwr();
+            emit keyedOwnerCommitted(m_panId);
         }
         return;
     }
@@ -235,6 +304,7 @@ void MoxDisplayController::setKeyed(bool keyed, int txSliceId)
         fall();
     }
     applyHighSwr();
+    emit keyedOwnerCommitted(m_panId);
 }
 
 // ── PR #212 follow-up bench fix (J.J. KG4VCF, 2026-05-07) ────────

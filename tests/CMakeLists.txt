@@ -833,6 +833,7 @@ target_compile_definitions(tst_puresignal_coordinator PRIVATE NEREUS_BUILD_TESTS
 # routes to the PureSignal coordinator (Task 7).  Save button gating mirrors
 # Thetis PSForm.cs:574-590 [v2.10.3.13] CorrectionsBeingApplied predicate.
 nereus_add_test(tst_psform)
+nereus_add_test(tst_puresignal_refresh_state NATIVE_WINDOW)
 
 # ── Phase 3M-4 Task 9: AmpViewWindow modeless dialog ─────────────────────────
 # Source-first port of Thetis AmpView.cs (528 LOC) [v2.10.3.13].  Tests verify
@@ -841,11 +842,14 @@ nereus_add_test(tst_psform)
 # (chkAVShowGain @ 7,378 / chkAVPhaseZoom @ 242,378 / chkAVLowRes @ 404,378
 # / chkStayOnTop @ 490,378), 5 named chart series (Ref / MagAmp / PhsAmp /
 # MagCorr / PhsCorr), default chkAVLowRes Checked per AmpView.Designer.cs:
-# 182-183 [v2.10.3.13], toggle persistence to AppSettings, stay-on-top window
+# 182-183 [v2.10.3.13], mode persistence to AppSettings, stay-on-top window
 # flag application, chart axis ranges (Mag 1.0/2.0 + Phase 180/45) matching
 # AmpView.cs:435-482 [v2.10.3.13], and lowResStride() == 4 per AmpView.cs:
 # 457-463 [v2.10.3.13].
 nereus_add_test(tst_ampview_window)
+# Linked cursor interpolation uses the independent PS3 X domains and keeps
+# visibility/cursor choices local to this window session.
+nereus_add_test(tst_ampview_linked_cursor)
 
 # ── Phase 3M-4 Task 10: PsaIndicatorWidget bottom-banner FB+PS pair ──────────
 # Source-first port of Thetis ucInfoBar.cs:820-1098 [v2.10.3.13] (lblFB +
@@ -6212,6 +6216,11 @@ nereus_add_test(tst_transmit_model_hl2_audio_volume)
 # Source: Thetis display.cs:5008/5210-5316/5453-5475/5512-5685/5725-5760
 #         [v2.10.3.13].
 nereus_add_test(tst_imd_overlay)
+nereus_add_test(tst_imd_measurement_presenter)
+nereus_add_test(tst_imd_spectrum_integration)
+nereus_add_test(tst_imd_measurement_panel NATIVE_WINDOW)
+nereus_add_test(tst_imd_waterfall_annotations NATIVE_WINDOW)
+nereus_add_test(tst_imd_rail_controls)
 
 # ── v0.4.1 hotfix: RadioModel pushes hardware HPSDRModel to ReceiverManager ──
 # 5 tests pinning the contract that RadioModel propagates m_hardwareProfile.

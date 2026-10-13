@@ -578,7 +578,9 @@ void Hl2IoBoardTab::buildConfigAndRegisterRow(QVBoxLayout* outer)
         rowL->setSpacing(4);
         auto* lbl = new QLabel(label, rowW);
         lbl->setStyleSheet(QStringLiteral("color: #aaa; font-size: 10px;"));
-        lbl->setFixedWidth(160);
+        // Workspace fonts need one more pixel for the longest register name;
+        // leave a small fixed allowance so the label is never clipped.
+        lbl->setFixedWidth(164);
         valueLabel = new QLabel(QStringLiteral("—"), rowW);
         valueLabel->setStyleSheet(QStringLiteral("font-size: 10px; font-family: monospace;"));
         rowL->addWidget(lbl);

@@ -34,6 +34,7 @@
 #include "models/PureSignalSettings.h"
 #include "gui/PsaIndicatorWidget.h"
 #include "gui/PsForm.h"
+#include "gui/PureSignalInstruments.h"
 #include "gui/DspAssetDialog.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
@@ -689,6 +690,7 @@ private slots:
         // R-R3-49 (parity Task 7): a Core at transmitSettingsVersion 7
         // takes a restore from this window off the air.
         QSignalSpy restoreRequested(manager, &DspAssetDialog::restoreCorrectionRequested);
+        QVERIFY(restoreRequested.isValid());
         QTRY_VERIFY(restore->isEnabled());
         restore->click();
         QCOMPARE(restoreRequested.size(), 1);
@@ -733,15 +735,21 @@ private slots:
         QVERIFY(indicator.findChild<QLabel*>("lblPSFeedback"));
         QCOMPARE(indicator.fbText(), QStringLiteral("Feedback 149"));
         QCOMPARE(facade->statusSnapshot().correctionGainAtPeak, 0.8125);
-        QLabel* correction = applet.findChild<QLabel*>("PsAppletCorrectionDbLabel");
+        QLabel* correction = applet.findChild<QLabel*>("PsAppletCorrectionState");
         QVERIFY(correction);
-        QCOMPARE(correction->text(), QStringLiteral("Correction: Applied"));
-        QLabel* diagnostic = applet.findChild<QLabel*>("PsAppletStatusLabel");
-        QVERIFY(diagnostic);
-        QVERIFY(diagnostic->text().contains("Collect"));
-        QLabel* calibrations = applet.findChild<QLabel*>("PsAppletIterationsLabel");
-        QVERIFY(calibrations);
-        QVERIFY(calibrations->text().contains("5 / 7"));
+        QCOMPARE(correction->text(), QStringLiteral("● Applied"));
+        QLabel* activity = applet.findChild<QLabel*>("PsAppletActivity");
+        QLabel* successes = applet.findChild<QLabel*>("PsAppletSuccessfulCalibrations");
+        QLabel* attempts = applet.findChild<QLabel*>("PsAppletCalibrationAttempts");
+        QLabel* feedback = applet.findChild<QLabel*>("PsAppletFeedbackLevel");
+        auto* feedbackMeter = static_cast<PureSignalFeedbackMeter*>(
+            applet.findChild<QWidget*>("PsAppletFeedbackMeter"));
+        QVERIFY(activity && successes && attempts && feedback && feedbackMeter);
+        QVERIFY(activity->text().contains("Collect"));
+        QVERIFY(successes->text().contains("5"));
+        QVERIFY(attempts->text().contains("7"));
+        QVERIFY(feedback->text().contains("149"));
+        QVERIFY(feedbackMeter->available());
         // A new feedback level can arrive without another calibration attempt.
         status["feedbackLevel"] = 171;
         status["correctionsApplied"] = false;
@@ -749,10 +757,16 @@ private slots:
         QVERIFY(facade->applyRemoteProperty("statusJson",
             QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
         QCOMPARE(indicator.fbText(), QStringLiteral("Feedback 171"));
-        QCOMPARE(correction->text(), QStringLiteral("Correction: Off"));
+        QCOMPARE(correction->text(), QStringLiteral("Off"));
+        QVERIFY(feedback->text().contains("171"));
+        QVERIFY(attempts->text().contains("7"));
         facade->resetSession();
         QCOMPARE(indicator.fbText(), QStringLiteral("Feedback —"));
-        QCOMPARE(correction->text(), QStringLiteral("Correction: Off"));
+        QCOMPARE(correction->text(), QStringLiteral("Unavailable"));
+        QCOMPARE(feedback->text(), QStringLiteral("—"));
+        QVERIFY(successes->text().contains(QStringLiteral("—")));
+        QVERIFY(attempts->text().contains(QStringLiteral("—")));
+        QVERIFY(!feedbackMeter->available());
         QVERIFY(!remote.pureSignal());
     }
 
@@ -917,33 +931,29 @@ private slots:
 
         QLabel* banner = indicator.findChild<QLabel*>("lblPSFeedback");
         QVERIFY(banner);
-        QList<QLabel*> lights;
-        for (const char* name : {"PsAppletCalLed", "PsAppletRunLed", "PsAppletFbkLed"}) {
-            QLabel* light = applet.findChild<QLabel*>(QString::fromLatin1(name));
-            QVERIFY2(light, name);
-            lights.append(light);
-        }
+        QLabel* correction = applet.findChild<QLabel*>("PsAppletCorrectionState");
+        QLabel* feedbackClass = applet.findChild<QLabel*>("PsAppletFeedbackClass");
+        QLabel* feedback = applet.findChild<QLabel*>("PsAppletFeedbackLevel");
+        QVERIFY(correction && feedbackClass && feedback);
         // A shown widget is polished; only a polished one is polished again.
         StyleChangeCounter restyled;
-        for (QLabel* label : lights + QList<QLabel*>{banner}) {
+        for (QLabel* label : {correction, feedbackClass, feedback, banner}) {
             label->ensurePolished();
             label->installEventFilter(&restyled);
         }
 
-        // On the air the reading changes ten times a second and the
-        // lights stay as they are.
-        QLabel* feedback = applet.findChild<QLabel*>("PsAppletFeedbackDbLabel");
-        QVERIFY(feedback);
+        // On the air the reading changes ten times a second while the
+        // styled readouts stay in the same visual states.
         status["feedbackLevel"] = 150;
         QVERIFY(facade->applyRemoteProperty("statusJson", statusText(status)));
         QVERIFY(feedback->text().contains("150"));
         QCOMPARE(restyled.count, 0);
 
-        // A light that changes state is restyled, and only that one.
-        const QString runOff = lights[1]->styleSheet();
+        // A readout that changes visual state is restyled, and only that one.
+        const QString correctionOff = correction->styleSheet();
         status["correctionsApplied"] = true;
         QVERIFY(facade->applyRemoteProperty("statusJson", statusText(status)));
-        QVERIFY(lights[1]->styleSheet() != runOff);
+        QVERIFY(correction->styleSheet() != correctionOff);
         QCOMPARE(restyled.count, 1);
     }
 };

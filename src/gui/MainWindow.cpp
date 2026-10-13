@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Route IMD presentation gates through the existing MOX
+//                 display owner rather than the startup/focused pan.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -1158,6 +1161,7 @@ warren@wpratt.com
 #include "RemoteConnectionController.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/MoxDisplayController.h"
+#include "gui/ImdMeasurementPanel.h"
 #include "gui/TxDisplaySource.h"
 #include "gui/RemoteVaxRouter.h"
 #include "gui/ReceiverStopNotices.h"
@@ -3984,6 +3988,7 @@ void MainWindow::applyDisplayDuplex()
     if (m_containerButtons) {
         refreshContainerControls();
     }
+    refreshImdRailControls();
 }
 
 void MainWindow::ensureRemoteSession()
@@ -4197,6 +4202,7 @@ void MainWindow::ensureRemoteSession()
             m_remoteMedia, m_stationClient, m_panStack);
         if (m_moxDisplay == nullptr) {
             m_moxDisplay = new MoxDisplayController(m_panStack, m_radioModel, this);
+            wireImdMeasurementForwarding();
         }
         m_moxDisplay->setSource(m_remoteTxDisplaySource.get());
         m_moxDisplay->followStation(m_stationClient);
@@ -7465,6 +7471,7 @@ void MainWindow::buildUI()
         refreshPanNotchMarkers();
         refreshPanVisualNotch();
         refreshPanNotchMinWidth();
+        wireImdMeasurementForwarding();
     });
 
     // R1 Task 7 fix round 1 (coordinator spec review, finding 2):
@@ -7481,6 +7488,9 @@ void MainWindow::buildUI()
             [this](const QString& panId) {
         if (m_clarityRegistry) { m_clarityRegistry->retirePan(panId); }
         m_topology.unsubscribe(panId);
+        if (m_psForm && m_moxDisplay && m_moxDisplay->keyedPanId() == panId) {
+            refreshImdMeasurementForwarding();
+        }
     });
 
     // A stream's physical ADC can move without its stream index or its folded
@@ -8874,6 +8884,7 @@ void MainWindow::buildUI()
             m_localTxDisplaySource = std::make_unique<LocalTxDisplaySource>(
                 m_radioModel->txDisplayFeed());
             m_moxDisplay = new MoxDisplayController(m_panStack, m_radioModel, this);
+            wireImdMeasurementForwarding();
             m_moxDisplay->setSource(m_localTxDisplaySource.get());
             m_moxDisplay->followLocalRadio();
         }
@@ -8895,36 +8906,10 @@ void MainWindow::buildUI()
         // displayduplex is the window's DUP (parity Task 31), set on the
         // transmitting pan by MoxDisplayController; off by default as Thetis,
         // so the overlay shows during two-tone only with DUP on.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setShowIMDMeasurements(
-                AppSettings::instance().value(
-                    QStringLiteral("puresignal/showTwoToneMeasurements"), false).toBool());
-            if (auto* tt = m_radioModel->twoToneController()) {
-                connect(tt, &TwoToneController::twoToneActiveChanged,
-                        activeSpectrumWidget(), &SpectrumWidget::setTestingIMD);
-            }
-            // Phase 3M-4 bench-fix: PureSignal coordinator is late-bound
-            // during WDSP-init — at MainWindow build time it's typically
-            // nullptr, so the connection below never gets made and the
-            // IMD overlay show condition stays at m_showIMDMeasurements=
-            // false even after the user checks chkShow2ToneMeasurements.
-            // Subscribe to RadioModel::pureSignalCoordinatorReady so we
-            // re-attempt the connect when the coordinator becomes available.
-            // Mirrors the pattern in PureSignalApplet.cpp:118-123 +
-            // PsaIndicatorWidget bench-fix.
-            auto wireSpectrumToPs = [this](PureSignal* ps) {
-                if (!ps || !activeSpectrumWidget()) { return; }
-                connect(ps, &PureSignal::show2ToneMeasurementsChanged,
-                        activeSpectrumWidget(),
-                        &SpectrumWidget::setShowIMDMeasurements,
-                        Qt::UniqueConnection);
-            };
-            wireSpectrumToPs(m_radioModel->pureSignal());
-            connect(m_radioModel, &RadioModel::pureSignalCoordinatorReady,
-                    this, [wireSpectrumToPs](PureSignal* ps) {
-                        wireSpectrumToPs(ps);
-                    });
-        }
+        // MoxDisplayController mirrors testing/show onto current and future
+        // pans, including late/replaced coordinators and remote facade
+        // state. Its existing rise/fall supplies MOX/DUP only to the TX
+        // host, so measurement ownership never follows startup focus.
 
         // ── 3M-1c Phase L.3: VFO TX badge routing ─────────────────────────────
         //
@@ -17082,15 +17067,133 @@ void MainWindow::openPureSignalDialog()
             (m_radioModel ? m_radioModel->pureSignal() : nullptr);
         m_psForm = new PsForm(m_radioModel, coordinator, this);
         connect(m_psForm, &PsForm::showTwoToneMeasurementsChanged,
-                this, [this](bool shown) {
-            if (auto* spectrum = activeSpectrumWidget()) {
-                spectrum->setShowIMDMeasurements(shown);
-            }
-        });
+                this, &MainWindow::setImdMeasurementsShown);
     }
+    wireImdMeasurementForwarding();
+    refreshImdMeasurementForwarding();
     m_psForm->show();
     m_psForm->raise();
     m_psForm->activateWindow();
+}
+
+// Forward only the controller's committed owner, independently of focus and DUP.
+void MainWindow::wireImdMeasurementForwarding()
+{
+    if (!m_panStack || !m_moxDisplay) { return; }
+    PureSignalSessionFacade* facade = m_radioModel ? m_radioModel->pureSignalFacade() : nullptr;
+    if (m_imdObservedFacade != facade) {
+        m_imdObservedFacade = facade;
+        m_imdStatusBaselineKnown = facade != nullptr;
+        m_imdLastCorrectionsApplied = facade
+            ? facade->statusSnapshot().correctionsApplied : false;
+        if (facade) {
+            connect(facade, &PureSignalSessionFacade::statusChanged,
+                    this, &MainWindow::onImdPureSignalStatusChanged,
+                    Qt::UniqueConnection);
+        }
+    }
+    connect(m_moxDisplay, &MoxDisplayController::keyedOwnerCommitted,
+            this, &MainWindow::refreshImdMeasurementForwarding, Qt::UniqueConnection);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        ImdMeasurementPanel* rail = applet != nullptr ? applet->imdRail() : nullptr;
+        if (rail != nullptr) {
+            connect(rail, &ImdMeasurementPanel::hideMeasurementsRequested,
+                    this, &MainWindow::hideImdMeasurements, Qt::UniqueConnection);
+            connect(rail, &ImdMeasurementPanel::enableDisplayDuplexRequested,
+                    this, &MainWindow::enableImdDisplayDuplex, Qt::UniqueConnection);
+        }
+        SpectrumWidget* spectrum = applet->spectrumWidget();
+        connect(spectrum, &SpectrumWidget::imdMeasurementChanged,
+                this, &MainWindow::refreshImdMeasurementForwarding, Qt::UniqueConnection);
+        if (!spectrum->property("ImdOwnerDestructionBound").toBool()) {
+            spectrum->setProperty("ImdOwnerDestructionBound", true);
+            const QString panId = applet->panId();
+            connect(spectrum, &QObject::destroyed, this, [this, panId]() {
+                if (m_psForm && m_moxDisplay && m_moxDisplay->keyedPanId() == panId) {
+                    ImdMeasurementFrame invalid;
+                    invalid.context.measurementsEnabled = m_moxDisplay->showIMDMeasurements();
+                    invalid.status = invalid.context.measurementsEnabled ? ImdStatus::WaitingForSpectrum : ImdStatus::Disabled;
+                    m_psForm->setImdMeasurementFrame(invalid);
+                }
+            });
+        }
+    }
+    refreshImdRailControls();
+    refreshImdMeasurementForwarding();
+}
+
+void MainWindow::setImdMeasurementsShown(bool shown)
+{
+    AppSettings::instance().setValue(
+        QStringLiteral("puresignal/showTwoToneMeasurements"),
+        shown ? QStringLiteral("True") : QStringLiteral("False"));
+    if (m_psForm != nullptr) {
+        m_psForm->setShowTwoToneMeasurements(shown);
+    }
+    if (m_moxDisplay != nullptr) {
+        m_moxDisplay->setShowIMDMeasurements(shown);
+    }
+    refreshImdMeasurementForwarding();
+}
+
+void MainWindow::hideImdMeasurements()
+{
+    setImdMeasurementsShown(false);
+}
+
+void MainWindow::enableImdDisplayDuplex()
+{
+    if (m_displayDuplexAction == nullptr || !m_displayDuplexAction->isEnabled()
+        || m_displayDuplexAction->isChecked()) {
+        return;
+    }
+    m_displayDuplexAction->setChecked(true);
+}
+
+void MainWindow::refreshImdRailControls()
+{
+    if (m_panStack == nullptr) { return; }
+    const QString reason =
+        MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet != nullptr && applet->imdRail() != nullptr) {
+            applet->imdRail()->setDisplayDuplexCapability(reason.isEmpty(), reason);
+        }
+    }
+}
+
+void MainWindow::onImdPureSignalStatusChanged()
+{
+    PureSignalSessionFacade* facade = m_radioModel ? m_radioModel->pureSignalFacade() : nullptr;
+    if (!facade || facade != m_imdObservedFacade) { return; }
+    const bool applied = facade->statusSnapshot().correctionsApplied;
+    const bool changed = m_imdStatusBaselineKnown
+        && applied != m_imdLastCorrectionsApplied;
+    m_imdStatusBaselineKnown = true;
+    m_imdLastCorrectionsApplied = applied;
+    if (!changed || !m_moxDisplay || !m_moxDisplay->isKeyed() || !m_panStack) { return; }
+    SpectrumWidget* owner = m_panStack->spectrum(m_moxDisplay->keyedPanId());
+    if (owner) { owner->queueImdCorrectionEdge(applied); }
+}
+
+void MainWindow::refreshImdMeasurementForwarding()
+{
+    if (!m_psForm) { return; }
+    ImdMeasurementFrame frame;
+    if (m_moxDisplay) {
+        frame.context.measurementsEnabled = m_moxDisplay->showIMDMeasurements();
+        frame.context.mox = m_moxDisplay->isKeyed();
+        frame.context.testing = m_moxDisplay->testingIMD();
+        frame.context.duplex = m_moxDisplay->displayDuplex();
+    }
+    frame.status = !frame.context.measurementsEnabled ? ImdStatus::Disabled
+        : !frame.context.mox || !frame.context.testing ? ImdStatus::WaitingForTx
+        : !frame.context.duplex ? ImdStatus::DuplexRequired : ImdStatus::WaitingForSpectrum;
+    if (m_moxDisplay && m_moxDisplay->isKeyed()) {
+        SpectrumWidget* owner = m_panStack ? m_panStack->spectrum(m_moxDisplay->keyedPanId()) : nullptr;
+        if (owner) { frame = owner->imdMeasurementFrame(); }
+    }
+    m_psForm->setImdMeasurementFrame(frame);
 }
 
 // Phase 3J-2 H1: open the modeless SpotHubDialog.

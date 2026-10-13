@@ -24,6 +24,7 @@
 
 #include "NativeWindowFrames.h"
 #include "gui/SpectrumWidget.h"
+#include "support/ImdSpectrumTestAccess.h"
 
 using namespace NereusSDR;
 using NereusSDR::NativeWindowFrames::FrameWait;
@@ -193,6 +194,86 @@ private:
     }
 
 private slots:
+    void imdGateOffInvalidatesAndClearsTexture_data()
+    {
+        QTest::addColumn<bool>("showGate");
+        QTest::newRow("show-measurements") << true;
+        QTest::newRow("two-tone") << false;
+    }
+
+    void imdGateOffInvalidatesAndClearsTexture()
+    {
+        QFETCH(bool, showGate);
+        SpectrumWidget w;
+        w.resize(800, 600);
+        w.setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode2D));
+        w.setSampleRate(192000.0);
+        w.setDisplayDuplex(true);
+        w.setMoxOverlay(true);
+        w.setTestingIMD(true);
+        w.setShowIMDMeasurements(true);
+        w.setDbmRange(-140.0f, 0.0f);
+        w.setShowNoiseFloor(false);
+        QVector<float> pixels(800, -120.0f);
+        const int positions[] = {100, 220, 340, 460, 580, 700};
+        const float levels[] = {-88.0f, -65.0f, -22.0f, -22.0f, -65.0f, -88.0f};
+        for (int i = 0; i < 6; ++i) { pixels[positions[i]] = levels[i]; }
+        ImdSpectrumTestAccess::seedVisiblePixels(w, pixels);
+        // First assert invalidation without a native window so this independently
+        // pins the cache bug even on a host where QRhi cannot submit a frame.
+        w.clearOverlayStaticDirtyForTest();
+        if (showGate) { w.setShowIMDMeasurements(false); }
+        else { w.setTestingIMD(false); }
+        QVERIFY2(w.overlayStaticDirtyForTest(), "Gate-off must invalidate the IMD-bearing GPU static overlay");
+        if (showGate) { w.setShowIMDMeasurements(true); }
+        else { w.setTestingIMD(true); }
+        QSignalSpy submitted(&w, &QRhiWidget::frameSubmitted);
+        w.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&w));
+        // Gate enable and native resize retire the old measurement. Accept
+        // an explicit new synthetic receiver plane before drawing the cache.
+        QVERIFY(!w.imdMeasurementFrame().summary);
+        ImdSpectrumTestAccess::seedVisiblePixels(w, pixels);
+        FrameWait wait = NativeWindowFrames::requestFrame(w, submitted, kFrameTimeoutMs);
+        if (wait == FrameWait::Stalled && submitted.isEmpty()) {
+            QSKIP("no QRhi; invalidation was tested but native texture clearing remains unverified");
+        }
+        QVERIFY2(wait == FrameWait::Submitted, "Native GPU frame must arrive for a valid IMD texture");
+        QVERIFY(ImdSpectrumTestAccess::readout(w).valid);
+        const auto countMarkerPixels = [&w](const QImage& image) {
+            int count = 0;
+            // Frequency-scale labels are yellow while keyed. IMD markers
+            // belong to the spectrum, so exclude that separate chrome band.
+            const int endRow = qMin(image.height(), firstRowBelowSpectrum(w, image));
+            for (int y = 0; y < endRow; ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    const QColor c = image.pixelColor(x, y);
+                    if (c.red() > 180 && c.green() > 145 && c.green() < 230 && c.blue() < 115) { ++count; }
+                }
+            }
+            return count;
+        };
+        const QImage before = w.grabFramebuffer();
+        QVERIFY(!before.isNull());
+        QVERIFY2(countMarkerPixels(before) > 0, "Valid GPU image must contain the amber fundamental markers");
+        w.clearOverlayStaticDirtyForTest();
+        if (showGate) { w.setShowIMDMeasurements(false); }
+        else { w.setTestingIMD(false); }
+        QVERIFY(w.overlayStaticDirtyForTest());
+        QCOMPARE(ImdSpectrumTestAccess::mox(w), true);
+        wait = NativeWindowFrames::requestFrame(w, submitted, kFrameTimeoutMs);
+        QVERIFY(wait == FrameWait::Submitted);
+        const QImage after = w.grabFramebuffer();
+        QVERIFY(!after.isNull());
+        qInfo() << "IMD amber pixels before/after" << countMarkerPixels(before) << countMarkerPixels(after);
+        const QString evidence = qEnvironmentVariable("NEREUS_IMD_EVIDENCE");
+        if (!evidence.isEmpty()) {
+            const QString gate = showGate ? QStringLiteral("show") : QStringLiteral("testing");
+            QVERIFY(before.save(evidence + QStringLiteral("/gpu-%1-before.png").arg(gate)));
+            QVERIFY(after.save(evidence + QStringLiteral("/gpu-%1-after.png").arg(gate)));
+        }
+        QCOMPARE(countMarkerPixels(after), 0);
+    }
     // JJ's case: the spectrum gets shorter inside an unchanged widget.
     void spectrumFracShrink_leavesNoFloorBelowSpectrum()
     {
