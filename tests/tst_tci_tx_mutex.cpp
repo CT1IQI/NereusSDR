@@ -1586,6 +1586,13 @@ void TestTciTxMutex::key_on_names_only_the_receiver_that_transmits()
     wsjtx.socket.sendTextMessage(QStringLiteral("trx:1,false;"));
     QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(wsjtx.lines(mark).contains(QStringLiteral("trx:1,false;")), 3000);
+    // The asking app receives its direct reply and the release broadcast.
+    // Finish both on this socket before marking the next key; the logger's
+    // received release does not order delivery to the asking app.
+    QTRY_VERIFY_WITH_TIMEOUT(wsjtx.lines(mark).contains(QStringLiteral("trx:0,false;")),
+                             3000);
+    QTRY_COMPARE_WITH_TIMEOUT(wsjtx.lines(mark).count(QStringLiteral("trx:1,false;")),
+                              2, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:0,false;")),
                              3000);
     QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:1,false;")),
