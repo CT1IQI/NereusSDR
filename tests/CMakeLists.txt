@@ -8520,6 +8520,10 @@ nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
+# The headless Core (nereusd) and the desktop Core serve the same things,
+# except for the differences the test lists with their reasons.
+nereus_add_test(tst_core_parity fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+target_compile_definitions(tst_core_parity PRIVATE NEREUS_BUILD_TESTS)
 # R3 controls that work, Task 1 (R-R3-21, R-R3-17): shortcut uniqueness in
 # local and remote windows, developer-only Tools test entries, startup
 # apply of saved meter settings, Band > HF band memory, the bundled DXCC
