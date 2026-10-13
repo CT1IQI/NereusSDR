@@ -1,9 +1,13 @@
 // no-port-check: NereusSDR-original. Approved common power meter rule.
 // Modification history (NereusSDR):
 // 2026-10-12 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-12 Use the existing shared Core export/import declaration for
+//            the new model and its typed Qt signals across Windows DLLs.
+//            J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
 #include <QObject>
 #include "core/HpsdrModel.h"
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 class AmplifierModel;
@@ -12,7 +16,7 @@ class RadioStatus;
 
 // Every consumer uses the mirrored accessory models in both Local and Remote
 // roles. This selects readings only; transmit safety remains in RadioModel.
-class MainPowerMeter : public QObject {
+class NEREUS_CORE_EXPORT MainPowerMeter : public QObject {
     Q_OBJECT
 public:
     enum class Source { Radio, PowerGenius, RfKit };

@@ -14,6 +14,14 @@ using namespace NereusSDR;
 class TstMainPowerMeter : public QObject {
     Q_OBJECT
 private slots:
+    void typedSignalsResolveAcrossTheSharedCoreBoundary()
+    {
+        QVERIFY(QMetaMethod::fromSignal(&MainPowerMeter::sourceChanged).isValid());
+        QVERIFY(QMetaMethod::fromSignal(&MainPowerMeter::readingChanged).isValid());
+        QVERIFY(QMetaMethod::fromSignal(&MainPowerMeter::scaleChanged).isValid());
+        QVERIFY(QMetaMethod::fromSignal(&MainPowerMeter::driveChanged).isValid());
+    }
+
     void sourcePriorityAndDisconnectKeepRadioDrive()
     {
         AmplifierModel pgxl;
@@ -69,6 +77,10 @@ private slots:
         QSignalSpy sources(&meter, &MainPowerMeter::sourceChanged);
         QSignalSpy scales(&meter, &MainPowerMeter::scaleChanged);
         QSignalSpy drive(&meter, &MainPowerMeter::driveChanged);
+        QVERIFY(readings.isValid());
+        QVERIFY(sources.isValid());
+        QVERIFY(scales.isValid());
+        QVERIFY(drive.isValid());
         pgxl.applyStationValue("forwardPowerW", 1236.0);
         rfkit.applyStationValue("forwardPowerW", 800.0);
         radio.setPowerReadings(42.0, 0.0, 1.2);
