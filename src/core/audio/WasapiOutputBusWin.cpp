@@ -14,6 +14,12 @@
 //               (remote playback) tells the bus's clock matcher its packet
 //               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setClockMatchWritePacket() takes the packet's timing
+//               (MatcherPacketTiming: its wait for room, its arrival, its
+//               place in the stream), where it said only whether it had
+//               waited, for the matcher's clock fit and its
+//               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/WasapiSystemWin.h"
@@ -436,10 +442,10 @@ void WasapiOutputBusWin::restartClockMatch()
     }
 }
 
-void WasapiOutputBusWin::setClockMatchWritePacket(int frames, bool waited)
+void WasapiOutputBusWin::setClockMatchWritePacket(int frames, const MatcherPacketTiming& timing)
 {
     if (m_impl->matcher) {
-        m_impl->matcher->setWritePacketFrames(frames, waited);
+        m_impl->matcher->setWritePacketFrames(frames, timing);
     }
 }
 

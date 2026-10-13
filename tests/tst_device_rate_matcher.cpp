@@ -25,6 +25,11 @@
 //               steady packets, batches and a stall with no overrun while
 //               it matches the clocks. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: the packet writer's harness says when each packet was
+//               handed over and how long it waited, as the receiver does;
+//               after a stall the backlog is played down at the matcher's
+//               0.5% and nothing is left standing (R-AUD-15). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13: A BLOCK writer resumes after repeated intentional gaps
 //               without treating the continuously running reader as clock
 //               drift. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -40,6 +45,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <future>
 #include <limits>
 #include <memory>
@@ -1021,12 +1027,13 @@ void TestDeviceRateMatcher::packetWriterSizeHoldsAPacket()
 }
 
 // The packet writer with its room rule (a packet is written when
-// queuedFrames + packetOutFrames is within packetHighWaterFrames, and is
-// said to have waited when it was kept back), on two simulated clocks 300
-// ppm apart: packets one at a time, in batches of seven as a link delivers
-// them, and after the source stopped for 250 ms and its backlog came at
-// once.  The ring never overruns, the device runs dry only while the
-// source is stopped, and the control still finds the clocks' ratio.
+// queuedFrames + packetOutFrames is within packetHighWaterFrames, and says
+// how long it was kept back), on two simulated clocks 300 ppm apart:
+// packets one at a time, in batches of seven as a link delivers them, and
+// after the source stopped for 250 ms and its backlog came at once.  The
+// ring never overruns, the device runs dry only while the source is
+// stopped, the control still finds the clocks' ratio, and a backlog is
+// played out no faster than the matcher's limit.
 void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks_data()
 {
     QTest::addColumn<int>("packetFrames");
@@ -1065,15 +1072,20 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
     std::int64_t sent = 0;        // packets the source has made
     std::int64_t delivered = 0;   // packets the link has handed over
     std::int64_t written = 0;
+    std::deque<double> waitingSince;   // when each packet not yet written was handed over
     bool refused = false;
     // The device's dry runs before the first packet are not the stream's.
     std::uint64_t dryAtStart = 0;
     std::uint64_t dryInStall = 0;
     bool stallOver = false;
     std::int64_t keptBackAfterStall = 0;
+    double lowestRatioAfterStall = 2.0;
     int lowestFill = std::numeric_limits<int>::max();
 
     const auto writeWhatFits = [&](double now) {
+        // A packet written in the same pass as one that waited stood
+        // behind it, and waited with it (the receiver's passIntoMatcher).
+        bool behindWaited = false;
         while (written < delivered) {
             const DeviceRateMatcherStats stats = matcher.stats();
             const bool room = stats.packetFrames != packetFrames || stats.queuedFrames <= 0
@@ -1089,9 +1101,18 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
                 dryAtStart = stats.dryRuns;
             }
             source.fill(packet.data(), packetFrames);
-            matcher.setWritePacketFrames(packetFrames, refused);
+            // The link handed it over that long ago; kept back, it waited
+            // all that time (at least 1 ns, which says that it waited).
+            MatcherPacketTiming timing;
+            timing.arrivedAgoNs = static_cast<std::int64_t>((now - waitingSince.front()) * 1.0e9);
+            timing.waitedNs
+                = refused || behindWaited ? std::max<std::int64_t>(1, timing.arrivedAgoNs) : 0;
+            timing.sourceFrame = written * packetFrames;
+            matcher.setWritePacketFrames(packetFrames, timing);
             refused = false;
+            behindWaited = timing.waitedNs > 0;
             matcher.write(packet.data(), packetFrames, static_cast<std::int64_t>(now * 1.0e9));
+            waitingSince.pop_front();
             ++written;
         }
     };
@@ -1108,6 +1129,7 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
             const bool stalled = stall && now >= kStallAt && now < kStallAt + kStallSeconds;
             if (!stalled) {
                 delivered = sent - sent % batch;
+                waitingSince.resize(static_cast<std::size_t>(delivered - written), now);
             }
             const bool stallEnds = stall && !stallOver && now >= kStallAt + kStallSeconds;
             if (stallEnds) {
@@ -1123,15 +1145,21 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
             nextRead += readSeconds;
             reader.read(out.data(), kReadFrames);
             writeWhatFits(now);
+            if (stallOver) {
+                lowestRatioAfterStall = std::min(lowestRatioAfterStall, matcher.stats().ratio);
+            }
         }
     }
 
     const DeviceRateMatcherStats stats = matcher.stats();
+    const double clocksRatio = 1.0 + ppm * 1.0e-6;
     qInfo("ratio %.6f, step %d ms, lowest fill ahead of a packet %d frames, dry runs %llu, "
-          "packets kept back after the stall %lld and at the end %lld",
+          "packets kept back after the stall %lld and at the end %lld, lowest ratio after it "
+          "%.0f ppm from the clocks'",
           stats.ratio, stats.delayStepMs, lowestFill,
           static_cast<unsigned long long>(stats.dryRuns - dryAtStart),
-          static_cast<long long>(keptBackAfterStall), static_cast<long long>(delivered - written));
+          static_cast<long long>(keptBackAfterStall), static_cast<long long>(delivered - written),
+          stall ? (lowestRatioAfterStall - clocksRatio) * 1.0e6 : 0.0);
     QCOMPARE(stats.overruns, std::uint64_t(0));
     QVERIFY(stats.controlActive);
     // Audio stayed queued ahead of every packet.
@@ -1140,21 +1168,24 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
         // The stall outlasted the audio that was queued; nothing ran dry
         // after it.  Its backlog came at once and waited behind the writer
         // (here nothing sheds it, as the receiver's jitter queue would),
-        // and the control plays it out: slower than the clocks' ratio, and
-        // fewer packets are kept back at the end.
+        // and the control plays it out: at its limit of 0.5% (the clocks'
+        // ratio is found to 3e-4 or better, as below), and at the end
+        // nothing stands behind the writer.
         QVERIFY(dryInStall > 0);
         QCOMPARE(stats.dryRuns - dryAtStart, dryInStall);
         QVERIFY(keptBackAfterStall > 1);
-        QVERIFY2(delivered - written < keptBackAfterStall,
+        QVERIFY2(delivered - written <= 1,
                  qPrintable(QStringLiteral("%1 of %2").arg(delivered - written)
                                 .arg(keptBackAfterStall)));
-        QVERIFY(stats.ratio < 1.0 + ppm * 1.0e-6);
+        QVERIFY2(lowestRatioAfterStall < clocksRatio - 0.005 + 3.0e-4
+                     && lowestRatioAfterStall > clocksRatio - 0.005 - 3.0e-4,
+                 qPrintable(QStringLiteral("ratio %1").arg(lowestRatioAfterStall, 0, 'f', 6)));
         return;
     }
     QCOMPARE(stats.dryRuns - dryAtStart, std::uint64_t(0));
     // The clocks' ratio, as the block writer finds it (driftMatchesRmatch),
     // and no backlog built up behind the writer.
-    QVERIFY2(std::abs(stats.ratio - (1.0 + ppm * 1.0e-6)) < 1.0e-4,
+    QVERIFY2(std::abs(stats.ratio - clocksRatio) < 1.0e-4,
              qPrintable(QStringLiteral("ratio %1").arg(stats.ratio, 0, 'f', 6)));
     QVERIFY(delivered - written <= batch);
 }

@@ -37,6 +37,11 @@
 //               writes for a test on its own clock (R-AUD-15, bench
 //               regression). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: setClockMatchWritePacket() passes on the packet's
+//               timing, and keeps the count of waits, the longest, and
+//               the last timing it was given for a test to read
+//               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #pragma once
@@ -244,12 +249,37 @@ public:
         }
     }
 
-    void setClockMatchWritePacket(int frames, bool waited) override
+    void setClockMatchWritePacket(int frames, const MatcherPacketTiming& timing) override
     {
+        if (timing.waitedNs > 0) {
+            m_waitedWrites.fetch_add(1, std::memory_order_relaxed);
+            std::int64_t longest = m_longestWaitNs.load(std::memory_order_relaxed);
+            while (timing.waitedNs > longest
+                   && !m_longestWaitNs.compare_exchange_weak(longest, timing.waitedNs,
+                                                             std::memory_order_relaxed)) {
+            }
+        }
+        if (frames > 0) {
+            m_lastArrivedAgoNs.store(timing.arrivedAgoNs, std::memory_order_relaxed);
+            m_lastSourceFrame.store(timing.sourceFrame, std::memory_order_relaxed);
+            m_packetWrites.fetch_add(1, std::memory_order_relaxed);
+        }
         if (m_matcher) {
-            m_matcher->setWritePacketFrames(frames, waited);
+            m_matcher->setWritePacketFrames(frames, timing);
         }
     }
+    // What the packet writer said of its waits: how many packets it said
+    // had waited for room, and the longest wait it gave for one.
+    int waitedWriteCount() const { return m_waitedWrites.load(std::memory_order_relaxed); }
+    std::int64_t longestWaitNs() const { return m_longestWaitNs.load(std::memory_order_relaxed); }
+    // The packets it announced, and what it said of the last one's arrival
+    // and place in the stream.
+    int packetWriteCount() const { return m_packetWrites.load(std::memory_order_relaxed); }
+    std::int64_t lastArrivedAgoNs() const
+    {
+        return m_lastArrivedAgoNs.load(std::memory_order_relaxed);
+    }
+    std::int64_t lastSourceFrame() const { return m_lastSourceFrame.load(std::memory_order_relaxed); }
 
     // Reads frames from the matcher as the device callback would, at most
     // the callback size per read.  Returns the frames read (zero when the
@@ -308,6 +338,11 @@ private:
     std::vector<float> m_readBuffer;
     int m_lastReadFrames = 0;
     std::atomic<std::int64_t> m_pumpedFrames{0};
+    std::atomic<int> m_waitedWrites{0};
+    std::atomic<std::int64_t> m_longestWaitNs{0};
+    std::atomic<int> m_packetWrites{0};
+    std::atomic<std::int64_t> m_lastArrivedAgoNs{-1};
+    std::atomic<std::int64_t> m_lastSourceFrame{0};
     int m_pushes = 0;
     int m_restarts = 0;
     int m_fadeRequests = 0;

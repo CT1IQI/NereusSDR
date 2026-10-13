@@ -2066,6 +2066,20 @@ if(TEST tst_device_rate_matcher)
     set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
         "QTEST_FUNCTION_TIMEOUT=540000")
 endif()
+# The same matcher's packet writer on a link: clocks that agree, packets
+# that come up to 20 ms late, and the receiver's eight-packet queue behind
+# the writer.  No backlog may stand and no packet may be dropped.
+# Deterministic, two simulated clocks, no device; in its own binary so the
+# drift test above keeps its time.
+nereus_add_test(tst_device_rate_matcher_link)
+# TIMEOUT 300: seventeen 4-minute simulations, one after another, about 2 s
+# each on the Mac (35 s in all).  The drift test above takes six times its
+# Mac time in a loaded Linux container; at that rate this one takes about
+# 180 s, past the 120 s every test starts with.  Each simulation is its own
+# data row, so the per-function watchdog sees about 12 s at most.
+if(TEST tst_device_rate_matcher_link)
+    set_tests_properties(tst_device_rate_matcher_link PROPERTIES TIMEOUT 300)
+endif()
 # Native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32, V-SW-1): engine
 # keys and labels, the pair model, sample format conversion, the no-device
 # rule and the live device catalogue (its debounce, its own thread, the
