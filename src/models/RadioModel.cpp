@@ -1124,6 +1124,11 @@
 //                takes the admission rule, and the window's own Connect and
 //                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The saved FFT plans are looked for where the process was
+//                told (DspCacheLocation): a background Core started by the
+//                app reuses the app's plans. A process told nothing keeps
+//                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1399,6 +1404,7 @@ mw0lge@grange-lane.co.uk
 #include "core/PaTelemetryScaling.h"
 #include "core/AlexSettingsKeys.h"
 #include "models/PureSignalSettings.h"
+#include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/session/RemoteTransmitClient.h"
@@ -18294,7 +18300,9 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
 
     // Initialize WDSP DSP engine (wisdom runs async — channel creation
     // is deferred until initializedChanged fires)
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // The program's own configuration folder, unless the process was given
+    // another (a background Core is given the app's: DspCacheLocation.h).
+    QString configDir = DspCacheLocation::directory();
     // Sample rate + active RX count come from Hardware Config (per-MAC).
     // Falls back to Thetis default (192000, setup.cs:866) when nothing
     // is persisted, and to the board-cap first-entry if 192000 isn't

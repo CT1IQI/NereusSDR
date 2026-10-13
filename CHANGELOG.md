@@ -97,6 +97,16 @@ Advanced, and each control appears on one page only.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.
+- On Windows, closing the window with "Keep it running when NereusSDR is
+  closed" checked starts the background Core. In 2026.10.0 Windows refused
+  the startup task the app wrote, and every close ended with "The background
+  Core could not start." A start that fails now says why, on every system.
+- The background Core is the Core the window ran, so paired computers and
+  phones can sign in to it. Started from the default profile it kept an
+  identity and a list of paired devices of its own, and a paired device
+  could not reach it. It also uses the FFT plans the app has saved, instead
+  of building them all again before it takes the radio, which took minutes
+  the first time.
 - A TCI program set to the second receiver (WSJT-X on receiver 2, for one)
   is no longer told that receiver 2 is off immediately after its key is
   accepted. That contradictory state could make the program abandon PTT and
