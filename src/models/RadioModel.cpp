@@ -22621,7 +22621,7 @@ void RadioModel::pushTxFrequencyFromTxSlice()
         return;
     }
 
-    const quint64 txFreqHz = txFrequencyForSlice(slice);
+    const quint64 txFreqHz = txNcoFrequencyForSlice(slice);
 
     // Recomputed rather than read from RadioModel::xitOffset(). The XIT that
     // went into txFreqHz is the BOUND SLICE's, which is what this line is
@@ -27903,6 +27903,31 @@ static bool isLsbFamily(DSPMode mode) noexcept
     return mode == DSPMode::LSB || mode == DSPMode::CWL || mode == DSPMode::DIGL;
 }
 
+// Existing Tune generator frequency, shared by its NCO compensation.
+// From Thetis console.cs:18211,30082-30085 [v2.10.3.15].
+static double signedTuneToneHz(DSPMode mode) noexcept
+{
+    constexpr double kCwPitch = 600.0;
+    return isLsbFamily(mode) ? -kCwPitch : +kCwPitch;
+}
+
+quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
+{
+    if (!slice) {
+        return 0;
+    }
+    const quint64 dialHz = txFrequencyForSlice(slice);
+    if (!m_isTuning) {
+        return dialHz;
+    }
+    // Retunes and delayed connect seeds must keep the same compensation
+    // as setTune. Use the saved mode that chose the active generator tone.
+    // From Thetis console.cs:31782-31783,31820-31868 [v2.10.3.15].
+    const qint64 adjustedHz = static_cast<qint64>(dialHz)
+        - static_cast<qint64>(signedTuneToneHz(m_savedTxDspMode));
+    return adjustedHz < 0 ? 0 : static_cast<quint64>(adjustedHz);
+}
+
 bool RadioModel::tuneCycleCurrent(quint64 serial) const
 {
     return serial == m_tuneCycleSerial && (!m_tuneCycleGuarded
@@ -28163,9 +28188,8 @@ void RadioModel::setTune(bool on)
         //   the correct sideband. This ordering is preserved here.
         //
         // cw_pitch: from Thetis console.cs:18182 [v2.10.3.13] — private int cw_pitch = 600;
-        static constexpr double kCwPitch = 600.0;
         const DSPMode modeBeforeSwap = m_savedTxDspMode;
-        const double signedFreq = isLsbFamily(modeBeforeSwap) ? -kCwPitch : +kCwPitch;
+        const double signedFreq = signedTuneToneHz(modeBeforeSwap);
 
         // ── SET TUNE TONE ──────────────────────────────────────────────────────
         // Cite: console.cs:30038-30040 [v2.10.3.13]:
@@ -28383,11 +28407,7 @@ void RadioModel::setTune(bool on)
             // Dial plus XIT, not the raw dial: Thetis applies the TUNE offset
             // to tx_freq, which already carries XIT
             // (console.cs:31782-31783 then 31845-31860 [v2.10.3.15]).
-            const quint64 dialHz = txFrequencyForSlice(tuneSlice);
-            const qint64 adjustedTxHz =
-                static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
-            const quint64 wireHz =
-                (adjustedTxHz < 0) ? 0 : static_cast<quint64>(adjustedTxHz);
+            const quint64 wireHz = txNcoFrequencyForSlice(tuneSlice);
             auto* conn = m_connection;
             const QPointer<RadioConnection> tuneConnection(conn);
             QMetaObject::invokeMethod(this, [this, serial, tuneConnection, wireHz]() {

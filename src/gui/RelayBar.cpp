@@ -16,6 +16,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-05-18  Extracted RelayBar widget from AetherSDR
 //                 src/gui/HGauge.h (inner class) into standalone
 //                 NereusSDR widget by J.J. Boyd (KG4VCF), with
@@ -96,7 +99,7 @@ void RelayBar::paintEvent(QPaintEvent*)
 
     // Label
     QFont f = font();
-    f.setPixelSize(10);
+    f.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
     f.setBold(true);
     p.setFont(f);
     // Workspace preview: roleColour() returns the legacy colour with the

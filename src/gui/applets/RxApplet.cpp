@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-10-03 — Clear Qt6.11 Cocoa's stale preamp popup cell cache before
 //                 rebuilding its items. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex.
@@ -191,8 +194,11 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/TuneStepLabel.h"
 
+#include <QFontMetrics>
+#include <QEvent>
 #include <QGuiApplication>
 
 #include "core/BoardCapabilities.h"
@@ -226,6 +232,7 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStyleOptionComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -241,6 +248,80 @@
 namespace NereusSDR {
 
 namespace {
+
+// Fixed controls retain their classic geometry when the look is switched off.
+class RxControlFit final : public QObject {
+public:
+    explicit RxControlFit(QWidget* control, bool combo) : QObject(control), m_combo(combo) {
+        control->installEventFilter(this);
+        fit(control);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange
+            || event->type() == QEvent::Show || event->type() == QEvent::Polish) {
+            fit(static_cast<QWidget*>(watched));
+        }
+        return false;
+    }
+private:
+    void fit(QWidget* control) const {
+        if (!m_combo) {
+            control->setFixedHeight(WorkspacePreview::enabled() ? 49 : 48);
+            return;
+        }
+        if (!WorkspacePreview::enabled()) {
+            control->setFixedWidth(52);
+            return;
+        }
+        auto* combo = static_cast<QComboBox*>(control);
+        const QFontMetrics metrics(WorkspacePreview::readableFont(combo->font(), combo), combo);
+        int widest = 0;
+        for (int index = 0; index < combo->count(); ++index) {
+            widest = std::max(widest, metrics.horizontalAdvance(combo->itemText(index)));
+        }
+        QStyleOptionComboBox option;
+        option.initFrom(combo);
+        option.currentText = combo->currentText();
+        option.rect.setWidth(54);
+        const QRect field = combo->style()->subControlRect(QStyle::CC_ComboBox, &option,
+                                                           QStyle::SC_ComboBoxEditField, combo);
+        // The resolved style supplies its arrow, frame and horizontal padding.
+        const int chrome = option.rect.width() - field.width();
+        combo->setFixedWidth(std::max(54, widest + chrome + 2));
+    }
+    bool m_combo;
+};
+
+// JJ's option B, 2026-10-12 (Codex): keep the AUTO badge's original
+// palette and classic box, and fit the final workspace font after updates.
+class AutoBadgeFit final : public QObject {
+public:
+    explicit AutoBadgeFit(QPushButton* badge) : QObject(badge) {
+        badge->installEventFilter(this);
+        fit(badge);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::Show || event->type() == QEvent::Polish) {
+            fit(static_cast<QPushButton*>(watched));
+        }
+        return false;
+    }
+private:
+    static void fit(QPushButton* badge) {
+        if (!WorkspacePreview::enabled()) {
+            badge->setFixedSize(30, 14);
+            return;
+        }
+        const QFontMetrics metrics(WorkspacePreview::readableFont(badge->font(), badge), badge);
+        // Three pixels padding and the one-pixel border on each side.
+        badge->setFixedSize(std::max(30, metrics.horizontalAdvance(badge->text()) + 8),
+                            std::max(14, metrics.height() + 4));
+    }
+};
+
 // Logical size of the lock button's icon inside its 20 x 20 button.
 constexpr int kLockIconPx = 16;
 } // namespace
@@ -938,6 +1019,7 @@ void RxApplet::buildUi()
         // ~4× its intended height.  Fixed vertical avoids that
         // re-flow whiplash.
         m_filterPassband->setFixedHeight(48);
+        new RxControlFit(m_filterPassband, false);
         m_filterPassband->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_filterPassband, &FilterPassbandWidget::filterChanged,
                 this, [this](int lo, int hi) {
@@ -1126,6 +1208,7 @@ void RxApplet::buildUi()
         }
         m_agcCombo->setFixedWidth(52);
         m_agcCombo->setFixedHeight(20);
+        new RxControlFit(m_agcCombo, true);
         applyComboStyle(m_agcCombo);
 
         // Tier 1 wiring
@@ -1164,6 +1247,7 @@ void RxApplet::buildUi()
                             "QPushButton:hover { border-color: #adff2f; }"));
         m_agcAutoLabel->setFixedHeight(14);
         m_agcAutoLabel->setFixedWidth(30);
+        new AutoBadgeFit(m_agcAutoLabel);
         m_agcAutoLabel->setCursor(Qt::PointingHandCursor);
         // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
         m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));

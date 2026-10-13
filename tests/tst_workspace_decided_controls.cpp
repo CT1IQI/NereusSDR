@@ -16,6 +16,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - The groove is JJ's D29 track, with its disabled rule.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Isolate indicator geometry from the approved font floor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include <QtTest/QtTest>
 
@@ -454,21 +456,32 @@ private slots:
     }
 
     // A widget sheet's indicator with a size and no border gets the rim
-    // inside that size: the box keeps its size hint.
+    // inside that size: the box keeps its size hint at an equal font size.
     void indicatorRimKeepsAGivenSize()
     {
         const QString sheet = QStringLiteral(
             "QCheckBox { color: #c8d8e8; font-size: 10px; }"
             "QCheckBox::indicator { width: 12px; height: 12px; background: #1a2a3a; }");
         WorkspacePreview::setEnabledForTest(false);
-        QCheckBox today(QStringLiteral("Show"));
-        today.setStyleSheet(sheet);
+        ProbeCheckBox reference(QStringLiteral("Show"));
+        QString referenceSheet = sheet;
+        referenceSheet.replace(QStringLiteral("font-size: 10px"), QStringLiteral("font-size: 11px"));
+        reference.setStyleSheet(referenceSheet);
+        reference.ensurePolished();
         WorkspacePreview::setEnabledForTest(true);
-        QCheckBox after(QStringLiteral("Show"));
+        ProbeCheckBox after(QStringLiteral("Show"));
+        // Keep the 10 px input: the real look must apply the 11 px floor.
         const QString look = WorkspacePreview::lookQss(sheet, &after);
         after.setStyleSheet(look);
+        after.ensurePolished();
+        QCOMPARE(after.font().pixelSize(), 11);
+        QCOMPARE(after.font(), reference.font());
         QVERIFY2(look.contains(QStringLiteral("width: 10px")), qPrintable(look));
-        QCOMPARE(after.sizeHint(), today.sizeHint());
+        QVERIFY2(look.contains(QStringLiteral("height: 10px")), qPrintable(look));
+        QVERIFY2(look.contains(QStringLiteral("border: 1px solid #58585e")), qPrintable(look));
+        QCOMPARE(reference.indicatorRect().size(), QSize(12, 12));
+        QCOMPARE(after.indicatorRect().size(), reference.indicatorRect().size());
+        QCOMPARE(after.sizeHint(), reference.sizeHint());
         QCOMPARE(WorkspacePreview::lookQss(look, &after), look);
     }
 

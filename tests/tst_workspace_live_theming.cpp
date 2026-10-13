@@ -17,6 +17,8 @@
 // Modification history (NereusSDR):
 //   2026-10-08 - Written for the workspace visual review. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Text-floor regressions, J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 
 #include <QtTest/QtTest>
 
@@ -24,6 +26,10 @@
 #include <QDialog>
 #include <QLabel>
 #include <QHeaderView>
+#include <QFontMetricsF>
+#include <QTextBrowser>
+#include <QTextBlock>
+#include <QTextFragment>
 #include <QMenu>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -38,6 +44,7 @@
 #include "gui/styles/QssTranslator.h"
 #include "gui/styles/WorkspacePalette.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/styles/WorkspaceStyle.h"
 #include "models/RadioModel.h"
 
 using namespace NereusSDR;
@@ -359,6 +366,231 @@ private slots:
         QCOMPARE(c.grid.name(), roleColour("border-subtle").name());
         QVERIFY(c.headerEdge != c.headerFill);
         QCOMPARE(c.headerEdge.name(), roleColour("border").name());
+    }
+
+    void readableFontsPreserveSizeAndAttributes()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        QFont small(QStringLiteral("monospace"));
+        small.setPixelSize(9);
+        small.setBold(true);
+        small.setItalic(true);
+        QFont expected = small;
+        expected.setPixelSize(11);
+        QCOMPARE(WorkspacePreview::readableFont(small), expected);
+        QCOMPARE(WorkspacePreview::readableTextPixelSize(9), 11);
+        for (int size : {11, 12, 18, 24}) {
+            QFont larger = small;
+            larger.setPixelSize(size);
+            QCOMPARE(WorkspacePreview::readableFont(larger), larger);
+            QCOMPARE(WorkspacePreview::readableTextPixelSize(size), size);
+        }
+
+        // Compare point sizes using the same logical DPI as Qt's metrics;
+        // 10 logical pixels is small at any offscreen platform DPI.
+        QFont points = small;
+        const qreal dpi = QFontMetricsF(points).fontDpi();
+        points.setPointSizeF(10.0 * 72.0 / dpi);
+        expected = points;
+        expected.setPixelSize(11);
+        QCOMPARE(WorkspacePreview::readableFont(points), expected);
+        points.setPointSizeF(12.0 * 72.0 / dpi);
+        QCOMPARE(WorkspacePreview::readableFont(points), points);
+
+        const QFont caps = Workspace::capsFont(small, 9);
+        QCOMPARE(caps.pixelSize(), 11);
+        QCOMPARE(caps.capitalization(), QFont::AllUppercase);
+        WorkspacePreview::setEnabledForTest(false);
+        const QFont classicCaps = Workspace::capsFont(small, 9);
+        WorkspacePreview::setEnabledForTest(true);
+        // QFont quantizes absolute spacing; preserve the factory's actual
+        // stored value rather than comparing against unquantized arithmetic.
+        QCOMPARE(caps.letterSpacing(), classicCaps.letterSpacing());
+        QFont expectedCaps = classicCaps;
+        expectedCaps.setPixelSize(11);
+        QCOMPARE(caps, expectedCaps);
+        const QFont mono = Workspace::monoFont(small, 9, QFont::Bold);
+        QCOMPARE(mono.pixelSize(), 11);
+        QVERIFY(mono.fixedPitch());
+        QCOMPARE(mono.weight(), QFont::Bold);
+        QCOMPARE(Workspace::monoFont(small, 18, QFont::Bold).pixelSize(), 18);
+
+        WorkspacePreview::setEnabledForTest(false);
+        QCOMPARE(Workspace::capsFont(small, 9).pixelSize(), 9);
+        QCOMPARE(Workspace::monoFont(small, 9, QFont::Bold).pixelSize(), 9);
+        QCOMPARE(WorkspacePreview::readableFont(small), small);
+        QCOMPARE(WorkspacePreview::readableFont(points), points);
+        QCOMPARE(WorkspacePreview::readableTextPixelSize(9), 9);
+        const QString original = QStringLiteral("font-size: 9px; min-height: 9px;");
+        QCOMPARE(WorkspacePreview::lookQss(original), original);
+        QLabel classic;
+        classic.setFont(small);
+        classic.setStyleSheet(original);
+        classic.show();
+        QCoreApplication::processEvents();
+        QCOMPARE(classic.styleSheet(), original);
+        QCOMPARE(classic.font().pixelSize(), 9);
+    }
+
+    void readablePointFontsUseTheActualPaintDeviceDpi()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        QImage at72(16, 16, QImage::Format_ARGB32_Premultiplied);
+        QImage at96(16, 16, QImage::Format_ARGB32_Premultiplied);
+        // dots per metre controls QImage's logical DPI; DPR controls only
+        // physical backing scale and must not change this text threshold.
+        at72.setDotsPerMeterX(qRound(72.0 / 0.0254));
+        at72.setDotsPerMeterY(qRound(72.0 / 0.0254));
+        at96.setDotsPerMeterX(qRound(96.0 / 0.0254));
+        at96.setDotsPerMeterY(qRound(96.0 / 0.0254));
+        QCOMPARE(QFontMetricsF(QFont(), &at72).fontDpi(), 72);
+        QCOMPARE(QFontMetricsF(QFont(), &at96).fontDpi(), 96);
+        QFont original(QStringLiteral("monospace"));
+        original.setPointSizeF(9.0);
+        original.setBold(true);
+        original.setItalic(true);
+        QCOMPARE(WorkspacePreview::readableFont(original, &at96), original);
+        QFont expected = original;
+        expected.setPixelSize(11);
+        QCOMPARE(WorkspacePreview::readableFont(original, &at72), expected);
+        at96.setDevicePixelRatio(2.0);
+        QCOMPARE(WorkspacePreview::readableFont(original, &at96), original);
+        WorkspacePreview::setEnabledForTest(false);
+        QCOMPARE(WorkspacePreview::readableFont(original, &at72), original);
+    }
+
+    void liveFontsAndDynamicSheetsRespectTheFloor()
+    {
+        turnOn();
+        QLabel label(QStringLiteral("small label"));
+        QFont small = label.font();
+        small.setPixelSize(8);
+        label.setFont(small);
+        label.show();
+        QCoreApplication::processEvents();
+        QCOMPARE(label.font().pixelSize(), 11);
+
+        // A font change after the first Show must be handled even when
+        // the stored stylesheet already matches; setFont must not recurse.
+        small.setPixelSize(10);
+        label.setFont(small);
+        QCOMPARE(label.font().pixelSize(), 11);
+        small.setPixelSize(18);
+        label.setFont(small);
+        QCOMPARE(label.font(), small);
+
+        const QString original = QStringLiteral(
+            "QLabel { font-size: 9px; min-height: 9px; padding: 2px; }");
+        label.setStyleSheet(original);
+        QCOMPARE(label.styleSheet(), QStringLiteral(
+            "QLabel { font-size: 11px; min-height: 9px; padding: 2px; }"));
+        QCOMPARE(label.font().pixelSize(), 11);
+        QCOMPARE(label.property(WorkspacePreview::kOriginalQssProperty).toString(), original);
+        label.setStyleSheet(QStringLiteral("QLabel { font-size: 15px; }"));
+        QCOMPARE(label.styleSheet(), QStringLiteral("QLabel { font-size: 15px; }"));
+        QCOMPARE(label.font().pixelSize(), 15);
+        label.hide();
+        label.setStyleSheet(QStringLiteral("QLabel { font-size: 7px; }"));
+        label.show();
+        QCOMPARE(label.styleSheet(), QStringLiteral("QLabel { font-size: 11px; }"));
+        QCOMPARE(label.font().pixelSize(), 11);
+    }
+
+    void richLabelsFloorOnlyInlineSizesAndTrackDynamicText()
+    {
+        turnOn();
+        const QString original = QStringLiteral(
+            "<!-- <span style='font-size:8px'>comment</span> -->"
+            "<span title='style=font-size:8px' style=\"color:#123456; font-size:9px;"
+            "background:#abcdef; font-family:monospace\">badge</span>"
+            "<span style='font-size:15px'>large</span> font-size:8px prose"
+            " &lt;span style='font-size:8px'&gt;code&lt;/span&gt;");
+        QString expected = original;
+        expected.replace(QStringLiteral("font-size:9px"), QStringLiteral("font-size:11px"));
+        QLabel label;
+        label.setTextFormat(Qt::RichText);
+        label.setText(original);
+        label.show();
+        QCOMPARE(label.text(), expected);
+        label.setText(QStringLiteral("<b style='font-size:8px;color:red'>later</b>"));
+        label.grab();
+        QCOMPARE(label.text(), QStringLiteral("<b style='font-size:11px;color:red'>later</b>"));
+        const QString floored = label.text();
+        label.grab();
+        QCOMPARE(label.text(), floored);
+        label.hide();
+        label.setText(QStringLiteral("<span style='font-size:10px'>hidden</span>"));
+        label.show();
+        QCOMPARE(label.text(), QStringLiteral("<span style='font-size:11px'>hidden</span>"));
+        label.setTextFormat(Qt::PlainText);
+        label.setText(original);
+        label.grab();
+        QCOMPARE(label.text(), original);
+        WorkspacePreview::setEnabledForTest(false);
+        QLabel classic;
+        classic.setText(original);
+        classic.show();
+        classic.grab();
+        QCOMPARE(classic.text(), original);
+    }
+
+    void readOnlyRichDocumentsFloorInitialAndReplacementHtml()
+    {
+        turnOn();
+        QTextBrowser browser;
+        browser.setHtml(QStringLiteral("<span style='font-size:9px;color:#123456'>small</span>"
+                                       "<span style='font-size:15px'>large</span>"));
+        browser.show();
+        QTextBlock block = browser.document()->begin();
+        QTextBlock::iterator it = block.begin();
+        QCOMPARE(it.fragment().charFormat().font().pixelSize(), 11);
+        QCOMPARE(it.fragment().charFormat().foreground().color(), QColor(QStringLiteral("#123456")));
+        ++it;
+        QCOMPARE(it.fragment().charFormat().font().pixelSize(), 15);
+        browser.setHtml(QStringLiteral("<span style='font-size:8px'>later</span>"));
+        QCOMPARE(browser.document()->begin().begin().fragment().charFormat().font().pixelSize(), 11);
+        QCOMPARE(browser.toPlainText(), QStringLiteral("later"));
+        browser.hide();
+        browser.setHtml(QStringLiteral("<span style='font-size:10px'>hidden</span>"));
+        browser.show();
+        QCOMPARE(browser.document()->begin().begin().fragment().charFormat().font().pixelSize(), 11);
+        WorkspacePreview::setEnabledForTest(false);
+        browser.setHtml(QStringLiteral("<span style='font-size:9px'>classic</span>"));
+        QCOMPARE(browser.document()->begin().begin().fragment().charFormat().font().pixelSize(), 9);
+    }
+
+    void skippedUserColourSurfacesGetOnlyTypography()
+    {
+        turnOn();
+        QWidget swatch;
+        swatch.setProperty(WorkspacePreview::kSkipProperty, true);
+        const QString original = QStringLiteral(
+            "background:#123456; color:#abcdef; font-size:7px;"
+            "min-height:7px; image:url(:/icons/spin-up.svg);");
+        swatch.setStyleSheet(original);
+        QLabel child(QStringLiteral("<span style='font-size:8px;color:#123456'>swatch</span>"),
+                     &swatch);
+        swatch.show();
+        QCoreApplication::processEvents();
+        QString expected = original;
+        expected.replace(QStringLiteral("font-size:7px"), QStringLiteral("font-size:11px"));
+        QCOMPARE(swatch.styleSheet(), expected);
+        QCOMPARE(child.font().pixelSize(), 11);
+        QCOMPARE(child.text(), QStringLiteral("<span style='font-size:11px;color:#123456'>swatch</span>"));
+        const QString large = QStringLiteral("background:#654321; font-size:15px;");
+        swatch.setStyleSheet(large);
+        QCOMPARE(swatch.styleSheet(), large);
+        QCOMPARE(swatch.font().pixelSize(), 15);
+        swatch.setStyleSheet(original);
+        QCOMPARE(swatch.styleSheet(), expected);
+        QVERIFY(!swatch.property(WorkspacePreview::kThemedQssProperty).isValid());
+        WorkspacePreview::setEnabledForTest(false);
+        QWidget classic;
+        classic.setProperty(WorkspacePreview::kSkipProperty, true);
+        classic.setStyleSheet(original);
+        classic.show();
+        QCOMPARE(classic.styleSheet(), original);
+        QCOMPARE(classic.font().pixelSize(), 7);
     }
 
     void cleanupTestCase()

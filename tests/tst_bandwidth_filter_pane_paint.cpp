@@ -1223,9 +1223,38 @@ private slots:
         // Qt's note on how long it took to list the fonts is not about
         // this test.
         QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.fonts=false"));
-        WorkspacePreview::setEnabledForTest(true);
+        WorkspacePreview::setEnabledForTest(false);
     }
     void cleanupTestCase() { WorkspacePreview::setEnabledForTest(false); }
+    void init() { WorkspacePreview::setEnabledForTest(false); }
+    void cleanup() { WorkspacePreview::setEnabledForTest(false); }
+    void workspaceBandRepaintMatchesWholeFrame() {
+        WorkspacePreview::setEnabledForTest(true);
+        for(const QSize& size:{QSize(620,105),QSize(180,84)}) {
+            for(qreal dpr:{qreal(1),qreal(2)}) {
+                Rig rig; rig.standardState(); rig.resize(size.width(),size.height());
+                Rig fullRig; fullRig.standardState(); fullRig.resize(size.width(),size.height());
+                QImage initialWhole=blankFrame(size,dpr,QImage::Format_ARGB32_Premultiplied,Qt::transparent);
+                renderInto(fullRig.pane,initialWhole);
+                QImage kept=blankFrame(size,dpr,QImage::Format_ARGB32_Premultiplied,Qt::transparent);
+                renderInto(rig.pane,kept);
+                for(int frame=0;frame<8;++frame) {
+                    const QVector<float> trace=sawtoothTrace(pointsFor(size.width()),frame);
+                    rig.feed(trace); fullRig.feed(trace);
+                    renderInto(rig.pane,kept,QRegion(rig.pane.traceBand()));
+                    QImage whole=blankFrame(size,dpr,QImage::Format_ARGB32_Premultiplied,Qt::transparent);
+                    // Average-line smoothing advances on each paint. Use an
+                    // independently fed pane with the same paint count, so
+                    // this compares partial vs whole rather than two time steps.
+                    renderInto(fullRig.pane,whole);
+                    const QString difference=frameDifference(whole,kept);
+                    QVERIFY2(difference.isEmpty(),qPrintable(difference));
+                }
+            }
+        }
+        WorkspacePreview::setEnabledForTest(false);
+    }
+
 
     void everyFrameEqualsTheReference_data()
     {

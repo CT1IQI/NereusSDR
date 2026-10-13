@@ -3438,6 +3438,11 @@ public:
     /// rather than re-derive the offset.
     quint64 txFrequencyForSlice(const SliceModel* slice) const;
 
+    /// The radio NCO and TX analyzer's baseband origin. During Tune this
+    /// subtracts the existing signed tone from dial+XIT, so the tone lands
+    /// on txFrequencyForSlice(). Other transmit modes keep dial+XIT.
+    quint64 txNcoFrequencyForSlice(const SliceModel* slice) const;
+
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
     // multiple zoom levels of the same I/Q data. MainWindow registers

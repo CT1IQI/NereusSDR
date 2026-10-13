@@ -659,6 +659,8 @@ nereus_add_test(tst_workspace_arrange_drag)
 nereus_add_test(tst_workspace_arrange_drag_native NATIVE_WINDOW)
 # Workspace look: Pop Out in the body menu, the pin on a window's header, and Return to where a container came from (offscreen).
 nereus_add_test(tst_workspace_popout_return)
+# A drag never resizes a floating container's window, and a window is never larger than its screen (offscreen).
+nereus_add_test(tst_container_drag_keeps_size)
 nereus_add_test(tst_workspace_live_input)
 # Each case builds a MainWindow; 43 cases ran past the 120 s limit under
 # load. Four entries of the same binary (the limit is not raised; groups in
@@ -673,6 +675,8 @@ nereus_add_test(tst_workspace_preview_default)
 nereus_add_test(tst_workspace_no_lock)
 # The Main Panel is never narrower than its applets (both looks, real MainWindow offscreen).
 nereus_add_test(tst_workspace_main_panel_fit fakes/RemoteWindowHarness.cpp)
+# Workspace look: Reset Default Layout redraws the look as a first launch does (real MainWindow offscreen).
+nereus_add_test(tst_workspace_reset_layout fakes/RemoteWindowHarness.cpp)
 # A container's stylesheet border stays on the container (antenna switch toast,
 # floating pan title bar, VAX first-run rows), offscreen.
 nereus_add_test(tst_widget_style_scoping)
@@ -698,6 +702,7 @@ nereus_add_test(tst_visual_preview_quiet_layout visual/PreviewData.cpp)
 nereus_add_test(tst_native_cursors EXTRA_LABELS gui)
 # The filter pane draws every frame as it did before its cost work (offscreen).
 nereus_add_test(tst_bandwidth_filter_pane_paint)
+nereus_add_test(tst_workspace_spectrum_font_minimum)
 
 if(APPLE)
     set_source_files_properties(tst_qt_cocoa_accessibility_ownership.cpp
@@ -1780,6 +1785,10 @@ nereus_add_test(tst_audio_ring_spsc)
 # stalls loses nothing the collector pulled meanwhile, a full queue drops
 # its oldest, and stop joins without waiting out the wake.
 nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
+
+# The microphone helper's lost-input watch: it counts the blocks the device
+# delivers, so a window that stops reading the ring never loses the input.
+nereus_add_test(tst_capture_input_watch EXTRA_LABELS core)
 
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
@@ -9921,7 +9930,8 @@ nereus_add_test(tst_remote_spectrum_render)
 # Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
 # subscription lifecycle, stale context rejection, and teardown.
 nereus_add_test(tst_remote_media_controller
-    fakes/LoopbackTransport.cpp)
+    fakes/LoopbackTransport.cpp
+    fakes/FakeCaptureChild.cpp)
 # R-DISP-HOLD: the window holds the dBm range it asked the Core for, and a
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold
