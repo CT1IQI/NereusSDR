@@ -335,8 +335,13 @@ public:
     /// negative when unknown (then Shed is never returned). While
     /// `holdSplices` is true (DEXP's hold, decay or VOX turn-off is
     /// counting, TxChannel::dexpTimingRunning) nothing is shed or inserted.
+    struct Observation {
+        quint64 changeGeneration = 0;
+        int validFrames = 0;
+    };
+    quint64 currentChangeGeneration() const { return m_change.load(std::memory_order_acquire); }
     Pull pullBlock(float* dst, int frames, double downstreamQueuedMs,
-                   bool holdSplices = false);
+                   bool holdSplices = false, Observation* observation = nullptr);
     /// pullBlock without a send ring: true while in use.
     bool pull(float* dst, int frames)
     {
@@ -518,6 +523,7 @@ private:
     // Pump.
     std::unique_ptr<RemoteAudioRateMatcher> m_matcher;
     quint64 m_seenChange{0};
+    int m_observerSyntheticFrames{0};
     quint64 m_readBytes{0};
     bool m_started{false};
     // LINK minor 12: the buffer ran dry while in use; the next start may

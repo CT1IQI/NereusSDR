@@ -205,7 +205,7 @@ StationCatalog::Inputs inputsFor(HPSDRModel model, ProtocolVersion protocol,
     inputs.model = model;
     inputs.board = BoardCapsTable::forModel(model);
     inputs.protocol = protocol;
-    for (int id = 0; id <= static_cast<int>(DSPMode::RADE_L); ++id) {
+    for (int id = 0; id <= 15; ++id) {
         const auto mode = static_cast<DSPMode>(id);
         inputs.filterPresets.append({mode, FilterPresetStore().presetsForMode(mode)});
     }
@@ -251,10 +251,11 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
                  QString::fromLatin1(grid.at(i)->label));
     }
 
-    // Modes: DSPMode 0 to 13 with SliceModel's names.
+    // Historical pre-gate fixture: all 16 declared modes, including V2.
+    // Current builder OFF/ON tables are checked separately below.
     const QJsonArray modes = catalog.value(QStringLiteral("modes")).toArray();
-    QCOMPARE(modes.size(), 14);
-    for (int id = 0; id < 14; ++id) {
+    QCOMPARE(modes.size(), 16);
+    for (int id = 0; id < 16; ++id) {
         const QJsonObject mode = modes.at(id).toObject();
         QCOMPARE(mode.value(QStringLiteral("id")).toInt(), id);
         QCOMPARE(mode.value(QStringLiteral("label")).toString(),
@@ -267,9 +268,12 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     QCOMPARE(modes.at(6).toObject().value(QStringLiteral("sideband")).toString(),
              QStringLiteral("both"));
 
+    QCOMPARE(modes.at(14).toObject().value(QStringLiteral("sideband")).toString(), QStringLiteral("upper"));
+    QCOMPARE(modes.at(15).toObject().value(QStringLiteral("sideband")).toString(), QStringLiteral("lower"));
+
     // Filter presets: the store's, per mode label, F1 onwards.
     const QJsonObject presets = catalog.value(QStringLiteral("filterPresets")).toObject();
-    QCOMPARE(presets.size(), 14);
+    QCOMPARE(presets.size(), 16);
     const QJsonArray usb = presets.value(QStringLiteral("USB")).toArray();
     const QList<FilterPreset> usbDefaults = FilterPresetStore().presetsForMode(DSPMode::USB);
     QCOMPARE(usb.size(), usbDefaults.size());
@@ -281,6 +285,13 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
         QCOMPARE(entry.value(QStringLiteral("highHz")).toInt(), usbDefaults.at(slot).high);
     }
     QCOMPARE(presets.value(QStringLiteral("RADE-U")).toArray().size(), 1);
+
+    const QJsonObject rade2Upper = presets.value(QStringLiteral("RADE2-U")).toArray().first().toObject();
+    QCOMPARE(rade2Upper.value(QStringLiteral("lowHz")).toInt(), 650);
+    QCOMPARE(rade2Upper.value(QStringLiteral("highHz")).toInt(), 2350);
+    const QJsonObject rade2Lower = presets.value(QStringLiteral("RADE2-L")).toArray().first().toObject();
+    QCOMPARE(rade2Lower.value(QStringLiteral("lowHz")).toInt(), -2350);
+    QCOMPARE(rade2Lower.value(QStringLiteral("highHz")).toInt(), -650);
 
     // Tune steps: SliceModel's list.
     const QJsonArray steps = catalog.value(QStringLiteral("tuneSteps")).toArray();
@@ -728,6 +739,47 @@ class TstStationCatalog : public QObject {
 private slots:
     void init() { AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().clear(); }
+
+    void currentBuilderModeChoicesFollowOptIn_data()
+    {
+        QTest::addColumn<bool>("enabled");
+        QTest::newRow("default-off") << false;
+        QTest::newRow("explicit-on") << true;
+    }
+    void currentBuilderModeChoicesFollowOptIn()
+    {
+        QFETCH(bool, enabled);
+        BandPlanManager plans;
+        plans.loadPlans();
+        StationCatalog::Inputs inputs = inputsFor(HPSDRModel::HERMESLITE,
+                                                   ProtocolVersion::Protocol1, plans);
+        QVERIFY(!inputs.radeV2Enabled);
+        if (enabled) { inputs.radeV2Enabled = true; }
+        const QJsonObject catalog = StationCatalog::build(inputs);
+        QSet<QString> expectedKeys = kTopLevelKeys;
+        expectedKeys.insert(QStringLiteral("radeV2Enabled"));
+        const QStringList keys = catalog.keys();
+        QCOMPARE(QSet<QString>(keys.cbegin(), keys.cend()), expectedKeys);
+        QVERIFY(catalog.value(QStringLiteral("radeV2Enabled")).isBool());
+        QCOMPARE(catalog.value(QStringLiteral("radeV2Enabled")).toBool(), enabled);
+        const QJsonArray modes = catalog.value(QStringLiteral("modes")).toArray();
+        QCOMPARE(modes.size(), enabled ? 16 : 14);
+        for (int id = 0; id < modes.size(); ++id) {
+            QCOMPARE(modes.at(id).toObject().value(QStringLiteral("id")).toInt(), id);
+        }
+        QCOMPARE(modes.at(12).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("RADE-U"));
+        QCOMPARE(modes.at(13).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("RADE-L"));
+        const QJsonObject presets = catalog.value(QStringLiteral("filterPresets")).toObject();
+        QCOMPARE(presets.size(), enabled ? 16 : 14);
+        QCOMPARE(presets.contains(QStringLiteral("RADE2-U")), enabled);
+        QCOMPARE(presets.contains(QStringLiteral("RADE2-L")), enabled);
+        QVERIFY(presets.contains(QStringLiteral("RADE-U")));
+        QVERIFY(presets.contains(QStringLiteral("RADE-L")));
+        if (enabled) {
+            QCOMPARE(modes.at(14).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("RADE2-U"));
+            QCOMPARE(modes.at(15).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("RADE2-L"));
+        }
+    }
 
     // The grid the desktop draws, in the order it draws it: 160 to 6 m, 2 m
     // (R-IOS-26), then WWV, each id the Band enum's value.

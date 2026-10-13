@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-09-30 - VFO flag crash lane: lockButtonForTest, sliceForTest.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
@@ -927,6 +929,8 @@ private:
     NereusSDR::RadioModel* m_radioModel{nullptr};
     // R-R3-49: the model's DFNR and MNR availability signals.
     std::array<QMetaObject::Connection, 3> m_nrAvailabilityConns;
+    QMetaObject::Connection m_radeV2AvailabilityConn;
+    void refreshRadeV2Modes();
 
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).

@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable
 //                                    and coreSpeakerNeedsNewerCore
 //                                    (coreSpeakerVersion 1, native audio
@@ -1888,6 +1890,7 @@ private:
     void reconcileSlicesAgainstStation();
 
     void handleAudioCatalogue(const QList<MirrorUpdate>& updates);
+    void handleRadeCatalogue(const QList<MirrorUpdate>& updates);
     void handleObjectCreate(const SessionMessage& message);
     void handleObjectDestroy(const SessionMessage& message);
     void handleDelta(const SessionMessage& message);

@@ -5096,9 +5096,9 @@ void P1RadioConnection::ioBoardPollTick()
             // so it goes as the digital mode on its sideband (operator ruling
             // 2026-09-29): RADE_U as DIGU, RADE_L as DIGL.
             int mode = m_ioTxMode;
-            if (mode == static_cast<int>(DSPMode::RADE_U)) {
+            if (isRadeUpperDspMode(static_cast<DSPMode>(mode))) {
                 mode = static_cast<int>(DSPMode::DIGU);
-            } else if (mode == static_cast<int>(DSPMode::RADE_L)) {
+            } else if (isRadeLowerDspMode(static_cast<DSPMode>(mode))) {
                 mode = static_cast<int>(DSPMode::DIGL);
             }
             if (mode >= static_cast<int>(DSPMode::LSB)

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/session/media/RemoteIqIngress.h"
+#include "core/session/media/WaveformCodec.h"
 // =================================================================
 // src/core/session/media/DaemonMediaController.h  (NereusSDR)
 // =================================================================
@@ -516,6 +517,41 @@ private:
         /// R-AUD-SEND: where `sender`'s packets go; made and dropped with it.
         std::shared_ptr<AudioSendRoute> route;
     };
+    using WaveformKey = std::pair<int, WaveformKind>;
+    struct WaveformStream {
+        bool wanted = false;
+        bool sending = false;
+        quint32 revision = 0;
+        quint64 sourceGeneration = 0;
+        quint64 deliveryGeneration = 0;
+        quint64 packetSerial = 0;
+        quint64 droppedFrames = 0;
+        int sampleRate = 0;
+        WaveformBatch pending;
+        int segmentIndex = 0;
+        int segmentOffset = 0;
+        QString reason;
+    };
+    bool handleWaveformStream(const QJsonObject& control);
+    bool waveformAuthorized(const WaveformKey& key) const;
+    void reconcileWaveforms();
+    void clearWaveforms(bool notify = true, const QString& reason = {}, qint64 retryAtNs = -1);
+    void sendWaveformContext(const WaveformKey& key, const WaveformStream& stream);
+    void acceptWaveformBatch(int sliceId, WaveformKind kind, quint64 source, WaveformBatchPtr batch);
+    bool trySendWaveform(MediaPeer* peer, quint64 epoch, qint64 nowNs);
+    quint64 waveformBytesPerSecond() const;
+    static quint64 waveformCharge(int rate);
+    bool m_waveformNegotiated = false;
+    bool m_waveformFailed = false;
+    qint64 m_waveformRetryAtNs = -1;
+    bool m_reconcilingWaveforms = false;
+    quint64 m_nextWaveformGeneration = 0;
+    std::map<WaveformKey, WaveformStream> m_waveformStreams;
+    QByteArray m_waveformPacket;
+    WaveformKey m_waveformPacketKey{-1, WaveformKind::RawMicrophone};
+    int m_waveformPacketFrames = 0;
+    bool m_waveformPacketDebited = false;
+    qint64 m_waveformBlockedAtNs = -1;
     struct IqStream {
         quint32 revision = 0;
         quint32 generation = 0;

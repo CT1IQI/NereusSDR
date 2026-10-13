@@ -12,6 +12,43 @@ import Testing
 @Suite struct StationCatalogTests {
     static let fixtures = ["session-catalog-anan-g2", "session-catalog-hermes-lite-2"]
 
+    @Test("V2 choices require explicit Core opt-in even when an older Core lists their IDs")
+    func radeV2ChoicesFailClosed() throws {
+        var raw = try Self.object(try Self.catalogueJson(Self.fixtures[0]))
+        var modes = try #require(raw["modes"] as? [[String: Any]])
+        modes.removeAll { ($0["id"] as? Int ?? 0) >= 14 }
+        modes.append(["id": 14, "label": "RADE2-U", "sideband": "upper"])
+        modes.append(["id": 15, "label": "RADE2-L", "sideband": "lower"])
+        raw["modes"] = modes
+        let cases: [(Any?, Bool)] = [(nil, false), (false, false), ("true", false), (1, false), (true, true)]
+        for (flag, enabled) in cases {
+            raw["radeV2Enabled"] = flag
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self)
+            let catalog = try #require(StationCatalog.parse(json: json))
+            #expect(catalog.offeredModes.contains { $0.id == 14 } == enabled)
+            #expect(catalog.offeredModes.contains { $0.id == 15 } == enabled)
+            #expect(catalog.modes.contains { $0.id == 12 })
+            #expect(catalog.modes.contains { $0.id == 13 })
+            #expect(catalog.modeDescription(14)?.label == "RADE2-U")
+            #expect(catalog.modeDescription(15)?.label == "RADE2-L")
+            #expect(catalog.offeredFilterPresets(forMode: 14).isEmpty == !enabled)
+            #expect(catalog.filterPresets["RADE2-U"]?.isEmpty == false)
+        }
+    }
+
+
+    @Test("a preserved current V2 has a label without becoming an offered choice")
+    func inactiveCurrentRadeV2Label() throws {
+        var raw = try Self.object(try Self.catalogueJson(Self.fixtures[0]))
+        raw["radeV2Enabled"] = false
+        raw["modes"] = (raw["modes"] as? [[String: Any]])?.filter { ($0["id"] as? Int ?? 0) < 14 }
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self)
+        let catalog = try #require(StationCatalog.parse(json: json))
+        #expect(catalog.modeDescription(14)?.label == "RADE2-U")
+        #expect(catalog.modeDescription(15)?.label == "RADE2-L")
+        #expect(!catalog.offeredModes.contains { $0.id == 14 || $0.id == 15 })
+    }
+
     @Test(arguments: fixtures)
     func eachCatalogueFixtureParsesToExactlyWhatItHolds(_ fixture: String) throws {
         let json = try Self.catalogueJson(fixture)

@@ -1784,10 +1784,10 @@ private:
     /// the status-bar light and this item never disagree.
     QAction*      m_tnfAction = nullptr;
 
-    // Mode menu actions (14 modes: 12 Thetis + NereusSDR-native
-    // RADE-U / RADE-L from Phase 3R L3; mutual exclusion via
-    // QActionGroup).
-    QAction*      m_modeActions[14]  = {};
+    // Mode menu actions (16 modes: 12 Thetis + NereusSDR-native
+    // RADE-U / RADE-L from Phase 3R L3 + experimental RADE2-U / RADE2-L;
+    // mutual exclusion via QActionGroup).
+    QAction*      m_modeActions[16]  = {};
     QActionGroup* m_modeActionGroup  = nullptr;
 
     // AGC menu action group (Task 12)

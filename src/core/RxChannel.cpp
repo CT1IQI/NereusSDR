@@ -609,8 +609,8 @@ DSPMode RxChannel::wdspModeFor(DSPMode mode)
     // as non-WDSP slice modes. The RX K-bench pipeline runs WDSP as
     // the SSB demod front-end in both, so the WDSP-facing equivalent
     // is USB for RADE_U and LSB for RADE_L.
-    if (mode == DSPMode::RADE_U) return DSPMode::USB;
-    if (mode == DSPMode::RADE_L) return DSPMode::LSB;
+    if (isRadeUpperDspMode(mode)) { return DSPMode::USB; }
+    if (isRadeLowerDspMode(mode)) { return DSPMode::LSB; }
     return mode;
 }
 

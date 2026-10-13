@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion 1 for a
 //               minor-11 peer that declared spectrumPicture 1, media on.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -8030,6 +8032,13 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
             refusals.insert(update.name, QStringLiteral("The Core does not have this setting, or not in this form."));
             continue;
         }
+        if (message.objectKey.startsWith("slice:") && update.name == "dspMode"
+            && isRade2DspMode(static_cast<DSPMode>(update.value.toInt()))
+            && !m_radioModel->radeV2Enabled()) {
+            refusals.insert(update.name, QStringLiteral(
+                "Experimental RADE V2 is disabled. Start the Core with NEREUS_ENABLE_RADE_V2=1 to enable it."));
+            continue;
+        }
         if (message.objectKey.startsWith("slice:") && update.name == "diversityEnabled") {
             const int id = message.objectKey.mid(6).toInt();
             QString refusal = m_radioModel->legacyDiversityRefusal(id, update.value.toBool());
@@ -12794,6 +12803,20 @@ bool StationServer::txMonitorAudioAvailable(quint64 epoch) const
         && txMonitorAudioVersion() >= 1;
 }
 
+int StationServer::waveformVersion() const
+{
+    return m_mediaEnabled && m_radioModel && m_radioModel->role() != RadioModel::Role::Remote
+        && m_radioModel->radeWaveformModel() ? 1 : 0;
+}
+
+bool StationServer::waveformAvailable(quint64 epoch) const
+{
+    const auto peer = m_peers.constFind(mediaSessionFor(epoch));
+    return mediaAvailable(epoch) && peer != m_peers.cend()
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peer->features.value(QByteArrayLiteral("waveform")) >= 1 && waveformVersion() >= 1;
+}
+
 int StationServer::remoteIqVersion() const
 {
     return m_mediaEnabled && m_radioModel && m_radioModel->role() != RadioModel::Role::Remote
@@ -13364,6 +13387,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // controlChannelVersion.
             caps.txMonitorAudioVersion = media ? txMonitorAudioVersion() : 0;
             caps.remoteIqVersion = media ? remoteIqVersion() : 0;
+            caps.waveformVersion = media && peerDeclares(transport, QByteArrayLiteral("waveform"), 1)
+                ? waveformVersion() : 0;
             // R-IOS-26 / R-R3-49 (iPhone plan Task 22, parity Task 20): the
             // Core's FreeDV Reporter, appended after txMonitorAudioVersion.
             caps.stationFreedvVersion = stationFreedvVersion();

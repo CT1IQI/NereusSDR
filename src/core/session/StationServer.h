@@ -1285,6 +1285,8 @@ public:
     // and was told it, so its media start may declare it.
     int txMonitorAudioVersion() const;
     bool txMonitorAudioAvailable(quint64 epoch) const;
+    int waveformVersion() const;
+    bool waveformAvailable(quint64 epoch) const;
     int remoteIqVersion() const;
     bool remoteIqAvailable(quint64 epoch) const;
     // R-IOS-26 / R-R3-49 (iPhone plan Task 22, parity Task 20):

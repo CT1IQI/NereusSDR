@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 // 2026-10-04 - Guard mode/filter notification continuations against deletion
 //              and superseding commits, including a return to the same tuple.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -213,6 +215,7 @@
 #include "core/DiversityPattern.h"
 #include "core/LogCategories.h"
 #include "core/RadeChannel.h"
+#include "core/RadeV2Feature.h"
 #include "core/WdspEngine.h"
 #include "core/accessories/AlexController.h"
 #include "core/session/MirrorEnumDomain.h"
@@ -285,7 +288,7 @@ void SliceModel::setupRadeIdleClearTimer()
 void SliceModel::restartRadeIdleClearTimer()
 {
     if (!m_radeIdleClearTimer) { return; }
-    if (m_dspMode != DSPMode::RADE_U && m_dspMode != DSPMode::RADE_L) {
+    if (!isRadeDspMode(m_dspMode)) {
         return;
     }
     m_radeIdleClearTimer->start();  // restarts even if already running
@@ -406,7 +409,7 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     // unchanged (slices are parented to RadioModel; see RadioModel.cpp:
     // 1374 [Phase 3R J3] new SliceModel(this)).
     const auto isRade = [](DSPMode m) {
-        return m == DSPMode::RADE_U || m == DSPMode::RADE_L;
+        return isRadeDspMode(m);
     };
 
     // 2026-05-12 bench: clear last RADE-decoded speaker callsign
@@ -468,7 +471,8 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
             // Reconcile the owned decoder, rather than an intermediate logical
             // old mode left by a superseded early notification continuation.
             const bool oldIsRade = engine->radeChannel(channelId) != nullptr;
-            const bool newIsRade = isRade(newMode);
+            const bool newIsRade = isRade(newMode)
+                && (!isRade2DspMode(newMode) || radio->radeV2Enabled());
 
             // RADE reason (2026-09-30): each start below is bracketed
             // (RadioModel::beginRadeStart, before any destroy, and
@@ -481,7 +485,9 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
                                         RadioModel::RadeStartFault::CreateFailed);
                     return;
                 }
-                radeCh->setSideband(newMode == DSPMode::RADE_U);
+                radeCh->setVersion(isRade2DspMode(newMode)
+                    ? RadeChannel::Version::V2 : RadeChannel::Version::V1);
+                radeCh->setSideband(isRadeUpperDspMode(newMode));
                 radio->wireRadeChannel(channelId, radeCh, this);
                 if (!currentMode()) { return; }
                 const QString modelPath = radeModelPath();
@@ -534,10 +540,22 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
             }
         }
     }
+    if (!currentMode()) { return; }
+    if (radio && isRade2DspMode(newMode) && !radio->radeV2Enabled()) {
+        radio->beginRadeStart(m_sliceIndex);
+        radio->endRadeStart(m_sliceIndex, RadioModel::RadeStartFault::None);
+    }
 }
 
 void SliceModel::setDspMode(DSPMode mode)
 {
+    if (isRade2DspMode(mode) && !(m_stationApplyProbe && m_stationApplyProbe())) {
+        const auto* radio = qobject_cast<RadioModel*>(parent());
+        if (!(radio ? radio->radeV2Enabled() : RadeV2Feature::enabled())) {
+            qCWarning(lcDsp) << "Experimental RADE V2 mode is unavailable on the Core";
+            return;
+        }
+    }
     if (holdsListenerWrite(dspMode(), mode)) { return; }
     const bool modeChanged = (m_dspMode != mode);
     const DSPMode oldMode = m_dspMode;
@@ -2450,6 +2468,7 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
     case DSPMode::DRM:
         // DRM: wide filter similar to AM
         return {-5000, 5000};
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
         // Phase 3R Task J1.  RADE Upper sideband: the modem occupies
         // ~650..2350 Hz (1700 Hz wide, centered at +1500 Hz).  This is
@@ -2459,6 +2478,7 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         // was a placeholder; the filter IS visible on the panadapter
         // AND defines the IF/baseband passband for the modem energy.
         return {650, 2350};
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
         return {-2350, -650};
@@ -2553,11 +2573,13 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     case DSPMode::DRM:
         // DRM: wide digital AM-like filters
         return { {-10000,10000}, {-5000,5000} };
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
         // Phase 3R Task J1.  RADE Upper sideband: single fixed-bandwidth
         // preset matching the 1700 Hz modem passband.  No F1-F10
         // variants; RADE has a fixed bandwidth per sideband.
         return { {650, 2350} };
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
         return { {-2350, -650} };
@@ -2644,7 +2666,9 @@ QString SliceModel::modeName(DSPMode mode)
     // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.  Split
     // into upper/lower sidebands like USB/LSB.
     case DSPMode::RADE_U: return QStringLiteral("RADE-U");
+    case DSPMode::RADE2_U: return QStringLiteral("RADE2-U");
     case DSPMode::RADE_L: return QStringLiteral("RADE-L");
+    case DSPMode::RADE2_L: return QStringLiteral("RADE2-L");
     }
     return QStringLiteral("USB");
 }
@@ -2664,6 +2688,8 @@ DSPMode SliceModel::modeFromName(const QString& name)
     if (name == QLatin1String("SAM"))  return DSPMode::SAM;
     if (name == QLatin1String("DRM"))  return DSPMode::DRM;
     // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.
+    if (name == QLatin1String("RADE2-U")) { return DSPMode::RADE2_U; }
+    if (name == QLatin1String("RADE2-L")) { return DSPMode::RADE2_L; }
     if (name == QLatin1String("RADE-U")) return DSPMode::RADE_U;
     if (name == QLatin1String("RADE-L")) return DSPMode::RADE_L;
     // Legacy migration: pre-fix builds persisted the singular "RADE"
@@ -2786,6 +2812,10 @@ bool SliceModel::restoreReceiveState(double frequencyHz, DSPMode mode)
     m_frequency = frequencyHz;
     m_currentBand = manifestBand;
     m_dspMode = mode;
+    if (isRade2DspMode(mode) && !radio->radeV2Enabled()) {
+        radio->beginRadeStart(m_sliceIndex);
+        radio->endRadeStart(m_sliceIndex, RadioModel::RadeStartFault::None);
+    }
 
     // restoreFromSettings already made the full legacy (mode-specific, then
     // band-level) filter selection when its valid stored mode matches this

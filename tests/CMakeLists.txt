@@ -4236,6 +4236,45 @@ nereus_add_test(tst_wdsp_engine_rade_lifecycle)
 # m_initialized = true so the createRxChannel seed at the head of the
 # test does not bail out on its !m_initialized guard.
 nereus_add_test(tst_slice_model_rade_swap)
+if(TEST tst_slice_model_rade_swap)
+    set_property(TEST tst_slice_model_rade_swap APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
+
+nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+if(TEST tst_rade_v2_link_gate)
+    get_test_property(tst_rade_v2_link_gate ENVIRONMENT _rade_link_env)
+    set_property(TEST tst_rade_v2_link_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    string(REPLACE "test-home/tst_rade_v2_link_gate" "test-home/tst_rade_v2_link_gate_1" _rade_link_on_env "${_rade_link_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_link_gate_1")
+    add_test(NAME tst_rade_v2_link_gate_1 COMMAND tst_rade_v2_link_gate)
+    set_tests_properties(tst_rade_v2_link_gate_1 PROPERTIES
+        ENVIRONMENT "${_rade_link_on_env};NEREUS_ENABLE_RADE_V2=1"
+        ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui;session")
+endif()
+
+# The immutable process switch is exercised in separate processes.
+nereus_add_test(tst_rade_v2_gate)
+if(TEST tst_rade_v2_gate)
+    get_test_property(tst_rade_v2_gate ENVIRONMENT _rade_gate_env)
+    set_property(TEST tst_rade_v2_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    add_test(NAME tst_rade_v2_gate_unset COMMAND tst_rade_v2_gate)
+    string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_unset" _rade_unset_env "${_rade_gate_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_unset")
+    set_tests_properties(tst_rade_v2_gate_unset PROPERTIES
+        ENVIRONMENT "${_rade_unset_env}" ENVIRONMENT_MODIFICATION "NEREUS_ENABLE_RADE_V2=unset:;QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui")
+    foreach(_gate_value IN ITEMS 1 malformed)
+        add_test(NAME tst_rade_v2_gate_${_gate_value} COMMAND tst_rade_v2_gate)
+        string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_${_gate_value}" _rade_process_env "${_rade_gate_env}")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_${_gate_value}")
+        set_tests_properties(tst_rade_v2_gate_${_gate_value} PROPERTIES
+            ENVIRONMENT "${_rade_process_env};NEREUS_ENABLE_RADE_V2=${_gate_value}"
+            ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+            TIMEOUT 120 LABELS "core;models;gui")
+    endforeach()
+endif()
+
 
 # ── Phase 3R Task J4: RADE audio routing into AudioEngine ───────────────────
 # Pins the contract that RadioModel::wireRadeChannel adds an audio
@@ -6928,6 +6967,9 @@ nereus_add_test(tst_rade_applet)
 #                                          the RADE purple accent when
 #                                          RADE-L active.
 nereus_add_test(tst_mode_menu_rade)
+if(TEST tst_mode_menu_rade)
+    set_property(TEST tst_mode_menu_rade APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # ── Phase 3J-2 Task E1: SpectrumWidget spot overlay render ─────────────────
 # Pins the contract that drawSpotMarkers places spot labels with
@@ -7127,6 +7169,9 @@ nereus_add_test(tst_spot_auto_start)
 # follows freedv-gui src/pipeline/RADE{Receive,Transmit}Step.{h,cpp}
 # [@77e793a]. I1 ships skeleton bodies only; no DSP yet.
 nereus_add_test(tst_rade_channel)
+if(TEST tst_rade_channel)
+    set_property(TEST tst_rade_channel APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # Phase 3R Task I2a pins the Resampler wrapper around r8brain-free-src
 # (vendored MIT, third_party/r8brain/ at SHA 5c44bebe). The Resampler
@@ -10709,6 +10754,15 @@ nereus_add_test(tst_cat_rigctld CORE_ONLY)
 # The GLOBAL property NEREUS_ALL_TESTS is appended to by every
 # nereus_add_test() call above.  add_custom_target then bundles them
 # into a single buildable target.
+nereus_add_test(tst_rade_waveform_model CORE_ONLY)
+nereus_add_test(tst_waveform_dispatch)
+nereus_add_test(tst_waveform_containers)
+nereus_add_test(tst_waveform_native NATIVE_WINDOW)
+nereus_add_test(tst_waveform_meter)
+nereus_add_test(tst_waveform_remote_model CORE_ONLY)
+nereus_add_test(tst_waveform_codec CORE_ONLY)
+nereus_add_test(tst_waveform_publisher CORE_ONLY)
+nereus_add_test(tst_waveform_history CORE_ONLY)
 nereus_add_test(tst_container_content_host)
 nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
 

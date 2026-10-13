@@ -61,6 +61,7 @@
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include "core/session/media/RemoteIqCodec.h"
+#include "core/session/media/WaveformCodec.h"
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include <QElapsedTimer>
@@ -355,6 +356,8 @@ private slots:
     void micLineCarriesLosslessWhenOffered();
     void micSsrcPreconditionsRefuseSilently();
     void dedicatedIqChannelPreservesOrder();
+    void waveformChannelIsOptionalAndBounded();
+    void waveformPendingOpenIsBusy();
     void dedicatedTxAndIqTelemetryCountsPayloadsAndResets();
     void iqTelemetryCountsValidArrivalBeforeReceiveQueueFails();
 
@@ -410,6 +413,73 @@ void TestMediaTransport::startPair(LibDataChannelMediaTransport& offerer,
     QTRY_COMPARE_WITH_TIMEOUT(answerReady.count(), 1, 10000);
     QVERIFY(offerer.isReady());
     QVERIFY(answerer.isReady());
+}
+
+void TestMediaTransport::waveformPendingOpenIsBusy()
+{
+    LibDataChannelMediaTransport offerer,answerer; wire(offerer,answerer);
+    IMediaTransport::StartOptions offered{IMediaTransport::Role::Offerer,kTestAudioSsrc};
+    IMediaTransport::StartOptions answered{IMediaTransport::Role::Answerer,kTestAudioSsrc};
+    offered.waveformChannel=answered.waveformChannel=true;
+    QSignalSpy ready(&offerer,&IMediaTransport::ready),answerReady(&answerer,&IMediaTransport::ready);
+    QSignalSpy received(&answerer,&IMediaTransport::waveformReceived),writable(&offerer,&IMediaTransport::waveformWritable);
+    QVERIFY(answerer.start(answered)); QVERIFY(offerer.start(offered));
+    QTRY_COMPARE_WITH_TIMEOUT(ready.size(),1,10000); QTRY_COMPARE_WITH_TIMEOUT(answerReady.size(),1,10000);
+    offerer.setWaveformOpenHeldForTest(true);
+    QVERIFY(offerer.waveformBusy());
+    QCOMPARE(offerer.submitWaveform(QByteArrayLiteral("pending-open")),IMediaTransport::DisplaySendResult::Busy);
+    offerer.setWaveformOpenHeldForTest(false); QTRY_VERIFY(!writable.empty());
+    const auto result=offerer.submitWaveform(QByteArrayLiteral("opened"));
+    QVERIFY(result==IMediaTransport::DisplaySendResult::Sent || result==IMediaTransport::DisplaySendResult::Queued);
+    QTRY_COMPARE_WITH_TIMEOUT(received.size(),1,5000); QCOMPARE(received[0][0].toByteArray(),QByteArrayLiteral("opened"));
+    offerer.stop(); answerer.stop();
+}
+
+void TestMediaTransport::waveformChannelIsOptionalAndBounded()
+{
+    LibDataChannelMediaTransport offerer, answerer;
+    wire(offerer, answerer);
+    IMediaTransport::StartOptions offered{IMediaTransport::Role::Offerer, kTestAudioSsrc};
+    IMediaTransport::StartOptions answered{IMediaTransport::Role::Answerer, kTestAudioSsrc};
+    QSignalSpy offerReady(&offerer, &IMediaTransport::ready), answerReady(&answerer, &IMediaTransport::ready);
+    QSignalSpy received(&answerer, &IMediaTransport::waveformReceived);
+    QSignalSpy dropped(&answerer, &IMediaTransport::waveformDropped);
+    QVERIFY(answerer.start(answered)); QVERIFY(offerer.start(offered));
+    QTRY_COMPARE_WITH_TIMEOUT(offerReady.size(), 1, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(answerReady.size(), 1, 10000);
+    QCOMPARE(offerer.submitWaveform(QByteArrayLiteral("absent")), IMediaTransport::DisplaySendResult::Refused);
+    offerer.stop(); answerer.stop(); offerReady.clear(); answerReady.clear();
+    offered.waveformChannel = answered.waveformChannel = true;
+    QVERIFY(answerer.start(answered)); QVERIFY(offerer.start(offered));
+    QTRY_COMPARE_WITH_TIMEOUT(offerReady.size(), 1, 10000);
+    QTRY_COMPARE_WITH_TIMEOUT(answerReady.size(), 1, 10000);
+    WaveformPacket packet; packet.sliceId=1; packet.sourceGeneration=UINT64_MAX; packet.deliveryGeneration=9;
+    packet.batch.kind=WaveformKind::RawMicrophone; packet.batch.sampleRate=48000;
+    packet.batch.samples.resize(1024, -0.125f); packet.batch.segments={{0,1024,0,1}};
+    packet.batch.serial=1;
+    const auto bytes = WaveformCodec::encode(packet); QVERIFY(bytes);
+    const auto result = offerer.submitWaveform(*bytes);
+    QVERIFY(result == IMediaTransport::DisplaySendResult::Sent || result == IMediaTransport::DisplaySendResult::Queued);
+    QTRY_COMPARE_WITH_TIMEOUT(received.size(), 1, 5000);
+    QCOMPARE(received.at(0).at(0).toByteArray(), *bytes);
+    received.clear();
+    // Hold the owner drain while network callbacks enqueue 40 large packets.
+    // Byte cap (128 KiB) is tighter than 32 packets at the 4168-byte maximum.
+    for (int i=0; i<40; ++i) {
+        packet.batch.serial=quint64(i+2); const auto next=WaveformCodec::encode(packet); QVERIFY(next);
+        QElapsedTimer waited; waited.start();
+        while (offerer.waveformBusy() && waited.elapsed()<5000) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+        QVERIFY(!offerer.waveformBusy());
+        const auto sent=offerer.submitWaveform(*next);
+        QVERIFY(sent == IMediaTransport::DisplaySendResult::Sent || sent == IMediaTransport::DisplaySendResult::Queued);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!dropped.empty(), 5000);
+    QVERIFY(received.size() <= 31);
+    quint64 losses=0; for(const auto& drop:dropped) { losses+=drop.at(0).toULongLong(); }
+    QCOMPARE(quint64(received.size())+losses,quint64(40));
+    offerer.stop(); answerer.stop();
+    const int old=received.size(); QTest::qWait(10); QCOMPARE(received.size(),old);
 }
 
 void TestMediaTransport::dedicatedIqChannelPreservesOrder()

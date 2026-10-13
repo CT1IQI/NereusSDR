@@ -17,7 +17,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 113)
+        #expect(capabilities.count == 114)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -54,7 +54,11 @@ import Testing
             // `spectrumPicture` 1, R-DISP-RETUNE) goes before the build
             // info as well, which moves to 112.
             (111, "spectrumPictureVersion", "i64"),
-            (112, "coreBuildInfo", "utf8"),
+            // The waveform feed (feature `waveform` 1, which the phone
+            // does not declare) goes before the build info as well, which
+            // moves to 113.
+            (112, "waveformVersion", "i64"),
+            (113, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -63,7 +67,7 @@ import Testing
         #expect((capabilities[105]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[84]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[108]["value"] as? NSNumber)?.intValue == 1)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 113)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 114)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")

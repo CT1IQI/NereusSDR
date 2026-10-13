@@ -118,6 +118,9 @@ namespace {
 
 constexpr char kDisplayLabel[] = "display";
 constexpr char kIqLabel[] = "iq";
+constexpr char kWaveformLabel[] = "waveform";
+constexpr std::size_t kMaxPendingWaveformMessages = 32;
+constexpr std::size_t kMaxPendingWaveformBytes = 128 * 1024;
 // Task 37: the transmit keepalive's channel.
 constexpr char kTxLabel[] = "tx";
 constexpr char kAudioMid[] = "audio";
@@ -159,6 +162,8 @@ struct CallbackEvent {
         DisplayError,
         DisplayWritable,
         IqError,
+        WaveformError,
+        WaveformWritable,
         PeerClosed,
         PeerFailed,
         // Task 37: a message on the "tx" channel (in `first`).
@@ -218,6 +223,9 @@ struct CallbackBridge {
     std::deque<rtc::binary> displayMessages;
     std::size_t displayBytes = 0;
     std::deque<rtc::binary> iqMessages;
+    std::deque<rtc::binary> waveformMessages;
+    std::size_t waveformBytes = 0;
+    quint64 waveformDrops = 0;
     std::size_t iqBytes = 0;
     bool iqFailed = false;
     bool iqFailureReported = false;
@@ -244,6 +252,9 @@ struct CallbackBridge {
     bool txChannelWanted = false;
     bool txChannelAssigned = false;
     std::shared_ptr<rtc::DataChannel> txChannel;
+    bool waveformChannelWanted = false;
+    bool waveformChannelAssigned = false;
+    std::shared_ptr<rtc::DataChannel> waveformChannel;
     bool iqChannelWanted = false;
     bool iqChannelAssigned = false;
     std::shared_ptr<rtc::DataChannel> iqChannel;
@@ -459,6 +470,44 @@ void queueIq(const std::weak_ptr<CallbackBridge>& weak, rtc::binary data)
     }
     bridge->iqBytes += data.size();
     bridge->iqMessages.push_back(std::move(data));
+}
+
+void queueWaveform(const std::weak_ptr<CallbackBridge>& weak, rtc::binary data)
+{
+    const auto bridge = weak.lock();
+    if (!bridge) { return; }
+    std::lock_guard lock(bridge->mutex);
+    if (bridge->cancelled || bridge->receiveSeveredForTest) { return; }
+    if (data.empty() || data.size() > std::size_t(IMediaTransport::kMaxWaveformMessageBytes)) {
+        ++bridge->waveformDrops;
+        return;
+    }
+    while (!bridge->waveformMessages.empty()
+           && (bridge->waveformMessages.size() >= kMaxPendingWaveformMessages
+               || bridge->waveformBytes + data.size() > kMaxPendingWaveformBytes)) {
+        bridge->waveformBytes -= bridge->waveformMessages.front().size();
+        bridge->waveformMessages.pop_front();
+        ++bridge->waveformDrops;
+    }
+    bridge->waveformBytes += data.size();
+    bridge->waveformMessages.push_back(std::move(data));
+    // The existing one 2-ms owner drain serves this queue; no packet event.
+}
+
+void bindWaveformChannel(const std::shared_ptr<rtc::DataChannel>& channel,
+                         const std::weak_ptr<CallbackBridge>& weak)
+{
+    channel->onOpen([weak] { queueEvent(weak, CallbackEvent::Kind::WaveformWritable); });
+    channel->onError([weak](std::string reason) {
+        queueEvent(weak, CallbackEvent::Kind::WaveformError, std::move(reason));
+    });
+    channel->onClosed([weak] {
+        queueEvent(weak, CallbackEvent::Kind::WaveformError, "waveform channel closed");
+    });
+    channel->setBufferedAmountLowThreshold(0);
+    channel->onBufferedAmountLow([weak] { queueEvent(weak, CallbackEvent::Kind::WaveformWritable); });
+    channel->onMessage([weak](rtc::binary data) { queueWaveform(weak, std::move(data)); },
+        [weak](std::string) { queueEvent(weak, CallbackEvent::Kind::WaveformError, "text waveform rejected"); });
 }
 
 void bindIqChannel(const std::shared_ptr<rtc::DataChannel>& channel,
@@ -852,6 +901,8 @@ struct LibDataChannelMediaTransport::Private {
     std::shared_ptr<rtc::PeerConnection> peer;
     std::shared_ptr<rtc::DataChannel> display;
     std::shared_ptr<rtc::DataChannel> iq;
+    std::shared_ptr<rtc::DataChannel> waveform;
+    bool waveformOpenHeldForTest = false;
     // Task 37: the "tx" channel, null without one.
     std::shared_ptr<rtc::DataChannel> tx;
     std::shared_ptr<rtc::Track> audio;
@@ -955,6 +1006,7 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
     }
     d->bridge->txChannelWanted = options.txChannel;
     d->bridge->iqChannelWanted = options.iqChannel;
+    d->bridge->waveformChannelWanted = options.waveformChannel;
     // Task 36: the microphone line's packets share the queue with one more
     // stream's worth of room.
     d->bridge->rtpPacketCapacity =
@@ -1054,6 +1106,20 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
         });
         d->peer->onDataChannel([weak](std::shared_ptr<rtc::DataChannel> channel) {
             const rtc::Reliability reliability = channel->reliability();
+            if (channel->label() == kWaveformLabel) {
+                const auto bridge = weak.lock();
+                bool take = false;
+                if (bridge) {
+                    std::lock_guard lock(bridge->mutex);
+                    take = !bridge->cancelled && bridge->waveformChannelWanted
+                        && !bridge->waveformChannelAssigned
+                        && isUnorderedWithoutRetransmits(channel->reliability());
+                    if (take) { bridge->waveformChannelAssigned = true; bridge->waveformChannel = channel; }
+                }
+                if (!take) { channel->resetCallbacks(); channel->close(); return; }
+                bindWaveformChannel(channel, weak);
+                return;
+            }
             if (channel->label() == kIqLabel) {
                 const auto bridge = weak.lock();
                 bool take = false;
@@ -1191,6 +1257,10 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
             init.reliability.maxRetransmits = 0;
             d->display = d->peer->createDataChannel(kDisplayLabel, init);
             bindDataChannel(d->display, weak);
+            if (options.waveformChannel) {
+                d->waveform = d->peer->createDataChannel(kWaveformLabel, init);
+                bindWaveformChannel(d->waveform, weak);
+            }
             if (options.iqChannel) {
                 rtc::DataChannelInit iqInit;
                 d->iq = d->peer->createDataChannel(kIqLabel, iqInit);
@@ -1451,6 +1521,7 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
 
     std::shared_ptr<rtc::DataChannel> pendingDisplay;
     std::shared_ptr<rtc::DataChannel> pendingIq;
+    std::shared_ptr<rtc::DataChannel> pendingWaveform;
     std::shared_ptr<rtc::DataChannel> pendingTx;
     std::shared_ptr<rtc::Track> pendingAudio;
     std::shared_ptr<rtc::Track> pendingMic;
@@ -1461,6 +1532,9 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
         d->bridge->events.clear();
         d->bridge->displayMessages.clear();
         d->bridge->displayBytes = 0;
+        d->bridge->waveformMessages.clear();
+        d->bridge->waveformBytes = 0;
+        pendingWaveform = std::move(d->bridge->waveformChannel);
         d->bridge->iqMessages.clear();
         d->bridge->iqBytes = 0;
         d->bridge->rtpPackets.clear();
@@ -1500,6 +1574,11 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
         pendingDisplay->resetCallbacks();
         pendingDisplay->close();
     }
+    if (pendingWaveform && pendingWaveform != d->waveform) {
+        pendingWaveform->resetCallbacks(); pendingWaveform->close();
+    }
+    if (d->waveform) { d->waveform->resetCallbacks(); d->waveform->close(); }
+    d->waveform.reset();
     if (pendingIq && pendingIq != d->iq) {
         pendingIq->resetCallbacks();
         pendingIq->close();
@@ -1748,6 +1827,38 @@ bool LibDataChannelMediaTransport::iqBusy() const
     return d->iq && d->iq->bufferedAmount() != 0;
 }
 
+IMediaTransport::DisplaySendResult LibDataChannelMediaTransport::submitWaveform(const QByteArray& message)
+{
+    if (!d->ready || message.isEmpty() || message.size() > kMaxWaveformMessageBytes
+        || !d->bridge || !d->bridge->waveformChannelWanted) { return DisplaySendResult::Refused; }
+    // The base peer can become ready before this optional channel opens.
+    // Keep the one caller packet pending; opening is a writable notification.
+    if (!d->waveform || !d->waveform->isOpen() || d->waveformOpenHeldForTest
+        || d->waveform->bufferedAmount() != 0) { return DisplaySendResult::Busy; }
+    try {
+        return d->waveform->send(reinterpret_cast<const rtc::byte*>(message.constData()), std::size_t(message.size()))
+            ? DisplaySendResult::Sent : DisplaySendResult::Queued;
+    } catch (const std::exception& error) {
+        emit waveformErrorOccurred(QString::fromUtf8(error.what()));
+        return DisplaySendResult::Refused;
+    }
+}
+
+void LibDataChannelMediaTransport::setWaveformOpenHeldForTest(bool held)
+{
+    const bool wasHeld = d->waveformOpenHeldForTest;
+    d->waveformOpenHeldForTest = held;
+    if (wasHeld && !held && d->ready && d->waveform && d->waveform->isOpen()) { emit waveformWritable(); }
+}
+
+bool LibDataChannelMediaTransport::waveformBusy() const
+{
+    return d->ready && d->bridge && d->bridge->waveformChannelWanted
+        && (!d->waveform || !d->waveform->isOpen() || d->waveformOpenHeldForTest
+            || d->waveform->bufferedAmount() != 0);
+}
+
+
 bool LibDataChannelMediaTransport::sendRtp(const QByteArray& packet)
 {
     // R-AUD-SEND: one send path, the one another thread uses. On this
@@ -1892,12 +2003,15 @@ void LibDataChannelMediaTransport::drainCallbacks()
     std::deque<CallbackEvent> events;
     std::deque<rtc::binary> displayMessages;
     std::deque<rtc::binary> iqMessages;
+    std::deque<rtc::binary> waveformMessages;
+    quint64 waveformDrops = 0;
     std::deque<PendingRtpPacket> rtpPackets;
     std::chrono::steady_clock::duration maxRtpCallbackGap {};
     std::size_t droppedRtpPackets = 0;
     bool reportIqOverflow = false;
     std::shared_ptr<rtc::DataChannel> incomingDisplay;
     std::shared_ptr<rtc::DataChannel> incomingIq;
+    std::shared_ptr<rtc::DataChannel> incomingWaveform;
     std::shared_ptr<rtc::DataChannel> incomingTx;
     std::shared_ptr<rtc::Track> incomingAudio;
     std::shared_ptr<rtc::Track> incomingMic;
@@ -1909,6 +2023,10 @@ void LibDataChannelMediaTransport::drainCallbacks()
         events.swap(bridge->events);
         displayMessages.swap(bridge->displayMessages);
         bridge->displayBytes = 0;
+        waveformMessages.swap(bridge->waveformMessages);
+        bridge->waveformBytes = 0;
+        waveformDrops = std::exchange(bridge->waveformDrops, 0);
+        incomingWaveform = std::move(bridge->waveformChannel);
         iqMessages.swap(bridge->iqMessages);
         bridge->iqBytes = 0;
         reportIqOverflow = bridge->iqFailed && !bridge->iqFailureReported;
@@ -1938,6 +2056,11 @@ void LibDataChannelMediaTransport::drainCallbacks()
 
     if (!d->display && incomingDisplay) {
         d->display = std::move(incomingDisplay);
+    }
+    if (!d->waveform && incomingWaveform) { d->waveform = std::move(incomingWaveform); }
+    if (waveformDrops != 0) {
+        emit waveformDropped(waveformDrops);
+        if (!isCurrentGeneration()) { return; }
     }
     if (!d->iq && incomingIq) {
         d->iq = std::move(incomingIq);
@@ -1990,6 +2113,12 @@ void LibDataChannelMediaTransport::drainCallbacks()
         }
         case CallbackEvent::Kind::DisplayWritable:
             emit displayWritable();
+            break;
+        case CallbackEvent::Kind::WaveformError:
+            emit waveformErrorOccurred(QString::fromStdString(event.first));
+            break;
+        case CallbackEvent::Kind::WaveformWritable:
+            emit waveformWritable();
             break;
         case CallbackEvent::Kind::IqError:
             emit iqErrorOccurred(QString::fromStdString(event.first));
@@ -2053,6 +2182,10 @@ void LibDataChannelMediaTransport::drainCallbacks()
         if (!isCurrentGeneration()) {
             return;
         }
+    }
+    for (const rtc::binary& message : waveformMessages) {
+        emit waveformReceived(toByteArray(message));
+        if (!isCurrentGeneration()) { return; }
     }
     for (const rtc::binary& message : iqMessages) {
         emit iqReceived(toByteArray(message));

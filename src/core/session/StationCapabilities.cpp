@@ -581,6 +581,13 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (spectrumPictureVersion > 0) {
         updates.append(intEntry("spectrumPictureVersion", spectrumPictureVersion));
     }
+    // Waveform feed: the exact samples a waveform meter draws, after
+    // spectrumPictureVersion and before coreBuildInfo (which stays last),
+    // only for a peer that agreed the minor-11 block and declared waveform;
+    // any other peer is sent no entry, so its capabilities are today's.
+    if (radioIdentityEntries && waveformVersion > 0) {
+        updates.append(intEntry("waveformVersion", waveformVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -904,6 +911,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "txWatchPathVersion"
                    || u.name == "txStateVersion"
                    || u.name == "txReadingsVersion"
+                   || u.name == "waveformVersion"
                    || u.name == "remoteIqVersion"
                    || u.name == "miniDisplayVersion"
                    || u.name == "spectrumPictureVersion"
@@ -1027,6 +1035,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.controlChannelVersion = version;
                 } else if (u.name == "txMonitorAudioVersion") {
                     caps.txMonitorAudioVersion = version;
+                } else if (u.name == "waveformVersion") {
+                    caps.waveformVersion = version;
                 } else if (u.name == "remoteIqVersion") {
                     caps.remoteIqVersion = version;
                 } else if (u.name == "miniDisplayVersion") {

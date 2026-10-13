@@ -275,12 +275,13 @@ private slots:
         // Negative, and one past the last declared enumerator, are the
         // two ways to walk off either end.
         QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(-1))).isValid());
-        QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(14))).isValid());
+        QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(16))).isValid());
 
         // Every declared enumerator still round-trips, including the two
         // NereusSDR-native RADE modes at the top of the range.
         for (const DSPMode mode : { DSPMode::LSB, DSPMode::AM, DSPMode::DRM,
-                                    DSPMode::RADE_U, DSPMode::RADE_L }) {
+                                    DSPMode::RADE_U, DSPMode::RADE_L,
+                                    static_cast<DSPMode>(14), static_cast<DSPMode>(15) }) {
             const QVariant wire(static_cast<qlonglong>(mode));
             QVERIFY2(MirrorSchema::decode(*dsp, wire).isValid(),
                      qPrintable(QString::number(static_cast<int>(mode))));

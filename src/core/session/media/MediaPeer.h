@@ -107,7 +107,7 @@ public:
                bool receiverAudioStreams = false,
                bool headphonesMixStream = false,
                bool micLine = false,
-               bool iqChannel = false);
+               bool iqChannel = false, bool waveformChannel = false);
     void stop();
 
     /// iPhone app plan Task 28 (R-IOS-16): for a session whose control
@@ -128,6 +128,8 @@ public:
     IMediaTransport::DisplaySendResult submitDisplay(const QByteArray& message);
     IMediaTransport::DisplaySendResult submitIq(const QByteArray& message);
     bool iqBusy() const;
+    IMediaTransport::DisplaySendResult submitWaveform(const QByteArray& message);
+    bool waveformBusy() const;
     bool displayBusy() const;
     bool sendRtp(const QByteArray& packet);
     /// R-AUD-SEND: sendRtp() for another thread (the Core's audio send
@@ -224,6 +226,10 @@ signals:
     void controlReady(const QJsonObject& control);
     void displayReceived(const QByteArray& message);
     void iqReceived(const QByteArray& message);
+    void waveformReceived(const QByteArray& message);
+    void waveformErrorOccurred(const QString& reason);
+    void waveformDropped(quint64 packets);
+    void waveformWritable();
     void iqErrorOccurred(const QString& reason);
     void rtpReceived(const QByteArray& packet);
     /// Task 36: a packet on the microphone line carrying micAudioSsrc().

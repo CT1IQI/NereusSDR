@@ -1076,7 +1076,12 @@ set(CORE_SOURCES
     src/core/DspControlThread.cpp
     src/core/RxChannel.cpp
     src/core/TxChannel.cpp
+    src/models/RadeWaveformModel.cpp
+    src/core/session/media/WaveformCodec.cpp
+    src/core/audio/WaveformPublisher.cpp
+    src/core/audio/WaveformHistory.cpp
     src/core/RadeChannel.cpp
+    src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp
     src/core/RadeText.cpp
     # RADE end-of-over callsigns: FreeDV's callsign format (freedv-backend
@@ -2040,6 +2045,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
+    src/gui/meters/WaveformMeterItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
@@ -2757,7 +2763,7 @@ endif()
 
 # --------------------------------------------------------------------------
 # RADE neural codec for FreeDV digital voice (Phase 3R)
-# License: BSD 2-Clause (radae_nopy at b2891023f3aecdf8b1793618000b1be6bcb2c4d1)
+# License: BSD 2-Clause (rade_c at c8a3dc156045cae2cd251e1a4be0c304c9ddf2f9)
 # See docs/architecture/phase3j2-3r-spots-and-rade-design.md Section 5
 #
 # radae_nopy's CMakeLists.txt fetches and builds Opus from xiph at first

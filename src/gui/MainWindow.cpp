@@ -14,6 +14,8 @@
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -2609,8 +2611,8 @@ void MainWindow::refreshActiveSlicePresentation()
                              DSPMode::CWL, DSPMode::CWU, DSPMode::AM,
                              DSPMode::SAM, DSPMode::FM, DSPMode::DIGL,
                              DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
-                             DSPMode::RADE_U, DSPMode::RADE_L};
-    for (int i = 0; i < 14; ++i) {
+                             DSPMode::RADE_U, DSPMode::RADE_L, DSPMode::RADE2_U, DSPMode::RADE2_L};
+    for (int i = 0; i < 16; ++i) {
         if (!m_modeActions[i]) { continue; }
         const QSignalBlocker block(m_modeActions[i]);
         m_modeActions[i]->setChecked(slice && slice->dspMode() == modes[i]);
@@ -7962,6 +7964,36 @@ void MainWindow::buildUI()
         return maxBinSpectrumFor(slice);
     });
     m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
+    m_meterPoller->setWaveformSource([this](const QJsonObject& context, WaveformKind kind) {
+        return ContainerSourceAdapter::waveform(
+            m_radioModel, context, windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), kind,
+            containerSessionId());
+    });
+    const quintptr waveformOwner = reinterpret_cast<quintptr>(m_meterPoller);
+    const QPointer<RadeWaveformModel> waveforms = m_radioModel->radeWaveformModel();
+    m_meterPoller->setWaveformDemandSource([this, waveforms,
+                                            waveformOwner](const QList<WaveformContextRequest>& contexts) {
+        if (!waveforms) {
+            return;
+        }
+        if (contexts.isEmpty()) {
+            waveforms->clearDemand(waveformOwner);
+            return;
+        }
+        m_radioModel->synchronizeWaveformEndpoints();
+        QList<WaveformRequest> requests;
+        for (const auto& context : contexts) {
+            const auto request = ContainerSourceAdapter::waveformRequest(
+                m_radioModel, context.context,
+                windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context.context)), context.kind,
+                containerSessionId());
+            if (request) {
+                requests.append(*request);
+            }
+        }
+        waveforms->setDemand(waveformOwner, requests);
+    });
+
     m_meterPoller->setRxSourceIdentitySource([this](const QJsonObject& context) {
         const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
         const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
@@ -11513,6 +11545,7 @@ void MainWindow::buildMenuBar()
     // MODE
     // =========================================================================
     QMenu* modeMenu = menuBar()->addMenu(QStringLiteral("&Mode"));
+    modeMenu->setToolTipsVisible(true);
 
     // 12 Thetis-faithful modes + the NereusSDR-native RADE-U / RADE-L
     // entries (Phase 3R L3).  Display order: LSB, USB, DSB, CWL, CWU,
@@ -11538,12 +11571,14 @@ void MainWindow::buildMenuBar()
         { "SPEC",   DSPMode::SPEC   },
         { "RADE-U", DSPMode::RADE_U },  // Phase 3R L3, NereusSDR-native upper
         { "RADE-L", DSPMode::RADE_L },  // Phase 3R L3, NereusSDR-native lower
+        { "RADE2-U", DSPMode::RADE2_U },
+        { "RADE2-L", DSPMode::RADE2_L },
     };
 
     m_modeActionGroup = new QActionGroup(this);
     m_modeActionGroup->setExclusive(true);
 
-    for (int i = 0; i < 14; ++i) {
+    for (int i = 0; i < 16; ++i) {
         DSPMode mode = modes[i].mode;
         QAction* act = modeMenu->addAction(QString::fromUtf8(modes[i].label),
                                            this, [this, mode]() {
@@ -11551,9 +11586,19 @@ void MainWindow::buildMenuBar()
             if (slice) { slice->setDspMode(mode); }
         });
         act->setCheckable(true);
+        if (isRade2DspMode(mode)) {
+            act->setVisible(m_radioModel->radeV2Enabled());
+            act->setToolTip(QStringLiteral("Experimental RADE v2 speech mode"));
+        }
         m_modeActionGroup->addAction(act);
         m_modeActions[i] = act;
     }
+
+    connect(m_radioModel, &RadioModel::radeV2AvailabilityChanged, this, [this] {
+        for (int index : {14, 15}) {
+            if (m_modeActions[index]) { m_modeActions[index]->setVisible(m_radioModel->radeV2Enabled()); }
+        }
+    });
 
     // Sync checked mode action when SliceModel reports a mode change.
     // Connection is deferred until slice 0 is available (sliceAdded signal).
@@ -11568,8 +11613,9 @@ void MainWindow::buildMenuBar()
                 DSPMode::DIGL, DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
                 DSPMode::RADE_U,  // Phase 3R L3, index 12
                 DSPMode::RADE_L,  // Phase 3R L3, index 13
+                DSPMode::RADE2_U, DSPMode::RADE2_L,
             };
-            for (int i = 0; i < 14; ++i) {
+            for (int i = 0; i < 16; ++i) {
                 if (m_modeActions[i]) {
                     m_modeActions[i]->setChecked(displayOrder[i] == mode);
                 }
@@ -14619,8 +14665,7 @@ void MainWindow::wireSliceToSpectrum()
         // slider, which RADE TX still needs. Routed through the visibility
         // controller so the wrapper and the menu entry agree, and the user's
         // persisted preference survives the mode change.
-        const bool isRade = (mode == DSPMode::RADE_U
-                             || mode == DSPMode::RADE_L);
+        const bool isRade = (isRadeDspMode(mode));
         if (m_appletVis) {
             m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
         }

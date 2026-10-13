@@ -560,6 +560,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "waveformVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -3674,6 +3679,22 @@
                     "op",
                     "replaces"
                 ]
+            },
+            "waveform-stream-context": {
+                "capability": "waveformVersion",
+                "fields": [
+                    "availability",
+                    "connectionId",
+                    "deliveryGeneration",
+                    "enabled",
+                    "kind",
+                    "op",
+                    "reason",
+                    "revision",
+                    "sampleRateHz",
+                    "sliceId",
+                    "sourceGeneration"
+                ]
             }
         },
         "guiToCore": {
@@ -3828,6 +3849,9 @@
                     ],
                     "txMonitorAudioVersion": [
                         "txMonitorAudioVersion"
+                    ],
+                    "waveformVersion": [
+                        "waveformVersion"
                     ]
                 },
                 "fields": [
@@ -3969,6 +3993,17 @@
                     "connectionId",
                     "endpointId",
                     "op"
+                ]
+            },
+            "waveform-stream": {
+                "capability": "waveformVersion",
+                "fields": [
+                    "connectionId",
+                    "enabled",
+                    "kind",
+                    "op",
+                    "revision",
+                    "sliceId"
                 ]
             }
         },
@@ -6346,7 +6381,9 @@
                         10,
                         11,
                         12,
-                        13
+                        13,
+                        14,
+                        15
                     ],
                     "kind": "enum",
                     "name": "dspMode",
@@ -6454,7 +6491,9 @@
                         10,
                         11,
                         12,
-                        13
+                        13,
+                        14,
+                        15
                     ],
                     "kind": "enum",
                     "name": "dspMode",

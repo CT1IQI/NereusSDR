@@ -194,6 +194,7 @@
 // =================================================================
 
 #pragma once
+#include "audio/WaveformPublisher.h"
 
 #include <QLoggingCategory>
 #include <QObject>
@@ -258,6 +259,10 @@ class RadeChannel : public QObject {
     Q_OBJECT
 
 public:
+    enum class Version { V1, V2 };
+    void setVersion(Version version);
+    Version version() const;
+
     explicit RadeChannel(QObject* parent = nullptr);
     ~RadeChannel() override;
 
@@ -412,6 +417,7 @@ public:
     // RADE end-of-over callsigns: resetTx's flush (speech and feature
     // accumulators, the 8 -> 24 kHz resampler, the end-of-over flag)
     // without counting as the operator's Reset vocoder. Run at every unkey.
+    WaveformPublisher* speechWaveformPublisher() { return &m_speechWaveform; }
     void dropTxAudio();
 
 signals:
@@ -438,6 +444,7 @@ signals:
     void rxTextDecoded(const QString& callsign, const QString& grid);
 
 private:
+    WaveformPublisher m_speechWaveform{WaveformKind::DecodedSpeech, 24000};
     // Fix wave (RADE EOO). Encode m_txHeld then m_txAccum into modem
     // chunks; m_codecMutex held by the caller.
     void encodeSpeechLocked(std::vector<QByteArray>& modemOut);
@@ -501,6 +508,8 @@ private:
     // mode-swap path; not yet consumed by the I/Q routing layer at
     // v0.5.0.  K-bench follow-up will wire this into any future
     // spectral mirroring at the TX modulator stage.
+    // Selected before start; published to the decoder worker with the channel.
+    std::atomic<Version> m_version{Version::V1};
     std::atomic<bool>    m_sidebandUpper{true};
 
     // Test seam counter: incremented every time rade_rx() runs in
