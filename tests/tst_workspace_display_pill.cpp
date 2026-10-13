@@ -17,6 +17,10 @@
 #include <QSignalSpy>
 #include <QRegularExpression>
 #include <QSlider>
+#include <QSplitter>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QWheelEvent>
 #include <QSpinBox>
 #include <QStyleOptionSlider>
 #include <QStyleOptionSpinBox>
@@ -104,6 +108,105 @@ private slots:
         qApp->setStyleSheet(m_sheet);
         qApp->setPalette(m_palette);
     }
+    void classicPillPagesPreserveFlyoutTransparency() {
+        WorkspacePreview::setEnabledForTest(false);
+        Harness h;
+        h.panel->openDisplayPill();
+        auto* scroll = h.pill()->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+        QVERIFY(scroll);
+        QVERIFY(!scroll->widget()->autoFillBackground());
+    }
+
+    void shortDockedPanKeepsEveryDisplayTabAccessible() {
+        QSplitter host(Qt::Vertical);
+        SpectrumWidget first;
+        SpectrumWidget second;
+        first.setUpdatesEnabled(false);
+        second.setUpdatesEnabled(false);
+        host.addWidget(&first);
+        host.addWidget(&second);
+        host.resize(1000, 600);
+        auto* panel = new SpectrumOverlayPanel(&first);
+        panel->move(4, 4);
+        panel->show();
+        host.show();
+        QCoreApplication::processEvents();
+        panel->openDisplayPill();
+        QWidget* pill = first.findChild<QWidget*>(QStringLiteral("displayPill"));
+        QVERIFY(pill);
+        QSignalSpy writes(&first, &SpectrumWidget::displaySettingChanged);
+        QSignalSpy tuneClicks(&first, &SpectrumWidget::frequencyClicked);
+        QSignalSpy retunes(&first, &SpectrumWidget::ddcRetuneRequested);
+        const auto contained = [&]() {
+            return first.rect().contains(pill->geometry());
+        };
+        const Tab tabs[] = {Tab::Spectrum, Tab::Levels, Tab::Waterfall, Tab::View3D, Tab::Fft};
+        for (Tab tab : tabs) {
+            panel->setDisplayPillTab(tab);
+            QCoreApplication::processEvents();
+            QVERIFY2(contained(), qPrintable(QStringLiteral("pan %1x%2, pill %3,%4 %5x%6")
+                .arg(first.width()).arg(first.height()).arg(pill->x()).arg(pill->y())
+                .arg(pill->width()).arg(pill->height())));
+            auto* scroll = pill->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+            QVERIFY(scroll);
+            QVERIFY(!scroll->widget()->autoFillBackground());
+            const QString pageNames[] = {QStringLiteral("displayPageSpectrum"),
+                QStringLiteral("displayPageLevels"), QStringLiteral("displayPageWaterfall"),
+                QStringLiteral("displayPage3D"), QStringLiteral("displayPageFft")};
+            QWidget* page = pill->findChild<QWidget*>(pageNames[static_cast<int>(tab)]);
+            QVERIFY(page && !page->isHidden());
+            QPushButton* footer = page->findChild<QPushButton*>(QStringLiteral("pillResetPan"));
+            QVERIFY(footer);
+            scroll->ensureWidgetVisible(footer, 0, 0);
+            QCoreApplication::processEvents();
+            const QRect footerRect(footer->mapTo(scroll->viewport(), QPoint()), footer->size());
+            QVERIFY(scroll->viewport()->rect().contains(footerRect));
+        }
+        panel->setDisplayPillTab(Tab::Spectrum);
+        host.resize(1000, 1200);
+        QCoreApplication::processEvents();
+        QVERIFY(contained());
+        QVERIFY(pill->height() <= 480);
+        auto* scroll = pill->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+        QCOMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        const int normalWidth = pill->width();
+        host.resize(1000, 450);
+        QCoreApplication::processEvents();
+        QVERIFY(contained());
+        QVERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        QScrollBar* bar = scroll->verticalScrollBar();
+        bar->setValue(0);
+        QStyleOptionSlider option;
+        option.initFrom(bar);
+        option.orientation = Qt::Vertical;
+        option.minimum = bar->minimum();
+        option.maximum = bar->maximum();
+        option.sliderPosition = bar->value();
+        option.sliderValue = bar->value();
+        option.pageStep = bar->pageStep();
+        const QRect handle = bar->style()->subControlRect(QStyle::CC_ScrollBar, &option,
+            QStyle::SC_ScrollBarSlider, bar);
+        QTest::mousePress(bar, Qt::LeftButton, Qt::NoModifier, handle.center());
+        const QPoint bottom(handle.center().x(), bar->height() - handle.height() / 2 - 1);
+        QTest::mouseMove(bar, bottom);
+        QTest::mouseRelease(bar, Qt::LeftButton, Qt::NoModifier, bottom);
+        QVERIFY(bar->value() > 0);
+        bar->setValue(0);
+        const QPoint point = scroll->viewport()->rect().center();
+        QWheelEvent wheel(point, scroll->viewport()->mapToGlobal(point), QPoint(), QPoint(0, -120),
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(scroll->viewport(), &wheel);
+        QVERIFY(bar->value() > 0);
+        QCOMPARE(tuneClicks.count(), 0);
+        QCOMPARE(retunes.count(), 0);
+        host.resize(1000, 1200);
+        QCoreApplication::processEvents();
+        QVERIFY(contained());
+        QCOMPARE(scroll->verticalScrollBar()->maximum(), 0);
+        QCOMPARE(pill->width(), normalWidth);
+        QCOMPARE(writes.count(), 0);
+    }
+
     void workspaceControlsAndUserSwatchesUseTheExistingPipeline() {
         Harness h;
         h.pan.setFillColor(QColor(QStringLiteral("#00b4d8")));

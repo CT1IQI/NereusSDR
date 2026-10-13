@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Keep Display pages reachable inside short docked pans.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Approved Levels scale/mode choosers, View segments and
 //                 unlabelled FFT sizing, reusing per-pan setters. J.J. Boyd,
 //                 AI-assisted via OpenAI Codex.
@@ -211,6 +213,8 @@
 #include <QFontMetrics>
 #include <QTextDocument>
 #include <QStyleOptionSpinBox>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QLineEdit>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -599,7 +603,9 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     // has been clicked or tabbed to.
     if (event->type() == QEvent::Wheel && isInDisplayPill(obj)) {
         const auto* slider = qobject_cast<const QSlider*>(obj);
-        if (slider && slider->hasFocus()) {
+        auto* scroll = m_displayFlyout->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+        if ((slider && slider->hasFocus())
+            || (scroll && (obj == scroll->viewport() || obj == scroll->verticalScrollBar()))) {
             return false;
         }
         event->accept();
@@ -654,6 +660,7 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     // Reposition zoom buttons when parent (spectrum widget) resizes
     if (obj == parentWidget() && event->type() == QEvent::Resize) {
         repositionZoomButtons();
+        if (displayPillVisible()) { layoutDisplayPill(); }
     }
     // Task 26: the row's place depends on where the column is, so follow
     // the column when it moves (MainWindow places it after construction).
@@ -1499,7 +1506,7 @@ void SpectrumOverlayPanel::refreshDisplayPillGeometry()
     }
     m_displayFlyout->layout()->invalidate();
     m_displayFlyout->layout()->activate();
-    m_displayFlyout->adjustSize();
+    layoutDisplayPill();
     positionPillOwnIndicators();
 }
 
@@ -1634,6 +1641,27 @@ void SpectrumOverlayPanel::buildDisplayFlyout()
     }
     column->addLayout(tabs);
 
+    // NereusSDR design based on AetherSDR SpectrumOverlayMenu.cpp:1263-1299,
+    // 2533-2557 [@1e0718ad]: keep content reachable in a short host. Our
+    // approved tab strip remains outside the scrolling pages.
+    auto* scroll = new QScrollArea(m_displayFlyout);
+    scroll->setObjectName(QStringLiteral("displayPillScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(false);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setMinimumHeight(0);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea#displayPillScroll { background: transparent; border: none; }"));
+    scroll->viewport()->setStyleSheet(QStringLiteral("background: transparent;"));
+    auto* content = new QWidget(scroll);
+    content->setObjectName(QStringLiteral("displayPillPages"));
+    content->setFixedWidth(PillStyle::kWidth - 2);
+    auto* pages = new QVBoxLayout(content);
+    pages->setContentsMargins(0, 0, 0, 0);
+    pages->setSpacing(0);
+    scroll->setWidget(content);
+    content->setAutoFillBackground(false);
+    column->addWidget(scroll);
+
     m_pillPages.fill(nullptr, static_cast<int>(std::size(tabTable)));
     buildPillSpectrumPage();
     buildPillLevelsPage();
@@ -1734,7 +1762,7 @@ void SpectrumOverlayPanel::endPillPage(PillPage& page)
     page.grid->addWidget(foot, page.row++, 0, 1, 4);
 
     m_pillPages[static_cast<int>(page.tab)] = page.widget;
-    m_displayFlyout->layout()->addWidget(page.widget);
+    m_displayFlyout->findChild<QWidget*>(QStringLiteral("displayPillPages"))->layout()->addWidget(page.widget);
 }
 
 // From AetherSDR src/gui/SpectrumOverlayMenu.cpp:1387-1406 [@1e0718ad]
@@ -2466,7 +2494,7 @@ void SpectrumOverlayPanel::bindDisplayPill()
                     layout->activate();
                 }
             }
-            m_displayFlyout->adjustSize();
+            layoutDisplayPill();
         }
         // Any picture setting may be a parent of another row in the
         // approved control list. Showing the gates writes no settings.
@@ -2716,7 +2744,7 @@ void SpectrumOverlayPanel::updatePillEnables()
                 layout->activate();
             }
             if (m_displayFlyout) {
-                m_displayFlyout->adjustSize();
+                layoutDisplayPill();
             }
         }
     }
@@ -2838,7 +2866,7 @@ void SpectrumOverlayPanel::updateBandGridNote()
             layout->activate();
         }
         if (m_displayFlyout) {
-            m_displayFlyout->adjustSize();
+            layoutDisplayPill();
         }
     }
 }
@@ -2878,7 +2906,7 @@ void SpectrumOverlayPanel::showPillTab(DisplayPillTab tab)
         }
     }
     if (m_displayFlyout) {
-        m_displayFlyout->adjustSize();
+        layoutDisplayPill();
     }
 }
 
@@ -2929,6 +2957,33 @@ bool SpectrumOverlayPanel::isInDisplayPill(const QObject* obj, bool throughPopup
     return false;
 }
 
+void SpectrumOverlayPanel::layoutDisplayPill()
+{
+    if (!m_displayFlyout || !parentWidget()) { return; }
+    auto* scroll = m_displayFlyout->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+    if (!scroll || !scroll->widget()) { return; }
+    QWidget* content = scroll->widget();
+    content->layout()->invalidate();
+    content->layout()->activate();
+    QLayout* column = m_displayFlyout->layout();
+    const int tabHeight = column->itemAt(0)->layout()->sizeHint().height();
+    content->setFixedHeight(content->layout()->sizeHint().height());
+    const int naturalHeight = tabHeight + content->height() + 2;
+    const int top = std::clamp(y(), 0, std::max(0, parentWidget()->height() - 1));
+    const int availableHeight = std::max(1, parentWidget()->height() - top);
+    const bool scrolling = naturalHeight > availableHeight;
+    // Reserve the scrollbar outside the original page width. Every approved
+    // control retains its normal width and font when the host gets shorter.
+    const int scrollWidth = scrolling
+        ? scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, scroll) : 0;
+    m_displayFlyout->setFixedSize(PillStyle::kWidth + scrollWidth,
+                                std::min(naturalHeight, availableHeight));
+    const int left = std::clamp(x() + width(), 0,
+        std::max(0, parentWidget()->width() - m_displayFlyout->width()));
+    m_displayFlyout->move(left, top);
+    column->activate();
+}
+
 void SpectrumOverlayPanel::showDisplayPill()
 {
     // Button index 4 (Display)
@@ -2938,8 +2993,8 @@ void SpectrumOverlayPanel::showDisplayPill()
     themeFlyout(m_displayFlyout);
     refreshDisplayPillGeometry();
     // adjustSize then position (from AetherSDR toggleDisplayPanel)
-    m_displayFlyout->adjustSize();
-    m_displayFlyout->move(x() + width(), y());
+    // The bounded layout now supplies the size before positioning.
+    layoutDisplayPill();
     m_displayFlyout->raise();
     m_displayFlyout->show();
     m_activeFlyout = m_displayFlyout;
@@ -3334,7 +3389,7 @@ void SpectrumOverlayPanel::updatePillModeNotes()
         for (QWidget* page : std::as_const(m_pillPages)) {
             if (page && page->layout()) { page->layout()->activate(); }
         }
-        m_displayFlyout->adjustSize();
+        layoutDisplayPill();
     }
     scheduleDisplayPillGeometryRefresh();
 }

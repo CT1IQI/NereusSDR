@@ -259,12 +259,15 @@ private slots:
     {
         Harness h;
         h.panel->openDisplayPill();
-        h.panel->setDisplayPillTab(Tab::Waterfall);
+        h.panel->setDisplayPillTab(Tab::Levels);
         QWidget* pill = h.pill();
         auto* low = pill->findChild<QSlider*>(QStringLiteral("pillDisplayWfLowLevel"));
         QVERIFY(low != nullptr);
-        // AGC off, so Low is the operator's to move.
-        h.pan.setWfAgcEnabled(false);
+        // The approved Levels chooser owns Low; AGC off alone still leaves
+        // the default requested Clarity mode in charge.
+        auto* manual = pill->findChild<QPushButton*>(QStringLiteral("pillWaterfallLevelsManual"));
+        QVERIFY(manual && manual->isVisibleTo(pill));
+        QTest::mouseClick(manual, Qt::LeftButton);
         QCoreApplication::processEvents();
         QVERIFY(low->isEnabled());
 
@@ -724,8 +727,20 @@ private slots:
         }
         QVERIFY2(worked > 4, "the tab showed almost no control to work");
         if (Tab(tab) == Tab::Levels) {
-            // Low is gray while AGC is on. The AGC button is worked first,
-            // which turns AGC off, so Low is still worked.
+            // Working all five approved modes ends on Scale. Explicitly
+            // choose Manual and exercise its Low editor under the same
+            // placement/stacking assertions as every other control.
+            auto* manual = pill->findChild<QPushButton*>(QStringLiteral("pillWaterfallLevelsManual"));
+            QVERIFY(manual && manual->isVisibleTo(pill));
+            QTest::mouseClick(manual, Qt::LeftButton);
+            check(QStringLiteral("Manual waterfall choice"));
+            if (QTest::currentTestFailed()) { return; }
+            auto* low = pill->findChild<QSlider*>(QStringLiteral("pillDisplayWfLowLevel"));
+            QVERIFY(low && low->isVisibleTo(pill) && low->isEnabled());
+            low->setFocus();
+            QTest::keyClick(low, low->value() < low->maximum() ? Qt::Key_Right : Qt::Key_Left);
+            check(QStringLiteral("slider pillDisplayWfLowLevel"));
+            if (QTest::currentTestFailed()) { return; }
             QVERIFY(workedNames.contains(QStringLiteral("slider pillDisplayWfLowLevel")));
         }
         if (Tab(tab) == Tab::Fft) {

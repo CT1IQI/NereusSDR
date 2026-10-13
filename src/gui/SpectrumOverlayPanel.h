@@ -497,6 +497,7 @@ private:
     void updatePillEnables();
     void showPillTab(DisplayPillTab tab);
     void showDisplayPill();
+    void layoutDisplayPill();
     QString pillSetupPage() const;
     bool isInDisplayPill(const QObject* obj, bool throughPopups = false) const;
 
