@@ -22,6 +22,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 - Export the panel's Qt signal addresses from the Windows
+//                 GUI DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -56,6 +58,8 @@
 
 #pragma once
 
+#include "gui/NereusGuiExport.h"
+
 #include <QWidget>
 #include <QVector>
 #include <functional>
@@ -75,7 +79,7 @@ struct BoardCapabilities;
 class RadioModel;
 class SliceModel;
 
-class SpectrumOverlayPanel : public QWidget {
+class NEREUS_GUI_EXPORT SpectrumOverlayPanel : public QWidget {
     Q_OBJECT
 
 public:
