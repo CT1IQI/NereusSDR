@@ -2,9 +2,12 @@
 // the Display pill using the existing approved Longpath-derived workspace look.
 // Modification history (NereusSDR):
 //   2026-10-12 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-13 - Runtime level refresh event regressions. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include <QtTest/QtTest>
 #include <QApplication>
+#include <QEventLoop>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -46,6 +49,12 @@ struct Harness {
     template<typename T> T* control(const char* name) const {
         return pill()->findChild<T*>(QString::fromLatin1(name));
     }
+    QPushButton* displayButton() const {
+        for (QPushButton* button : panel->findChildren<QPushButton*>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (button->text() == QStringLiteral("Display")) { return button; }
+        }
+        return nullptr;
+    }
     void layout() {
         pill()->adjustSize();
         pill()->layout()->setGeometry(pill()->rect());
@@ -54,6 +63,63 @@ struct Harness {
         }
     }
 };
+
+// Drain zero-delay geometry callbacks and the layout events they post, without
+// waiting for render timers or showing the pan's native GPU surface.
+void drainPillEvents() {
+    for (int turn = 0; turn < 4; ++turn) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
+}
+
+class PillRefreshEvents : public QObject {
+public:
+    int enabledChanges{0};
+    int styleChanges{0};
+    int layoutRequests{0};
+    int geometryChanges{0};
+    int layoutEdits{0};
+
+    void watch(QWidget* pill) {
+        pill->installEventFilter(this);
+        for (QObject* child : pill->findChildren<QObject*>()) {
+            if (child->isWidgetType() || qobject_cast<QLayout*>(child)) {
+                child->installEventFilter(this);
+            }
+        }
+    }
+    QString counts() const {
+        return QStringLiteral("enabled=%1 style=%2 layoutRequests=%3 geometry=%4 layoutEdits=%5")
+            .arg(enabledChanges).arg(styleChanges).arg(layoutRequests)
+            .arg(geometryChanges).arg(layoutEdits);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::EnabledChange) { ++enabledChanges; }
+        if (event->type() == QEvent::StyleChange) { ++styleChanges; }
+        if (event->type() == QEvent::LayoutRequest) { ++layoutRequests; }
+        if (event->type() == QEvent::Move || event->type() == QEvent::Resize) { ++geometryChanges; }
+        if (qobject_cast<QLayout*>(watched)
+            && (event->type() == QEvent::ChildAdded || event->type() == QEvent::ChildRemoved)) {
+            ++layoutEdits;
+        }
+        return false;
+    }
+};
+
+void prepareClarityTelemetry(Harness& h) {
+    h.pan.setUpdatesEnabled(false);
+    h.pan.setClarityEnabled(true);
+    // A noise-floor black point and a 10 dB span give hand-checkable numbers.
+    h.pan.setWfBlackLevel(50);
+    h.pan.setWfColorGain(100);
+    h.pan.setClarityFloorDbm(-110.0f);
+    h.pan.setClarityActive(true);
+    h.panel->setDisplayPillTab(Tab::Levels);
+    h.panel->openDisplayPill();
+    drainPillEvents();
+}
 
 QRect handleOf(QSlider* slider) {
     QStyleOptionSlider option;
@@ -115,6 +181,225 @@ private slots:
         auto* scroll = h.pill()->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
         QVERIFY(scroll);
         QVERIFY(!scroll->widget()->autoFillBackground());
+    }
+
+    void liveLevelsDoNotRefreshStaticControls_data() {
+        QTest::addColumn<bool>("workspace");
+        QTest::addColumn<float>("floorDbm");
+        QTest::addColumn<QString>("lowText");
+        QTest::addColumn<QString>("highText");
+        QTest::newRow("workspace-rounded-unchanged") << true << -110.01f << QStringLiteral("-110 dBm") << QStringLiteral("-100 dBm");
+        QTest::newRow("classic-rounded-unchanged") << false << -110.01f << QStringLiteral("-110 dBm") << QStringLiteral("-100 dBm");
+        QTest::newRow("workspace-rounded-boundary") << true << -110.6f << QStringLiteral("-111 dBm") << QStringLiteral("-101 dBm");
+        QTest::newRow("classic-rounded-boundary") << false << -110.6f << QStringLiteral("-111 dBm") << QStringLiteral("-101 dBm");
+    }
+    // A runtime-only level change must update the numbers without temporarily
+    // enabling held editors, restyling static rows or rebuilding their layouts.
+    void liveLevelsDoNotRefreshStaticControls() {
+        QFETCH(bool, workspace);
+        QFETCH(float, floorDbm);
+        QFETCH(QString, lowText);
+        QFETCH(QString, highText);
+        WorkspacePreview::setEnabledForTest(workspace);
+        Harness h;
+        prepareClarityTelemetry(h);
+        auto* low = h.control<QSlider>("pillDisplayWfLowLevel");
+        auto* high = h.control<QSlider>("pillDisplayWfHighLevel");
+        QVERIFY(low && high);
+        QVERIFY(!low->isEnabled() && !high->isEnabled());
+        const float savedLow = h.pan.wfLowThreshold();
+        const float savedHigh = h.pan.wfHighThreshold();
+        const QStringList savedKeys = AppSettings::instance().allKeys();
+        const QRect pillRect = h.pill()->geometry();
+        QSignalSpy changes(&h.pan, &SpectrumWidget::displaySettingChanged);
+        PillRefreshEvents events;
+        events.watch(h.pill());
+
+        h.pan.setClarityFloorDbm(floorDbm);
+        drainPillEvents();
+
+        QCOMPARE(changes.count(), 1);
+        QCOMPARE(changes.first().first().toString(), QStringLiteral("DisplayWfEffectiveLevels"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfLowLevelValue")->text(), lowText);
+        QCOMPARE(h.control<QLabel>("pillDisplayWfHighLevelValue")->text(), highText);
+        QCOMPARE(low->value(), lowText == QStringLiteral("-110 dBm") ? -110 : -111);
+        QCOMPARE(high->value(), highText == QStringLiteral("-100 dBm") ? -100 : -101);
+        QCOMPARE(h.pan.wfLowThreshold(), savedLow);
+        QCOMPARE(h.pan.wfHighThreshold(), savedHigh);
+        QCOMPARE(AppSettings::instance().allKeys(), savedKeys);
+        QCOMPARE(h.pill()->geometry(), pillRect);
+        qInfo().noquote() << "live level refresh" << events.counts();
+        QVERIFY2(events.enabledChanges == 0, qPrintable(events.counts()));
+        QVERIFY2(events.styleChanges == 0, qPrintable(events.counts()));
+        QVERIFY2(events.layoutEdits == 0, qPrintable(events.counts()));
+    }
+
+    void identicalAndClosedLevelsDoNotRefreshPill_data() {
+        QTest::addColumn<bool>("workspace");
+        QTest::newRow("workspace") << true;
+        QTest::newRow("classic") << false;
+    }
+    void identicalAndClosedLevelsDoNotRefreshPill() {
+        QFETCH(bool, workspace);
+        WorkspacePreview::setEnabledForTest(workspace);
+        Harness h;
+        prepareClarityTelemetry(h);
+        QSignalSpy changes(&h.pan, &SpectrumWidget::displaySettingChanged);
+        {
+            PillRefreshEvents events;
+            events.watch(h.pill());
+            h.pan.setClarityFloorDbm(-110.0f);
+            drainPillEvents();
+            QCOMPARE(changes.count(), 0);
+            qInfo().noquote() << "identical level refresh" << events.counts();
+            QVERIFY2(events.enabledChanges == 0 && events.styleChanges == 0
+                && events.layoutEdits == 0 && events.geometryChanges == 0,
+                qPrintable(events.counts()));
+        }
+        QPushButton* display = h.displayButton();
+        QVERIFY(display);
+        display->click();
+        QVERIFY(!h.panel->displayPillVisible());
+        drainPillEvents();
+        const QString lowText = h.control<QLabel>("pillDisplayWfLowLevelValue")->text();
+        const float savedLow = h.pan.wfLowThreshold();
+        const float savedHigh = h.pan.wfHighThreshold();
+        const QStringList savedKeys = AppSettings::instance().allKeys();
+        PillRefreshEvents events;
+        events.watch(h.pill());
+        h.pan.setClarityFloorDbm(-110.6f);
+        drainPillEvents();
+        QCOMPARE(changes.count(), 1);
+        QCOMPARE(changes.first().first().toString(), QStringLiteral("DisplayWfEffectiveLevels"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfLowLevelValue")->text(), lowText);
+        QCOMPARE(h.pan.wfLowThreshold(), savedLow);
+        QCOMPARE(h.pan.wfHighThreshold(), savedHigh);
+        QCOMPARE(AppSettings::instance().allKeys(), savedKeys);
+        qInfo().noquote() << "closed level refresh" << events.counts();
+        QVERIFY2(events.enabledChanges == 0 && events.styleChanges == 0
+            && events.layoutEdits == 0 && events.geometryChanges == 0,
+            qPrintable(events.counts()));
+    }
+
+    void levelActivationAndModeChoiceStillRefreshControls_data() {
+        identicalAndClosedLevelsDoNotRefreshPill_data();
+    }
+    // Bypassing static refresh for telemetry must preserve real mode edges:
+    // no signal becomes measured, then the Manual button releases the editors.
+    void levelActivationAndModeChoiceStillRefreshControls() {
+        QFETCH(bool, workspace);
+        WorkspacePreview::setEnabledForTest(workspace);
+        Harness h;
+        h.pan.setUpdatesEnabled(false);
+        h.pan.setClarityEnabled(true);
+        h.pan.setClarityActive(false);
+        h.pan.setWfBlackLevel(50);
+        h.pan.setWfColorGain(100);
+        h.panel->setDisplayPillTab(Tab::Levels);
+        h.panel->openDisplayPill();
+        drainPillEvents();
+        auto* low = h.control<QSlider>("pillDisplayWfLowLevel");
+        auto* high = h.control<QSlider>("pillDisplayWfHighLevel");
+        auto* retune = h.control<QPushButton>("pillClarityRetune");
+        QVERIFY(low && high && retune);
+        QCOMPARE(h.control<QLabel>("pillDisplayWfLowLevelValue")->text(), QStringLiteral("no signal"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfHighLevelValue")->text(), QStringLiteral("no signal"));
+        h.pan.setClarityFloorDbm(-110.0f);
+        QSignalSpy changes(&h.pan, &SpectrumWidget::displaySettingChanged);
+        h.pan.setClarityActive(true);
+        drainPillEvents();
+        QCOMPARE(changes.count(), 1);
+        QCOMPARE(changes.first().first().toString(), QStringLiteral("DisplayWfEffectiveLevels"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfLowLevelValue")->text(), QStringLiteral("-110 dBm"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfHighLevelValue")->text(), QStringLiteral("-100 dBm"));
+        QVERIFY(!low->isEnabled() && !high->isEnabled() && retune->isEnabled());
+        auto* manual = h.control<QPushButton>("pillWaterfallLevelsManual");
+        QVERIFY(manual);
+        manual->click();
+        h.pan.setClarityActive(false);
+        drainPillEvents();
+        QVERIFY(manual->isChecked());
+        QVERIFY(low->isEnabled() && high->isEnabled());
+        QVERIFY(!retune->isEnabled());
+        QCOMPARE(low->value(), qRound(h.pan.wfLowThreshold()));
+        QCOMPARE(high->value(), qRound(h.pan.wfHighThreshold()));
+        QVERIFY(h.control<QLabel>("pillWaterfallNote")->text().contains(QStringLiteral("You set Low and High")));
+    }
+
+    void repeatedClarityStatusDoesNotRefreshStaticControls_data() {
+        QTest::addColumn<bool>("workspace");
+        QTest::addColumn<bool>("open");
+        QTest::newRow("workspace-open") << true << true;
+        QTest::newRow("classic-open") << false << true;
+        QTest::newRow("workspace-closed") << true << false;
+        QTest::newRow("classic-closed") << false << false;
+    }
+    // Registry output reports its flags before deduplicating its own signal.
+    // An identical status tuple must leave the pill's static widgets alone.
+    void repeatedClarityStatusDoesNotRefreshStaticControls() {
+        QFETCH(bool, workspace);
+        QFETCH(bool, open);
+        WorkspacePreview::setEnabledForTest(workspace);
+        Harness h;
+        prepareClarityTelemetry(h);
+        h.panel->setClarityState(true, true, false);
+        if (!open) {
+            QVERIFY(h.displayButton());
+            h.displayButton()->click();
+        }
+        QCOMPARE(h.panel->displayPillVisible(), open);
+        drainPillEvents();
+        const float savedLow = h.pan.wfLowThreshold();
+        const float savedHigh = h.pan.wfHighThreshold();
+        const QStringList savedKeys = AppSettings::instance().allKeys();
+        QSignalSpy changes(&h.pan, &SpectrumWidget::displaySettingChanged);
+        PillRefreshEvents events;
+        events.watch(h.pill());
+        for (int reading = 0; reading < 3; ++reading) {
+            h.panel->setClarityState(true, true, false);
+            drainPillEvents();
+        }
+        QCOMPARE(changes.count(), 0);
+        QCOMPARE(h.control<QLabel>("pillClarityBadge")->property("clarityState").toString(), QStringLiteral("active"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfLowLevelValue")->text(), QStringLiteral("-110 dBm"));
+        QCOMPARE(h.control<QLabel>("pillDisplayWfHighLevelValue")->text(), QStringLiteral("-100 dBm"));
+        QCOMPARE(h.pan.wfLowThreshold(), savedLow);
+        QCOMPARE(h.pan.wfHighThreshold(), savedHigh);
+        QCOMPARE(AppSettings::instance().allKeys(), savedKeys);
+        qInfo().noquote() << "repeated Clarity status" << open << events.counts();
+        QVERIFY2(events.enabledChanges == 0, qPrintable(events.counts()));
+        QVERIFY2(events.styleChanges == 0, qPrintable(events.counts()));
+        QVERIFY2(events.layoutEdits == 0, qPrintable(events.counts()));
+    }
+
+    void clarityStatusSeedsNewPanelAndPreservesEdges_data() {
+        identicalAndClosedLevelsDoNotRefreshPill_data();
+    }
+    void clarityStatusSeedsNewPanelAndPreservesEdges() {
+        QFETCH(bool, workspace);
+        WorkspacePreview::setEnabledForTest(workspace);
+        Harness h;
+        h.pan.setUpdatesEnabled(false);
+        h.pan.setClarityEnabled(true);
+        auto* badge = h.control<QLabel>("pillClarityBadge");
+        QVERIFY(badge);
+        // The target's requested choice wins over a stale incoming choice.
+        h.panel->setClarityState(false, true, true);
+        drainPillEvents();
+        QCOMPARE(badge->property("clarityState").toString(), QStringLiteral("paused"));
+        h.panel->openDisplayPill();
+        drainPillEvents();
+        QCOMPARE(badge->property("clarityState").toString(), QStringLiteral("paused"));
+        h.panel->setClarityState(false, true, false);
+        drainPillEvents();
+        QCOMPARE(badge->property("clarityState").toString(), QStringLiteral("active"));
+        h.panel->setClarityState(false, false, false);
+        drainPillEvents();
+        QCOMPARE(badge->property("clarityState").toString(), QStringLiteral("off"));
+        h.pan.setClarityEnabled(false);
+        h.panel->setClarityState(true, true, false);
+        drainPillEvents();
+        QCOMPARE(badge->property("clarityState").toString(), QStringLiteral("off"));
     }
 
     void shortDockedPanKeepsEveryDisplayTabAccessible() {

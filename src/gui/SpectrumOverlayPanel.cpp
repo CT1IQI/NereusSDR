@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 - Keep runtime level and unchanged Clarity status refreshes
+//                 from restyling and reflowing Display rows. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Keep Display pages reachable inside short docked pans.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Approved Levels scale/mode choosers, View segments and
@@ -2479,11 +2482,13 @@ void SpectrumOverlayPanel::bindDisplayPill()
 
     m_pillConns.append(connect(target, &SpectrumWidget::displaySettingChanged, this,
                                [this](const QString& keyBase) {
-        seedPillRow(keyBase);
         if (keyBase == QStringLiteral("DisplayWfEffectiveLevels")) {
-            seedPillRow(QStringLiteral("DisplayWfLowLevel"));
-            seedPillRow(QStringLiteral("DisplayWfHighLevel"));
+            // Runtime levels change the readouts, not the stored editors,
+            // mode choices, row gates or ownership indicators.
+            updateWaterfallReadouts();
+            return;
         }
+        seedPillRow(keyBase);
         seedPillRow(QStringLiteral("WaterfallLevelsMode"));
         seedPillRow(QStringLiteral("SpectrumScaleMode"));
         if (keyBase == QStringLiteral("DisplayWfUpdatePeriodMs")
@@ -4114,7 +4119,14 @@ void SpectrumOverlayPanel::buildPillWaterfallPage()
 
 void SpectrumOverlayPanel::setClarityState(bool enabled, bool active, bool paused)
 {
-    m_clarityEnabled = m_displayTarget ? m_displayTarget->clarityEnabled() : enabled;
+    const bool effectiveEnabled = m_displayTarget ? m_displayTarget->clarityEnabled() : enabled;
+    // The registry reports status on each changed floor. Constructor/open
+    // seeding already covers a new panel whose flags are unchanged.
+    if (m_clarityEnabled == effectiveEnabled && m_clarityActive == active
+        && m_clarityPaused == paused) {
+        return;
+    }
+    m_clarityEnabled = effectiveEnabled;
     m_clarityActive = active;
     m_clarityPaused = paused;
     seedPillRow(QStringLiteral("WaterfallLevelsMode"));
