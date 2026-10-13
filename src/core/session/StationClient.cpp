@@ -8646,7 +8646,13 @@ QString StationClient::transmitHolderText() const
                    : QStringLiteral("Transmit is changing hands.");
     }
     if (tx.holderDeviceId().isEmpty()) {
-        return {};
+        // Nobody holds transmit. MOX and TUNE take it as they key
+        // (TransmitHolder::askKey); a program's key never does, and until
+        // 2026-10-12 nothing on screen said so or offered the take.
+        return transmitTakeAvailable()
+                   ? QStringLiteral("No device has transmit. MOX and TUNE take it here. A "
+                                    "program needs Take transmit first.")
+                   : QString();
     }
     const QString self = thisDeviceWireId();
     if (!self.isEmpty() && tx.holderDeviceId() == self) {
@@ -8735,6 +8741,11 @@ bool StationClient::transmitHeldElsewhere() const
 {
     return transmitTakeAvailable() && !m_transmitState->holderDeviceId().isEmpty()
         && !holdsTransmitHere();
+}
+
+bool StationClient::transmitTakeOffered() const
+{
+    return transmitTakeAvailable() && !holdsTransmitHere();
 }
 
 quint32 StationClient::requestTakeTransmit(bool shown, qint64 holderEpoch, bool shownKeyed)

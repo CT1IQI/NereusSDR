@@ -654,8 +654,8 @@ void TxApplet::buildUI()
         m_takeTransmitBtn->setObjectName(QStringLiteral("TxTakeTransmitButton"));
         m_takeTransmitBtn->setAccessibleName(QStringLiteral("Take transmit"));
         m_takeTransmitBtn->setToolTip(
-            QStringLiteral("Ask to take transmit from the device that has it, so MOX and "
-                           "TUNE work here."));
+            QStringLiteral("Take transmit for this window, from the device that has it or "
+                           "when no device does, so MOX, TUNE and programs transmit from here."));
         m_takeTransmitBtn->setVisible(false);
         connect(m_takeTransmitBtn, &QPushButton::clicked, this,
                 &TxApplet::takeTransmitRequested);

@@ -101,6 +101,7 @@ private slots:
     void disconnect_releases_the_app_key_before_its_audio();
     void disconnect_of_an_app_that_did_not_key_leaves_the_key();
     void trx_on_a_receiver_that_is_off_keys_nothing();
+    void key_on_names_only_the_receiver_that_transmits();
     void desktop_host_trx_goes_through_ptt_admission();
     void tx_audio_header_is_validated();
     void uppercase_trx_key_ends_with_the_app_data();
@@ -241,6 +242,26 @@ void TestTciTxMutex::desktop_host_owned_two_three_broadcasts_logical_receivers()
     radio.setLock(3, true);
     QTRY_VERIFY_WITH_TIMEOUT(hasLine(QStringLiteral("lock:1,true;")), 3000);
     QVERIFY(!hasLine(QStringLiteral("lock:0,true;")));
+    // A station-owned stable slice ID is translated to its logical TCI
+    // receiver for key and tune broadcasts as well as receiver controls.
+    radio.sliceById(3)->setTxSlice(true);
+    text.clear();
+    emit radio.moxController()->moxStateChanged(true);
+    QTRY_VERIFY_WITH_TIMEOUT(hasLine(QStringLiteral("trx:1,true;")), 3000);
+    QVERIFY(!hasLine(QStringLiteral("trx:0,true;")));
+    QVERIFY(!hasLine(QStringLiteral("trx:1,false;")));
+    text.clear();
+    emit radio.transmitModel().tuneChanged(true);
+    QTRY_VERIFY_WITH_TIMEOUT(hasLine(QStringLiteral("tune:1,true;")), 3000);
+    QVERIFY(!hasLine(QStringLiteral("tune:0,true;")));
+    QVERIFY(!hasLine(QStringLiteral("tune:1,false;")));
+    text.clear();
+    emit radio.moxController()->moxStateChanged(false);
+    emit radio.transmitModel().tuneChanged(false);
+    QTRY_VERIFY_WITH_TIMEOUT(hasLine(QStringLiteral("trx:1,false;")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(hasLine(QStringLiteral("tune:1,false;")), 3000);
+    QVERIFY(hasLine(QStringLiteral("trx:0,false;")));
+    QVERIFY(hasLine(QStringLiteral("tune:0,false;")));
     app.close();
     server.stop();
 }
@@ -1478,6 +1499,91 @@ void TestTciTxMutex::trx_on_a_receiver_that_is_off_keys_nothing()
     app.socket.sendTextMessage(QStringLiteral("trx:0,false;"));
     QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
     app.socket.close();
+    server.stop();
+}
+
+// 2026-10-12: a key going on names the receiver that transmits and says
+// nothing of the other. Every key also sent trx:1,false;, so an app on
+// receiver 1 (WSJT-X set to the second receiver) could treat its own key
+// as ended, skip its release, and time out on its next trx:1,true.
+// From Thetis TCIServer.cs:1443-1472 [v2.10.3.15]: MoxChange ends with
+//   sendMOX(rx - 1, newMox);
+// and console.cs:29728 [v2.10.3.15] passes rx 2 when RX2 is on and VFO B
+// transmits, else 1.
+void TestTciTxMutex::key_on_names_only_the_receiver_that_transmits()
+{
+    RadioModel core;
+    QCOMPARE(core.addSlice(QStringLiteral("pan-0")), 0);
+    QCOMPARE(core.addSlice(QStringLiteral("pan-0")), 1);
+    MoxController* mox = core.moxController();
+    QVERIFY(mox != nullptr);
+    allowEveryKey(mox);
+    QVERIFY(core.txSliceArbiter()->requestHandoff(0));
+    TciServer server(&core);
+    QVERIFY(server.start(0));
+    TrxApp wsjtx;    // set to the second receiver
+    TrxApp logger;
+    QVERIFY(wsjtx.open(server.port()));
+    QVERIFY(logger.open(server.port()));
+
+    // Slice 0 transmits and the app keys receiver 1: it is answered for its
+    // own receiver, every app hears receiver 0 transmit, and nobody is told
+    // receiver 1 is not transmitting.
+    int mark = int(wsjtx.text.count());
+    int loggerMark = int(logger.text.count());
+    wsjtx.socket.sendTextMessage(QStringLiteral("trx:1,true,tci;"));
+    QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(wsjtx.lines(mark).contains(QStringLiteral("trx:1,true;")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:0,true;")),
+                             3000);
+    QTest::qWait(300);   // past the update gap: nothing more is due
+    QVERIFY(!wsjtx.lines(mark).contains(QStringLiteral("trx:1,false;")));
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("trx:1,false;")));
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("trx:1,true;")));
+
+    // The release tells both receivers.
+    mark = int(wsjtx.text.count());
+    loggerMark = int(logger.text.count());
+    wsjtx.socket.sendTextMessage(QStringLiteral("trx:1,false;"));
+    QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(wsjtx.lines(mark).contains(QStringLiteral("trx:1,false;")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:0,false;")),
+                             3000);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:1,false;")),
+                             3000);
+
+    // Slice 1 transmits: receiver 1 is the one named, and receiver 0 is not.
+    QVERIFY(core.txSliceArbiter()->requestHandoff(1));
+    QCOMPARE(core.txSliceArbiter()->txBoundSliceId(), 1);
+    mark = int(wsjtx.text.count());
+    loggerMark = int(logger.text.count());
+    wsjtx.socket.sendTextMessage(QStringLiteral("trx:1,true,tci;"));
+    QTRY_VERIFY_WITH_TIMEOUT(core.mox(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("trx:1,true;")),
+                             3000);
+    QTest::qWait(300);
+    QVERIFY(wsjtx.lines(mark).contains(QStringLiteral("trx:1,true;")));
+    QVERIFY(!wsjtx.lines(mark).contains(QStringLiteral("trx:1,false;")));
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("trx:0,true;")));
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("trx:1,false;")));
+
+    // TUNE is named the same way.
+    wsjtx.socket.sendTextMessage(QStringLiteral("trx:1,false;"));
+    QTRY_VERIFY_WITH_TIMEOUT(!core.mox(), 3000);
+    loggerMark = int(logger.text.count());
+    emit core.transmitModel().tuneChanged(true);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("tune:1,true;")),
+                             3000);
+    QTest::qWait(300);
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("tune:0,true;")));
+    QVERIFY(!logger.lines(loggerMark).contains(QStringLiteral("tune:1,false;")));
+    loggerMark = int(logger.text.count());
+    emit core.transmitModel().tuneChanged(false);
+    QTRY_VERIFY_WITH_TIMEOUT(logger.lines(loggerMark).contains(QStringLiteral("tune:1,false;")),
+                             3000);
+    QVERIFY(logger.lines(loggerMark).contains(QStringLiteral("tune:0,false;")));
+    wsjtx.socket.close();
+    logger.socket.close();
     server.stop();
 }
 

@@ -1460,6 +1460,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
                           ToastSeverity::Warning, 5000);
                 return;
             }
+            // Nobody holds transmit and a program asked to key: what it
+            // asked for, why nothing keyed, and the control that fixes it.
+            // The radio stays in receive, so it is kept up longer than a
+            // passing notice.
+            if (m_stationClient && m_stationClient->transmitTakeOffered()
+                && reason == TxRefusals::programNeedsTransmit().text) {
+                showToast(tr("A program using TCI asked to transmit, but this window does not "
+                             "have transmit. Click Take transmit, then try again."),
+                          ToastSeverity::Warning, 10000);
+                return;
+            }
             showToast(tr("TCI: %1").arg(OperatorReasonText::forDisplay(reason)),
                       ToastSeverity::Warning, 5000);
         });
@@ -3881,15 +3892,22 @@ void MainWindow::refreshRemoteDeviceScreens()
         }
     }
 
-    // Take transmit: the TX applet's button and every pan's TX pill.
-    const QString holderName = badge.shown ? badge.label : QString();
+    // Take transmit: the TX applet's button and every pan's TX pill, while
+    // this window does not hold transmit, whether another device does or
+    // nobody does (a program's key is refused until it is taken).
+    const bool takeOffered = m_stationClient->transmitTakeOffered();
+    QString holderName;
+    if (elsewhere) {
+        holderName = badge.shown && !badge.label.isEmpty() ? badge.label
+                                                           : QStringLiteral("Another device");
+    }
     if (m_txApplet) {
-        m_txApplet->setTakeTransmitOffered(elsewhere, elsewhere && tx.keyed());
+        m_txApplet->setTakeTransmitOffered(takeOffered, elsewhere && tx.keyed());
     }
     if (m_panStack) {
         for (PanadapterApplet* applet : m_panStack->allApplets()) {
             if (applet) {
-                applet->setTakeTransmitOffered(elsewhere, holderName, elsewhere && tx.keyed());
+                applet->setTakeTransmitOffered(takeOffered, holderName, elsewhere && tx.keyed());
             }
         }
     }

@@ -1192,6 +1192,9 @@ public:
     /// window could take it: transmitTakeAvailable() and a holder that is
     /// not this window.
     bool transmitHeldElsewhere() const;
+    /// Take transmit is offered: tx.take may be sent and this window does
+    /// not hold transmit, whether another device does or nobody does.
+    bool transmitTakeOffered() const;
     /// `tx.take`: with `shown`, the holder epoch and on-air state the
     /// operator was shown before confirming (ruling 8.7), so the Core takes
     /// at once when nothing changed. Returns the command id, 0 when it

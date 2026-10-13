@@ -17,15 +17,47 @@
 
 #include <QtTest>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QWebSocket>
 #include "core/TciProtocol.h"
 #include "core/TciServer.h"
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
+#include "core/RadioConnection.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "TestMockRadioModel.h"
 
 using namespace NereusSDR;
+
+// A connected transport seam only: none of these calls reaches a radio.
+class InitBurstFakeConnection final : public RadioConnection {
+public:
+    void init() override {}
+    void connectToRadio(const RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void sendTxIq(const float*, int) override {}
+    void setWatchdogEnabled(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setMox(bool) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TestTciInitBurstLiveState : public QObject {
     Q_OBJECT
@@ -45,6 +77,8 @@ private slots:
     void agc_drives_agc_mode_and_gain_lines();
     // RED #5 -- mox + rit/xit + lock + globalMute drive their lines.
     void global_toggles_drive_their_lines();
+    void production_tx_slice_drives_trx_and_tune_lines_data();
+    void production_tx_slice_drives_trx_and_tune_lines();
     // RED #6 -- per-rx flags: sql, rxMute, nr, anf, apf, bin, nf, ctun, split.
     void per_rx_flags_drive_their_lines();
     // RED #7 -- balance + rxBalance per RX per channel.
@@ -247,6 +281,78 @@ void TestTciInitBurstLiveState::global_toggles_drive_their_lines()
              "VFOALock on must flow into lock:0,true");
     QVERIFY2(burst.contains(QStringLiteral("mute:true;")),
              "Global mute on must flow into mute:true");
+}
+
+// The production slice flags, including a desktop receiver map, choose
+// the receiver in the init burst. MOX and TUNE use the model's usual paths
+// with a fake transport and no TX channel or audio device.
+void TestTciInitBurstLiveState::production_tx_slice_drives_trx_and_tune_lines_data()
+{
+    QTest::addColumn<bool>("secondReceiverPresent");
+    QTest::addColumn<bool>("desktopMap");
+    QTest::newRow("slice-1-transmits") << true << false;
+    QTest::newRow("rx2-absent-falls-back") << false << false;
+    QTest::newRow("desktop-receiver-1-maps-slice-2") << true << true;
+}
+
+void TestTciInitBurstLiveState::production_tx_slice_drives_trx_and_tune_lines()
+{
+    QFETCH(bool, secondReceiverPresent);
+    QFETCH(bool, desktopMap);
+    pinAppSettingsToCaptureConditions();
+    InitBurstFakeConnection connection;
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 1);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 2);
+    if (!secondReceiverPresent) {
+        radio.removeSlice(1);
+    }
+    // In the fallback case, a live TX flag elsewhere must not invent RX2.
+    const int txSliceId = desktopMap || !secondReceiverPresent ? 2 : 1;
+    for (SliceModel* slice : radio.slices()) {
+        slice->setTxSlice(slice->sliceIndex() == txSliceId);
+    }
+    radio.injectConnectionForTest(&connection);
+    const auto detachConnection = qScopeGuard([&radio] {
+        radio.injectConnectionForTest(nullptr);
+    });
+    radio.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+    radio.moxController()->setMoxCheck([] {
+        return safety::BandPlanGuard::MoxCheckResult{true, QString()};
+    });
+    radio.setTuneOffSettleMsForTest(0);
+    TciProtocol protocol(&radio);
+    if (desktopMap) {
+        protocol.setReceiverSliceMap([](int receiver) { return receiver == 1 ? 2 : 0; });
+    }
+    const int txReceiver = secondReceiverPresent ? 1 : 0;
+    QCOMPARE(protocol.transmitReceiverNow(), txReceiver);
+
+    radio.setMox(true);
+    QTRY_VERIFY(radio.mox());
+    const QStringList moxBurst = protocol.buildInitBurst();
+    QVERIFY(moxBurst.contains(QStringLiteral("trx:%1,true;").arg(txReceiver)));
+    QVERIFY(moxBurst.contains(QStringLiteral("trx:%1,false;").arg(1 - txReceiver)));
+    QVERIFY(!moxBurst.contains(QStringLiteral("trx:%1,true;").arg(1 - txReceiver)));
+    QVERIFY(moxBurst.contains(QStringLiteral("tune:0,false;")));
+    QVERIFY(moxBurst.contains(QStringLiteral("tune:1,false;")));
+    radio.setMox(false);
+    QTRY_VERIFY(!radio.mox());
+
+    radio.setTune(true);
+    QVERIFY(radio.tune());
+    QTRY_VERIFY(radio.mox());
+    const QStringList tuneBurst = protocol.buildInitBurst();
+    QVERIFY(tuneBurst.contains(QStringLiteral("trx:%1,true;").arg(txReceiver)));
+    QVERIFY(tuneBurst.contains(QStringLiteral("trx:%1,false;").arg(1 - txReceiver)));
+    QVERIFY(tuneBurst.contains(QStringLiteral("tune:%1,true;").arg(txReceiver)));
+    QVERIFY(tuneBurst.contains(QStringLiteral("tune:%1,false;").arg(1 - txReceiver)));
+    QVERIFY(!tuneBurst.contains(QStringLiteral("tune:%1,true;").arg(1 - txReceiver)));
+    radio.setTune(false);
+    QTRY_VERIFY(!radio.mox());
+    QTRY_VERIFY(!radio.tune());
 }
 
 void TestTciInitBurstLiveState::per_rx_flags_drive_their_lines()

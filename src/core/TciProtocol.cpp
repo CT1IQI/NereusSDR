@@ -1,4 +1,120 @@
-// no-port-check: NereusSDR-original — parser + dispatch shells ported from
+// =================================================================
+// src/core/TciProtocol.cpp  (NereusSDR)
+// =================================================================
+//
+// Ported from Thetis source:
+//   Project Files/Source/Console/console.cs, original licence included below
+//   Project Files/Source/Console/TCIServer.cs, original licence included below
+//
+// Modification history (NereusSDR):
+//   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Anthropic
+//                Claude Code; attribution remediation via OpenAI Codex.
+// =================================================================
+
+// --- From console.cs ---
+//=================================================================
+// console.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems 
+// Copyright (C) 2010-2020  Doug Wigley
+// Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Modifications to support the Behringer Midi controllers
+// by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines. 
+// Modifications for using the new database import function.  W2PA, 29 May 2017
+// Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
+// Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Final modifictions by MW0LGE Richard Samphire - 19th April 2026
+// Nothing further added by him after this date, and his repo is now in archive https://github.com/ramdor/Thetis
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
+
+//
+
+// --- From TCIServer.cs ---
+/*  TCIServer.cs
+
+This file is part of a program that implements a Software-Defined Radio.
+
+This code/file can be found on GitHub : https://github.com/ramdor/Thetis
+
+Copyright (C) 2020-2026 Richard Samphire MW0LGE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+The author can be reached by email at
+
+mw0lge@grange-lane.co.uk
+*/
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+//
+
+// Historical attribution context: NereusSDR-original — parser + dispatch shells ported from
 // Thetis TCIServer.cs:4900-5197 [v2.10.3.13]. Handler bodies are stubs;
 // Phase 5+ adds individual cases via the matrix runner.
 
@@ -54,6 +170,10 @@
 //   2026-09-29 - Level Cal: calibration_ex carries the meter and display
 //                calibration and goes to apps when either changes. J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - transmitReceiverNow: the receiver whose slice transmits,
+//                for the trx and tune lines (Thetis's VFOBTX choice); the
+//                init burst names it. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 
 #include "TciProtocol.h"
 #include <QSet>
@@ -1249,10 +1369,13 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildRxChannelEnableLine(1, 1, false);
 
     // From Thetis TCIServer.cs:2483-2487 [v2.10.3.13]
-    lines << buildTrxLine(0, mox && !(false && bRX2Enabled));
-    lines << buildTrxLine(1, mox && (false && bRX2Enabled));
-    lines << buildTuneLine(0, tune && !(false && bRX2Enabled));
-    lines << buildTuneLine(1, tune && (false && bRX2Enabled));
+    // VFOBTX && bRX2Enabled is receiver 1 transmitting
+    // (transmitReceiverNow).
+    const bool vfoBTx = transmitReceiverNow() == 1;
+    lines << buildTrxLine(0, mox && !vfoBTx);
+    lines << buildTrxLine(1, mox && vfoBTx);
+    lines << buildTuneLine(0, tune && !vfoBTx);
+    lines << buildTuneLine(1, tune && vfoBTx);
 
     // From Thetis TCIServer.cs:2489-2497 [v2.10.3.13]
     lines << buildIqStopLine(0);
@@ -1411,6 +1534,31 @@ bool TciProtocol::rx2EnabledNow() const
                                   Q_RETURN_ARG(bool, on));
     }
     return on;
+}
+
+// The receiver that transmits, zero-based.
+// From Thetis console.cs:29728 [v2.10.3.15]:
+//   if (bOldMox != tx) MoxChangeHandlers?.Invoke(rx2_enabled && VFOBTX ? 2 : 1, bOldMox, tx); // MW0LGE_21a
+// MW0LGE_21a [original inline comment from console.cs:29728]
+// and console.cs:30208 [v2.10.3.15]:
+//   if (oldTune != _tuning) TuneChangedHandlers?.Invoke(RX2Enabled && VFOBTX ? 2 : 1, oldTune, _tuning);
+// Thetis's VFOBTX is receiver 1's slice carrying the transmit flag here:
+// with a receiver map (desktop hosting) the map's receiver 1, and without
+// one slice 1. The flag is read from the slice, not from TxSliceArbiter: a
+// remote window's arbiter binds nothing (the Core chooses the slice), and
+// the Core's choice arrives as the slice's flag. A test radio that is not a
+// RadioModel transmits on receiver 0.
+int TciProtocol::transmitReceiverNow() const
+{
+    if (!rx2EnabledNow()) {
+        return 0;
+    }
+    const auto* radio = qobject_cast<const RadioModel*>(m_radio);
+    if (!radio) {
+        return 0;
+    }
+    const SliceModel* second = radio->sliceById(m_receiverSliceMap ? m_receiverSliceMap(1) : 1);
+    return second && second->isTxSlice() ? 1 : 0;
 }
 
 // The receiver whose slice vfo:rx,chan reads and writes, and which of

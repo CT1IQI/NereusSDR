@@ -97,6 +97,16 @@ Advanced, and each control appears on one page only.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.
+- A TCI program set to the second receiver (WSJT-X on receiver 2, for one)
+  is no longer told that receiver 2 is off immediately after its key is
+  accepted. That contradictory state could make the program abandon PTT and
+  miss its release. A key or TUNE now names only the receiver that transmits,
+  as Thetis does; the initial state names that receiver too.
+- A remote window shows Take transmit whenever it does not have transmit,
+  including when no device does, and one click takes it. A program cannot
+  transmit until the window has transmit; when a program's request is refused
+  for that reason, the notice now says so and names the button. Before, the
+  button appeared only while another device had transmit.
 
 ## [2026.10.0] - 2026-10-05
 
