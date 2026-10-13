@@ -146,8 +146,11 @@ QString SpectrumStatusOverlay::takeTransmitToolTip() const
     if (!m_takeOffered || m_txBound) {
         return {};
     }
-    const QString name = m_takeHolderName.isEmpty() ? QStringLiteral("Another device")
-                                                    : m_takeHolderName;
+    // No holder's name: nobody holds transmit.
+    if (m_takeHolderName.isEmpty()) {
+        return QStringLiteral("No device has transmit. Click TX to take transmit.");
+    }
+    const QString name = m_takeHolderName;
     return m_takeHolderOnAir
                ? QStringLiteral("%1 is on the air. Click TX to take transmit.").arg(name)
                : QStringLiteral("%1 has the transmitter. Click TX to take transmit.").arg(name);
