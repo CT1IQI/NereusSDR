@@ -39,6 +39,9 @@
 //                 a Tuner Genius cycle runs, in both windows; a faulted
 //                 amp's click puts it in standby. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12  The three HGauge bars become one large forward power bar
+//                 and slim reflected, SWR and temperature rows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -54,12 +57,13 @@ class QMenu;
 namespace NereusSDR {
 
 class AmplifierModel;
-class HGauge;
+class BarInstrument;
 class RadioModel;
 
 // AmpApplet -- PGXL power amplifier telemetry and control applet.
 //
-// Displays three HGauge bars (Fwd Power, SWR, Temp) plus a stacked
+// Displays forward power as a large bar and reflected power, SWR and
+// temperature as slim rows (AccessoryReadouts), plus a stacked
 // telemetry row showing mains voltage, drain current (Amps), and
 // mains efficiency (MEffA). An OPERATE/STANDBY toggle button reflects
 // the current amplifier state and emits operateToggled() on click.
@@ -115,6 +119,14 @@ public:
     double  fwdGaugeValueForTesting() const;
     double  swrGaugeValueForTesting() const;
     double  tempGaugeValueForTesting() const;
+    // The reflected power row, and whether each row shows a value (true)
+    // or the instrument's dashes (false). The value accessors return the
+    // last value a row was given, also while it shows dashes.
+    double  reflectedValueForTesting() const;
+    bool    fwdHasValueForTesting() const;
+    bool    reflectedHasValueForTesting() const;
+    bool    swrHasValueForTesting() const;
+    bool    tempHasValueForTesting() const;
     QString powerLabelTextForTesting() const;
     QString meffLabelTextForTesting() const;
     QString operateButtonTextForTesting() const;
@@ -202,15 +214,30 @@ private:
 
     // From AetherSDR src/gui/AmpApplet.h:29 [@0cd4559]
     void updatePowerLabel();
+    // The readout rows from the values last set; see AmpApplet.cpp.
+    bool passingPower() const;
+    void showReadouts();
+    void clearReadouts();
 
     // Phase 3P-II Phase 4 Task 88: builds the context menu.
     // parent is the QObject* parent for the returned heap-allocated QMenu.
     QMenu* buildContextMenu(QObject* menuParent);
 
     // From AetherSDR src/gui/AmpApplet.h:31-38 [@0cd4559]
-    HGauge*      m_fwdGauge{nullptr};
-    HGauge*      m_swrGauge{nullptr};
-    HGauge*      m_tempGauge{nullptr};
+    // NereusSDR: the three HGauge bars are a large forward power bar and
+    // slim reflected, SWR and temperature rows (AccessoryReadouts).
+    BarInstrument* m_fwdBar{nullptr};
+    BarInstrument* m_refBar{nullptr};
+    BarInstrument* m_swrBar{nullptr};
+    BarInstrument* m_tempBar{nullptr};
+    // The values last given to setFwdPower / setSwr / setTemp, and
+    // whether each has been given since the amplifier was last absent.
+    double m_fwdWatts{0.0};
+    double m_swr{1.0};
+    double m_tempC{0.0};
+    bool   m_haveFwd{false};
+    bool   m_haveSwr{false};
+    bool   m_haveTemp{false};
     QLabel*      m_powerLabel{nullptr};
     QLabel*      m_meffLabel{nullptr};
     QPushButton* m_operateBtn{nullptr};

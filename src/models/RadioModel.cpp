@@ -17,6 +17,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-12 - Accessory meters: coreOnAirChanged reaches the amplifier and
+//                tuner links (setKeyed), which ask for status more often
+//                while keyed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -1525,6 +1532,7 @@ mw0lge@grange-lane.co.uk
 #include "core/RfKitBandFollow.h"
 #include "core/PgxlStatusGauges.h"
 #include "models/AmplifierModel.h"
+#include "models/MainPowerMeter.h"
 #include "models/RfKitModel.h"
 #include "models/StationTciModel.h"
 #include "models/RotorModel.h"
@@ -3210,6 +3218,17 @@ RadioModel::RadioModel(Role role, QObject* parent)
     m_tgxlConnection = new TgxlConnection(this);
     m_tunerModel     = new TunerModel(this);
     m_tunerModel->bindConnection(m_tgxlConnection);
+    // Accessory meters (2026-10-12): both links ask for `status` more often
+    // while the Core is on the air (transmitting, TUNE or the two-tone
+    // test), so the meters follow the signal from the first moment of the
+    // key (GeniusPollPacer.h). A remote window's links are never connected,
+    // so nothing polls there.
+    connect(this, &RadioModel::coreOnAirChanged,
+            m_pgxlConnection, &PgxlConnection::setKeyed);
+    connect(this, &RadioModel::coreOnAirChanged,
+            m_tgxlConnection, &TgxlConnection::setKeyed);
+    m_pgxlConnection->setKeyed(isCoreOnAir());
+    m_tgxlConnection->setKeyed(isCoreOnAir());
     // TGXL tune lane (2026-09-30): the tuner's link dropping ends a tune
     // cycle. Nothing else would: a hardware cycle waits for the tuner's
     // `transmit tune off`, and a cycle whose sweep started waits for its
@@ -3288,6 +3307,13 @@ RadioModel::RadioModel(Role role, QObject* parent)
     // this computer's accessory connections.
     m_amplifierModel = new AmplifierModel(this);
     m_rfKitModel = new RfKitModel(this);
+    // The same mirrored inputs feed main meters in every role. Existing
+    // amplifier predicates/signals continue to govern transmit safety.
+    m_mainPowerMeter = new MainPowerMeter(m_amplifierModel, m_rfKitModel,
+                                         &m_radioStatus, this);
+    m_mainPowerMeter->setHardwareModel(m_hardwareProfile.model);
+    connect(this, &RadioModel::currentRadioChanged, m_mainPowerMeter,
+            [this] { m_mainPowerMeter->setHardwareModel(m_hardwareProfile.model); });
     // R-R3-48: the Core's station TCI server state (`stationTci`).
     m_stationTciModel = new StationTciModel(this);
     // Rotor control plan Task 4b: the Core's rotor (`rotor`).

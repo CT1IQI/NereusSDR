@@ -1256,6 +1256,7 @@ set(CORE_SOURCES
     # Phase 3P-II TGXL tuner model
     src/models/TunerModel.cpp
     # R-R3-47: the Core's Power Genius and RF-Kit status objects
+    src/models/MainPowerMeter.cpp
     src/models/AmplifierModel.cpp
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
@@ -1788,6 +1789,7 @@ set(GUI_SOURCES
     src/gui/styles/WorkspaceStyle.cpp
     src/gui/styles/WorkspaceStyle.h
     src/gui/instruments/BarInstrument.cpp
+    src/gui/instruments/PowerReadingDescriptor.cpp
     src/gui/instruments/BarInstrument.h
     src/gui/instruments/FrequencyInstrument.cpp
     src/gui/instruments/FrequencyInstrument.h
@@ -2157,6 +2159,7 @@ set(GUI_SOURCES
     src/gui/applets/CwxApplet.cpp
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
+    src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/RotorApplet.cpp
     src/gui/applets/AmpApplet.cpp

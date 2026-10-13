@@ -7319,6 +7319,9 @@ nereus_add_test(tst_tgxl_connection_ping)
 # One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
 # for the answer, a refusal or a lost answer frees it, a new connection asks.
 nereus_add_test(tst_tgxl_connection_status_pacing)
+# The status poll's rate on both Genius links (GeniusPollPacer): fast while
+# keyed and for a hold after, and a poll already fast is not restarted.
+nereus_add_test(tst_genius_poll_pacer)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
@@ -7568,6 +7571,22 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
+# The tuner and amplifier panels' readouts: the four scales and limits, the
+# text rules (whole watts, the three SWR forms, whole degrees), reflected
+# power from forward power and SWR, and BarInstrument fed a reading of the
+# caller's own (value, dashes, the small second reading, the peak reset).
+nereus_add_test(tst_main_power_meter)
+nereus_add_test(tst_composite_main_power_scale)
+nereus_add_test(tst_main_power_descriptors)
+nereus_add_test(tst_main_power_meter_poller)
+nereus_add_test(tst_tx_applet_power_row)
+
+nereus_add_test(tst_accessory_readouts)
+# The Tuner Genius, Power Genius and RF2K-S panels in layout 3: the rows
+# each has, values while passing power, dashes on forward, reflected and
+# SWR when not, every row dashed for an absent device, the tuner's three
+# forward scales and the RF2K-S text line.
+nereus_add_test(tst_accessory_panels_layout3)
 # The bar gauge's scale numbers at the 96 dpi text size (7 points = 9 px):
 # drawn whole with a clear row under them, the gauge 30 px tall where the
 # scale font is 7 px (the Mac) and taller only where it is larger.

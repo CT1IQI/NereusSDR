@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-08 - Workspace preview only: a reading consumer's cached
 //                 readings are replayed to that consumer alone (a callback,
 //                 not readingUpdated), and cachedReading() seeds inert
@@ -137,6 +140,7 @@ class RxChannel;
 class TxChannel;
 class MeterWidget;
 class RadioStatus;
+class MainPowerMeter;
 class SMeterWidget;
 class WdspEngine;
 class RadioModel;
@@ -376,6 +380,7 @@ public:
     // should use these setters when changing global units or PA rating.
     void setUnitMode(MeterItem::MeterUnit unit);
     void rescalePowerMeters(int watts);
+    void setMainPowerMeter(MainPowerMeter* meter);
     static const QList<int>& remoteTxPeakBindingsNotSent();
 
     // ── Polling interval (Task 3.1, MultimeterPage wire-up) ──────────────────
@@ -572,6 +577,8 @@ private:
     std::function<qint64()> m_monotonicSource;
     MeterItem::MeterUnit m_unitMode{MeterItem::MeterUnit::dBm};
     int m_powerScale{0};
+    QPointer<MainPowerMeter> m_mainPowerMeter;
+    void applyMainPowerScale(MeterWidget* target = nullptr) const;
     QMetaObject::Connection m_rxDestroyed, m_txDestroyed, m_paDestroyed, m_statusDestroyed;
     QVector<QMetaObject::Connection> m_remoteConnections;
     QTimer m_timer;

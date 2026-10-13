@@ -51,6 +51,14 @@
 //               amplifier link: the poll waits for the tuner's answer
 //               to the one before. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: The status poll runs every 250 ms (it was 1 s), and every
+//               62 ms while the Core or the tuner's own pttA, pttB or
+//               tuning flag says keyed, and for 2 s after
+//               (GeniusPollPacer). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-12: Two comments that named the 1 Hz poll give the new
+//               rates. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 #include "TgxlConnection.h"
 #include "AppSettings.h"
@@ -85,7 +93,7 @@ TgxlConnection::TgxlConnection(QObject* parent)
     : QObject(parent)
     , m_socket(new QTcpSocket(this))
 {
-    m_pollTimer.setInterval(1000);  // 1 Hz per AetherSDR [@0cd4559]
+    // m_pollPacer set the poll interval (kPollReceiveMs) and keeps it.
     connect(&m_pollTimer, &QTimer::timeout, this, &TgxlConnection::pollStatus);
 
     // Keepalive timer: issues a status poke at the configured interval.
@@ -575,6 +583,11 @@ void TgxlConnection::onConnected(quint64 attemptGeneration)
     // this one. The handshake's own `status` restarts the wait before any
     // poll can run, so today this only guards a change in that order.
     m_statusGate.reset();
+    // Nor does what the last connection's tuner said keep the poll fast.
+    m_devicePttA = false;
+    m_devicePttB = false;
+    m_deviceTuning = false;
+    m_pollPacer.reset();
     clearIdentityAttempt();
     if (m_identityAdmissionRequired) {
         // Bound the complete TCP-handshake/V/info/owner-approval interval. A
@@ -913,6 +926,7 @@ void TgxlConnection::processLine(const QString& line,
                     if (eq > 0)
                         kvs.insert(part.left(eq), part.mid(eq + 1));
                 }
+                noteDeviceKeys(kvs);
                 if (!kvs.isEmpty())
                     emit statusUpdated(kvs);
             }
@@ -976,8 +990,9 @@ void TgxlConnection::processLine(const QString& line,
             // TGXL tune lane: the tuning flag too, so a cycle's sweep (or
             // its absence) is in the log.
             // Info only when this object's state or tuning flag changed; the
-            // 1 Hz status answer repeats them (Core journal volume, Rock 5C
-            // bench 2026-10-09). A sweep still shows as tuning=1 then 0.
+            // status answer (4 a second in receive, about 16 keyed) repeats
+            // them (Core journal volume, Rock 5C bench 2026-10-09). A sweep
+            // still shows as tuning=1 then 0.
             const QString state = kvs.value("state", kvs.value("status", "unknown"));
             const QString tuning = kvs.value(QStringLiteral("tuning"), QStringLiteral("-"));
             const QString logged = state + QLatin1Char('|') + tuning;
@@ -993,8 +1008,10 @@ void TgxlConnection::processLine(const QString& line,
         }
 
         if (object == "state") {
+            noteDeviceKeys(kvs);
             emit stateUpdated(kvs);
         } else if (object == "status") {
+            noteDeviceKeys(kvs);
             emit statusUpdated(kvs);
         }
         return;
@@ -1028,8 +1045,9 @@ quint32 TgxlConnection::writeProtocolCommand(const QString& cmd)
     m_socket->write(line.toUtf8());
     qCDebug(lcTgxl) << "TgxlConnection: sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
-    // The 1 Hz status poll and the auto-ping log at debug, not info; at
-    // info they filled the Core's journal (Rock 5C bench 2026-10-09).
+    // The status poll (4 a second in receive, about 16 keyed) and the
+    // auto-ping log at debug, not info; at info they filled the Core's
+    // journal (Rock 5C bench 2026-10-09).
     if (isPeriodicCommand(cmd)) {
         qCDebug(lcTgxl) << "TX seq=" << seq << "cmd:" << cmd;
     } else {
@@ -1061,6 +1079,27 @@ void TgxlConnection::pollStatus()
     if (m_connected) {
         sendCommand("status");
     }
+}
+
+// The tuner's own word on whether it is passing power or tuning, from any
+// status answer or state push that carries the flag. Either port keyed
+// counts, as in AetherSDR's applyPollRateFor,
+// src/core/TgxlConnection.cpp:512-517 [@a9a83e66]; `tuning` is added here.
+void TgxlConnection::noteDeviceKeys(const QMap<QString, QString>& kvs)
+{
+    const auto pttA = kvs.constFind(QStringLiteral("pttA"));
+    if (pttA != kvs.constEnd()) {
+        m_devicePttA = pttA->toInt() != 0;
+    }
+    const auto pttB = kvs.constFind(QStringLiteral("pttB"));
+    if (pttB != kvs.constEnd()) {
+        m_devicePttB = pttB->toInt() != 0;
+    }
+    const auto tuning = kvs.constFind(QStringLiteral("tuning"));
+    if (tuning != kvs.constEnd()) {
+        m_deviceTuning = tuning->toInt() == 1;
+    }
+    m_pollPacer.setDeviceBusy(m_devicePttA || m_devicePttB || m_deviceTuning);
 }
 
 // -------------------------------------------------------------------------

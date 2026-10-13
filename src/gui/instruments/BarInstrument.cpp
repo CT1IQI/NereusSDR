@@ -70,6 +70,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Footer fit: sizeHint() asks for the trough, scale
@@ -84,6 +87,14 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - The compact form shows one dash for no reading, as the
 //                 footer of the full form does (upstream drew two).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - A reading of the caller's own (setReading, setValue):
+//                 the places that looked the primary reading and its name
+//                 up in the binding table go through primaryReading() and
+//                 nameOf(). The compact form's number size and its small
+//                 second reading (setCompactValuePx, setCompactNote), and
+//                 the footer without its peak and limit text
+//                 (setFooterDetailVisible).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -133,6 +144,9 @@ bool BarInstrument::setPrimary(int bindingId)
     const ReadingDescriptor* d = readingFor(bindingId);
     if (!d || !d->hasScale) { return false; }
     m_primary = bindingId;
+    // NereusSDR: a bound reading replaces the caller's own, see setReading().
+    m_ownReading.reset();
+    m_ownName.clear();
     // Kein Startwert — siehe NeedleInstrument::setPrimary.
     clearValue();
     return true;
@@ -209,6 +223,83 @@ void BarInstrument::clearSecondValue()
     update();
 }
 
+// NereusSDR: see the header.
+void BarInstrument::setPrimaryScale(const ReadingDescriptor& d)
+{
+    m_ownReading = d;
+    refreshFooter();
+    update();
+}
+
+void BarInstrument::setReading(const ReadingDescriptor& d, const QString& name)
+{
+    m_ownReading = d;
+    m_ownName = name;
+    m_primary = -1;
+    refreshFooter();
+    update();
+}
+
+// NereusSDR: see the header. The same steps as onReading() for the
+// primary binding.
+void BarInstrument::setValue(double value)
+{
+    m_value = value;
+    m_hasValue = true;
+    m_peak.note(value);
+    refreshFooter();
+    update();
+}
+
+// NereusSDR: see the header.
+void BarInstrument::setCompactValuePx(int px)
+{
+    if (m_compactValuePx == px) { return; }
+    m_compactValuePx = px;
+    update();
+}
+
+// NereusSDR: see the header.
+void BarInstrument::setCompactNote(const QString& label, const QString& number)
+{
+    if (m_noteLabel == label && m_noteNumber == number) { return; }
+    m_noteLabel = label;
+    m_noteNumber = number;
+    update();
+}
+
+// NereusSDR: see the header.
+void BarInstrument::setFooterDetailVisible(bool on)
+{
+    if (m_footerDetail == on) { return; }
+    m_footerDetail = on;
+    if (m_footer) { m_footer->setDetailVisible(on); }
+    refreshFooter();
+}
+
+// NereusSDR: see the header.
+const ReadingDescriptor* BarInstrument::primaryReading() const
+{
+    if (m_ownReading.has_value()) { return &m_ownReading.value(); }
+    return readingFor(m_primary);
+}
+
+// NereusSDR: see the header.
+QString BarInstrument::readingName() const
+{
+    const ReadingDescriptor* d = primaryReading();
+    return d ? nameOf(*d) : QString();
+}
+
+// NereusSDR: see the header.
+QString BarInstrument::nameOf(const ReadingDescriptor& d) const
+{
+    if (m_ownReading.has_value() && &d == &m_ownReading.value()) {
+        return m_ownName;
+    }
+    return d.thetisName();
+}
+
 // From Longpath src/gui/instruments/BarInstrument.cpp:104 [@551576e3]
 void BarInstrument::onReading(int bindingId, double value)
 {
@@ -231,9 +322,11 @@ void BarInstrument::refreshFooter()
     // Wortgleich mit NeedleInstrument::refreshFooter — dieselbe
     // Fusszeile, dieselben Felder, damit der Blick beim Umschalten
     // nicht springt.
-    const ReadingDescriptor* d = readingFor(m_primary);
+    // NereusSDR: primaryReading() and nameOf() for readingFor(m_primary)
+    // and d->thetisName(), see setReading().
+    const ReadingDescriptor* d = primaryReading();
     if (!d || !m_footer) { return; }
-    m_footer->setCaption(d->thetisName());
+    m_footer->setCaption(nameOf(*d));
 
     if (!m_hasValue) {
         // Wortgleich mit NeedleInstrument::refreshFooter — dieselbe
@@ -341,7 +434,31 @@ void BarInstrument::paintOne(QPainter& p, const QRectF& area,
 
         p.setFont(capFont);
         p.setPen(QColor(Style::role("text-scale", Style::kTextScale)));
-        p.drawText(QPointF(area.left(), textY), d.thetisName());
+        // NereusSDR: nameOf(d) for d.thetisName(), see setReading().
+        p.drawText(QPointF(area.left(), textY), nameOf(d));
+        // NereusSDR: the small second reading, see setCompactNote(). A
+        // hairline sets it apart from the row's name; its label is a size
+        // down and its number is the dim reading color, so it reads as a
+        // second, lesser reading. Only the primary row carries it.
+        if (&d == primaryReading()
+            && (!m_noteLabel.isEmpty() || !m_noteNumber.isEmpty())) {
+            const QFontMetricsF capFm(capFont);
+            qreal x = area.left() + capFm.horizontalAdvance(nameOf(d)) + 10.0;
+            p.setPen(QPen(QColor(Style::role("text-scale", Style::kTextScale)), 1.0));
+            p.drawLine(QPointF(x, textY - capFm.ascent() + 2.0),
+                       QPointF(x, textY + 1.0));
+            x += 9.0;
+            const QFont labelFont = Style::capsFont(p.font(), Style::kFontCaption);
+            p.setFont(labelFont);
+            p.setPen(QColor(Style::role("text-scale", Style::kTextScale)));
+            p.drawText(QPointF(x, textY), m_noteLabel);
+            if (!m_noteLabel.isEmpty()) {
+                x += QFontMetricsF(labelFont).horizontalAdvance(m_noteLabel) + 6.0;
+            }
+            p.setFont(Style::monoFont(p.font(), Style::kFontSmall, QFont::Normal));
+            p.setPen(Instrument::measuredDim());
+            p.drawText(QPointF(x, textY), m_noteNumber);
+        }
 
         {
             // Ohne Messung ein Strich, keine leere Stelle (Hausstil
@@ -354,8 +471,12 @@ void BarInstrument::paintOne(QPainter& p, const QRectF& area,
             // drew two here, so the two forms side by side disagreed.
             const QString text = hasValue ? d.textWithUnit(value)
                                           : QStringLiteral("\u2014");
+            // NereusSDR: the caller's size when it set one, see
+            // setCompactValuePx().
             const QFont valueFont = Style::monoFont(
-                p.font(), Style::kFontCaption, QFont::DemiBold);
+                p.font(),
+                m_compactValuePx > 0 ? m_compactValuePx : Style::kFontCaption,
+                QFont::DemiBold);
             p.setFont(valueFont);
             const QFontMetricsF fm(valueFont);
             p.setPen(hasValue ? col : Instrument::measuredDim());
@@ -452,7 +573,8 @@ void BarInstrument::paintEvent(QPaintEvent*)
 // bleibt, wie es ist.
 void BarInstrument::paintInto(QPainter& painter, QSize forSize, bool bare)
 {
-    const ReadingDescriptor* d = readingFor(m_primary);
+    // NereusSDR: primaryReading() for readingFor(m_primary), see setReading().
+    const ReadingDescriptor* d = primaryReading();
     if (!d || !d->hasScale) { return; }
 
     // Eine VERBORGENE Fusszeile belegt keinen Platz. Ein verborgenes

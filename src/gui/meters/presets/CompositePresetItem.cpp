@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Make bounded clock float rounding explicit by J.J. Boyd
@@ -386,7 +389,34 @@ void CompositePresetItem::resetRxSource()
     }
     if (changed) { markPresentationDirty(m_face == Face::Anan); }
 }
-void CompositePresetItem::setPowerScale(int watts) { if(watts>0 && watts!=m_powerScale) { m_powerScale=watts; markPresentationDirty(true); } }
+void CompositePresetItem::setPowerScale(int watts) {
+    if(watts>0 && (watts!=m_powerScale || m_displayPowerTop>0.0)) {
+        m_powerScale=watts; m_displayPowerTop=0.0; m_legalMarkerW=0.0;
+        markPresentationDirty(true);
+    }
+}
+void CompositePresetItem::setPowerScale(int visualLimitWatts,double topWatts) {
+    if(visualLimitWatts<=0 || topWatts<=0.0) { return; }
+    if(m_displayPowerTop!=topWatts || m_legalMarkerW!=visualLimitWatts) {
+        m_displayPowerTop=topWatts; m_legalMarkerW=visualLimitWatts;
+        markPresentationDirty(true);
+    }
+}
+bool CompositePresetItem::hasLegalMarker(int i) const {
+    return i>=0 && i<m_channels.size() && legalMarkerW()>0.0
+        && (i==0?bindingId():m_channels[i].binding)==MeterBinding::TxPower
+        && m_channels[i].config["normalisePower"].toBool();
+}
+double CompositePresetItem::powerBasisForChannel(int i) const {
+    const Channel& channel=m_channels[i];
+    if(m_displayPowerTop>0.0 && (i==0?bindingId():channel.binding)==MeterBinding::TxPower
+        && channel.calibration.lastKey()>0.0) {
+        // Preserve every relative curve point; its existing endpoint maps
+        // to the display top. The legal marker never defines this basis.
+        return m_displayPowerTop*100.0/channel.calibration.lastKey();
+    }
+    return m_powerScale;
+}
 void CompositePresetItem::setFrequency(qint64 hz) { if(m_vfo && m_vfo->frequency()!=hz) { markPresentationDirty(); } if(m_vfo) { m_vfo->setFrequency(hz); m_vfo->setUnavailableText(hz>0?QString():QStringLiteral("No live slice reading")); } }
 void CompositePresetItem::setModeLabel(const QString& text) { if(m_stateMode!=text) { m_stateMode=text; markPresentationDirty(); } if(m_vfo) { m_vfo->setModeLabel(text); } }
 void CompositePresetItem::setBandLabel(const QString& text) { if(m_stateBand!=text) { m_stateBand=text; markPresentationDirty(); } if(m_vfo) { m_vfo->setBandLabel(text); } }
@@ -431,7 +461,7 @@ QPointF CompositePresetItem::calibratedPoint(int i,double value) const {
     //[2.10.3.9]MW0LGE refactor for speed
     value=std::round(value*100)/100;
     if(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)) { value+=20; }
-    if(c["normalisePower"].toBool()) { value*=100.0/m_powerScale; }
+    if(c["normalisePower"].toBool()) { value*=100.0/powerBasisForChannel(i); }
     const auto& cal=channel.calibration; if(!std::isfinite(value)) { return cal.first(); } if(value<=cal.firstKey()) { return cal.first(); } if(value>=cal.lastKey()) { return cal.last(); }
     auto high=cal.upperBound(value), low=high; --low; const double t=(value-low.key())/(high.key()-low.key()); return low.value()+(high.value()-low.value())*t;
 }
@@ -602,7 +632,7 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
     struct TickLabel { QRectF box; QRectF ink; QString value; QFont font; };
     QVector<TickLabel> workspaceLabels;
     for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it) {
-        const double raw=c["normalisePower"].toBool() ? it.key()*m_powerScale/100.0 : it.key(); const double x=pos(raw);
+        const double raw=c["normalisePower"].toBool() ? it.key()*powerBasisForChannel(index)/100.0 : it.key(); const double x=pos(raw);
         p.drawLine(QPointF(x,base),QPointF(x,base-10*scale)); QRectF label(x-22*scale,base-30*scale,44*scale,18*scale);
         const QString value=QString::number(raw,'g',4);
         if (WorkspacePreview::enabled()) {
@@ -658,12 +688,16 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
             p.setFont(label.font); p.drawText(label.box,Qt::AlignCenter,label.value);
         }
     }
+    if(hasLegalMarker(index)) {
+        p.setPen(QPen(color(m_config,"highColor"),2));
+        p.drawLine(QPointF(pos(legalMarkerW()),base),QPointF(pos(legalMarkerW()),base-10*scale));
+    }
     if(channel.dynamics.hasReading()) {
         if(c["peakHold"].toBool()) { p.setPen(QPen(color(m_config,"highColor"),3)); p.drawLine(QPointF(pos(channel.dynamics.maxHistory()),top),QPointF(pos(channel.dynamics.maxHistory()),base)); }
         p.setPen(QPen(color(c,"color"),3)); p.drawLine(QPointF(pos(channel.dynamics.value()),top),QPointF(pos(channel.dynamics.value()),base));
     }
     const auto reading=[&](double value) { return QString::number(value,'f',1)+(channel.units.isEmpty()?QString():" "+channel.units); };
-    p.setPen(color(c,"color")); if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(left,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--",size,Qt::AlignLeft|Qt::AlignVCenter); }
+    p.setPen(hasLegalMarker(index) && channel.dynamics.value()>=legalMarkerW()?color(m_config,"highColor"):color(c,"color")); if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(left,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--",size,Qt::AlignLeft|Qt::AlignVCenter); }
     p.setPen(color(m_config,"highColor")); if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(left+(right-left)*.68+2*scale,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.maxHistory()):"--",size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool background) {
@@ -683,7 +717,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
             const Channel& channel=m_channels[i];QPainterPath arc;bool first=true;
             const QPointF pivot=needlePivot(i,r);
             for(auto it=channel.calibration.cbegin();it!=channel.calibration.cend();++it) {
-                const double raw=channel.config["normalisePower"].toBool()?it.key()*m_powerScale/100.0:it.key();
+                const double raw=channel.config["normalisePower"].toBool()?it.key()*powerBasisForChannel(i)/100.0:it.key();
                 const QPointF tip=needleTip(i,raw,r),delta=tip-pivot;
                 const QPointF direction=delta/qMax(.001,std::hypot(delta.x(),delta.y()));
                 if(first) {arc.moveTo(tip);first=false;} else {arc.lineTo(tip);}
@@ -700,9 +734,15 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
         if(!channelVisible(i)) { continue; } const Channel& channel=m_channels[i]; const QJsonObject& c=channel.config;
         const QPointF pivot=needlePivot(i,r); const double stroke=c["strokeWidth"].toDouble()*std::hypot(r.width(),r.height())/450;
         if(background) {
+            if(hasLegalMarker(i)) {
+                const QPointF tip=needleTip(i,legalMarkerW(),r);
+                const QPointF direction=(tip-pivot)/qMax(.001,std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y()));
+                p.setPen(QPen(color(m_config,"highColor"),1.5));
+                p.drawLine(tip,tip-direction*(7*scale));
+            }
             QPainterPath arc; int n=0;
             for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it,++n) {
-                const double raw=c["normalisePower"].toBool()?it.key()*m_powerScale/100.0:it.key()-(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)?20:0);
+                const double raw=c["normalisePower"].toBool()?it.key()*powerBasisForChannel(i)/100.0:it.key()-(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)?20:0);
                 const QPointF tip=needleTip(i,raw,r); if(n==0) { arc.moveTo(tip); } else { arc.lineTo(tip); }
                 const QPointF direction=(tip-pivot)/std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y());
                 p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawLine(tip,tip-direction*(7*scale));
@@ -792,7 +832,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     };
     const auto raw=[&](int i,double key) {
         const Channel& channel=m_channels[i]; const int binding=i==0?bindingId():channel.binding;
-        return channel.config["normalisePower"].toBool()?key*m_powerScale/100.0:
+        return channel.config["normalisePower"].toBool()?key*powerBasisForChannel(i)/100.0:
             key-(m_aboveS9 && isReceiveSignalBinding(binding)?20:0);
     };
     const auto theta=[&](int i,double value) {
@@ -839,6 +879,12 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
             p.setPen(QPen(ink,stroke)); p.drawLine(a,b);
             QPainterPath path; path.moveTo(a); path.lineTo(b); recordClearance(path,stroke);
         };
+        for(int i=0;i<m_channels.size();++i) {
+            if(!included(i) || !hasLegalMarker(i)) { continue; }
+            const QPointF tip=needleTip(i,legalMarkerW(),skin),pivot=needlePivot(i,skin);
+            const QPointF direction=(tip-pivot)/qMax(.001,std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y()));
+            line(tip,tip-direction*(7*scale),qMax(1.0,1.5*scale),onDarkGlass(color(m_config,"highColor")));
+        }
         const auto arc=[&](int i,double begin,double end,const QBrush& ink,double width) {
             QPainterPath path;
             const double stroke=qMax(1.0,width*scale);

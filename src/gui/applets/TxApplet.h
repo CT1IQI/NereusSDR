@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -235,6 +238,7 @@ class QTimer;
 namespace NereusSDR {
 
 class HGauge;
+class BarInstrument;
 class MicProfileManager;
 class PureSignal;
 class PureSignalSessionFacade;
@@ -303,6 +307,7 @@ public:
     // wireControls().  HPSDRModel::FIRST is a safe sentinel default
     // (yields 100 W ceiling).  Bench-reported #167 follow-up.
     void rescaleFwdGaugeForModel(HPSDRModel model);
+    void refreshPowerReadouts();
 
     // K.2: MOX button tooltip override based on current DSP mode.
     // Public static so tests can call it directly without constructing a full
@@ -410,8 +415,8 @@ public slots:
     void applyStationCfcCompression(const QList<double>& binsDb);
     void setStationCfcBarChartUnavailable(const QString& reason);
     // Parity Task 33: the RF Pwr and SWR bars, for a test.
-    HGauge* fwdPowerGauge() const { return m_fwdPowerGauge; }
-    HGauge* swrGauge() const { return m_swrGauge; }
+    BarInstrument* fwdPowerGauge() const { return m_fwdPowerGauge; }
+    BarInstrument* swrGauge() const { return m_swrGauge; }
     // R-R3-49 (parity Task 7): PS-A arms PureSignal and keys nothing. It
     // follows this gate (not setTransmitPermitted): a remote window whose
     // Core offers arming (transmitSettingsVersion 7) uses it while the
@@ -619,9 +624,9 @@ private:
     QLabel*  m_holderLabel = nullptr;   // fix wave I4
     QPushButton* m_takeTransmitBtn = nullptr;  // Task 78
     // 1. Forward Power gauge
-    HGauge*  m_fwdPowerGauge  = nullptr;
+    BarInstrument*  m_fwdPowerGauge  = nullptr;
     // 2. SWR gauge
-    HGauge*  m_swrGauge       = nullptr;
+    BarInstrument*  m_swrGauge       = nullptr;
     // EMA smoothing state for fwd-power gauge (Thetis-style envelope detector
     // not yet ported; this is a simple alpha=0.25 exponential-moving-average
     // to keep the displayed value calm — RadioStatus::powerChanged fires

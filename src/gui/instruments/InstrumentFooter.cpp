@@ -58,6 +58,11 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Each label's style sheet carries the pixel size its
+//                 QFont already has, so a host panel's own
+//                 `QLabel { font-size: ... }` rule no longer resizes the
+//                 footer; setDetailVisible() leaves the middle text empty.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/InstrumentFooter.h"
@@ -72,6 +77,23 @@ namespace NereusSDR {
 
 // NereusSDR: the Longpath values, see gui/instruments/InstrumentStyle.h.
 namespace Style = ::NereusSDR::InstrumentStyle;
+
+namespace {
+// NereusSDR: a label's color sheet with the pixel size its QFont was given
+// (capsFont and monoFont set one). A style sheet rule on an ancestor,
+// such as an applet's `QLabel { font-size: 11px; }`, otherwise replaces
+// the QFont's size and the footer changes with its host.
+QString labelSheet(const QLabel* label, const QString& color)
+{
+    const int px = label->font().pixelSize();
+    if (px <= 0) {
+        return QStringLiteral("QLabel { color: %1; background: transparent; }")
+            .arg(color);
+    }
+    return QStringLiteral("QLabel { color: %1; background: transparent; font-size: %2px; }")
+        .arg(color).arg(px);
+}
+} // namespace
 
 // From Longpath src/gui/instruments/InstrumentFooter.cpp:18 [@551576e3]
 InstrumentFooter::InstrumentFooter(QWidget* parent)
@@ -91,17 +113,17 @@ InstrumentFooter::InstrumentFooter(QWidget* parent)
     // 8 px mit von Hand gerechneter Laufweite; 9 ist die benannte
     // Stufe und liegt weiterhin im Bereich, den HAUSSTIL.md nennt.
     m_caption->setFont(Style::capsFont(m_caption->font()));
+    // NereusSDR: labelSheet() adds the font's own size, see above.
     m_caption->setStyleSheet(Style::themed(
-        QStringLiteral("QLabel { color: %1; background: transparent; }")
-            .arg(Style::kTextScale)));
+        labelSheet(m_caption, QString::fromLatin1(Style::kTextScale))));
     lay->addWidget(m_caption, 0, Qt::AlignBaseline);
 
     m_middle = new QLabel(this);
     // Zahlen, die sich aendern -> Monospace (HAUSSTIL Regel 2).
     m_middle->setFont(Style::monoFont(m_middle->font(), Style::kFontSmall));
+    // NereusSDR: labelSheet() adds the font's own size, see above.
     m_middle->setStyleSheet(Style::themed(
-        QStringLiteral("QLabel { color: %1; background: transparent; }")
-            .arg(Instrument::measuredDim().name())));
+        labelSheet(m_middle, Instrument::measuredDim().name())));
     lay->addWidget(m_middle, 1, Qt::AlignBaseline);
 
     m_value = new QLabel(this);
@@ -135,9 +157,8 @@ void InstrumentFooter::setValueText(const QString& text)
 // From Longpath src/gui/instruments/InstrumentFooter.cpp:74 [@551576e3]
 void InstrumentFooter::setValueColour(const QColor& c)
 {
-    m_value->setStyleSheet(
-        QStringLiteral("QLabel { color: %1; background: transparent; }")
-            .arg(c.name()));
+    // NereusSDR: labelSheet() adds the font's own size, see above.
+    m_value->setStyleSheet(labelSheet(m_value, c.name()));
 }
 
 void InstrumentFooter::setPeakAndLimit(const QString& peakText,
@@ -151,7 +172,16 @@ void InstrumentFooter::setPeakAndLimit(const QString& peakText,
     // oben, "PK" darunter) und in beiden Sprachen lesbar.
     if (!peakText.isEmpty())  { parts << QStringLiteral("PK %1").arg(peakText); }
     if (!limitText.isEmpty()) { parts << QStringLiteral("LIM %1").arg(limitText); }
-    m_middle->setText(parts.join(QStringLiteral(" · ")));
+    // NereusSDR: empty when the detail is switched off, see setDetailVisible().
+    m_middle->setText(m_detailVisible ? parts.join(QStringLiteral(" · ")) : QString());
+}
+
+// NereusSDR: the middle label stays in the layout (its stretch keeps the
+// value at the right edge) and only its text goes.
+void InstrumentFooter::setDetailVisible(bool on)
+{
+    m_detailVisible = on;
+    if (!on) { m_middle->clear(); }
 }
 
 int InstrumentFooter::valueMinimumWidthForTest() const { return m_value->minimumWidth(); }
