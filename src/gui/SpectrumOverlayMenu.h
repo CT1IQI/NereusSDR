@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Export signal addresses for Windows DLL consumers.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -27,6 +29,9 @@
 //                 via Anthropic Claude Code.
 //   2026-10-01 - Completed 3D port history during PR review by
 //                 J.J. Boyd (KG4VCF), with AI assistance via OpenAI Codex.
+//   2026-10-12 - setCtunAvailable takes the reason the C-Tune switch is
+//                 held. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QWidget>
@@ -35,6 +40,7 @@
 #include <QCheckBox>
 #include <QLabel>
 #include <QPushButton>
+#include "gui/NereusGuiExport.h"
 
 namespace NereusSDR {
 
@@ -46,7 +52,7 @@ namespace NereusSDR {
 // be wrapped in a ContainerWidget (Phase 3F) without changes.
 //
 // From plan Step 9 / AetherSDR SpectrumOverlayMenu pattern.
-class SpectrumOverlayMenu : public QWidget {
+class NEREUS_GUI_EXPORT SpectrumOverlayMenu : public QWidget {
     Q_OBJECT
 
 public:
@@ -58,7 +64,9 @@ public:
                    bool heatMap, float refLevel, float dynRange,
                    bool ctunEnabled = true);
 
-    void setCtunAvailable(bool available);
+    // `heldReason`, when C-Tune is available: the receiver's setting is not
+    // this window's to change, and the switch is disabled with these words.
+    void setCtunAvailable(bool available, const QString& heldReason = QString());
     void setCtunState(bool pinned);
 
     // Absolute RF Hz under the cursor at popup time.  The caller sets it

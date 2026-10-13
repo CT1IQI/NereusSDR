@@ -52,6 +52,11 @@
 //                                    dropped from a saved layout, and an
 //                                    old id does nothing. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  The CTUN button on a receiver whose
+//                                    C-Tune setting is another's to change:
+//                                    unavailable with the reason, and a
+//                                    click changes nothing. AI-assisted via
+//                                    Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -637,6 +642,21 @@ private slots:
         QCOMPARE(f.spectrumB.ctunEnabled(), ctunB);
         f.dispatcher->apply(&item, kSliceA);
         QCOMPARE(item.buttonState(Id::Ctun), !ctunA);
+
+        // A receiver whose C-Tune setting is another holder's: the button
+        // shows the receiver's setting, unavailable with the reason, and a
+        // click changes nothing.
+        const QString held = QStringLiteral(
+            "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
+        f.spectrumA.applyRemoteCtunState(true, !ctunA, held);
+        const ContainerButtonDispatcher::State heldState = f.dispatcher->stateOf(Id::Ctun, kSliceA);
+        QVERIFY(!heldState.available);
+        QCOMPARE(heldState.reason, held);
+        QCOMPARE(heldState.on, !ctunA);
+        QCOMPARE(f.dispatcher->click(Id::Ctun, kSliceA), held);
+        QCOMPARE(f.spectrumA.ctunEnabled(), !ctunA);
+        f.spectrumA.applyRemoteCtunState(true, !ctunA);
+        QVERIFY(f.dispatcher->stateOf(Id::Ctun, kSliceA).available);
     }
 
     void vaxButtonsOpenAndCloseThisComputersVaxOutputs()

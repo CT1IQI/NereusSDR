@@ -36,6 +36,9 @@
 //   2026-10-09 - The section titles read WorkspacePreview::roleColourName()
 //                 (title-text) with the preview on. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the C-Tune switch on a receiver whose setting is another's
+//                 to change is shown disabled with the reason. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayMenu.h"
@@ -507,9 +510,14 @@ void SpectrumOverlayMenu::setValues(int wfColorGain, int wfBlackLevel, bool auto
     m_ctunCheck->blockSignals(false);
 }
 
-void SpectrumOverlayMenu::setCtunAvailable(bool available)
+void SpectrumOverlayMenu::setCtunAvailable(bool available, const QString& heldReason)
 {
-    m_ctunCheck->setEnabled(available);
+    const bool held = available && !heldReason.isEmpty();
+    m_ctunCheck->setEnabled(available && !held);
+    if (held) {
+        m_ctunCheck->setToolTip(heldReason);
+        return;
+    }
     m_ctunCheck->setToolTip(available
         ? QStringLiteral("Keep the receive window fixed while tuning within it")
         : QStringLiteral("C-Tune requires a connected Core with remote C-Tune support"));

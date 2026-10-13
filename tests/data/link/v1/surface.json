@@ -6277,6 +6277,12 @@
                     "kind": "bool",
                     "name": "onAir",
                     "ordinal": 7
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "receiverHolderDeviceId",
+                    "ordinal": 8
                 }
             ]
         },

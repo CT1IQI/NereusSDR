@@ -1,5 +1,11 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  Check cross-DLL signal metadata and
+//                                    explicitly simulate VAX availability
+//                                    in microphone pause fixtures.
+//                                    AI-assisted via OpenAI Codex.
+//   2026-10-12: Cover pin deltas arriving after their command result on a
+//               budgeted display. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12  J.J. Boyd / KG4VCF  Fixed-window TX mini admission and
 //                                    stale-domain/frame regressions across
 //                                    legacy/budget and picture negotiation.
@@ -108,6 +114,16 @@
 //               step (with a coarse timer's 5% slack), not by the silence
 //               window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: new savedCtunIsNotSentForAReceiverAnotherHolds (a slice
+//               that shares the Core's receiver, and one only listened to)
+//               and panMenuShowsAHeldCtunSwitchDisabledWithTheReason;
+//               remoteCtunProjectionPreservesPreferenceWithoutEcho covers
+//               the held reason. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-12: savedCtunIsNotSentForAReceiverAnotherHolds gains a Core
+//               from before the holder was named: the window asks once and
+//               is refused, as it always was. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -189,6 +205,7 @@
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/SpectrumOverlayMenu.h"
 #include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -363,6 +380,35 @@ public:
     int stripped = 0;
 };
 
+// The command result may precede its coalesced pin delta. Keep that real
+// mirror message until the test has observed the result on the old value.
+class HoldingCtunDeltaTransport final : public Test::LoopbackTransport {
+public:
+    HoldingCtunDeltaTransport() : LoopbackTransport(QStringLiteral("station")) {}
+    void sendText(const QByteArray& wire) override
+    {
+        SessionMessage message;
+        if (hold && SessionMessages::decode(wire, &message)
+            && message.kind == SessionMessageKind::Delta) {
+            for (const MirrorUpdate& update : message.updates) {
+                if (update.name == "streamCtunPinned") {
+                    held.append(wire);
+                    return;
+                }
+            }
+        }
+        LoopbackTransport::sendText(wire);
+    }
+    void releaseHeld()
+    {
+        hold = false;
+        const QList<QByteArray> messages = std::exchange(held, {});
+        for (const QByteArray& wire : messages) { LoopbackTransport::sendText(wire); }
+    }
+    bool hold = false;
+    QList<QByteArray> held;
+};
+
 class HoldingAllocationResultTransport final : public Test::LoopbackTransport {
 public:
     HoldingAllocationResultTransport() : LoopbackTransport(QStringLiteral("station")) {}
@@ -429,6 +475,33 @@ QList<QJsonObject> controlsFor(const QSignalSpy& spy, const QString& op)
         if (control.value(QStringLiteral("op")) == op) { controls.append(control); }
     }
     return controls;
+}
+
+// A Core from before 2026-10-12 does not say who holds a slice's receiver.
+// This is what such a Core sends where a current one sends `wire`: the same
+// message with no receiverHolderDeviceId among its values, and no message
+// at all where that value was the only change. For
+// LoopbackTransport::setRewritesIncoming on the window's end of the link.
+QByteArray asACoreThatNamesNoReceiverHolderSends(const QByteArray& wire)
+{
+    static const QLatin1String kHolder("receiverHolderDeviceId");
+    if (!wire.contains(kHolder.data())) { return wire; }
+    QJsonObject message = QJsonDocument::fromJson(wire).object();
+    for (const QString& list : {QStringLiteral("properties"), QStringLiteral("fields")}) {
+        if (!message.value(list).isArray()) { continue; }
+        QJsonArray kept;
+        for (const QJsonValue& entry : message.value(list).toArray()) {
+            if (entry.toObject().value(QStringLiteral("name")).toString() != kHolder) {
+                kept.append(entry);
+            }
+        }
+        if (kept.isEmpty() && message.value(QStringLiteral("type")).toString()
+                                  == QStringLiteral("delta")) {
+            return {};
+        }
+        message.insert(list, kept);
+    }
+    return QJsonDocument(message).toJson(QJsonDocument::Compact);
 }
 
 // The station's two-slice tone and this computer's speaker, each paced
@@ -854,6 +927,30 @@ private slots:
         const QString path = AppSettings::instance().filePath();
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));
+    }
+
+    void crossDllSignalsResolveToTheirDeclaredMetadata()
+    {
+        const QMetaMethod ctun = QMetaMethod::fromSignal(&SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(ctun.isValid());
+        QCOMPARE(ctun.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                         "ctunEnabledChanged(bool)"));
+        const QMetaMethod frequency = QMetaMethod::fromSignal(&SpectrumWidget::frequencyClicked);
+        QVERIFY(frequency.isValid());
+        QCOMPARE(frequency.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                              "frequencyClicked(double)"));
+        const QMetaMethod centre = QMetaMethod::fromSignal(&SpectrumWidget::centerChanged);
+        QVERIFY(centre.isValid());
+        QCOMPARE(centre.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                           "centerChanged(double)"));
+        const QMetaMethod menu = QMetaMethod::fromSignal(&SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(menu.isValid());
+        QCOMPARE(menu.methodIndex(), SpectrumOverlayMenu::staticMetaObject.indexOfSignal(
+                                         "ctunChanged(bool)"));
+        const QMetaMethod text = QMetaMethod::fromSignal(&SessionTransport::textReceived);
+        QVERIFY(text.isValid());
+        QCOMPARE(text.methodIndex(), SessionTransport::staticMetaObject.indexOfSignal(
+                                         "textReceived(QByteArray)"));
     }
 
     void pureSignalChunksShareMediaWithoutChangingMessageLimit()
@@ -1536,6 +1633,8 @@ private slots:
         widget.setCtunEnabled(true);
         QSignalSpy gestures(&widget, &SpectrumWidget::ctunEnabledChanged);
         QSignalSpy centres(&widget, &SpectrumWidget::centerChanged);
+        QVERIFY(gestures.isValid());
+        QVERIFY(centres.isValid());
         widget.applyRemoteCtunState(false, false);
         QVERIFY(!widget.ctunAvailable());
         QVERIFY(!widget.ctunEnabled());
@@ -1546,6 +1645,65 @@ private slots:
         QVERIFY(widget.ctunEnabled());
         QCOMPARE(gestures.size(), 0);
         QCOMPARE(centres.size(), 0);
+
+        // A receiver whose C-Tune setting is another holder's: the pan
+        // shows the receiver's setting, and its own switch changes neither
+        // that nor the saved setting.
+        const QString held = QStringLiteral(
+            "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
+        widget.applyRemoteCtunState(true, false, held);
+        QVERIFY(widget.ctunAvailable());
+        QCOMPARE(widget.ctunHeldReason(), held);
+        QVERIFY(!widget.ctunEnabled());
+        widget.setCtunEnabled(true);
+        QVERIFY(!widget.ctunEnabled());
+        widget.applyRemoteCtunState(true, true, held);
+        QVERIFY(widget.ctunEnabled());
+        widget.setCtunEnabled(false);
+        QVERIFY(widget.ctunEnabled());
+        QVERIFY(widget.ctunPreference());
+        // No Core to pin on: that reason stands alone.
+        widget.applyRemoteCtunState(false, false, held);
+        QVERIFY(widget.ctunHeldReason().isEmpty());
+        widget.applyRemoteCtunState(true, true);
+        QVERIFY(widget.ctunHeldReason().isEmpty());
+        widget.setCtunEnabled(false);
+        QVERIFY(!widget.ctunEnabled());
+        QVERIFY(!widget.ctunPreference());
+        QCOMPARE(gestures.size(), 1);
+    }
+
+    // The pan menu's C-Tune switch on a receiver whose setting is another
+    // holder's: shown, disabled, with the reason, and showing the
+    // receiver's setting.
+    void panMenuShowsAHeldCtunSwitchDisabledWithTheReason()
+    {
+        SpectrumOverlayMenu menu;
+        QCheckBox* ctun = nullptr;
+        for (QCheckBox* box : menu.findChildren<QCheckBox*>()) {
+            if (box->text().startsWith(QStringLiteral("CTUN"))) { ctun = box; }
+        }
+        QVERIFY(ctun);
+        QSignalSpy changes(&menu, &SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(changes.isValid());
+        const QString held = QStringLiteral(
+            "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
+        menu.setCtunAvailable(true, held);
+        menu.setCtunState(true);
+        QVERIFY(!ctun->isHidden());
+        QVERIFY(!ctun->isEnabled());
+        QVERIFY(ctun->isChecked());
+        QCOMPARE(ctun->toolTip(), held);
+        menu.setCtunAvailable(true);
+        QVERIFY(ctun->isEnabled());
+        QVERIFY(ctun->toolTip() != held);
+        const QString free = ctun->toolTip();
+        // No Core to pin on: its own reason, whatever the holder.
+        menu.setCtunAvailable(false, held);
+        QVERIFY(!ctun->isEnabled());
+        QVERIFY(ctun->toolTip() != held);
+        QVERIFY(ctun->toolTip() != free);
+        QCOMPARE(changes.size(), 0);
     }
 
     void acceptedWidebandContextControlsRemoteZoomWithoutLocalDemand()
@@ -1633,6 +1791,137 @@ private slots:
         QVERIFY(widget.extendedViewAllowed());
         QCOMPARE(widget.dssRowsPushedForTest(), 0);
         QCOMPARE(localDemand.size(), 0);
+    }
+
+    // A quiet budgeted display must follow the actual mirrored pin, even
+    // when that delta arrives after the command answer. No pan reselection
+    // or fresh picture is needed to complete the operator's change.
+    void budgetedCtunFollowsPinDeltaAfterTheCommandResult()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* sourceSlice = station.sliceById(sliceId);
+        QVERIFY(sourceSlice);
+        const int stream = sourceSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        const double centre = station.streamCentreHz(stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10000000, 10000000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        PanadapterApplet* first = stack.addPanadapter(QStringLiteral("first"));
+        PanadapterApplet* cohost = stack.addPanadapter(QStringLiteral("cohost"));
+        stack.setActivePan(QStringLiteral("first"));
+        for (PanadapterApplet* applet : {first, cohost}) {
+            applet->setActiveSliceIndex(sliceId);
+            applet->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 48000);
+            applet->spectrumWidget()->setVfoFrequency(centre);
+            applet->spectrumWidget()->setCtunEnabled(false);
+            applet->spectrumWidget()->setWfAgcEnabled(false);
+        }
+        SpectrumWidget* widget = first->spectrumWidget();
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new HoldingCtunDeltaTransport();
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        QVERIFY(client.remoteDisplayBudgetLimits().has_value());
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            return !widget->renderedPixels().isEmpty()
+                && !cohost->spectrumWidget()->renderedPixels().isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(feed(), 5000);
+        QTRY_VERIFY(widget->ctunAvailable());
+        QVERIFY(widget->ctunHeldReason().isEmpty());
+        SliceModel* mirrored = remote.sliceById(sliceId);
+        QVERIFY(mirrored);
+        QVERIFY(!mirrored->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        const int contexts = countControl(inbound, QStringLiteral("context"));
+        const auto pinRequests = [&] {
+            int count = 0;
+            for (const QByteArray& wire : stationLink->received()) {
+                SessionMessage message;
+                if (SessionMessages::decode(wire, &message)
+                    && message.kind == SessionMessageKind::CommandInvoke
+                    && message.commandVerb == "requestStreamCtunPinned") {
+                    ++count;
+                }
+            }
+            return count;
+        };
+        const int requestsBefore = pinRequests();
+        QSignalSpy answers(&client, &StationClient::streamCtunPinFinished);
+        QSignalSpy gestures(widget, &SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(gestures.isValid());
+        stationLink->hold = true;
+        widget->setCtunEnabled(true);
+        QTRY_VERIFY(!answers.isEmpty());
+        QCOMPARE(answers.constLast().at(0).toInt(), sliceId);
+        QVERIFY(answers.constLast().at(3).toBool());
+        QTRY_VERIFY(!stationLink->held.isEmpty());
+        QVERIFY(sourceSlice->streamCtunPinned());
+        QVERIFY(!mirrored->streamCtunPinned());
+        stationLink->releaseHeld();
+        QTRY_VERIFY(mirrored->streamCtunPinned());
+        gui.planNowForTest();
+        QCOMPARE(countControl(inbound, QStringLiteral("context")), contexts);
+        QCOMPARE(gestures.count(), 1);
+        QVERIFY2(widget->ctunEnabled(), "the model pin arrived, but the budgeted pan stayed off");
+        QVERIFY(cohost->spectrumWidget()->ctunEnabled());
+        QCOMPARE(answers.count(), 1);
+        QCOMPARE(pinRequests(), requestsBefore + 1);
+        // Turning it off uses the same late-delta path, without a second
+        // gesture on the cohost or another request from mirror projection.
+        stationLink->hold = true;
+        widget->setCtunEnabled(false);
+        QTRY_COMPARE(answers.count(), 2);
+        QVERIFY(answers.constLast().at(3).toBool());
+        QTRY_VERIFY(!stationLink->held.isEmpty());
+        QVERIFY(!sourceSlice->streamCtunPinned());
+        QVERIFY(mirrored->streamCtunPinned());
+        stationLink->releaseHeld();
+        QTRY_VERIFY(!mirrored->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        QVERIFY(!cohost->spectrumWidget()->ctunEnabled());
+        gui.planNowForTest();
+        QCOMPARE(countControl(inbound, QStringLiteral("context")), contexts);
+        QCOMPARE(gestures.count(), 2);
+        QCOMPARE(pinRequests(), requestsBefore + 2);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+        QVERIFY(!widget->ctunAvailable());
     }
 
     void ctunWheelKeepsSourceAndDragMovesCoreCentre()
@@ -1910,6 +2199,263 @@ private slots:
         moveCoreCentre(centre + 3000);
         QTRY_COMPARE(pinResults.size(), 4);
         QVERIFY(pinResults.last().at(3).toBool());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A window signing in sends its pan's saved C-Tune setting once for each
+    // receiver its pans show. On a receiver another holder got to first the
+    // Core refuses that (ruling 6.3: the pin is the holder's), so the window
+    // asked at every launch for what it could not have. Here the Core's own
+    // position holds the receiver, as the desktop that hosts a Core does. The
+    // window's own slice shares it, or the window listens to the Core's
+    // slice: no pin request may reach the Core. When the receiver becomes the
+    // window's (the Core's slice leaves, or the window takes control of it)
+    // its saved setting goes in.
+    //
+    // The window knows who holds a receiver from the access entry's
+    // receiverHolderDeviceId, which a Core from before 2026-10-12 does not
+    // send. On such a Core the window cannot know, so it asks once and is
+    // refused, exactly as it always was, and the switch is not held.
+    void savedCtunIsNotSentForAReceiverAnotherHolds_data()
+    {
+        QTest::addColumn<bool>("listens");
+        QTest::addColumn<bool>("olderCore");
+        QTest::newRow("its slice shares the receiver the Core's slice holds") << false << false;
+        QTest::newRow("it listens to the Core's slice") << true << false;
+        QTest::newRow("an older Core names no holder: asked once and refused, as before")
+            << false << true;
+    }
+
+    void savedCtunIsNotSentForAReceiverAnotherHolds()
+    {
+        QFETCH(bool, listens);
+        QFETCH(bool, olderCore);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        SliceOwnership* ownership = station.sliceOwnership();
+        int coreSliceId = -1;
+        {
+            const SliceOwnership::CreatorScope coreCreates(ownership,
+                                                           SliceOwnership::stationDevice());
+            coreSliceId = station.addSlice();
+        }
+        SliceModel* coreSlice = station.sliceById(coreSliceId);
+        QVERIFY(coreSlice);
+        const int stream = coreSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        QCOMPARE(ownership->anchorOf(stream), SliceOwnership::stationDevice());
+        const double center = station.streamCentreHz(stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        QTemporaryDir keyDir;
+        const auto identity = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(identity->isValid());
+        PairedDevice paired;
+        paired.id = identity->fingerprint();
+        paired.publicKeySpki = identity->publicKeySpki();
+        paired.name = QStringLiteral("Sharing window");
+        paired.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(paired));
+        client.setDeviceIdentity(identity, paired.name, QStringLiteral("Window"));
+        PanadapterStack stack;
+        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        stack.setActivePan(QStringLiteral("first"));
+        auto* widget = first->spectrumWidget();
+        // The pan's saved setting: C-Tune on.
+        widget->setCtunEnabled(true);
+        QVERIFY(widget->ctunPreference());
+        widget->setWfAgcEnabled(false);
+        widget->setConnectionState(ConnectionState::Connected);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        QString certificatePin = server.certificateFingerprint();
+        certificatePin.remove(QLatin1Char(':'));
+        clientLink->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLink->setPeerAddress(QStringLiteral("192.0.2.30"));
+        stationLink->linkTo(clientLink);
+        if (olderCore) {
+            clientLink->setRewritesIncoming(asACoreThatNamesNoReceiverHolderSends);
+        }
+        // Every pin request the Core receives from the window, and its answers.
+        int pinAsks = 0;
+        connect(stationLink, &SessionTransport::textReceived, this, [&pinAsks](const QByteArray& wire) {
+            SessionMessage message;
+            if (SessionMessages::decode(wire, &message)
+                && message.commandVerb == "requestStreamCtunPinned") {
+                ++pinAsks;
+            }
+        });
+        QStringList pinAnswers;
+        connect(&client, &StationClient::commandResponse, this,
+            [&pinAnswers](const NereusSDR::SessionMessage& message) {
+                if (message.commandVerb == "requestStreamCtunPinned") {
+                    pinAnswers.append(message.accepted ? QStringLiteral("accepted")
+                                                       : QStringLiteral("refused: ") + message.reason);
+                }
+            });
+        const auto asked = [&] {
+            return QStringLiteral("the window sent %1 C-Tune request(s); the Core answered: %2")
+                .arg(pinAsks).arg(pinAnswers.join(QStringLiteral(" | "))).toUtf8();
+        };
+        // A change the window held back itself, as it shows one to the user.
+        QSignalSpy heldNotices(&client, &StationClient::sliceAccessHeld);
+        client.startSession(clientLink, QString(), QString(),
+                            server.stationIdentity().fingerprint());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(client.stationLinkReady());
+
+        int ownId = -1;
+        for (SliceModel* slice : station.slices()) {
+            if (ownership->mark(slice->sliceIndex()).owner == identity->fingerprint()) {
+                ownId = slice->sliceIndex();
+            }
+        }
+        QVERIFY(ownId >= 0);
+        SliceModel* ownSlice = station.sliceById(ownId);
+        int shownId = ownId;
+        if (listens) {
+            // The window's own slice goes to another band and receiver; its
+            // pan shows the Core's slice, which it joins to listen.
+            ownSlice->setFrequency(center + 7'000'000);
+            QVERIFY(ownSlice->streamIndex() >= 0);
+            QVERIFY(ownSlice->streamIndex() != stream);
+            QTRY_VERIFY(client.sliceAccess()->entry(coreSliceId).has_value());
+            const auto listen = client.requestListen(
+                coreSliceId, client.sliceAccess()->entry(coreSliceId)->incarnation);
+            QVERIFY2(listen.sent, qPrintable(listen.reason));
+            QTRY_VERIFY(client.sliceAccess()->listeningHere(coreSliceId));
+            QVERIFY(!client.sliceAccess()->controlledHere(coreSliceId));
+            shownId = coreSliceId;
+        } else {
+            // The window's own slice, put on the receiver the Core's slice holds.
+            ownSlice->setFrequency(center + 20000);
+            QCOMPARE(ownSlice->streamIndex(), stream);
+            QTRY_VERIFY(client.sliceAccess()->controlledHere(ownId));
+        }
+        SliceModel* shown = station.sliceById(shownId);
+        QCOMPARE(ownership->anchorOf(stream), SliceOwnership::stationDevice());
+        QVERIFY(!shown->streamCtunPinned());
+        QTRY_VERIFY(remote.sliceById(shownId));
+        SliceModel* mirrored = remote.sliceById(shownId);
+        QTRY_COMPARE(mirrored->streamIndex(), stream);
+        QTRY_COMPARE(mirrored->frequency(), shown->frequency());
+        QCOMPARE(pinAsks, 0);
+
+        first->setActiveSliceIndex(shownId);
+        widget->setDisplayWindowPreservingHistory(center, 48000);
+        widget->setVfoFrequency(shown->frequency());
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&](int receiver) {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, receiver), Q_ARG(QVector<float>, iq));
+            return !widget->renderedPixels().isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(feed(stream), 5000);
+        for (int i = 0; i < 10; ++i) {
+            QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+            feed(stream);
+        }
+        if (olderCore) {
+            // The window was told of no holder, so it cannot know the
+            // setting is another's. It asks once, the Core refuses in its
+            // own words, nothing is asked again, and the switch is not held.
+            QVERIFY(client.sliceAccess()->entry(shownId).has_value());
+            QVERIFY(client.sliceAccess()->receiverHeldReason(shownId).isEmpty());
+            QTRY_VERIFY2(pinAnswers.size() == 1, asked().constData());
+            QCOMPARE(pinAnswers.first(),
+                     QStringLiteral("refused: This panadapter shows the Core's receiver. Its "
+                                    "C-Tune setting is the Core's."));
+            for (int i = 0; i < 5; ++i) {
+                QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+                feed(stream);
+            }
+            QVERIFY2(pinAsks == 1, asked().constData());
+            QVERIFY(!shown->streamCtunPinned());
+            QVERIFY(widget->ctunHeldReason().isEmpty());
+            client.disconnectFromStation(QStringLiteral("test complete"));
+            return;
+        }
+        QVERIFY2(pinAsks == 0, asked().constData());
+        // Nor is the window told of a change held back that nobody made.
+        QCOMPARE(heldNotices.size(), 0);
+        QVERIFY(!shown->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        // The switch is there, held, with the Core's own words for why.
+        QVERIFY(widget->ctunAvailable());
+        QCOMPARE(widget->ctunHeldReason(),
+                 listens ? QStringLiteral("Slice A is controlled by the Core. Take control to "
+                                          "change it.")
+                         : QStringLiteral("This panadapter shows the Core's receiver. Its C-Tune "
+                                          "setting is the Core's."));
+        widget->setCtunEnabled(false);
+        for (int i = 0; i < 3; ++i) {
+            QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+            feed(stream);
+        }
+        QVERIFY2(pinAsks == 0, asked().constData());
+        QCOMPARE(heldNotices.size(), 0);
+        // The saved setting is kept for the day the receiver is the window's.
+        QVERIFY(widget->ctunPreference());
+        // The words on the switch are the Core's own: asked past the window
+        // (which never asks), the Core refuses with the same sentence.
+        const auto direct = client.requestStreamCtunPinned(shownId, true);
+        QVERIFY2(direct.sent, qPrintable(direct.reason));
+        QTRY_COMPARE(pinAnswers.size(), 1);
+        QCOMPARE(pinAnswers.first(), QStringLiteral("refused: ") + widget->ctunHeldReason());
+        QCOMPARE(pinAsks, 1);
+        pinAsks = 0;
+        pinAnswers.clear();
+
+        if (listens) {
+            // The window takes control of the slice, and the receiver with it.
+            const auto access = *client.sliceAccess()->entry(coreSliceId);
+            const auto take = client.requestTakeControl(coreSliceId, access.incarnation,
+                                                        access.controlRevision);
+            QVERIFY2(take.sent, qPrintable(take.reason));
+            QTRY_COMPARE(ownership->mark(coreSliceId).owner, identity->fingerprint());
+        } else {
+            // The Core's slice goes to another band and another receiver.
+            coreSlice->setFrequency(center + 7'000'000);
+            QVERIFY(coreSlice->streamIndex() >= 0);
+            QVERIFY(coreSlice->streamIndex() != stream);
+        }
+        QCOMPARE(shown->streamIndex(), stream);
+        QCOMPARE(ownership->anchorOf(stream), identity->fingerprint());
+        QTRY_VERIFY2_WITH_TIMEOUT((feed(stream), shown->streamCtunPinned()), asked().constData(),
+                                  5000);
+        QTRY_VERIFY(widget->ctunEnabled());
+        QVERIFY(widget->ctunHeldReason().isEmpty());
+        QVERIFY2(pinAsks == 1, asked().constData());
+        QCOMPARE(pinAnswers, QStringList{QStringLiteral("accepted")});
+        QCOMPARE(heldNotices.size(), 0);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -12030,6 +12576,8 @@ private slots:
         const auto recoveries = [] {
             return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector is taking audio again"));
         };
+        // This fake session needs VAX as its no-preview source on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         const auto pause = [&] {
             h.remote.transmitModel().setMicSource(MicSource::Vax);
             media.pumpMicUplinkForTest();
@@ -12039,12 +12587,14 @@ private slots:
             media.pumpMicUplinkForTest();
         };
         pause();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QVERIFY(!media.micCollectorThreadRunningForTest());
         QVERIFY(!media.micCaptureLeaseHeldForTest());
         QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
         QCOMPARE(engine->captureStatus().generation, generation);
         nowMs += 5000;
         resume();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
         QVERIFY(media.micCollectorThreadRunningForTest());
         QCOMPARE(engine->captureStatus().generation, generation);
         QCOMPARE(stalls().size(), 0);
@@ -12139,7 +12689,9 @@ private slots:
                                             == CaptureSupervisor::Status::State::Failed,
                                  5000);
         // No local preview: only VOX holds the lease.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         QVERIFY(takeTransmit(h));
         const quint32 previewed = engine->captureStatus().generation;
