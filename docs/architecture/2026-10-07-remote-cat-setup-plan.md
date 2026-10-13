@@ -76,11 +76,17 @@ setting.
     resolves each bound slice id to its live incarnation at apply time, then
     calls `CatService::reconfigureChannel`. An id the channel already holds
     keeps its incarnation unless the config carries `primaryRebind` or
-    `secondaryRebind` true (the operator picked that slice in the selector). Refusal reason: the page's text,
+    `secondaryRebind` true (the operator picked that slice in the selector). Refusal reason: the rule the
+    change broke, in the sentence `CatService::reconfigureChannel` hands back
+    (for example "This serial port has no device. Choose a device, then turn
+    the port on." or "That serial device is already used by CAT 1."). A
+    refusal with no rule to name gets the page's general text,
     "Configuration refused: check address, port, format and exclusive device
     assignment."
   * `setStationCatGlobal {config: utf8 JSON}`: `CatService::reconfigureGlobal`.
-    Refusal: "Configuration refused: check PTT source, sampled inputs and
+    Refusal: the rule the change broke (for example "Input PTT has no input
+    source. Choose a source, then turn it on."); with no rule to name,
+    "Configuration refused: check PTT source, sampled inputs and
     device assignment."
   * `testStationCatCommand {requestId: Int64, channel: Int64, command: utf8}`:
     `CatService::testCommand`, the same refusals for keying and calibration as

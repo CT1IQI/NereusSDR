@@ -3,6 +3,8 @@
 // 2026-10-04 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-11 One serial device under two spellings compares equal.
 //            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12 A refused global setting names the rule it broke.
+//            J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #pragma once
 #include "CatConfiguration.h"
 #include <QList>
@@ -19,7 +21,7 @@ public:
     static bool validate(const CatEndpointConfig&, QString* reason = nullptr);
     CatGlobalConfig global() const;
     bool setGlobal(CatGlobalConfig, std::function<bool()> current = {});
-    static bool validateGlobal(const CatGlobalConfig&);
+    static bool validateGlobal(const CatGlobalConfig&, QString* reason = nullptr);
 #ifdef Q_OS_WIN
     static constexpr bool kWindowsSerialNames = true;
 #else

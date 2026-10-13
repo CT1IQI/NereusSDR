@@ -24,6 +24,9 @@
 //                                    split, kept settings, log history,
 //                                    refusals, device refresh, test gaps.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  A refused change shows the rule it
+//                                    broke. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -232,8 +235,9 @@ private slots:
         NEREUS_TRY_VERIFY(session.coreCat().channelConfig(1).tcpPort == 0);
         NEREUS_TRY_VERIFY(session.window->catControl()->channelConfig(1).tcpPort == 0);
         enabled->setChecked(true);
+        // A listener turned on with no port: the Core says which rule.
         NEREUS_TRY_VERIFY(control<QLabel>(page, "cat1Status")->text()
-                          == StationCatController::channelRefusedReason());
+                          == QStringLiteral("Invalid CAT listener address or port."));
         QVERIFY(!enabled->isChecked());
         QVERIFY(!session.coreCat().channelConfig(1).tcpEnabled);
     }

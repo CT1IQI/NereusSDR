@@ -58,6 +58,11 @@
 //              J.J. Boyd (KG4VCF), AI tooling: Claude Code.
 // 2026-10-11 - One serial device under two spellings compares equal.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - A refused serial port or global setting names the rule it
+//              broke, in words for the operator. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - Name the reported radio model in its refusal using operator
+//              words. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
@@ -162,9 +167,11 @@ bool CatSettings::validate(const CatEndpointConfig& config, QString* reason)
         || QHostAddress(config.tcpBindAddress).isNull() || QHostAddress(config.rigctldBindAddress).isNull()) {
         return fail(QStringLiteral("Invalid CAT listener address or port."));
     }
-    if ((config.serialEnabled && config.serialDevice.trimmed().isEmpty())
-        || !serialFormat(config.serialBaud, config.serialParity, config.serialDataBits, config.serialStopBits)) {
-        return fail(QStringLiteral("Invalid CAT serial device or format."));
+    if (config.serialEnabled && config.serialDevice.trimmed().isEmpty()) {
+        return fail(QStringLiteral("This serial port has no device. Choose a device, then turn the port on."));
+    }
+    if (!serialFormat(config.serialBaud, config.serialParity, config.serialDataBits, config.serialStopBits)) {
+        return fail(QStringLiteral("The serial port's baud rate, parity, data bits or stop bits are not valid."));
     }
     if (!isCatPtyDialect(config.ptyDialect)) { return fail(QStringLiteral("Invalid CAT PTY dialect.")); }
     if (reason) { reason->clear(); }
@@ -223,18 +230,39 @@ bool CatSettings::sameSerialDevice(const QString& a, const QString& b, bool wind
 {
     return serialDeviceKey(a, windowsNames) == serialDeviceKey(b, windowsNames);
 }
-bool CatSettings::validateGlobal(const CatGlobalConfig& config)
+bool CatSettings::validateGlobal(const CatGlobalConfig& config, QString* reason)
 {
     // From Thetis setup.Designer.cs:59524-59528 [v2.10.3.15].
     // Native validation preserves rig selections and RTTY offset limits.
+    // One rule at a time, in the order they were first written as one test,
+    // so each refusal can say which rule it was.
+    const auto fail = [reason](const QString& text) { if (reason) { *reason = text; } return false; };
     if (config.rttyDiguHz < CatDefaults::kRttyMinimumHz || config.rttyDiguHz > CatDefaults::kRttyMaximumHz
-        || config.rttyDiglHz < CatDefaults::kRttyMinimumHz || config.rttyDiglHz > CatDefaults::kRttyMaximumHz
-        || !QStringList{"PowerSDR", "TS-2000", "TS-50S", "TS-480"}.contains(config.rigIdentity)
-        || config.pttChannel < 1 || config.pttChannel > 4
-        || !QStringList{"None", "CAT1", "CAT2", "CAT3", "CAT4", "Physical"}.contains(config.pttDeviceSource)
-        || (config.pttEnabled && (config.pttDeviceSource == "None" || (!config.pttUseCts && !config.pttUseDsr)))
-        || (config.pttEnabled && config.pttDeviceSource == "Physical" && config.pttSerialDevice.trimmed().isEmpty())
-        || !serialFormat(config.pttSerialBaud, config.pttSerialParity, config.pttSerialDataBits, config.pttSerialStopBits)) { return false; }
+        || config.rttyDiglHz < CatDefaults::kRttyMinimumHz || config.rttyDiglHz > CatDefaults::kRttyMaximumHz) {
+        return fail(QStringLiteral("The RTTY offset is out of range."));
+    }
+    if (!QStringList{"PowerSDR", "TS-2000", "TS-50S", "TS-480"}.contains(config.rigIdentity)) {
+        return fail(QStringLiteral("The CAT radio model is not valid."));
+    }
+    if (config.pttChannel < 1 || config.pttChannel > 4) {
+        return fail(QStringLiteral("The Input PTT CAT port number is not valid."));
+    }
+    if (!QStringList{"None", "CAT1", "CAT2", "CAT3", "CAT4", "Physical"}.contains(config.pttDeviceSource)) {
+        return fail(QStringLiteral("The Input PTT source is not valid."));
+    }
+    if (config.pttEnabled && config.pttDeviceSource == "None") {
+        return fail(QStringLiteral("Input PTT has no input source. Choose a source, then turn it on."));
+    }
+    if (config.pttEnabled && !config.pttUseCts && !config.pttUseDsr) {
+        return fail(QStringLiteral("Input PTT has no input to watch. Tick the CTS or the DSR input, then turn it on."));
+    }
+    if (config.pttEnabled && config.pttDeviceSource == "Physical" && config.pttSerialDevice.trimmed().isEmpty()) {
+        return fail(QStringLiteral("Input PTT has no physical device. Enter the device, then turn it on."));
+    }
+    if (!serialFormat(config.pttSerialBaud, config.pttSerialParity, config.pttSerialDataBits, config.pttSerialStopBits)) {
+        return fail(QStringLiteral("Input PTT's baud rate, parity, data bits or stop bits are not valid."));
+    }
+    if (reason) { reason->clear(); }
     return true;
 }
 bool CatSettings::setGlobal(CatGlobalConfig config, std::function<bool()> current)
