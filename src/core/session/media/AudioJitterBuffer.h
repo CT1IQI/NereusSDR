@@ -5,6 +5,11 @@
 //   2026-10-10: hasReady(), so a consumer can check its room before it
 //               takes a packet (R-AUD-15, bench regression). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: readyForNs(), how long the next interval has stood ready,
+//               for a consumer that kept it back; a released packet says
+//               when it arrived (Playout::arrivalNs), for a consumer that
+//               measures the source's clock by it (R-AUD-15). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QByteArray>
 #include <QtGlobal>
 #include <algorithm>
@@ -102,6 +107,9 @@ public:
     struct Playout {
         QByteArray packet; // empty means one explicit missing-packet interval
         quint32 timestamp{0};
+        // When the packet arrived, as insert() was told; -1 for a missing
+        // interval, which never did.
+        qint64 arrivalNs{-1};
         bool concealed() const { return packet.isEmpty(); }
     };
 
@@ -131,6 +139,11 @@ public:
     /// queue: call tick() first, as takeReady() does. For a consumer that
     /// must have room downstream before it takes anything.
     bool hasReady(qint64 nowNs) const;
+    /// How long the interval takeReady(nowNs) would release has stood
+    /// ready: nowNs less its due time, 0 when none is due.  For a consumer
+    /// that kept it back for room downstream and tells the next stage how
+    /// long.
+    qint64 readyForNs(qint64 nowNs) const;
     /// Releases only the exact expected packet when downstream PCM is about
     /// to underrun. Future packets never conceal a missing head through this
     /// path. Its original due time remains the empty-queue missing deadline;
@@ -199,7 +212,7 @@ public:
     qint64 holdNs() const { return m_holdNs; }
 
 private:
-    struct Entry { QByteArray packet; qint64 dueNs; };
+    struct Entry { QByteArray packet; qint64 dueNs; qint64 arrivalNs; };
     // R-R3-21: a recently released interval. A late packet finds its own
     // here to learn how late it was and what the hold was then.
     struct Released { quint32 timestamp; qint64 releasedNs; qint64 holdNs; bool concealed; };

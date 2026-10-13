@@ -11,6 +11,12 @@
 //               (remote playback) tells the bus's clock matcher its packet
 //               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setClockMatchWritePacket() takes the packet's timing
+//               (MatcherPacketTiming: its wait for room, its arrival, its
+//               place in the stream), where it said only whether it had
+//               waited, for the matcher's clock fit and its
+//               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioOutputBus.h"
@@ -407,10 +413,10 @@ void CoreAudioOutputBus::restartClockMatch()
     }
 }
 
-void CoreAudioOutputBus::setClockMatchWritePacket(int frames, bool waited)
+void CoreAudioOutputBus::setClockMatchWritePacket(int frames, const MatcherPacketTiming& timing)
 {
     if (d->matcher) {
-        d->matcher->setWritePacketFrames(frames, waited);
+        d->matcher->setWritePacketFrames(frames, timing);
     }
 }
 

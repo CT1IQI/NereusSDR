@@ -4,6 +4,9 @@
 //   2026-10-10: hasReady(); takeReady() reads the same due time through
 //               nextDueNs() (R-AUD-15, bench regression). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: readyForNs(); a released packet carries its arrival
+//               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 #include "core/session/media/AudioJitterBuffer.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include <bit>
@@ -168,7 +171,7 @@ AudioJitterBuffer::Admission AudioJitterBuffer::insert(
             m_rewound += back;
             m_nextTimestamp = timestamp;
             m_released.erase(std::prev(it.base()), m_released.end());
-            m_packets.try_emplace(m_nextIndex, Entry{packet, arrivalNs + m_holdNs});
+            m_packets.try_emplace(m_nextIndex, Entry{packet, arrivalNs + m_holdNs, arrivalNs});
             return Admission::Rewound;
         }
         return Admission::Late;
@@ -177,7 +180,8 @@ AudioJitterBuffer::Admission AudioJitterBuffer::insert(
     const int ahead = delta / m_packetFrames;
     if (ahead >= m_maxPackets) { return Admission::OutsideWindow; }
     const auto [unused, inserted] = m_packets.try_emplace(
-        m_nextIndex + static_cast<quint64>(ahead), Entry{packet, arrivalNs + m_holdNs});
+        m_nextIndex + static_cast<quint64>(ahead),
+        Entry{packet, arrivalNs + m_holdNs, arrivalNs});
     Q_UNUSED(unused);
     return inserted ? Admission::Accepted : Admission::Duplicate;
 }
@@ -205,6 +209,12 @@ bool AudioJitterBuffer::hasReady(qint64 nowNs) const
     return due && nowNs >= *due;
 }
 
+qint64 AudioJitterBuffer::readyForNs(qint64 nowNs) const
+{
+    const std::optional<qint64> due = nextDueNs();
+    return due && nowNs >= *due ? nowNs - *due : 0;
+}
+
 std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeReady(qint64 nowNs)
 {
     tick(nowNs);
@@ -216,6 +226,7 @@ std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeReady(qint64 no
     result.timestamp = m_nextTimestamp;
     if (present) {
         result.packet = std::move(first->second.packet);
+        result.arrivalNs = first->second.arrivalNs;
         m_packets.erase(first);
     }
     ++m_nextIndex;
@@ -289,6 +300,7 @@ std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeExpectedPresent
     Playout result;
     result.packet = std::move(first->second.packet);
     result.timestamp = m_nextTimestamp;
+    result.arrivalNs = first->second.arrivalNs;
     const qint64 originalDue = first->second.dueNs;
     m_packets.erase(first);
     ++m_nextIndex;

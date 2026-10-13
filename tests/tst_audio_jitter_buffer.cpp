@@ -75,6 +75,40 @@ private slots:
         QCOMPARE(queue.insert("late copy", 3940, 302'000'000), Admission::Late);
         QCOMPARE(queue.holdNs(), qint64(140'000'000));
     }
+    // R-AUD-15: what a consumer that keeps a due interval back for room
+    // downstream passes on: how long the interval has stood ready, and
+    // when its packet arrived. Asking moves nothing.
+    void aReadyIntervalSaysHowLongItStoodAndWhenItArrived()
+    {
+        AudioJitterBuffer queue;
+        queue.reset(100);
+        QCOMPARE(queue.readyForNs(500'000'000), qint64(0)); // nothing queued
+        QCOMPARE(queue.insert("first", 100, 45'000'000), Admission::Accepted);
+        QCOMPARE(queue.insert("third", 3940, 126'000'000), Admission::Accepted);
+        // Due at its arrival plus the 80 ms hold.
+        QCOMPARE(queue.readyForNs(124'999'999), qint64(0));
+        QCOMPARE(queue.readyForNs(125'000'000), qint64(0));
+        QCOMPARE(queue.readyForNs(132'000'000), qint64(7'000'000));
+        QCOMPARE(queue.queuedPackets(), 2);
+        QCOMPARE(queue.nextTimestamp(), quint32(100));
+        const auto first = queue.takeReady(132'000'000);
+        QVERIFY(first);
+        QCOMPARE(first->packet, QByteArray("first"));
+        QCOMPARE(first->arrivalNs, qint64(45'000'000));
+        // The second never came. Its interval is due a packet ahead of the
+        // third's (206 ms less 40 ms), stands ready from then, and has no
+        // arrival.
+        QCOMPARE(queue.readyForNs(165'999'999), qint64(0));
+        QCOMPARE(queue.readyForNs(170'000'000), qint64(4'000'000));
+        const auto missing = queue.takeReady(170'000'000);
+        QVERIFY(missing && missing->concealed());
+        QCOMPARE(missing->arrivalNs, qint64(-1));
+        // A packet taken ahead of its hold says its own arrival too.
+        const auto third = queue.takeExpectedPresentEarly(171'000'000);
+        QVERIFY(third);
+        QCOMPARE(third->packet, QByteArray("third"));
+        QCOMPARE(third->arrivalNs, qint64(126'000'000));
+    }
     void wrapBoundAndReset()
     {
         AudioJitterBuffer queue;
