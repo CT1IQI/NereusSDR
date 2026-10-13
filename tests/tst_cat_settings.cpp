@@ -6,6 +6,8 @@
 //            AI-assisted via Anthropic Claude Code.
 // 2026-10-12 Each refused setting names the rule it broke. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-12 Invalid reported radio model refusal uses operator words.
+//            J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QTcpServer>
@@ -265,7 +267,7 @@ private slots:
         row("DIGU offset high",[](CatGlobalConfig& c) { c.rttyDiguHz=CatDefaults::kRttyMaximumHz+1; },"The RTTY offset is out of range.");
         row("DIGL offset low",[](CatGlobalConfig& c) { c.rttyDiglHz=CatDefaults::kRttyMinimumHz-1; },"The RTTY offset is out of range.");
         row("DIGL offset high",[](CatGlobalConfig& c) { c.rttyDiglHz=CatDefaults::kRttyMaximumHz+1; },"The RTTY offset is out of range.");
-        row("identity",[](CatGlobalConfig& c) { c.rigIdentity=QStringLiteral("invented"); },"The CAT radio identity is not valid.");
+        row("identity",[](CatGlobalConfig& c) { c.rigIdentity=QStringLiteral("invented"); },"The CAT radio model is not valid.");
         row("port number low",[](CatGlobalConfig& c) { c.pttChannel=0; },"The Input PTT CAT port number is not valid.");
         row("port number high",[](CatGlobalConfig& c) { c.pttChannel=5; },"The Input PTT CAT port number is not valid.");
         row("source",[](CatGlobalConfig& c) { c.pttDeviceSource=QStringLiteral("CAT5"); },"The Input PTT source is not valid.");

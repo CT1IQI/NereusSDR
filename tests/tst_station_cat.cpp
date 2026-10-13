@@ -509,7 +509,7 @@ private slots:
             {with(QStringLiteral("rttyDiguHz"), QJsonValue(3001)),
              QStringLiteral("The RTTY offset is out of range.")},
             {with(QStringLiteral("rigIdentity"), QJsonValue(QStringLiteral("invented"))),
-             QStringLiteral("The CAT radio identity is not valid.")},
+             QStringLiteral("The CAT radio model is not valid.")},
             {with(QStringLiteral("pttChannel"), QJsonValue(5)),
              QStringLiteral("The Input PTT CAT port number is not valid.")},
             {with(QStringLiteral("pttDeviceSource"), QJsonValue(QStringLiteral("CAT5"))),

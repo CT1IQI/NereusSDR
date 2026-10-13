@@ -61,6 +61,8 @@
 // 2026-10-12 - A refused serial port or global setting names the rule it
 //              broke, in words for the operator. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - Name the reported radio model in its refusal using operator
+//              words. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Serialization is Nereus-original; source constants retain their contract.
 
 #include "CatSettings.h"
@@ -240,7 +242,7 @@ bool CatSettings::validateGlobal(const CatGlobalConfig& config, QString* reason)
         return fail(QStringLiteral("The RTTY offset is out of range."));
     }
     if (!QStringList{"PowerSDR", "TS-2000", "TS-50S", "TS-480"}.contains(config.rigIdentity)) {
-        return fail(QStringLiteral("The CAT radio identity is not valid."));
+        return fail(QStringLiteral("The CAT radio model is not valid."));
     }
     if (config.pttChannel < 1 || config.pttChannel > 4) {
         return fail(QStringLiteral("The Input PTT CAT port number is not valid."));
