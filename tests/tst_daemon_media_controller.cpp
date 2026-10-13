@@ -742,6 +742,8 @@ private slots:
     void realMicLineTornDownWhileItsThreadDelivers_data();
     void realMicLineTornDownWhileItsThreadDelivers();
     void displayDiagnosticsLineReportsBytesAndFragments();
+    void displayDiagnosticsCountFramesReplacedBeforeTheyWereSent();
+    void displayDiagnosticsMeasureTheLongestGapBetweenSenderTurns();
     void staleEpochAndForeignConnectionLeaveEndpointsUntouched();
     void olderAppNeverReceivesReceiverStreams();
     void receiverStreamRunsBesideTheMainWithoutRestartingIt();
@@ -2163,7 +2165,9 @@ void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
                             " largestDelta=1800 bytes/3 fragments"
                             " maxFragments=4 sendRefusals=0 transportErrors=0"
                             " queuedLate=0 keyframeRequests=0"
-                            " keyframeRequestsRefused=0"));
+                            " keyframeRequestsRefused=0"
+                            " sourceFramesReplaced=0 panFramesReplaced=0"
+                            " senderGapMaxMs=-1"));
 
     DaemonDisplayDiagnostics largest;
     largest.displayMaxKeyframeBytes = 9361; // 4096/4096 points with a 768-point 3D row
@@ -2174,15 +2178,228 @@ void TstDaemonMediaController::displayDiagnosticsLineReportsBytesAndFragments()
     largest.displayQueuedLate = 3;
     largest.displayKeyframeRequests = 12;
     largest.displayKeyframeRequestsRefused = 1;
+    largest.displaySourceFramesReplaced = 40;
+    largest.displayPanFramesReplaced = 9;
+    largest.displaySenderGapMaxUs = 141'200;
     QCOMPARE(daemonDisplayDiagnosticsLine(largest),
              QStringLiteral("largestKeyframe=9361 bytes/11 fragments"
                             " largestDelta=9361 bytes/11 fragments"
                             " maxFragments=11 sendRefusals=7 transportErrors=2"
                             " queuedLate=3 keyframeRequests=12"
-                            " keyframeRequestsRefused=1"));
+                            " keyframeRequestsRefused=1"
+                            " sourceFramesReplaced=40 panFramesReplaced=9"
+                            " senderGapMaxMs=141.2"));
     QCOMPARE(IMediaTransport::sctpFragmentCount(876), quint64(1));
     QCOMPARE(IMediaTransport::sctpFragmentCount(877), quint64(2));
     QCOMPARE(IMediaTransport::sctpFragmentCount(65536), quint64(75));
+}
+
+// A frame a newer one replaces before it was sent is counted where it was
+// replaced. In the source's slot (the Core's main thread had not taken it)
+// it counts once, whatever the number of pans on that source. In a pan's
+// slot (no sender turn had taken it) it counts once for that pan, and only
+// when the pan would have sent it: a frame its own pacing would have
+// dropped is not a frame lost.
+void TstDaemonMediaController::displayDiagnosticsCountFramesReplacedBeforeTheyWereSent()
+{
+    constexpr qint64 kStartNs = 1'000'000'000;
+    constexpr qint64 kFps = 60;
+    const auto frameNs = [](qint64 frame) { return kStartNs + frame * 1'000'000'000 / kFps; };
+
+    Harness harness;
+    harness.useManualDisplayTicks();
+    harness.establishSession();
+    harness.startReadyPeer();
+    const double centre = harness.radio.streamCentreHz(harness.streamIndex);
+    // Two pans on one source, each taking every source frame.
+    for (quint32 endpointId : {quint32(61), quint32(62)}) {
+        QVERIFY(harness.client.sendMediaControl(
+            subscription(endpointId, 1, harness.sliceId, centre),
+            harness.client.sessionEpoch()));
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(harness.controller.activeEndpointCount(), 2, 10'000);
+    DaemonSpectrumSource* const source = &harness.controller.sharedSpectrum()->source();
+    const QList<MediaSourceKey> keys = source->activeSources();
+    QCOMPARE(keys.size(), 1);
+    const MediaSourceKey key = keys.constFirst();
+    QCOMPARE(harness.controller.spectrumSourceFps(61), std::optional<int>(int(kFps)));
+
+    const auto publish = [&](qint64 producedAtNs) {
+        harness.nowNs = producedAtNs;
+        return source->publishFrameForTest(key, producedAtNs);
+    };
+    const auto sent = [&] { return harness.mediaTransport->displays.size(); };
+    const auto replacedAtSource = [&] {
+        return harness.controller.displayDiagnostics().displaySourceFramesReplaced;
+    };
+    const auto replacedAtPans = [&] {
+        return harness.controller.displayDiagnostics().displayPanFramesReplaced;
+    };
+
+    // The engine takes its configuration on its own thread; after that
+    // every frame comes from here, never from I/Q (none is fed), and each
+    // is published once: a retried publish would itself replace a frame.
+    // One message goes per sender turn, so two turns send a frame to both
+    // pans.
+    const auto ready = [source, &key] {
+        const DaemonSpectrumSource::InputQueueDiagnostics queue =
+            source->inputQueueDiagnostics(key);
+        return queue.active && !queue.configurationPending;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(ready(), 10'000);
+    QVERIFY(publish(frameNs(0)));
+    harness.sendDisplayTick();
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 2);
+    QCOMPARE(replacedAtSource(), quint64(0));
+    QCOMPARE(replacedAtPans(), quint64(0));
+
+    // No sender turn between two frames: each pan held the first, would
+    // have sent it, and lost it to the second.
+    QVERIFY(publish(frameNs(1)));
+    QVERIFY(publish(frameNs(2)));
+    QCOMPARE(replacedAtPans(), quint64(2));
+    QCOMPARE(replacedAtSource(), quint64(0));
+    harness.sendDisplayTick();
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 4);
+
+    // A frame 1 ms after one a pan sent is early for its 60 a second: its
+    // pacing would have dropped it, so replacing it loses nothing.
+    QVERIFY(publish(frameNs(2) + 1'000'000));
+    QVERIFY(publish(frameNs(3)));
+    QCOMPARE(replacedAtPans(), quint64(2));
+    harness.sendDisplayTick();
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 6);
+
+    // The main thread never takes frame 4 from the source (its notice is
+    // held back here); frame 5 replaces it there. One source frame, counted
+    // once, and no pan held anything.
+    {
+        const QSignalBlocker noticeHeld(source);
+        QVERIFY(publish(frameNs(4)));
+    }
+    QVERIFY(publish(frameNs(5)));
+    QCOMPARE(replacedAtSource(), quint64(1));
+    QCOMPARE(replacedAtPans(), quint64(2));
+    harness.sendDisplayTick();
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 8);
+
+    // One sender turn between two frames: one pan sent the first, the other
+    // still held it and lost it.
+    QVERIFY(publish(frameNs(6)));
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 9);
+    QVERIFY(publish(frameNs(7)));
+    QCOMPARE(replacedAtPans(), quint64(3));
+    QCOMPARE(replacedAtSource(), quint64(1));
+    harness.sendDisplayTick();
+    harness.sendDisplayTick();
+    QCOMPARE(sent(), 11);
+    QCOMPARE(replacedAtPans(), quint64(3));
+    QCOMPARE(replacedAtSource(), quint64(1));
+    harness.finish();
+}
+
+// The longest time between two turns of the display sender's timer, for the
+// life of the media peer and since the last diagnostics line. A send the
+// display channel asks for when it clears is not a turn of the timer.
+void TstDaemonMediaController::displayDiagnosticsMeasureTheLongestGapBetweenSenderTurns()
+{
+    g_daemonMediaMessages.clear();
+    const QtMessageHandler previous = qInstallMessageHandler(captureDaemonMediaMessages);
+    const auto restore = qScopeGuard([previous] { qInstallMessageHandler(previous); });
+    const auto lines = [] {
+        return g_daemonMediaMessages.filter(QStringLiteral("daemon display diagnostics"));
+    };
+
+    Harness harness;
+    harness.useManualDisplayTicks();
+    harness.establishSession();
+    harness.startReadyPeer();
+    const auto gapMaxUs = [&] {
+        return harness.controller.displayDiagnostics().displaySenderGapMaxUs;
+    };
+    const auto turnAfterMs = [&](qint64 ms) {
+        harness.nowNs += ms * 1'000'000;
+        harness.sendDisplayTick();
+    };
+    QTimer* diagnostics = nullptr;
+    for (QTimer* timer : harness.controller.findChildren<QTimer*>(
+             QString(), Qt::FindDirectChildrenOnly)) {
+        if (timer->interval() == 10'000) {
+            diagnostics = timer;
+        }
+    }
+    QVERIFY(diagnostics);
+    const auto logNow = [diagnostics] {
+        return QMetaObject::invokeMethod(diagnostics, "timeout", Qt::DirectConnection);
+    };
+
+    // No gap until two turns have run.
+    QCOMPARE(gapMaxUs(), qint64(-1));
+    harness.nowNs = 1'000'000'000;
+    harness.sendDisplayTick();
+    QCOMPARE(gapMaxUs(), qint64(-1));
+    turnAfterMs(5);
+    QCOMPARE(gapMaxUs(), qint64(5'000));
+
+    // The channel clearing 200 ms into a 400 ms gap sends, but the timer
+    // still went 400 ms between its turns.
+    harness.nowNs += 200'000'000;
+    emit harness.mediaTransport->displayWritable();
+    turnAfterMs(200);
+    QCOMPARE(gapMaxUs(), qint64(400'000));
+    turnAfterMs(5);
+    QCOMPARE(gapMaxUs(), qint64(400'000));
+
+    QVERIFY(logNow());
+    QCOMPARE(lines().size(), 1);
+    QVERIFY2(lines().constLast().contains(
+                 QStringLiteral(" senderGapMaxMs=400.0 senderGapMaxSinceLastMs=400.0 ")),
+             qPrintable(lines().constLast()));
+
+    // Turns go on at 5 ms: nothing new to report, so no line.
+    turnAfterMs(5);
+    turnAfterMs(5);
+    QVERIFY(logNow());
+    QCOMPARE(lines().size(), 1);
+
+    // A 50 ms gap is not a new longest, so it alone writes no line. When
+    // something else changes the line, it is the longest since the last one.
+    turnAfterMs(50);
+    turnAfterMs(5);
+    QVERIFY(logNow());
+    QCOMPARE(lines().size(), 1);
+    emit harness.mediaTransport->displayErrorOccurred(QStringLiteral("sctp send failed"));
+    QVERIFY(logNow());
+    QCOMPARE(lines().size(), 2);
+    QVERIFY2(lines().constLast().contains(
+                 QStringLiteral(" senderGapMaxMs=400.0 senderGapMaxSinceLastMs=50.0 ")),
+             qPrintable(lines().constLast()));
+
+    // A new longest gap writes a line by itself.
+    turnAfterMs(450);
+    QVERIFY(logNow());
+    QCOMPARE(lines().size(), 3);
+    QVERIFY2(lines().constLast().contains(
+                 QStringLiteral(" senderGapMaxMs=450.0 senderGapMaxSinceLastMs=450.0 ")),
+             qPrintable(lines().constLast()));
+
+    // A new media peer starts again: the time since the old peer's last
+    // turn is not a gap of the new one.
+    harness.mediaTransport->onDisplaySend = {};
+    emit harness.mediaTransport->closed();
+    QTRY_VERIFY(harness.mediaTransport.isNull());
+    harness.startReadyPeer();
+    QCOMPARE(gapMaxUs(), qint64(-1));
+    turnAfterMs(2'000);
+    QCOMPARE(gapMaxUs(), qint64(-1));
+    turnAfterMs(5);
+    QCOMPARE(gapMaxUs(), qint64(5'000));
+    harness.finish();
 }
 
 void TstDaemonMediaController::exhaustedDisplayCreditDoesNotBlockAudioRtp()

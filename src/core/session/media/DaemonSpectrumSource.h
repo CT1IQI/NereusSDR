@@ -86,6 +86,11 @@ struct DaemonSpectrumFrame {
     /// values; binsDbmValid is false when it rejected the frame.
     QVector<float> binsDbm;
     bool binsDbmValid{false};
+    /// Set by DaemonSpectrumSource::takeLatest(): how many frames before
+    /// this one the engine put in the source's one-frame slot and replaced
+    /// there with nobody having taken them. Frames the source discarded
+    /// itself (a retune, a restart) are not among them.
+    quint32 replacedBefore{0};
 };
 
 class DaemonSpectrumSource final : public QObject {
