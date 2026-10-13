@@ -3574,6 +3574,9 @@ target_compile_definitions(tst_tx_applet_binding PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_applet_tune_state)
 target_compile_definitions(tst_tx_applet_tune_state PRIVATE NEREUS_BUILD_TESTS)
 
+# Remote Core indicators seed from existing mirrors and retain authority on resync.
+nereus_add_test(tst_tx_applet_remote_indicators)
+
 # ── Phase 3M-1b (relocated): PhoneCwApplet Mic Gain slider ──────────────────
 # Verifies the model-layer contracts that PhoneCwApplet's Mic Gain slider depends on
 # (relocated from TxApplet J.1 per JJ feedback 2026-04-28):
