@@ -17979,7 +17979,11 @@ void MainWindow::onConnectionStateChanged()
         // the operator's own Disconnect (RemoteConnectionController::
         // operatorDisconnected); a Disconnected state it reaches through
         // link loss or an offline radio at the Core opens nothing.
-        if (!m_autoReconnectInProgress && !m_shuttingDown
+        // Connecting/Probing also enter this non-connected branch. They
+        // are startup progress, not a reason to reopen the connection picker.
+        const ConnectionState state = m_radioModel->connectionState();
+        if ((state == ConnectionState::Disconnected || state == ConnectionState::LinkLost)
+            && !m_autoReconnectInProgress && !m_shuttingDown
             && m_radioModel->ownsLocalDsp()) {
             // Only open if we were previously connected (transition from Connected,
             // not the initial Disconnected state at startup). We detect this by

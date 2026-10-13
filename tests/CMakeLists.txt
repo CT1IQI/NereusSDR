@@ -8592,7 +8592,7 @@ else()
     set(NEREUS_TEST_PYTHON python3)
 endif()
 
-nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
