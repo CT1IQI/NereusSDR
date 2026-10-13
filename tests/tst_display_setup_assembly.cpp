@@ -36,6 +36,24 @@
 
 using namespace NereusSDR;
 
+// Counts transient changes as well as settled geometry: a runtime level
+// notification must not reveal a disabled explanation that was deduplicated.
+class DisplayRowEventCounter final : public QObject {
+public:
+    int visibilityChanges{0};
+    int geometryChanges{0};
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        if (event->type() == QEvent::Show || event->type() == QEvent::Hide) {
+            ++visibilityChanges;
+        }
+        if (event->type() == QEvent::Move || event->type() == QEvent::Resize) {
+            ++geometryChanges;
+        }
+        return false;
+    }
+};
+
 class TstDisplaySetupAssembly : public QObject {
     Q_OBJECT
     static QStringList pages() {
@@ -60,6 +78,47 @@ class TstDisplaySetupAssembly : public QObject {
     }
 private slots:
     void init() { AppSettings::instance().clear(); }
+
+    void runtimeWaterfallLevelsKeepDisplayRowsStable_data() {
+        QTest::addColumn<QString>("pageName");
+        QTest::newRow("spectrum") << QStringLiteral("Spectrum");
+        QTest::newRow("peaks-and-markers") << QStringLiteral("Peaks & Markers");
+    }
+
+    void runtimeWaterfallLevelsKeepDisplayRowsStable() {
+        QFETCH(QString, pageName);
+        SpectrumWidget pan;
+        pan.setPanIndex(0); pan.loadSettings();
+        pan.setSpectrumRenderMode(1);
+        pan.setActivePeakHoldEnabled(false);
+        pan.setPeakBlobsEnabled(false);
+        pan.setShowNoiseFloor(false);
+        RadioModel model;
+        model.setSpectrumWidget(&pan);
+        SetupDialog dialog(&model);
+        dialog.setPanWidgetsProvider([&pan] { return QList<SpectrumWidget*>{&pan}; });
+        dialog.setDisplayPanIndex(0);
+        QWidget* page = selected(dialog, pageName);
+        QVERIFY(page);
+        dialog.show();
+        QCoreApplication::processEvents();
+        DisplayRowEventCounter counter;
+        int hiddenReasons = 0;
+        for (QLabel* label : page->findChildren<QLabel*>()) {
+            label->installEventFilter(&counter);
+            if (label->objectName().startsWith(QStringLiteral("setupReason"))
+                && !label->text().isEmpty() && label->isHidden()) { ++hiddenReasons; }
+        }
+        QVERIFY(hiddenReasons > 0);
+        for (int frame = 0; frame < 5; ++frame) {
+            pan.displaySettingChanged(QStringLiteral("DisplayWfEffectiveLevels"));
+            QCoreApplication::processEvents();
+        }
+        qInfo() << pageName << "runtime label events: visibility" << counter.visibilityChanges
+                << "geometry" << counter.geometryChanges;
+        QCOMPARE(counter.visibilityChanges, 0);
+        QCOMPARE(counter.geometryChanges, 0);
+    }
 
     void transmitScaleRowsAreVisibleSharedPairsAndFollowExternalEditsWithoutEcho() {
         SpectrumWidget pan0, pan1;

@@ -8,6 +8,8 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-12 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Keep disabled explanations stable during live level refreshes.
+//   2026-10-12 - J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Approved eight-page Display assembly, scoped bindings, own-row indicators,
 //                 shared workspace styling, mode notes, editor placement, scoped resets,
 //                 shared TX endpoints and explicit station/computer ownership.
@@ -5350,7 +5352,6 @@ void DisplayAssemblyPage::refreshOwnRows()
             m_rowReasons.insert(logicalKey, reason);
         }
         reason->setText(control->isEnabled() ? QString() : control->toolTip());
-        reason->setVisible(!reason->text().isEmpty());
     }
     for (auto dot = m_ownDots.cbegin(); dot != m_ownDots.cend(); ++dot) {
         if (!seen.contains(dot.key()) && dot.value()) { dot.value()->hide(); }
@@ -5378,17 +5379,19 @@ void DisplayAssemblyPage::refreshOwnRows()
             m_rowReasons.insert(id, reason);
         }
         reason->setText(control->isEnabled() ? QString() : control->toolTip());
-        reason->setVisible(!reason->text().isEmpty());
     }
     // Form rows retained from the source builders may collect their reasons
     // below the group. Keep each distinct explanation once in that group.
     QHash<QWidget*, QSet<QString>> displayedReasons;
     for (QLabel* reason : findChildren<QLabel*>()) {
-        if (!reason->objectName().startsWith(QStringLiteral("setupReason")) || reason->text().isEmpty()) { continue; }
+        if (!reason->objectName().startsWith(QStringLiteral("setupReason"))) { continue; }
         QWidget* group = reason->parentWidget();
         QSet<QString>& seenReasons = displayedReasons[group];
-        reason->setVisible(!seenReasons.contains(reason->text()));
-        seenReasons.insert(reason->text());
+        const bool shown = !reason->text().isEmpty() && !seenReasons.contains(reason->text());
+        // Decide the final visibility once. Showing duplicate explanations
+        // before hiding them again reflows unchanged rows on live level updates.
+        reason->setVisible(shown);
+        if (shown) { seenReasons.insert(reason->text()); }
     }
     positionOwnRows();
 }
