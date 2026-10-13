@@ -2,6 +2,11 @@
 // Modification history (NereusSDR):
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//   2026-10-12: TX mini identity follows the Core's versioned txState or
+//               unique legacy TX flag, never the local arbiter's cache.
+//               Its exact TX analyzer window is admitted separately from
+//               the inclusive RX FFT crop.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12: reset collector stall diagnostics between runs, so an
 //               intentional pause is not counted as a stall. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
@@ -240,6 +245,7 @@
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/WdspEngine.h"
 #include "core/Resampler.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/MicUplinkCollector.h"
@@ -1178,6 +1184,31 @@ struct RemoteMediaController::Private {
         const TransmitState* tx = client->transmitState();
         return tx && (tx->keyed() || tx->tuning() || tx->txEnding());
     }
+    bool miniUsesTransmit(const SliceModel* slice) const
+    {
+        if (!model || !slice) { return false; }
+        if (model->role() != RadioModel::Role::Remote) {
+            return model->isTransmitting() && model->txBoundSlice() == slice;
+        }
+        // Same authority as MoxDisplayController::followStation: txState
+        // precedes slice mirrors in a snapshot, so resolve its stable ID
+        // only once that slice exists. The remote arbiter cache is not
+        // populated by the mirrored TX flags.
+        if (client && client->capabilities().txStateVersion >= 1) {
+            const TransmitState* state = client->transmitState();
+            return state && state->keyed() && state->txSliceId() >= 0
+                && model->sliceById(state->txSliceId()) == slice;
+        }
+        if (!model->isTransmitting()) { return false; }
+        const SliceModel* transmitSlice = nullptr;
+        for (const SliceModel* candidate : model->slices()) {
+            if (candidate && candidate->isTxSlice()) {
+                if (transmitSlice) { return false; }
+                transmitSlice = candidate;
+            }
+        }
+        return transmitSlice == slice;
+    }
     bool replaceStartFailed = false;
     QTimer* replaceRetry = nullptr;
     std::unique_ptr<DualPathAudio> dual;
@@ -1282,7 +1313,7 @@ struct RemoteMediaController::Private {
         constexpr double kTxSpanHz = 40'000.0;
         constexpr int kPixels = 1024;
         constexpr int kFps = 30;
-        const bool transmit = model->isTransmitting() && model->txBoundSlice() == slice;
+        const bool transmit = miniUsesTransmit(slice);
         const double span = transmit ? kTxSpanHz : kRxSpanHz;
         const double centre = transmit ? double(model->txFrequencyForSlice(slice))
                                        : slice->frequency();
@@ -2048,6 +2079,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     // display budget's holder is the Core's, from `txState`'s holderEpoch
     // and holderAway (0 and not away while unheld or not sent).
     if (TransmitState* txState = client->transmitState()) {
+        // Read the completed snapshot/delta, including a TX-slice change
+        // while keyed, rather than its individual property notifications.
+        connect(txState, &TransmitState::stateChanged, this,
+                &RemoteMediaController::refreshSubscriptions, Qt::QueuedConnection);
         connect(txState, &TransmitState::stateChanged, this, [this, client] {
             if (d->client != client) { return; }
             const bool onAir = d->coreTransmitting();
@@ -2251,6 +2286,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     });
     connect(model, &RadioModel::transmittingChanged, this,
             &RemoteMediaController::refreshSubscriptions);
+    connect(client, &StationClient::stateSnapshotApplied, this,
+            &RemoteMediaController::refreshSubscriptions, Qt::QueuedConnection);
     if (client && client->mediaAvailable()) {
         start();
     }
@@ -7109,8 +7146,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             : binding.context.codec.contextGeneration;
         if (!isNewerGeneration(context.codec.contextGeneration, drawn)) { return; }
         if (binding.isMini()) {
-            const bool wantsTx = d->model && d->model->isTransmitting()
-                && d->model->txBoundSlice() == binding.slice;
+            const bool wantsTx = d->miniUsesTransmit(binding.slice);
             if (!d->miniWanted.contains(binding.miniSliceId)
                 || binding.slice->sliceIndex() != binding.miniSliceId || wantsTx
                 || decoded->traceSamples <= 0
@@ -7156,37 +7192,50 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         : std::nullopt;
     if (binding.isMini()) {
         const QJsonObject target = budgetMode ? binding.acceptedRequest : binding.observed;
-        const bool wantsTx = d->model && binding.slice && d->model->isTransmitting()
-            && d->model->txBoundSlice() == binding.slice;
+        const bool wantsTx = d->miniUsesTransmit(binding.slice);
         const double expectedCentre = target.value(QStringLiteral("centreHz")).toDouble();
         const double expectedSpan = target.value(QStringLiteral("spanHz")).toDouble();
         const int fftSize = decoded->grant ? decoded->grant->grantedFftSize
             : target.value(QStringLiteral("fftSize")).toInt();
-        // Core reports the exact inclusive FFT-bin crop, which can differ
-        // from the requested RF window by several bins. Recompute that crop
-        // from the same SpectrumReducer rule rather than allowing a broad
-        // tolerance that could admit a stale, shifted context.
-        ReducerConfig crop;
-        crop.centreHz = expectedCentre;
-        crop.spanHz = expectedSpan;
-        crop.streamCentreHz = decoded->sourceCentreHz;
-        crop.sampleRateHz = decoded->sampleRateHz;
-        const auto bins = fftSize > 0
-            ? SpectrumReducer::visibleBinRange(fftSize, crop)
-            : std::pair<int, int>{0, -1};
         const double binHz = fftSize > 0 ? decoded->sampleRateHz / fftSize : 0.0;
-        const double cropCentre = decoded->sourceCentreHz - decoded->sampleRateHz * 0.5
-            + (bins.first + bins.second + 1) * binHz * 0.5;
-        const double cropSpan = (bins.second - bins.first + 1) * binHz;
         const double rfEpsilon = std::max(1.0e-6, binHz * 1.0e-9);
+        bool coordinatesMatch = false;
+        if (wantsTx) {
+            // DaemonMediaController::transmitContextFor sends miniView's
+            // exact fixed window, not a SpectrumReducer crop. Its source
+            // origin is the Core's NCO, including signed Tune compensation;
+            // the request centre is still the operator's dial plus XIT.
+            // The span comes from requestMini's existing fixed TX contract.
+            coordinatesMatch = fftSize > 0
+                && decoded->sampleRateHz == static_cast<double>(WdspEngine::kTxDspSampleRate)
+                && std::abs(decoded->centreHz - decoded->sourceCentreHz) <= rfEpsilon
+                && std::abs(decoded->spanHz - expectedSpan) <= rfEpsilon;
+        } else {
+            // Core reports the exact inclusive FFT-bin crop, which can differ
+            // from the requested RF window by several bins. Recompute that crop
+            // from the same SpectrumReducer rule rather than allowing a broad
+            // tolerance that could admit a stale, shifted context.
+            ReducerConfig crop;
+            crop.centreHz = expectedCentre;
+            crop.spanHz = expectedSpan;
+            crop.streamCentreHz = decoded->sourceCentreHz;
+            crop.sampleRateHz = decoded->sampleRateHz;
+            const auto bins = fftSize > 0
+                ? SpectrumReducer::visibleBinRange(fftSize, crop)
+                : std::pair<int, int>{0, -1};
+            const double cropCentre = decoded->sourceCentreHz - decoded->sampleRateHz * 0.5
+                + (bins.first + bins.second + 1) * binHz * 0.5;
+            const double cropSpan = (bins.second - bins.first + 1) * binHz;
+            coordinatesMatch = bins.second >= bins.first
+                && std::abs(decoded->centreHz - cropCentre) <= rfEpsilon
+                && std::abs(decoded->spanHz - cropSpan) <= rfEpsilon;
+        }
         if (!d->miniWanted.contains(binding.miniSliceId) || !binding.slice
             || binding.slice->sliceIndex() != binding.miniSliceId
             || decoded->sourceStream != binding.slice->streamIndex()
             || binding.observedStreamEpoch != binding.slice->streamEpoch()
             || decoded->transmit.value_or(false) != wantsTx
-            || bins.second < bins.first
-            || std::abs(decoded->centreHz - cropCentre) > rfEpsilon
-            || std::abs(decoded->spanHz - cropSpan) > rfEpsilon
+            || !coordinatesMatch
             || decoded->traceSamples <= 0
             || decoded->traceSamples != decoded->waterfallSamples
             || decoded->wideSamples != 0) {
@@ -7421,8 +7470,7 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         const bool budgetMode = d->client->remoteDisplayBudgetLimits().has_value();
         const QJsonObject wanted = d->requestMini(mini.slice);
         if (!d->miniWanted.contains(mini.miniSliceId) || wanted.isEmpty()
-            || mini.transmit != (d->model->isTransmitting()
-                && d->model->txBoundSlice() == mini.slice)
+            || mini.transmit != d->miniUsesTransmit(mini.slice)
             // A context taken for drawing only answers a request the mini
             // display has since changed, by its nature.
             || (!mini.drawing
@@ -7623,9 +7671,7 @@ void RemoteMediaController::presentDueDisplay()
             if (it == d->bindings.end()) { break; }
             if (it->second.isMini()) {
                 auto& mini = it->second;
-                const bool currentTx = d->model && mini.slice
-                    && d->model->isTransmitting()
-                    && d->model->txBoundSlice() == mini.slice;
+                const bool currentTx = d->miniUsesTransmit(mini.slice);
                 const bool budgetMode = d->client
                     && d->client->remoteDisplayBudgetLimits().has_value();
                 const QJsonObject wanted = d->requestMini(mini.slice);
