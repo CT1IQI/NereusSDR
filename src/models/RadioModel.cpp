@@ -1115,6 +1115,21 @@
 //                resampled to the mix rate (it was mixed at 192 kHz on a
 //                Protocol 2 radio). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - Receive filters on the Anvelina Pro 3: slices on different
+//                bands sharing an input get all of their band filters
+//                together, in place of a bypass that passes nothing on that
+//                radio (republishAlexAdcSlices). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The same radio: a bypass the filter policy reports (Force
+//                bypass, extended view), a filter row's own bypass and the
+//                Alex-2 master bypass go out as the five ordinary band
+//                filters together. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - The same radio: a 6 m slice sharing an input keeps the
+//                6 m BPF/LNA, the 12/10 m row stays out while it is in, and
+//                the chain says what that costs the other slices
+//                (sharedLnaReason). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - setPgxlOperateFromApplet: the local Power Genius OPERATE
 //                click no longer needs the station amplifier object, which
 //                only a Core that shares its accessories has. J.J. Boyd
@@ -24109,6 +24124,16 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 //     cover the case where three slices share one ADC across three bands.
 // Operators who prefer a filtered chain over a wide one keep BpfMode::
 // ForceBand.
+//
+// One radio is known not to fit "bypass is correct under either reading":
+// on the Anvelina Pro 3 the bypass passes nothing at all, and several band
+// filters selected together pass each band at the level it has behind its
+// own filter (measured; codec::alex::combinesRxBandFilters). There the Auto
+// policy selects the filter of every slice counted on the chain, and the
+// chain stays Filtered.
+// A bypass the policy still reports there (Force bypass, extended view) goes
+// out as the five ordinary band filters together, the nearest thing to a
+// bypass that board has (codec::alex::receiveBypassSelection).
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
@@ -24228,10 +24253,24 @@ void RadioModel::republishAlexAdcSlices()
     // for the board's ladder, as before.
     const bool alex2Chain = codec::alex::usesAlex2Hpf(m_hardwareProfile.model);
     const codec::alex::AlexHpfEdges edges = m_alexHpfEdges;
-    const auto preselectorFor = [alexBoard, alex2Chain, edges](int chain, double hz) {
+    // The radio whose band filters combine, where a band difference on a
+    // chain selects every band's filter in place of the bypass (below, at
+    // hpfBitsFor). Never the OC-matrix path, whose identities are pin masks.
+    const bool combineBandFilters = !ocFilterPath
+        && codec::alex::combinesRxBandFilters(m_hardwareProfile.model);
+    // What a bypass the policy reports goes out as on receive: 0x20, or on
+    // that radio, whose bypass passes nothing, the five ordinary band
+    // filters together (measured; codec::alex::receiveBypassSelection).
+    const quint8 receiveBypass = ocFilterPath
+        ? quint8(0x20)
+        : codec::alex::receiveBypassSelection(m_hardwareProfile.model);
+    // A row's own Bypass box and the Alex-2 master bypass send the same
+    // (receiveBypass); a frequency no row holds stays 0x20.
+    const auto preselectorFor = [alexBoard, alex2Chain, edges, receiveBypass](int chain,
+                                                                              double hz) {
         return (chain == 1 && alex2Chain)
-            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges)
-            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges);
+            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges, receiveBypass)
+            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges, receiveBypass);
     };
     auto addToChain = [&bands, &preselectors, &counts, &lowestHz, &preselectorFor,
                         ocFilterPath, this](
@@ -24502,11 +24541,80 @@ void RadioModel::republishAlexAdcSlices()
         if (!currentParticipants()) { return; }
     }
 
+    // ── Where the band filters combine: the 6 m BPF/LNA on a shared input ──
+    //
+    // The selection for a chain whose slices need more than one row
+    // (codec::alex::combineRxBandSelections, measured). A 6 m slice keeps
+    // the BPF/LNA (the maintainer's ruling, 2026-10-11), and that costs the
+    // slices sharing its input: every other row passes its band 10 to 20 dB
+    // lower, and the 12/10 m row stays out, so a slice there has no filter
+    // of its own. The chain says so, after its bands
+    // (AlexController::setCombineNote) and in the shared-input reason
+    // below. With Disable 6m LNA on RX on, Alex0 loses the BPF/LNA in the
+    // connection (codec::alex::applyAlex1HpfSwitches) and it is the 6 m
+    // slice that has no filter. NereusSDR-original.
+    std::array<quint8, kAdcCount> combinedSelection {};
+    std::array<QString, kAdcCount> combineNote;
+    std::array<QString, kAdcCount> sharedLnaText;
+    for (int adc = 0; adc < chainCount; ++adc) {
+        if (!combineBandFilters || counts[adc] < 2) { continue; }
+        static constexpr quint8 kBypassBits  = 0x20;
+        static constexpr quint8 k6mBpfLnaRow = 0x40;
+        quint8 selection = 0;
+        for (int i = 0; i < counts[adc]; ++i) {
+            selection |= preselectors[adc][i];
+        }
+        // The switch is Alex0's alone (SetAlexHPFBits, the block above).
+        const bool lnaStays = adc != 0 || !m_alexDisable6mLnaOnRxSwitch;
+        const quint8 sent = codec::alex::combineRxBandSelections(selection, lnaStays);
+        combinedSelection[adc] = sent;
+        if ((selection & k6mBpfLnaRow) == 0) { continue; }
+        // The rows on the wire once the switch has had its say.
+        const quint8 heard = lnaStays ? sent : static_cast<quint8>(sent & ~k6mBpfLnaRow);
+
+        QList<const SliceModel*> lna;        // the BPF/LNA is in for these
+        QList<const SliceModel*> low;        // behind another row, with it in
+        QList<const SliceModel*> noFilter;   // their row is not sent
+        QStringList noFilterBands;
+        for (const SliceModel* s : std::as_const(countedSlices[static_cast<size_t>(adc)])) {
+            const quint8 own = preselectorFor(adc, s->frequency());
+            if ((own & ~kBypassBits) == 0) { continue; }   // no row of its own
+            if (lnaStays && (own & k6mBpfLnaRow) != 0) {
+                lna.append(s);
+            } else if ((own & heard) == 0) {
+                noFilter.append(s);
+                const QString band = bandLabel(bandFromFrequency(s->frequency()));
+                if (!noFilterBands.contains(band)) { noFilterBands << band; }
+            } else if (lnaStays) {
+                low.append(s);
+            }
+        }
+        QStringList costs;
+        if (lnaStays && !low.isEmpty()) {
+            costs << QStringLiteral("HF reads low");
+        }
+        if (!noFilter.isEmpty()) {
+            costs << QStringLiteral("%1 filter out").arg(noFilterBands.join(QStringLiteral(" + ")));
+        }
+        if (costs.isEmpty() || (lnaStays && lna.isEmpty())) { continue; }
+        combineNote[adc] = QStringLiteral("%1: %2").arg(
+            lnaStays ? QStringLiteral("6m LNA in") : QStringLiteral("6m LNA off on RX"),
+            costs.join(QStringLiteral(", ")));
+        sharedLnaText[adc] = sharedLnaReason(lna, low, noFilter, !lnaStays);
+    }
+
     // Every chain AlexController models is notified, including one the board
     // does not have: the array for it is empty, which is the correct input for
     // a chain with nothing on it and which clears any state left over from a
     // previously connected two-chain radio.
     for (int adc = 0; adc < kAdcCount; ++adc) {
+        // Set first, so the one recompute that reports this pass's slices
+        // already knows whether a band difference bypasses or combines, and
+        // what combining costs them.
+        m_alexController.setBandFiltersCombine(adc, combineBandFilters);
+        if (!currentParticipants()) { return; }
+        m_alexController.setCombineNote(adc, combineNote[adc]);
+        if (!currentParticipants()) { return; }
         m_alexController.notifySlicesOnAdc(adc, bands[adc]);
         if (!currentParticipants()) { return; }
     }
@@ -24518,7 +24626,8 @@ void RadioModel::republishAlexAdcSlices()
     // prbpfilter2's HPF nibble.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
-    auto hpfBitsFor = [this, &counts, &lowestHz, &preselectorFor, chainCount](int adc) -> int {
+    auto hpfBitsFor = [this, &counts, &lowestHz, &combinedSelection, &preselectorFor,
+                       chainCount, combineBandFilters, receiveBypass](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -24540,7 +24649,11 @@ void RadioModel::republishAlexAdcSlices()
             // From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]:
             //   prbpfilter->_Bypass  = (bits & 0x20) != 0;
             //   prbpfilter2->_Bypass = (bits & 0x20) != 0;
-            return 0x20;
+            // On the radio whose bypass passes nothing, the five band
+            // filters go out in its place (receiveBypass above). The chain
+            // still reports the bypass: Force bypass and extended view mean
+            // what they did, and the WIDE badge stays. NereusSDR-original.
+            return int(receiveBypass);
         }
 
         // Filtered. Select from the LOWEST frequency on the chain, which is
@@ -24556,6 +24669,22 @@ void RadioModel::republishAlexAdcSlices()
         //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
         // With the Alex tab's rows, and on chain 1 the Alex-2 bank where
         // Thetis sets it (preselectorFor above).
+        //
+        // Where the radio's band filters combine, Auto over more than one
+        // filter selects them all: the relay bits are one per filter, so
+        // the selections are added (0x04 for 40 m and 0x01 for 20 m go out
+        // as Alex0's receive half 0x0012, the word measured at
+        // codec::alex::combinesRxBandFilters). A slice with no filter of
+        // its own (below the lowest row) brings the bypass, which is left
+        // out while another slice has a filter: it passes nothing there,
+        // and with two filters it cost them 3 to 5 dB. The 6 m BPF/LNA and
+        // the 12/10 m row never go out together (combinedSelection above).
+        // Force filter keeps one filter, as the operator asked.
+        // NereusSDR-original; Thetis never selects two rows.
+        if (combineBandFilters && st.mode == AlexController::BpfMode::Auto
+            && counts[adc] > 1) {
+            return int(combinedSelection[adc]);
+        }
         return int(preselectorFor(adc, lowestHz[adc]));
     };
 
@@ -24669,10 +24798,25 @@ void RadioModel::republishAlexAdcSlices()
                 }
             }
         }
-        m_alexController.setLowPassHold(0, forcing, lowPassReason);
+        // The 6 m BPF/LNA's cost to a shared input (sharedLnaText above)
+        // joins the reason on either chain, while the combined selection is
+        // what the chain sends: Auto, with no switch, override or extended
+        // view over it.
+        const auto withSharedLna = [this, &sharedLnaText](int adc,
+                                                          const QString& reason) -> QString {
+            const AlexController::AlexAdcState& st = m_alexController.adcState(adc);
+            const QString& lna = sharedLnaText[static_cast<size_t>(adc)];
+            if (lna.isEmpty() || st.mode != AlexController::BpfMode::Auto
+                || st.effective != AlexController::BpfEffective::Filtered) {
+                return reason;
+            }
+            if (reason.isEmpty()) { return lna; }
+            return QStringLiteral("%1 %2").arg(reason, lna);
+        };
+        m_alexController.setLowPassHold(0, forcing, withSharedLna(0, lowPassReason));
         if (!currentParticipants()) { return; }
         // The low-pass is on ADC0's input only.
-        m_alexController.setLowPassHold(1, -1, QString());
+        m_alexController.setLowPassHold(1, -1, withSharedLna(1, QString()));
         if (!currentParticipants()) { return; }
     }
 
@@ -25323,6 +25467,61 @@ QString RadioModel::lowPassHoldReason(const SliceModel* top,
             parts << tr("The broadcast-band high-pass filter is off because slices %1 "
                         "need it off.").arg(joinRangeNames(off));
         }
+    }
+    return parts.join(QLatin1Char(' '));
+}
+
+// ---------------------------------------------------------------------------
+// sharedLnaReason: what the 6 m BPF/LNA costs the slices sharing its input
+// where the radio's band filters combine (the Anvelina Pro 3; measured,
+// codec::alex::combineRxBandSelections). NereusSDR-original. Joins
+// AlexAdcState::lowPassReason, the chain's shared-input reason.
+//
+// Plain words, read by an operator. The filter names are the Alex tab's.
+// Kept short: the sentences follow lowPassHoldReason's in one string, and a
+// remote window refuses a reason over 512 characters
+// (applyStationFilterValue).
+// ---------------------------------------------------------------------------
+QString RadioModel::sharedLnaReason(const QList<const SliceModel*>& lna,
+                                    const QList<const SliceModel*>& low,
+                                    const QList<const SliceModel*>& noFilter,
+                                    bool lnaDisabled) const
+{
+    const auto named = [](const QList<const SliceModel*>& slices) {
+        QStringList names;
+        for (const SliceModel* s : slices) {
+            names << QStringLiteral("%1 on %2").arg(
+                s->sliceLetter(), bandLabel(bandFromFrequency(s->frequency())));
+        }
+        return joinRangeNames(names);
+    };
+    if (lnaDisabled) {
+        if (noFilter.isEmpty()) { return QString(); }
+        return noFilter.size() == 1
+            ? tr("Disable 6m LNA on RX is on, so the 6m BPF/LNA is out and slice %1 "
+                 "hears nothing while other bands share its receiver input.")
+                  .arg(named(noFilter))
+            : tr("Disable 6m LNA on RX is on, so the 6m BPF/LNA is out and slices %1 "
+                 "hear nothing while other bands share their receiver input.")
+                  .arg(named(noFilter));
+    }
+    if (lna.isEmpty() || (low.isEmpty() && noFilter.isEmpty())) { return QString(); }
+    QStringList parts;
+    parts << (lna.size() == 1 ? tr("The 6m BPF/LNA is in for slice %1.").arg(named(lna))
+                              : tr("The 6m BPF/LNA is in for slices %1.").arg(named(lna)));
+    if (low.size() == 1) {
+        parts << tr("The meter and panadapter of slice %1 read about 10 to 20 dB lower "
+                    "with it in.").arg(named(low));
+    } else if (!low.isEmpty()) {
+        parts << tr("The meters and panadapters of slices %1 read about 10 to 20 dB "
+                    "lower with it in.").arg(named(low));
+    }
+    if (noFilter.size() == 1) {
+        parts << tr("The 12/10m BPF stays out with it, so slice %1 has no filter and "
+                    "may hear little or nothing.").arg(named(noFilter));
+    } else if (!noFilter.isEmpty()) {
+        parts << tr("The 12/10m BPF stays out with it, so slices %1 have no filter and "
+                    "may hear little or nothing.").arg(named(noFilter));
     }
     return parts.join(QLatin1Char(' '));
 }
