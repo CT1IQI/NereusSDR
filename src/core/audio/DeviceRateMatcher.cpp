@@ -63,6 +63,10 @@
 //               dry run.  The block writer is as it was.  Bench regression
 //               (R-AUD-15).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-13: BLOCK starvation starts a fresh control epoch before old
+//               reader requests are replayed, retaining the existing size,
+//               padding and fade. Public packet playback is unchanged.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -882,6 +886,21 @@ struct DeviceRateMatcher::Writer {
             stalled = false;
             restartControl();
             // The gaps are measured from this write on.
+            haveLastWrite = true;
+            lastWriteNs = nowNs;
+        }
+
+        // NereusSDR: unlike rmatch's continuing underflow control, a BLOCK
+        // starvation starts a new clock epoch. The absent source interval
+        // cannot measure drift: do not replay its reader requests into the
+        // restarted averages. Adopt only writer-owned baselines from the
+        // values sampled above; the separate atomics are not a transactional
+        // callback snapshot. A later observed dry run starts another epoch.
+        if (packetFrames == 0 && dryRunsNow != dryRunsSeen) {
+            restartControl();
+            readAtLast = readNow;
+            requestedAtLast = requestedNow;
+            readCallsAtLast = readCallsNow;
             haveLastWrite = true;
             lastWriteNs = nowNs;
         }
