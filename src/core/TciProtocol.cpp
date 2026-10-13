@@ -7,6 +7,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
+//                existence gates initial/query and live RX/TX availability.
 //   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code; attribution remediation via OpenAI Codex.
@@ -318,7 +321,7 @@ QString TciProtocol::handleCommand(const QString& command)
                                         && args.size() == *query
                                         && kVacantReceiverQueries.contains(name);
             if (m_receiverSliceMap && query != kQueryArgs.cend() && ok
-                && m_receiverSliceMap(rx) < 0 && !vacantAnswered) {
+                && !receiverAvailableNow(rx) && !vacantAnswered) {
                 return {};
             }
             // A vfo set can name one receiver and write another's slice
@@ -759,7 +762,7 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // lines whose value does not come from receiver 1's slice are still
     // sent: rx_enable, rx_nf_enable (global), calibration_ex, split_enable,
     // tx_enable, rx_channel_enable, trx, tune and iq_stop.
-    const bool rx1Vacant = m_receiverSliceMap && m_receiverSliceMap(1) < 0;
+    const bool rx1Vacant = m_receiverSliceMap && !receiverAvailableNow(1);
 
     // Helper: read a qint64 RadioModel accessor via QMetaObject::invokeMethod.
     // Mirrors the query-path pattern at handleVfoCommand below (line ~1140).
@@ -1251,7 +1254,7 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // From Thetis TCIServer.cs:2385-2389 [v2.10.3.13]
     // A missing dynamic slice has no mode. Do not put an incomplete
     // modulation message (or an empty frame) in the initial burst.
-    if (!modeUpper[0].isEmpty()) {
+    if ((!m_receiverSliceMap || receiverAvailableNow(0)) && !modeUpper[0].isEmpty()) {
         lines << buildModulationLine(0, modeUpper[0]);
     }
     if (!rx1Vacant && !modeUpper[1].isEmpty()) {
@@ -1261,7 +1264,7 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     if (!rx1Vacant) { lines << buildRxFilterBandLine(1, filterLow[1], filterHigh[1]); }
 
     // From Thetis TCIServer.cs:2391-2392 [v2.10.3.13]
-    lines << buildRxEnableLine(0, !mox);
+    lines << buildRxEnableLine(0, receiverAvailableNow(0) && !mox);
     lines << buildRxEnableLine(1, bRX2Enabled && !mox);
 
     // From Thetis TCIServer.cs:2394-2403 [v2.10.3.13]
@@ -1364,11 +1367,11 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     lines << buildSplitEnableLine(0, split[0]);
     lines << buildSplitEnableLine(1, bRX2Enabled && split[1]);
     // R-R3-42 / R-R3-25: neither receiver can transmit from a remote window.
-    lines << buildTxEnableLine(0, !transmitRefused() && !mox);
+    lines << buildTxEnableLine(0, receiverAvailableNow(0) && !transmitRefused() && !mox);
     lines << buildTxEnableLine(1, !transmitRefused() && bRX2Enabled && !mox);
 
     // From Thetis TCIServer.cs:2478-2481 [v2.10.3.13]
-    lines << buildRxChannelEnableLine(0, 0, true);
+    lines << buildRxChannelEnableLine(0, 0, receiverAvailableNow(0));
     lines << buildRxChannelEnableLine(0, 1, false);  // GetSubRX(1) placeholder
     lines << buildRxChannelEnableLine(1, 0, bRX2Enabled);
     // no sub rx on rx2
@@ -1527,12 +1530,23 @@ bool TciProtocol::useRx1VfoaForRx2VfoaSetting()
 // options never took effect on the Core's own server.
 bool TciProtocol::rx2EnabledNow() const
 {
-    if (m_receiverSliceMap) {
-        return m_receiverSliceMap(1) >= 0;
-    }
+    return receiverAvailableNow(1);
+}
+
+// NereusSDR adaptation of Thetis TCIServer.cs:2515-2516; 4617-4628
+// [v2.10.3.15]: Thetis's RX1 always exists; either dynamic slice here may
+// be absent. Never use receiverSlice's vacant-map fallback for existence.
+bool TciProtocol::receiverAvailableNow(int receiver) const
+{
+    if (receiver < 0 || receiver >= kExposedReceiverCount) { return false; }
+    const int sliceId = m_receiverSliceMap ? m_receiverSliceMap(receiver) : receiver;
+    if (sliceId < 0) { return false; }
     if (const auto* radio = qobject_cast<const RadioModel*>(m_radio)) {
-        return radio->sliceById(1) != nullptr;
+        return radio->sliceById(sliceId) != nullptr;
     }
+    // Synthetic radios have no slice roster: preserve their RX0 convention
+    // and their explicit RX2Enabled flag.
+    if (receiver == 0) { return true; }
     bool on = false;
     if (radioHas(m_radio, "rx2Enabled()")) {
         QMetaObject::invokeMethod(m_radio, "rx2Enabled",
@@ -2259,12 +2273,17 @@ QString TciProtocol::handleVfoCommand(const QStringList& args)
         return {};
     }
 
+    // NereusSDR: an absent named receiver cannot read or set an alias.
+    if ((m_receiverSliceMap || qobject_cast<const RadioModel*>(m_radio))
+        && !receiverAvailableNow(rx)) { return {}; }
     const bool vfoaUseRx2 = useRx1VfoaForRx2VfoaSetting() && rx2EnabledNow();
     // The receiver and slice VFO this rx/chan reads and writes
     // (vfoTarget). handleCommand's ownership gate checks the same
     // receiver, so a set it lets through writes only a slice it allowed.
     const VfoTarget target = vfoTarget(rx, chan);
     const int targetRx = target.rx;
+    if ((m_receiverSliceMap || qobject_cast<const RadioModel*>(m_radio))
+        && !receiverAvailableNow(targetRx)) { return {}; }
 
     if (args.size() >= 3) {
         // 3-arg set path.
@@ -2444,7 +2463,8 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
     bool ok = false;
     const int rx = args.at(0).trimmed().toInt(&ok);
     if (!ok || rx < 0 || rx >= kExposedReceiverCount
-        || (m_receiverSliceMap && m_receiverSliceMap(rx) < 0)) {
+        || ((m_receiverSliceMap || qobject_cast<const RadioModel*>(m_radio))
+            && !receiverAvailableNow(rx))) {
         return {};
     }
 
@@ -3791,7 +3811,7 @@ QString TciProtocol::handleRxEnableCommand(const QStringList& args)
         bool mox = false;
         QMetaObject::invokeMethod(m_radio, "mox", Qt::DirectConnection,
                                   Q_RETURN_ARG(bool, mox));
-        return buildRxEnableLine(rx, rx == 0 ? !mox : rx2EnabledNow() && !mox);
+        return buildRxEnableLine(rx, receiverAvailableNow(rx) && !mox);
     }
 
     // From Thetis TCIServer.cs:4603-4616 [v2.10.3.15]: set path. A receiver
@@ -3826,7 +3846,7 @@ bool TciProtocol::rxChannelEnabledNow(int rx, int chan) const
     //get
     if (rx == 0) {
         // GetSubRX(1): NereusSDR has no sub receiver.
-        return chan == 0;
+        return chan == 0 && receiverAvailableNow(0);
     }
     if (rx == 1) {
         //just return rx2 state as no subrx
@@ -3857,7 +3877,12 @@ QString TciProtocol::handleRxChannelEnableCommand(const QStringList& args)
     const bool enabled = value == QStringLiteral("true");
 
     // The slice this set names. Receiver 1 has one only while RX2 is on.
-    const bool hasSlice = rx == 0 || (rx == 1 && rx2EnabledNow());
+    const bool hasSlice = receiverAvailableNow(rx);
+    // A dynamic receiver cannot acknowledge enabling a channel it lacks.
+    // Preserve the existing authoritative reply pattern for refused writes.
+    if (!hasSlice && rx >= 0 && rx < kExposedReceiverCount) {
+        return buildRxChannelEnableLine(rx, chan, false);
+    }
     if (hasSlice && m_sliceWriteGate && !m_sliceWriteGate(receiverSlice(rx))) {
         return buildRxChannelEnableLine(rx, chan, rxChannelEnabledNow(rx, chan));
     }

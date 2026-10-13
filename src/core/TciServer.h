@@ -6,6 +6,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
+//                existence gates initial/query and live RX/TX availability.
 //   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code; attribution remediation via OpenAI Codex.
@@ -670,11 +673,10 @@ private:
     std::function<bool(int)> m_externalSliceWriteGate;
     void refreshSliceWriteGate();
     int desktopSliceForReceiver(int receiver) const;
-    // Sends rx_enable:1 and tx_enable:1 when TciProtocol::rx2EnabledNow()
-    // flips (Thetis OnRX2EnabledChanged -> RX2EnabledChange,
+    // Sends rx_enable and tx_enable when either mapped receiver
+    // becomes available or unavailable (Thetis OnRX2EnabledChanged -> RX2EnabledChange,
     // TCIServer.cs:7451-7462 and 842-847 [v2.10.3.15]).
     void refreshRx2Enabled();
-    bool m_rx2EnabledSent{false};
     QMetaObject::Connection m_rx2OwnershipConnection;
     int desktopReceiverForSlice(int sliceId) const;
     void releaseDesktopProgramKey();
@@ -725,6 +727,7 @@ private:
     //
     // kMaxTciRxSlices: we support slice 0 and slice 1 (RX1 + RX2).
     static constexpr int kMaxTciRxSlices = 2;
+    std::array<bool, kMaxTciRxSlices> m_receiverAvailableSent{};
     // WdspEngine::kMaxSliceChannels is five. The DSP callback reads this
     // atomic map without touching main-thread SliceOwnership state.
     static constexpr int kMaxPhysicalSlices = 5;

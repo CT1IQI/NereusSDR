@@ -110,6 +110,7 @@ private slots:
     void desktop_host_holder_and_program_ownership_data();
     void desktop_host_holder_and_program_ownership();
     void desktop_host_owned_two_three_broadcasts_logical_receivers();
+    void desktop_host_availability_follows_owned_slice_lifecycle();
     void stopped_server_queues_no_rx2_lines();
     void desktop_host_answers_rx2_off_queries_without_receiver_1();
     void desktop_host_notch_reads_the_receiver_not_the_slice();
@@ -399,6 +400,44 @@ QStringList framesOf(const QSignalSpy& text)
     return out;
 }
 } // namespace
+
+
+void TestTciTxMutex::desktop_host_availability_follows_owned_slice_lifecycle()
+{
+    RadioModel radio;
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 1);
+    radio.sliceOwnership()->setOwner(0, SliceOwnership::stationDevice());
+    radio.sliceOwnership()->setOwner(1, QByteArray("phone"));
+    TciServer server(&radio);
+    server.setDesktopHostMode(true);
+    QVERIFY(server.start(0));
+    QWebSocket app;
+    QSignalSpy connected(&app, &QWebSocket::connected);
+    QSignalSpy text(&app, &QWebSocket::textMessageReceived);
+    app.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("ready;")), 3000);
+    QVERIFY(framesOf(text).contains(QStringLiteral("rx_enable:0,true;")));
+    text.clear();
+    // Hosting starts with a receiver it may control; only the live
+    // ownership change can leave its established client without one.
+    radio.sliceOwnership()->setOwner(0, QByteArray("phone"));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("rx_enable:0,false;")), 3000);
+    QVERIFY(framesOf(text).contains(QStringLiteral("tx_enable:0,false;")));
+    text.clear();
+    radio.sliceOwnership()->setOwner(0, SliceOwnership::stationDevice());
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("rx_enable:0,true;")), 3000);
+    radio.sliceOwnership()->setOwner(1, SliceOwnership::stationDevice());
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("rx_enable:1,true;")), 3000);
+    text.clear();
+    radio.sliceOwnership()->setOwner(0, QByteArray("phone"));
+    radio.sliceOwnership()->setOwner(1, QByteArray("phone"));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("rx_enable:0,false;")), 3000);
+    QVERIFY(framesOf(text).contains(QStringLiteral("rx_enable:1,false;")));
+    app.close();
+    server.stop();
+}
 
 // rx_nf_enable reads the global notch through RadioModel::rxNf, which
 // takes the receiver index (GetMNF, console.cs:52317-52330 [v2.10.3.15]).

@@ -7,6 +7,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
+//                existence gates initial/query and live RX/TX availability.
 //   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code; attribution remediation via OpenAI Codex.
@@ -395,6 +398,9 @@ public:
     // station server, a plain desktop) it is slice 1, since trx:N is slice N.
     // A test radio that is not a RadioModel answers through rx2Enabled().
     bool rx2EnabledNow() const;
+    // Dynamic slices can leave either exposed receiver absent. A mapped
+    // receiver is available only when its exact mapped slice exists.
+    bool receiverAvailableNow(int receiver) const;
     // The receiver that transmits (0 or 1): receiver 1 when RX2 is on and
     // its slice is the transmit slice, as Thetis's VFOBTX (console.cs:29728
     // [v2.10.3.15]). The trx and tune lines name it.

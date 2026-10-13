@@ -6,6 +6,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
+//                existence gates initial/query and live RX/TX availability.
 //   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code; attribution remediation via OpenAI Codex.
@@ -1353,25 +1356,18 @@ void TciServer::hookGlobalBroadcasts()
                     // RX count (0 until a connect sets it from the
                     // persisted count, and not tied to slices).  tx_enable
                     // also follows the init burst's transmitRefused() gate.
-                    const bool rx2en = m_protocol->rx2EnabledNow();
-                    const QString notMox =
-                        on ? QStringLiteral("false") : QStringLiteral("true");
-                    m_protocol->enqueueLocalBroadcast(
-                        QStringLiteral("rx_enable:0,%1;").arg(notMox));
-                    m_protocol->enqueueLocalBroadcast(
-                        QStringLiteral("rx_enable:1,%1;")
-                            .arg((rx2en && !on) ? QStringLiteral("true")
-                                                 : QStringLiteral("false")));
-                    m_protocol->enqueueLocalBroadcast(
-                        QStringLiteral("tx_enable:0,%1;")
-                            .arg((!m_protocol->transmitRefused() && !on)
-                                     ? QStringLiteral("true")
-                                     : QStringLiteral("false")));
-                    m_protocol->enqueueLocalBroadcast(
-                        QStringLiteral("tx_enable:1,%1;")
-                            .arg((!m_protocol->transmitRefused() && rx2en && !on)
-                                     ? QStringLiteral("true")
-                                     : QStringLiteral("false")));
+                    for (int receiver = 0; receiver < TciProtocol::kExposedReceiverCount;
+                         ++receiver) {
+                        const bool available = m_protocol->receiverAvailableNow(receiver);
+                        m_protocol->enqueueLocalBroadcast(
+                            QStringLiteral("rx_enable:%1,%2;").arg(receiver)
+                                .arg(available && !on ? QStringLiteral("true")
+                                                     : QStringLiteral("false")));
+                        m_protocol->enqueueLocalBroadcast(
+                            QStringLiteral("tx_enable:%1,%2;").arg(receiver)
+                                .arg(available && !on && !m_protocol->transmitRefused()
+                                         ? QStringLiteral("true") : QStringLiteral("false")));
+                    }
                 });
     }
 
@@ -1517,7 +1513,7 @@ void TciServer::hookGlobalBroadcasts()
                 }
             });
 
-    // ── RX2 enabled (rx_enable:1 + tx_enable:1) ───────────────────────────
+    // ── Receiver availability (rx_enable + tx_enable) ───────────────────────────
     // Source: Thetis RX2EnabledChangedHandlers at TCIServer.cs:6741
     // [v2.10.3.15] routed to OnRX2EnabledChanged -> RX2EnabledChange.
     // RX2 is on when receiver 1 has a slice (TciProtocol::rx2EnabledNow), so
@@ -1525,7 +1521,9 @@ void TciServer::hookGlobalBroadcasts()
     // removed, the receiver map moving with slice ownership while hosting,
     // and the active RX count. They go out only when the answer flips, as
     // Thetis's handler fires only on a change.
-    m_rx2EnabledSent = m_protocol->rx2EnabledNow();
+    for (int receiver = 0; receiver < TciProtocol::kExposedReceiverCount; ++receiver) {
+        m_receiverAvailableSent[receiver] = m_protocol->receiverAvailableNow(receiver);
+    }
     connect(m_model, &RadioModel::activeRxCountChanged, this,
             [this](int) { refreshRx2Enabled(); });
     connect(m_model, &RadioModel::sliceAdded, this,
@@ -1549,25 +1547,30 @@ void TciServer::refreshRx2Enabled()
     // A stopped server queues nothing (stop() also drops the ownership
     // hook; the singleShot after a slice removal can still land here).
     if (!m_model || !m_protocol || !m_globalBroadcastsWired) { return; }
-    const bool en = m_protocol->rx2EnabledNow();
-    if (en == m_rx2EnabledSent) { return; }
-    m_rx2EnabledSent = en;
     // From Thetis TCIServer.cs:842-847 [v2.10.3.15] (RX2EnabledChange):
     //   sendRXEnable(1, enabled);
     //   sendTXEnable(1, enabled && !consoleThreadSafe.MOX);
     // Only those two lines: rx_channel_enable and lock are not re-sent on
     // this path (console.cs:37522 fires RX2EnabledChangedHandlers alone).
+    // NereusSDR: either receiver's exact mapped slice may disappear. Apply
+    // the initial/query !MOX gate to both RX lines as well as TX lines.
     // tx_enable also follows transmitRefused(), as the first lines do.
     bool mox = false;
     QMetaObject::invokeMethod(m_model, "mox",
                               Qt::DirectConnection,
                               Q_RETURN_ARG(bool, mox));
-    const auto flag = [](bool on) {
-        return on ? QStringLiteral("true") : QStringLiteral("false");
-    };
-    m_protocol->enqueueLocalBroadcast(QStringLiteral("rx_enable:1,%1;").arg(flag(en)));
-    m_protocol->enqueueLocalBroadcast(QStringLiteral("tx_enable:1,%1;")
-        .arg(flag(en && !mox && !m_protocol->transmitRefused())));
+    for (int receiver = 0; receiver < TciProtocol::kExposedReceiverCount; ++receiver) {
+        const bool available = m_protocol->receiverAvailableNow(receiver);
+        if (available == m_receiverAvailableSent[receiver]) { continue; }
+        m_receiverAvailableSent[receiver] = available;
+        m_protocol->enqueueLocalBroadcast(
+            QStringLiteral("rx_enable:%1,%2;").arg(receiver)
+                .arg(available && !mox ? QStringLiteral("true") : QStringLiteral("false")));
+        m_protocol->enqueueLocalBroadcast(
+            QStringLiteral("tx_enable:%1,%2;").arg(receiver)
+                .arg(available && !mox && !m_protocol->transmitRefused()
+                         ? QStringLiteral("true") : QStringLiteral("false")));
+    }
 }
 
 TciServer::~TciServer()
