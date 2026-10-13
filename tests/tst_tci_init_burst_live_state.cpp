@@ -119,6 +119,10 @@ private slots:
     // true (init) to false (live) between the two frames.
     void live_vfo_broadcast_reads_rx2_enabled_live();
     void existing_slice_after_deletion_gap_uses_stable_receiver_id();
+    void missing_slice_modes_are_not_advertised_data();
+    void missing_slice_modes_are_not_advertised();
+    void removed_slice_mode_commands_are_silent();
+    void vacant_receiver_mapping_does_not_alias_slice_a();
     void a_client_joining_before_the_drain_does_not_hide_a_centre_change();
 };
 
@@ -947,6 +951,105 @@ void TestTciInitBurstLiveState::
     p.enqueueLocalBroadcastCentre(0);
     (void)p.buildInitBurst();
     QVERIFY(!hasPrefix(drain(), QStringLiteral("dds:0,")));
+}
+
+void TestTciInitBurstLiveState::missing_slice_modes_are_not_advertised_data()
+{
+    QTest::addColumn<bool>("keepA");
+    QTest::addColumn<bool>("keepB");
+    QTest::newRow("slice-a-only") << true << false;
+    QTest::newRow("slice-b-only") << false << true;
+    QTest::newRow("no-slices") << false << false;
+}
+
+void TestTciInitBurstLiveState::missing_slice_modes_are_not_advertised()
+{
+    QFETCH(bool, keepA);
+    QFETCH(bool, keepB);
+    pinAppSettingsToCaptureConditions();
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    // A cold startup can have no slices. Removing the final live slice is
+    // deliberately refused by RadioModel, so do not model startup that way.
+    if (keepA || keepB) {
+        const int a = radio.addSlice(QStringLiteral("pan-0"));
+        const int b = radio.addSlice(QStringLiteral("pan-0"));
+        QCOMPARE(a, 0);
+        QCOMPARE(b, 1);
+        radio.sliceById(a)->setDspMode(DSPMode::DIGU);
+        radio.sliceById(b)->setDspMode(DSPMode::CWL);
+        if (!keepA) {
+            radio.removeSlice(a);
+        }
+        if (!keepB) {
+            radio.removeSlice(b);
+        }
+    }
+
+    TciProtocol protocol(&radio);
+    const QStringList burst = protocol.buildInitBurst();
+    QVERIFY(!burst.contains(QString()));
+    QVERIFY(!burst.contains(QStringLiteral("modulation:0,;")));
+    QVERIFY(!burst.contains(QStringLiteral("modulation:1,;")));
+    QCOMPARE(burst.contains(QStringLiteral("modulation:0,DIGU;")), keepA);
+    QCOMPARE(burst.contains(QStringLiteral("modulation:1,CWL;")), keepB);
+    QCOMPARE(protocol.handleCommand(QStringLiteral("modulation:0;")),
+             keepA ? QStringLiteral("modulation:0,DIGU;") : QString());
+    QCOMPARE(protocol.handleCommand(QStringLiteral("modulation:1;")),
+             keepB ? QStringLiteral("modulation:1,CWL;") : QString());
+}
+
+void TestTciInitBurstLiveState::removed_slice_mode_commands_are_silent()
+{
+    pinAppSettingsToCaptureConditions();
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    const int a = radio.addSlice(QStringLiteral("pan-0"));
+    const int b = radio.addSlice(QStringLiteral("pan-0"));
+    const int c = radio.addSlice(QStringLiteral("pan-0"));
+    QCOMPARE(a, 0);
+    QCOMPARE(b, 1);
+    QCOMPARE(c, 2);
+    radio.sliceById(a)->setDspMode(DSPMode::DIGU);
+    radio.sliceById(b)->setDspMode(DSPMode::CWL);
+    radio.sliceById(c)->setDspMode(DSPMode::CWU);
+    TciProtocol protocol(&radio);
+    QCOMPARE(protocol.handleCommand(QStringLiteral("modulation:1;")),
+             QStringLiteral("modulation:1,CWL;"));
+
+    radio.removeSlice(b);
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:1;")).isEmpty());
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:1,USB;")).isEmpty());
+    QVERIFY(!protocol.hasPendingNotification());
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:2;")).isEmpty());
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:2,USB;")).isEmpty());
+    QVERIFY(!protocol.hasPendingNotification());
+    QCOMPARE(radio.mode(c), QStringLiteral("CWU"));
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:-1,USB;")).isEmpty());
+    QVERIFY(!protocol.hasPendingNotification());
+    QCOMPARE(radio.mode(a), QStringLiteral("DIGU"));
+
+    // Commands for the surviving Slice A still work under its stable RX1 ID.
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:0,USB;")).isEmpty());
+    QCOMPARE(radio.mode(a), QStringLiteral("USB"));
+    QCOMPARE(protocol.takePendingNotification(), QStringLiteral("modulation:0,USB;"));
+    QVERIFY(!protocol.hasPendingNotification());
+}
+
+void TestTciInitBurstLiveState::vacant_receiver_mapping_does_not_alias_slice_a()
+{
+    pinAppSettingsToCaptureConditions();
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    radio.sliceById(0)->setDspMode(DSPMode::DIGU);
+    TciProtocol protocol(&radio);
+    protocol.setReceiverSliceMap([](int rx) { return rx == 0 ? 0 : -1; });
+    QVERIFY(protocol.buildInitBurst().contains(QStringLiteral("modulation:0,DIGU;")));
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:1;")).isEmpty());
+    QVERIFY(protocol.handleCommand(QStringLiteral("modulation:1,USB;")).isEmpty());
+    QVERIFY(!protocol.hasPendingNotification());
+    QCOMPARE(radio.mode(0), QStringLiteral("DIGU"));
 }
 
 QTEST_MAIN(TestTciInitBurstLiveState)

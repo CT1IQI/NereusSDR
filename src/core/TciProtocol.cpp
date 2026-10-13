@@ -1249,8 +1249,14 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     }
 
     // From Thetis TCIServer.cs:2385-2389 [v2.10.3.13]
-    lines << buildModulationLine(0, modeUpper[0]);
-    if (!rx1Vacant) { lines << buildModulationLine(1, modeUpper[1]); }
+    // A missing dynamic slice has no mode. Do not put an incomplete
+    // modulation message (or an empty frame) in the initial burst.
+    if (!modeUpper[0].isEmpty()) {
+        lines << buildModulationLine(0, modeUpper[0]);
+    }
+    if (!rx1Vacant && !modeUpper[1].isEmpty()) {
+        lines << buildModulationLine(1, modeUpper[1]);
+    }
     lines << buildRxFilterBandLine(0, filterLow[0], filterHigh[0]);
     if (!rx1Vacant) { lines << buildRxFilterBandLine(1, filterLow[1], filterHigh[1]); }
 
@@ -1616,6 +1622,13 @@ QString TciProtocol::buildTxFrequencyThetisLine(qint64 hz, const QString& band,
 // MW0LGE_22b mods are uppercase on the sun, replicate
 QString TciProtocol::buildModulationLine(int rx, const QString& modeUpper)
 {
+    // NereusSDR: deleted slices have no mode. Like Thetis sendMode
+    // (TCIServer.cs:2183 [v2.10.3.15], FIRST/LAST), send nothing in that
+    // state. WSJT-X expects a mode argument and crashes on an empty one.
+    //MW0LGE  [original inline comment from TCIServer.cs:2154]
+    if (modeUpper.isEmpty()) {
+        return {};
+    }
     return QStringLiteral("modulation:%1,%2;").arg(rx).arg(modeUpper);
 }
 
@@ -2430,7 +2443,8 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
     }
     bool ok = false;
     const int rx = args.at(0).trimmed().toInt(&ok);
-    if (!ok) {
+    if (!ok || rx < 0 || rx >= kExposedReceiverCount
+        || (m_receiverSliceMap && m_receiverSliceMap(rx) < 0)) {
         return {};
     }
 
@@ -2441,7 +2455,7 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
         QMetaObject::invokeMethod(m_radio, "mode", Qt::DirectConnection,
                                   Q_RETURN_ARG(QString, currentMode),
                                   Q_ARG(int, receiverSlice(rx)));
-        return QStringLiteral("modulation:%1,%2;").arg(rx).arg(currentMode.toUpper());
+        return buildModulationLine(rx, currentMode.toUpper());
     }
 
     if (args.size() >= 2) {
@@ -2519,14 +2533,17 @@ QString TciProtocol::handleModulationCommand(const QStringList& args)
         // R-R3-42: in a remote window, answer with the mode the slice holds
         // now (see handleVfoCommand); the Core's answer follows through the
         // slice's mode broadcast.
+        QString held;
+        QMetaObject::invokeMethod(m_radio, "mode", Qt::DirectConnection,
+                                  Q_RETURN_ARG(QString, held),
+                                  Q_ARG(int, receiverSlice(rx)));
+        // A setter silently ignores a deleted slice. Do not acknowledge
+        // a mode change that never happened, including after removal.
+        if (held.isEmpty()) {
+            return {};
+        }
         if (m_remoteWindow) {
-            QString held;
-            QMetaObject::invokeMethod(m_radio, "mode", Qt::DirectConnection,
-                                      Q_RETURN_ARG(QString, held),
-                                      Q_ARG(int, receiverSlice(rx)));
-            if (!held.isEmpty()) {
-                modeOut = held.toUpper();
-            }
+            modeOut = held.toUpper();
         }
         // MW0LGE_22b mods are uppcase on the sun, replicate
         // From Thetis TCIServer.cs:2155 [v2.10.3.13] — sendMode format string.
