@@ -48,7 +48,10 @@ import Testing
     @Test func theTracesPeakSitsAtItsBinAndLevel() throws {
         let target = try Offscreen(width: Self.width, height: Self.height)
         let renderer = try BandRenderer(device: target.device)
-        let settings = Self.plain()
+        var settings = Self.plain()
+        // This test isolates frequency/level placement at an explicit1px;
+        // V29 default0.5pt@1x no longer receives the old1pixel clamp.
+        settings.traceWidthPoints = 1
         var trace = Self.flat(200)
         trace[57] = -60
         let frame = BandFixtures.frame(trace: trace)
@@ -102,8 +105,10 @@ import Testing
     }
 
     @Test func theTracesVerticesAreTheLinesWidthApart() {
+        // Approved V29 clamps converted pixel geometry to0.1...5; point
+        // representation still produces1.5px from the established0.5pt/3x.
         var vertices: [BandRenderer.ColourVertex] = []
-        for (points, scale, pixels) in [(0.5, 3.0, 1.5), (3.0, 3.0, 9.0), (0.25, 3.0, 1.0)] {
+        for (points, scale, pixels) in [(0.5, 3.0, 1.5), (3.0, 3.0, 5.0), (0.25, 3.0, 0.75)] {
             var settings = BandDisplaySettings.desktopDefaults
             settings.traceWidthPoints = points
             vertices.removeAll()
@@ -124,6 +129,8 @@ import Testing
         let renderer = try BandRenderer(device: target.device)
         var settings = Self.plain()
         settings.traceFill = false
+        // Isolate projection with1px geometry; do not relax the XY/empty-edge assertions.
+        settings.traceWidthPoints = 1
         let greys = try BandFixtures.palette(id: 7, [(0, "#000000"), (1, "#FFFFFF")])
         var trace = Self.flat(200, -135)
         trace[100] = -60
@@ -518,6 +525,37 @@ import Testing
         let y = Int(Self.geometry(settings).y(forDbm: -90))
         let stroke = try #require((y - 1...y).map { image.pixel(100, $0) }.max { $0.r < $1.r })
         #expect(stroke.r > 200 && stroke.g < 40 && stroke.b < 60)
+    }
+
+    /// Rulings wave R3: the trace line has its own colour (the desktop's
+    /// Trace Color); the fill under it keeps the fill's. Until a trace
+    /// colour is chosen the line follows the fill's, as the desktop's does.
+    @Test func theTraceLineTakesItsOwnColourAndTheFillKeepsTheFills() throws {
+        let target = try Offscreen(width: Self.width, height: Self.height)
+        let renderer = try BandRenderer(device: target.device)
+        var settings = Self.plain()
+        settings.traceColour = "#FF0000"
+        settings.traceFill = true
+        settings.traceFillOpacity = 1
+        let frame = BandFixtures.frame(trace: Self.flat(200, -60))
+        let y = Int(Self.geometry(settings).y(forDbm: -60))
+        let below = Int(Self.geometry(settings).y(forDbm: -80))
+        #expect(settings.traceLineColour == nil && settings.traceLineColourDrawn == "#FF0000")
+        let following = try target.render(renderer, frame: frame, history: WaterfallHistory(capacity: 1), extras: nil,
+                                          overlays: Self.overlays(settings))
+        let followingStroke = try #require((y - 1...y).map { following.pixel(100, $0) }.max { $0.r < $1.r })
+        #expect(followingStroke.r > 200 && followingStroke.g < 40 && followingStroke.b < 60, "\(followingStroke)")
+
+        settings.traceLineColour = "#00FF00"
+        #expect(settings.traceLineColourDrawn == "#00FF00")
+        let own = try target.render(renderer, frame: frame, history: WaterfallHistory(capacity: 1), extras: nil,
+                                    overlays: Self.overlays(settings))
+        let stroke = try #require((y - 1...y).map { own.pixel(100, $0) }.max { $0.g < $1.g })
+        #expect(stroke.g > 200 && stroke.r < 120, "the line \(stroke)")
+        // The fill is still the fill's red, at four tenths over the background.
+        let fill = own.pixel(100, below)
+        #expect(fill.r > 80 && fill.g < 40, "the fill \(fill)")
+        #expect(fill == following.pixel(100, below))
     }
 
     @Test func theFillChangesBelowTheTrace() throws {

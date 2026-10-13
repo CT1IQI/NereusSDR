@@ -14,6 +14,46 @@
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-12 - Route Display Clarity requests to the captured pan.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-11 - J.J. Boyd (KG4VCF). FFT sizing mode (design D38): the
+//                pill's and Setup's Sizing selector ask through
+//                applyDisplayFftSizingMode, and the FFT readout is told the
+//                size, rate and decimation that run. AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - J.J. Boyd (KG4VCF). Follow-up wave F6: a frame computed
+//                before the last FFT input purge is handed to its pans as
+//                such, so it cannot end the waterfall's hold after a key
+//                edge. AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 19: a pan's
+//                right-click "Display settings..." opens its pill, and a
+//                range set from the menu or the dB strip goes to the band
+//                store (wirePanDisplayFlyout). AI-assisted transformation
+//                via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 18: each pan's
+//                Display pill is wired through DisplayPillHooks
+//                (wirePanDisplayFlyout); the station's FPS, window, Hz/bin
+//                target and decimation reach every engine
+//                (applyDisplayFps and its three neighbours); every pill is
+//                told the station's FFT settings, its gates and its band's
+//                dB Max and Min; a pan leaving or joining a stream replans
+//                that stream. AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 13: a key edge
+//                purges every FFT engine's input and reaches every pan with
+//                its band and hold length (wireDisplayKeyEdges,
+//                refreshLocalFftShapes, the Clarity hold-length provider);
+//                the noise-floor fast attack on a MOX edge moved from
+//                TransmitModel::moxChanged on the active pan to that edge on
+//                every pan. AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 8: the station's
+//                receive offset goes to SpectrumWidget::setStationCalOffsetDb
+//                (per frame and pushSpectrumCalToPans), no longer into the
+//                operator's Cal Offset. AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 7: every pan's
+//                zoom replans the FFT of the stream it shows
+//                (replanFftForStream, applyFftBaseline; R-DSP-30,
+//                R-DSP-33), in place of pan 0's lambda on stream 0's
+//                engine. AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -976,6 +1016,7 @@ warren@wpratt.com
 #include "SupportDialog.h"
 #include "AboutDialog.h"
 #include "SpectrumWidget.h"
+#include "gui/DssMeshGeometry.h"  // dssRowSpanSupported
 #include "SliceFlagPresentationBinding.h"
 // Phase 3F Sub-Epic D Task 10: +PAN bottom-bar dropdown reads slice
 // state + drives PanadapterStack layout/float actions.
@@ -1005,6 +1046,7 @@ warren@wpratt.com
 #include "core/ReceiverManager.h"
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
+#include "core/DisplayFftSizing.h"
 #include "core/BuildIdentity.h"
 #include "core/PaTempUnit.h"
 #include "core/RadioStatus.h"
@@ -1012,6 +1054,8 @@ warren@wpratt.com
 #include "core/WdspEngine.h"
 #include "core/FFTEngine.h"
 #include "core/spectrum/FftEnginePool.h"
+#include "core/spectrum/WaterfallPalettes.h"
+#include "core/spectrum/MoxDisplayHold.h"
 #include "core/spectrum/FftTopology.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
@@ -1019,11 +1063,14 @@ warren@wpratt.com
 #include "core/NbFamily.h"
 #include "core/ClarityController.h"
 #include "gui/PanClarityRegistry.h"
+#include "gui/PanModels.h"
+#include "gui/DisplayPillWiring.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/accessories/AlexAntennaFacade.h"
 
 #include <array>
+#include <vector>
 #include "core/MoxController.h"  // 3M-1a G.1: F.2 connect (hardwareFlipped → onMoxHardwareFlipped)
 #include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
@@ -4200,6 +4247,7 @@ void MainWindow::ensureRemoteSession()
         }
         m_moxDisplay->setSource(m_remoteTxDisplaySource.get());
         m_moxDisplay->followStation(m_stationClient);
+        wireDisplayKeyEdges();
         if (m_clarityRegistry) {
             m_clarityRegistry->setKeyed(m_moxDisplay->isKeyed());
             connect(m_moxDisplay, &MoxDisplayController::keyedChanged,
@@ -5538,7 +5586,11 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
         floor = static_cast<float>(slice->stationAutoAgcNoiseFloorDbm());
         valid = model->isConnected() && slice->stationAutoAgcNoiseFloorValid();
     } else if (const auto* tracker = model->noiseFloorTrackerForSlice(slice)) {
-        floor = tracker->noiseFloor();
+        // NereusSDR-original: this line explains the Auto AGC-T threshold,
+        // so it shows the floor the threshold is built from, referred to a
+        // 4096-point FFT. That is the number a remote window shows for the
+        // same band (the Core's floor comes from a 4096 FFT).
+        floor = tracker->agcNoiseFloor();
         valid = tracker->isGood();
     }
     if (flag) {
@@ -5567,6 +5619,22 @@ void MainWindow::refreshFftPoolConfig()
     cfg.fftSize = s.value(QLatin1String(ControlRanges::kDisplayFftSizeKey),
                           QString::number(ControlRanges::kDisplayFftSizeDefault))
                       .toString().toInt();
+    // Display pill plan Task 20 (issue #296): a stored size that is not one
+    // of the slider's seven is not given to the engines, which would refuse
+    // it and leave the key and the engines disagreeing in silence. The
+    // default is used, and where this window owns the setting the key is
+    // put right and the fact logged once. A remote window's key is its
+    // Core's; it is not written from here.
+    if (!ControlRanges::isDisplayFftSize(cfg.fftSize)) {
+        const int stored = cfg.fftSize;
+        cfg.fftSize = ControlRanges::kDisplayFftSizeDefault;
+        if (m_radioModel && m_radioModel->ownsLocalDsp()) {
+            qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayFftSizeKey << stored
+                                  << "is not an FFT size; using" << cfg.fftSize;
+            s.setValue(QLatin1String(ControlRanges::kDisplayFftSizeKey),
+                       QString::number(cfg.fftSize));
+        }
+    }
     // Fallback default matches FFTEngine's own constructor default
     // (WindowFunction::BlackmanHarris4 == 1).  The pre-extraction code
     // computed this by querying a freshly constructed engine's
@@ -5580,9 +5648,14 @@ void MainWindow::refreshFftPoolConfig()
         s.value(QLatin1String(ControlRanges::kDisplayFftWindowKey),
                 QString::number(defaultWin)).toString().toInt(),
         static_cast<int>(WindowFunction::Count) - 1);
-    cfg.hzPerBinTarget = s.value(QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey),
-                                 QString::number(ControlRanges::kDisplayHzPerBinTargetDefault))
-                             .toString().toDouble();
+    // The sizing mode (design D38) decides what the stored size and target
+    // mean: a new stream's engine starts at the size the mode's own control
+    // chose (the stored size in Fixed, 4096 in Auto and Hz/bin) with the
+    // target in force, and replanFftForStream sizes it from there.
+    const DisplayFftSizing sizing = readDisplayFftSizing(s);
+    cfg.sizingMode = sizing.mode;
+    cfg.fftSize = sizing.baseline();
+    cfg.hzPerBinTarget = sizing.hzPerBinTarget;
     m_fftEnginePool->setConfigForNewStreams(cfg);
 }
 
@@ -5662,6 +5735,13 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
         static constexpr float kFrameIntervalMs = 33.0f;
         nf->feed(binsDbm, kFrameIntervalMs);
     });
+    // Rulings wave R2: every FFT size change, wherever it came from (a
+    // pan's Display pill, Setup, a station setting change), restarts this
+    // stream's tracker. It was Setup's slider alone, on the shared tracker.
+    // Fast-attack noise-floor reset.  Mirrors Thetis setup.cs:16156:
+    //   Display.FastAttackNoiseFloorRX1 = true;
+    connect(engine, &FFTEngine::fftSizeBaselineChanged, this,
+            [nf](int /*size*/) { nf->triggerFastAttack(); });
 
     return engine;
 }
@@ -6313,13 +6393,419 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
         }
     });
 
-    // NOT wired here: bandwidthChangeRequested. Zoom itself already works on
-    // every pan (SpectrumWidget narrows its own visible bin range), but the
-    // auto-replan that keeps bins-per-pixel constant across zoom levels runs
-    // against primaryFftEngine() -- one engine, pan-0's. Routing it per pan
-    // needs the FFT engine looked up by the pan's stream, which is a bigger
-    // change than this function. Until then a deep zoom on another pan stays
-    // visually correct but does not gain FFT resolution.
+    // Not wired here: bandwidthChangeRequested. ensureOverlayPanels() connects
+    // it for every pan, pan-0 included (which does not come through this
+    // function), to replanFftForPan(): a zoom on any pan replans the FFT of
+    // the stream that pan shows.
+}
+
+// ── Display pill plan Task 7: the FFT size each stream runs ────────────────
+//
+// NereusSDR-original (Thetis does not replan on zoom; the operator picks the
+// FFT size by hand). The station's sizing mode says which control sets the
+// size (design D38): in Auto a zoom keeps about 4096 points across the pan,
+// in Hz/bin the target's resolution is kept, and in Fixed the stream runs
+// exactly the FFT Size slider's size and a zoom changes nothing, as Thetis.
+// The rule, its 0.7 s cap and its floor are ControlRanges::planDisplayFft,
+// which a remote pan shares. Pans that show one stream share its engine, so
+// the engine runs the largest size any of them plans (the finest need wins,
+// as the Core's shared engine does).
+//
+// The pans of a stream are the ones FftTopology subscribes to it, which is
+// the map the frame fan-out itself is built from (rebuildFftRouting).
+void MainWindow::replanFftForStream(int streamIndex)
+{
+    if (!m_fftEnginePool || !m_panStack || streamIndex < 0) { return; }
+    // A stream with no engine has nothing to size; this never creates one.
+    if (!m_fftEnginePool->streams().contains(streamIndex)) { return; }
+    FFTEngine* engine = m_fftEnginePool->engineForStream(streamIndex);
+    if (!engine) { return; }
+
+    // The pool carries the mode; each engine carries the size the mode's
+    // control chose (its baseline) and the target in force
+    // (applyFftSizingFromSettings, refreshFftPoolConfig).
+    const ControlRanges::DisplayFftSizingMode mode = m_fftEnginePool->config().sizingMode;
+    const int baseline = engine->fftSizeBaseline();
+    const double hzPerBinTarget = engine->hzPerBinTarget();
+    if (mode == ControlRanges::DisplayFftSizingMode::Fixed) {
+        // Exactly the slider's size, whatever the pans show: no plan per
+        // pan, no cap and no hysteresis. A zoom finds it already running.
+        if (engine->fftSize() != baseline) {
+            engine->setFftSize(baseline);
+            refreshLocalFftShapes();
+        }
+        return;
+    }
+    std::vector<ControlRanges::AutoZoomPlan> plans;
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        if (sub.streamIndex != streamIndex) { continue; }
+        const SpectrumWidget* sw = m_panStack->spectrum(sub.consumerId);
+        if (!sw) { continue; }
+        const double sampleRate = sw->sampleRate();
+        const double spanHz = sw->bandwidth();
+        // A pan with no rate or span yet has no need to state.
+        if (!(sampleRate > 0.0) || !(spanHz > 0.0)) { continue; }
+        plans.push_back(
+            ControlRanges::planDisplayFft(mode, baseline, sampleRate, spanHz, hzPerBinTarget));
+    }
+    if (plans.empty()) { return; }
+    const int targetSize = ControlRanges::largestPlannedFftSize(plans, baseline);
+
+    // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
+    // Avoids replan thrash on a smooth zoom drag.
+    constexpr double kReplanRatioLow = 0.66;
+    constexpr double kReplanRatioHigh = 1.5;
+    const int currentSize = engine->fftSize();
+    if (currentSize > 0) {
+        const double ratio = static_cast<double>(targetSize)
+                             / static_cast<double>(currentSize);
+        if (ratio > kReplanRatioLow && ratio < kReplanRatioHigh) {
+            return;  // small enough change to ignore
+        }
+    }
+
+    // An atomic store; the engine replans on its own thread at its next
+    // input.
+    engine->setFftSize(targetSize);
+    refreshLocalFftShapes();
+}
+
+// Every stream `panId` shows (a pan can carry more than one).
+void MainWindow::replanFftForPan(const QString& panId)
+{
+    QList<int> streams;
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        if (sub.consumerId == panId && !streams.contains(sub.streamIndex)) {
+            streams.append(sub.streamIndex);
+        }
+    }
+    for (int streamIndex : std::as_const(streams)) {
+        replanFftForStream(streamIndex);
+    }
+}
+
+void MainWindow::applyFftBaseline(int size)
+{
+    if (!m_fftEnginePool) { return; }
+    // The control's seven sizes only: a stored size that is not one of them
+    // reads back as the default (readDisplayFftSizing).
+    if (!ControlRanges::isDisplayFftSize(size)) {
+        qCWarning(lcSpectrum) << "FFT size" << size << "is not one of the FFT Size control's"
+                              << "sizes; ignored";
+        return;
+    }
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayFftSizeKey),
+                                     QString::number(size));
+    // In Fixed every stream now runs `size`; in Auto and Hz/bin the stored
+    // size plays no part and the engines are left as they are (design D38).
+    applyFftSizingFromSettings(/*replan=*/true);
+    // An open Setup dialog shows the new size.
+    emit stationFftSettingsChanged();
+}
+
+// The one place the station's sizing reaches the engines. The pool's
+// setSizing gives every engine the size the mode's control chose (so the FFT
+// size offset follows, FFTEngine::setFftSizeBaseline) and, on a mode change,
+// has each say fftSizeBaselineChanged once, which restarts the noise-floor
+// trackers' fast attack (ensureStreamWired; design D43, R-DSP-67).
+void MainWindow::applyFftSizingFromSettings(bool replan)
+{
+    if (!m_fftEnginePool) { return; }
+    const DisplayFftSizing sizing = readDisplayFftSizing(AppSettings::instance());
+    m_fftEnginePool->setSizing(sizing.mode, sizing.baseline(), sizing.hzPerBinTarget);
+    if (!replan) { return; }
+    const QList<int> streams = m_fftEnginePool->streams();
+    for (int streamIndex : streams) {
+        replanFftForStream(streamIndex);
+    }
+    refreshLocalFftShapes();
+}
+
+void MainWindow::applyDisplayFftSizingMode(ControlRanges::DisplayFftSizingMode mode,
+                                           double hzPerBinIfNoneRemembered)
+{
+    if (!m_fftEnginePool || !stationSettingsAvailable()) { return; }
+    auto& settings = AppSettings::instance();
+    double target = 0.0;
+    if (mode == ControlRanges::DisplayFftSizingMode::HzPerBin) {
+        // The remembered target; with none, the caller's, else the bin
+        // width the active pan runs now, so entering Hz/bin changes nothing
+        // until its control moves (today's rule for the On button).
+        target = readDisplayFftSizing(settings).lastHzPerBinTarget;
+        if (!(target > 0.0)) {
+            target = hzPerBinIfNoneRemembered;
+        }
+        if (!(target > 0.0) || !std::isfinite(target)) {
+            const DisplayPillFftState state =
+                displayPillFftState(m_panStack ? m_panStack->activePanId() : QString());
+            const double bins = double(std::max(1, state.decimation)) * double(state.runningSize);
+            target = ControlRanges::hzPerBinTargetForBinWidth(
+                bins > 0.0 ? state.sampleRateHz / bins : 0.0);
+        }
+    }
+    // The mode key first, then the target key (writeDisplayFftSizingMode).
+    writeDisplayFftSizingMode(settings, mode, target);
+    // A remote window's engines are idle: the pool follows the keys and the
+    // pan requests follow on their own (RemoteMediaController).
+    applyFftSizingFromSettings(/*replan=*/!m_radioModel || m_radioModel->ownsLocalDsp());
+    refreshDisplayPillFftStates();
+    emit stationFftSettingsChanged();
+}
+
+// ── Display pill plan Task 18: the station's other FFT settings ────────────
+//
+// NereusSDR-original. The FFT tab of every pan's Display pill is the
+// station's (design D25: "ALL PANS"), so each of these reaches every engine
+// through the pool, the way applyFftBaseline does, and never one stream's
+// engine alone. The pool's setters are atomic stores on each engine, called
+// here on the GUI thread as applyFftBaseline calls setFftSizeBaseline. One
+// key write per call. A remote window's pool holds only its idle engine;
+// there the key write is what matters (it goes to the Core through the
+// station settings), and RemoteMediaController reads the keys and the
+// engine's decimation when it next plans each pan's request.
+
+void MainWindow::applyDisplayFps(int fps)
+{
+    if (!m_fftEnginePool || !stationSettingsAvailable()) { return; }
+    // The engine's own clamp (FftEnginePool::setOutputFps).
+    fps = qBound(1, fps, 60);
+    m_fftEnginePool->setOutputFps(fps);
+    // Each pan draws at the rate its rows arrive.
+    if (m_panStack) {
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
+                sw->setDisplayFps(fps);
+            }
+        }
+    }
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                                     QString::number(fps));
+    refreshDisplayPillFftStates();
+    emit stationFftSettingsChanged();
+}
+
+void MainWindow::applyDisplayFftWindow(int windowType)
+{
+    if (!m_fftEnginePool || !stationSettingsAvailable()) { return; }
+    // The pool refuses a window it does not have, and says so.
+    if (windowType < 0 || windowType >= static_cast<int>(WindowFunction::Count)) { return; }
+    m_fftEnginePool->setWindowType(windowType);
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayFftWindowKey),
+                                     QString::number(windowType));
+    refreshDisplayPillFftStates();
+    emit stationFftSettingsChanged();
+}
+
+void MainWindow::applyDisplayHzPerBinTarget(double hz)
+{
+    if (!m_fftEnginePool || !stationSettingsAvailable()) { return; }
+    // Off for anything that is not a resolution (the pool does the same).
+    if (!std::isfinite(hz) || hz < 0.0) { hz = 0.0; }
+    hz = std::min(hz, ControlRanges::kDisplayHzPerBinTargetMax);
+    // The target is one of the three sizing modes (design D38): a target
+    // sets the mode HzPerBin, and turning it off goes back to Auto. Off in
+    // Fixed leaves Fixed, as the Core's rule for an older client does
+    // (followHzPerBinTargetWrite).
+    auto& settings = AppSettings::instance();
+    using ControlRanges::DisplayFftSizingMode;
+    if (hz > 0.0) {
+        writeDisplayFftSizingMode(settings, DisplayFftSizingMode::HzPerBin, hz);
+    } else if (readDisplayFftSizingMode(settings) == DisplayFftSizingMode::Fixed) {
+        writeDisplayFftSizingMode(settings, DisplayFftSizingMode::Fixed);
+    } else {
+        writeDisplayFftSizingMode(settings, DisplayFftSizingMode::Auto);
+    }
+    // The mode and target change the size every stream plans, at once.
+    applyFftSizingFromSettings(/*replan=*/true);
+    emit stationFftSettingsChanged();
+}
+
+void MainWindow::applyDisplayDecimation(int decimation)
+{
+    if (!m_fftEnginePool || !stationSettingsAvailable()) { return; }
+    if (decimation < ControlRanges::kDisplayDecimationMin
+        || decimation > ControlRanges::kDisplayDecimationMax) { return; }
+    // A Core that has no decimation control is sent none
+    // (RemoteMediaController); nothing here would reach it.
+    const bool remote = m_radioModel && !m_radioModel->ownsLocalDsp();
+    if (remote && !(m_stationClient && m_stationClient->spectrumDecimationAvailable())) {
+        return;
+    }
+    // Every engine, and engines made later. In a remote window this is the
+    // value the next request for each pan carries; the pan is told the
+    // decimation the Core runs when the Core's answer arrives
+    // (SpectrumWidget::setRemoteDecimation, from the accepted context).
+    m_fftEnginePool->setDecimation(decimation);
+    // Each local pan's hold length follows its engine's decimation.
+    refreshLocalFftShapes();
+    emit stationFftSettingsChanged();
+}
+
+DisplayPillFftState MainWindow::displayPillFftState(const QString& panId) const
+{
+    DisplayPillFftState state;
+    // The four station keys, read as refreshFftPoolConfig reads them.
+    const auto& s = AppSettings::instance();
+    // The sizing mode and what it plans from, through the one reader.
+    const DisplayFftSizing sizing = readDisplayFftSizing(s);
+    state.sizingMode = sizing.mode;
+    state.baselineSize = sizing.storedSize;
+    state.lastHzPerBinTarget = sizing.lastHzPerBinTarget;
+    state.fps = qBound(1,
+        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
+        60);
+    state.windowType = qBound(0,
+        s.value(QLatin1String(ControlRanges::kDisplayFftWindowKey),
+                QString::number(ControlRanges::kDisplayFftWindowDefault)).toString().toInt(),
+        static_cast<int>(WindowFunction::Count) - 1);
+    // Above 0 in HzPerBin only.
+    state.hzPerBinTarget = sizing.hzPerBinTarget;
+    // Decimation has no key: it is what the engines were last given.
+    state.decimation = m_fftEnginePool ? m_fftEnginePool->decimation()
+                                       : ControlRanges::kDisplayDecimationDefault;
+
+    const SpectrumWidget* sw = m_panStack ? m_panStack->spectrum(panId) : nullptr;
+    if (!sw) { return state; }
+
+    if (m_radioModel && !m_radioModel->ownsLocalDsp()) {
+        // A pan a Core feeds: the size the Core granted it.
+        state.runningSize = sw->remoteGrantedFftSize();
+        state.sampleRateHz = sw->sampleRate();
+    } else if (m_fftEnginePool) {
+        // The engine this pan shows; the largest when it shows several.
+        const QList<int> streams = m_fftEnginePool->streams();
+        for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+            // engineForStream makes an engine for a stream that has none.
+            if (sub.consumerId != panId || !streams.contains(sub.streamIndex)) { continue; }
+            const FFTEngine* engine = m_fftEnginePool->engineForStream(sub.streamIndex);
+            if (engine && engine->fftSize() > state.runningSize) {
+                state.runningSize = engine->fftSize();
+                state.sampleRateHz = engine->sampleRate();
+            }
+        }
+    }
+
+    return state;
+}
+
+void MainWindow::refreshDisplayPillFftStates()
+{
+    for (auto it = m_overlayPanels.constBegin(); it != m_overlayPanels.constEnd(); ++it) {
+        SpectrumOverlayPanel* panel = it.value();
+        if (!panel) { continue; }
+        const DisplayPillFftState state = displayPillFftState(it.key());
+        const DisplayPillFftState& shown = panel->fftState();
+        // This runs on every routing pass; a pill already showing the
+        // station is left alone, so a row being moved is not reseeded.
+        if (shown.baselineSize == state.baselineSize && shown.fps == state.fps
+            && shown.windowType == state.windowType
+            && shown.hzPerBinTarget == state.hzPerBinTarget
+            && shown.decimation == state.decimation
+            && shown.runningSize == state.runningSize
+            && shown.sampleRateHz == state.sampleRateHz
+            && shown.sizingMode == state.sizingMode
+            && shown.lastHzPerBinTarget == state.lastHzPerBinTarget) {
+            continue;
+        }
+        panel->setFftState(state);
+    }
+}
+
+void MainWindow::refreshDisplayPillStationGates()
+{
+    const bool remote = m_radioModel && !m_radioModel->ownsLocalDsp();
+    const bool coreOffersDecimation =
+        remote && m_stationClient && m_stationClient->spectrumDecimationAvailable();
+    // The station's rows: every FFT row and the band's dB Max and Min
+    // (R-DSP-34), greyed with Setup's own reason while the Core's settings
+    // cannot be reached.
+    const bool available = stationSettingsAvailable();
+    const QString reason = available ? QString() : stationSettingsReason();
+    for (auto it = m_overlayPanels.constBegin(); it != m_overlayPanels.constEnd(); ++it) {
+        SpectrumOverlayPanel* panel = it.value();
+        if (!panel) { continue; }
+        panel->setRemoteWindow(remote, coreOffersDecimation);
+        panel->setStationRowsAvailable(available, reason);
+    }
+}
+
+void MainWindow::refreshDisplayPillBandGrid(const QString& panId)
+{
+    SpectrumOverlayPanel* panel = m_overlayPanels.value(panId);
+    const PanadapterModel* model = m_panModels ? m_panModels->model(panId) : nullptr;
+    if (!panel || !model) { return; }
+    const Band band = model->band();
+    const BandGridSettings grid = model->perBandGrid(band);
+    panel->setBandGrid(bandLabel(band), grid.dbMax, grid.dbMin);
+}
+
+// Display pill plan Task 13: the size, decimation and rate of the engine
+// each pan shows, for the pan's hold after an un-key
+// (SpectrumWidget::moxHoldLengthMs). Called where MainWindow changes a size
+// or a subscription, and again at each key edge and each time the Clarity
+// registry asks for a hold length: Setup's decimation and a queued rate
+// change reach the engines without passing through here, so the value is
+// read from the engine at the moment it is used.
+//
+// A pan showing several streams takes the shape that holds longest. A pan
+// of this window showing no engine gets none (the one-second minimum). A
+// window with no engines of its own (a remote window) is left alone.
+void MainWindow::refreshLocalFftShapes()
+{
+    if (!m_fftEnginePool || !m_panStack) { return; }
+    struct Shape {
+        int fftSize{0};
+        int decimation{0};
+        double sampleRateHz{0.0};
+    };
+    QHash<QString, Shape> shapes;
+    const QList<int> streams = m_fftEnginePool->streams();
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        // engineForStream makes an engine for a stream that has none.
+        if (!streams.contains(sub.streamIndex)) { continue; }
+        const FFTEngine* engine = m_fftEnginePool->engineForStream(sub.streamIndex);
+        if (!engine) { continue; }
+        const Shape shape{engine->fftSize(), engine->decimation(), engine->sampleRate()};
+        const auto held = shapes.constFind(sub.consumerId);
+        if (held == shapes.constEnd()
+            || moxHoldLengthMs(shape.fftSize, shape.decimation, shape.sampleRateHz)
+                   > moxHoldLengthMs(held->fftSize, held->decimation, held->sampleRateHz)) {
+            shapes.insert(sub.consumerId, shape);
+        }
+    }
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+        if (!sw) { continue; }
+        const Shape shape = shapes.value(applet->panId());
+        sw->setLocalFftShape(shape.fftSize, shape.decimation, shape.sampleRateHz);
+    }
+    // Display pill plan Task 18: the same facts are what each pill's FFT
+    // tab reads out (running size, rate, decimation).
+    refreshDisplayPillFftStates();
+}
+
+// Display pill plan Task 13: what a key edge does beyond the pans
+// themselves. Called wherever m_moxDisplay is made.
+void MainWindow::wireDisplayKeyEdges()
+{
+    if (!m_moxDisplay) { return; }
+    // The band each pan keeps its waterfall AGC level under.
+    m_moxDisplay->setPanBandProvider([this](const QString& panId) {
+        const PanadapterModel* model = m_panModels ? m_panModels->model(panId) : nullptr;
+        return model ? static_cast<int>(model->band()) : MoxDisplayController::kNoBandKey;
+    });
+    // keyedChanged is the first thing an edge does, so both of these run
+    // before any pan is told: each pan's hold length is read from its
+    // engine as it is now, and every engine drops the samples it holds.
+    connect(m_moxDisplay, &MoxDisplayController::keyedChanged,
+            this, &MainWindow::refreshLocalFftShapes, Qt::UniqueConnection);
+    if (m_fftEnginePool) {
+        // resetInputHistoryAll runs here on the GUI thread and queues each
+        // engine's own reset onto that engine's thread.
+        connect(m_moxDisplay, &MoxDisplayController::keyedChanged,
+                m_fftEnginePool, &FftEnginePool::resetInputHistoryAll, Qt::UniqueConnection);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6508,6 +6994,54 @@ void MainWindow::ensureOverlayPanels()
 {
     if (!m_panStack || !m_radioModel) { return; }
 
+    // Display pill plan Task 9: the window's per-band pan models. A band's
+    // dB max or min arriving from the Core, or changed by Setup, reaches
+    // every one of them.
+    if (!m_panModels) {
+        m_panModels = new PanModels(this);
+        connect(m_radioModel, &RadioModel::panGridSettingChanged,
+                m_panModels, &PanModels::applyStationGridSetting);
+        // Display pill plan Task 18: a pan's band, or that band's stored
+        // dB Max or Min, changed: the pan's pill shows it.
+        connect(m_panModels, &PanModels::bandGridChanged,
+                this, &MainWindow::refreshDisplayPillBandGrid);
+        // A remote window: the Core's FFT settings changed (Setup, another
+        // window, or the whole snapshot arriving): every pill's FFT tab
+        // reads them again. A snapshot is also when the settings become
+        // reachable.
+        connect(m_radioModel, &RadioModel::stationSettingChanged, this,
+                [this](const QString& key) {
+            if (key.isEmpty()) { refreshDisplayPillStationGates(); }
+            // Rulings wave R2: the Core's FFT size reaches this window's
+            // engines through the pool, as a size chosen here does, so the
+            // FFT size offset and the noise-floor fast attack follow it
+            // (FFTEngine::setFftSizeBaseline). The pool only: the key is the
+            // Core's and is not written from here, and nothing is replanned
+            // (a remote window's engines are idle). A size that is already
+            // the baseline changes nothing.
+            //
+            // The sizing mode decides which size that is (design D38, D43):
+            // the stored size in Fixed, 4096 in Auto and Hz/bin. A mode, size
+            // or target arriving from the Core goes through the same one
+            // place a change made here does.
+            const bool sizingKey = key.isEmpty()
+                || key == QLatin1String(ControlRanges::kDisplayFftSizeKey)
+                || key == QLatin1String(ControlRanges::kDisplayFftSizingModeKey)
+                || key == QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey)
+                || key == QLatin1String(ControlRanges::kDisplayHzPerBinLastTargetKey);
+            if (m_fftEnginePool && sizingKey) {
+                applyFftSizingFromSettings(/*replan=*/false);
+            }
+            if (sizingKey
+                || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
+                || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
+                refreshDisplayPillFftStates();
+                // An open Setup dialog reads them again too.
+                emit stationFftSettingsChanged();
+            }
+        });
+    }
+
     // Remote Daemon R2 Task 12: this used to call refreshMeterPollerSlices()
     // here too (belt-and-braces alongside the sliceAdded/sliceRemoved
     // connects removed from wirePanStatusOverlayTriggers's neighbourhood).
@@ -6527,8 +7061,8 @@ void MainWindow::ensureOverlayPanels()
         if (!applet) { continue; }
         const QString panId = applet->panId();
         if (m_overlayPanels.contains(panId)) {
-            PanadapterModel* saved = panId == QStringLiteral("pan-0") && !m_radioModel->panadapters().isEmpty()
-                ? m_radioModel->panadapters().first() : nullptr;
+            // Display pill plan Task 9: the pan's own per-band model.
+            PanadapterModel* saved = m_panModels->ensure(panId, m_panStack->spectrum(panId));
             if (m_clarityRegistry) { m_clarityRegistry->registerPan(panId, m_panStack->spectrum(panId), m_overlayPanels.value(panId), saved); }
             continue;
         }
@@ -6548,6 +7082,15 @@ void MainWindow::ensureOverlayPanels()
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
         wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
+
+        // Display pill plan Task 7: a zoom on this pan (and its
+        // requestAutoZoomReplan(), which emits the same signal) replans the
+        // FFT of the stream this pan shows. Every pan, pan-0 included; it
+        // was pan-0's widget alone, against stream 0's engine. The widget
+        // has its new span before it emits, so the replan reads the spans
+        // of all the stream's pans from the widgets.
+        connect(sw, &SpectrumWidget::bandwidthChangeRequested, this,
+                [this, panId](double) { replanFftForPan(panId); });
 
         // Parity Task 31 (A11): the keyed trace's calibration
         // (SpectrumWidget::displayCalOffsetDb; Thetis display.cs:4820-4850
@@ -6590,8 +7133,12 @@ void MainWindow::ensureOverlayPanels()
         panel->move(4, 4);
         panel->show();
         m_overlayPanels.insert(panId, panel);
-        PanadapterModel* saved = panId == QStringLiteral("pan-0") && !m_radioModel->panadapters().isEmpty()
-            ? m_radioModel->panadapters().first() : nullptr;
+        // Display pill plan Task 9 (D29): every pan has a per-band model of
+        // its own, the window's (PanModels), made before the pan is
+        // registered so its saved per-band noise estimate primes Clarity.
+        // Not RadioModel::addPanadapter(): that list is mirrored on the
+        // station link under an index-only pan name.
+        PanadapterModel* saved = m_panModels->ensure(panId, sw);
         if (m_clarityRegistry) { m_clarityRegistry->registerPan(panId, sw, panel, saved); }
         // Parity Task 18: this strip's Display flyout and Clarity Re-tune act
         // on this pan.
@@ -6678,46 +7225,149 @@ void MainWindow::wirePanDisplayFlyout(SpectrumOverlayPanel* panel, SpectrumWidge
 {
     if (!panel || !sw) { return; }
 
-    // B8 Task 20: WF Gain, WF Black Level and the colour scheme.
-    connect(panel, &SpectrumOverlayPanel::wfColorGainChanged,
-            sw, &SpectrumWidget::setWfColorGain);
-    connect(panel, &SpectrumOverlayPanel::wfBlackLevelChanged,
-            sw, &SpectrumWidget::setWfBlackLevel);
-    connect(panel, &SpectrumOverlayPanel::colorSchemeChanged, sw, [sw](int idx) {
-        // colorSchemeChanged carries a raw combo index (int); setWfColorScheme
-        // takes the WfColorScheme enum, so adapt with a bounds-checked cast.
-        const int schemeCount = static_cast<int>(WfColorScheme::Count);
-        sw->setWfColorScheme(static_cast<WfColorScheme>(qBound(0, idx, schemeCount - 1)));
-    });
-    // B8 Task 21: Cursor Freq.
-    connect(panel, &SpectrumOverlayPanel::cursorFreqVisibleChanged,
-            sw, &SpectrumWidget::setCursorFreqVisible);
-    // B8 Task 22: Fill Color. B8 fix-up: Fill Alpha.
-    connect(panel, &SpectrumOverlayPanel::fillColorChanged,
-            sw, &SpectrumWidget::setFillColor);
-    connect(panel, &SpectrumOverlayPanel::fillAlphaChanged,
-            sw, &SpectrumWidget::setFillAlpha);
-    // Parity Task 18: Grid Lines changed only its own label.
-    panel->setGridVisible(sw->gridEnabled());
-    connect(panel, &SpectrumOverlayPanel::gridVisibleChanged,
-            sw, &SpectrumWidget::setGridEnabled);
-    // B8 Task 24: "More Display Options" opens Setup > Display, whose pages
-    // act on the active pan (setSpectrumHooks), so this pan becomes it.
-    connect(panel, &SpectrumOverlayPanel::openSetupRequested, this,
-            [this, panId](const QString& page) {
+    // Display pill plan Task 18: what this pan's pill asks of the window.
+    // Its per-pan rows read and write this pan's widget themselves
+    // (wireDisplayPill makes the widget the pill's target); everything
+    // else is a request, answered here.
+    DisplayPillHooks hooks;
+    // The FFT tab is the station's: every stream, every pan (D25).
+    hooks.applyFftBaseline = [this](int size) {
+        if (stationSettingsAvailable()) { applyFftBaseline(size); }
+    };
+    hooks.applyFftSizingMode =
+        [this](ControlRanges::DisplayFftSizingMode mode, double hzPerBinIfNoneRemembered) {
+            applyDisplayFftSizingMode(mode, hzPerBinIfNoneRemembered);
+        };
+    hooks.applyFps = [this](int fps) { applyDisplayFps(fps); };
+    hooks.applyWindowType = [this](int windowType) { applyDisplayFftWindow(windowType); };
+    hooks.applyHzPerBinTarget = [this](double hz) { applyDisplayHzPerBinTarget(hz); };
+    hooks.applyDecimation = [this](int decimation) { applyDisplayDecimation(decimation); };
+    hooks.fftState = [this, panId]() { return displayPillFftState(panId); };
+    // The Clarity switch is the window's one (RadioModel, as Setup's box).
+    // PanClarityRegistry hears the change and tells every pill; nothing
+    // here calls setClarityState.
+    // The approved rebuild supersedes the historical global switch above:
+    // a pill edits its captured pan's requested choice, never the master.
+    hooks.setClarityEnabled = [pan = QPointer<SpectrumWidget>(sw)](bool on) {
+        if (pan) { pan->setClarityEnabled(on); }
+    };
+    // Re-tune retains this strip's active-pan selection behavior; its
+    // controller is owned and retuned by the registry.
+    hooks.retuneClarity = [this, panId]() {
+        if (m_panStack) { m_panStack->setActivePan(panId); }
+    };
+    // dB Max and dB Min are the band's, kept for every pan and window
+    // (design S9): they go to the store for the band this pan is on, and
+    // the pan's range follows the store (PanModels). An end that would
+    // cross the other is not taken. The pill is then shown the store, so
+    // a value that was not taken goes back.
+    hooks.setPerBandDbMax = [this, panId](int db) {
+        PanadapterModel* model = m_panModels ? m_panModels->model(panId) : nullptr;
+        if (model && stationSettingsAvailable()) {
+            const Band band = model->band();
+            if (db > model->perBandGrid(band).dbMin) { model->setPerBandDbMax(band, db); }
+        }
+        refreshDisplayPillBandGrid(panId);
+    };
+    hooks.setPerBandDbMin = [this, panId](int db) {
+        PanadapterModel* model = m_panModels ? m_panModels->model(panId) : nullptr;
+        if (model && stationSettingsAvailable()) {
+            const Band band = model->band();
+            if (db < model->perBandGrid(band).dbMax) { model->setPerBandDbMin(band, db); }
+        }
+        refreshDisplayPillBandGrid(panId);
+    };
+    // B8 Task 24: "Setup defaults" opens the Setup page for the pill's open
+    // tab, whose pages act on the active pan (setSpectrumHooks), so this
+    // pan becomes it.
+    hooks.openSetupPage = [this, panId, setupPanIndex = sw->panIndex()](const QString& page) {
         if (m_panStack) { m_panStack->setActivePan(panId); }
         auto* dialog = createSetupDialog();
         if (dialog == nullptr) {
             return;  // the gate refused and has already said why
         }
+        dialog->setDisplayPanIndex(setupPanIndex);
         dialog->selectPage(page);
         dialog->show();
-    });
-    // Re-tune retains this strip's active-pan selection behavior; its
-    // controller is owned and retuned by the registry.
-    connect(panel, &SpectrumOverlayPanel::clarityRetuneRequested, this,
-            [this, panId]() { if (m_panStack) { m_panStack->setActivePan(panId); } });
+    };
+    wireDisplayPill(panel, sw, hooks);
 
+    // What the pill cannot ask for itself. 3D Span and Slice Shadow are
+    // drawn by the GPU path only (design 3.6, R-DSP-48); in a build
+    // without it they stay visible and greyed. The same holds for a GPU
+    // build whose mesh is not up (not built yet, or a renderer that cannot
+    // build it), so the pill is told what the pan can draw now and again
+    // whenever that changes. The change is reported from inside the
+    // renderer's own step, so it is taken queued and the pan is read then.
+#ifdef NEREUS_GPU_SPECTRUM
+    constexpr bool kGpuSpectrumBuild = true;
+#else
+    constexpr bool kGpuSpectrumBuild = false;
+#endif
+    const auto pushGpuCapabilities = [panel = QPointer<SpectrumOverlayPanel>(panel),
+                                      pan = QPointer<SpectrumWidget>(sw)]() {
+        if (!panel || !pan) {
+            return;
+        }
+        const bool meshDrawn = dssRowSpanSupported(kGpuSpectrumBuild, pan->dssMeshReady());
+        panel->setGpuCapabilities(meshDrawn, meshDrawn);
+    };
+    pushGpuCapabilities();
+    connect(sw, &SpectrumWidget::dssMeshReadyChanged, panel, pushGpuCapabilities,
+            Qt::QueuedConnection);
+    refreshDisplayPillStationGates();
+    refreshDisplayPillBandGrid(panId);
+
+    // A pan made after start-up draws at the station's rate too; it was
+    // only the pan that was active at start-up that was given it.
+    sw->setDisplayFps(displayPillFftState(panId).fps);
+
+    // This pan's part of the FFT read-out: the size a Core grants it, and
+    // its zoom (which decides whether the Hz/bin target is setting the
+    // size). The zoom's own replan is connected before this, so it has run.
+    connect(sw, &SpectrumWidget::remoteSpectrumGrantChanged,
+            this, &MainWindow::refreshDisplayPillFftStates);
+    connect(sw, &SpectrumWidget::bandwidthChangeRequested, this,
+            [this](double) { refreshDisplayPillFftStates(); });
+
+    // Display pill plan Task 19: the right-click menu's "Display
+    // settings..." line opens this pan's pill.
+    connect(sw, &SpectrumWidget::displayPillRequested,
+            panel, &SpectrumOverlayPanel::openDisplayPill);
+
+    // Display pill plan Task 19 (design S9): a range set on the pan itself
+    // is the band's, as the pill's dB Max and dB Min are. Two signals
+    // carry one: the right-click menu's Ref Level and Dyn Range ask for a
+    // range (bandRangeRequested), and the dB strip (its arrows, a drag,
+    // the wheel) reports the range the gesture ended on
+    // (dbmRangeChangeRequested). Both go to the store for the band this
+    // pan is on, in whole dB, and the pan is then set from the store, so
+    // every pan on the band and every pill follow (PanModels).
+    //
+    // Not taken: a range while this pan shows the transmit grid (that
+    // range is the transmitter's, not the band's), a range while the
+    // station's settings cannot be reached, and a pair that is upside
+    // down. Both ends go to the store in one step, which writes only the
+    // end that changed (PanadapterModel::setPerBandDbRange).
+    const auto storeBandRange = [this, panId, sw](float minDbm, float maxDbm) {
+        PanadapterModel* model = m_panModels ? m_panModels->model(panId) : nullptr;
+        const int dbMax = qRound(maxDbm);
+        const int dbMin = qRound(minDbm);
+        if (model && !sw->isMoxOverlayActive() && stationSettingsAvailable()
+            && dbMax > dbMin) {
+            const Band band = model->band();
+            model->setPerBandDbRange(band, dbMax, dbMin);
+            // The store says nothing when it already held this pair, and
+            // the pan's live range may have moved off it since (the grid
+            // following the noise floor): set the pan from the store.
+            const BandGridSettings grid = model->perBandGrid(band);
+            sw->setReceiveDbmRange(static_cast<float>(grid.dbMin),
+                                   static_cast<float>(grid.dbMax));
+        }
+        refreshDisplayPillBandGrid(panId);
+    };
+    connect(sw, &SpectrumWidget::bandRangeRequested, this, storeBandRange);
+    connect(sw, &SpectrumWidget::dbmRangeChangeRequested, this, storeBandRange);
 }
 
 void MainWindow::reconcileClarityBindings()
@@ -7078,13 +7728,50 @@ void MainWindow::rebuildFftRouting()
     }
 
     m_topology.applyTo(*router);
+
+    // Display pill plan Task 18 (left open by Task 7): a pan that left a
+    // stream, or joined one, changes what that stream's engine has to
+    // resolve, so both the stream it left and the stream it joined are
+    // sized again. Only those: this pass runs on every stream binding.
+    {
+        QHash<QString, QList<int>> after;
+        for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+            after[sub.consumerId].append(sub.streamIndex);
+        }
+        QList<int> changedStreams;
+        const auto noteMissing = [&changedStreams](const QHash<QString, QList<int>>& from,
+                                                   const QHash<QString, QList<int>>& to) {
+            for (auto it = from.constBegin(); it != from.constEnd(); ++it) {
+                const QList<int> kept = to.value(it.key());
+                for (int stream : it.value()) {
+                    if (!kept.contains(stream) && !changedStreams.contains(stream)) {
+                        changedStreams.append(stream);
+                    }
+                }
+            }
+        };
+        noteMissing(before, after);   // streams a pan left
+        noteMissing(after, before);   // streams a pan joined
+        for (int stream : std::as_const(changedStreams)) {
+            replanFftForStream(stream);
+        }
+    }
+
+    // Which engine a pan shows may have changed with the subscriptions.
+    refreshLocalFftShapes();
 }
 
 void MainWindow::dispatchFftFrameToPans(int streamIndex,
                                         const QVector<float>& binsLinear,
                                         double windowEnb,
-                                        double dbmOffset)
+                                        double dbmOffset,
+                                        quint64 inputGeneration)
 {
+    // A key edge purges every engine's input and tells the pans in the same
+    // turn of this thread, but a frame an engine had already computed is
+    // delivered after it. Its generation is older than the pool's.
+    const bool computedAfterInputPurge = !m_fftEnginePool
+        || inputGeneration >= m_fftEnginePool->inputGeneration();
     if (m_radioModel && m_panStack
         && m_radioModel->role() != RadioModel::Role::Remote) {
         // From Thetis MeterManager.cs:43362-43363,44463-44477 [@3759d096]
@@ -7212,11 +7899,14 @@ void MainWindow::dispatchFftFrameToPans(int streamIndex,
         if (!panShowsStream(panId, streamIndex)) { continue; }
         if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
             // R-R3-46 / R-R3-11: the receive offset of this stream's ADC
-            // (unchanged values return early in setDbmCalOffset).
-            sw->setDbmCalOffset(
+            // (unchanged values return early in setStationCalOffsetDb).
+            // Display pill plan Task 8: the station's term, beside the
+            // operator's Cal Offset and never written over it.
+            sw->setStationCalOffsetDb(
                 static_cast<float>(m_radioModel->rxMeterOffsetDbForStream(streamIndex)));
             sw->updateSpectrumLinear(streamIndex, binsLinear,
-                                     windowEnb, dbmOffset);
+                                     windowEnb, dbmOffset,
+                                     computedAfterInputPurge);
         }
     }
 }
@@ -7237,7 +7927,7 @@ void MainWindow::pushSpectrumCalToPans()
                 for (const QString& panId : router->pansForReceiver(stream)) {
                     if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
                         if (!placed.contains(sw)) {
-                            sw->setDbmCalOffset(offset);
+                            sw->setStationCalOffsetDb(offset);
                             placed.insert(sw);
                         }
                     }
@@ -7246,7 +7936,7 @@ void MainWindow::pushSpectrumCalToPans()
         }
     }
     if (SpectrumWidget* active = activeSpectrumWidget(); active && !placed.contains(active)) {
-        active->setDbmCalOffset(static_cast<float>(m_radioModel->rxMeterOffsetDb()));
+        active->setStationCalOffsetDb(static_cast<float>(m_radioModel->rxMeterOffsetDb()));
     }
 }
 
@@ -7273,11 +7963,22 @@ void MainWindow::disconnectPanadapter(const QString& panId)
     // removal stays alongside it for the reason it was already here:
     // disconnect-before-removal needs the fan-out to stop in this same
     // tick, not just by the next rebuild.
+    // Display pill plan Task 18 (left open by Task 7): the streams this pan
+    // showed are sized for the pans that are left.
+    QList<int> streamsLeft;
+    for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
+        if (sub.consumerId == panId && !streamsLeft.contains(sub.streamIndex)) {
+            streamsLeft.append(sub.streamIndex);
+        }
+    }
     m_topology.unsubscribe(panId);
     if (m_radioModel) {
         if (auto* router = m_radioModel->fftRouter()) {
             router->removePan(panId);
         }
+    }
+    for (int streamIndex : std::as_const(streamsLeft)) {
+        replanFftForStream(streamIndex);
     }
 }
 
@@ -7328,6 +8029,13 @@ bool MainWindow::restoreMainWindowGeometry()
 void MainWindow::buildUI()
 {
     m_clarityRegistry = new PanClarityRegistry(m_radioModel, this);
+    // Display pill plan Task 13: Clarity holds after an un-key for as long
+    // as the pan itself does.
+    m_clarityRegistry->setHoldLengthProvider([this](const QString& panId) -> qint64 {
+        refreshLocalFftShapes();
+        const SpectrumWidget* sw = m_panStack ? m_panStack->spectrum(panId) : nullptr;
+        return sw ? sw->moxHoldLengthMs() : kMoxHoldMinMs;
+    });
     // Title: name, version, then whatever else the operator needs to tell
     // this window apart from another one.
     //
@@ -7480,6 +8188,7 @@ void MainWindow::buildUI()
     connect(m_panStack, &PanadapterStack::panRetired, this,
             [this](const QString& panId) {
         if (m_clarityRegistry) { m_clarityRegistry->retirePan(panId); }
+        if (m_panModels) { m_panModels->retire(panId); }
         m_topology.unsubscribe(panId);
     });
 
@@ -8876,6 +9585,7 @@ void MainWindow::buildUI()
             m_moxDisplay = new MoxDisplayController(m_panStack, m_radioModel, this);
             m_moxDisplay->setSource(m_localTxDisplaySource.get());
             m_moxDisplay->followLocalRadio();
+            wireDisplayKeyEdges();
         }
         // Parity Task 31: DUP from the window's setting.
         applyDisplayDuplex();
@@ -9022,6 +9732,13 @@ void MainWindow::buildUI()
         });
     }
 
+    // Rulings wave R2: every FFT size change restarts the shared tracker
+    // too (each stream's own is connected in ensureStreamWired).
+    // Fast-attack noise-floor reset.  Mirrors Thetis setup.cs:16156:
+    //   Display.FastAttackNoiseFloorRX1 = true;
+    connect(primaryFftEngine(), &FFTEngine::fftSizeBaselineChanged, this,
+            [nfTracker](int /*size*/) { nfTracker->triggerFastAttack(); });
+
     // Fast-attack triggers — deferred until slice exists
     // From Thetis v2.10.3.13 display.cs:905 — freq change triggers fast attack
     // From Thetis v2.10.3.13 display.cs:880 — mode change triggers fast attack
@@ -9056,38 +9773,10 @@ void MainWindow::buildUI()
         activeSpectrumWidget()->setTxFilterRange(txModel.filterLow(), txModel.filterHigh());
     }
 
-    {
-        PanadapterModel* pan0 = m_radioModel->panadapters().isEmpty()
-            ? nullptr : m_radioModel->panadapters().first();
-        if (pan0) {
-            // NF fast-attack triggers — From Thetis display.cs:879-905
-            // [v2.10.3.13]:
-            //   if (rx == 1) FastAttackNoiseFloorRX1 = true;  // band change
-            //   if (Math.Abs(oldFreq - newFreq) > 0.5)         // freq jump
-            //       FastAttackNoiseFloorRX1 = true;
-            // While in fast-attack state SpectrumWidget renders the NF
-            // line/box/text in gray to signal the smoothed estimate is
-            // still settling.  Auto-clear is internal to the setter (see
-            // SpectrumWidget::setNoiseFloorFastAttack — 1000ms timer
-            // matching Thetis display.cs:5906 minimum delay).
-            if (activeSpectrumWidget()) {
-                connect(pan0, &PanadapterModel::bandChanged,
-                        this, [this](NereusSDR::Band) {
-                    activeSpectrumWidget()->setNoiseFloorFastAttack(true);
-                });
-            }
-
-            // 3D Stacked-Trace Spectrum Plan Task 14 fix-forward: 3D Floor
-            // recall, same bandChanged block as the ClarityController
-            // priming and NF fast-attack connections directly above, so 3D
-            // Floor arrives at the same time as the rest of the per-band
-            // state a band change already recalls. Routed through the
-            // static seam below (same shape as wireWidebandExtensionForTest
-            // etc.) so the unit test exercises the exact connect() call
-            // this constructor makes, not a parallel test-only copy of it.
-            wireDss3DFloorRecallForTest(pan0, activeSpectrumWidget());
-        }
-    }
+    // Display pill plan Task 9: the band-change noise-floor fast attack and
+    // the per-band 3D Floor recall that were wired here for pan 0 alone,
+    // against RadioModel's (always empty) pan list, are wired for every pan
+    // by PanModels::ensure() (ensureOverlayPanels()).
 
     // Slice freq-jump > 0.5 MHz fast-attack trigger — Thetis display.cs:905
     // [v2.10.3.13]: if (Math.Abs(oldFreq - newFreq) > 0.5) FastAttack = true.
@@ -9332,94 +10021,16 @@ void MainWindow::buildUI()
         }
     });
 
-    // MOX transition fast-attack trigger — Thetis display.cs:889-892:
-    //   if (rx == 1) FastAttackNoiseFloorRX1 = true;
-    // Fires on both RX→TX and TX→RX transitions; the buffer-clear pulse on
-    // either edge resets the noise-floor settling window.
-    if (activeSpectrumWidget()) {
-        connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
-                this, [this](bool) {
-            activeSpectrumWidget()->setNoiseFloorFastAttack(true);
-        });
-    }
+    // The noise-floor fast attack on a MOX edge is no longer started here
+    // from the transmit model's MOX on the active pan. It starts on the
+    // display's own edge, on every pan, with the pan's hold length as its
+    // minimum: MoxDisplayController::setKeyed ->
+    // SpectrumWidget::setDisplayKeyed (display pill plan Task 13).
 
-    // Wire: zoom changes -> auto-replan FFT size to maintain constant
-    // bins-per-pixel across zoom levels.  NereusSDR-original (Thetis
-    // does not auto-replan on zoom; the user manually picks FFT size).
-    //
-    // Math: the slider's "FFT size at full DDC bandwidth" baseline
-    // implies a target K = baseline / displayWidth bins per pixel.
-    // To maintain K as bwHz narrows (zoom in), the FFT size must scale
-    // inversely with bwHz:
-    //   targetSize = baseline * sampleRate / bwHz
-    //
-    // Cap at ControlRanges::autoZoomMaxFftSize(sampleRate): about 0.7 s per
-    // transform (kAutoZoomMaxTransformSeconds), at most 262144; 65536 at
-    // 96 kHz.  The rationale lives with the constant in
-    // src/core/ControlRanges.h; a remote pan's plannedFftSize shares it
-    // through ControlRanges::autoZoomFftSize.
-    //
-    // Floor at the slider baseline (we never replan BELOW the user's
-    // chosen value).
-    //
-    // Hysteresis: only replan when computed/current is outside
-    // [0.66, 1.5].  Avoids replan thrash on smooth zoom drag.
-    //
-    // Phase 3F Sub-Epic I Task 8: the primary engine, because this lambda is
-    // wired to pan 0's SpectrumWidget (the signal is per-pan). Per-pan
-    // auto-zoom on secondary pans is Phase 3F follow-up work.
-    connect(activeSpectrumWidget(), &SpectrumWidget::bandwidthChangeRequested,
-            this, [this](double bwHz) {
-        FFTEngine* engine = primaryFftEngine();
-        if (!engine || !activeSpectrumWidget()) { return; }
-        const double sampleRate = activeSpectrumWidget()->sampleRate();
-        if (sampleRate <= 0.0 || bwHz <= 0.0) { return; }
-
-        const int baseline = engine->fftSizeBaseline();
-
-        // Hz/bin override (Option 3 from the 2026-05-08 design).  When the
-        // user has set a non-zero target Hz/bin in
-        // Setup → Display → Spectrum Defaults, the auto-zoom formula
-        // becomes zoom-INDEPENDENT:
-        //   targetSize = sampleRate / hzPerBinTarget
-        // The FFT delivers the requested resolution at any zoom — useful
-        // for hunting narrow features (CW, digital).  Floor at baseline
-        // still applies, so the FFT slider remains a minimum-FFT-size
-        // knob.  When hzPerBinTarget == 0 we use the original
-        // bins-in-window default (constant K = baseline).
-        const double hzPerBinTarget = engine->hzPerBinTarget();
-        double desired;
-        if (hzPerBinTarget > 0.0) {
-            desired = sampleRate / hzPerBinTarget;
-        } else {
-            const double scale = sampleRate / bwHz;        // 1.0 at full bw
-            desired = static_cast<double>(baseline) * scale;
-        }
-
-        // Round up to next power of 2.
-        const int autoZoomMax = ControlRanges::autoZoomMaxFftSize(sampleRate);
-        int targetSize = 1024;
-        while (targetSize < desired && targetSize < autoZoomMax) {
-            targetSize *= 2;
-        }
-        // Floor at baseline (slider's choice always honoured), then cap at
-        // auto-zoom max.  When baseline > cap (user explicitly picked a
-        // larger size via the slider), baseline wins and auto-zoom is a
-        // no-op for that range.
-        targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline, sampleRate);
-
-        // Hysteresis: only replan if outside [current * 2/3, current * 3/2].
-        const int currentSize = engine->fftSize();
-        if (currentSize > 0) {
-            const double ratio = static_cast<double>(targetSize)
-                                 / static_cast<double>(currentSize);
-            if (ratio > 0.66 && ratio < 1.5) {
-                return;  // small enough change to ignore
-            }
-        }
-
-        engine->setFftSize(targetSize);
-    });
+    // Zoom changes -> auto-replan of the FFT size: wired per pan in
+    // ensureOverlayPanels() (display pill plan Task 7), each pan to the
+    // stream it shows, through replanFftForStream(). It was one lambda here,
+    // on the widget active at start and stream 0's engine.
 
     // R1 Task 6: no explicit thread start here anymore -- FftEnginePool
     // starts each worker thread itself the moment it is first needed
@@ -9845,7 +10456,7 @@ void MainWindow::populateDefaultMeter()
     // but the spectrum path never got that calibration step. Result: the
     // S-meter and the spectrum trace lived in different reference frames
     // (38 dB gap on the bench at preamp Off; 18 dB at preamp On). Forward
-    // the SAME rxMeterOffsetDb value to SpectrumWidget::setDbmCalOffset so
+    // the SAME rxMeterOffsetDb value to SpectrumWidget::setStationCalOffsetDb so
     // both views share the antenna reference. Per the calibration research,
     // carriers will then agree to ~1 dB between meter and spectrum. Noise
     // floor will still differ by 10*log10(NBP_BW/bin_BW) which is physics
@@ -13733,7 +14344,13 @@ void MainWindow::presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
     if (producer.customGradient.isEmpty() || producer.gradientKey != gradientKey
         || producer.gradientTx != transmit) {
         GradientPickerWidget picker;
-        if (!gradientKey.isEmpty()) { picker.setEncodedText(gradientKey); }
+        if (!gradientKey.isEmpty()) {
+            picker.setEncodedText(gradientKey);
+        } else if (!transmit) {
+            // Receive Custom starts from the same Default palette as the
+            // main pan. TX retains its independent existing picker defaults.
+            picker.setEncodedText(SpectrumWidget::defaultRxWfGradient());
+        }
         producer.customGradient = picker.colorTable(101);
         producer.gradientKey = gradientKey;
         producer.gradientTx = transmit;
@@ -14511,6 +15128,23 @@ void MainWindow::setVoltsAmpsVisible(bool visible)
 void MainWindow::wireSetupDialog(SetupDialog* dialog)
 {
     if (!dialog) { return; }
+    connect(dialog, &SetupDialog::clarityRetuneRequested, this, [this](int selectedPan) {
+        if (!m_clarityRegistry || !m_panStack) { return; }
+        QList<QPair<QString, QPointer<SpectrumWidget>>> targets;
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (!applet || !applet->spectrumWidget()) { continue; }
+            SpectrumWidget* pan = applet->spectrumWidget();
+            if (selectedPan >= 0 && pan->panIndex() != selectedPan) { continue; }
+            targets.append({applet->panId(), QPointer<SpectrumWidget>(pan)});
+        }
+        const QPointer<MainWindow> self(this);
+        for (const auto& target : targets) {
+            if (!self || !m_clarityRegistry) { return; }
+            if (target.second && target.second->clarityEnabled() && !target.second->displayKeyed()) {
+                m_clarityRegistry->retunePan(target.first);
+            }
+        }
+    });
     connect(dialog,&SetupDialog::catLogRequested,this,&MainWindow::showCatLog);
     // R-R3-21: Appearance > Meter Styles changes the S-meter on screen.
     const auto sMeter = [this]() {
@@ -15070,17 +15704,12 @@ void MainWindow::wireSliceToSpectrum()
     // through sliceForPan(panId) on each signal instead of capturing it.
     // verify-no-captured-slice-spectrum-wiring.py keeps them from coming back.
 
-    // --- dBm range strip → PanadapterModel (per-band grid storage + AppSettings) ---
+    // The dBm range strip's dbmRangeChangeRequested used to be connected
+    // here, for pan 0 alone, to RadioModel's first panadapter, which no
+    // window has (display pill plan Task 9), so it stored nothing. Every
+    // pan's strip now goes to the band store from wirePanDisplayFlyout
+    // (display pill plan Task 19).
     if (firstWiring) {
-        connect(host, &SpectrumWidget::dbmRangeChangeRequested,
-                this, [this](float minDbm, float maxDbm) {
-            if (m_radioModel && !m_radioModel->panadapters().isEmpty()) {
-                PanadapterModel* pan = m_radioModel->panadapters().first();
-                pan->setdBmFloor(static_cast<int>(minDbm));
-                pan->setdBmCeiling(static_cast<int>(maxDbm));
-            }
-        });
-
         // Set initial lock state
         m_radioModel->receiverManager()->setDdcFrequencyLocked(
             host->ctunEnabled());
@@ -15811,6 +16440,91 @@ SetupDialog* MainWindow::createSetupDialog()
     }
     dialog->setCoreAudioSources(m_remoteMedia, m_remoteTelemetry);
     dialog->setCoreAudioContext(coreSettingsSnapshot());
+    // Display pill plan Task 20 (D22, D26; R-DSP-33): Setup's FFT controls
+    // change the station's FFT settings the way each pan's Display pill
+    // does, so every stream and every open pill follows.
+    dialog->setFftBaselineHandler([this](int size) {
+        if (stationSettingsAvailable()) { applyFftBaseline(size); }
+    });
+    dialog->setDisplayFpsHandler([this](int fps) { applyDisplayFps(fps); });
+    dialog->setFftWindowHandler([this](int windowType) { applyDisplayFftWindow(windowType); });
+    dialog->setHzPerBinTargetHandler([this](double hz) { applyDisplayHzPerBinTarget(hz); });
+    dialog->setDisplayDecimationHandler(
+        [this](int decimation) { applyDisplayDecimation(decimation); });
+    dialog->setFftReadoutSource([this] {
+        const DisplayPillFftState state =
+            displayPillFftState(m_panStack ? m_panStack->activePanId() : QString());
+        return DisplayFftReadoutFacts{state.runningSize, state.sampleRateHz, state.decimation};
+    });
+    dialog->setFftSizingModeHandler(
+        [this](ControlRanges::DisplayFftSizingMode mode, double hzPerBinIfNoneRemembered) {
+            applyDisplayFftSizingMode(mode, hzPerBinIfNoneRemembered);
+        });
+    // A pan's Display pill, or the Core, changed one of them while Setup is
+    // open: its pages show them again. Both are on the GUI thread.
+    connect(this, &MainWindow::stationFftSettingsChanged,
+            dialog, &SetupDialog::notifyStationFftSettingsChanged);
+    // Display pill plan Task 21 (D26, D27): Setup's display controls are the
+    // defaults for every pan, so its pages are given every pan's widget, and
+    // the active pan's band store for Grid & Scales' per-band dB Max and Min.
+    dialog->setPanWidgetsProvider([this] {
+        QList<SpectrumWidget*> pans;
+        if (m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    pans.append(applet->spectrumWidget());
+                }
+            }
+        }
+        return pans;
+    });
+    dialog->setDisplayPanIndicesProvider([this] {
+        QList<int> indices;
+        // The same independently available pan addresses as the layout chooser.
+        const int limit = panLayoutLimitFor(m_radioModel);
+        for (int index = 0; index < limit; ++index) { indices.append(index); }
+        return indices;
+    });
+    // All pans and closed pans can edit a chosen band's existing store
+    // without changing the band of an open pan. Open selections use their
+    // actual model and keep the picker locked to that band's rows.
+    auto* bandPreview = new PanadapterModel(dialog);
+    // Seed every stored band without saving or retuning. setBand() alone
+    // is a no-op when the active band already matches the model default.
+    bandPreview->applyStationGridSetting(QString());
+    if (m_panModels && m_panStack) {
+        if (PanadapterModel* active = m_panModels->model(m_panStack->activePanId())) {
+            const BandGridSettings unset = active->unsetBandGridDefault();
+            bandPreview->setUnsetBandGridDefault(unset.dbMax, unset.dbMin);
+            bandPreview->setBand(active->band());
+        }
+    }
+    if (m_radioModel) {
+        connect(m_radioModel, &RadioModel::stationSettingChanged,
+                bandPreview, &PanadapterModel::applyStationGridSetting);
+    }
+    dialog->setBandGridModelProvider([bandPreview]() { return bandPreview; });
+    dialog->setBandGridModelForPanProvider([this, bandPreview](int panIndex) -> PanadapterModel* {
+        if (m_panModels) {
+            if (PanadapterModel* open = m_panModels->model(QStringLiteral("pan-%1").arg(panIndex))) {
+                return open;
+            }
+        }
+        return bandPreview;
+    });
+    const auto displayClarityStatus = [this](int panIndex) -> std::optional<SetupDisplayClarityStatus> {
+        if (!m_clarityRegistry) { return std::nullopt; }
+        const auto status = m_clarityRegistry->statusForPan(QStringLiteral("pan-%1").arg(panIndex));
+        if (!status) { return std::nullopt; }
+        return SetupDisplayClarityStatus{status->requestedEnabled, status->active, status->paused, status->sourceAvailable};
+    };
+    dialog->setDisplayClarityStatusProvider(displayClarityStatus);
+    if (m_clarityRegistry) {
+        connect(m_clarityRegistry, &PanClarityRegistry::panStatusChanged, dialog,
+                [dialog, displayClarityStatus](const QString&) {
+            dialog->setDisplayClarityStatusProvider(displayClarityStatus);
+        });
+    }
     dialog->setStationSettingsAvailable(stationSettingsAvailable(), stationSettingsReason());
     seedReceiverAudioNote(dialog, [this] { return receiverAudioNoteFor(m_remoteMedia); });
     dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -16724,6 +17438,11 @@ void MainWindow::applyRemoteRoleGating()
     // it reports a lost or closed session, and ready (with the snapshot)
     // before it reports the session established.
     const bool stationAvailable = stationSettingsAvailable();
+    // Display pill plan Task 18: and every pan's Display pill: its station
+    // rows, and whether this Core offers Decimation (a capability, which
+    // arrives with the session).
+    refreshDisplayPillStationGates();
+    refreshDisplayPillFftStates();
     for (SetupDialog* dialog : findChildren<SetupDialog*>()) {
         dialog->setTransmitPermitted(transmitPermitted, transmitReason);
         dialog->setVoxPermitted(voxLine, voxReason);

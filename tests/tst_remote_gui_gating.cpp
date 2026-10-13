@@ -2283,7 +2283,7 @@ private slots:
             // Task 38, gated as one), Extended (addendum G-42) and Prevent
             // TX'ing on a different band (the Core's setting since 2026-09-29).
             {QStringLiteral("Options"), 6},
-            {QStringLiteral("Spectrum Defaults"), 5},   // FFT size, window, Hz/bin, fps x2
+            {QStringLiteral("Spectrum Defaults"), 6},   // Sizing, FFT size, window, Hz/bin, fps x2
             {QStringLiteral("Grid & Scales"), 3},       // dB max, dB min, copy
             {QStringLiteral("Multimeter"), 1},          // sample interval
             {QStringLiteral("TX Display"), 9},          // TX analyzer

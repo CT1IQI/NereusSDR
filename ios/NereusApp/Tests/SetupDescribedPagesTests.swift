@@ -6,6 +6,7 @@ import NereusBand
 import NereusKitTesting
 import NereusLink
 import NereusMirror
+import NereusModels
 @testable import NereusSDR
 import SwiftUI
 import Testing
@@ -26,6 +27,12 @@ struct SetupDescribedPagesTests {
     /// The Core's category files projected for a version-11 session, as the
     /// Core projects them: later controls dropped, the attenuator range
     /// filled for one board, each category at its own version.
+    /// The version 12 sentences of the two Display rows reworded at 26, as
+    /// the Core sends them to a peer below 26.
+    static let smoothDefaultsV12Tooltip = "Overwrite this panadapter's spectrum and waterfall look with the NereusSDR smooth-default profile: Clarity Blue palette, log-recursive averaging with a 650 ms averaging time, a white trace without fill, waterfall AGC on and a 30 ms waterfall update period. FFT size, frequency, band stack, and per-band grid ranges are not affected."
+    static let smoothDefaultsV12Confirm = "This will overwrite your current Spectrum and Waterfall display settings with the NereusSDR smooth-default profile.\n\nYour FFT size, frequency, band stack, and per-band grid ranges are NOT affected.\n\nContinue?"
+    static let clarityV12Tooltip = "Clarity keeps the waterfall thresholds centered on the actual noise floor as band conditions and tuning change. Uses a 30th-percentile estimator with 3-second EWMA smoothing and a \u{00B1}2 dB deadband. When off, thresholds are fixed at their last values."
+
     static func coreCategories(peer: Int = 11) throws -> [(id: String, json: String)] {
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("resources/setup")
@@ -59,6 +66,38 @@ struct SetupDescribedPagesTests {
                             control["min"] = -34
                             control["step"] = 1
                             control.removeValue(forKey: "decimals")
+                        }
+                        if id == "display", peer < 28, control["requiresDescriptionVersion"] as? Int == 28 {
+                            // Display 28 added Sizing above Size: a peer below 28 is sent no
+                            // Sizing row, and the rows 28 changed in their earlier form.
+                            guard let older = displayRowBelow28(control) else { continue }
+                            control = older
+                        }
+                        if id == "display", peer < 26, control["requiresDescriptionVersion"] as? Int == 26 {
+                            // Display 26 gated Waterfall Defaults' level rows on Clarity and
+                            // AGC: a peer below 26 keeps their version 12 form, which follows
+                            // Use spectrum min/max alone (the switch itself follows nothing).
+                            // Reset to Smooth Defaults and Enable Clarity moved to 26 for
+                            // their sentences alone: a peer below 26 is sent the version 12
+                            // sentences (the Core's kDisplayV12Controls) and nothing else differs.
+                            control["requiresDescriptionVersion"] = 12
+                            if control["id"] as? String == "display.spectrumDefaults.smoothDefaults" {
+                                control["tooltip"] = smoothDefaultsV12Tooltip
+                                control["confirm"] = smoothDefaultsV12Confirm
+                            } else if control["id"] as? String == "display.spectrumDefaults.clarity" {
+                                control["tooltip"] = clarityV12Tooltip
+                            } else if control["id"] as? String == "display.waterfallDefaults.useSpectrumMinMax" {
+                                control.removeValue(forKey: "enabledWhen")
+                            } else {
+                                control["enabledWhen"] = ["phone": "DisplayWfUseSpectrumMinMax", "oneOf": [false]] as [String: Any]
+                            }
+                        }
+                        if id == "appearance", peer < 27,
+                           control["id"] as? String == "appearance.colorsTheme.traceFillColor" {
+                            // Appearance 27 split Trace & Fill Color in two: a peer below 27
+                            // keeps the one row (and is sent no Trace Color row).
+                            control["label"] = "Trace & Fill Color:"
+                            control["tooltip"] = "Click to choose the spectrum trace line and fill color. The color picker lets you adjust alpha for the fill opacity."
                         }
                         if (control["requiresDescriptionVersion"] as? Int ?? 1) > peer { continue }
                         // The Core fills availableOn for its radio; on a radio it
@@ -122,12 +161,50 @@ struct SetupDescribedPagesTests {
                 // CAT & Network changed at 15 and 21 (TCI Forget's enabledWhen):
                 // 15 to 20 see 15.
                 root["version"] = min(root["version"] as? Int ?? 3, 15)
+            } else if id == "display" {
+                // Display changed at 26 (Waterfall Defaults' level gates) and 28
+                // (Sizing): 12 to 25 see 12, 26 and 27 see 26.
+                root["version"] = peer < 26 ? 12 : peer < 28 ? 26 : 28
+            } else if id == "appearance" {
+                // Appearance changed at 27 (Trace Color beside Fill Color): 12 to 26 see 12.
+                root["version"] = peer < 27 ? 12 : 27
             } else {
                 root["version"] = max(root["version"] as? Int ?? 3, ceilings[id] ?? 3)
             }
             let json = try JSONSerialization.data(withJSONObject: root)
             return (id, String(decoding: json, as: UTF8.self))
         }
+    }
+
+    /// The Hz/bin Target row's sentence as a peer below 28 is sent it.
+    static let hzPerBinTargetV26Tooltip = "Auto-zoom override: target a constant Hz/bin regardless of zoom. Set to 0 (\"Off\") to use the default bins-in-window behavior (FFT replans on zoom). When > 0, the FFT size is fixed at sample rate / target so the trace delivers the requested resolution at any zoom level, which is handy for hunting narrow signals (CW, digital). Floor at the FFT slider value still applies (slider sets the minimum FFT size)."
+
+    /// A Display row of version 28 as the Core sends it to a peer below 28:
+    /// nil for the Sizing row, which such a peer is not sent; Size without
+    /// its gate; the Hz/bin Target from 0 ("Off") with its earlier sentence;
+    /// the two averaging times from 10 ms by 10.
+    static func displayRowBelow28(_ row: [String: Any]) -> [String: Any]? {
+        var older = row
+        switch row["id"] as? String {
+        case "display.spectrumDefaults.fftSizing":
+            return nil
+        case "display.spectrumDefaults.fftSize":
+            older["requiresDescriptionVersion"] = 4
+            older.removeValue(forKey: "enabledWhen")
+        case "display.spectrumDefaults.hzPerBinTarget":
+            older.removeValue(forKey: "requiresDescriptionVersion")
+            older.removeValue(forKey: "enabledWhen")
+            older["tooltip"] = hzPerBinTargetV26Tooltip
+            older["min"] = 0
+            older["default"] = 0
+        case "display.spectrumDefaults.averageTime", "display.waterfallDefaults.averageTime":
+            older["requiresDescriptionVersion"] = 8
+            older["min"] = 10
+            older["step"] = 10
+        default:
+            break
+        }
+        return older
     }
 
     /// The three HL2 clock rows as the Core sends them to a peer below
@@ -452,10 +529,10 @@ struct SetupDescribedPagesTests {
 
     @Test("V22: the phone asks for 22 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
     func v12DrawsEveryRow() async throws {
-        #expect(LinkFeatures.app["setupDescription"] == 25)
+        #expect(LinkFeatures.app["setupDescription"] == 28)
         #expect(LinkFeatures.app["alexLpf"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
-        #expect(SetupDescription.highestVersion == 25)
+        #expect(SetupDescription.highestVersion == 28)
         #expect(SetupDescribedPages.notDrawnYet.isEmpty)
         let rig = try await Self.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
@@ -500,7 +577,7 @@ struct SetupDescribedPagesTests {
                                           "display.txDisplay", "display.threeD"])
         let rows = shown.pages.flatMap(\.sections).flatMap(\.controls)
         #expect(rows.count == 100)
-        #expect(rows.allSatisfy { $0.metadataIssue == nil })
+        #expect(rows.compactMap { row in row.metadataIssue.map { "\(row.id): \($0)" } } == [])
         // Every V12 row the Core describes is there, and every phone-bound
         // one reaches a setting of this phone (none reads "not available").
         let v12 = rows.filter { $0.requiresDescriptionVersion == 12 }
@@ -526,6 +603,71 @@ struct SetupDescribedPagesTests {
         let appearance = try #require(app.setupPages.categories["appearance"])
         #expect(appearance.version == 12)
         #expect(appearance.pages[0].sections.map(\.title) == ["Spectrum", "Reset"])
+        await rig.app.disconnect()
+    }
+
+    @Test("V28: Spectrum Defaults draws Sizing above Size; Size and the Hz/bin Target follow it, and 26 and 27 read as before")
+    func v28DrawsSizing() async throws {
+        let rig = try await Self.connected()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let app = rig.app
+        let controls = app.setupControls
+        typealias Sizing = StationCatalog.Display.FftSizing
+        // A Core at 27 sends the rows as they were: no Sizing, Size and the target not gated.
+        Self.asV12Core(app, setupDescription: 27)
+        await rig.station.deliverSetup(try Self.coreCategories(peer: 27))
+        #expect(await settle { app.setupPages.isCurrent && app.setupFeed.description(for: "display")?.version == 26
+            && app.setupPages.categories["display"] == app.setupFeed.description(for: "display") })
+        let before = try #require(app.setupPages.categories["display"]).pages.flatMap(\.sections).flatMap(\.controls)
+        #expect(before.count == 100)
+        #expect(before.compactMap { row in row.metadataIssue.map { "\(row.id): \($0)" } } == [])
+        #expect(!before.contains { $0.id == "display.spectrumDefaults.fftSizing" })
+        let oldSize = try #require(before.first { $0.id == "display.spectrumDefaults.fftSize" })
+        let oldTarget = try #require(before.first { $0.id == "display.spectrumDefaults.hzPerBinTarget" })
+        #expect(oldSize.enabledWhen == nil && oldTarget.enabledWhen == nil)
+        #expect(oldTarget.range == .init(minimum: 0, maximum: 200, step: 0.5))
+        #expect(controls.state(of: oldSize, in: "display").reason != SetupControlDispatcher.dependsReason)
+        #expect(controls.state(of: oldTarget, in: "display").reason != SetupControlDispatcher.dependsReason)
+        let oldAverage = try #require(before.first { $0.id == "display.spectrumDefaults.averageTime" })
+        #expect(oldAverage.range == .init(minimum: 10, maximum: 9999, step: 10))
+
+        // The Core at 28: every row is drawn, Sizing first in its section.
+        Self.asV12Core(app, setupDescription: 28)
+        await rig.station.deliverSetup(try Self.coreCategories(peer: 28))
+        #expect(await settle { app.setupPages.isCurrent && app.setupFeed.description(for: "display")?.version == 28
+            && app.setupPages.categories["display"] == app.setupFeed.description(for: "display") })
+        let shown = try #require(app.setupPages.categories["display"])
+        let rows = shown.pages.flatMap(\.sections).flatMap(\.controls)
+        #expect(rows.count == 101)
+        #expect(rows.compactMap { row in row.metadataIssue.map { "\(row.id): \($0)" } } == [])
+        let fft = try #require(shown.pages.first { $0.id == "display.spectrumDefaults" }?.sections
+            .first { $0.title == "Fast Fourier Transform" })
+        #expect(fft.controls.map(\.id) == ["display.spectrumDefaults.fftSizing", "display.spectrumDefaults.fftSize",
+                                           "display.spectrumDefaults.hzPerBinTarget", "display.spectrumDefaults.window"])
+        let sizing = fft.controls[0], size = fft.controls[1], target = fft.controls[2]
+        // The menu every described choice uses: a choice of three.
+        #expect(sizing.kind == .choice && sizing.options?.map(\.label) == ["Auto", "Hz/bin", "Fixed"])
+        #expect(sizing.binding == .setting(Sizing.settingsKey))
+        // This Core never wrote the choice and holds no target: Auto.
+        #expect(controls.sizingMode == .auto)
+        let chosen = controls.state(of: sizing, in: "display")
+        #expect(chosen.value == .integer(0) && chosen.reason != SetupControlDispatcher.dependsReason)
+        // Size and the target are gray, never hidden, with the page's own sentence.
+        let sizeState = controls.state(of: size, in: "display")
+        #expect(!sizeState.editable && sizeState.reason == SetupControlDispatcher.dependsReason)
+        let targetState = controls.state(of: target, in: "display")
+        #expect(!targetState.editable && targetState.reason == SetupControlDispatcher.dependsReason)
+        // Never 0, and so never "Off".
+        #expect(targetState.value != .decimal(0) && targetState.value != .integer(0))
+        #expect(await controls.edit(size, in: "display", to: .integer(8192)) == .notSent(SetupControlDispatcher.dependsReason))
+        // The gray rows show what this phone's pan runs.
+        #expect(controls.runningFftSize?() == app.main.coreDisplay.runningFftSize)
+        #expect(controls.runningBinWidthHz?() == app.main.coreDisplay.runningBinWidthHz)
+        // Averaging goes down to 1 ms, on this phone's own setting.
+        let average = try #require(rows.first { $0.id == "display.spectrumDefaults.averageTime" })
+        #expect(average.range == .init(minimum: 1, maximum: 9999, step: 1))
+        #expect(await controls.edit(average, in: "display", to: .integer(1)) == .applied)
+        #expect(await settle { app.main.band.settings.spectrumAverageTimeMs == 1 })
         await rig.app.disconnect()
     }
 
@@ -665,6 +807,46 @@ struct SetupDescribedPagesTests {
         await rig.app.disconnect()
     }
 
+    @Test("The phone's Display panel has a Trace color and a Fill color picker, each setting its own colour")
+    func traceAndFillColourPickers() throws {
+        var settings = BandDisplaySettings.desktopDefaults
+        // Until a trace colour is chosen, "Trace color" shows the fill's.
+        #expect(DisplayOnThisPhonePage.traceColourShown(settings) == "#00E5FF")
+        #expect(DisplayOnThisPhonePage.fillColourShown(settings) == "#00E5FF")
+        DisplayOnThisPhonePage.setFillColour("#102030", in: &settings)
+        #expect(DisplayOnThisPhonePage.traceColourShown(settings) == "#102030")
+        #expect(settings.traceLineColour == nil)
+
+        // "Trace color" sets the line's colour and nothing else.
+        var expected = settings
+        expected.traceLineColour = "#FF0000"
+        DisplayOnThisPhonePage.setTraceColour("#FF0000", in: &settings)
+        #expect(settings == expected)
+        #expect(DisplayOnThisPhonePage.traceColourShown(settings) == "#FF0000")
+        #expect(DisplayOnThisPhonePage.fillColourShown(settings) == "#102030")
+
+        // "Fill color" sets the fill's colour and nothing else: the chosen
+        // trace colour stays.
+        expected.traceColour = "#00FF00"
+        DisplayOnThisPhonePage.setFillColour("#00FF00", in: &settings)
+        #expect(settings == expected)
+        #expect(DisplayOnThisPhonePage.traceColourShown(settings) == "#FF0000")
+        #expect(DisplayOnThisPhonePage.fillColourShown(settings) == "#00FF00")
+
+        // The page offers both, the fill directly after the trace.
+        let page = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Setup/DisplayOnThisPhonePage.swift")
+        let source = try String(contentsOf: page, encoding: .utf8)
+        let trace = try #require(source.range(of: #"ColorPicker("Trace color""#))
+        let fill = try #require(source.range(of: #"ColorPicker("Fill color""#))
+        let passband = try #require(source.range(of: #"ColorPicker("Passband color""#))
+        #expect(trace.lowerBound < fill.lowerBound && fill.lowerBound < passband.lowerBound)
+        #expect(!source[trace.upperBound..<fill.lowerBound].contains("ColorPicker("))
+        #expect(source[trace.upperBound..<fill.lowerBound].contains(#".accessibilityIdentifier("traceColour")"#))
+        #expect(!source[fill.upperBound..<passband.lowerBound].contains("ColorPicker("))
+        #expect(source[fill.upperBound..<passband.lowerBound].contains(#".accessibilityIdentifier("fillColour")"#))
+    }
+
     @Test("V12: the buttons do what the desktop's do, and Smooth Defaults moves only its own settings (D97)")
     func v12Buttons() async throws {
         let rig = try await Self.connected()
@@ -681,12 +863,15 @@ struct SetupDescribedPagesTests {
         }
         let smooth = try control("display.spectrumDefaults.smoothDefaults")
         #expect(smooth.confirm?.contains("per-band grid ranges") == true)
-        // Reset to Smooth Defaults: its seven values, nothing else.
+        // Reset to Smooth Defaults: its values, nothing else.
         app.main.changeDisplay {
             $0.waterfallPaletteId = 2
             $0.spectrumAveraging = .none
             $0.spectrumAverageTimeMs = 120
             $0.traceColour = "#123456"
+            // A trace color chosen on its own: the button makes it the
+            // profile's white, as the desktop's does its Trace Color.
+            $0.traceLineColour = "#FF0000"
             $0.traceFill = true
             $0.waterfallAgc = false
             $0.waterfallPeriodMs = 200
@@ -701,10 +886,33 @@ struct SetupDescribedPagesTests {
         expected.spectrumAveraging = .logRecursive
         expected.spectrumAverageTimeMs = 650
         expected.traceColour = "#FFFFFF"
+        expected.traceLineColour = "#FFFFFF"
         expected.traceFill = false
         expected.waterfallAgc = true
         expected.waterfallPeriodMs = 30
         #expect(app.main.band.settings == expected)
+        #expect(app.main.band.settings.traceLineColour == "#FFFFFF")
+        #expect(app.main.band.settings.traceLineColourDrawn == "#FFFFFF")
+
+        // Reset all colors: the fill's colour back to the desktop's cyan,
+        // the chosen trace colour kept.
+        var coloursReset = app.main.band.settings
+        coloursReset.traceLineColour = "#ABCDEF"
+        PhoneSetupKeys.resetColours(&coloursReset)
+        #expect(coloursReset.traceColour == "#00E5FF")
+        #expect(coloursReset.traceLineColour == "#ABCDEF")
+        // With no trace color chosen, Smooth Defaults draws the white
+        // trace it drew before, now as the trace's own color.
+        var following = BandDisplaySettings.desktopDefaults
+        PhoneSetupKeys.smoothDefaults(&following)
+        #expect(following.traceLineColour == "#FFFFFF")
+        #expect(following.traceColour == "#FFFFFF" && following.traceLineColourDrawn == "#FFFFFF")
+        // Reset all colors gives a trace that follows the fill none of its
+        // own.
+        var unchosen = BandDisplaySettings.desktopDefaults
+        PhoneSetupKeys.resetColours(&unchosen)
+        #expect(unchosen.traceLineColour == nil)
+        #expect(unchosen.traceLineColourDrawn == "#00E5FF")
 
         // Copy spectrum min/max: the thresholds become the scale as drawn.
         app.main.changeDisplay {

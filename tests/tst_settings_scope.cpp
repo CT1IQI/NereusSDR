@@ -625,6 +625,10 @@ private slots:
             << QStringLiteral("DisplayFftWindow") << int(SettingsScope::Station);
         QTest::newRow("DisplayHzPerBinTarget is Station (FftPoolConfig)")
             << QStringLiteral("DisplayHzPerBinTarget") << int(SettingsScope::Station);
+        QTest::newRow("DisplayFftSizingMode is Station (which control sets the FFT size)")
+            << QStringLiteral("DisplayFftSizingMode") << int(SettingsScope::Station);
+        QTest::newRow("DisplayHzPerBinLastTarget is Station (the remembered target)")
+            << QStringLiteral("DisplayHzPerBinLastTarget") << int(SettingsScope::Station);
         QTest::newRow("DisplaySpectrumFps is Station (the straddle -- see SettingsScope.cpp)")
             << QStringLiteral("DisplaySpectrumFps") << int(SettingsScope::Station);
         // Parity ruling C12: the per-band grid dB max and min are the Core's.

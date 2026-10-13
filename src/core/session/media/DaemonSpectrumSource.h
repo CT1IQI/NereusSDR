@@ -137,6 +137,18 @@ public:
     bool updateFrameRate(const MediaSourceKey& key, int fps,
                          bool transformsFollowFrameRate = false);
 
+    /// A MOX edge: every active source's queued I/Q is discarded and the
+    /// source is marked for an input reset through the discontinuity path a
+    /// dropped packet uses, so each engine clears its own input history on
+    /// its own worker thread before it takes the first samples after the
+    /// edge. No generation changes and no consumer's context is renewed.
+    /// Owner thread only.
+    void resetInputHistoryAll();
+    /// Input resets the source's engine has made on its worker thread for a
+    /// discontinuity (a dropped packet or resetInputHistoryAll). 0 for an
+    /// unknown source.
+    quint64 inputHistoryResets(const MediaSourceKey& key) const;
+
     /// Stops a single source tier and releases its engine. Safe for an
     /// unknown key.  The other tier for the same stream remains active.
     void deactivate(const MediaSourceKey& key);
@@ -228,6 +240,8 @@ private:
                           const QSharedPointer<FrameState>& state,
                           const QVector<float>& interleavedIq);
 
+    static void drainInput(FFTEngine* engine,
+                           const QSharedPointer<FrameState>& state);
     void attachRadioIq(SourceEntry& entry);
     void queueConfiguredActivation(SourceEntry& entry,
                                    const DaemonSpectrumSourceConfig& config,

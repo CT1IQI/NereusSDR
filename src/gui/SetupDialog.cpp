@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Assemble the eight approved Display pages from retained
+//                 bound controls and provide scoped values and Clarity status.
 //   2026-05-03 — PA calibration safety hotfix Phase 8 (#167): rewired
 //                 the Setup → PA category to be always-built, with
 //                 per-SKU visibility driven by BoardCapabilities and
@@ -279,6 +282,8 @@
 #include <QApplication>
 #include <QDialog>
 #include <QVBoxLayout>
+#include <QFormLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QShowEvent>
 #include <QElapsedTimer>
@@ -286,6 +291,7 @@
 #include <QScopeGuard>
 
 #include <utility>
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -525,12 +531,20 @@ void SetupDialog::showEvent(QShowEvent* event)
 
 void SetupDialog::selectPage(const QString& label)
 {
+    static const QHash<QString, QString> aliases = {
+        {QStringLiteral("Spectrum Defaults"), QStringLiteral("Spectrum")},
+        {QStringLiteral("Grid & Scales"), QStringLiteral("Levels")},
+        {QStringLiteral("Waterfall Defaults"), QStringLiteral("Waterfall")},
+        {QStringLiteral("3D View"), QStringLiteral("View")},
+        {QStringLiteral("Spectrum Peaks"), QStringLiteral("Peaks & Markers")},
+        {QStringLiteral("TX Display"), QStringLiteral("Transmit Display")}};
+    const QString destination = aliases.value(label, label);
     // Search all tree items (top-level categories + children) for matching text
     for (int i = 0; i < m_tree->topLevelItemCount(); ++i) {
         QTreeWidgetItem* cat = m_tree->topLevelItem(i);
         for (int j = 0; j < cat->childCount(); ++j) {
             QTreeWidgetItem* child = cat->child(j);
-            if (child->text(0) == label) {
+            if (child->text(0) == destination) {
                 m_tree->setCurrentItem(child);
                 return;
             }
@@ -702,6 +716,310 @@ void SetupDialog::setCoresPageBinder(std::function<void(CoresSetupPage*)> binder
     if (!m_coresPageBinder) { return; }
     for (const PageEntry& entry : m_pages) {
         if (auto* page = qobject_cast<CoresSetupPage*>(entry.widget)) { m_coresPageBinder(page); }
+    }
+}
+
+// ── Display pill plan Task 20: the window's FFT handlers ────────────────────
+
+void SetupDialog::setFftBaselineHandler(std::function<void(int)> handler)
+{
+    m_fftHandlers.applyBaseline = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::setDisplayFpsHandler(std::function<void(int)> handler)
+{
+    m_fftHandlers.applyFps = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::setFftWindowHandler(std::function<void(int)> handler)
+{
+    m_fftHandlers.applyWindowType = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::setHzPerBinTargetHandler(std::function<void(double)> handler)
+{
+    m_fftHandlers.applyHzPerBinTarget = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::setDisplayDecimationHandler(std::function<void(int)> handler)
+{
+    m_fftHandlers.applyDecimation = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::setFftReadoutSource(std::function<DisplayFftReadoutFacts()> source)
+{
+    m_fftHandlers.readoutFacts = std::move(source);
+    pushFftHandlers();
+}
+
+void SetupDialog::setFftSizingModeHandler(
+    std::function<void(ControlRanges::DisplayFftSizingMode, double)> handler)
+{
+    m_fftHandlers.applySizingMode = std::move(handler);
+    pushFftHandlers();
+}
+
+void SetupDialog::pushFftHandlers()
+{
+    // Every realized page, wherever it sits (a page may be inside a
+    // wrapper, as refreshTransmitPresentation finds them). A page built
+    // later takes them there.
+    for (const PageEntry& entry : m_pages) {
+        if (!entry.widget) { continue; }
+        QList<SetupPage*> setupPages = entry.widget->findChildren<SetupPage*>();
+        if (auto* self = qobject_cast<SetupPage*>(entry.widget)) {
+            setupPages.prepend(self);
+        }
+        for (SetupPage* setupPage : setupPages) {
+            setupPage->setFftHandlers(m_fftHandlers);
+        }
+    }
+}
+
+void SetupDialog::notifyStationFftSettingsChanged()
+{
+    // Every realized page, found as pushFftHandlers finds them.
+    for (const PageEntry& entry : m_pages) {
+        if (!entry.widget) { continue; }
+        QList<SetupPage*> setupPages = entry.widget->findChildren<SetupPage*>();
+        if (auto* self = qobject_cast<SetupPage*>(entry.widget)) {
+            setupPages.prepend(self);
+        }
+        for (SetupPage* setupPage : setupPages) {
+            setupPage->stationFftSettingsChanged();
+        }
+    }
+}
+
+// ── Display pill plan Task 21: the window's pans and band store ─────────────
+
+void SetupDialog::setPanWidgetsProvider(std::function<QList<SpectrumWidget*>()> provider)
+{
+    m_displayProviders.panWidgets = std::move(provider);
+    pushDisplayProviders();
+}
+
+void SetupDialog::setBandGridModelProvider(std::function<PanadapterModel*()> provider)
+{
+    m_displayProviders.bandGridModel = std::move(provider);
+    pushDisplayProviders();
+}
+
+void SetupDialog::ensureDisplaySourceSet(QWidget* hostParent)
+{
+    if (m_displaySourceHost) {
+        if (hostParent && m_displaySourceHost->parentWidget() == this) {
+            m_displaySourceHost->setParent(hostParent);
+            m_displaySourceHost->hide();
+        }
+        return;
+    }
+    m_displaySourceHost = new QWidget(hostParent ? hostParent : this);
+    m_displaySourceHost->setObjectName(QStringLiteral("displayBoundSourceOwners"));
+    m_displaySourceHost->hide();
+    m_displaySourcePages.insert(QStringLiteral("spectrum"), new SpectrumDefaultsPage(m_model, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("waterfall"), new WaterfallDefaultsPage(m_model, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("grid"), new GridScalesPage(m_model, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("view"), new Display3DSetupPage(m_model ? m_model->spectrumWidget() : nullptr, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("peaks"), new SpectrumPeaksPage(m_model, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("tx"), new TxDisplayPage(m_model, m_displaySourceHost));
+    m_displaySourcePages.insert(QStringLiteral("colors"), new ColorsThemePage(m_model, m_displaySourceHost));
+    for (SetupPage* source : std::as_const(m_displaySourcePages)) {
+        source->setProperty("displayAssemblyOwner", true);
+        source->setDisplayProviders(m_displayProviders);
+        source->setDisplayPanIndex(m_displayPanIndex);
+        source->setFftHandlers(m_fftHandlers);
+        connect(source, &SetupPage::displayPanIndexChanged, this, &SetupDialog::setDisplayPanIndex, Qt::UniqueConnection);
+    }
+    connect(qobject_cast<SpectrumDefaultsPage*>(m_displaySourcePages.value(QStringLiteral("spectrum"))),
+        &SpectrumDefaultsPage::navigateToSpectrumPeaksRequested, this, [this]() { selectPage(QStringLiteral("Peaks & Markers")); });
+    connect(qobject_cast<SpectrumDefaultsPage*>(m_displaySourcePages.value(QStringLiteral("spectrum"))),
+        &SpectrumDefaultsPage::navigateToMultimeterRequested, this, [this]() { selectPage(QStringLiteral("Multimeter")); });
+}
+
+QWidget* SetupDialog::buildDisplayAssembly(const QString& name)
+{
+    if (name == QStringLiteral("Multimeter")) {
+        auto* page = new MultimeterPage(m_model);
+        DisplayAssemblyPage::pairNumberRows(page);
+        connect(page, &MultimeterPage::backToSpectrumDefaultsRequested, this, [this]() { selectPage(QStringLiteral("Spectrum")); });
+        return page;
+    }
+    static const QHash<QString, QString> pageKeys = {
+        {QStringLiteral("Spectrum"), QStringLiteral("DisplaySpectrumDetector DisplayDispNormalize DisplaySpectrumAveraging DisplaySpectrumAverageTimeMs DisplayLineWidth DisplayTraceColor DisplayPanFill DisplayFftFillAlpha DisplayFillColor DisplayGradientEnabled DisplayPeakHoldEnabled DisplayPeakHoldResetMs DisplayGridEnabled DisplayFreqGridSpacing DisplayGridStep DisplayFreqScaleFontPx DisplayFreqLabelAlign DisplayDbmScaleVisible DisplayShowZeroLine DisplayCalOffset DisplayShowCursorFreq DisplayShowFps")},
+        {QStringLiteral("Levels"), QStringLiteral("DisplayAdjustGridMinToNoiseFloor DisplayNFOffsetGridFollow DisplayMaintainNFAdjustDelta ClarityEnabled DisplayWfAgc WaterfallNFAGCEnabled DisplayWfUseSpectrumMinMax DisplayWfBlackLevel DisplayWfColorGain WaterfallAGCOffsetDb DisplayWfLowLevel DisplayWfHighLevel")},
+        {QStringLiteral("Waterfall"), QStringLiteral("DisplayWfColorScheme DisplayWfUpdatePeriodMs DisplayWfOpacity WaterfallBlankingEnabled WaterfallBlankingThresholdDb DisplayWaterfallDetector DisplayWaterfallAveraging DisplayWaterfallAverageTimeMs WaterfallStopOnTx DisplayShowRxFilterOnWaterfall DisplayShowTxFilterOnRxWaterfall DisplayShowRxZeroLine DisplayShowTxZeroLine DisplayWfTimestampPos DisplayWfTimestampMode DisplayWaterfallHistoryMs")},
+        {QStringLiteral("View"), QStringLiteral("DisplaySpectrumRenderMode Display3DGain Display3DSpan Display3DAngle Display3DSpeed Display3DSliceShadow DisplayBackgroundEnabled DisplayBackgroundColor DisplayBackgroundImage DisplayBackgroundOpacity")},
+        {QStringLiteral("Peaks & Markers"), QStringLiteral("DisplayActivePeakHoldEnabled DisplayActivePeakHoldDurationMs DisplayActivePeakHoldDropDbPerSec DisplayActivePeakHoldFill DisplayActivePeakHoldOnTx DisplayActivePeakHoldColor DisplayPeakBlobsEnabled DisplayPeakBlobsCount DisplayPeakBlobsInsideFilterOnly DisplayPeakBlobsHoldEnabled DisplayPeakBlobsHoldMs DisplayPeakBlobsHoldDrop DisplayPeakBlobsFallDbPerSec DisplayPeakBlobColor DisplayPeakBlobTextColor DisplayShowPeakValueOverlay DisplayPeakValuePosition DisplayPeakTextDelayMs DisplayShowNoiseFloor DisplayShowNoiseFloorPosition DisplayNoiseFloorShiftDb DisplayNoiseFloorLineWidth DisplayNoiseFloorColor DisplayNoiseFloorTextColor DisplayNoiseFloorFastColor DisplayShowBinWidth")}};
+    auto* page = new DisplayAssemblyPage(name, m_model,
+        pageKeys.value(name).split(QLatin1Char(' '), Qt::SkipEmptyParts), pageKeys.contains(name));
+    connect(page, &DisplayAssemblyPage::clarityRetuneRequested, this, &SetupDialog::clarityRetuneRequested);
+    connect(page, &DisplayAssemblyPage::pageRequested, this, &SetupDialog::selectPage);
+    connect(page, &DisplayAssemblyPage::ownRowReset, this, [this]() { pushDisplayProviders(); });
+    page->setDisplayProviders(m_displayProviders);
+    page->setDisplayPanIndex(m_displayPanIndex);
+    ensureDisplaySourceSet(page);
+    QWidget* spec = m_displaySourcePages.value(QStringLiteral("spectrum"));
+    QWidget* grid = m_displaySourcePages.value(QStringLiteral("grid"));
+    QWidget* wf = m_displaySourcePages.value(QStringLiteral("waterfall"));
+    const auto rows = [page](QWidget* source, const QString& title, const QString& ids) {
+        page->takeRows(source, title, ids.split(QLatin1Char(' '), Qt::SkipEmptyParts));
+    };
+    if (name == QStringLiteral("Spectrum")) {
+        rows(spec, QStringLiteral("Trace"), QStringLiteral("display.spectrumDefaults.detector display.spectrumDefaults.normalize display.spectrumDefaults.averaging display.spectrumDefaults.averageTime display.spectrumDefaults.lineWidth"));
+        QWidget* colors = qobject_cast<ColorsThemePage*>(m_displaySourcePages.value(QStringLiteral("colors")))->takePictureColourRows(page);
+        rows(colors, QStringLiteral("Trace"), QStringLiteral("display.spectrum.traceColor"));
+        rows(spec, QStringLiteral("Fill"), QStringLiteral("display.spectrumDefaults.panFill display.spectrumDefaults.fillAlpha"));
+        rows(colors, QStringLiteral("Fill"), QStringLiteral("display.spectrum.fillColor"));
+        rows(spec, QStringLiteral("Fill"), QStringLiteral("display.spectrumDefaults.gradient"));
+        colors->hide();
+        rows(spec, QStringLiteral("Peak hold"), QStringLiteral("display.spectrumDefaults.peakHold display.spectrumDefaults.peakDelay"));
+        rows(grid, QStringLiteral("Grid"), QStringLiteral("display.gridScales.showGrid display.gridScales.dbStep"));
+        rows(grid, QStringLiteral("Scales and labels"), QStringLiteral("display.gridScales.freqLabelAlign display.gridScales.dbmScale display.gridScales.zeroLine"));
+        rows(spec, QStringLiteral("Calibration"), QStringLiteral("display.spectrumDefaults.calOffset"));
+        rows(spec, QStringLiteral("Readouts"), QStringLiteral("display.spectrumDefaults.showCursorFreq"));
+        rows(grid, QStringLiteral("Readouts"), QStringLiteral("display.gridScales.showFps"));
+        rows(spec, QStringLiteral("Reset"), QStringLiteral("display.spectrumDefaults.smoothDefaults"));
+        rows(spec, QString(), QStringLiteral("display.spectrum.crossLinks"));
+    } else if (name == QStringLiteral("Levels")) {
+        page->addSpectrumScaleChooser();
+        rows(grid, QStringLiteral("Spectrum scale"), QStringLiteral("display.gridScales.dbMax display.gridScales.dbMin display.gridScales.noiseFloorOffset display.gridScales.maintainGridRange display.gridScales.copyWaterfallThresholds"));
+        page->addWaterfallLevelsChooser();
+        rows(wf, QStringLiteral("Waterfall levels"), QStringLiteral("display.waterfallDefaults.nfAgcOffset display.waterfallDefaults.lowThreshold display.waterfallDefaults.highThreshold display.waterfallDefaults.copySpectrumMinMax"));
+    } else if (name == QStringLiteral("Waterfall")) {
+        rows(wf, QStringLiteral("Drawing"), QStringLiteral("display.waterfallDefaults.colorScheme display.waterfallDefaults.updatePeriod display.waterfallDefaults.opacity"));
+        rows(wf, QStringLiteral("Smoothing"), QStringLiteral("display.waterfallDefaults.detector display.waterfallDefaults.averaging display.waterfallDefaults.averageTime"));
+        rows(wf, QStringLiteral("Overlays"), QStringLiteral("display.waterfallDefaults.stopOnTx display.waterfallDefaults.showRxFilter display.waterfallDefaults.showTxFilter display.waterfallDefaults.showRxZeroLine display.waterfallDefaults.showTxZeroLine"));
+        rows(wf, QStringLiteral("Time"), QStringLiteral("display.waterfallDefaults.timestampPosition display.waterfallDefaults.timestampMode display.waterfallDefaults.historyDepth"));
+    } else if (name == QStringLiteral("View")) {
+        page->addViewChooser();
+        rows(m_displaySourcePages.value(QStringLiteral("view")), QStringLiteral("3D"), QStringLiteral("display.threeD.gain display.threeD.span display.threeD.angle display.threeD.speed display.threeD.sliceShadow display.threeD.reset"));
+        rows(m_displaySourcePages.value(QStringLiteral("view")), QStringLiteral("3D floor"), QStringLiteral("display.threeD.floor"));
+    } else if (name == QStringLiteral("Peaks & Markers")) {
+        page->takeGroups(m_displaySourcePages.value(QStringLiteral("peaks")));
+        rows(spec, QStringLiteral("Peak value"), QStringLiteral("display.spectrumDefaults.showPeakValue display.spectrumDefaults.peakValuePosition display.spectrumDefaults.peakTextDelay"));
+        rows(spec, QStringLiteral("Noise floor line"), QStringLiteral("display.spectrumDefaults.showNoiseFloor display.spectrumDefaults.noiseFloorShift display.spectrumDefaults.noiseFloorLineWidth display.spectrumDefaults.noiseFloorColor display.spectrumDefaults.noiseFloorTextColor display.spectrumDefaults.noiseFloorFastColor display.spectrumDefaults.noiseFloorPosition"));
+        rows(spec, QStringLiteral("Bin width"), QStringLiteral("display.spectrumDefaults.showBinWidth"));
+    } else if (name == QStringLiteral("FFT & Engine")) {
+        page->addFftSizingChooser(spec);
+        rows(spec, QStringLiteral("FFT size"), QStringLiteral("display.spectrumDefaults.fftSize display.spectrumDefaults.hzPerBinTarget display.spectrumDefaults.fftReadout display.spectrumDefaults.window display.spectrumDefaults.decimation"));
+        rows(spec, QStringLiteral("Frame rate"), QStringLiteral("display.spectrumDefaults.fps display.spectrumDefaults.getMonitorHz"));
+        rows(spec, QStringLiteral("This computer"), QStringLiteral("display.spectrumDefaults.threadPriority"));
+    } else if (name == QStringLiteral("Transmit Display")) {
+        page->takeGroups(m_displaySourcePages.value(QStringLiteral("tx")));
+    }
+    page->addMissingPictureRows();
+    if (name == QStringLiteral("View")) { page->addDisplayBackgroundSection(); }
+    const auto placeEditorAfter = [page](QWidget* editor, const QString& anchorId) {
+        QWidget* anchor = nullptr;
+        for (QWidget* control : page->findChildren<QWidget*>()) {
+            if (control->property("nereusSetupId").toString() == anchorId) { anchor = control; break; }
+        }
+        if (!editor || !anchor) { return; }
+        QGroupBox* group = nullptr;
+        QWidget* row = anchor;
+        while (row->parentWidget()) {
+            group = qobject_cast<QGroupBox*>(row->parentWidget());
+            if (group) { break; }
+            row = row->parentWidget();
+        }
+        if (!group) { return; }
+        if (editor->parentWidget() && editor->parentWidget()->layout()) {
+            editor->parentWidget()->layout()->removeWidget(editor);
+        }
+        if (auto* column = qobject_cast<QBoxLayout*>(group->layout())) {
+            const int index = column->indexOf(row);
+            if (index < 0) { return; }
+            column->insertWidget(index + 1, editor);
+        } else if (auto* form = qobject_cast<QFormLayout*>(group->layout())) {
+            int index = -1;
+            QFormLayout::ItemRole role;
+            form->getWidgetPosition(row, &index, &role);
+            if (index < 0) { return; }
+            form->insertRow(index + 1, editor);
+        } else { return; }
+        editor->show();
+    };
+    if (name == QStringLiteral("Waterfall")) {
+        page->addDisplayGradientEditor(false);
+        placeEditorAfter(page->findChild<QWidget*>(QStringLiteral("display.waterfall.customGradient")),
+                         QStringLiteral("display.waterfallDefaults.colorScheme"));
+    } else if (name == QStringLiteral("Transmit Display")) {
+        auto* owner = qobject_cast<TxDisplayPage*>(m_displaySourcePages.value(QStringLiteral("tx")));
+        owner->retireInlineGradientEditor();
+        page->addDisplayGradientEditor(true);
+        placeEditorAfter(page->findChild<QWidget*>(QStringLiteral("display.txDisplay.customGradient")),
+                         QStringLiteral("display.txDisplay.wfLowColor"));
+    }
+    if (name == QStringLiteral("Levels") || name == QStringLiteral("View")) {
+        page->enableDisplayBandPicker();
+        QWidget* bandRow = page->findChild<QWidget*>(QStringLiteral("setupDisplayBandRow"));
+        bandRow->setProperty("nereusSetupId", "display.selectedBand");
+        page->takeRows(page, name == QStringLiteral("Levels") ? QStringLiteral("Spectrum scale") : QStringLiteral("3D floor"),
+                       {QStringLiteral("display.selectedBand")});
+        if (auto* rows = qobject_cast<QVBoxLayout*>(bandRow->parentWidget()->layout())) {
+            rows->insertWidget(name == QStringLiteral("Levels") ? 2 : 0, bandRow);
+        }
+    }
+    page->setDisplayProviders(m_displayProviders);
+    page->refreshOwnRows();
+    return page;
+}
+
+void SetupDialog::setDisplayClarityStatusProvider(std::function<std::optional<SetupDisplayClarityStatus>(int)> provider)
+{
+    m_displayProviders.clarityStatusForPan = std::move(provider);
+    pushDisplayProviders();
+}
+
+void SetupDialog::setDisplayPanIndex(int panIndex)
+{
+    const int selected = std::max(-1, panIndex);
+    if (m_displayPanIndex == selected) { return; }
+    m_displayPanIndex = selected;
+    for (SetupPage* page : findChildren<SetupPage*>()) {
+        page->setDisplayPanIndex(selected);
+    }
+}
+
+void SetupDialog::setDisplayPanIndicesProvider(std::function<QList<int>()> provider)
+{
+    m_displayProviders.panIndices = std::move(provider);
+    pushDisplayProviders();
+}
+
+void SetupDialog::setBandGridModelForPanProvider(std::function<PanadapterModel*(int)> provider)
+{
+    m_displayProviders.bandGridModelForPan = std::move(provider);
+    pushDisplayProviders();
+}
+
+void SetupDialog::pushDisplayProviders()
+{
+    // Every realized page, as pushFftHandlers does. A page built later takes
+    // them in refreshTransmitPresentation.
+    for (const PageEntry& entry : m_pages) {
+        if (!entry.widget) { continue; }
+        QList<SetupPage*> setupPages = entry.widget->findChildren<SetupPage*>();
+        if (auto* self = qobject_cast<SetupPage*>(entry.widget)) {
+            setupPages.prepend(self);
+        }
+        for (SetupPage* setupPage : setupPages) {
+            setupPage->setDisplayProviders(m_displayProviders);
+            setupPage->setDisplayPanIndex(m_displayPanIndex);
+            connect(setupPage, &SetupPage::displayPanIndexChanged,
+                    this, &SetupDialog::setDisplayPanIndex, Qt::UniqueConnection);
+        }
+    }
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<DisplayAssemblyPage*>(entry.widget)) {
+            page->refreshAssemblyPresentation();
+        }
     }
 }
 
@@ -972,7 +1290,7 @@ void SetupDialog::rebuildStalePages()
 
     for (std::size_t i = 0; i < m_pages.size(); ++i) {
         PageEntry& entry = m_pages[i];
-        if (entry.widget == nullptr || entry.scope == SetupScope::ThisComputer) {
+        if (entry.widget == nullptr || entry.scope == SetupScope::ThisComputer || entry.retainsDisplaySources) {
             continue;
         }
         if (!entry.placeholder && entry.builtGeneration == m_snapshotGeneration) {
@@ -1177,6 +1495,15 @@ void SetupDialog::refreshTransmitPresentation()
             setupPages.prepend(self);
         }
         for (SetupPage* setupPage : setupPages) {
+            // Display pill plan Task 20: a page built since the handlers
+            // were set takes them here, before its gates.
+            setupPage->setFftHandlers(m_fftHandlers);
+            // Display pill plan Task 21: and the window's pans and band
+            // store.
+            setupPage->setDisplayProviders(m_displayProviders);
+            setupPage->setDisplayPanIndex(m_displayPanIndex);
+            connect(setupPage, &SetupPage::displayPanIndexChanged,
+                    this, &SetupDialog::setDisplayPanIndex, Qt::UniqueConnection);
             setupPage->setTransmitPermitted(m_transmitPermitted, m_transmitReason);
             // Fix wave 2 (M8): VOX needs this computer's microphone line.
             setupPage->setVoxPermitted(m_voxPermitted, m_voxReason);
@@ -1253,6 +1580,11 @@ void SetupDialog::refreshTransmitPresentation()
                 showLocalNotice = true;
                 localNoticeText = unavailableReason(entry);
             }
+        }
+    }
+    for (const PageEntry& entry : m_pages) {
+        if (auto* page = qobject_cast<DisplayAssemblyPage*>(entry.widget)) {
+            page->refreshAssemblyPresentation();
         }
     }
     QTreeWidgetItemIterator it(m_tree);
@@ -1758,48 +2090,16 @@ void SetupDialog::buildTree()
     // #272 / #301: the cross-links go through selectPage(), which drives the
     // nav tree, so the destination page is realized by the tree-selection
     // handler. No sibling-page pointer is needed here.
-    registerPage(display, "Spectrum Defaults", SetupScope::Mixed, [this]() -> QWidget* {
-        auto* specDefaultsPage = new SpectrumDefaultsPage(m_model);
-        connect(specDefaultsPage, &SpectrumDefaultsPage::navigateToSpectrumPeaksRequested,
-                this, [this]() { selectPage(QStringLiteral("Spectrum Peaks")); });
-        // Task 3.1: Multimeter page now exists — wire the cross-link.
-        connect(specDefaultsPage, &SpectrumDefaultsPage::navigateToMultimeterRequested,
-                this, [this]() { selectPage(QStringLiteral("Multimeter")); });
-        return specDefaultsPage;
-    });
-
-    // Task 2.4: Spectrum Peaks page — skeleton with APH + Blob controls + back cross-link.
-    registerPage(display, "Spectrum Peaks", SetupScope::ThisComputer, [this]() -> QWidget* {
-        auto* specPeaksPage = new SpectrumPeaksPage(m_model);
-        connect(specPeaksPage, &SpectrumPeaksPage::backToSpectrumDefaultsRequested,
-                this, [this]() { selectPage(QStringLiteral("Spectrum Defaults")); });
-        return specPeaksPage;
-    });
-
-    registerPage(display, "Waterfall Defaults", SetupScope::ThisComputer,
-                 [this] { return new WaterfallDefaultsPage(m_model); });
-    registerPage(display, "Grid & Scales", SetupScope::Mixed,
-                 [this] { return new GridScalesPage(m_model); });
-
-    // Task 3.1: Display → Multimeter — 8 multimeter globals + unit-mode + signal history.
-    // Folded from Thetis Display→General Multimeter group per design Section 3A.
-    // Cross-link: ← Spectrum Defaults / SpectrumDefaultsPage → Multimeter.
-    registerPage(display, "Multimeter", SetupScope::Mixed, [this]() -> QWidget* {
-        auto* multimeterPage = new MultimeterPage(m_model);
-        connect(multimeterPage, &MultimeterPage::backToSpectrumDefaultsRequested,
-                this, [this]() { selectPage(QStringLiteral("Spectrum Defaults")); });
-        return multimeterPage;
-    });
-
-    registerPage(display, "TX Display", SetupScope::Mixed,  [this] { return new TxDisplayPage(m_model);  });
-
-    // 3D Stacked-Trace Spectrum Plan Task 15: mirrors the Task 13 overlay
-    // menu's six 3D controls into Setup -> Display. Constructed against
-    // the SpectrumWidget directly (not RadioModel, unlike every page
-    // above) per Display3DSetupPage's own class-header comment.
-    registerPage(display, "3D View", SetupScope::ThisComputer, [this]() -> QWidget* {
-        return new Display3DSetupPage(m_model ? m_model->spectrumWidget() : nullptr);
-    });
+    for (const QString& page : {QStringLiteral("Spectrum"), QStringLiteral("Levels"),
+        QStringLiteral("Waterfall"), QStringLiteral("View"), QStringLiteral("Peaks & Markers"),
+        QStringLiteral("FFT & Engine"), QStringLiteral("Transmit Display"), QStringLiteral("Multimeter")}) {
+        registerPage(display, page, SetupScope::Mixed,
+                     [this, page]() { return buildDisplayAssembly(page); });
+        // These rows retain one set of callback owners. Snapshot changes
+        // refresh their providers/readouts/gates instead of reconstructing
+        // owners whose bound rows now live on different pages.
+        m_pages.back().retainsDisplaySources = true;
+    }
 
     tick("Display");
 
@@ -1864,7 +2164,10 @@ void SetupDialog::buildTree()
     // ── Appearance ────────────────────────────────────────────────────────────
     QTreeWidgetItem* appearance = addCategory("Appearance");
     registerPage(appearance, "Colors & Theme", SetupScope::ThisComputer,
-                 [this] { return new ColorsThemePage(m_model); });
+                 [this]() -> QWidget* {
+                     ensureDisplaySourceSet();
+                     return m_displaySourcePages.value(QStringLiteral("colors"));
+                 });
     registerPage(appearance, "Meter Styles", SetupScope::ThisComputer, [this]() -> QWidget* {
         auto* page = new MeterStylesPage(m_model);
         connect(page, &MeterStylesPage::sMeterFaceChanged,

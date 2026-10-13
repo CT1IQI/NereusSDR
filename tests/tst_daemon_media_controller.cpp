@@ -37,6 +37,8 @@
 #include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/ClarityController.h"
+#include "core/MoxController.h"
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessController.h"
 #include "core/FFTEngine.h"
@@ -691,6 +693,7 @@ private slots:
     void aPeerTheCoreDropsIsToldToTheAppAtOnce_data();
     void aPeerTheCoreDropsIsToldToTheAppAtOnce();
     void aNewStartReplacesTheSessionsHalfOpenPeer();
+    void aKeyEdgeResetsEveryActiveSourceOnce();
     void staleRevisionAndWrongEpochPreserveTheActiveSource();
     void streamRemovalRetiresEndpointAndSource();
     void nonoverlappingCropIsRejectedBeforeSourceActivation();
@@ -2988,6 +2991,13 @@ void TstDaemonMediaController::nonzeroNoiseFloorMatchesLocalFftBeforeCropAndQuan
         NoiseFloorEstimator estimator;
         const double expected = estimator.estimate(localBins) + harness.radio.rxMeterOffsetDb();
         QVERIFY(expected > -180); // This covers ordinary nonzero data, not the floor sentinel.
+        // R-DSP-60: the same number a local ClarityController with the
+        // station's calibration offset makes from the same bins.
+        NereusSDR::ClarityController localClarity;
+        localClarity.setEnabled(true);
+        localClarity.setCalibrationOffsetDb(float(harness.radio.rxMeterOffsetDb()));
+        localClarity.feedBins(localBins, 0);
+        QVERIFY(std::abs(double(localClarity.smoothedFloor()) - expected) < 0.01);
 
         controls.clear();
         QVERIFY(harness.client.sendMediaControl(subscription(
@@ -3005,6 +3015,65 @@ void TstDaemonMediaController::nonzeroNoiseFloorMatchesLocalFftBeforeCropAndQuan
         QVERIFY2(std::abs(received.value(QStringLiteral("floorDbm")).toDouble() - expected) < 0.01,
                  "Remote Clarity must match full local FFT percentile plus station calibration");
     }
+    harness.finish();
+}
+
+// S21, R-DSP-23: each end of MoxController's walk clears the FFT input of
+// every active source once, on that source's own worker thread (the counter
+// is advanced by the drain that runs there). A repeat of the same edge, as
+// a second device's controller would deliver it, clears nothing.
+void TstDaemonMediaController::aKeyEdgeResetsEveryActiveSourceOnce()
+{
+    Harness harness;
+    harness.establishSession();
+    harness.startReadyPeer();
+    // Two sources: the receiver's two spectrum tiers, each with its own
+    // engine and worker thread.
+    const double centre = harness.radio.streamCentreHz(harness.streamIndex);
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        31, 1, harness.sliceId, centre, QStringLiteral("wide"), 1024),
+        harness.client.sessionEpoch()));
+    QVERIFY(harness.client.sendMediaControl(tieredSubscription(
+        32, 1, harness.sliceId, centre, QStringLiteral("fine"), 1024),
+        harness.client.sessionEpoch()));
+    QTRY_COMPARE(harness.controller.activeEndpointCount(), 2);
+    QTRY_COMPARE(harness.controller.activeSourceCount(), 2);
+    DaemonSpectrumSource* const source = &harness.controller.sharedSpectrum()->source();
+    const QList<MediaSourceKey> keys = source->activeSources();
+    QCOMPARE(keys.size(), 2);
+    // Each engine has taken its configuration on its own thread.
+    for (const MediaSourceKey& key : keys) {
+        QTRY_VERIFY_WITH_TIMEOUT(source->publishFrameForTest(key, harness.nowNs), 10'000);
+    }
+    QList<quint64> before;
+    for (const MediaSourceKey& key : keys) {
+        before.append(source->inputHistoryResets(key));
+    }
+    const auto resetsSince = [&](int index) {
+        return source->inputHistoryResets(keys.at(index)) - before.at(index);
+    };
+
+    MoxController* const mox = harness.radio.moxController();
+    QVERIFY(mox);
+    emit mox->moxStateChanged(true);
+    QTRY_COMPARE(resetsSince(0), quint64{1});
+    QTRY_COMPARE(resetsSince(1), quint64{1});
+
+    emit mox->moxStateChanged(false);
+    QTRY_COMPARE(resetsSince(0), quint64{2});
+    QTRY_COMPARE(resetsSince(1), quint64{2});
+
+    // The same edge again clears nothing; the next real edge does, so the
+    // count after it proves the repeat added none.
+    harness.controller.sharedSpectrum()->keyEdge(false);
+    emit mox->moxStateChanged(true);
+    QTRY_COMPARE(resetsSince(0), quint64{3});
+    QTRY_COMPARE(resetsSince(1), quint64{3});
+    QTest::qWait(50);
+    QCOMPARE(resetsSince(0), quint64{3});
+    QCOMPARE(resetsSince(1), quint64{3});
+    emit mox->moxStateChanged(false);
+    QTRY_COMPARE(resetsSince(0), quint64{4});
     harness.finish();
 }
 

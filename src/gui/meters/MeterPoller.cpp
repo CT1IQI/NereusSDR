@@ -120,6 +120,10 @@
 //                 4), so a bar shows the same peak a local window's does;
 //                 below it they name the reason. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - D35 / R-DSP-47: a remote window with no S-meter item still
+//                 feeds the VFO flag level meters, with the signal average
+//                 (pollRemoteRxMeters() had returned before the flag loop).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1317,30 +1321,36 @@ void MeterPoller::pollRemoteRxMeters()
     publishContextReading({}, MeterBinding::AgcGain, agcGain);
     publishContextReading({}, MeterBinding::AgcPeak, agcPeak);
     publishContextReading({}, MeterBinding::AgcAvg, agcAverage);
-    if (!m_sMeter) { return; }
-    double level = slice ? peak : kNoReadingDbm;
-    switch (m_sMeter->rxMode()) {
-    case SMeterWidget::RxMode::SMeter:
-    case SMeterWidget::RxMode::SMeterPeak:
-        break;
-    case SMeterWidget::RxMode::SignalAverage:
-        level = slice ? average : kNoReadingDbm;
-        break;
-    case SMeterWidget::RxMode::MaxBin:
-        level = maxBin;
-        break;
+    if (m_sMeter) {
+        double level = slice ? peak : kNoReadingDbm;
+        switch (m_sMeter->rxMode()) {
+        case SMeterWidget::RxMode::SMeter:
+        case SMeterWidget::RxMode::SMeterPeak:
+            break;
+        case SMeterWidget::RxMode::SignalAverage:
+            level = slice ? average : kNoReadingDbm;
+            break;
+        case SMeterWidget::RxMode::MaxBin:
+            level = maxBin;
+            break;
+        }
+        if (m_rxReadingSource) { pollAdaptedSMeter(); }
+        else { m_sMeter->setLevel(static_cast<float>(level)); }
     }
-    if (m_rxReadingSource) { pollAdaptedSMeter(); }
-    else { m_sMeter->setLevel(static_cast<float>(level)); }
 
     // Keep each flag on the same selected meter source as the applet,
     // resolving stable slice IDs on every tick rather than caching channels.
+    // With no S-meter item in the window the flags still get a level: the
+    // signal average, the fallback the local window's flags use
+    // (MainWindow's SliceMeterPump source selector).
     if (!m_remoteModel) { return; }
+    const SMeterWidget::RxMode flagMode =
+        m_sMeter ? m_sMeter->rxMode() : SMeterWidget::RxMode::SignalAverage;
     for (const SliceModel* flagSlice : m_remoteModel->slices()) {
         if (!flagSlice) { continue; }
         double flagLevel = kNoReadingDbm;
         if (ready) {
-            switch (m_sMeter->rxMode()) {
+            switch (flagMode) {
             case SMeterWidget::RxMode::SMeter:
             case SMeterWidget::RxMode::SMeterPeak:
                 flagLevel = flagSlice->signalPeakDbm();

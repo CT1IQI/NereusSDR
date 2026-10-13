@@ -89,7 +89,9 @@ public enum SettingsScope: Sendable, Equatable {
     // Tier 3.
     static let wholeKeys: [Rule] = [
         Rule(text: "DisplayFftSize", scope: .station),
+        Rule(text: "DisplayFftSizingMode", scope: .station),
         Rule(text: "DisplayFftWindow", scope: .station),
+        Rule(text: "DisplayHzPerBinLastTarget", scope: .station),
         Rule(text: "DisplayHzPerBinTarget", scope: .station),
         Rule(text: "DisplaySpectrumFps", scope: .station),
         Rule(text: "DisplayTxFftSize", scope: .station),

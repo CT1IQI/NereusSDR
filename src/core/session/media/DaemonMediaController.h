@@ -172,6 +172,11 @@ public:
     QList<DaemonMediaController*> members() const;
     void join(DaemonMediaController* controller);
     void leave(DaemonMediaController* controller);
+    /// A MOX edge, told by every controller that hears it: the engines'
+    /// FFT input is cleared once for the edge
+    /// (DaemonSpectrumSource::resetInputHistoryAll), however many
+    /// controllers share them.
+    void keyEdge(bool keyed);
 
 private:
     void onFrameAvailable(MediaSourceKey key);
@@ -179,6 +184,8 @@ private:
     DaemonSpectrumSource m_source;
     QMap<MediaSourceKey, SourceRuntime> m_runtimes;
     QList<QPointer<DaemonMediaController>> m_members;
+    // The last edge the engines were cleared for; empty before the first.
+    std::optional<bool> m_lastKeyEdge;
 };
 
 /// Read-only diagnostics for the most recent active daemon audio context.
@@ -415,13 +422,15 @@ public:
     /// The frame rate Core configured on the engine that feeds a live
     /// spectrum endpoint (R-R3-01, R-R3-08). Empty for an unknown endpoint.
     std::optional<int> spectrumSourceFps(quint32 endpointId) const;
-    /// iPhone app follow-up (R-IOS-27): the averaging constants a live
+    /// iPhone app follow-up (R-IOS-27): the averaging constants/depths a live
     /// spectrum endpoint's trace and waterfall planes run with, after
     /// display extras' averageTimeMs and waterfallAverageTimeMs. Empty for
     /// an unknown endpoint.
     struct SpectrumAveraging {
         double traceAlpha{0.0};
         double waterfallAlpha{0.0};
+        int traceWindowFrames{SpectrumAvenger::kMinWindowFrames};
+        int waterfallWindowFrames{SpectrumAvenger::kMinWindowFrames};
     };
     std::optional<SpectrumAveraging> spectrumAveraging(quint32 endpointId) const;
     /// R-IOS-27, R-IOS-06: a live endpoint's display extras, for tests that
@@ -788,6 +797,9 @@ private:
     bool trySendDisplayExtras(MediaPeer* peer, quint64 epoch, qint64 nowNs);
     DisplayExtrasInputs displayExtrasInputs(const EndpointEntry& entry, double binWidthHz,
                                             qint64 nowNs) const;
+    /// The key state the display extras see: m_displayKeyed, or
+    /// TransmitModel's flag when the Core has no MoxController.
+    bool displayKeyed() const;
     void reconcileAudio();
     void stopAudioCapture();
     /// `reason` travels only in a disabled context, and only to a peer that
@@ -850,6 +862,10 @@ private:
     QMetaObject::Connection m_listenLevelConnection;
     /// coreBusyLimitsSources() as last applied to the sources.
     bool m_transformsFollowFrameRate = false;
+    // The Core is keyed, as its displays see it: set in the
+    // MoxController::moxStateChanged slot, so it turns on when the walk
+    // into transmit ends and off when the walk out ends.
+    bool m_displayKeyed = false;
     NoiseFloorEstimator m_noiseFloorEstimator;
     MediaPeer::TransportFactory m_peerFactory;
     MonotonicClock m_monotonicClock;

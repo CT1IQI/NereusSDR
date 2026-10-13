@@ -830,6 +830,14 @@ signals:
     // hosting SpectrumWidget listens (addVfoWidget) so its cached marker
     // overlay is redrawn in the new colours.
     void activeSliceChanged(bool active);
+    /// This flag just raised its close / lock / record / play buttons above
+    /// their siblings on the pan (positionFloatingButtons()). Emitted once
+    /// per call, however many buttons were raised, and not at all when none
+    /// was. The pan passes it on as SpectrumWidget::flagsRaised() when the
+    /// raise came from outside a placement pass (a re-show, the station
+    /// presentation gate, the access line), so an open overlay flyout goes
+    /// back above the buttons.
+    void floatingButtonsRaised();
 
     // The flag folded or opened (setCollapsed). The hosting SpectrumWidget
     // listens (addVfoWidget) to place the flag again and redraw its marker.

@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - floatingButtonsRaised(): the flag says when it has raised
+//                 its floating buttons, so the pan can keep an open overlay
+//                 flyout above them outside a placement pass too. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -3555,6 +3559,7 @@ void VfoWidget::positionFloatingButtons()
     // not built.
     const bool voiceBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice);
 
+    bool raisedAny = false;
     QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
         if (!voiceBuilt && (btn == m_recBtn || btn == m_playBtn)) {
@@ -3574,10 +3579,17 @@ void VfoWidget::positionFloatingButtons()
         btn->setVisible(show);
         if (show) {
             btn->raise();
+            raisedAny = true;
         }
         btnY += 22;
     }
     positionCollapsedFreqLabel();
+    // The buttons are the pan's children, so the raises above put them over
+    // every sibling, an open overlay flyout included. The pan hears this and
+    // lets the flyout go back on top (SpectrumWidget::flagsRaised()).
+    if (raisedAny) {
+        emit floatingButtonsRaised();
+    }
 }
 
 // The active-flag-on-top invariant (Bench 2026-07-28, Sub-Epic J): this

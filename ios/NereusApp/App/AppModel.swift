@@ -121,6 +121,10 @@ final class AppModel: ObservableObject {
             }
             return range.map { SetupDescription.Range(minimum: $0.min, maximum: $0.max, step: $0.step) }
         }
+        // What Spectrum Defaults' Size and Hz/bin Target show while Sizing
+        // has another control in charge (description 28).
+        dispatcher.runningFftSize = { [weak core = main.coreDisplay] in core?.runningFftSize }
+        dispatcher.runningBinWidthHz = { [weak core = main.coreDisplay] in core?.runningBinWidthHz }
         paValues.configure(dispatcher)
         return dispatcher
     }()

@@ -4,6 +4,25 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-11: Merge of main's R-DISP-RETUNE with the display pill's carry:
+//               a display asked for again whose source was relabeled waits
+//               for its moved picture and still carries its levels on the
+//               same receiver; a picture moved in frequency keeps its
+//               processor and starts a new context, and a new picture's
+//               processor adopts the old one's levels. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-11: Merge of main's R-DISP-HOLD with the display pill's carry:
+//               a display asked for again on the same receiver keeps its
+//               processor for the same picture, and for a new picture its
+//               new processor adopts the old one's levels (adoptCarry);
+//               another receiver carries nothing. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-10: A MOX edge (MoxController::moxStateChanged) clears every
+//               spectrum engine's FFT input and is the key state the
+//               display extras see; each endpoint's un-key hold length; a
+//               display asked for again on the same receiver carries its
+//               levels. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): a peer whose start declared
 //               spectrumPictureVersion is told, in each spectrum context,
 //               which picture its frames continue. J.J. Boyd (KG4VCF),
@@ -604,6 +623,17 @@ void DaemonSharedSpectrum::leave(DaemonMediaController* controller)
     m_members.removeAll(QPointer<DaemonMediaController>());
 }
 
+void DaemonSharedSpectrum::keyEdge(bool keyed)
+{
+    // Every controller on these engines hears the same edge; the engines
+    // are cleared for it once.
+    if (m_lastKeyEdge.has_value() && *m_lastKeyEdge == keyed) {
+        return;
+    }
+    m_lastKeyEdge = keyed;
+    m_source.resetInputHistoryAll();
+}
+
 void DaemonSharedSpectrum::onFrameAvailable(MediaSourceKey key)
 {
     // Taken once; every controller watching this receiver gets the frame.
@@ -872,14 +902,33 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
                         m_overKeepaliveWaitMaxUs = -1;   // a new over
                     }
                 });
+        // Display key edges. moxStateChanged comes at the end of each walk
+        // (transmit fully on, receive fully back), so a key shorter than the
+        // RF delay never reaches the displays, as it never reaches a
+        // window's (MoxDisplayController). A controller made in the middle
+        // of an over starts keyed.
+        const MoxState walk = moxController->state();
+        m_displayKeyed = walk == MoxState::Tx || walk == MoxState::TxToRxInFlight
+            || walk == MoxState::TxToRxBreakIn || walk == MoxState::TxToRxFlush;
         connect(moxController, &MoxController::moxStateChanged, this, [this](bool on) {
+            // The display extras read this, not TransmitModel::isMox().
+            m_displayKeyed = on;
+            // Either edge clears every engine's FFT input, each engine on
+            // its own worker thread (DaemonSpectrumSource::
+            // resetInputHistoryAll), so no transform mixes receive and
+            // transmit samples.
+            m_shared->keyEdge(on);
             if (!on) {
                 logUnkeyStats();
             }
         });
     } else {
+        // No MoxController, so no walk to follow: the display extras stay on
+        // TransmitModel::isMox() (displayKeyed), and its edge is the one
+        // that clears the FFT input.
         connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged, this,
                 [this](bool mox) {
+                    m_shared->keyEdge(mox);
                     if (!mox) {
                         snapshotUnkeyStats();
                         logUnkeyStats();
@@ -1137,7 +1186,9 @@ DaemonMediaController::spectrumAveraging(quint32 endpointId) const
         return std::nullopt;
     }
     return SpectrumAveraging{it->second.request.trace.averageAlpha,
-                             it->second.request.waterfall.averageAlpha};
+                             it->second.request.waterfall.averageAlpha,
+                             it->second.request.trace.averageFrames,
+                             it->second.request.waterfall.averageFrames};
 }
 
 DisplayExtrasProcessor* DaemonMediaController::displayExtrasForTest(quint32 endpointId)
@@ -3310,11 +3361,15 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // present.
     if (extrasRequest.averageTimeMs) {
         request.trace.averageAlpha = averageAlphaForTimeMs(*extrasRequest.averageTimeMs, fps);
+        request.trace.averageFrames = SpectrumAvenger::windowFramesForTimeMs(
+            *extrasRequest.averageTimeMs, fps);
     }
     const std::optional<int> waterfallTimeMs = extrasRequest.waterfallAverageTimeMs
         ? extrasRequest.waterfallAverageTimeMs : extrasRequest.averageTimeMs;
     if (waterfallTimeMs) {
         request.waterfall.averageAlpha = averageAlphaForTimeMs(*waterfallTimeMs, fps);
+        request.waterfall.averageFrames = SpectrumAvenger::windowFramesForTimeMs(
+            *waterfallTimeMs, fps);
     }
     request.endpointId = endpointId;
     request.source = source;
@@ -3545,6 +3600,14 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // dBm range, the frame rate or the line period therefore restarts
     // nothing the client sees.
     //
+    // A display asked for again on the same receiver (a pan, a zoom, a moved
+    // slider) carries its levels on: Clarity's floor and thresholds, the
+    // waterfall AGC's run level and the per-band ones. For the same picture
+    // the processor itself is kept; for a new picture the new processor
+    // adopts them (configureEndpointFromFrame). Another receiver's levels
+    // are not this one's, so a changed source carries nothing: its extras
+    // stay the new processor made above.
+    //
     // R-DISP-RETUNE: a re-request that only moves the view center (the
     // window following a tune) is a moved picture: the planes go on
     // averaging, the extras keep the noise floor and the waterfall levels
@@ -3560,7 +3623,7 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
         } else {
             current.endpoint.awaitContext();
         }
-        if (current.extras && replaced->extras) {
+        if (current.extras && replaced->extras && replacedSource == source) {
             replaced->extras->updateRequest(current.extrasRequest);
             current.extras = std::move(replaced->extras);
             current.extrasCarried = true;
@@ -4833,9 +4896,12 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
                 };
                 const quint32 revision = entry.revision;
                 const quint32 generation = entry.endpoint.context().codec.contextGeneration;
-                if (entry.extras) {
+                if (entry.extras && !displayKeyed()) {
                     // iPhone app Task 20: Clarity at the Core takes the same
                     // full-source floor a desktop window's Clarity is sent.
+                    // Not while keyed: the endpoint's processor learns of
+                    // the key on its next display frame, and a floor read
+                    // before that frame would be the transmitter's.
                     entry.extras->feedNoiseFloor(*floorDbm, displayNowNs() / 1'000'000);
                 }
                 const QPointer<DaemonMediaController> self(this);
@@ -4906,8 +4972,10 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
         // R-DISP-HOLD: a context for the same picture (both planes kept
         // their averaged state) keeps the peak hold and the blobs too. A new
         // picture starts them again; for an endpoint asked for again that
-        // is a new processor, as before, so its noise floor and waterfall
-        // levels start again with it.
+        // is a new processor. A processor is carried only on the same
+        // receiver, so the new one takes the old one's noise floor, key
+        // state and, for the same level mode, its waterfall levels
+        // (DisplayExtrasProcessor::adoptCarry).
         //
         // R-DISP-RETUNE: a moved picture (the same shape at another center)
         // keeps the processor it has, carried over a re-request or not, so
@@ -4922,7 +4990,9 @@ void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
             break;
         case SpectrumPictureKind::New:
             if (entry.extrasCarried) {
-                entry.extras = std::make_unique<DisplayExtrasProcessor>(entry.extrasRequest);
+                auto renewed = std::make_unique<DisplayExtrasProcessor>(entry.extrasRequest);
+                renewed->adoptCarry(entry.extras->takeCarry());
+                entry.extras = std::move(renewed);
             } else {
                 entry.extras->newContext();
             }
@@ -5348,12 +5418,29 @@ DisplayExtrasInputs DaemonMediaController::displayExtrasInputs(const EndpointEnt
             inputs.filterHighHz = slice->filterHigh();
             inputs.band = static_cast<int>(bandFromFrequency(slice->frequency()));
         }
-        inputs.mox = m_radioModel->transmitModel().isMox();
+        inputs.mox = displayKeyed();
         if (const SliceModel* slice = m_radioModel->sliceById(entry.sliceId)) {
             inputs.transmitting = inputs.mox && slice->isTxSlice();
         }
     }
+    // One hold length for this endpoint's Clarity, waterfall AGC and
+    // noise-floor fast attack, from the engine it is shown from.
+    inputs.holdLengthMs = moxHoldLengthMs(entry.sourceFftSize, entry.sourceDecimation,
+                                          entry.sourceSampleRateHz);
     return inputs;
+}
+
+bool DaemonMediaController::displayKeyed() const
+{
+    if (!m_radioModel) {
+        return false;
+    }
+    if (m_radioModel->moxController() != nullptr) {
+        return m_displayKeyed;
+    }
+    // No MoxController: there is no RF-delay walk whose end could be the
+    // edge, so TransmitModel's flag is the key state.
+    return m_radioModel->transmitModel().isMox();
 }
 
 bool DaemonMediaController::trySendDisplayExtras(MediaPeer* peer, quint64 epoch, qint64 nowNs)

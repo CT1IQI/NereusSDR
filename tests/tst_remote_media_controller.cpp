@@ -10,6 +10,11 @@
 //                                    stale-domain/frame regressions across
 //                                    legacy/budget and picture negotiation.
 //                                    AI-assisted via OpenAI Codex.
+//   2026-10-11  J.J. Boyd / KG4VCF  The key edge hold test (display pill
+//                                    plan Task 15) sends its context by
+//                                    hand, so it too stands for a Core
+//                                    that states no picture.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF  Verify collector pause/resume does not
 //                                    report an intentional pause as a stall.
 //                                    AI-assisted via OpenAI Codex.
@@ -163,6 +168,7 @@
 #include <utility>
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
+#include "core/DisplayFftSizing.h"
 #include "gui/setup/DisplaySetupPages.h"
 #include <QCheckBox>
 #include "core/MoxController.h"
@@ -5870,6 +5876,236 @@ private slots:
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // Display pill plan Task 15 (design 5.6): a pan a Core feeds, with
+    // Clarity on. A key and an un-key ask the Core nothing (Clarity stays on
+    // the pan, so coreWaterfallLevelsInUse() and the dBm window do not
+    // change); the hold after the un-key is twice the fill time of the FFT
+    // the Core runs for the pan (granted size, context rate, the decimation
+    // asked); the Core's noise-floor messages do not move the window's
+    // Clarity floor while keyed or inside the hold, and do after it. The
+    // Core here does nothing at the edges (no transmit context, noise-floor
+    // sent throughout), so nothing depends on what a newer Core does.
+    void remoteKeyEdgesAskNothingAndHoldForTheCoresFft_data()
+    {
+        QTest::addColumn<int>("grantedFftSize");
+        QTest::addColumn<double>("sampleRateHz");
+        QTest::addColumn<int>("decimation");
+        QTest::addColumn<qint64>("holdMs");
+        QTest::newRow("262144 at 48 kHz") << 262144 << 48000.0 << 1 << qint64(10922);
+        QTest::newRow("4096 at 192 kHz") << 4096 << 192000.0 << 1 << qint64(1000);
+        // 65536 x 4 samples at 192 kHz fill in 1365 ms.
+        QTest::newRow("65536 at 192 kHz, decimation 4") << 65536 << 192000.0 << 4 << qint64(2730);
+    }
+
+    void remoteKeyEdgesAskNothingAndHoldForTheCoresFft()
+    {
+        QFETCH(int, grantedFftSize);
+        QFETCH(double, sampleRateHz);
+        QFETCH(int, decimation);
+        QFETCH(qint64, holdMs);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice(QStringLiteral("pan-0"));
+        SliceModel* stationSlice = station.sliceById(sliceId);
+        QVERIFY(stationSlice);
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        NereusSDR::FFTEngine windowEngine(-1); // Rendering > Decimation keeps its value here.
+        windowEngine.setDecimation(decimation);
+        remote.setFftEngine(&windowEngine);
+        const auto clearEngine = qScopeGuard([&remote] { remote.setFftEngine(nullptr); });
+        remote.setClarityEnabled(true);
+        PanClarityRegistry registry(&remote);
+        qint64 clock = 100'000;
+        registry.setClockForTest([&clock] { return clock; });
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        // R-DISP-RETUNE: the context this test sends by hand states no picture,
+        // as an older Core's do, so the window is one that was told none.
+        client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
+        PanadapterStack stack;
+        const QString panId = QStringLiteral("pan-0");
+        auto* applet = stack.addPanadapter(panId);
+        applet->setActiveSliceIndex(sliceId);
+        auto* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        // A pan range that takes in every level Clarity sets below with its
+        // headroom, so the request count is about the key edges, not about
+        // the dBm window (runtimeWaterfallLevelsWidenTheDbmWindow).
+        widget->setDbmRange(-170.0f, -40.0f);
+        widget->setWfAgcEnabled(false);
+        widget->setWaterfallNFAGCEnabled(false);
+        widget->setDispNormalize(false);
+        widget->setWfUseSpectrumMinMax(false);
+        widget->setWfLowThreshold(-110.0f);
+        widget->setWfHighThreshold(-70.0f);
+        registry.registerPan(panId, widget, nullptr);
+        // As MainWindow wires it: the pan's own hold length.
+        registry.setHoldLengthProvider([widget](const QString&) {
+            return widget->moxHoldLengthMs();
+        });
+        ClarityController& clarity = *registry.controllerForPan(panId);
+        clarity.setPollIntervalMs(0);
+        clarity.setSmoothingTauSec(0);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        controller.setClarityRegistry(&registry);
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        QSignalSpy receivedControls(&client, &StationClient::mediaControlReceived);
+        QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QVERIFY(client.spectrumDecimationAvailable());
+        const QJsonObject subscription = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(subscription.value(QStringLiteral("decimation")).toInt(), decimation);
+
+        // Before a context the pan has no Core shape: the minimum.
+        QCOMPARE(widget->moxHoldLengthMs(), qint64(1000));
+
+        SpectrumContextMessage message;
+        message.connectionId = subscription.value(QStringLiteral("connectionId")).toString();
+        message.endpointId = quint32(subscription.value(QStringLiteral("endpointId")).toDouble());
+        message.revision = quint32(subscription.value(QStringLiteral("revision")).toDouble());
+        message.contextGeneration = 1;
+        message.sourceStream = 0;
+        message.sourceCentreHz = 14225000;
+        message.sampleRateHz = sampleRateHz;
+        message.centreHz = 14225000;
+        message.spanHz = 24000;
+        message.traceSamples = 128;
+        message.waterfallSamples = 128;
+        message.minDbm = -180;
+        message.maxDbm = 0;
+        message.fps = 30;
+        message.framesPerLine = 1;
+        message.wideband = WidebandDisplayContext{};
+        SpectrumContextGrant grant;
+        grant.grantedFftSize = grantedFftSize;
+        grant.requestedPixels = 128;
+        grant.grantedPixels = 128;
+        message.grant = grant;
+        QVERIFY(server.sendMediaControl(encodeRemoteSpectrumContext(message, true),
+                                        server.mediaSessionEpoch()));
+        QTRY_COMPARE(widget->remoteGrantedFftSize(), grantedFftSize);
+        QCOMPARE(widget->remoteDecimation(), decimation);
+        QCOMPARE(widget->moxHoldLengthMs(), holdMs);
+        // A window with its own engines resets the local shape at every
+        // refresh; the Core's shape is kept apart from it.
+        widget->setLocalFftShape(0, 0, 0.0);
+        QCOMPARE(widget->moxHoldLengthMs(), holdMs);
+        widget->setLocalFftShape(4096, 1, 192000.0);
+        QCOMPARE(widget->moxHoldLengthMs(), holdMs);
+
+        const auto deliverFloor = [&](double floorDbm) {
+            const QJsonObject event{
+                {QStringLiteral("op"), QStringLiteral("noise-floor")},
+                {QStringLiteral("connectionId"), message.connectionId},
+                {QStringLiteral("endpointId"), double(message.endpointId)},
+                {QStringLiteral("revision"), double(message.revision)},
+                {QStringLiteral("contextGeneration"), 1},
+                {QStringLiteral("floorDbm"), floorDbm}};
+            const int before = countControl(receivedControls, QStringLiteral("noise-floor"));
+            QVERIFY(server.sendMediaControl(event, server.mediaSessionEpoch()));
+            QTRY_COMPARE(countControl(receivedControls, QStringLiteral("noise-floor")),
+                         before + 1);
+        };
+        const auto settle = [] {
+            QTest::qWait(RemoteMediaController::kPlannerIntervalMs * 2 + 30);
+        };
+
+        deliverFloor(-130.0);
+        QTRY_VERIFY(widget->clarityActive());
+        QCOMPARE(clarity.smoothedFloor(), -130.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -135.0f);
+        settle();
+        const int asked = countControl(controls, QStringLiteral("subscribe"));
+        const int released = countControl(controls, QStringLiteral("unsubscribe"));
+        const bool coreLevels = widget->coreWaterfallLevelsInUse();
+        QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
+
+        // The key, as the window makes it on every pan.
+        constexpr int kBand = 5;
+        widget->setDisplayKeyed(true, widget->moxHoldLengthMs(), kBand);
+        registry.setKeyed(true);
+        controller.setPanTransmitting(panId, true, false);
+        QVERIFY(widget->clarityActive());
+        QCOMPARE(widget->coreWaterfallLevelsInUse(), coreLevels);
+        // The Core goes on sending its floor, with the transmitter in it.
+        clock += 500;
+        deliverFloor(-60.0);
+        QCOMPARE(floors.count(), 0);
+        QCOMPARE(clarity.smoothedFloor(), -130.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), asked);
+        QCOMPARE(countControl(controls, QStringLiteral("unsubscribe")), released);
+
+        // The un-key.
+        clock += 500;
+        const qint64 unkeyedAt = clock;
+        widget->setDisplayKeyed(false, widget->moxHoldLengthMs(), kBand);
+        registry.setKeyed(false);
+        controller.setPanTransmitting(panId, false, false);
+        QVERIFY(widget->clarityActive());
+        QCOMPARE(widget->coreWaterfallLevelsInUse(), coreLevels);
+        QVERIFY(clarity.inHold(unkeyedAt));
+        QVERIFY(clarity.inHold(unkeyedAt + holdMs - 1));
+        QVERIFY(!clarity.inHold(unkeyedAt + holdMs));
+
+        // Inside the hold the Core's floor is not taken.
+        deliverFloor(-70.0);
+        clock = unkeyedAt + holdMs - 1;
+        deliverFloor(-70.0);
+        QCOMPARE(floors.count(), 0);
+        QCOMPARE(clarity.smoothedFloor(), -130.0f);
+        QCOMPARE(widget->wfActiveLowThreshold(), -135.0f);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), asked);
+        QCOMPARE(countControl(controls, QStringLiteral("unsubscribe")), released);
+
+        // After it, it is.
+        clock = unkeyedAt + holdMs;
+        deliverFloor(-118.0);
+        QCOMPARE(floors.count(), 1);
+        QCOMPARE(clarity.smoothedFloor(), -118.0f);
+        QVERIFY(widget->clarityActive());
+
+        // The pan still draws the Core's frames.
+        DisplayCodecFrame frame;
+        frame.context = {message.endpointId, 1, -180, 0, 128, 128, 0};
+        frame.traceDbm = QVector<float>(128, -75);
+        frame.waterfallDbm = QVector<float>(128, -125);
+        frame.waterfallAdvance = true;
+        DisplayCodecEncoder encoder;
+        media->deliver(encoder.encode(frame));
+        QTRY_COMPARE(frames.count(), 1);
+        settle();
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), asked);
+        QCOMPARE(countControl(controls, QStringLiteral("unsubscribe")), released);
+
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     void contextMediaAndRetirementStayInAuthenticatedSession()
     {
         QTemporaryDir dir;
@@ -5898,7 +6134,7 @@ private slots:
         auto* widget = applet->spectrumWidget();
         registry.registerPan(QStringLiteral("pan-0"), widget, nullptr);
         ClarityController& clarity = *registry.controllerForPan(QStringLiteral("pan-0"));
-        clarity.setPollIntervalMs(0); clarity.setSmoothingTauSec(0); clarity.setDeadbandDb(0);
+        clarity.setPollIntervalMs(0); clarity.setSmoothingTauSec(0);
         QSignalSpy floors(&clarity, &ClarityController::noiseFloorChanged);
         // Parity Task 17 follow-up: the dBm window holds the run-time
         // waterfall levels with headroom. Levels that already take in the
@@ -7375,6 +7611,31 @@ private slots:
             if (hadFps) { appSettings.setValue(QStringLiteral("DisplaySpectrumFps"), savedFps); }
             else { appSettings.remove(QStringLiteral("DisplaySpectrumFps")); }
         });
+        // Merge of R-DSP-59 with R-DISP-HOLD (2026-10-11): the pan's FFT
+        // size no longer follows its width in pixels, so the stored size
+        // sets the bin width here. FFT sizing mode (2026-10-11): it does so
+        // in the Fixed mode only, and exactly. 4096 bins at a 192 kHz
+        // receiver are 46.9 Hz wide, where normalise moves the pan by
+        // 16.7 dB: more than the 10 dB of headroom a held range has, so the
+        // normalise step below has to ask again. In Auto, the 24 kHz span
+        // asks 32768 bins (7.7 dB) and the held range would hold it and ask
+        // nothing. (This test stored 1024, which the zoom plan of the day
+        // raised to 8192 bins; 1024 is not one of the FFT Size control's
+        // sizes.)
+        const QString sizingModeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        const bool hadFftSize = appSettings.contains(QStringLiteral("DisplayFftSize"));
+        const QVariant savedFftSize = appSettings.value(QStringLiteral("DisplayFftSize"));
+        const bool hadSizingMode = appSettings.contains(sizingModeKey);
+        const QVariant savedSizingMode = appSettings.value(sizingModeKey);
+        appSettings.setValue(QStringLiteral("DisplayFftSize"), QStringLiteral("4096"));
+        appSettings.setValue(sizingModeKey,
+                             QLatin1String(ControlRanges::kDisplayFftSizingModeFixedToken));
+        const auto restoreFftSize = qScopeGuard([&] {
+            if (hadFftSize) { appSettings.setValue(QStringLiteral("DisplayFftSize"), savedFftSize); }
+            else { appSettings.remove(QStringLiteral("DisplayFftSize")); }
+            if (hadSizingMode) { appSettings.setValue(sizingModeKey, savedSizingMode); }
+            else { appSettings.remove(sizingModeKey); }
+        });
         RadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
         station.setConnectionStateForTest(ConnectionState::Connected);
@@ -7511,32 +7772,81 @@ private slots:
         remote.setFftEngine(nullptr);
     }
 
-    // A deep zoom (or the Hz/bin target) grows a remote pan's FFT no
-    // further than a local pan's auto-zoom does: about 0.7 s per transform
-    // (ControlRanges::autoZoomMaxFftSize), 131072 at the fixture's
-    // 192 kHz, not the engine's 262144, unless the stored size is already
-    // at or above it; that is asked for exactly.  2026-10-09: the capped
-    // rows asked 65536 under the fixed cap of 2026-05-08.
+    // A remote pan asks the size a local pan runs, in each sizing mode
+    // (design D38, D42; R-DSP-59, R-DSP-66). In Auto and Hz/bin a deep zoom
+    // (or the target) grows the FFT no further than about 0.7 s per
+    // transform (ControlRanges::autoZoomMaxFftSize), 131072 at the fixture's
+    // 192 kHz, not the engine's 262144, and the stored size plays no part.
+    // In Fixed the stored size is asked for exactly, past the cap too, on
+    // the Wide tier whatever the pan shows.  2026-10-09: the capped rows
+    // asked 65536 under the fixed cap of 2026-05-08.  2026-10-11: before the
+    // sizing mode the stored size was a floor, so "300 Hz zoom, stored
+    // 131072" asked 131072 on the Wide tier with no mode stored; that is the
+    // Fixed row now, and with no mode (Auto) the same size is a zoom's, on
+    // the Fine tier.
     void subscribeCapsAZoomedPansFftSizeLikeALocalPan_data()
     {
         QTest::addColumn<double>("spanHz");
+        QTest::addColumn<QString>("sizingMode"); // empty: the key is absent
         QTest::addColumn<QString>("storedSize");
         QTest::addColumn<QString>("hzPerBin");
+        QTest::addColumn<int>("panWidth");
         QTest::addColumn<int>("fftSize");
         QTest::addColumn<QString>("tier");
-        QTest::newRow("300 Hz zoom, stored 4096") << 300.0 << QStringLiteral("4096")
-            << QStringLiteral("0") << 131072 << QStringLiteral("fine");
-        QTest::newRow("300 Hz zoom, stored 131072") << 300.0 << QStringLiteral("131072")
-            << QStringLiteral("0") << 131072 << QStringLiteral("wide");
-        QTest::newRow("Hz/bin 0.5, stored 4096") << 24000.0 << QStringLiteral("4096")
-            << QStringLiteral("0.5") << 131072 << QStringLiteral("fine");
+        const QString none;
+        const QString automatic = QStringLiteral("Auto");
+        const QString hzPerBinMode = QStringLiteral("HzPerBin");
+        const QString fixed = QStringLiteral("Fixed");
+        QTest::newRow("300 Hz zoom, stored 4096") << 300.0 << none << QStringLiteral("4096")
+            << QStringLiteral("0") << 600 << 131072 << QStringLiteral("fine");
+        QTest::newRow("300 Hz zoom, stored 131072, no mode") << 300.0 << none
+            << QStringLiteral("131072") << QStringLiteral("0") << 600 << 131072
+            << QStringLiteral("fine");
+        QTest::newRow("Hz/bin 0.5, stored 4096, no mode") << 24000.0 << none
+            << QStringLiteral("4096") << QStringLiteral("0.5") << 600 << 131072
+            << QStringLiteral("fine");
+        // 2026-10-10: the size follows the span, not the pan's width in
+        // pixels: 4096 x 192000 / 24000 = 32768 at either width. (The
+        // per-pixel rule asked 192000 x pixels / 24000 = 8 points a pixel,
+        // rounded up: 8192 for any pan 513 to 1024 px wide.)
+        QTest::newRow("24 kHz zoom, 600 px wide") << 24000.0 << none << QStringLiteral("4096")
+            << QStringLiteral("0") << 600 << 32768 << QStringLiteral("fine");
+        QTest::newRow("24 kHz zoom, 1000 px wide") << 24000.0 << none << QStringLiteral("4096")
+            << QStringLiteral("0") << 1000 << 32768 << QStringLiteral("fine");
+        // Auto: 4096 across the span whatever is stored. 48 kHz of 192 kHz
+        // is 16384, though 65536 is stored.
+        QTest::newRow("Auto, 48 kHz, stored 65536") << 48000.0 << automatic
+            << QStringLiteral("65536") << QStringLiteral("0") << 600 << 16384
+            << QStringLiteral("fine");
+        QTest::newRow("Auto, full span, stored 65536") << 192000.0 << automatic
+            << QStringLiteral("65536") << QStringLiteral("0") << 600 << 4096
+            << QStringLiteral("wide");
+        // Hz/bin: the target's size at any span. 192000 / 5 = 38400 points,
+        // 65536 as a power of two.
+        QTest::newRow("Hz/bin 5, 300 Hz zoom") << 300.0 << hzPerBinMode << QStringLiteral("4096")
+            << QStringLiteral("5") << 600 << 65536 << QStringLiteral("fine");
+        QTest::newRow("Hz/bin 5, full span, stored 262144") << 192000.0 << hzPerBinMode
+            << QStringLiteral("262144") << QStringLiteral("5") << 600 << 65536
+            << QStringLiteral("fine");
+        // Fixed: exactly the stored size, on the Wide tier.
+        QTest::newRow("Fixed 4096, 300 Hz zoom") << 300.0 << fixed << QStringLiteral("4096")
+            << QStringLiteral("0") << 600 << 4096 << QStringLiteral("wide");
+        QTest::newRow("Fixed 16384, full span") << 192000.0 << fixed << QStringLiteral("16384")
+            << QStringLiteral("0") << 600 << 16384 << QStringLiteral("wide");
+        QTest::newRow("Fixed 131072, 300 Hz zoom") << 300.0 << fixed << QStringLiteral("131072")
+            << QStringLiteral("0") << 600 << 131072 << QStringLiteral("wide");
+        QTest::newRow("Fixed 262144, 24 kHz zoom") << 24000.0 << fixed
+            << QStringLiteral("262144") << QStringLiteral("0") << 600 << 262144
+            << QStringLiteral("wide");
     }
 
     void subscribeCapsAZoomedPansFftSizeLikeALocalPan()
     {
         QFETCH(double, spanHz);
+        QFETCH(QString, sizingMode);
         QFETCH(QString, storedSize);
         QFETCH(QString, hzPerBin);
+        QFETCH(int, panWidth);
         QFETCH(int, fftSize);
         QFETCH(QString, tier);
         QTemporaryDir dir;
@@ -7544,11 +7854,17 @@ private slots:
         auto& appSettings = AppSettings::instance();
         const QString sizeKey = QLatin1String(ControlRanges::kDisplayFftSizeKey);
         const QString hzPerBinKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        const QString modeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
         appSettings.setValue(sizeKey, storedSize);
         appSettings.setValue(hzPerBinKey, hzPerBin);
+        appSettings.remove(modeKey);
+        if (!sizingMode.isEmpty()) {
+            appSettings.setValue(modeKey, sizingMode);
+        }
         const auto restore = qScopeGuard([&] {
             appSettings.remove(sizeKey);
             appSettings.remove(hzPerBinKey);
+            appSettings.remove(modeKey);
         });
         RadioModel station;
         station.setBoardForTest(HPSDRHW::HermesLite);
@@ -7570,7 +7886,7 @@ private slots:
         auto* widget = applet->spectrumWidget();
         widget->setExtendedViewAllowed(false);
         widget->setDisplayWindowPreservingHistory(14225000, spanHz);
-        stack.resize(600, 400);
+        stack.resize(panWidth, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
         QPointer<DisplayTransport> media;
@@ -7593,12 +7909,124 @@ private slots:
         const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
         SliceModel* mirrored = remote.sliceById(stationSlice->sliceIndex());
         QVERIFY(mirrored);
-        // Every row's uncapped size would be 262144: the rate is 192 kHz
-        // (cap 131072) and the pan at least 300 px wide.
+        // The rate is 192 kHz (cap 131072). The size asked is the shared
+        // rule's, from the sizing mode, the stored size, the slice's rate,
+        // the pan's span and the stored Hz/bin target; the pan's width is
+        // not in it.
         QCOMPARE(mirrored->sampleRateHz(), 192000);
+        QVERIFY(asked.value(QStringLiteral("pixels")).toInt() > panWidth / 2);
+        // What a local window plans for the same pan, as
+        // MainWindow::replanFftForStream calls the planner: the mode, the
+        // engine's baseline for it and the target in force.
+        const DisplayFftSizing sizing = readDisplayFftSizing(appSettings);
+        QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(),
+                 ControlRanges::planDisplayFft(sizing.mode, sizing.baseline(),
+                                               double(mirrored->sampleRateHz()), spanHz,
+                                               sizing.hzPerBinTarget).size);
         QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(), fftSize);
         QCOMPARE(asked.value(QStringLiteral("tier")).toString(), tier);
         QCOMPARE(ControlRanges::autoZoomMaxFftSize(mirrored->sampleRateHz()), 131072);
+
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // FFT sizing mode (design D42; R-DSP-66). A zoom on a remote pan: in
+    // Fixed every request carries exactly the stored size on the Wide tier,
+    // so the Core's shared engine keeps its size; in Auto the zoom asks a
+    // larger size on a tier of its own.
+    void aZoomAsksANewSizeInAutoAndNeverInFixed_data()
+    {
+        QTest::addColumn<QString>("sizingMode");
+        QTest::addColumn<int>("zoomedSize");
+        QTest::addColumn<QString>("zoomedTier");
+        QTest::newRow("Fixed") << QStringLiteral("Fixed") << 16384 << QStringLiteral("wide");
+        // 4096 x 192000 / 6000 = 131072.
+        QTest::newRow("Auto") << QStringLiteral("Auto") << 131072 << QStringLiteral("fine");
+    }
+
+    void aZoomAsksANewSizeInAutoAndNeverInFixed()
+    {
+        QFETCH(QString, sizingMode);
+        QFETCH(int, zoomedSize);
+        QFETCH(QString, zoomedTier);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        auto& appSettings = AppSettings::instance();
+        const QString sizeKey = QLatin1String(ControlRanges::kDisplayFftSizeKey);
+        const QString hzPerBinKey = QLatin1String(ControlRanges::kDisplayHzPerBinTargetKey);
+        const QString modeKey = QLatin1String(ControlRanges::kDisplayFftSizingModeKey);
+        appSettings.setValue(sizeKey, QStringLiteral("16384"));
+        appSettings.remove(hzPerBinKey);
+        appSettings.setValue(modeKey, sizingMode);
+        const auto restore = qScopeGuard([&] {
+            appSettings.remove(sizeKey);
+            appSettings.remove(modeKey);
+        });
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(!station.slices().isEmpty());
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setExtendedViewAllowed(false);
+        widget->setDisplayWindowPreservingHistory(14225000, 192000.0);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_VERIFY(countControl(controls, QStringLiteral("subscribe")) >= 1);
+        // Full span: the size the mode's own control chose, on the Wide tier.
+        const int fullSpanSize = sizingMode == QStringLiteral("Fixed") ? 16384 : 4096;
+        QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(), fullSpanSize);
+        QCOMPARE(asked.value(QStringLiteral("tier")).toString(), QStringLiteral("wide"));
+
+        // Zoom to 6 kHz, then to 300 Hz.
+        widget->setDisplayWindowPreservingHistory(14225000, 6000.0);
+        QTRY_COMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("spanHz")).toDouble(), 6000.0);
+        asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("fftSize")).toInt(), zoomedSize);
+        QCOMPARE(asked.value(QStringLiteral("tier")).toString(), zoomedTier);
+        widget->setDisplayWindowPreservingHistory(14225000, 300.0);
+        QTRY_COMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("spanHz")).toDouble(), 300.0);
+        if (sizingMode == QStringLiteral("Fixed")) {
+            // No request, at any zoom, asked a size other than the stored
+            // one or left the Wide tier.
+            for (const QJsonObject& request :
+                 controlsFor(controls, QStringLiteral("subscribe"))) {
+                QCOMPARE(request.value(QStringLiteral("fftSize")).toInt(), 16384);
+                QCOMPARE(request.value(QStringLiteral("tier")).toString(),
+                         QStringLiteral("wide"));
+            }
+        }
 
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
@@ -7753,10 +8181,17 @@ private slots:
         QTest::addColumn<float>("high1");
         QTest::addColumn<float>("low2");
         QTest::addColumn<float>("high2");
-        QTest::newRow("agc-only") << true << false << false << false << false << QStringLiteral("agc") << -172.0f << -84.5f << -171.0f << -83.5f;
-        QTest::newRow("nf-only") << false << true << false << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
-        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
-        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -159.0f << -99.0f << -139.0f << -79.0f;
+        // R-DSP-20: AGC moves only the low edge (12 under the smoothed
+        // minimum, -160 then -159); High stays the stored 0.
+        QTest::newRow("agc-only") << true << false << false << false << false << QStringLiteral("agc") << -172.0f << 0.0f << -171.0f << 0.0f;
+        // S7: NF-AGC is an option under AGC. Alone it leaves the stored
+        // levels and asks the Core for none.
+        QTest::newRow("nf-only") << false << true << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
+        // With AGC: the low is the pan's settled noise floor plus the
+        // offset of -5. The floor starts at -200 and its line follows over
+        // 41 frames at 20 a second: -200 + 1/41, then + 1.9756/41 more.
+        QTest::newRow("both-normal-ui") << true << true << true << false << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
+        QTest::newRow("both-restored") << true << true << false << true << false << QStringLiteral("noiseFloorAgc") << -204.97561f << 0.0f << -204.92742f << 0.0f;
         QTest::newRow("manual") << false << false << false << false << false << QString() << -180.0f << 0.0f << -180.0f << 0.0f;
         QTest::newRow("clarity-both-on") << true << true << true << false << true << QString() << -150.0f << -90.0f << -150.0f << -90.0f;
     }
@@ -7905,24 +8340,33 @@ private slots:
         inputs.binWidthHz = 192000.0 / 4096.0;
         QVector<DisplayExtrasFrame> computed;
         QVector<std::pair<float, float>> localLevels;
+        // The local pan takes each frame as a window does, so its own noise
+        // floor (NF-AGC's low level) has seen the rows the Core's has.
+        SpectrumEndpointContext localContext;
+        localContext.codec = codec;
+        localContext.exactCentreHz = 14225023.4375;
+        localContext.exactSpanHz = 24046.875;
+        local.setDisplayFps(20);
+        local.setRemoteSpectrumContext(localContext, 14225023.4375, 192000);
         for (int rowIndex = 0; rowIndex < 2; ++rowIndex) {
             QVector<float> row(128);
             for (int i = 0; i < row.size(); ++i) { row[i] = -160.0f + 0.5f * i + 20.0f * rowIndex; }
-            local.composeWaterfallActiveThresholds(row);
-            localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
             DisplayCodecFrame frame;
             frame.context = codec;
             frame.encoderSequence = static_cast<quint32>(rowIndex + 1);
             frame.waterfallAdvance = true;
             frame.traceDbm = row;
             frame.waterfallDbm = row;
+            QVERIFY(local.updateRemoteSpectrum(frame));
+            local.composeWaterfallActiveThresholds(row);
+            localLevels.append({local.wfActiveLowThreshold(), local.wfActiveHighThreshold()});
             inputs.nowMs = 1000 + rowIndex * 50;
             computed.append(processor.process(frame, inputs));
             qInfo() << "mode" << asked.value(QStringLiteral("waterfallLevels")).toObject().value(QStringLiteral("mode"))
                     << "row" << rowIndex << "local" << localLevels.last().first << localLevels.last().second
                     << "Core" << processor.waterfallLevels().first << processor.waterfallLevels().second;
         }
-        // Literal oracle: sorted index 12 is -154/-134, plus offset -5.
+        // Literal oracle: the row's values are worked in the data rows.
         QCOMPARE(localLevels[0].first, low1);
         QCOMPARE(localLevels[0].second, high1);
         QCOMPARE(localLevels[1].first, low2);
@@ -7959,19 +8403,25 @@ private slots:
         QCOMPARE(widget->wfHighThreshold(), 0.0f);
         QCOMPARE(widget->wfAgcEnabled(), agc);
         QCOMPARE(widget->waterfallNFAGCEnabled(), nfAgc);
-        // AGC's accepted -171 dBm low needs 10 dB below it in the window.
-        // R-DISP-HOLD: the first range asked already has it (the pan's and
-        // the stored levels' -180 to 0 dBm with the headroom), so the Core's
-        // levels arriving ask nothing in any mode. (This test held a second
-        // ask in the AGC row, for -181 dBm: the first range had no headroom
-        // and the levels' own had to be asked for when they arrived.)
+        // R-DISP-HOLD: the first range asked already has 10 dB of headroom
+        // (the pan's and the stored levels' -180 to 0 dBm with the headroom).
         QCOMPARE(asked.value(QStringLiteral("minDbm")).toDouble(), -190.0);
         QCOMPARE(asked.value(QStringLiteral("maxDbm")).toDouble(), 10.0);
+        // NF-AGC's accepted low (-204.9 dBm) is under the -190 dBm asked
+        // first, so the window is asked again with 10 dB of headroom below
+        // it. AGC's accepted pair (-171 and the stored High, 0) fits the
+        // window asked first now that AGC leaves the high level alone, so it
+        // asks nothing more; the request it used to make followed its high
+        // level (-83.5), not its low. Manual and Clarity fit theirs too.
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
-        const int expectedRequests = 1;
+        const int expectedRequests = mode == QStringLiteral("noiseFloorAgc") ? 2 : 1;
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
+        if (mode == QStringLiteral("noiseFloorAgc")) {
+            QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                         .value(QStringLiteral("minDbm")).toDouble(), -215.0);
+        }
         now += 60;
         QTest::qWait(RemoteMediaController::kPlannerIntervalMs + 30);
         QCOMPARE(countControl(controls, QStringLiteral("subscribe")), expectedRequests);
@@ -8248,9 +8698,9 @@ private slots:
         QCOMPARE(widget->wfColorGain(), 31);
         QCOMPARE(widget->waterfallAGCOffsetDb(), 0);
 
-        // NF-AGC asks for its own levels; the AGC's are not kept. The
-        // changed mode and subsequent settled window can each request once.
-        widget->setWfAgcEnabled(false);
+        // NF-AGC, an option under AGC, asks for its own levels; the AGC's
+        // are not kept. The changed mode and subsequent settled window can
+        // each request once.
         widget->setWaterfallNFAGCEnabled(true);
         widget->setWaterfallAGCOffsetDb(6);
         settle();
@@ -8266,7 +8716,13 @@ private slots:
         widget->composeWaterfallActiveThresholds(line);
         QCOMPARE(widget->wfActiveLowThreshold(), -109.5f);
 
-        // Manual levels ask for none.
+        // NF-AGC without AGC is manual levels, and manual levels ask for
+        // none.
+        widget->setWfAgcEnabled(false);
+        settle();
+        QTRY_VERIFY(!lastControl(controls, QStringLiteral("subscribe"))
+                         .contains(QStringLiteral("waterfallLevels")));
+        QVERIFY(!widget->coreWaterfallLevelsInUse());
         widget->setWaterfallNFAGCEnabled(false);
         settle();
         QTRY_VERIFY(!lastControl(controls, QStringLiteral("subscribe"))
@@ -9357,8 +9813,15 @@ private slots:
         first->spectrumWidget()->setExtendedViewAllowed(false);
         // Shared: a "fine" pan that sizes the engine. Edge: a crop that
         // overlaps the source by 4 kHz, so fewer bins than pixels exist.
+        // 2026-10-10: the shared pan's span was 12 kHz, which the per-pixel
+        // rule sized at 8192 (192000 x pixels / 12000 = 16 points a pixel on
+        // a pan 257 to 512 px wide). Under the shared rule
+        // (ControlRanges::planAutoZoomFft) 12 kHz is 65536, whose points in
+        // the second pan's 6 kHz outnumber its pixels; 96 kHz gives the 8192
+        // engine again (4096 x 192000 / 96000), and the second pan's 6 kHz
+        // then has 256 of its points, fewer than its pixels, as before.
         if (shared) {
-            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 12000);
+            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 96000);
         } else {
             first->spectrumWidget()->setDisplayWindowPreservingHistory(centre + 116000, 48000);
         }

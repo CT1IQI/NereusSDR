@@ -62,6 +62,10 @@
 //               listed, offered only when a rotor is set up on the Core.
 //               J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-11: FFT sizing mode (pill design D46): display.controls
+//               gains Sizing, first in its group, and `rememberedKey` on
+//               Hz/bin Target; the two averaging times run from 1 ms.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCatalog.h"
@@ -316,6 +320,30 @@ QJsonObject displayObject()
     fftSize.insert(QStringLiteral("options"), fftSizes);
     fftSize.insert(QStringLiteral("default"), kDisplayFftSizeDefault);
 
+    // Sizing (pill design D38, D46): which control sets the FFT size. The
+    // setting holds a word, so each option's value is the stored token and
+    // the default is one. A phone built before this control reads an
+    // option's value as a number, cannot read this entry and leaves it out
+    // (its reader skips a control it cannot read and keeps the rest); its
+    // Hz/bin Target still moves the mode, on the Core (design D41).
+    QJsonArray sizingModes;
+    for (const DisplayFftSizingItem& item : kDisplayFftSizingItems) {
+        sizingModes.append(QJsonObject{
+            {QStringLiteral("value"), QString::fromLatin1(displayFftSizingModeToken(item.mode))},
+            {QStringLiteral("label"), QString::fromLatin1(item.label)}});
+    }
+    QJsonObject sizing = displayControl(kDisplayFftSizingModeKey, "station", "fftSize", spectrum,
+                                        fft, kDisplayFftSizingLabel, "choice");
+    sizing.insert(QStringLiteral("options"), sizingModes);
+    sizing.insert(QStringLiteral("default"),
+                  QString::fromLatin1(displayFftSizingModeToken(kDisplayFftSizingModeDefault)));
+
+    // The stored target is 0 outside the Hz/bin mode (design D39), which a
+    // phone built before Sizing reads as "Off": the entry keeps that
+    // meaning (min 0, offValue, offLabel, default 0), since a catalog is
+    // not fitted to a version. `rememberedKey` names the station setting
+    // that holds the last target chosen, for a phone that knows the mode:
+    // what a grayed control shows and what entering Hz/bin writes.
     QJsonObject hzPerBin = displaySlider(
         displayControl(kDisplayHzPerBinTargetKey, "station", "fftSize", spectrum, fft,
                        kDisplayHzPerBinTargetLabel, "slider"),
@@ -325,13 +353,18 @@ QJsonObject displayObject()
     hzPerBin.insert(QStringLiteral("offValue"), kDisplayHzPerBinTargetMin);
     hzPerBin.insert(QStringLiteral("offLabel"),
                     QString::fromLatin1(kDisplayHzPerBinTargetOffLabel));
+    hzPerBin.insert(QStringLiteral("rememberedKey"),
+                    QString::fromLatin1(kDisplayHzPerBinLastTargetKey));
 
+    // The Fast Fourier Transform group in the desktop page's order: Sizing,
+    // Size, Hz/bin Target, Window.
     const QJsonArray controls{
+        sizing,
         fftSize,
+        hzPerBin,
         displayChoice(displayControl(kDisplayFftWindowKey, "station", "windowType", spectrum,
                                      fft, kDisplayFftWindowLabel, "choice"),
                       displayChoices(kDisplayFftWindows), kDisplayFftWindowDefault),
-        hzPerBin,
         displaySlider(displayControl(kDisplaySpectrumFpsKey, "station", "fps", spectrum,
                                      rendering, kDisplaySpectrumFpsLabel, "slider"),
                       kDisplaySpectrumFpsMin, kDisplaySpectrumFpsMax, kDisplaySpectrumFpsStep,
@@ -347,7 +380,8 @@ QJsonObject displayObject()
         displaySlider(displayControl(kDisplaySpectrumAvgTimeKey, "device", "averageTimeMs",
                                      spectrum, rendering, kDisplaySpectrumAvgTimeLabel,
                                      "slider"),
-                      kDisplayAvgTimeMinMs, kDisplayAvgTimeMaxMs, kDisplayAvgTimeStepMs, "ms", 0,
+                      kDisplayAvgTimeMinMs, kDisplayAvgTimeMaxMs,
+                      kDisplayAvgTimeStepMs, "ms", 0,
                       kDisplaySpectrumAvgTimeDefaultMs),
         displaySlider(displayControl(nullptr, "device", "decimation", spectrum, rendering,
                                      kDisplayDecimationLabel, "slider"),
@@ -365,7 +399,8 @@ QJsonObject displayObject()
         displaySlider(displayControl(kDisplayWaterfallAvgTimeKey, "device",
                                      "waterfallAverageTimeMs", waterfall, wfGroup,
                                      kDisplayWaterfallAvgTimeLabel, "slider"),
-                      kDisplayAvgTimeMinMs, kDisplayAvgTimeMaxMs, kDisplayAvgTimeStepMs, "ms", 0,
+                      kDisplayAvgTimeMinMs, kDisplayAvgTimeMaxMs,
+                      kDisplayAvgTimeStepMs, "ms", 0,
                       kDisplayWaterfallAvgTimeDefaultMs),
     };
 

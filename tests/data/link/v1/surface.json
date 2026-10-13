@@ -9219,6 +9219,8 @@
             "DisplayFftWindow",
             "DisplayHzPerBinTarget",
             "DisplaySpectrumFps",
+            "DisplayFftSizingMode",
+            "DisplayHzPerBinLastTarget",
             "DisplayTxFftSize",
             "DisplayTxWindowType",
             "DisplayTxPanDetector",

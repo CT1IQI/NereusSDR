@@ -200,7 +200,7 @@ struct DisplayMoreTests {
         rig.main.changeDisplay { $0.clarityEnabled = true }
         now += 1
         let payload: [String: LinkJSON] = ["op": .string("noise-floor"), "connectionId": .string("c"),
-                                           "endpointId": .number(1), "revision": .number(1),
+                                           "endpointId": .number(1), "revision": .number(2),
                                            "contextGeneration": .number(1), "floorDbm": .number(-110)]
         band.receive(.noiseFloor(try #require(MediaControlDecoder.noiseFloor(payload))))
         #expect(band.drawnSettings.scaleRange.lowerBound == -115)
