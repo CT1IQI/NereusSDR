@@ -70,6 +70,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-12 Keep the table reading name on bound scale overrides.
+//            J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -294,7 +296,8 @@ QString BarInstrument::readingName() const
 // NereusSDR: see the header.
 QString BarInstrument::nameOf(const ReadingDescriptor& d) const
 {
-    if (m_ownReading.has_value() && &d == &m_ownReading.value()) {
+    if (m_primary == -1 && m_ownReading.has_value()
+        && &d == &m_ownReading.value()) {
         return m_ownName;
     }
     return d.thetisName();

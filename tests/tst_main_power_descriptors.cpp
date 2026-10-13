@@ -35,7 +35,11 @@ private slots:
         QVERIFY(bar.setPrimary(MeterBinding::TxPower));
         QVERIFY(needle.setPrimary(MeterBinding::TxPower));
         const ReadingDescriptor amp = powerReadingDescriptor(1500,2000);
+        bar.onReading(MeterBinding::TxPower, 1236);
         bar.setPrimaryScale(amp);
+        QCOMPARE(bar.primary(), MeterBinding::TxPower);
+        QCOMPARE(bar.value(), 1236.0);
+        QCOMPARE(bar.readingName(), amp.thetisName());
         needle.setPrimaryScale(amp);
         bar.onReading(MeterBinding::TxPower, 2300);
         needle.onReading(MeterBinding::TxPower, 2300);
