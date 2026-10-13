@@ -1786,6 +1786,10 @@ nereus_add_test(tst_audio_ring_spsc)
 # its oldest, and stop joins without waiting out the wake.
 nereus_add_test(tst_mic_uplink_collector EXTRA_LABELS core)
 
+# The microphone helper's lost-input watch: it counts the blocks the device
+# delivers, so a window that stops reading the ring never loses the input.
+nereus_add_test(tst_capture_input_watch EXTRA_LABELS core)
+
 # ── Phase 3O Sub-Phase 8 Task 8: PipeWireStream config-translation ───────────
 # Pure unit test: exercises configToProperties() for Output (virtual source),
 # Input (consumer), and targetNodeName routing. No running daemon required.
@@ -9926,7 +9930,8 @@ nereus_add_test(tst_remote_spectrum_render)
 # Remote Daemon R3 GUI controller: authenticated media signalling, endpoint
 # subscription lifecycle, stale context rejection, and teardown.
 nereus_add_test(tst_remote_media_controller
-    fakes/LoopbackTransport.cpp)
+    fakes/LoopbackTransport.cpp
+    fakes/FakeCaptureChild.cpp)
 # R-DISP-HOLD: the window holds the dBm range it asked the Core for, and a
 # context for the same picture blanks nothing.
 nereus_add_test(tst_remote_display_hold

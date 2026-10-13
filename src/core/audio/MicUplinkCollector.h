@@ -16,6 +16,9 @@
 // Modification history (NereusSDR):
 //   2026-10-10: created.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: wakes() and collectedFrames(), so the owner can report a
+//               collector that takes nothing.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -80,6 +83,12 @@ public:
     void discardQueued();
     int queuedFrames() const;
     quint64 droppedFrames() const { return m_dropped.load(std::memory_order_relaxed); }
+    // 2026-10-12: how often collectOnce() ran and how many frames the
+    // source gave it, for the owner's "the collector took nothing" report:
+    // wakes that stand still are a thread that is not running, wakes that
+    // move with no frames are a source that gives nothing.
+    quint64 wakes() const { return m_wakes.load(std::memory_order_relaxed); }
+    quint64 collectedFrames() const { return m_collected.load(std::memory_order_relaxed); }
     // Whether the running thread got its real-time priority (false when not
     // running, before the thread has asked, or when the system refused).
     bool realtimePriorityHeld() const { return m_elevated.load(std::memory_order_acquire); }
@@ -100,6 +109,8 @@ private:
     std::atomic<std::uint64_t> m_write{0};       // the producer advances it
     std::atomic<std::uint64_t> m_read{0};        // the consumer; the producer when full
     std::atomic<quint64> m_dropped{0};
+    std::atomic<quint64> m_wakes{0};
+    std::atomic<quint64> m_collected{0};
     std::atomic<bool> m_elevated{false};
     std::array<float, kPullFrames> m_scratch{};  // the producer only
     QSemaphore m_stopWake;

@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  Verify collector pause/resume does not
+//                                    report an intentional pause as a stall.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (fourth wave): the
 //                                    contexts the window must not draw
 //                                    (another stream, a changed stream or
@@ -195,6 +198,8 @@
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "core/audio/CaptureAudioBus.h"
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeCaptureChild.h"
+#include <atomic>
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
@@ -11608,6 +11613,113 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // The collector can intentionally pause while Test Mic keeps shared
+    // capture Ready. Only time in the current collector run is a stall.
+    void anIntentionalCollectorPauseIsNotReportedAsAStall()
+    {
+        class GatedMicrophone final : public FakeAudioBus {
+        public:
+            qint64 pull(char* destination, qint64 bytes) override
+            {
+                if (bytes < qint64(sizeof(float)) || !block.exchange(false)) {
+                    return 0;
+                }
+                const float sample = 0.25f;
+                std::memcpy(destination, &sample, sizeof(sample));
+                return sizeof(sample);
+            }
+            std::atomic<bool> block{false};
+        };
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QCoreApplication::applicationFilePath();
+        options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+        options.helloTimeoutMs = Test::kFakeCaptureChildStartMs;
+        engine->setCaptureSupervisorOptionsForTest(options);
+        auto microphone = std::make_unique<GatedMicrophone>();
+        GatedMicrophone* source = microphone.get();
+        QVERIFY(source->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        engine->setTxInputBusForTest(std::move(microphone));
+        CaptureSupervisor::Lease other = engine->acquireCaptureDemand(
+            CaptureSupervisor::Demand::TestMic);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        qint64 nowMs = 10000;
+        media.setMicClockForTest([&nowMs] { return nowMs; });
+        const auto resetClock = qScopeGuard([&media] { media.setMicClockForTest({}); });
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready,
+                                  Test::kFakeCaptureChildStartMs);
+        const quint32 generation = engine->captureStatus().generation;
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        media.pumpMicUplinkForTest();
+
+        g_remoteMediaMessages.clear();
+        const QtMessageHandler previous = qInstallMessageHandler(captureRemoteMediaMessages);
+        const auto restoreMessages = qScopeGuard([previous] { qInstallMessageHandler(previous); });
+        const auto stalls = [] {
+            return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector took no audio"));
+        };
+        const auto recoveries = [] {
+            return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector is taking audio again"));
+        };
+        const auto pause = [&] {
+            h.remote.transmitModel().setMicSource(MicSource::Vax);
+            media.pumpMicUplinkForTest();
+        };
+        const auto resume = [&] {
+            h.remote.transmitModel().setMicSource(MicSource::Pc);
+            media.pumpMicUplinkForTest();
+        };
+        pause();
+        QVERIFY(!media.micCollectorThreadRunningForTest());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
+        QCOMPARE(engine->captureStatus().generation, generation);
+        nowMs += 5000;
+        resume();
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        QCOMPARE(engine->captureStatus().generation, generation);
+        QCOMPARE(stalls().size(), 0);
+        QCOMPARE(recoveries().size(), 0);
+        nowMs += 999;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 0);
+        ++nowMs;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 1);
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 1);
+
+        // A reported stall from the old run must not become a recovery
+        // attributed to the intentional pause either.
+        pause();
+        nowMs += 5000;
+        resume();
+        QCOMPARE(stalls().size(), 1);
+        QCOMPARE(recoveries().size(), 0);
+        nowMs += 1000;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 2);
+        nowMs += 100;
+        source->block.store(true);
+        QTRY_VERIFY_WITH_TIMEOUT((media.pumpMicUplinkForTest(), recoveries().size() == 1), 5000);
+        QVERIFY(recoveries().first().contains(QStringLiteral("1100 ms")));
+        media.pumpMicUplinkForTest();
+        QCOMPARE(recoveries().size(), 1);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+        other.release();
+    }
+
     // 2026-10-10: production, with no inline seam: the collector's thread
     // runs exactly while the capture lease is held, the pump sends what it
     // collected, and the thread is joined when the line goes.
@@ -11742,6 +11854,7 @@ namespace {
 // everything. A name here that is not a test function stops the run, so a
 // rename cannot quietly drop a test from both entries.
 const QStringList kAudioFunctions{
+    QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
     QStringLiteral("speakerLossPersistsAcrossMuteDeviceChangeAndDisabledContext"),
     QStringLiteral("retryClearsTheProblemOnlyOnceTheNewContextPlays"),
@@ -11809,6 +11922,9 @@ QStringList testFunctions(const QMetaObject* meta)
 
 int main(int argc, char** argv)
 {
+    if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--fake-capture-child")) {
+        return Test::runFakeCaptureChild(QString::fromLocal8Bit(argv[2]));
+    }
     QApplication app(argc, argv);
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TestRemoteMediaController test;

@@ -441,6 +441,9 @@ public:
     /// A program key that brings its own audio (programAudioKey()) never
     /// hears the microphone: silence follows its audio instead.
     static constexpr int kProgramAudioHoldMs = 200;
+    // 2026-10-12: how long the microphone's collector may take no audio,
+    // with capture ready, before the window says so in its log.
+    static constexpr int kMicCollectorStallMs = 1000;
     /// R-R3-37: how long a pan in budget mode may wait for the Core's first
     /// answer before it says "Waiting for the Core". A Core that answers
     /// within this (the usual case at session start) never flashes the line.
