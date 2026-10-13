@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Export signal addresses for Windows DLL consumers.
+//               J.J. Boyd / KG4VCF, AI-assisted via OpenAI Codex.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -312,6 +314,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "gui/RemoteSpectrumCapture.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -461,7 +464,7 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
 //   20px  - frequency scale bar
 //
 // From gpu-waterfall.md lines 274-289
-class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
+class NEREUS_GUI_EXPORT SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
     friend class ::TestDssRowTee;
     friend class ::TestWorkspaceSpectrumFontMinimum;

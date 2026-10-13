@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  Check cross-DLL signal metadata and
+//                                    explicitly simulate VAX availability
+//                                    in microphone pause fixtures.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-12: Cover pin deltas arriving after their command result on a
 //               budgeted display. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12  J.J. Boyd / KG4VCF  Verify collector pause/resume does not
@@ -921,6 +925,30 @@ private slots:
         QFile::remove(path + QStringLiteral(".bak"));
     }
 
+    void crossDllSignalsResolveToTheirDeclaredMetadata()
+    {
+        const QMetaMethod ctun = QMetaMethod::fromSignal(&SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(ctun.isValid());
+        QCOMPARE(ctun.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                         "ctunEnabledChanged(bool)"));
+        const QMetaMethod frequency = QMetaMethod::fromSignal(&SpectrumWidget::frequencyClicked);
+        QVERIFY(frequency.isValid());
+        QCOMPARE(frequency.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                              "frequencyClicked(double)"));
+        const QMetaMethod centre = QMetaMethod::fromSignal(&SpectrumWidget::centerChanged);
+        QVERIFY(centre.isValid());
+        QCOMPARE(centre.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                           "centerChanged(double)"));
+        const QMetaMethod menu = QMetaMethod::fromSignal(&SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(menu.isValid());
+        QCOMPARE(menu.methodIndex(), SpectrumOverlayMenu::staticMetaObject.indexOfSignal(
+                                         "ctunChanged(bool)"));
+        const QMetaMethod text = QMetaMethod::fromSignal(&SessionTransport::textReceived);
+        QVERIFY(text.isValid());
+        QCOMPARE(text.methodIndex(), SessionTransport::staticMetaObject.indexOfSignal(
+                                         "textReceived(QByteArray)"));
+    }
+
     void pureSignalChunksShareMediaWithoutChangingMessageLimit()
     {
         QTemporaryDir dir;
@@ -1601,6 +1629,8 @@ private slots:
         widget.setCtunEnabled(true);
         QSignalSpy gestures(&widget, &SpectrumWidget::ctunEnabledChanged);
         QSignalSpy centres(&widget, &SpectrumWidget::centerChanged);
+        QVERIFY(gestures.isValid());
+        QVERIFY(centres.isValid());
         widget.applyRemoteCtunState(false, false);
         QVERIFY(!widget.ctunAvailable());
         QVERIFY(!widget.ctunEnabled());
@@ -1651,6 +1681,7 @@ private slots:
         }
         QVERIFY(ctun);
         QSignalSpy changes(&menu, &SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(changes.isValid());
         const QString held = QStringLiteral(
             "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
         menu.setCtunAvailable(true, held);
@@ -1850,6 +1881,7 @@ private slots:
         const int requestsBefore = pinRequests();
         QSignalSpy answers(&client, &StationClient::streamCtunPinFinished);
         QSignalSpy gestures(widget, &SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(gestures.isValid());
         stationLink->hold = true;
         widget->setCtunEnabled(true);
         QTRY_VERIFY(!answers.isEmpty());
@@ -12186,6 +12218,8 @@ private slots:
         const auto recoveries = [] {
             return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector is taking audio again"));
         };
+        // This fake session needs VAX as its no-preview source on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         const auto pause = [&] {
             h.remote.transmitModel().setMicSource(MicSource::Vax);
             media.pumpMicUplinkForTest();
@@ -12195,12 +12229,14 @@ private slots:
             media.pumpMicUplinkForTest();
         };
         pause();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QVERIFY(!media.micCollectorThreadRunningForTest());
         QVERIFY(!media.micCaptureLeaseHeldForTest());
         QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
         QCOMPARE(engine->captureStatus().generation, generation);
         nowMs += 5000;
         resume();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
         QVERIFY(media.micCollectorThreadRunningForTest());
         QCOMPARE(engine->captureStatus().generation, generation);
         QCOMPARE(stalls().size(), 0);
@@ -12295,7 +12331,9 @@ private slots:
                                             == CaptureSupervisor::Status::State::Failed,
                                  5000);
         // No local preview: only VOX holds the lease.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         QVERIFY(takeTransmit(h));
         const quint32 previewed = engine->captureStatus().generation;

@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Export signal addresses for Windows DLL consumers.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -38,6 +40,7 @@
 #include <QCheckBox>
 #include <QLabel>
 #include <QPushButton>
+#include "gui/NereusGuiExport.h"
 
 namespace NereusSDR {
 
@@ -49,7 +52,7 @@ namespace NereusSDR {
 // be wrapped in a ContainerWidget (Phase 3F) without changes.
 //
 // From plan Step 9 / AetherSDR SpectrumOverlayMenu pattern.
-class SpectrumOverlayMenu : public QWidget {
+class NEREUS_GUI_EXPORT SpectrumOverlayMenu : public QWidget {
     Q_OBJECT
 
 public:
