@@ -3621,7 +3621,7 @@ void SpectrumOverlayPanel::buildPillLevelsPage()
 void SpectrumOverlayPanel::buildPillFftPage()
 {
     PillPage page = beginPillPage(DisplayPillTab::Fft, QStringLiteral("FFT"),
-                                  QStringLiteral("STATION"));
+                                  QStringLiteral("CORE"));
 
     m_fftState.baselineSize = ControlRanges::kDisplayFftSizeDefault;
     m_fftState.fps = ControlRanges::kDisplaySpectrumFpsDefault;

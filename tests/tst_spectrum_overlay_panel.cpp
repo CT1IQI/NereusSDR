@@ -1516,7 +1516,7 @@ private slots:
         } pages[] = {
             {"displayPageSpectrum", "Trace", ""},
             {"displayPageLevels", "Spectrum scale", ""},
-            {"displayPageFft", "FFT", "STATION"},
+            {"displayPageFft", "FFT", "CORE"},
             {"displayPageWaterfall", "Drawing", ""},
             {"displayPage3D", "View", ""},
         };
@@ -2893,7 +2893,7 @@ private slots:
         // The header says whose these are.
         auto* scope = page->findChild<QLabel*>(QStringLiteral("pillHeaderScope"));
         QVERIFY(scope);
-        QCOMPARE(scope->text(), QStringLiteral("STATION"));
+        QCOMPARE(scope->text(), QStringLiteral("CORE"));
     }
 
     void schemeListsAllEightAndShowsThePans() {
