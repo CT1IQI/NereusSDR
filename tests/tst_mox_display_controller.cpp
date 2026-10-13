@@ -57,6 +57,7 @@
 // The test seam for a rebinding while keyed (TxSliceArbiter::flipTo moves
 // the transmit flag without requestHandoff's unkey).
 #include "core/TxSliceArbiter.h"
+#include "models/RadioModel.h"
 #undef private
 
 #include "core/AppSettings.h"
@@ -770,6 +771,93 @@ private slots:
         QVERIFY(window.key(false));
         QTRY_VERIFY(!window.controller->isKeyed());
         QCOMPARE(PanState::of(two), before);
+    }
+
+    void tuneDisplayOffsetRestoresCurrentXit_data()
+    {
+        QTest::addColumn<bool>("remoteWindow");
+        QTest::addColumn<DSPMode>("mode");
+        QTest::addColumn<int>("xitHz");
+        QTest::addColumn<bool>("duplexBeforeRelease");
+        for (bool remoteWindow : {false, true}) {
+            for (DSPMode mode : {DSPMode::LSB, DSPMode::USB}) {
+                for (int xitHz : {0, 350}) {
+                    for (bool duplexBeforeRelease : {false, true}) {
+                        const QByteArray name = QByteArray(remoteWindow ? "remote-" : "local-")
+                            + (mode == DSPMode::LSB ? "LSB-" : "USB-")
+                            + QByteArray::number(xitHz) + (duplexBeforeRelease ? "-DUP" : "-TX");
+                        QTest::newRow(name.constData()) << remoteWindow << mode << xitHz
+                                                     << duplexBeforeRelease;
+                    }
+                }
+            }
+        }
+    }
+
+    void tuneDisplayOffsetRestoresCurrentXit()
+    {
+        QFETCH(bool, remoteWindow);
+        QFETCH(DSPMode, mode);
+        QFETCH(int, xitHz);
+        QFETCH(bool, duplexBeforeRelease);
+        // Inject the already-compensated display context without asking a
+        // RadioModel to Tune or key a radio. Both production display sources
+        // report this NCO origin to the same presentation controller.
+        const auto exercise = [&](RadioModel& model, int sliceId, SpectrumWidget* pan,
+                                  MoxDisplayController* controller,
+                                  const std::function<void(double)>& context) {
+            SliceModel* slice = model.sliceById(sliceId);
+            QVERIFY(slice);
+            slice->setFrequency(3'865'000.0);
+            slice->setDspMode(mode);
+            slice->setXitHz(xitHz);
+            slice->setXitEnabled(xitHz != 0);
+            pan->setTxVfoOffsetHz(xitHz);
+            const double carrier = double(model.txFrequencyForSlice(slice));
+            const double signedTone = mode == DSPMode::LSB ? -600.0 : 600.0;
+            // Give the local feed the same authoritative origin as the
+            // injected remote context, without running Tune's side effects.
+            model.m_isTuning = true;
+            model.m_savedTxDspMode = mode;
+            controller->setKeyed(true, sliceId);
+            context(carrier - signedTone);
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz - int(signedTone));
+
+            if (duplexBeforeRelease) {
+                controller->setDisplayDuplex(true);
+            }
+            model.m_isTuning = false;
+            controller->setKeyed(false, sliceId);
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz);
+            controller->setDisplayDuplex(false);
+            controller->setKeyed(true, sliceId);
+            context(carrier); // Ordinary SSB context equals the rise's seed.
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz);
+            controller->setKeyed(false, sliceId);
+        };
+        if (remoteWindow) {
+            RemoteWindow window(/*withAnalyzer=*/true);
+            QVERIFY(window.connect());
+            exercise(window.remote, window.txSliceId, window.pan(QStringLiteral("two")),
+                     window.controller.get(), [&](double origin) {
+                SpectrumContextMessage context;
+                context.sourceCentreHz = origin;
+                context.centreHz = origin;
+                context.spanHz = 8000.0;
+                emit window.gui->transmitContextReceived(QStringLiteral("two"), context);
+            });
+        } else {
+            LocalWindow window;
+            exercise(window.radio, window.txSliceId, window.pan(QStringLiteral("two")),
+                     window.controller.get(), [&](double origin) {
+                TxDisplayView view;
+                view.carrierHz = origin;
+                view.lowHz = -4000;
+                view.highHz = 4000;
+                view.pixels = 1024;
+                emit window.radio.txDisplayFeed()->viewChanged(view);
+            });
+        }
     }
 
     void remoteXitWhileKeyedMovesTheViewAndRestores()
