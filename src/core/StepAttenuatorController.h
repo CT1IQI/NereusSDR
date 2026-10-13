@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -456,6 +458,10 @@ public:
     // receive attenuator for rx1_band and ATTOnTX for _tx_band.
     void setTxBand(Band band) noexcept { m_txBand = band; }
     Band txBand() const noexcept { return m_txBand; }
+
+    // Operator edit of RX1's shared RX/TX readout. Generic RX setters and
+    // AutoAtt retain their existing lane; RX2 uses its own setter.
+    void setDisplayedAttenuation(int dB);
 
     // Set ATT value (e.g. from UI or persistence restore).
     void setAttenuation(int dB, int rx = 0);
