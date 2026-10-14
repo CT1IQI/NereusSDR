@@ -77,6 +77,9 @@
 //               Anthropic Claude Code.
 //   2026-10-13: PS two-tone shares the transmit intent and release fence.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-14: Retire a station session even when remote transmit was
+//               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -167,6 +170,9 @@ public:
     /// told it remoteTxVersion 1 or later. Going false forgets every key
     /// (the Core unkeys a device whose link drops, and never re-keys).
     void setAvailable(bool available);
+    /// The station session ended. Forget its requests even when the Core
+    /// already reported remote transmit unavailable.
+    void retireSession();
     bool available() const { return m_available; }
     void setMicSourceCapability(bool available);
     bool requestMicSource(RemoteMicSource source);

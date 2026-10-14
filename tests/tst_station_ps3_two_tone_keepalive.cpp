@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-10-13 J.J. Boyd (KG4VCF): exercise PS requests through StationClient
 //              with in-process transport and watchdog. AI-assisted via OpenAI Codex.
+//   2026-10-14 J.J. Boyd (KG4VCF): cover session retirement during a
+//              compatibility stop. AI-assisted via OpenAI Codex.
 #include <QtTest>
 
 #include "core/AppSettings.h"
@@ -282,6 +284,41 @@ private slots:
         session.answer(stop, true);
         QTRY_COMPARE(results.size(), 1);
         QCOMPARE(qvariant_cast<Ps3ActionPhase>(results.first()[1]), Ps3ActionPhase::Completed);
+    }
+
+    void unavailableStopIsRetiredWhenTheSessionEndsDuringSend()
+    {
+        PsSession session;
+        admit(session);
+        StationCapabilities capabilities = session.client.capabilities();
+        capabilities.remoteTxVersion = 0;
+        session.coreLink->sendText(SessionMessages::encode(
+            SessionMessages::capabilities(capabilities.toUpdates())));
+        QTRY_VERIFY(!session.client.remoteTransmitAvailable());
+        bool ended = false;
+        bool replaced = false;
+        QObject::connect(session.client.remoteTransmit(), &RemoteTransmitClient::micSourceChanged,
+                         &session.client, [&]() {
+            if (ended && !replaced) {
+                replaced = true;
+                session.join();
+            }
+        });
+        QObject::connect(session.clientLink, &Test::LoopbackTransport::outboundText,
+                         &session.client, [&](const QByteArray& wire) {
+            SessionMessage message;
+            if (!ended && SessionMessages::decode(wire, &message)
+                && message.commandVerb == "ps3.twoTone") {
+                ended = true;
+                session.client.disconnectFromStation(QStringLiteral("test departure"));
+            }
+        });
+
+        QCOMPARE(session.request(false), 0u);
+        QVERIFY(ended);
+        QVERIFY(replaced);
+        QTRY_VERIFY(session.client.isHandshakeComplete());
+        QVERIFY(!session.client.remoteTransmit()->keepaliveRunning());
     }
 
     void unavailableRetiresRequestsAndOldAnswersCannotClearANewIntent()

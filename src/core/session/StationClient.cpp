@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
+//                                    session ends even if its capability was
+//                                    already unavailable. AI-assisted via
+//                                    OpenAI Codex.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the hello
 //                                    declares spectrumPicture.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -2296,6 +2300,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     if (!m_sessionActive) {
         return;  // already reported for this attach
     }
+    const quint32 retiringEpoch = m_sessionEpoch;
     // Retire the operation now, but notify only as this teardown returns.
     // A completion handler may destroy this client or reconnect it. Emitting
     // before clearing mirrors/proxy/coalescer let that new session inherit
@@ -2376,7 +2381,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     m_coreValues.clear();
     // Desktop remote transmit: the Core unkeys this device when the link
     // drops and never keys it again by itself; nothing of it is kept.
-    refreshRemoteTransmit();
+    if (m_remoteTransmit != nullptr) {
+        m_remoteTransmit->retireSession();
+        if (!watchSelf || m_sessionEpoch != retiringEpoch || m_sessionActive) { return; }
+    }
     if (m_radioModel) {
         m_radioModel->dspAssets()->resetSession();
         m_radioModel->dspAssets()->setRemoteNr3ModelsSupported(false);

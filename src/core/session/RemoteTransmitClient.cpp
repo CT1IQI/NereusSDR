@@ -50,6 +50,9 @@
 //   2026-10-13: Track PS two-tone requests, asynchronous release results
 //               and superseded intent. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-14: Retire a station session even when remote transmit was
+//               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -242,22 +245,30 @@ void RemoteTransmitClient::setAvailable(bool available)
     if (m_available == available) {
         return;
     }
+    if (!available) {
+        retireSession();
+        return;
+    }
     m_available = available;
     const QPointer<RemoteTransmitClient> self(this);
     reset();
     if (!self || m_available != available) {
         return;
     }
-    if (!available) {
-        // The Core unkeys a device whose link drops and never keys it
-        // again by itself; nothing here survives.
-        // Task 37: a new link starts its keepalives from 1.
-        m_keepaliveSequence = 0;
-        m_channelKeepalives = 0;
-        m_sessionKeepalives = 0;
-        m_auxiliaryKeepalives = 0;
-    }
     refreshKeepalive();
+}
+
+void RemoteTransmitClient::retireSession()
+{
+    m_available = false;
+    // The Core unkeys a device whose link drops and never keys it
+    // again by itself; nothing here survives.
+    // Task 37: a new link starts its keepalives from 1.
+    m_keepaliveSequence = 0;
+    m_channelKeepalives = 0;
+    m_sessionKeepalives = 0;
+    m_auxiliaryKeepalives = 0;
+    reset();
 }
 
 quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpdate>& arguments,
@@ -803,7 +814,7 @@ void RemoteTransmitClient::reset()
     m_releaseDispatches = 0;
     m_releaseFailureSticky = false;
     m_releaseFailureNotified = false;
-    ++m_sessionGeneration;
+    const quint64 generation = ++m_sessionGeneration;
     m_micSourceAvailable = false;
     m_micSourcePending = false;
     m_micSourceSettled = true;
@@ -812,7 +823,7 @@ void RemoteTransmitClient::reset()
     m_micSourceReason.clear();
     const QPointer<RemoteTransmitClient> sourceSelf(this);
     emit micSourceChanged(m_acceptedMicSource, true, {});
-    if (!sourceSelf) { return; }
+    if (!sourceSelf || m_sessionGeneration != generation) { return; }
     auto reply = std::exchange(m_programAnswer, {});
     const QPointer<RemoteTransmitClient> self(this);
     publish();
