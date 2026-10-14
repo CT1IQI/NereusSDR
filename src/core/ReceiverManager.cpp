@@ -319,10 +319,11 @@ void ReceiverManager::setReceiverFrequency(int receiverIndex, quint64 frequencyH
     // MainWindow manages DDC frequency directly)
     // The logical callback may remove/remap the receiver or change CTUN.
     // Revalidate without operator[] so removal cannot insert a ghost entry.
+    // A nested retune supersedes this call before its hardware notification.
     locker.relock();
     const auto it = m_receivers.constFind(receiverIndex);
     if (m_ddcFreqLocked || it == m_receivers.constEnd()
-        || !it->active || it->hardwareRx < 0) {
+        || it->frequencyHz != frequencyHz || !it->active || it->hardwareRx < 0) {
         return;
     }
     const int hardwareRx = it->hardwareRx;

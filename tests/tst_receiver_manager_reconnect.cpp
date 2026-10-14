@@ -228,6 +228,34 @@ private slots:
         QCOMPARE(hardware.count(), 0);
     }
 
+    void frequencyCallbackRetuneDoesNotPublishSupersededFrequency()
+    {
+        ReceiverManager rm;
+        const int rx = rm.createReceiver();
+        rm.activateReceiver(rx);
+        const int hardwareRx = rm.receiverConfig(rx).hardwareRx;
+        QSignalSpy logical(&rm, &ReceiverManager::receiverFrequencyChanged);
+        QSignalSpy hardware(&rm, &ReceiverManager::hardwareFrequencyChanged);
+        connect(&rm, &ReceiverManager::receiverFrequencyChanged, &rm,
+                [&rm, rx](int receiverIndex, quint64 frequencyHz) {
+                    if (receiverIndex == rx && frequencyHz == 7100000) {
+                        rm.setReceiverFrequency(rx, 14200000);
+                    }
+                }, Qt::DirectConnection);
+
+        rm.setReceiverFrequency(rx, 7100000);
+
+        QCOMPARE(logical.count(), 2);
+        QCOMPARE(logical.at(0).at(1).toULongLong(), quint64(7100000));
+        QCOMPARE(logical.at(1).at(1).toULongLong(), quint64(14200000));
+        QCOMPARE(rm.receiverConfig(rx).frequencyHz, quint64(14200000));
+        // The nested retune is the latest command; the outer notification
+        // must not send its older frequency after the nested one completed.
+        QCOMPARE(hardware.count(), 1);
+        QCOMPARE(hardware.at(0).at(0).toInt(), hardwareRx);
+        QCOMPARE(hardware.at(0).at(1).toULongLong(), quint64(14200000));
+    }
+
     void firstConnectAssignsReceiver0ToDdc2()
     {
         ReceiverManager rm;
