@@ -20,6 +20,10 @@ import Testing
         modes.append(["id": 14, "label": "RADE2-U", "sideband": "upper"])
         modes.append(["id": 15, "label": "RADE2-L", "sideband": "lower"])
         raw["modes"] = modes
+        var presets = try #require(raw["filterPresets"] as? [String: Any])
+        presets["RADE2-U"] = try #require(presets["USB"] as? [[String: Any]])
+        presets["RADE2-L"] = try #require(presets["LSB"] as? [[String: Any]])
+        raw["filterPresets"] = presets
         let cases: [(Any?, Bool)] = [(nil, false), (false, false), ("true", false), (1, false), (true, true)]
         for (flag, enabled) in cases {
             raw["radeV2Enabled"] = flag
@@ -55,9 +59,9 @@ import Testing
         let catalog = try #require(StationCatalog.parse(json: json))
         var raw = try Self.object(json)
         // The thirteen sections every catalogue carries, the band grid a
-        // Core with bandSelectVersion 1 adds, and the Setup > Display and
-        // noise-reduction descriptions a newer Core adds (link 7.4).
-        #expect(Set(raw.keys).count == 16)
+        // Core with bandSelectVersion 1 adds, and the Setup > Display,
+        // noise-reduction and RADE V2 gate a newer Core adds (link 7.4).
+        #expect(Set(raw.keys).count == 17)
         #expect(raw["bands"] != nil)
         #expect(raw["noiseReduction"] != nil)
         let board = try #require(raw["board"] as? [String: Any])
@@ -285,7 +289,7 @@ import Testing
     }
 
     /// Every section a newer Core adds: none is required.
-    static let laterSections = ["display", "noiseReduction"]
+    static let laterSections = ["display", "noiseReduction", "radeV2Enabled"]
     /// The same for the board: the transmit ranges, the RX1 preamp, the
     /// relays, RX2's own input control (Level Cal 2) and the radio's mic
     /// input (the radio codec lane).
@@ -445,6 +449,7 @@ import Testing
         }
         let board = c.board
         return [
+            "radeV2Enabled": c.radeV2Enabled,
             "modes": c.modes.map { ["id": $0.id, "label": $0.label, "sideband": $0.sideband.rawValue] },
             "filterPresets": c.filterPresets.mapValues { presets in
                 presets.map { ["slot": $0.slot, "label": $0.label, "lowHz": $0.lowHz, "highHz": $0.highHz] }
