@@ -294,6 +294,10 @@
 //   2026-10-12: PortAudio no longer starts in the constructor (it starts on
 //               first need); m_paInitialized is gone. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: writeRemotePlayback() takes a packet's timing for the
+//               bus's clock matcher (MatcherPacketTiming), where it said
+//               only whether the packet had waited for room (R-AUD-15).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -672,11 +676,12 @@ public:
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<IAudioBus::OutputPacing> remotePlaybackPacing(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
-    // `waitedForRoom`: into a bus's own clock matcher, the caller kept
-    // this packet back until the matcher had room (see below).
+    // `timing`: into a bus's own clock matcher, what the caller knows of
+    // this packet (how long it kept it back until the matcher had room,
+    // how long ago it arrived, its place in the stream); see below.
     bool writeRemotePlayback(const QVector<float>& pcm,
                              RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
-                             bool waitedForRoom = false);
+                             const MatcherPacketTiming& timing = {});
 
     // R-AUD-15 (settled call 30): true when the output's bus takes the
     // 48 kHz stereo mix into its own clock matcher.  Remote playback then
@@ -687,8 +692,10 @@ public:
     // checks the room first (remotePlaybackMatcherStats(): queuedFrames +
     // packetOutFrames at or below packetHighWaterFrames) and keeps a burst
     // until there is room, because the matcher makes none, and says with
-    // the write whether the packet waited, so the matcher's control steers
-    // by the packets that came in their own time.
+    // the write how long the packet waited, how long ago it arrived and
+    // where it stands in the stream, so the matcher's control knows when
+    // each packet came, steers by the packets that came in their own time,
+    // and plays down a backlog that stands behind it.
     // remotePlaybackMatcherStats() is that bus's matcher counters and
     // sizes.  Any thread.
     bool remotePlaybackIntoMatcher(

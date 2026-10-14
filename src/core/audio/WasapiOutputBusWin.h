@@ -24,6 +24,12 @@
 //               (remote playback) tells the bus's clock matcher its packet
 //               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setClockMatchWritePacket() takes the packet's timing
+//               (MatcherPacketTiming: its wait for room, its arrival, its
+//               place in the stream), where it said only whether it had
+//               waited, for the matcher's clock fit and its
+//               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -66,7 +72,7 @@ public:
     bool takesStereoMix() const override { return true; }
     std::optional<DeviceRateMatcherStats> matcherStats() const override;
     void restartClockMatch() override;
-    void setClockMatchWritePacket(int frames, bool waited) override;
+    void setClockMatchWritePacket(int frames, const MatcherPacketTiming& timing) override;
     void requestFadeOut() override;
     bool fadedOut() const override;
 

@@ -356,6 +356,10 @@
 //   2026-10-12: retain a TX input choice migrated during the setter's first
 //               device setup, including its supervisor and GUI projection.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12: writeRemotePlayback() passes the bus's clock matcher a
+//               packet's timing (MatcherPacketTiming), where it passed
+//               only whether the packet had waited for room (R-AUD-15).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -2565,7 +2569,7 @@ void AudioEngine::endRemotePlayback(RemotePlaybackOutput output)
         m_remoteHeadphonesFormat = AudioFormat{};
         if (m_headphonesBus) {
             m_headphonesBus->flush();
-            m_headphonesBus->setClockMatchWritePacket(0, false);   // the block writer again
+            m_headphonesBus->setClockMatchWritePacket(0, {});   // the block writer again
             m_headphonesBus->restartClockMatch();   // R-AUD-15
         }
         return;
@@ -2577,7 +2581,7 @@ void AudioEngine::endRemotePlayback(RemotePlaybackOutput output)
         m_speakersBus->flush();
         // R-AUD-15: local playback that follows starts its own control,
         // at the block writer's own size.
-        m_speakersBus->setClockMatchWritePacket(0, false);
+        m_speakersBus->setClockMatchWritePacket(0, {});
         m_speakersBus->restartClockMatch();
     }
 }
@@ -3134,7 +3138,7 @@ std::optional<IAudioBus::OutputPacing> AudioEngine::remotePlaybackPacing(
 }
 
 bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackOutput output,
-                                      bool waitedForRoom)
+                                      const MatcherPacketTiming& timing)
 {
     // Bounded worker-side scratch; never called by the device callback.
     // The block is interleaved in the format begin accepted (one or two
@@ -3162,7 +3166,7 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
             const auto pacing = m_headphonesBus->outputPacing();
             if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
         } else {
-            m_headphonesBus->setClockMatchWritePacket(frames, waitedForRoom);
+            m_headphonesBus->setClockMatchWritePacket(frames, timing);
         }
         const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
         return m_headphonesBus->push(reinterpret_cast<const char*>(pcm.constData()), bytes)
@@ -3196,7 +3200,7 @@ bool AudioEngine::writeRemotePlayback(const QVector<float>& pcm, RemotePlaybackO
         if (!pacing || pacing->capacityFrames - pacing->queuedFrames < frames) { return false; }
     }
     if (intoMatcher) {
-        m_speakersBus->setClockMatchWritePacket(frames, waitedForRoom);
+        m_speakersBus->setClockMatchWritePacket(frames, timing);
     }
     const auto bytes = static_cast<qint64>(pcm.size()) * qint64(sizeof(float));
     return m_speakersBus->push(reinterpret_cast<const char*>(scaled.data()), bytes) == bytes;

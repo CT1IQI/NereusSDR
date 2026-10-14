@@ -365,10 +365,24 @@ int main(int argc, char* argv[])
         // Options were copied while the local runtime existed. The launcher
         // uses that explicit profile without touching shutdown AppSettings.
         NereusSDR::StationServiceManager service(*background);
+        QStringList loggedReasons;
         while (!service.startBackground()) {
+            // The log closed with the profile just above. Take the profile
+            // back for as long as it takes to write why the start failed,
+            // once per reason, so the answer does not live only in a dialog.
+            // A background Core that did start owns the profile and its log;
+            // then nothing is written here.
+            const QString reason = service.lastError();
+            if (!loggedReasons.contains(reason) && ownership.acquire(0)) {
+                NereusSDR::CoreInit::logAfterShutdown(
+                    activeProfile,
+                    QStringLiteral("The background Core could not start. %1").arg(reason));
+                ownership.release();
+                loggedReasons << reason;
+            }
             const auto answer = QMessageBox::warning(nullptr, QStringLiteral("NereusSDR"),
                 QStringLiteral("The background Core could not start.\n\n%1")
-                    .arg(service.lastError()),
+                    .arg(reason),
                 QMessageBox::Retry | QMessageBox::Close, QMessageBox::Retry);
             if (answer != QMessageBox::Retry) { return 1; }
         }
