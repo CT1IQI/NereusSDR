@@ -30,6 +30,9 @@
 //     only; here, the pan hosting the transmit slice.
 //
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd / KG4VCF  Export the controller's Qt signal
+//                 addresses from the Windows GUI DLL. AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Central IMD gate mirrors; unchanged TX source ownership.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
