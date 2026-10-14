@@ -4791,25 +4791,39 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
     // Track the actual owner object so a selection/removal without another
     // extension edge retires its old intent. Remote endpoints own separate
     // model leases; accepted remote state must never write local intent.
-    const auto requestedSlice = std::make_shared<QPointer<SliceModel>>();
-    const auto reconcile = [modelRef, spectrumRef, resolve, requestedSlice]() {
+    struct LocalRequestOwner {
+        QPointer<SliceModel> slice;
+        bool hasBoundSlice{false};
+    };
+    const auto requestOwner = std::make_shared<LocalRequestOwner>();
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner]() {
         if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
             return;
         }
         const QPointer<SliceModel> next(resolve());
-        const QPointer<SliceModel> previous(*requestedSlice);
+        const QPointer<SliceModel> previous(requestOwner->slice);
+        if (next) { requestOwner->hasBoundSlice = true; }
         if (previous != next) {
-            *requestedSlice = next;
+            requestOwner->slice = next;
             if (previous) { previous->setWidebandExtensionRequested(false); }
         }
         // A direct observer of the retirement may have changed selection or
         // removed the model/widget. Let the nested reconciliation win.
-        if (!modelRef || !spectrumRef || *requestedSlice != next) { return; }
+        if (!modelRef || !spectrumRef || requestOwner->slice != next) { return; }
+        const RadioInfo& info = modelRef->currentRadioInfo();
         if (!next) {
-            spectrumRef->setLocalWidebandAvailable(false);
+            // Startup wires the empty pan before discovery. Binding signals
+            // also arrive before sliceAdded associates the first receiver.
+            // Preserve its restored span until that first association, unless
+            // the known board/protocol offers no wideband source at all.
+            const bool knownUnsupported = info.boardType != HPSDRHW::Unknown
+                && BoardCapsTable::widebandAdcsFor(modelRef->boardCapabilities(),
+                                                   info.protocol) == 0;
+            if (requestOwner->hasBoundSlice || knownUnsupported) {
+                spectrumRef->setLocalWidebandAvailable(false);
+            }
             return;
         }
-        const RadioInfo& info = modelRef->currentRadioInfo();
         // Before discovery there is no protocol fact to apply. Retain the
         // restored geometry until currentRadioChanged supplies that fact.
         if (info.boardType != HPSDRHW::Unknown) {
@@ -4822,7 +4836,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             if (available) { spectrumRef->setWidebandAdcIndex(adc); }
             spectrumRef->setLocalWidebandAvailable(available);
         }
-        if (modelRef && spectrumRef && next && *requestedSlice == next) {
+        if (modelRef && spectrumRef && next && requestOwner->slice == next) {
             next->setWidebandExtensionRequested(spectrumRef->extendedMode());
         }
     };
@@ -4851,9 +4865,9 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (slice) { watchSlice(slice->sliceIndex()); }
     }
     connect(model, &RadioModel::sliceAdded, spectrum, watchSlice);
-    connect(spectrum, &QObject::destroyed, model, [requestedSlice]() {
-        if (*requestedSlice) { (*requestedSlice)->setWidebandExtensionRequested(false); }
-        requestedSlice->clear();
+    connect(spectrum, &QObject::destroyed, model, [requestOwner]() {
+        if (requestOwner->slice) { (requestOwner->slice)->setWidebandExtensionRequested(false); }
+        requestOwner->slice.clear();
     });
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
             spectrum, [resolve](double freqHz) {

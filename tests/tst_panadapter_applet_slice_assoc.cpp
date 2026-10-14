@@ -387,6 +387,43 @@ private slots:
         QVERIFY(pan->extendedViewEnabled());
     }
 
+    void empty_startup_bridge_preserves_restored_span_until_discovery()
+    {
+        AppSettings::instance().setValue(QStringLiteral("DisplayBandwidth"),
+                                         QStringLiteral("5000000"));
+        RadioModel model;
+        PanadapterStack stack;
+        PanadapterApplet* pan = stack.panadapter(QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        SpectrumWidget* spectrum = pan->spectrumWidget();
+        // Production order: restore the window before installing its bridge,
+        // with no radio descriptor or slices; only then does discovery bind.
+        MainWindow::configureSpectrumForPanForTest(spectrum, pan->panId());
+        QCOMPARE(spectrum->bandwidth(), 5000000.0);
+        QVERIFY(pan->associatedSlices().isEmpty());
+        QCOMPARE(model.currentRadioInfo().boardType, HPSDRHW::Unknown);
+        MainWindow::wireWidebandExtensionForTest(spectrum, &model, &stack, pan->panId());
+        QCOMPARE(spectrum->bandwidth(), 5000000.0);
+
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        RadioInfo info;
+        info.boardType = model.boardCapabilities().board;
+        info.protocol = ProtocolVersion::Protocol2;
+        model.setLastRadioInfoForTest(info);
+        model.configureStreamPool(4, 4, 192000);
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        pan->addSlice(slice->sliceIndex());
+        model.emitCurrentRadioChangedForTest();
+        QCOMPARE(spectrum->bandwidth(), 5000000.0);
+        QVERIFY(spectrum->extendedMode());
+        QVERIFY(slice->widebandExtensionRequested());
+        // Once it has a descriptor, an emptied pan still retires its intent.
+        pan->removeSlice(slice->sliceIndex());
+        QVERIFY(!slice->widebandExtensionRequested());
+        QVERIFY(!spectrum->extendedMode());
+    }
+
     void discovery_keeps_a_supported_restored_span()
     {
         RadioModel model;
