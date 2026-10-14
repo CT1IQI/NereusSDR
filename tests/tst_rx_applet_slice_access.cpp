@@ -13,6 +13,8 @@
 // "Your volume" is that surface).
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - PR #262 RX-only applet echo regression. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-29 - Written for slice control plan Task 15. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -39,12 +41,14 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
 
 #include "core/AppSettings.h"
+#include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/accessories/AlexController.h"
@@ -59,6 +63,37 @@
 using namespace NereusSDR;
 
 namespace {
+
+// No-I/O connection: makes RadioModel's real slice antenna handlers
+// eligible without a radio, sockets, audio, or a connection lifecycle.
+class AntennaConnectionFake : public RadioConnection {
+public:
+    AntennaConnectionFake() { setState(ConnectionState::Connected); }
+    void init() override {}
+    void connectToRadio(const RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setWatchdogEnabled(bool) override {}
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 const QString kReason = QStringLiteral("Shack iPad controls this slice");
 
@@ -431,6 +466,109 @@ private slots:
         QCOMPARE(rxAntSpy.count(), 0);
         QCOMPARE(slice->rxAntenna(), before);
         // The button shows the slice's antenna, which the controller sets.
+        QCOMPARE(applet.findChild<QPushButton*>(QStringLiteral("m_rxAntBtn"))->text(), before);
+    }
+
+    // PR #262: an applet's controller echo must preserve the RX-only mux.
+    // Literal slot labels come from SkuUiProfile.cpp's existing ANAN7000D
+    // and ANAN100D rows; the regression catches ANT-only read-back.
+    void controlling_applet_preserves_rx_only_selection_data()
+    {
+        QTest::addColumn<int>("sku");
+        QTest::addColumn<int>("slot");
+        QTest::addColumn<QString>("label");
+        QTest::addColumn<bool>("initialPopulate");
+        for (bool initial : {false, true}) {
+            const QByteArray phase = initial ? "initial" : "echo";
+            QTest::newRow((phase + "-7000-byps").constData())
+                << static_cast<int>(HPSDRModel::ANAN7000D) << 1 << QStringLiteral("BYPS") << initial;
+            QTest::newRow((phase + "-7000-ext1").constData())
+                << static_cast<int>(HPSDRModel::ANAN7000D) << 2 << QStringLiteral("EXT1") << initial;
+            QTest::newRow((phase + "-7000-xvtr").constData())
+                << static_cast<int>(HPSDRModel::ANAN7000D) << 3 << QStringLiteral("XVTR") << initial;
+            QTest::newRow((phase + "-100d-ext2").constData())
+                << static_cast<int>(HPSDRModel::ANAN100D) << 1 << QStringLiteral("EXT2") << initial;
+        }
+    }
+
+    void controlling_applet_preserves_rx_only_selection()
+    {
+        QFETCH(int, sku);
+        QFETCH(int, slot);
+        QFETCH(QString, label);
+        QFETCH(bool, initialPopulate);
+        // Add the slice while disconnected, then explicitly wire its real
+        // antenna handlers against a no-I/O fake; no DSP channel is started.
+        AntennaConnectionFake connection;
+        RadioModel model;
+        model.setHpsdrModelForTest(static_cast<HPSDRModel>(sku));
+        model.addPanadapter();
+        model.panadapters().first()->setBand(Band::Band20m);
+        model.addSlice();
+        SliceModel* slice = model.sliceById(0);
+        QVERIFY(slice);
+        QCOMPARE(model.activeSlice(), slice);
+        QCOMPARE(bandFromFrequency(slice->frequency()), Band::Band20m);
+        QCOMPARE(model.lastBand(), Band::Band20m);
+        QCOMPARE(model.panadapters().first()->band(), Band::Band20m);
+        model.injectConnectionForTest(&connection);
+        const auto uninject = qScopeGuard([&model] { model.injectConnectionForTest(nullptr); });
+        model.wireSliceSignalsForTest();
+        // Normalize restored per-band labels before testing a fresh choice.
+        // Keep Alex's TX read-back coherent with the slice's TX intent so
+        // RadioModel's existing reverse sync does not change it independently.
+        slice->setRxAntenna(QStringLiteral("ANT1"));
+        model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, 0);
+        model.alexControllerMutable().setTxAnt(Band::Band20m, 3);
+        slice->setTxAntenna(QStringLiteral("ANT3"));
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 0);
+        QCOMPARE(model.alexController().txAnt(Band::Band20m), 3);
+        QSignalSpy txSpy(slice, &SliceModel::txAntennaChanged);
+        if (initialPopulate) {
+            model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, slot);
+            QCOMPARE(slice->rxAntenna(), label);
+        }
+
+        RxApplet applet(slice, &model);
+        applet.setSliceAccess(controlled());
+        QPushButton* button = applet.findChild<QPushButton*>(QStringLiteral("m_rxAntBtn"));
+        QVERIFY(button);
+        if (!initialPopulate) {
+            slice->setRxAntenna(label);
+        }
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), slot);
+        QCOMPARE(slice->rxAntenna(), label);
+        QCOMPARE(button->text(), label);
+        QCOMPARE(slice->txAntenna(), QStringLiteral("ANT3"));
+        QCOMPARE(txSpy.count(), 0);
+
+        // A real main-ANT selection must still release the RX-only mux.
+        slice->setRxAntenna(QStringLiteral("ANT1"));
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 0);
+        QCOMPARE(slice->rxAntenna(), QStringLiteral("ANT1"));
+        QCOMPARE(button->text(), QStringLiteral("ANT1"));
+    }
+
+    void listened_applet_does_not_echo_rx_only_controller_changes()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANAN7000D);
+        model.addPanadapter();
+        model.panadapters().first()->setBand(Band::Band20m);
+        model.addSlice();
+        model.addSlice();
+        SliceModel* slice = model.sliceById(0) == model.activeSlice()
+            ? model.sliceById(1) : model.sliceById(0);
+        QVERIFY(slice);
+        RxApplet applet(slice, &model);
+        applet.setSliceAccess(listened());
+        const QString before = slice->rxAntenna();
+        QSignalSpy rxSpy(slice, &SliceModel::rxAntennaChanged);
+        model.alexControllerMutable().setRxOnlyAnt(Band::Band20m, 1);
+        QCOMPARE(model.alexController().rxOnlyAnt(Band::Band20m), 1);
+        QCOMPARE(rxSpy.count(), 0);
+        QCOMPARE(slice->rxAntenna(), before);
         QCOMPARE(applet.findChild<QPushButton*>(QStringLiteral("m_rxAntBtn"))->text(), before);
     }
 
