@@ -550,7 +550,7 @@ if(TARGET wdsp_static)
     # before a rebuild never run; the unkey drain is measured. REALTIME: it
     # holds the event loop's 10 ms timer to a wall-clock bound. It plans
     # through the shared wisdom cache, so the default 120 s holds.
-    nereus_add_test(tst_dsp_control_transmit EXTRA_LABELS core REALTIME)
+    nereus_add_test(tst_dsp_control_transmit CORE_ONLY EXTRA_LABELS core REALTIME)
     # Task 33 (R-IOS-03): stopping transmission at once. With both lanes
     # held for 200 ms, stopTransmitNow returns within 2 ms with the RF gate
     # shut and MOX off at the connection before either lane is free, and no
@@ -4622,7 +4622,7 @@ target_compile_definitions(tst_tx_channel_dexp_gate PRIVATE NEREUS_BUILD_TESTS)
 #   wdsp/dexp.c:399-403      — SendCBPushDexpVox setter signature
 #   cmaster.cs:1125          — Thetis analogue registration callsite
 #   cmaster.cs:1903-1906     — Thetis VOX.PushVox callback body
-nereus_add_test(tst_tx_channel_pushvox_callback)
+nereus_add_test(tst_tx_channel_pushvox_callback CORE_ONLY)
 target_compile_definitions(tst_tx_channel_pushvox_callback PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-3a-iii Task 18 (bench fix): TxChannel VOX-listening pump gate ──
