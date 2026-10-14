@@ -1,4 +1,4 @@
-// NereusSDR-original local drawing contract, GPLv3.
+// NereusSDR for iOS: retained 3D row quiet levels and overhang sample coverage
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-10-12 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.

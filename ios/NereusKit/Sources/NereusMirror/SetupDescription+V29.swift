@@ -1,4 +1,4 @@
-// NereusSDR-original: exact V29 Display and Appearance client contract.
+// NereusSDR for iOS: exact V29 Display and Appearance client contract
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 

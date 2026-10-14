@@ -1,4 +1,4 @@
-// NereusSDR-original: local V29 phone carriers and measured-floor boundary.
+// NereusSDR for iOS: local V29 phone carriers and measured-floor boundary
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 

@@ -1,4 +1,4 @@
-// NereusSDR-original: actual approved Phone picture/rendering regressions.
+// NereusSDR for iOS: actual approved Phone picture and rendering regressions
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
@@ -29,9 +29,7 @@ import Testing
         #expect(BandDisplaySettings.desktopDefaults.traceWidthPoints == 0.5) // Existing client initial default.
     }
 
-    @Test func freshReceiveCustomStartsFromTheExactNativeDefaultWhileTransmitKeepsItsInitialDefinition() {
-        // Independent constants: WaterfallPalettes.cpp:75–85 kDefaultStops.
-        // Float positions retain the current native constants' encoding.
+    @Test func freshReceiveCustomStartsFromTheAcceptedPhoneDefaultWhileTransmitKeepsItsInitialDefinition() {
         let expected = [PaletteStop(at: 0, colour: "#000000"),
             PaletteStop(at: Double(Float(0.15)), colour: "#000080"),
             PaletteStop(at: Double(Float(0.30)), colour: "#0040FF"),
@@ -44,10 +42,11 @@ import Testing
         #expect(settings.waterfallPaletteId == 0) // ef74a7707 BandDisplaySettings.swift:131 existing Phone initial choice.
     }
 
-    @Test func existingAmateurBoundaryFactsDriveLookupAndActualSharedColourPixels() throws {
-        // Band.cpp:123–149 identity ranges, not a regional/legal band plan.
-        #expect(BandRenderer.bandEdgeHz(in: BandCoverage(centerHz: 7_150_000, spanHz: 400_000)) == [7_000_000, 7_300_000])
-        #expect(BandRenderer.bandEdgeHz(in: BandCoverage(centerHz: 146_000_000, spanHz: 5_000_000)) == [144_000_000, 148_000_000])
+    @Test func offlineAmateurBoundariesDriveLookupAndActualSharedColourPixels() throws {
+        #expect(BandRenderer.bandEdgeHz(in: BandCoverage(centerHz: 7_150_000, spanHz: 400_000))
+            == [7_000_000, 7_300_000])
+        #expect(BandRenderer.bandEdgeHz(in: BandCoverage(centerHz: 146_000_000, spanHz: 5_000_000))
+            == [144_000_000, 148_000_000])
         #expect(BandRenderer.bandEdgeHz(in: BandCoverage(centerHz: 10_000_000, spanHz: 100_000)).isEmpty)
         let target = try Offscreen(width: 400, height: 600)
         let renderer = try BandRenderer(device: target.device)
@@ -127,6 +126,18 @@ import Testing
         #expect(state.stack.count == 2)
         let current = try #require(state.stack.row(age: 0))
         #expect(!current.contains(-40))
+    }
+
+    @Test func waterfallBlankerSuppressesAnImpulseAndFreezesItsReceiveBaselineDuringTransmit() {
+        var blanker = WaterfallBlanker()
+        let quiet = [Float](repeating: -100, count: 16)
+        let impulse = [Float](repeating: -80, count: 16)
+        for _ in 0..<8 {
+            #expect(blanker.filtered(quiet, enabled: true, transmitting: false, thresholdDb: 6) == quiet)
+        }
+        #expect(blanker.filtered(impulse, enabled: true, transmitting: true, thresholdDb: 6) == impulse)
+        #expect(blanker.filtered(impulse, enabled: true, transmitting: false, thresholdDb: 6) == quiet)
+        #expect(blanker.filtered(impulse, enabled: false, transmitting: false, thresholdDb: 6) == impulse)
     }
 
     @Test func trackFloorUsesTheStoredDbStepForItsFinalPairGapWithoutChangingKeptEndpoints() {

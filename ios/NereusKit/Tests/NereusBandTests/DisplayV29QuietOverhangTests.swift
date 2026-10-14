@@ -1,4 +1,4 @@
-// NereusSDR-original: accepted call56 retained real row quiet and actual Metal consumer.
+// NereusSDR for iOS: accepted call56 retained real row quiet and actual Metal consumer
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 

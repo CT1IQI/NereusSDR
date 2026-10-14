@@ -1,4 +1,4 @@
-// NereusSDR-original: master, sparse own and shared Phone picture scope.
+// NereusSDR for iOS: master, sparse own and shared Phone picture scope
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 

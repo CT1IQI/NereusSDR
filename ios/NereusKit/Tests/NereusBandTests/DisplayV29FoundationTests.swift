@@ -1,4 +1,4 @@
-// NereusSDR-original: approved V29 local mode and level-storage regressions.
+// NereusSDR for iOS: approved V29 local mode and level-storage regressions
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
