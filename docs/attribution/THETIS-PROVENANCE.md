@@ -22,13 +22,37 @@ Template variant (see `HEADER-TEMPLATES.md`):
 - `mi0bot`              — sourced from mi0bot/Thetis-HL2 fork
 - `multi-source`        — synthesizes multiple Thetis sources
 
+## Original Swift implementations excluded from this inventory
+
+The Display publication compliance repair of October 14, 2026 replaced five
+earlier Swift translations with original NereusSDR expression. They therefore
+do not belong in this derived-file inventory:
+
+- `ios/NereusKit/Sources/NereusBand/StackTraceFold.swift` implements the
+  accepted Phone endpoint, context and cadence contract directly in Swift.
+- `ios/NereusKit/Sources/NereusBand/DisplayBandEdges.swift` records factual
+  frequency boundaries from the published ARRL US band chart plus the accepted
+  outward-rounded 60 m display envelope; it is not a transmit-permission plan.
+- `ios/NereusKit/Sources/NereusBand/DisplayReceiveDefaultPalette.swift` records
+  the accepted NereusSDR product-design positions and colours; the Phone's
+  interpolation and drawing remain original app code.
+- `ios/NereusKit/Sources/NereusBand/ClarityLevels.swift` independently expresses
+  the accepted NereusSDR level and migration contracts while retaining their
+  numeric settings compatibility.
+- `ios/NereusKit/Sources/NereusBand/WaterfallBlanker.swift` independently
+  expresses the accepted blanker behavior in Swift. AetherSDR remains a
+  behavioral reference for the native desktop port recorded in
+  `AETHERSDR-PROVENANCE.md`; no upstream source expression or comments remain in
+  the Swift file.
+
+This replacement changed source expression and provenance only. The accepted
+defaults, public APIs, compatibility values and tested behavior remain the
+same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
+
 ## Files derived from ramdor/Thetis
 
 | NereusSDR file | Thetis source | Line ranges | Type | Variant | Notes |
 | --- | --- | --- | --- | --- | --- |
-| ios/NereusKit/Sources/NereusBand/StackTraceFold.swift | Native src/gui/SpectrumWidget.cpp:9566–9632; original owning display.cs/console.cs notices [v2.10.3.15] | exact/wide peak fold | port | multi-source | Existing committed Phone endpoint/context/coverage replaces native DDC/source capture identity. Incomplete folds retire without deleting painted history; held ticks are excluded; lower cadence pushes on current tick. Full native source prefix and all owning inline fold comments preserved. No DSP or wire change. |
-| ios/NereusKit/Sources/NereusBand/DisplayBandEdges.swift | Native src/models/Band.cpp:123–149; console.cs and clsBandStackManager.cs:1330,1346–1729,1240 [v2.10.3.15] | existing identity boundaries | port | multi-source | Exact native twelve union intervals for local picture edge painting; full native owning source notices preserved, including both original GPL/dual-license blocks and every table comment. No legal/regional permission inference or transport change. |
-| ios/NereusKit/Sources/NereusBand/DisplayReceiveDefaultPalette.swift | Native src/core/spectrum/WaterfallPalettes.cpp:75–85; AetherSDR SpectrumWidget.cpp:43–51 | seven Default stops | port | multi-source | Exact native Float stop positions and RGB constants as the approved fresh receive Custom seed; existing TX seed and saved user gradients survive. Full native display.cs owning notices preserved; AetherSDR author/project citation under no-per-file-header rule. All color comments retained. |
 | src/core/cat/CatStreamFramer.h | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-306 [v2.10.3.15 @3759d096] | port | project-level | Thetis's 255-character line buffer (:295) is the request cap, so long commands reach the parser and get its (verbose) error; past it, the command is dropped silently through its terminator, as Thetis clears with no reply. CR+LF pairs removed anywhere (:280) and leading white space trimmed per frame (:306); payload case and inner spaces preserved. Serial sessions share this TCP framing (Thetis serial has no cap). Exact author/inspiration notice and project GPL attribution. |
 | src/core/cat/CatStreamFramer.cpp | Project Files/Source/Console/CAT/TCPIPcatServer.cs | 275-306 [v2.10.3.15 @3759d096] | port | project-level | Thetis's 255-character line buffer (:295) is the request cap, so long commands reach the parser and get its (verbose) error; past it, the command is dropped silently through its terminator, as Thetis clears with no reply. CR+LF pairs removed anywhere (:280) and leading white space trimmed per frame (:306); payload case and inner spaces preserved. Serial sessions share this TCP framing (Thetis serial has no cap). Exact author/inspiration notice and project GPL attribution. |
 | src/core/cat/CatSerialTransport.h | Project Files/Source/Console/CAT/SDRSerialPortII.cs | 91,234-241,265-268 [v2.10.3.15 @3759d096] | port | GPL-2.0-or-later | Main-thread QSerialPort byte/configuration lifecycle with explicit checked formats and composite CTS/DSR sampling; independent bounded output and injected device seam. |
@@ -654,14 +678,6 @@ TX/Tune/TwoTone, VOX enable and PureSignal single/calibration are denied.
 These changes are original adaptation by J.J. Boyd (KG4VCF), AI-assisted via
 OpenAI Codex. Existing source headers, inline comments and constants are retained.
 
-
-## Swift translation of the existing AetherSDR-derived level helper
-
-| NereusSDR file | Source | Line ranges | Type | Notices | Notes |
-| --- | --- | --- | --- | --- | --- |
-| ios/NereusKit/Sources/NereusBand/ClarityLevels.swift | src/core/spectrum/ClarityLevels.h; original AetherSDR src/gui/SpectrumWidget.cpp [@1e0718ad] | NereusSDR71–178; Aether11588–11593,11928 | port | Existing ClarityLevels.h source header and every inline comment copied verbatim; upstream has no per-file header | Swift Float preserves the original float constants, Double conversion preserves float-to-double promotion, ties round away from zero as C++lround. Same Black/Gain defaults, oldBlack-dependent legacy conversion and clamps; no DSP change. J.J. Boyd (KG4VCF), October12,2026, AI-assisted via OpenAI Codex. |
-
-| ios/NereusKit/Sources/NereusBand/WaterfallBlanker.swift | src/gui/SpectrumWidget.cpp; original AetherSDR src/gui/SpectrumWidget.cpp / .h [@1e0718ad] | NereusSDR5202–5264; Aether8449,8460/.h1771–1779 | port | SpectrumWidget.cpp complete mixed-source GPL/Samphire/source header copied byte-for-byte; every original blankWaterfallRow comment retained | Same32-row linear-power ring,8-row warmup,1.05f burst cap, TX freeze and last-good-row replacement. NereusSDR's approved dB threshold retained. Display-only phone history integration; no I/Q/WDSP/audio path change. J.J. Boyd (KG4VCF), October12,2026, AI-assisted via OpenAI Codex. |
 
 ## Accepted Phone retained quiet-overhang contract
 
