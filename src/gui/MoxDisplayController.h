@@ -31,6 +31,9 @@
 //     only; here, the pan hosting the transmit slice.
 //
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd / KG4VCF  Export the controller's Qt signal
+//                 addresses from the Windows GUI DLL. AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
@@ -55,6 +58,8 @@
 
 #pragma once
 
+#include "gui/NereusGuiExport.h"
+
 #include <functional>
 
 #include <QMetaObject>
@@ -72,7 +77,7 @@ class SliceModel;
 class SpectrumWidget;
 class StationClient;
 
-class MoxDisplayController : public QObject {
+class NEREUS_GUI_EXPORT MoxDisplayController : public QObject {
     Q_OBJECT
 
 public:

@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 — Export the widget's Qt signal addresses from the Windows
+//                 GUI DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - VFO flag crash lane: lockButtonForTest, sliceForTest.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
@@ -353,6 +355,7 @@ warren@wpratt.com
 #include "core/BoardCapabilities.h"
 #include "core/SkuUiProfile.h"
 #include "core/WdspTypes.h"
+#include "gui/NereusGuiExport.h"
 #include "models/SliceModel.h"
 #include "VfoLevelBar.h"
 #include "ScrollableLabel.h"
@@ -392,7 +395,7 @@ enum class HPSDRModel : int;  // forward declaration — Phase 3P-I-b T9
 //   Tab pages: (collapsible content)
 //
 // From AetherSDR VfoWidget.h pattern.
-class VfoWidget : public QWidget {
+class NEREUS_GUI_EXPORT VfoWidget : public QWidget {
     Q_OBJECT
 
 public:

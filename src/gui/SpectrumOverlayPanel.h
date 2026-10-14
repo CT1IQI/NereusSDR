@@ -30,6 +30,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Levels tab added; saved Fft and View3D tokens retained.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-13 - Export the panel's Qt signal addresses from the Windows
+//                 GUI DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Ported/adapted in C++20/Qt6 for NereusSDR by
 //                 J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                 via Anthropic Claude Code.
@@ -93,6 +95,7 @@
 #pragma once
 
 #include "core/ControlRanges.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QColor>
 #include <QHash>
@@ -141,7 +144,7 @@ struct DisplayPillFftState {
     double lastHzPerBinTarget{0.0};
 };
 
-class SpectrumOverlayPanel : public QWidget {
+class NEREUS_GUI_EXPORT SpectrumOverlayPanel : public QWidget {
     Q_OBJECT
 
 public:
