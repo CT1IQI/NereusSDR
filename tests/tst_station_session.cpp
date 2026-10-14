@@ -89,6 +89,7 @@
 #include "core/HardwareProfile.h"
 #include "core/MoxController.h"
 #include "core/P1RadioConnection.h"
+#include "core/SettingsFileWriter.h"
 #include "core/security/CertificateStore.h"
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/DeviceAuthenticator.h"
@@ -2127,6 +2128,7 @@ void TstStationSession::remoteTgxlConfigureAcceptanceStartsIdentityOnly()
              QStringLiteral("127.0.0.1"));
     QCOMPARE(stationModel->peripheralValue(QStringLiteral("TGXL_ManualPort")),
              QString::number(tgxl.serverPort()));
+    AppSettings::instance().backgroundSaveNotifier()->waitUntilIdle();
     AppSettings persisted(AppSettings::instance().filePath());
     persisted.load();
     QCOMPARE(persisted.hardwareValue(stationModel->currentRadioMac(),
