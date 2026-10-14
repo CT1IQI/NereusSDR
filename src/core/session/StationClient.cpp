@@ -527,6 +527,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13: Route PS two-tone through the transmit keepalive tracker,
+//               preserving PS wire/result phases. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -1009,6 +1012,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // copies rule); the Core acts on the first and answers every copy.
     m_remoteTransmit = new RemoteTransmitClient(
         [this](const QByteArray& verb, const QList<MirrorUpdate>& arguments) -> quint32 {
+            if (verb == "ps3.twoTone") {
+                // PS's asynchronous stop handler refuses a same-ID copy
+                // while pending. Preserve its existing single submission.
+                return invokeCommand(verb, arguments);
+            }
             if (!remoteTransmitAvailable()) {
                 return 0;
             }
@@ -3680,6 +3688,11 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         [self](Ps3Action action, const QVariantMap& arguments) -> quint32 {
         if (!self || !self->propertyResultsAvailable() || self->m_capabilities.psAlgorithmVersion != 3) {
             return 0;
+        }
+        if (action == Ps3Action::SetTwoTone
+            && PureSignalSessionFacade::argumentsFit(action, arguments)) {
+            return self->m_remoteTransmit->requestPureSignalTwoTone(
+                arguments.value(QStringLiteral("enabled")).toBool());
         }
         const auto values = dspCommandValues(arguments);
         return values ? self->invokeCommand(PureSignalSessionFacade::actionVerb(action), *values) : 0;
@@ -7902,6 +7915,14 @@ void StationClient::handleCommandResult(const SessionMessage& message)
         || message.commandVerb == "records.unsubscribe") {
         m_pendingCommands.remove(message.commandId);
         return;
+    }
+    if (message.commandVerb == "ps3.twoTone" && m_remoteTransmit != nullptr) {
+        const QPointer<StationClient> self(this);
+        const quint32 epoch = m_sessionEpoch;
+        m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,
+                                          message.accepted, message.reason, message.updates);
+        if (!self || m_sessionEpoch != epoch || !m_sessionActive) { return; }
+        // Continue through the PS facade's phase/operation-result path below.
     }
     if (message.commandVerb == "tx.key" || message.commandVerb == "tx.unkey"
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
