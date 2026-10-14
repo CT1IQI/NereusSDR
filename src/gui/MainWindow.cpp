@@ -690,6 +690,10 @@
 //                teardown no longer reaches this window's meter source
 //                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Also detach the common power meter before RadioModel
+//                teardown, so its destroyed hook cannot republish binding
+//                support through the dying window. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-09 - Workspace preview only: the zoom bar carries
 //                kVisibleTrackProperty, so its track reads against the bar
 //                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1969,11 +1973,12 @@ MainWindow::~MainWindow()
     // parked native applet safely back into this window.
     if (m_meterPoller) {
         m_meterPoller->stop();
-        // The poller lets go of the model's PA readings and status now. QObject
-        // destroys the RadioModel child before the poller, and the poller's
-        // destroyed hooks republished binding support from inside that
-        // teardown, into this window's source lambdas, which read the model's
-        // already deleted slices.
+        // The poller lets go of the model's common power meter, PA readings,
+        // and status now. QObject destroys the RadioModel child before the
+        // poller, and the poller's destroyed hooks republished binding support
+        // from inside that teardown, into this window's source lambdas, which
+        // read the model's already deleted slices.
+        m_meterPoller->setMainPowerMeter(nullptr);
         m_meterPoller->setPaReadingsModel(nullptr);
         m_meterPoller->setRadioStatus(nullptr);
     }
