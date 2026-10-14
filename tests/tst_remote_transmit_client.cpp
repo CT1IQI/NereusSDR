@@ -41,6 +41,9 @@
 //               on, with the Core ending the key on its own, with MOX off,
 //               and with the screen key's release. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-14: a replacement session started by the retirement key-up edge
+//               still completes the retired program request. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -762,6 +765,32 @@ private slots:
         client.setScreenKey(true);
         QCOMPARE(refused.count(), 1);
         QVERIFY(!client.micKeyDown());
+    }
+
+    void aReplacementDuringRetirementStillAnswersTheWaitingProgram()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        client.setAvailable(true);
+        client.setScreenKey(true);
+        QString programReason;
+        bool programAnswered = false;
+        client.keyForProgram(false, [&](const RemoteTransmitClient::Answer& a) {
+            programAnswered = true;
+            programReason = a.reason;
+        });
+        QObject::connect(&client, &RemoteTransmitClient::micKeyDownChanged,
+                         &client, [&](bool down) {
+            if (!down) {
+                client.setAvailable(true);
+            }
+        });
+
+        client.retireSession();
+
+        QVERIFY(programAnswered);
+        QCOMPARE(programReason, QString::fromLatin1(RemoteTransmitClient::kNoLinkReason));
+        QVERIFY(client.available());
     }
 
     // ---- Task 37: the keepalive -------------------------------------------

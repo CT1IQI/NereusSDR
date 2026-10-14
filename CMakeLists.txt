@@ -1360,6 +1360,10 @@ set(CORE_SOURCES
     # server_main.cpp (R1 Task 9) run the identical sequence instead of a
     # daemon-first install running against an unmigrated settings store.
     src/core/CoreInit.cpp
+    # Where a process keeps its saved FFT plans. The app names its folder
+    # to the background Core it starts, so that Core reuses the plans the
+    # app already built instead of building them again while the radio waits.
+    src/core/DspCacheLocation.cpp
     # R1 Task 9: nereusd's own "key = value" config file parser (default
     # /etc/nereusd.conf). Widget-free by construction (QString/QFile/
     # QTextStream only) so it links into nereusd alongside NereusCore with

@@ -125,6 +125,8 @@
 //               via Anthropic Claude Code.
 //   2026-10-06: Issue #351: m_radioInPlaceDeadline. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setSecurityDirectory (nereusd --security-dir). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/RadioDiscovery.h"       // RadioInfo, RadioDiscovery, HPSDRHW
@@ -222,6 +224,13 @@ public:
     // and accepts. Call before start(); empty (the default) keeps the
     // build's own list. Only a debug build's --test-link-majors sets it.
     void setLinkMajors(const QList<quint16>& majors) { m_linkMajors = majors; }
+
+    // Where the hosted Core keeps its certificate, its identity key and its
+    // paired devices. Call before start(); empty (the default) keeps the
+    // profile's own folder (CertificateStore::defaultDirectory). The
+    // desktop app's background Core is given the app's folder
+    // (--security-dir), so it is the Core the app's devices are paired with.
+    void setSecurityDirectory(const QString& directory) { m_securityDirectory = directory; }
 
     // Tears down in reverse: drops every FFT-topology subscription this
     // run created (via clearFftTopology(), which pushes the removal to
@@ -597,6 +606,7 @@ private:
     std::unique_ptr<StationControlCommands> m_controlCommands;
     std::unique_ptr<StationControlSocket> m_controlSocket;
     QList<quint16> m_linkMajors;
+    QString m_securityDirectory;
     int m_stationListenRetryInitialMs {1000};
     int m_stationListenRetryMaximumMs {30000};
     std::unique_ptr<DnsSdAdvertiser> m_testDnsSdAdvertiser;

@@ -557,6 +557,9 @@ public slots:
         sw.hpfBypass     = m_alexHpfBypass;
         sw.disable6mLnaOnRx = m_disable6mLnaOnRx;
         sw.disable6mLnaOnTx = m_disable6mLnaOnTx;
+        // What HPF Bypass sends on the radio in use: 0x20, or on the radio
+        // whose bypass passes nothing the five band filters.
+        sw.receiveBypass = codec::alex::receiveBypassSelection(m_hardwareProfile.model);
         return sw;
     }
 

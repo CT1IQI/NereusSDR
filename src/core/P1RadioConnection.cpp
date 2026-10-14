@@ -180,6 +180,8 @@
 //                the start went out), attempts come 1 s apart (was 5 s), and
 //                inPlaceRecoveryMs tells the owner how long they run.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
+//                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 /*
@@ -2947,6 +2949,15 @@ double P1RadioConnection::txIqRingLengthMs() const
 {
     static constexpr double kWireRateHz = 48000.0;
     return static_cast<double>(kTxIqBufSamples) * 1000.0 / kWireRateHz;
+}
+
+double P1RadioConnection::txIqQueuedMs() const
+{
+    // The same P1 EP2 wire rate as txIqRingLengthMs, independent of RX rate.
+    // From Thetis ChannelMaster/networkproto1.c:724-725 [v2.10.3.15] — P1 I/Q/LR output at 48 kHz.
+    static constexpr double kWireRateHz = 48000.0;
+    return static_cast<double>(m_txIqCount.load(std::memory_order_acquire))
+        * 1000.0 / kWireRateHz;
 }
 
 // ---------------------------------------------------------------------------

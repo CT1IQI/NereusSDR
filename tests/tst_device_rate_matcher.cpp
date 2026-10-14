@@ -25,6 +25,14 @@
 //               steady packets, batches and a stall with no overrun while
 //               it matches the clocks. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: the packet writer's harness says when each packet was
+//               handed over and how long it waited, as the receiver does;
+//               after a stall the backlog is played down at the matcher's
+//               0.5% and nothing is left standing (R-AUD-15). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13: A BLOCK writer resumes after repeated intentional gaps
+//               without treating the continuously running reader as clock
+//               drift. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest>
@@ -37,6 +45,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <future>
 #include <limits>
 #include <memory>
@@ -104,6 +113,7 @@ public:
         bool reference = false;          // feed WDSP's rmatchV instead of ours
         double readerSkipAtSeconds = -1;  // the reader skips 50 ms of calls here
         double writerBurstAtSeconds = -1; // the writer delivers 100 ms at once here
+        double writerHiatusAtSeconds = -1; // source time continues; no writes for 5 s
     };
 
     explicit ClockSim(const Options& options)
@@ -190,7 +200,10 @@ private:
             m_matcher.write(m_burstBuffer.data(), frames, nowNs);
         }
         m_source.fill(m_writeBuffer.data(), kWriteFrames);
-        if (feedsOurs()) {
+        const bool inHiatus = m_options.writerHiatusAtSeconds >= 0.0
+            && time >= static_cast<std::int64_t>(m_options.writerHiatusAtSeconds * m_unitsPerSecond)
+            && time < static_cast<std::int64_t>((m_options.writerHiatusAtSeconds + 5.0) * m_unitsPerSecond);
+        if (feedsOurs() && !inHiatus) {
             m_matcher.write(m_writeBuffer.data(), kWriteFrames, nowNs);
         }
 #ifdef HAVE_WDSP
@@ -277,6 +290,9 @@ private slots:
     void callerMemory();
     void driftMatchesRmatch();
     void forcedDryRunStepsUpOnce();
+    void blockWriterRecoversAfterHiatus_data();
+    void blockWriterRecoversAfterHiatus();
+    void blockWriterReacquiresRealDriftAfterHiatus();
     void forcedOverrunStaysSmooth();
     void flushRestartAndFade();
     void flushLeavesNothingOfTheEarlierAudio();
@@ -463,6 +479,176 @@ void TestDeviceRateMatcher::driftMatchesRmatch()
                  qPrintable(QStringLiteral("ppm %1: ratio %2 vs rmatchV %3")
                                 .arg(ppm).arg(result.ratio, 0, 'f', 9).arg(reference, 0, 'f', 9)));
         QVERIFY(result.maxStep <= kMaxAllowedStep);
+    }
+#endif
+}
+
+// Equal clocks with a continuous reader: intentional missing writes must
+// recover as well as transport silence. Counter checks start at the first
+// resumed write; continuity starts after 50 ms of existing padding/fade.
+// Ratio agreement uses
+// driftMatchesRmatch's final minute of 600 s and its unchanged tolerance.
+// Keep the earlier 30-60 s ratio diagnostic: neither arm is necessarily
+// settled then. Real varsamp, no forced ratio, repeated 0.5, 5 and 30 s gaps.
+void TestDeviceRateMatcher::blockWriterRecoversAfterHiatus_data()
+{
+    QTest::addColumn<int>("callbackFrames");
+    QTest::addColumn<double>("warmupSeconds");
+    QTest::addColumn<int>("delayMs");
+    for (int callback : {64, 128, 256, 512}) {
+        for (double warmup : {2.8, 40.0}) {
+            QTest::addRow("callback%d-warm%.1f", callback, warmup) << callback << warmup << 0;
+        }
+    }
+    QTest::addRow("callback512-warm400") << 512 << 400.0 << 0;
+    QTest::addRow("callback128-fixed20") << 128 << 40.0 << 20;
+}
+
+void TestDeviceRateMatcher::blockWriterRecoversAfterHiatus()
+{
+#ifndef HAVE_WDSP
+    QSKIP("Recovery acceptance needs the production variable resampler");
+#else
+    QFETCH(int, callbackFrames);
+    QFETCH(double, warmupSeconds);
+    QFETCH(int, delayMs);
+    const DeviceRateMatcher::Config config{kRate, kRate, kWriteFrames, callbackFrames, delayMs};
+    DeviceRateMatcher gap(config);
+    DeviceRateMatcher zeros(config);
+    MatcherReader gapReader = gap.makeReader();
+    MatcherReader zeroReader = zeros.makeReader();
+    QVERIFY(gap.valid() && zeros.valid() && gapReader.valid() && zeroReader.valid());
+    std::array<DeviceRateMatcher*, 2> matchers{&gap, &zeros};
+    std::array<MatcherReader*, 2> readers{&gapReader, &zeroReader};
+    std::vector<float> tone(kWriteFrames * 2);
+    const std::vector<float> silence(kWriteFrames * 2, 0.0f);
+    std::vector<float> output(static_cast<std::size_t>(callbackFrames) * 2);
+    SineSource source;
+    std::array<double, 2> last{};
+    std::int64_t nextWriter = 0;
+    std::int64_t nextReader = 0;
+    std::int64_t keyBegin = static_cast<std::int64_t>(warmupSeconds * kRate);
+
+    for (double duration : {0.5, 5.0, 30.0}) {
+        const std::int64_t keyEnd = keyBegin + static_cast<std::int64_t>(duration * kRate);
+        const std::int64_t recoveryBegin = keyEnd + kRate / 20;
+        const std::int64_t sampleBegin = keyEnd + 540 * kRate;
+        const std::int64_t end = keyEnd + 600 * kRate;
+        std::array<DeviceRateMatcherStats, 2> before{};
+        std::array<DeviceRateMatcherStats, 2> resume{};
+        std::array<double, 2> ratioSum{};
+        std::array<double, 2> earlyRatioSum{};
+        std::array<double, 2> maxStep{};
+        std::uint64_t ratioSamples = 0;
+        std::uint64_t earlyRatioSamples = 0;
+        bool keyed = false;
+        bool resumed = false;
+        while (nextWriter < end || nextReader < end) {
+            if (nextWriter <= nextReader) {
+                if (!keyed && nextWriter >= keyBegin) {
+                    keyed = true;
+                    for (std::size_t arm = 0; arm < matchers.size(); ++arm) {
+                        before[arm] = matchers[arm]->stats();
+                    }
+                }
+                source.fill(tone.data(), kWriteFrames); // source time also advances in the gap
+                const bool inGap = nextWriter >= keyBegin && nextWriter < keyEnd;
+                const std::int64_t nowNs = nextWriter * 1'000'000'000LL / kRate;
+                if (!inGap) {
+                    gap.write(tone.data(), kWriteFrames, nowNs);
+                }
+                zeros.write(inGap ? silence.data() : tone.data(), kWriteFrames, nowNs);
+                if (!resumed && nextWriter >= keyEnd) {
+                    resumed = true;
+                    for (std::size_t arm = 0; arm < matchers.size(); ++arm) {
+                        resume[arm] = matchers[arm]->stats();
+                    }
+                }
+                if (nextWriter >= keyEnd + 30 * kRate && nextWriter < keyEnd + 60 * kRate) {
+                    for (std::size_t arm = 0; arm < matchers.size(); ++arm) {
+                        earlyRatioSum[arm] += matchers[arm]->ratio();
+                    }
+                    ++earlyRatioSamples;
+                }
+                if (nextWriter >= sampleBegin) {
+                    for (std::size_t arm = 0; arm < matchers.size(); ++arm) {
+                        ratioSum[arm] += matchers[arm]->ratio();
+                    }
+                    ++ratioSamples;
+                }
+                nextWriter += kWriteFrames;
+            } else {
+                for (std::size_t arm = 0; arm < readers.size(); ++arm) {
+                    readers[arm]->read(output.data(), callbackFrames);
+                    for (int f = 0; f < callbackFrames; ++f) {
+                        const double sample = output[static_cast<std::size_t>(2 * f)];
+                        if (nextReader + f >= recoveryBegin) {
+                            maxStep[arm] = std::max(maxStep[arm], std::abs(sample - last[arm]));
+                        }
+                        last[arm] = sample;
+                    }
+                }
+                nextReader += callbackFrames;
+            }
+        }
+        QVERIFY(ratioSamples > 0);
+        QVERIFY(earlyRatioSamples > 0);
+        const double gapMean = ratioSum[0] / ratioSamples;
+        const double zeroMean = ratioSum[1] / ratioSamples;
+        qInfo("callback %d warm %.1f gap %.1f: ratio %.9f vs zeros %.9f; resumed active %d step %d -> %d",
+              callbackFrames, warmupSeconds, duration, gapMean, zeroMean, resume[0].controlActive,
+              before[0].delayStepMs, resume[0].delayStepMs);
+        qInfo("early 30-60 s ratio %.9f vs zeros %.9f; recovery max steps %.9f and %.9f",
+              earlyRatioSum[0] / earlyRatioSamples, earlyRatioSum[1] / earlyRatioSamples,
+              maxStep[0], maxStep[1]);
+        QVERIFY(resume[0].dryRuns > before[0].dryRuns); // silence during the gap is expected
+        QCOMPARE(resume[1].dryRuns, before[1].dryRuns);
+        const auto& steps = DeviceRateMatcher::kDelayStepsMs;
+        const auto beforeIndex = std::find(steps.begin(), steps.end(), before[0].delayStepMs) - steps.begin();
+        const int recoveryStep = delayMs == 0
+            ? steps[std::min(beforeIndex + 1, static_cast<decltype(beforeIndex)>(steps.size() - 1))]
+            : before[0].delayStepMs;
+        QCOMPARE(resume[0].delayStepMs, recoveryStep);
+        for (std::size_t arm = 0; arm < matchers.size(); ++arm) {
+            const DeviceRateMatcherStats final = matchers[arm]->stats();
+            QVERIFY(final.controlActive);
+            QCOMPARE(final.dryRuns, resume[arm].dryRuns);
+            QCOMPARE(final.overruns, resume[arm].overruns);
+            QCOMPARE(final.delayStepMs, resume[arm].delayStepMs);
+            QVERIFY(maxStep[arm] <= kMaxAllowedStep);
+        }
+        QVERIFY2(std::abs(gapMean - zeroMean) <= 10.0e-6,
+                 qPrintable(QStringLiteral("resumed ratio %1 vs transport silence %2")
+                                .arg(gapMean, 0, 'f', 9).arg(zeroMean, 0, 'f', 9)));
+        keyBegin = end;
+    }
+#endif
+}
+
+void TestDeviceRateMatcher::blockWriterReacquiresRealDriftAfterHiatus()
+{
+#ifndef HAVE_WDSP
+    QSKIP("Drift recovery acceptance needs the production variable resampler");
+#else
+    for (int ppm : {200, -200}) {
+        ClockSim::Options options;
+        options.ppm = ppm;
+        options.writerHiatusAtSeconds = 15.0;
+        ClockSim sim(options);
+        sim.runUntil(50.0);
+        const DeviceRateMatcherStats settled = sim.matcher().stats();
+        sim.runUntil(540.0);
+        sim.runUntil(600.0, 540.0);
+        const DeviceRateMatcherStats end = sim.matcher().stats();
+        qInfo("resumed drift %d ppm: ratio %.9f, dry %llu, over %llu, step %d ms", ppm, sim.meanRatio(),
+              static_cast<unsigned long long>(end.dryRuns), static_cast<unsigned long long>(end.overruns),
+              end.delayStepMs);
+        QVERIFY(end.controlActive);
+        QCOMPARE(end.dryRuns, settled.dryRuns);
+        QCOMPARE(end.overruns, settled.overruns);
+        QCOMPARE(end.delayStepMs, settled.delayStepMs);
+        QVERIFY(std::abs(sim.meanRatio() - (1.0 + ppm * 1.0e-6)) <= 10.0e-6);
+        QVERIFY(sim.maxStep() <= kMaxAllowedStep);
     }
 #endif
 }
@@ -841,12 +1027,13 @@ void TestDeviceRateMatcher::packetWriterSizeHoldsAPacket()
 }
 
 // The packet writer with its room rule (a packet is written when
-// queuedFrames + packetOutFrames is within packetHighWaterFrames, and is
-// said to have waited when it was kept back), on two simulated clocks 300
-// ppm apart: packets one at a time, in batches of seven as a link delivers
-// them, and after the source stopped for 250 ms and its backlog came at
-// once.  The ring never overruns, the device runs dry only while the
-// source is stopped, and the control still finds the clocks' ratio.
+// queuedFrames + packetOutFrames is within packetHighWaterFrames, and says
+// how long it was kept back), on two simulated clocks 300 ppm apart:
+// packets one at a time, in batches of seven as a link delivers them, and
+// after the source stopped for 250 ms and its backlog came at once.  The
+// ring never overruns, the device runs dry only while the source is
+// stopped, the control still finds the clocks' ratio, and a backlog is
+// played out no faster than the matcher's limit.
 void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks_data()
 {
     QTest::addColumn<int>("packetFrames");
@@ -885,15 +1072,20 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
     std::int64_t sent = 0;        // packets the source has made
     std::int64_t delivered = 0;   // packets the link has handed over
     std::int64_t written = 0;
+    std::deque<double> waitingSince;   // when each packet not yet written was handed over
     bool refused = false;
     // The device's dry runs before the first packet are not the stream's.
     std::uint64_t dryAtStart = 0;
     std::uint64_t dryInStall = 0;
     bool stallOver = false;
     std::int64_t keptBackAfterStall = 0;
+    double lowestRatioAfterStall = 2.0;
     int lowestFill = std::numeric_limits<int>::max();
 
     const auto writeWhatFits = [&](double now) {
+        // A packet written in the same pass as one that waited stood
+        // behind it, and waited with it (the receiver's passIntoMatcher).
+        bool behindWaited = false;
         while (written < delivered) {
             const DeviceRateMatcherStats stats = matcher.stats();
             const bool room = stats.packetFrames != packetFrames || stats.queuedFrames <= 0
@@ -909,9 +1101,18 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
                 dryAtStart = stats.dryRuns;
             }
             source.fill(packet.data(), packetFrames);
-            matcher.setWritePacketFrames(packetFrames, refused);
+            // The link handed it over that long ago; kept back, it waited
+            // all that time (at least 1 ns, which says that it waited).
+            MatcherPacketTiming timing;
+            timing.arrivedAgoNs = static_cast<std::int64_t>((now - waitingSince.front()) * 1.0e9);
+            timing.waitedNs
+                = refused || behindWaited ? std::max<std::int64_t>(1, timing.arrivedAgoNs) : 0;
+            timing.sourceFrame = written * packetFrames;
+            matcher.setWritePacketFrames(packetFrames, timing);
             refused = false;
+            behindWaited = timing.waitedNs > 0;
             matcher.write(packet.data(), packetFrames, static_cast<std::int64_t>(now * 1.0e9));
+            waitingSince.pop_front();
             ++written;
         }
     };
@@ -928,6 +1129,7 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
             const bool stalled = stall && now >= kStallAt && now < kStallAt + kStallSeconds;
             if (!stalled) {
                 delivered = sent - sent % batch;
+                waitingSince.resize(static_cast<std::size_t>(delivered - written), now);
             }
             const bool stallEnds = stall && !stallOver && now >= kStallAt + kStallSeconds;
             if (stallEnds) {
@@ -943,15 +1145,21 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
             nextRead += readSeconds;
             reader.read(out.data(), kReadFrames);
             writeWhatFits(now);
+            if (stallOver) {
+                lowestRatioAfterStall = std::min(lowestRatioAfterStall, matcher.stats().ratio);
+            }
         }
     }
 
     const DeviceRateMatcherStats stats = matcher.stats();
+    const double clocksRatio = 1.0 + ppm * 1.0e-6;
     qInfo("ratio %.6f, step %d ms, lowest fill ahead of a packet %d frames, dry runs %llu, "
-          "packets kept back after the stall %lld and at the end %lld",
+          "packets kept back after the stall %lld and at the end %lld, lowest ratio after it "
+          "%.0f ppm from the clocks'",
           stats.ratio, stats.delayStepMs, lowestFill,
           static_cast<unsigned long long>(stats.dryRuns - dryAtStart),
-          static_cast<long long>(keptBackAfterStall), static_cast<long long>(delivered - written));
+          static_cast<long long>(keptBackAfterStall), static_cast<long long>(delivered - written),
+          stall ? (lowestRatioAfterStall - clocksRatio) * 1.0e6 : 0.0);
     QCOMPARE(stats.overruns, std::uint64_t(0));
     QVERIFY(stats.controlActive);
     // Audio stayed queued ahead of every packet.
@@ -960,21 +1168,24 @@ void TestDeviceRateMatcher::packetWriterTakesBurstsAndMatchesTheClocks()
         // The stall outlasted the audio that was queued; nothing ran dry
         // after it.  Its backlog came at once and waited behind the writer
         // (here nothing sheds it, as the receiver's jitter queue would),
-        // and the control plays it out: slower than the clocks' ratio, and
-        // fewer packets are kept back at the end.
+        // and the control plays it out: at its limit of 0.5% (the clocks'
+        // ratio is found to 3e-4 or better, as below), and at the end
+        // nothing stands behind the writer.
         QVERIFY(dryInStall > 0);
         QCOMPARE(stats.dryRuns - dryAtStart, dryInStall);
         QVERIFY(keptBackAfterStall > 1);
-        QVERIFY2(delivered - written < keptBackAfterStall,
+        QVERIFY2(delivered - written <= 1,
                  qPrintable(QStringLiteral("%1 of %2").arg(delivered - written)
                                 .arg(keptBackAfterStall)));
-        QVERIFY(stats.ratio < 1.0 + ppm * 1.0e-6);
+        QVERIFY2(lowestRatioAfterStall < clocksRatio - 0.005 + 3.0e-4
+                     && lowestRatioAfterStall > clocksRatio - 0.005 - 3.0e-4,
+                 qPrintable(QStringLiteral("ratio %1").arg(lowestRatioAfterStall, 0, 'f', 6)));
         return;
     }
     QCOMPARE(stats.dryRuns - dryAtStart, std::uint64_t(0));
     // The clocks' ratio, as the block writer finds it (driftMatchesRmatch),
     // and no backlog built up behind the writer.
-    QVERIFY2(std::abs(stats.ratio - (1.0 + ppm * 1.0e-6)) < 1.0e-4,
+    QVERIFY2(std::abs(stats.ratio - clocksRatio) < 1.0e-4,
              qPrintable(QStringLiteral("ratio %1").arg(stats.ratio, 0, 'f', 6)));
     QVERIFY(delivered - written <= batch);
 }

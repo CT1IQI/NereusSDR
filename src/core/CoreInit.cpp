@@ -197,6 +197,22 @@ void shutdown()
     LogSink::instance().setOutputs(nullptr, false);
 }
 
+bool logAfterShutdown(const QString& profile, const QString& message)
+{
+    LogSink& sink = LogSink::instance();
+    if (sink.isRunning()) {
+        return false;
+    }
+    const QString logDir = AppSettings::resolveConfigDir(profile);
+    QDir().mkpath(logDir);
+    const bool opened = sink.setRotatingOutput(logDir, true);
+    sink.start();
+    qInstallMessageHandler(messageHandler);
+    qCWarning(lcApp).noquote() << message;
+    shutdown();
+    return opened;
+}
+
 #ifdef NEREUS_BUILD_TESTS
 int initializeRunCount()
 {
