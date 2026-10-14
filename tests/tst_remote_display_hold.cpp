@@ -23,6 +23,9 @@
 // and the noise floor carry on; the peak hold and the blobs empty.
 //
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  Display-only fixtures withhold remoteTx
+//                                    so no PC microphone preview is opened.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-11  J.J. Boyd / KG4VCF  The fast spin tests end each step on the
 //                                    frames it waits for, not on a count of
 //                                    frames in a fixed time, which fell
@@ -255,6 +258,8 @@ struct Fixture {
     explicit Fixture(bool withCore, bool statesPicture = true)
         : settings(dir.filePath(QStringLiteral("station.settings")))
     {
+        // These display fixtures offer no microphone line or keying verbs.
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx"));
         if (!statesPicture) {
             client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
         }
@@ -326,7 +331,9 @@ struct Fixture {
             coreMedia->activate();
         }
         windowMedia->activate();
-        return QTest::qWaitFor([this] { return panAsks() >= 1; }, 10'000);
+        return QTest::qWaitFor([this] { return panAsks() >= 1; }, 10'000)
+            && !window->micLineOpen() && !remote.audioEngine()->hasCaptureDemand()
+            && remote.audioEngine()->captureHelperProcessIdForTest() == 0;
     }
 
     void record(const QByteArray& wire)

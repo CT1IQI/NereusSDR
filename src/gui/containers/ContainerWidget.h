@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - dragActive, and the press size a dragged floating window
+//                 is held at. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: operatorSizesHeight() and
 //                 sizingHeightNow(). A popped-out object's window keeps its
 //                 resize corner while its height follows its content; a
@@ -313,6 +316,8 @@ public:
     // Title-bar visibility toggle — from Thetis chkContainerNoTitle
     // (setup.cs:24447). Persistent.
     bool geometryInteractionActive() const { return m_dragging || m_resizing; }
+    // True while a header or title-bar drag moves the container.
+    bool dragActive() const { return m_dragging; }
     void setPopOutShell(bool shell);
     void setHeaderMode(HeaderMode mode);
     HeaderMode headerMode() const { return m_headerMode; }
@@ -518,6 +523,10 @@ private:
     // Ends a drag made under the arrange drop rule: cancelled, the
     // container is back where it started.
     void finishArrangeDrag(bool cancelled, const QPoint& globalPos);
+    // Puts a dragged floating window back at its press size; true when it
+    // had to. Never called from inside a resize event.
+    bool holdDragSize();
+    void endDragSizeHold();
     void endEdgeDrag(bool cancelled, const QPoint& globalPos);
 
     void beginResize(const QPoint& globalPos);
@@ -565,6 +574,20 @@ private:
     QPoint m_dragStartPos;
     QPoint m_resizeStartGlobal;
     QSize m_resizeStartSize;
+    // A drag moves a floating window and never resizes it: the window's
+    // size at the press, put back whenever it is found different while the
+    // drag lasts (holdDragSize). Not valid outside a floating drag.
+    QSize m_dragHoldSize;
+    // One warning per drag.
+    bool m_dragSizeWarned{false};
+    // The resize that puts the size back is under way; nothing answers it.
+    bool m_restoringDragSize{false};
+    // A resize arrived mid-drag: one check is queued, and at most one such
+    // check restores the size between two pointer moves, so a platform
+    // that answers every restore with another resize cannot keep a loop
+    // going through the event queue.
+    bool m_dragSizeCheckQueued{false};
+    bool m_dragSizeQueuedRestoreDone{false};
 
     // --- Docked geometry ---
     QPoint m_dockedLocation;

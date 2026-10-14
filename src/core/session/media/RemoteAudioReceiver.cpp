@@ -6,6 +6,14 @@
 //               room for it; a burst waits in the bounded jitter queue, as
 //               it does on the receiver's own rate matcher. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: a packet kept back for the bus matcher's room is written
+//               with how long it stood ready, so the matcher can tell a
+//               backlog that stands from a packet that came late; and
+//               every packet with how long ago it arrived and its place in
+//               the stream, so the matcher measures the Core's clock by
+//               arrivals and not by what the jitter hold released when
+//               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 #include "core/session/media/RemoteAudioReceiver.h"
 #include "core/AudioEngine.h"
 #include "core/audio/RealtimeAudioPriority.h"
@@ -154,9 +162,15 @@ struct RemoteAudioReceiver::WorkerState {
     quint64 busDryRunsBase = 0;
     quint64 busOverrunsBase = 0;
     // R-AUD-15: the next packet was due and the bus's matcher had no room
-    // for it. The matcher is told when that packet is written, so its
-    // control steers by the packets that did not wait.
+    // for it. The matcher is told when that packet is written, and how
+    // long it stood ready, so its control steers by the packets that did
+    // not wait and plays down a backlog that stands.
     bool matcherRefused = false;
+    // R-AUD-15: where the packet being written stands in the stream, for
+    // the bus matcher's clock fit: the RTP timestamp, which counts frames
+    // and wraps, added up a step at a time from the first one written.
+    std::optional<quint32> matcherLastTimestamp;
+    qint64 matcherSourceFrame = 0;
     const int packetFrames;
     // R-R3-23: the speaker side runs at the device's rate. One worker
     // block is 10 ms of it (480 frames at 48 kHz, 441 at 44.1 kHz, 960
@@ -1302,6 +1316,9 @@ bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
     // queue until the device has drained room for the next one, as on the
     // receiver's own rate matcher. Writing them at once overran the
     // matcher on every packet of a burst (bench, 2026-10-10).
+    // A packet taken in the same pass as one that waited stood behind it,
+    // and waited with it.
+    bool behindWaited = false;
     for (int i = 0; i < jitter.maxPackets(); ++i) {
         // tick() ran this wake (pass()), so the queue's answer is current.
         if (!jitter.hasReady(now)) { break; }
@@ -1309,10 +1326,15 @@ bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
             matcherRefused = true;
             break;
         }
+        // Read before the release: how long this interval stood ready
+        // while the matcher had no room (at least 1 ns, which says that it
+        // waited).
+        const qint64 waitedNs = matcherRefused || behindWaited
+            ? std::max<qint64>(1, jitter.readyForNs(now)) : 0;
         const auto frame = jitter.takeReady(now);
         if (!frame) { break; }
-        const bool waited = matcherRefused;
         matcherRefused = false;
+        behindWaited = waitedNs > 0;
         const QVector<float> audio = decodePacket(frame->packet);
         if (audio.isEmpty()) {
             notify(QStringLiteral("Remote audio decode failed"), Fault::DecodeFailed);
@@ -1324,7 +1346,21 @@ bool RemoteAudioReceiver::WorkerState::passIntoMatcher(qint64 now)
                 busOverrunsBase = bus->overruns;
             }
         }
-        if (!d->engine->writeRemotePlayback(audio, d->output, waited)) {
+        // What the matcher measures the Core's clock by: when the packet
+        // arrived (a concealed interval never did) and where it stands in
+        // the stream. Neither moves when the hold deepens or eases, or
+        // when an interval is shed, concealed or played after a rewind.
+        if (matcherLastTimestamp) {
+            matcherSourceFrame += std::bit_cast<qint32>(
+                quint32(frame->timestamp - *matcherLastTimestamp));
+        }
+        matcherLastTimestamp = frame->timestamp;
+        MatcherPacketTiming timing;
+        timing.waitedNs = waitedNs;
+        timing.arrivedAgoNs
+            = frame->arrivalNs >= 0 ? std::max<qint64>(0, now - frame->arrivalNs) : -1;
+        timing.sourceFrame = matcherSourceFrame;
+        if (!d->engine->writeRemotePlayback(audio, d->output, timing)) {
             notify(QStringLiteral("Could not write remote audio to the speaker device"),
                    Fault::SpeakerWriteFailed, true);
             return false;

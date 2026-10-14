@@ -37,6 +37,7 @@
 
 #include <QtTest/QtTest>
 
+#include <QEvent>
 #include <QFont>
 #include <QImage>
 #include <QPainter>
@@ -44,6 +45,7 @@
 #include <QWidget>
 
 #include "gui/HGauge.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/StyleConstants.h"
 
 using namespace NereusSDR;
@@ -235,6 +237,28 @@ private:
     QList<ScaleText> m_texts;
 };
 
+// Workspace glyphs use the same QWidget paint device, background and colors
+// as the gauge. White on black at a fixed ink threshold has different faint
+// antialias rows from cyan/yellow/red on the widget's actual background.
+int wholeColoredInkRows(const HGauge& gauge,int pixelSize,const QStringList& labels)
+{
+    QList<ScaleText> texts;
+    const QFontMetrics metrics(scaleFontOf(gauge,pixelSize),&gauge);
+    int x=4;
+    for(int i=0;i<labels.size();++i) {
+        const double value=2000.0*i/(labels.size()-1);
+        const QColor color(value>=1500?Style::kGaugeDanger:value>=1000?Style::kGaugeWarning:Style::kGaugeNormal);
+        const int width=metrics.horizontalAdvance(labels[i])+8;
+        texts.append({QRect(x,kScaleTop,width,40),Qt::AlignLeft|Qt::AlignTop,labels[i],color});
+        x+=width;
+    }
+    ScaleTextReference reference(gauge,pixelSize,texts);
+    reference.setPalette(gauge.palette());
+    reference.resize(qMax(400,x+4),kScaleTop+40);
+    const QImage image=picture(reference);
+    return lastInkRow(image,kScaleTop)-firstInkRow(image,kScaleTop)+1;
+}
+
 // A label with nothing to cut it: drawn in the middle of a widget the
 // size of the gauge, flush to the side the gauge aligns it to. The box
 // starts and ends on a whole pixel, as the gauge's does.
@@ -309,6 +333,50 @@ private:
     void titleIsWhole(int pixelSize);
 
 private slots:
+    void init() { WorkspacePreview::setEnabledForTest(false); }
+    void classicExternalMinimumSurvivesPresentationEvents()
+    {
+        HGauge gauge;
+        gauge.setMinimumWidth(120); // AudioTxInputPage's no-scale VU allocation.
+        for (QEvent::Type type : {QEvent::FontChange, QEvent::StyleChange, QEvent::PaletteChange}) {
+            QEvent event(type);
+            QCoreApplication::sendEvent(&gauge, &event);
+            QCOMPARE(gauge.minimumWidth(), 120);
+        }
+    }
+    void workspaceExtraMinimumRestoresCallerBaseline()
+    {
+        HGauge gauge;
+        gauge.setMinimumWidth(120);
+        gauge.setTickLabels({"-40dB", "-30", "-20", "-10", "0", "+5", "+10"});
+        QCOMPARE(gauge.minimumWidth(), 120);
+        WorkspacePreview::setEnabledForTest(true);
+        QEvent workspaceFont(QEvent::FontChange);
+        QCoreApplication::sendEvent(&gauge, &workspaceFont);
+        QVERIFY(gauge.minimumWidth() > 120);
+        WorkspacePreview::setEnabledForTest(false);
+        QEvent classicStyle(QEvent::StyleChange);
+        QCoreApplication::sendEvent(&gauge, &classicStyle);
+        QCOMPARE(gauge.minimumWidth(), 120);
+
+        WorkspacePreview::setEnabledForTest(true);
+        QEvent secondWorkspaceFont(QEvent::FontChange);
+        QCoreApplication::sendEvent(&gauge, &secondWorkspaceFont);
+        const int externalMinimum = gauge.minimumWidth() + 20;
+        gauge.setMinimumWidth(externalMinimum);
+        WorkspacePreview::setEnabledForTest(false);
+        QEvent classicPalette(QEvent::PaletteChange);
+        QCoreApplication::sendEvent(&gauge, &classicPalette);
+        QCOMPARE(gauge.minimumWidth(), externalMinimum);
+    }
+    void workspaceMinimumLeavesWholeScaleNumbers() {
+        WorkspacePreview::setEnabledForTest(true);
+        scaleNumbersAreWhole(11);
+        endNumbersAreInsideTheGauge(11);
+        innerNumbersAreCenteredOnTheirTicks(11);
+        titleIsWhole(11);
+        WorkspacePreview::setEnabledForTest(false);
+    }
     void windowsSizeNumbersAreWholeWithAClearRowUnder();
     void macSizeNumbersAreWholeWithAClearRowUnder();
     void platformSizeNumbersAreWholeWithAClearRowUnder();
@@ -353,7 +421,9 @@ void TestHGaugeScaleText::scaleNumbersAreWhole(int pixelSize)
         // cut it.
         QFont font(gauge.font().family(), 7);
         if (pixelSize > 0) { font.setPixelSize(pixelSize); }
-        QCOMPARE(last - first + 1, wholeInkRows(labels, font, gauge.logicalDpiY()));
+        const int whole=WorkspacePreview::enabled() ? wholeColoredInkRows(gauge,pixelSize,labels)
+            : wholeInkRows(labels,font,gauge.logicalDpiY());
+        QCOMPARE(last-first+1,whole);
     }
 }
 

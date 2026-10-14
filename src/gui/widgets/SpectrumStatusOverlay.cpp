@@ -10,6 +10,10 @@
 // Modification history (NereusSDR).
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "gui/widgets/SpectrumStatusOverlay.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/WorkspacePalette.h"
@@ -40,9 +44,9 @@ constexpr int kRightPad       = 4;
 // resolves "monospace" to its own face (DejaVu Sans Mono on Linux, a
 // proportional face on macOS), so the row measures every form in the font it
 // actually got rather than assuming a width per character.
-QFont remoteStatusFont()
+QFont remoteStatusFont(const QPaintDevice* device)
 {
-    return QFont(QStringLiteral("monospace"), 9);
+    return WorkspacePreview::readableFont(QFont(QStringLiteral("monospace"), 9), device);
 }
 
 } // namespace
@@ -142,8 +146,11 @@ QString SpectrumStatusOverlay::takeTransmitToolTip() const
     if (!m_takeOffered || m_txBound) {
         return {};
     }
-    const QString name = m_takeHolderName.isEmpty() ? QStringLiteral("Another device")
-                                                    : m_takeHolderName;
+    // No holder's name: nobody holds transmit.
+    if (m_takeHolderName.isEmpty()) {
+        return QStringLiteral("No device has transmit. Click TX to take transmit.");
+    }
+    const QString name = m_takeHolderName;
     return m_takeHolderOnAir
                ? QStringLiteral("%1 is on the air. Click TX to take transmit.").arg(name)
                : QStringLiteral("%1 has the transmitter. Click TX to take transmit.").arg(name);
@@ -232,7 +239,7 @@ int SpectrumStatusOverlay::remoteStatusRowWidth() const
 
 int SpectrumStatusOverlay::remoteStatusTextWidth(const QString& text) const
 {
-    const QFontMetricsF metrics(remoteStatusFont(), this);
+    const QFontMetricsF metrics(remoteStatusFont(this), this);
     return int(std::ceil(metrics.horizontalAdvance(text)));
 }
 
@@ -296,10 +303,10 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
     if (workspaceLook) {
         // A number: the workspace monospace chain at the same 9 pt.
         QFont chFont = Workspace::monoFont(QFont(), Workspace::kFontCaption, QFont::Bold);
-        chFont.setPointSize(9);
+        chFont.setPointSize(9); chFont = WorkspacePreview::readableFont(chFont, p.device());
         p.setFont(chFont);
     } else {
-        p.setFont(QFont(QStringLiteral("monospace"), 9, QFont::Bold));
+        p.setFont(WorkspacePreview::readableFont(QFont(QStringLiteral("monospace"), 9, QFont::Bold), p.device()));
     }
     p.drawText(QRect(x, y + 1, kChTagWidth, 14), Qt::AlignCenter,
                QStringLiteral("CH %1").arg(m_chainIndex));
@@ -351,7 +358,7 @@ void SpectrumStatusOverlay::paintEvent(QPaintEvent*)
     }
 
     if (!m_remoteDisplayForms.isEmpty()) {
-        p.setFont(remoteStatusFont());
+        p.setFont(remoteStatusFont(p.device()));
         p.setPen(pick(QColor(Style::kTitleText), "title-text"));
         p.drawText(remoteStatusRect(), Qt::AlignLeft | Qt::AlignVCenter,
                    visibleRemoteDisplayStatus());

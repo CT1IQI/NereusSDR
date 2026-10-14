@@ -53,6 +53,9 @@
 //               so a busy computer cannot fail a case that is not about
 //               the helper's start.  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: regression for a first TX input configuration overwriting
+//               its migrated native engine during catalog setup.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -75,7 +78,9 @@
 #include "fakes/FakeAudioEngineBackend.h"
 #include "fakes/FakeCaptureChild.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <memory>
@@ -1053,6 +1058,69 @@ private slots:
         engine.stop();
     }
 #endif
+
+    // First setTxInputConfig() starts the catalog and migrates the saved
+    // choice. It must retain that native choice instead of handing the
+    // original, unmigrated argument back to the stream supervisor.
+    void firstTxInputConfigKeepsItsMigratedNativeEngine()
+    {
+        Rig rig;
+        rig.native->addDevice(deviceInfo(AudioBackendId::CoreAudio, AudioDeviceDirection::Input,
+                                         QStringLiteral("desk-mic-uid"), QStringLiteral("Desk mic")));
+        AudioDeviceConfig legacy;
+        legacy.deviceName = QStringLiteral("Desk mic");
+        legacy.driverApi = kCoreAudioApi;
+        legacy.saveToSettings(QStringLiteral("audio/TxInput"));
+        rig.build(fakeHelper(QStringLiteral("ready")));
+        // Like the Mac registry: no older-driver backend can accept the
+        // same device name and hide a choice that lost its native engine.
+        rig.engine->setAudioBackendsForTest({rig.native});
+        QCOMPARE(rig.native->enumerateCalls(), 0);
+        QVERIFY(!AppSettings::instance().contains(QStringLiteral("audio/TxInput/Engine")));
+        QVERIFY(!rig.engine->txInputConfig().engine.has_value());
+        QSignalSpy projected(rig.engine.get(), &AudioEngine::txInputConfigChanged);
+
+        rig.engine->setTxInputConfig(legacy);
+
+        QCOMPARE(rig.engine->txInputConfig().engine,
+                 std::optional<AudioEngineKind>(AudioEngineKind::CoreAudio));
+        QCOMPARE(rig.engine->txInputConfig().deviceName, QStringLiteral("Desk mic"));
+        QCOMPARE(rig.engine->txInputConfig().deviceId, QStringLiteral("desk-mic-uid"));
+        const AudioRoleStatus selected = rig.engine->roleStatus(AudioRole::TxInput);
+        QCOMPARE(selected.chosen.engine,
+                 std::optional<AudioEngineKind>(AudioEngineKind::CoreAudio));
+        QCOMPARE(selected.chosen.deviceName, QStringLiteral("Desk mic"));
+        QCOMPARE(selected.chosen.deviceId, QStringLiteral("desk-mic-uid"));
+        QCOMPARE(selected.state, AudioRoleState::Playing);
+        QVERIFY(!projected.isEmpty());
+        QCOMPARE(projected.back().front().value<AudioDeviceConfig>(), rig.engine->txInputConfig());
+        CaptureSupervisor::Lease lease =
+            rig.engine->acquireCaptureDemand(CaptureSupervisor::Demand::TestMic);
+        QTRY_COMPARE_WITH_TIMEOUT(rig.engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready, kHelperStartMs);
+        QCOMPARE(rig.engine->captureStatus().configuredDevice, QStringLiteral("Desk mic"));
+        QCOMPARE(rig.engine->captureStatus().actualDevice, QStringLiteral("Desk mic"));
+        QVERIFY(rig.engine->isCaptureReaderOpen());
+
+        // Ready alone does not prove readable audio. The scripted helper
+        // writes a 0.5-amplitude tone after the matcher's initial silence.
+        std::vector<float> samples(240);
+        float peak = 0.0f;
+        int framesRead = 0;
+        const auto hasReadableTone = [&]() {
+            const int frames = rig.engine->pullTxMic(samples.data(), static_cast<int>(samples.size()));
+            framesRead += frames;
+            for (int i = 0; i < frames; ++i) {
+                peak = std::max(peak, std::fabs(samples[static_cast<std::size_t>(i)]));
+            }
+            return peak > 0.4f;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(hasReadableTone(), kWaitMs);
+        QVERIFY(framesRead > 0);
+        QVERIFY2(peak > 0.4f && peak <= 0.51f, qPrintable(QString::number(peak)));
+        lease.release();
+        rig.engine->stop();
+    }
 
     // M2: a capture demand before the radio starts (Test Mic) opens the
     // helper once, on the matched mic, never the saved choice and then the

@@ -17,6 +17,10 @@
 //                 Anthropic Claude Code.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "AmpViewChart.h"
 
 #include "gui/styles/WorkspacePreview.h"
@@ -200,10 +204,13 @@ void AmpViewChart::paintEvent(QPaintEvent*)
     }
     painter.drawRect(plot);
 
-    QFont labels = painter.font();
-    labels.setPointSizeF(labels.pointSizeF() * 0.85);
+    QFont labels = WorkspacePreview::readableFont(painter.font(), painter.device());
+    if (labels.pointSizeF() > 0) {
+        labels.setPointSizeF(labels.pointSizeF() * 0.85);
+    }
+    labels = WorkspacePreview::readableFont(labels, painter.device());
     painter.setFont(labels);
-    const QFontMetrics metrics(labels);
+    const QFontMetrics metrics(labels,painter.device());
     painter.setPen(QColor(kLabel));
 
     const double magnitudeMax = magYMax();

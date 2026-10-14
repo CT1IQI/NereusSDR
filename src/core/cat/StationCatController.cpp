@@ -15,6 +15,11 @@
 //                                    Phone client: platform's ptyDialects,
 //                                    from the one list in CatPtyDialects.h.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  A refused change is answered with the
+//                                    rule it broke; the general sentence
+//                                    only when CatService names none.
+//                                    AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "core/cat/StationCatController.h"
@@ -138,12 +143,14 @@ bool StationCatController::setChannel(int channel, const QString& configJson, QS
         config.binding.secondaryIncarnation = current.binding.secondaryIncarnation;
     }
     const QPointer<StationCatController> self(this);
-    const bool accepted = m_service->reconfigureChannel(channel, config);
+    // The rule the change broke, when CatService names one.
+    QString specific;
+    const bool accepted = m_service->reconfigureChannel(channel, config, &specific);
     if (!self) {
         return false;
     }
     publishAll();
-    return accepted ? true : refuse(channelRefusedReason());
+    return accepted ? true : refuse(specific.isEmpty() ? channelRefusedReason() : specific);
 }
 
 bool StationCatController::setGlobal(const QString& configJson, QString* reason)
@@ -165,12 +172,13 @@ bool StationCatController::setGlobal(const QString& configJson, QString* reason)
         return refuse(QStringLiteral("The CAT settings were not understood."));
     }
     const QPointer<StationCatController> self(this);
-    const bool accepted = m_service->reconfigureGlobal(*parsed);
+    QString specific;
+    const bool accepted = m_service->reconfigureGlobal(*parsed, &specific);
     if (!self) {
         return false;
     }
     publishAll();
-    return accepted ? true : refuse(globalRefusedReason());
+    return accepted ? true : refuse(specific.isEmpty() ? globalRefusedReason() : specific);
 }
 
 bool StationCatController::testCommand(qint64 requestId, int channel, const QString& command,

@@ -22,6 +22,12 @@
 //               (remote playback) tells the bus's clock matcher its packet
 //               (R-AUD-15, bench regression). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setClockMatchWritePacket() takes the packet's timing
+//               (MatcherPacketTiming: its wait for room, its arrival, its
+//               place in the stream), where it said only whether it had
+//               waited, for the matcher's clock fit and its
+//               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -132,11 +138,15 @@ public:
     virtual std::optional<DeviceRateMatcherStats> matcherStats() const { return std::nullopt; }
     virtual void restartClockMatch() {}
     // A writer of whole packets (remote playback) says, ahead of each
-    // write, how many 48 kHz frames one is and whether this one waited for
-    // room; 0 is the block writer again.  The matcher then keeps a size
-    // that holds a packet (DeviceRateMatcher::setWritePacketFrames).  The
-    // writer's thread; no effect on a bus without a clock matcher.
-    virtual void setClockMatchWritePacket(int /*frames*/, bool /*waited*/) {}
+    // write, how many 48 kHz frames one is and what it knows of this one's
+    // timing (MatcherPacketTiming: its wait for room, how long ago it
+    // arrived, its place in the stream); 0 frames is the block writer
+    // again.  The matcher then keeps a size that holds a packet, finds the
+    // clocks' ratio from when each packet arrived, and plays down a
+    // backlog that stands behind it
+    // (DeviceRateMatcher::setWritePacketFrames).  The writer's thread; no
+    // effect on a bus without a clock matcher.
+    virtual void setClockMatchWritePacket(int /*frames*/, const MatcherPacketTiming& /*timing*/) {}
     // R-AUD-06: the output slews to silence at its next read and stays
     // silent; fadedOut() is true once it is (or when the bus has nothing
     // to fade).  Any thread.

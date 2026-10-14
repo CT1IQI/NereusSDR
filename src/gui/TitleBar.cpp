@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-04-20 — Ported/adapted in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code. Phase 3O Sub-Phase 10 Task 10c.
@@ -420,7 +423,7 @@ QWidget* ConnectionSegment::routePopup() const
 QSize ConnectionSegment::sizeHint() const
 {
     QFont metricFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold);
-    const QFontMetrics metrics(metricFont);
+    const QFontMetrics metrics(WorkspacePreview::readableFont(metricFont, this), this);
     const QString text = remotePresentationText();
     if (!text.isEmpty()) {
         // Dot + its gap + text + trailing breathing room. Reserve enough
@@ -630,7 +633,7 @@ void ConnectionSegment::paintEvent(QPaintEvent*)
     p.setBrush(WorkspacePreview::roleColour(QColor("#0f1420"), "inset"));
     p.drawRoundedRect(rect(), 3, 3);
 
-    p.setFont(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
+    p.setFont(WorkspacePreview::readableFont(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold), this));
 
     // ── 1. State-encoding dot ──────────────────────────────────────────────
     const QRect dotRect(8, height() / 2 - 5, 10, 10);

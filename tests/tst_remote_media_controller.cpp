@@ -1,5 +1,18 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  Check cross-DLL signal metadata and
+//                                    explicitly simulate VAX availability
+//                                    in microphone pause fixtures.
+//                                    AI-assisted via OpenAI Codex.
+//   2026-10-12: Cover pin deltas arriving after their command result on a
+//               budgeted display. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//   2026-10-12  J.J. Boyd / KG4VCF  Fixed-window TX mini admission and
+//                                    stale-domain/frame regressions across
+//                                    legacy/budget and picture negotiation.
+//                                    AI-assisted via OpenAI Codex.
+//   2026-10-12  J.J. Boyd / KG4VCF  Verify collector pause/resume does not
+//                                    report an intentional pause as a stall.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (fourth wave): the
 //                                    contexts the window must not draw
 //                                    (another stream, a changed stream or
@@ -101,6 +114,16 @@
 //               step (with a coarse timer's 5% slack), not by the silence
 //               window. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: new savedCtunIsNotSentForAReceiverAnotherHolds (a slice
+//               that shares the Core's receiver, and one only listened to)
+//               and panMenuShowsAHeldCtunSwitchDisabledWithTheReason;
+//               remoteCtunProjectionPreservesPreferenceWithoutEcho covers
+//               the held reason. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-12: savedCtunIsNotSentForAReceiverAnotherHolds gains a Core
+//               from before the holder was named: the window asks once and
+//               is refused, as it always was. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -182,6 +205,7 @@
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
+#include "gui/SpectrumOverlayMenu.h"
 #include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -195,6 +219,8 @@
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "core/audio/CaptureAudioBus.h"
 #include "fakes/FakeAudioBus.h"
+#include "fakes/FakeCaptureChild.h"
+#include <atomic>
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
@@ -354,6 +380,35 @@ public:
     int stripped = 0;
 };
 
+// The command result may precede its coalesced pin delta. Keep that real
+// mirror message until the test has observed the result on the old value.
+class HoldingCtunDeltaTransport final : public Test::LoopbackTransport {
+public:
+    HoldingCtunDeltaTransport() : LoopbackTransport(QStringLiteral("station")) {}
+    void sendText(const QByteArray& wire) override
+    {
+        SessionMessage message;
+        if (hold && SessionMessages::decode(wire, &message)
+            && message.kind == SessionMessageKind::Delta) {
+            for (const MirrorUpdate& update : message.updates) {
+                if (update.name == "streamCtunPinned") {
+                    held.append(wire);
+                    return;
+                }
+            }
+        }
+        LoopbackTransport::sendText(wire);
+    }
+    void releaseHeld()
+    {
+        hold = false;
+        const QList<QByteArray> messages = std::exchange(held, {});
+        for (const QByteArray& wire : messages) { LoopbackTransport::sendText(wire); }
+    }
+    bool hold = false;
+    QList<QByteArray> held;
+};
+
 class HoldingAllocationResultTransport final : public Test::LoopbackTransport {
 public:
     HoldingAllocationResultTransport() : LoopbackTransport(QStringLiteral("station")) {}
@@ -420,6 +475,33 @@ QList<QJsonObject> controlsFor(const QSignalSpy& spy, const QString& op)
         if (control.value(QStringLiteral("op")) == op) { controls.append(control); }
     }
     return controls;
+}
+
+// A Core from before 2026-10-12 does not say who holds a slice's receiver.
+// This is what such a Core sends where a current one sends `wire`: the same
+// message with no receiverHolderDeviceId among its values, and no message
+// at all where that value was the only change. For
+// LoopbackTransport::setRewritesIncoming on the window's end of the link.
+QByteArray asACoreThatNamesNoReceiverHolderSends(const QByteArray& wire)
+{
+    static const QLatin1String kHolder("receiverHolderDeviceId");
+    if (!wire.contains(kHolder.data())) { return wire; }
+    QJsonObject message = QJsonDocument::fromJson(wire).object();
+    for (const QString& list : {QStringLiteral("properties"), QStringLiteral("fields")}) {
+        if (!message.value(list).isArray()) { continue; }
+        QJsonArray kept;
+        for (const QJsonValue& entry : message.value(list).toArray()) {
+            if (entry.toObject().value(QStringLiteral("name")).toString() != kHolder) {
+                kept.append(entry);
+            }
+        }
+        if (kept.isEmpty() && message.value(QStringLiteral("type")).toString()
+                                  == QStringLiteral("delta")) {
+            return {};
+        }
+        message.insert(list, kept);
+    }
+    return QJsonDocument(message).toJson(QJsonDocument::Compact);
 }
 
 // The station's two-slice tone and this computer's speaker, each paced
@@ -845,6 +927,30 @@ private slots:
         const QString path = AppSettings::instance().filePath();
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));
+    }
+
+    void crossDllSignalsResolveToTheirDeclaredMetadata()
+    {
+        const QMetaMethod ctun = QMetaMethod::fromSignal(&SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(ctun.isValid());
+        QCOMPARE(ctun.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                         "ctunEnabledChanged(bool)"));
+        const QMetaMethod frequency = QMetaMethod::fromSignal(&SpectrumWidget::frequencyClicked);
+        QVERIFY(frequency.isValid());
+        QCOMPARE(frequency.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                              "frequencyClicked(double)"));
+        const QMetaMethod centre = QMetaMethod::fromSignal(&SpectrumWidget::centerChanged);
+        QVERIFY(centre.isValid());
+        QCOMPARE(centre.methodIndex(), SpectrumWidget::staticMetaObject.indexOfSignal(
+                                           "centerChanged(double)"));
+        const QMetaMethod menu = QMetaMethod::fromSignal(&SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(menu.isValid());
+        QCOMPARE(menu.methodIndex(), SpectrumOverlayMenu::staticMetaObject.indexOfSignal(
+                                         "ctunChanged(bool)"));
+        const QMetaMethod text = QMetaMethod::fromSignal(&SessionTransport::textReceived);
+        QVERIFY(text.isValid());
+        QCOMPARE(text.methodIndex(), SessionTransport::staticMetaObject.indexOfSignal(
+                                         "textReceived(QByteArray)"));
     }
 
     void pureSignalChunksShareMediaWithoutChangingMessageLimit()
@@ -1527,6 +1633,8 @@ private slots:
         widget.setCtunEnabled(true);
         QSignalSpy gestures(&widget, &SpectrumWidget::ctunEnabledChanged);
         QSignalSpy centres(&widget, &SpectrumWidget::centerChanged);
+        QVERIFY(gestures.isValid());
+        QVERIFY(centres.isValid());
         widget.applyRemoteCtunState(false, false);
         QVERIFY(!widget.ctunAvailable());
         QVERIFY(!widget.ctunEnabled());
@@ -1537,6 +1645,65 @@ private slots:
         QVERIFY(widget.ctunEnabled());
         QCOMPARE(gestures.size(), 0);
         QCOMPARE(centres.size(), 0);
+
+        // A receiver whose C-Tune setting is another holder's: the pan
+        // shows the receiver's setting, and its own switch changes neither
+        // that nor the saved setting.
+        const QString held = QStringLiteral(
+            "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
+        widget.applyRemoteCtunState(true, false, held);
+        QVERIFY(widget.ctunAvailable());
+        QCOMPARE(widget.ctunHeldReason(), held);
+        QVERIFY(!widget.ctunEnabled());
+        widget.setCtunEnabled(true);
+        QVERIFY(!widget.ctunEnabled());
+        widget.applyRemoteCtunState(true, true, held);
+        QVERIFY(widget.ctunEnabled());
+        widget.setCtunEnabled(false);
+        QVERIFY(widget.ctunEnabled());
+        QVERIFY(widget.ctunPreference());
+        // No Core to pin on: that reason stands alone.
+        widget.applyRemoteCtunState(false, false, held);
+        QVERIFY(widget.ctunHeldReason().isEmpty());
+        widget.applyRemoteCtunState(true, true);
+        QVERIFY(widget.ctunHeldReason().isEmpty());
+        widget.setCtunEnabled(false);
+        QVERIFY(!widget.ctunEnabled());
+        QVERIFY(!widget.ctunPreference());
+        QCOMPARE(gestures.size(), 1);
+    }
+
+    // The pan menu's C-Tune switch on a receiver whose setting is another
+    // holder's: shown, disabled, with the reason, and showing the
+    // receiver's setting.
+    void panMenuShowsAHeldCtunSwitchDisabledWithTheReason()
+    {
+        SpectrumOverlayMenu menu;
+        QCheckBox* ctun = nullptr;
+        for (QCheckBox* box : menu.findChildren<QCheckBox*>()) {
+            if (box->text().startsWith(QStringLiteral("CTUN"))) { ctun = box; }
+        }
+        QVERIFY(ctun);
+        QSignalSpy changes(&menu, &SpectrumOverlayMenu::ctunChanged);
+        QVERIFY(changes.isValid());
+        const QString held = QStringLiteral(
+            "This panadapter shows Shack PC's receiver. Its C-Tune setting is Shack PC's.");
+        menu.setCtunAvailable(true, held);
+        menu.setCtunState(true);
+        QVERIFY(!ctun->isHidden());
+        QVERIFY(!ctun->isEnabled());
+        QVERIFY(ctun->isChecked());
+        QCOMPARE(ctun->toolTip(), held);
+        menu.setCtunAvailable(true);
+        QVERIFY(ctun->isEnabled());
+        QVERIFY(ctun->toolTip() != held);
+        const QString free = ctun->toolTip();
+        // No Core to pin on: its own reason, whatever the holder.
+        menu.setCtunAvailable(false, held);
+        QVERIFY(!ctun->isEnabled());
+        QVERIFY(ctun->toolTip() != held);
+        QVERIFY(ctun->toolTip() != free);
+        QCOMPARE(changes.size(), 0);
     }
 
     void acceptedWidebandContextControlsRemoteZoomWithoutLocalDemand()
@@ -1624,6 +1791,137 @@ private slots:
         QVERIFY(widget.extendedViewAllowed());
         QCOMPARE(widget.dssRowsPushedForTest(), 0);
         QCOMPARE(localDemand.size(), 0);
+    }
+
+    // A quiet budgeted display must follow the actual mirrored pin, even
+    // when that delta arrives after the command answer. No pan reselection
+    // or fresh picture is needed to complete the operator's change.
+    void budgetedCtunFollowsPinDeltaAfterTheCommandResult()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* sourceSlice = station.sliceById(sliceId);
+        QVERIFY(sourceSlice);
+        const int stream = sourceSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        const double centre = station.streamCentreHz(stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QVERIFY(server.setDisplayBudgetLimits({10000000, 10000000, 1}));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        PanadapterApplet* first = stack.addPanadapter(QStringLiteral("first"));
+        PanadapterApplet* cohost = stack.addPanadapter(QStringLiteral("cohost"));
+        stack.setActivePan(QStringLiteral("first"));
+        for (PanadapterApplet* applet : {first, cohost}) {
+            applet->setActiveSliceIndex(sliceId);
+            applet->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 48000);
+            applet->spectrumWidget()->setVfoFrequency(centre);
+            applet->spectrumWidget()->setCtunEnabled(false);
+            applet->spectrumWidget()->setWfAgcEnabled(false);
+        }
+        SpectrumWidget* widget = first->spectrumWidget();
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy inbound(&client, &StationClient::mediaControlReceived);
+        auto* stationLink = new HoldingCtunDeltaTransport();
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        QVERIFY(client.remoteDisplayBudgetLimits().has_value());
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            return !widget->renderedPixels().isEmpty()
+                && !cohost->spectrumWidget()->renderedPixels().isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(feed(), 5000);
+        QTRY_VERIFY(widget->ctunAvailable());
+        QVERIFY(widget->ctunHeldReason().isEmpty());
+        SliceModel* mirrored = remote.sliceById(sliceId);
+        QVERIFY(mirrored);
+        QVERIFY(!mirrored->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        const int contexts = countControl(inbound, QStringLiteral("context"));
+        const auto pinRequests = [&] {
+            int count = 0;
+            for (const QByteArray& wire : stationLink->received()) {
+                SessionMessage message;
+                if (SessionMessages::decode(wire, &message)
+                    && message.kind == SessionMessageKind::CommandInvoke
+                    && message.commandVerb == "requestStreamCtunPinned") {
+                    ++count;
+                }
+            }
+            return count;
+        };
+        const int requestsBefore = pinRequests();
+        QSignalSpy answers(&client, &StationClient::streamCtunPinFinished);
+        QSignalSpy gestures(widget, &SpectrumWidget::ctunEnabledChanged);
+        QVERIFY(gestures.isValid());
+        stationLink->hold = true;
+        widget->setCtunEnabled(true);
+        QTRY_VERIFY(!answers.isEmpty());
+        QCOMPARE(answers.constLast().at(0).toInt(), sliceId);
+        QVERIFY(answers.constLast().at(3).toBool());
+        QTRY_VERIFY(!stationLink->held.isEmpty());
+        QVERIFY(sourceSlice->streamCtunPinned());
+        QVERIFY(!mirrored->streamCtunPinned());
+        stationLink->releaseHeld();
+        QTRY_VERIFY(mirrored->streamCtunPinned());
+        gui.planNowForTest();
+        QCOMPARE(countControl(inbound, QStringLiteral("context")), contexts);
+        QCOMPARE(gestures.count(), 1);
+        QVERIFY2(widget->ctunEnabled(), "the model pin arrived, but the budgeted pan stayed off");
+        QVERIFY(cohost->spectrumWidget()->ctunEnabled());
+        QCOMPARE(answers.count(), 1);
+        QCOMPARE(pinRequests(), requestsBefore + 1);
+        // Turning it off uses the same late-delta path, without a second
+        // gesture on the cohost or another request from mirror projection.
+        stationLink->hold = true;
+        widget->setCtunEnabled(false);
+        QTRY_COMPARE(answers.count(), 2);
+        QVERIFY(answers.constLast().at(3).toBool());
+        QTRY_VERIFY(!stationLink->held.isEmpty());
+        QVERIFY(!sourceSlice->streamCtunPinned());
+        QVERIFY(mirrored->streamCtunPinned());
+        stationLink->releaseHeld();
+        QTRY_VERIFY(!mirrored->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        QVERIFY(!cohost->spectrumWidget()->ctunEnabled());
+        gui.planNowForTest();
+        QCOMPARE(countControl(inbound, QStringLiteral("context")), contexts);
+        QCOMPARE(gestures.count(), 2);
+        QCOMPARE(pinRequests(), requestsBefore + 2);
+        client.disconnectFromStation(QStringLiteral("test complete"));
+        QVERIFY(!widget->ctunAvailable());
     }
 
     void ctunWheelKeepsSourceAndDragMovesCoreCentre()
@@ -1901,6 +2199,263 @@ private slots:
         moveCoreCentre(centre + 3000);
         QTRY_COMPARE(pinResults.size(), 4);
         QVERIFY(pinResults.last().at(3).toBool());
+        client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // A window signing in sends its pan's saved C-Tune setting once for each
+    // receiver its pans show. On a receiver another holder got to first the
+    // Core refuses that (ruling 6.3: the pin is the holder's), so the window
+    // asked at every launch for what it could not have. Here the Core's own
+    // position holds the receiver, as the desktop that hosts a Core does. The
+    // window's own slice shares it, or the window listens to the Core's
+    // slice: no pin request may reach the Core. When the receiver becomes the
+    // window's (the Core's slice leaves, or the window takes control of it)
+    // its saved setting goes in.
+    //
+    // The window knows who holds a receiver from the access entry's
+    // receiverHolderDeviceId, which a Core from before 2026-10-12 does not
+    // send. On such a Core the window cannot know, so it asks once and is
+    // refused, exactly as it always was, and the switch is not held.
+    void savedCtunIsNotSentForAReceiverAnotherHolds_data()
+    {
+        QTest::addColumn<bool>("listens");
+        QTest::addColumn<bool>("olderCore");
+        QTest::newRow("its slice shares the receiver the Core's slice holds") << false << false;
+        QTest::newRow("it listens to the Core's slice") << true << false;
+        QTest::newRow("an older Core names no holder: asked once and refused, as before")
+            << false << true;
+    }
+
+    void savedCtunIsNotSentForAReceiverAnotherHolds()
+    {
+        QFETCH(bool, listens);
+        QFETCH(bool, olderCore);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        SliceOwnership* ownership = station.sliceOwnership();
+        int coreSliceId = -1;
+        {
+            const SliceOwnership::CreatorScope coreCreates(ownership,
+                                                           SliceOwnership::stationDevice());
+            coreSliceId = station.addSlice();
+        }
+        SliceModel* coreSlice = station.sliceById(coreSliceId);
+        QVERIFY(coreSlice);
+        const int stream = coreSlice->streamIndex();
+        QVERIFY(stream >= 0);
+        QCOMPARE(ownership->anchorOf(stream), SliceOwnership::stationDevice());
+        const double center = station.streamCentreHz(stream);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        QTemporaryDir keyDir;
+        const auto identity = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(identity->isValid());
+        PairedDevice paired;
+        paired.id = identity->fingerprint();
+        paired.publicKeySpki = identity->publicKeySpki();
+        paired.name = QStringLiteral("Sharing window");
+        paired.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(paired));
+        client.setDeviceIdentity(identity, paired.name, QStringLiteral("Window"));
+        PanadapterStack stack;
+        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        stack.setActivePan(QStringLiteral("first"));
+        auto* widget = first->spectrumWidget();
+        // The pan's saved setting: C-Tune on.
+        widget->setCtunEnabled(true);
+        QVERIFY(widget->ctunPreference());
+        widget->setWfAgcEnabled(false);
+        widget->setConnectionState(ConnectionState::Connected);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        QString certificatePin = server.certificateFingerprint();
+        certificatePin.remove(QLatin1Char(':'));
+        clientLink->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLink->setPeerAddress(QStringLiteral("192.0.2.30"));
+        stationLink->linkTo(clientLink);
+        if (olderCore) {
+            clientLink->setRewritesIncoming(asACoreThatNamesNoReceiverHolderSends);
+        }
+        // Every pin request the Core receives from the window, and its answers.
+        int pinAsks = 0;
+        connect(stationLink, &SessionTransport::textReceived, this, [&pinAsks](const QByteArray& wire) {
+            SessionMessage message;
+            if (SessionMessages::decode(wire, &message)
+                && message.commandVerb == "requestStreamCtunPinned") {
+                ++pinAsks;
+            }
+        });
+        QStringList pinAnswers;
+        connect(&client, &StationClient::commandResponse, this,
+            [&pinAnswers](const NereusSDR::SessionMessage& message) {
+                if (message.commandVerb == "requestStreamCtunPinned") {
+                    pinAnswers.append(message.accepted ? QStringLiteral("accepted")
+                                                       : QStringLiteral("refused: ") + message.reason);
+                }
+            });
+        const auto asked = [&] {
+            return QStringLiteral("the window sent %1 C-Tune request(s); the Core answered: %2")
+                .arg(pinAsks).arg(pinAnswers.join(QStringLiteral(" | "))).toUtf8();
+        };
+        // A change the window held back itself, as it shows one to the user.
+        QSignalSpy heldNotices(&client, &StationClient::sliceAccessHeld);
+        client.startSession(clientLink, QString(), QString(),
+                            server.stationIdentity().fingerprint());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(client.stationLinkReady());
+
+        int ownId = -1;
+        for (SliceModel* slice : station.slices()) {
+            if (ownership->mark(slice->sliceIndex()).owner == identity->fingerprint()) {
+                ownId = slice->sliceIndex();
+            }
+        }
+        QVERIFY(ownId >= 0);
+        SliceModel* ownSlice = station.sliceById(ownId);
+        int shownId = ownId;
+        if (listens) {
+            // The window's own slice goes to another band and receiver; its
+            // pan shows the Core's slice, which it joins to listen.
+            ownSlice->setFrequency(center + 7'000'000);
+            QVERIFY(ownSlice->streamIndex() >= 0);
+            QVERIFY(ownSlice->streamIndex() != stream);
+            QTRY_VERIFY(client.sliceAccess()->entry(coreSliceId).has_value());
+            const auto listen = client.requestListen(
+                coreSliceId, client.sliceAccess()->entry(coreSliceId)->incarnation);
+            QVERIFY2(listen.sent, qPrintable(listen.reason));
+            QTRY_VERIFY(client.sliceAccess()->listeningHere(coreSliceId));
+            QVERIFY(!client.sliceAccess()->controlledHere(coreSliceId));
+            shownId = coreSliceId;
+        } else {
+            // The window's own slice, put on the receiver the Core's slice holds.
+            ownSlice->setFrequency(center + 20000);
+            QCOMPARE(ownSlice->streamIndex(), stream);
+            QTRY_VERIFY(client.sliceAccess()->controlledHere(ownId));
+        }
+        SliceModel* shown = station.sliceById(shownId);
+        QCOMPARE(ownership->anchorOf(stream), SliceOwnership::stationDevice());
+        QVERIFY(!shown->streamCtunPinned());
+        QTRY_VERIFY(remote.sliceById(shownId));
+        SliceModel* mirrored = remote.sliceById(shownId);
+        QTRY_COMPARE(mirrored->streamIndex(), stream);
+        QTRY_COMPARE(mirrored->frequency(), shown->frequency());
+        QCOMPARE(pinAsks, 0);
+
+        first->setActiveSliceIndex(shownId);
+        widget->setDisplayWindowPreservingHistory(center, 48000);
+        widget->setVfoFrequency(shown->frequency());
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&](int receiver) {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, receiver), Q_ARG(QVector<float>, iq));
+            return !widget->renderedPixels().isEmpty();
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(feed(stream), 5000);
+        for (int i = 0; i < 10; ++i) {
+            QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+            feed(stream);
+        }
+        if (olderCore) {
+            // The window was told of no holder, so it cannot know the
+            // setting is another's. It asks once, the Core refuses in its
+            // own words, nothing is asked again, and the switch is not held.
+            QVERIFY(client.sliceAccess()->entry(shownId).has_value());
+            QVERIFY(client.sliceAccess()->receiverHeldReason(shownId).isEmpty());
+            QTRY_VERIFY2(pinAnswers.size() == 1, asked().constData());
+            QCOMPARE(pinAnswers.first(),
+                     QStringLiteral("refused: This panadapter shows the Core's receiver. Its "
+                                    "C-Tune setting is the Core's."));
+            for (int i = 0; i < 5; ++i) {
+                QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+                feed(stream);
+            }
+            QVERIFY2(pinAsks == 1, asked().constData());
+            QVERIFY(!shown->streamCtunPinned());
+            QVERIFY(widget->ctunHeldReason().isEmpty());
+            client.disconnectFromStation(QStringLiteral("test complete"));
+            return;
+        }
+        QVERIFY2(pinAsks == 0, asked().constData());
+        // Nor is the window told of a change held back that nobody made.
+        QCOMPARE(heldNotices.size(), 0);
+        QVERIFY(!shown->streamCtunPinned());
+        QVERIFY(!widget->ctunEnabled());
+        // The switch is there, held, with the Core's own words for why.
+        QVERIFY(widget->ctunAvailable());
+        QCOMPARE(widget->ctunHeldReason(),
+                 listens ? QStringLiteral("Slice A is controlled by the Core. Take control to "
+                                          "change it.")
+                         : QStringLiteral("This panadapter shows the Core's receiver. Its C-Tune "
+                                          "setting is the Core's."));
+        widget->setCtunEnabled(false);
+        for (int i = 0; i < 3; ++i) {
+            QTest::qWait(RemoteMediaController::kPlannerIntervalMs);
+            feed(stream);
+        }
+        QVERIFY2(pinAsks == 0, asked().constData());
+        QCOMPARE(heldNotices.size(), 0);
+        // The saved setting is kept for the day the receiver is the window's.
+        QVERIFY(widget->ctunPreference());
+        // The words on the switch are the Core's own: asked past the window
+        // (which never asks), the Core refuses with the same sentence.
+        const auto direct = client.requestStreamCtunPinned(shownId, true);
+        QVERIFY2(direct.sent, qPrintable(direct.reason));
+        QTRY_COMPARE(pinAnswers.size(), 1);
+        QCOMPARE(pinAnswers.first(), QStringLiteral("refused: ") + widget->ctunHeldReason());
+        QCOMPARE(pinAsks, 1);
+        pinAsks = 0;
+        pinAnswers.clear();
+
+        if (listens) {
+            // The window takes control of the slice, and the receiver with it.
+            const auto access = *client.sliceAccess()->entry(coreSliceId);
+            const auto take = client.requestTakeControl(coreSliceId, access.incarnation,
+                                                        access.controlRevision);
+            QVERIFY2(take.sent, qPrintable(take.reason));
+            QTRY_COMPARE(ownership->mark(coreSliceId).owner, identity->fingerprint());
+        } else {
+            // The Core's slice goes to another band and another receiver.
+            coreSlice->setFrequency(center + 7'000'000);
+            QVERIFY(coreSlice->streamIndex() >= 0);
+            QVERIFY(coreSlice->streamIndex() != stream);
+        }
+        QCOMPARE(shown->streamIndex(), stream);
+        QCOMPARE(ownership->anchorOf(stream), identity->fingerprint());
+        QTRY_VERIFY2_WITH_TIMEOUT((feed(stream), shown->streamCtunPinned()), asked().constData(),
+                                  5000);
+        QTRY_VERIFY(widget->ctunEnabled());
+        QVERIFY(widget->ctunHeldReason().isEmpty());
+        QVERIFY2(pinAsks == 1, asked().constData());
+        QCOMPARE(pinAnswers, QStringList{QStringLiteral("accepted")});
+        QCOMPARE(heldNotices.size(), 0);
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -6367,6 +6922,7 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
         // R-DISP-RETUNE: the contexts this test sends by hand state no picture,
         // as an older Core's do, so the window is one that was told none.
         client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture"));
@@ -6564,6 +7120,9 @@ private slots:
         QCOMPARE(filledRows(), filledBefore);
         QVERIFY(rowsAtTransmit >= rowsBefore);
 
+        QVERIFY(!controller.micLineOpen());
+        QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+        QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -7922,6 +8481,345 @@ private slots:
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // The TX mini is the Core's fixed analyzer window, not an RX FFT crop.
+    // Requiring the latter drops valid TX contexts before any frame reaches
+    // the mini. The transport is fake; context admission and presentation
+    // are production code, with no radio, sound device or network backend.
+    void transmitMiniAdmitsItsFixedWindow_data()
+    {
+        QTest::addColumn<bool>("budget");
+        QTest::addColumn<bool>("picture");
+        QTest::addColumn<double>("originHz");
+        QTest::addColumn<bool>("txState");
+        for (bool budget : {false, true}) {
+            for (bool picture : {false, true}) {
+                for (const auto& origin : {std::pair{"ordinary", 14'074'000.0},
+                                           std::pair{"DIGU", 14'073'400.0},
+                                           std::pair{"DIGL", 14'074'600.0}}) {
+                    const QByteArray name = QByteArray(budget ? "budget-" : "legacy-")
+                        + (picture ? "picture-" : "no-picture-") + origin.first;
+                    QTest::newRow(name.constData()) << budget << picture << origin.second << false;
+                    const QByteArray versionedName = name + "-tx-state";
+                    QTest::newRow(versionedName.constData()) << budget << picture << origin.second << true;
+                }
+            }
+        }
+    }
+
+    void transmitMiniAdmitsItsFixedWindow()
+    {
+        QFETCH(bool, budget);
+        QFETCH(bool, picture);
+        QFETCH(double, originHz);
+        QFETCH(bool, txState);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        RadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* slice = station.sliceById(sliceId);
+        QVERIFY(slice);
+        slice->setFrequency(14'074'000.0);
+        QCOMPARE(station.txBoundSlice(), slice);
+        QVERIFY(slice->isTxSlice());
+        station.sliceOwnership()->setOwner(sliceId, QByteArrayLiteral("token:1"));
+        const int otherId = station.addSlice();
+        station.sliceOwnership()->setOwner(otherId, QByteArrayLiteral("token:1"));
+        QCOMPARE(station.txBoundSlice(), slice);
+        const int stream = slice->streamIndex();
+        TxAnalyzer analyzer(TxAnalyzer::kTxDispId);
+        station.setTxAnalyzer(&analyzer); // Declares the TX display; opens no TX channel.
+        const auto clearAnalyzer = qScopeGuard([&] { station.setTxAnalyzer(nullptr); });
+        StationServer server(&station, settings, Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        server.setRemoteTransmitAllowed(true);
+        server.setTokenSessionsMayTransmitForTest(true);
+        TransmitHolder::Holder holder;
+        holder.deviceId = QByteArrayLiteral("token:1");
+        holder.name = QStringLiteral("Mini display Core fixture");
+        server.transmitHolder()->transferTo(holder, QStringLiteral("test"));
+        QVERIFY(slice->txSliceMarked());
+        if (budget) { server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}); }
+        QPointer<DisplayTransport> coreMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&](QObject* owner) -> IMediaTransport* {
+                coreMedia = new DisplayTransport(owner);
+                return coreMedia;
+            });
+        RadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        auto microphone = std::make_unique<FakeAudioBus>();
+        QVERIFY(microphone->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        remote.audioEngine()->setTxInputBusForTest(std::move(microphone));
+        CaptureSupervisor::Options capture;
+        capture.program = dir.filePath(QStringLiteral("no-real-capture-helper"));
+        remote.audioEngine()->setCaptureSupervisorOptionsForTest(capture);
+        if (txState) {
+            // Local ClientAudio uses this fake non-PC source: the session's
+            // accepted ClientAudio cannot change it to a PC preview demand.
+            remote.transmitModel().setVaxSourceAvailable(true);
+            remote.transmitModel().setMicSource(MicSource::Vax);
+            QCOMPARE(remote.transmitModel().micSource(), MicSource::Vax);
+        }
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        // This display-only peer offers no microphone line or keying verbs.
+        if (!txState) { client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); }
+        if (!picture) { client.withholdFeatureForTest(QByteArrayLiteral("spectrumPicture")); }
+        PanadapterStack stack; // No main pan: this fixture subscribes only the mini.
+        QPointer<DisplayTransport> windowMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&](QObject* owner) -> IMediaTransport* {
+                windowMedia = new DisplayTransport(owner);
+                return windowMedia;
+            });
+        QSignalSpy requests(&server, &StationServer::mediaControlReceived);
+        QSignalSpy contexts(&client, &StationClient::mediaControlReceived);
+        QSignalSpy frames(&gui, &RemoteMediaController::miniDisplayFrame);
+        QSignalSpy unavailable(&gui, &RemoteMediaController::miniDisplayUnavailable);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* windowLink = new Test::LoopbackTransport(QStringLiteral("window"));
+        stationLink->linkTo(windowLink);
+        client.startSession(windowLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(coreMedia && windowMedia);
+        QVERIFY(gui.txDisplayNegotiated());
+        QCOMPARE(client.capabilities().txStateVersion >= 1, txState);
+        coreMedia->other = windowMedia;
+        coreMedia->activate();
+        windowMedia->activate();
+        gui.setMiniDisplaySlices({sliceId});
+        QTRY_COMPARE(daemon.activeEndpointCount(), 1);
+        const QVector<float> iq(4096, 0.01f);
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            return !frames.isEmpty();
+        }()), 5'000);
+        const QJsonObject rxContext = lastControl(contexts, QStringLiteral("context"));
+        QVERIFY(!rxContext.isEmpty());
+        QCOMPARE(frames.last().at(5).toBool(), false);
+        if (txState) { QCOMPARE(remote.transmitModel().micSource(), MicSource::Vax); }
+        else { QVERIFY(!gui.micLineOpen()); }
+        QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+        QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
+        unavailable.clear();
+        frames.clear();
+        // Inbound Core observations, not a local key or an outbound TX request.
+        QCOMPARE(station.txBoundSlice(), slice);
+        QVERIFY(slice->txSliceMarked());
+        QTRY_VERIFY(remote.sliceById(sliceId)->isTxSlice());
+        if (txState) {
+            // Publish on the fake Core facade, then observe real session
+            // deltas on the window. Legacy radio.transmitting stays false.
+            QVERIFY(server.transmitState()->applyStationValue("txSliceId", sliceId));
+            QVERIFY(server.transmitState()->applyStationValue("keyed", true));
+            QTRY_VERIFY(client.transmitState()->keyed());
+            QTRY_COMPARE(client.transmitState()->txSliceId(), sliceId);
+            QVERIFY(!remote.isTransmitting());
+        } else {
+            QCOMPARE(client.capabilities().txStateVersion, 0);
+            QVERIFY(remote.applyMirroredValue("transmitting", true).isEmpty());
+        }
+        gui.refreshTransmitView();
+        QTRY_VERIFY_WITH_TIMEOUT(lastControl(requests, QStringLiteral("subscribe"))
+                        .value(QStringLiteral("spanHz")).toDouble() == 40'000.0, 1'000);
+        const QJsonObject ask = lastControl(requests, QStringLiteral("subscribe"));
+        const auto pendingCleared = [&] {
+            return !budget || lastControl(contexts, QStringLiteral("allocation-result"))
+                .value(QStringLiteral("revision")) == ask.value(QStringLiteral("revision"));
+        };
+        QTRY_VERIFY(pendingCleared());
+        // RX frames received before the versioned key delta are not the
+        // TX result being awaited below.
+        frames.clear();
+        // Picture-aware requests retain RX pixels until a TX context is admitted.
+        QCOMPARE(unavailable.isEmpty(), picture);
+        QJsonObject txContext = rxContext;
+        txContext.insert(QStringLiteral("revision"), ask.value(QStringLiteral("revision")));
+        constexpr quint32 kGeneration = 10'000;
+        txContext.insert(QStringLiteral("contextGeneration"), static_cast<qint64>(kGeneration));
+        if (picture) { txContext.insert(QStringLiteral("pictureGeneration"), static_cast<qint64>(kGeneration)); }
+        txContext.insert(QStringLiteral("transmit"), true);
+        txContext.insert(QStringLiteral("sourceCentreHz"), originHz);
+        txContext.insert(QStringLiteral("centreHz"), originHz);
+        txContext.insert(QStringLiteral("sampleRateHz"), 96'000.0);
+        txContext.insert(QStringLiteral("spanHz"), 40'000.0);
+        txContext.insert(QStringLiteral("traceSamples"), 1024);
+        txContext.insert(QStringLiteral("waterfallSamples"), 1024);
+        txContext.insert(QStringLiteral("wideSamples"), 0);
+        txContext.insert(QStringLiteral("wideCentreHz"), 0);
+        txContext.insert(QStringLiteral("wideSpanHz"), 0);
+        txContext.insert(QStringLiteral("grantedFftSize"), 32768);
+        txContext.insert(QStringLiteral("requestedPixels"), 1024);
+        txContext.insert(QStringLiteral("grantedPixels"), 1024);
+        const auto decoded = decodeRemoteSpectrumContext(txContext, true, true, picture);
+        QVERIFY(decoded);
+        DisplayCodecFrame frame;
+        frame.context.endpointId = decoded->endpointId;
+        frame.context.contextGeneration = kGeneration;
+        frame.context.traceSamples = frame.context.waterfallSamples = 1024;
+        frame.context.minDbm = float(decoded->minDbm);
+        frame.context.maxDbm = float(decoded->maxDbm);
+        frame.traceDbm = frame.waterfallDbm = QVector<float>(1024, -100.0f);
+        frame.traceDbm[527] = frame.waterfallDbm[527] = -50.0f;
+        frame.waterfallAdvance = true;
+        DisplayCodecEncoder encoder;
+        QVERIFY(server.sendMediaControl(txContext, server.mediaSessionEpoch()));
+        // Control and media are independent: do not consume the encoder's
+        // first keyframe before the window has processed its context.
+        QTRY_COMPARE(lastControl(contexts, QStringLiteral("context"))
+            .value(QStringLiteral("contextGeneration")).toInt(), int(kGeneration));
+        const auto sendFrame = [&] {
+            ++frame.encoderSequence;
+            frame.producerTimestamp += 33'333'333;
+            windowMedia->deliver(encoder.encode(frame));
+            return std::any_of(frames.begin(), frames.end(), [](const auto& delivered) {
+                return delivered.at(5).toBool();
+            });
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(sendFrame(), 1'000);
+        QCOMPARE(frames.last().at(0).toInt(), sliceId);
+        QCOMPARE(frames.last().at(3).toDouble(), originHz);
+        QCOMPARE(frames.last().at(4).toDouble(), 40'000.0);
+        QCOMPARE(frames.last().at(5).toBool(), true);
+        const QVector<float> received = frames.last().at(1).value<QVector<float>>();
+        QCOMPARE(std::distance(received.begin(), std::max_element(received.begin(), received.end())), 527);
+
+        // A shifted domain, wrong span/rate/state/stream/shape or old request
+        // must neither install a new context nor deliver its recognizable peak.
+        const QList<std::pair<QString, QJsonValue>> invalidFields{
+            {QStringLiteral("centreHz"), originHz + 100.0},
+            {QStringLiteral("spanHz"), 40'003.0},
+            {QStringLiteral("sampleRateHz"), 48'000.0},
+            {QStringLiteral("transmit"), false},
+            {QStringLiteral("sourceStream"), stream + 1},
+            {QStringLiteral("traceSamples"), 512},
+            {QStringLiteral("revision"), ask.value(QStringLiteral("revision")).toInt() - 1}};
+        quint32 invalidGeneration = kGeneration;
+        for (const auto& field : invalidFields) {
+            QJsonObject invalid = txContext;
+            invalid.insert(QStringLiteral("contextGeneration"), static_cast<qint64>(++invalidGeneration));
+            if (picture) { invalid.insert(QStringLiteral("pictureGeneration"), static_cast<qint64>(invalidGeneration)); }
+            invalid.insert(field.first, field.second);
+            frames.clear();
+            QVERIFY(server.sendMediaControl(invalid, server.mediaSessionEpoch()));
+            QTRY_COMPARE(lastControl(contexts, QStringLiteral("context"))
+                             .value(QStringLiteral("contextGeneration")).toInt(), int(invalidGeneration));
+            DisplayCodecFrame badFrame = frame;
+            badFrame.context.contextGeneration = invalidGeneration;
+            badFrame.encoderSequence = 1;
+            badFrame.traceDbm[527] = -100.0f;
+            badFrame.traceDbm[100] = -50.0f;
+            DisplayCodecEncoder badEncoder;
+            windowMedia->deliver(badEncoder.encode(badFrame));
+            QTRY_VERIFY_WITH_TIMEOUT(sendFrame(), 1'000);
+            for (const auto& delivered : frames) {
+                QCOMPARE(delivered.at(3).toDouble(), originHz);
+                QCOMPARE(delivered.at(4).toDouble(), 40'000.0);
+                QCOMPARE(delivered.at(5).toBool(), true);
+                const QVector<float> bins = delivered.at(1).value<QVector<float>>();
+                QCOMPARE(std::distance(bins.begin(), std::max_element(bins.begin(), bins.end())), 527);
+            }
+        }
+        // Late RX and old TX generations cannot replace the admitted TX frame.
+        for (const quint32 old : {quint32(rxContext.value(QStringLiteral("contextGeneration")).toInt()),
+                                 kGeneration - 1}) {
+            frames.clear();
+            DisplayCodecFrame stale = frame;
+            stale.context.contextGeneration = old;
+            stale.encoderSequence = 1;
+            stale.traceDbm[527] = -100.0f;
+            stale.traceDbm[100] = -50.0f;
+            DisplayCodecEncoder staleEncoder;
+            windowMedia->deliver(staleEncoder.encode(stale));
+            QTRY_VERIFY_WITH_TIMEOUT(sendFrame(), 1'000);
+            const QVector<float> bins = frames.last().at(1).value<QVector<float>>();
+            QCOMPARE(std::distance(bins.begin(), std::max_element(bins.begin(), bins.end())), 527);
+        }
+
+        // Absent/ambiguous legacy flags, or a versioned identity not yet
+        // resolvable from the slice snapshot, never fall back to another
+        // slice. Old TX packets stop; a fresh RX context still presents.
+        SliceModel* remoteOther = remote.sliceById(otherId);
+        QVERIFY(remoteOther);
+        const auto receiveRx = [&] {
+            QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                Q_ARG(int, stream), Q_ARG(QVector<float>, iq));
+            return std::any_of(frames.begin(), frames.end(), [](const auto& delivered) {
+                return !delivered.at(5).toBool();
+            });
+        };
+        quint32 installedGeneration = kGeneration;
+        for (int identityCase = 0; identityCase < 2; ++identityCase) {
+            if (txState) {
+                const int unresolved = identityCase == 0 ? -1 : otherId + 1000;
+                QVERIFY(server.transmitState()->applyStationValue("txSliceId", unresolved));
+                QTRY_COMPARE(client.transmitState()->txSliceId(), unresolved);
+                QVERIFY(client.transmitState()->keyed());
+            } else if (identityCase == 0) {
+                // Same assignments as the real inbound slice mirror uses.
+                remote.sliceById(sliceId)->setTxSlice(false);
+            } else {
+                remoteOther->setTxSlice(true);
+                QVERIFY(remote.sliceById(sliceId)->isTxSlice());
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(lastControl(requests, QStringLiteral("subscribe"))
+                .value(QStringLiteral("spanHz")).toDouble() == 20'000.0, 1'000);
+            frames.clear();
+            sendFrame();
+            QTRY_VERIFY_WITH_TIMEOUT(receiveRx(), 5'000);
+            for (const auto& delivered : frames) { QVERIFY(!delivered.at(5).toBool()); }
+            if (txState) {
+                QVERIFY(server.transmitState()->applyStationValue("txSliceId", sliceId));
+                QTRY_COMPARE(client.transmitState()->txSliceId(), sliceId);
+            } else {
+                remoteOther->setTxSlice(false);
+                remote.sliceById(sliceId)->setTxSlice(true);
+            }
+            QTRY_VERIFY_WITH_TIMEOUT(lastControl(requests, QStringLiteral("subscribe"))
+                .value(QStringLiteral("spanHz")).toDouble() == 40'000.0, 1'000);
+            const QJsonObject renewedAsk = lastControl(requests, QStringLiteral("subscribe"));
+            if (budget) {
+                QTRY_COMPARE(lastControl(contexts, QStringLiteral("allocation-result"))
+                    .value(QStringLiteral("revision")), renewedAsk.value(QStringLiteral("revision")));
+            }
+            txContext.insert(QStringLiteral("revision"), renewedAsk.value(QStringLiteral("revision")));
+            installedGeneration += 10'000;
+            txContext.insert(QStringLiteral("contextGeneration"), static_cast<qint64>(installedGeneration));
+            if (picture) { txContext.insert(QStringLiteral("pictureGeneration"), static_cast<qint64>(installedGeneration)); }
+            frame.context.contextGeneration = installedGeneration;
+            frame.encoderSequence = 0;
+            encoder.reset();
+            frames.clear();
+            QVERIFY(server.sendMediaControl(txContext, server.mediaSessionEpoch()));
+            QTRY_COMPARE(lastControl(contexts, QStringLiteral("context"))
+                .value(QStringLiteral("contextGeneration")).toInt(), int(installedGeneration));
+            QTRY_VERIFY_WITH_TIMEOUT(sendFrame(), 1'000);
+            QCOMPARE(frames.last().at(3).toDouble(), originHz);
+            QCOMPARE(frames.last().at(5).toBool(), true);
+        }
+        // The versioned unkey also wins over stale legacy TX observations.
+        if (txState) {
+            QVERIFY(remote.applyMirroredValue("transmitting", true).isEmpty());
+            QVERIFY(server.transmitState()->applyStationValue("keyed", false));
+            QTRY_VERIFY(!client.transmitState()->keyed());
+        } else {
+            QVERIFY(remote.applyMirroredValue("transmitting", false).isEmpty());
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(lastControl(requests, QStringLiteral("subscribe"))
+            .value(QStringLiteral("spanHz")).toDouble() == 20'000.0, 1'000);
+        frames.clear();
+        sendFrame();
+        QTRY_VERIFY_WITH_TIMEOUT(receiveRx(), 5'000);
+        for (const auto& delivered : frames) { QVERIFY(!delivered.at(5).toBool()); }
+        client.disconnectFromStation(QStringLiteral("test complete"));
+        QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+        QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
+    }
+
     void miniSlicesShareOneStreamButKeepIndependentEndpoints()
     {
         QTemporaryDir dir;
@@ -7954,6 +8852,7 @@ private slots:
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("main"));
         applet->setActiveSliceIndex(a);
@@ -8114,6 +9013,9 @@ private slots:
         sinkMedia->deliver(retiredPacket);
         QTest::qWait(100);
         QVERIFY(!framesSince(beforeStale, b));
+        QVERIFY(!gui.micLineOpen());
+        QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+        QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -8162,6 +9064,7 @@ private slots:
         remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        client.withholdFeatureForTest(QByteArrayLiteral("remoteTx")); // Display-only fixture.
         PanadapterStack stack;
         auto* applet = stack.addPanadapter(QStringLiteral("only"));
         applet->setActiveSliceIndex(sliceId);
@@ -8219,6 +9122,9 @@ private slots:
             for (const QJsonObject& context : controlsFor(inbound, QStringLiteral("context"))) {
                 QVERIFY(!context.contains(QStringLiteral("transmit")));
             }
+            QVERIFY(!gui.micLineOpen());
+            QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+            QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
             client.disconnectFromStation(QStringLiteral("test complete"));
             return;
         }
@@ -8271,6 +9177,9 @@ private slots:
         const int framesAtFall = frames.count();
         QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() > framesAtFall + 2), 5000);
         QCOMPARE(transmitFrames.count(), transmitFramesAtFall);
+        QVERIFY(!gui.micLineOpen());
+        QVERIFY(!remote.audioEngine()->hasCaptureDemand());
+        QCOMPARE(remote.audioEngine()->captureHelperProcessIdForTest(), qint64(0));
         client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -11608,6 +12517,117 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // The collector can intentionally pause while Test Mic keeps shared
+    // capture Ready. Only time in the current collector run is a stall.
+    void anIntentionalCollectorPauseIsNotReportedAsAStall()
+    {
+        class GatedMicrophone final : public FakeAudioBus {
+        public:
+            qint64 pull(char* destination, qint64 bytes) override
+            {
+                if (bytes < qint64(sizeof(float)) || !block.exchange(false)) {
+                    return 0;
+                }
+                const float sample = 0.25f;
+                std::memcpy(destination, &sample, sizeof(sample));
+                return sizeof(sample);
+            }
+            std::atomic<bool> block{false};
+        };
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        AudioEngine* engine = h.remote.audioEngine();
+        CaptureSupervisor::Options options;
+        options.program = QCoreApplication::applicationFilePath();
+        options.arguments = {QStringLiteral("--fake-capture-child"), QStringLiteral("ready")};
+        options.helloTimeoutMs = Test::kFakeCaptureChildStartMs;
+        engine->setCaptureSupervisorOptionsForTest(options);
+        auto microphone = std::make_unique<GatedMicrophone>();
+        GatedMicrophone* source = microphone.get();
+        QVERIFY(source->open(AudioFormat{48000, 1, AudioFormat::Sample::Float32}));
+        engine->setTxInputBusForTest(std::move(microphone));
+        CaptureSupervisor::Lease other = engine->acquireCaptureDemand(
+            CaptureSupervisor::Demand::TestMic);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        qint64 nowMs = 10000;
+        media.setMicClockForTest([&nowMs] { return nowMs; });
+        const auto resetClock = qScopeGuard([&media] { media.setMicClockForTest({}); });
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
+        QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
+                                  CaptureSupervisor::Status::State::Ready,
+                                  Test::kFakeCaptureChildStartMs);
+        const quint32 generation = engine->captureStatus().generation;
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        media.pumpMicUplinkForTest();
+
+        g_remoteMediaMessages.clear();
+        const QtMessageHandler previous = qInstallMessageHandler(captureRemoteMediaMessages);
+        const auto restoreMessages = qScopeGuard([previous] { qInstallMessageHandler(previous); });
+        const auto stalls = [] {
+            return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector took no audio"));
+        };
+        const auto recoveries = [] {
+            return g_remoteMediaMessages.filter(QStringLiteral("Microphone collector is taking audio again"));
+        };
+        // This fake session needs VAX as its no-preview source on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        const auto pause = [&] {
+            h.remote.transmitModel().setMicSource(MicSource::Vax);
+            media.pumpMicUplinkForTest();
+        };
+        const auto resume = [&] {
+            h.remote.transmitModel().setMicSource(MicSource::Pc);
+            media.pumpMicUplinkForTest();
+        };
+        pause();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
+        QVERIFY(!media.micCollectorThreadRunningForTest());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Ready);
+        QCOMPARE(engine->captureStatus().generation, generation);
+        nowMs += 5000;
+        resume();
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Pc);
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        QCOMPARE(engine->captureStatus().generation, generation);
+        QCOMPARE(stalls().size(), 0);
+        QCOMPARE(recoveries().size(), 0);
+        nowMs += 999;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 0);
+        ++nowMs;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 1);
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 1);
+
+        // A reported stall from the old run must not become a recovery
+        // attributed to the intentional pause either.
+        pause();
+        nowMs += 5000;
+        resume();
+        QCOMPARE(stalls().size(), 1);
+        QCOMPARE(recoveries().size(), 0);
+        nowMs += 1000;
+        media.pumpMicUplinkForTest();
+        QCOMPARE(stalls().size(), 2);
+        nowMs += 100;
+        source->block.store(true);
+        QTRY_VERIFY_WITH_TIMEOUT((media.pumpMicUplinkForTest(), recoveries().size() == 1), 5000);
+        QVERIFY(recoveries().first().contains(QStringLiteral("1100 ms")));
+        media.pumpMicUplinkForTest();
+        QCOMPARE(recoveries().size(), 1);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+        other.release();
+    }
+
     // 2026-10-10: production, with no inline seam: the collector's thread
     // runs exactly while the capture lease is held, the pump sends what it
     // collected, and the thread is joined when the line goes.
@@ -11669,7 +12689,9 @@ private slots:
                                             == CaptureSupervisor::Status::State::Failed,
                                  5000);
         // No local preview: only VOX holds the lease.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         QVERIFY(takeTransmit(h));
         const quint32 previewed = engine->captureStatus().generation;
@@ -11742,6 +12764,7 @@ namespace {
 // everything. A name here that is not a test function stops the run, so a
 // rename cannot quietly drop a test from both entries.
 const QStringList kAudioFunctions{
+    QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
     QStringLiteral("speakerLossPersistsAcrossMuteDeviceChangeAndDisabledContext"),
     QStringLiteral("retryClearsTheProblemOnlyOnceTheNewContextPlays"),
@@ -11809,6 +12832,9 @@ QStringList testFunctions(const QMetaObject* meta)
 
 int main(int argc, char** argv)
 {
+    if (argc > 2 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--fake-capture-child")) {
+        return Test::runFakeCaptureChild(QString::fromLocal8Bit(argv[2]));
+    }
     QApplication app(argc, argv);
     app.setAttribute(Qt::AA_Use96Dpi, true);
     TestRemoteMediaController test;

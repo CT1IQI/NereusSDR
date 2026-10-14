@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Seed and resync remote TX indicators from Core mirrors.
+//                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Fit live inset threshold/hold readouts to the actual
+//                 slider range and resolved workspace font/style metrics.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -232,6 +237,8 @@
 //                fallback reads the transmit model's TUNE, which the
 //                release press clears, as the hosting window's handler
 //                does. AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd (KG4VCF): approved 6 px workspace-look TX
+//               panel row spacing. AI-assisted via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -340,7 +347,9 @@
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/ComboStyle.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/DexpPeakMeter.h"
+#include "gui/widgets/InsetValueLabelFit.h"
 #include "gui/widgets/VfoWidget.h"
 #include "core/AudioEngine.h"
 #include "core/ControlRanges.h"
@@ -380,6 +389,8 @@
 namespace NereusSDR {
 
 namespace {
+
+constexpr int kWorkspaceTxRowSpacing = 6;
 
 // R-R3-45: the MON output captions, in one place so a rename is one edit.
 // They match the receiver flag's output buttons (VfoWidget), in capitals
@@ -456,7 +467,7 @@ void TxApplet::buildUI()
     body->setStyleSheet(QStringLiteral("background: %1;").arg(Style::kPanelBg));
     auto* vbox = new QVBoxLayout(body);
     vbox->setContentsMargins(4, 2, 4, 2);
-    vbox->setSpacing(2);
+    vbox->setSpacing(WorkspacePreview::enabled() ? kWorkspaceTxRowSpacing : 2);
     outer->addWidget(body);
 
     // ── 0. Mic-source badge ── read-only label above the gauges ─────────────
@@ -645,8 +656,8 @@ void TxApplet::buildUI()
         m_takeTransmitBtn->setObjectName(QStringLiteral("TxTakeTransmitButton"));
         m_takeTransmitBtn->setAccessibleName(QStringLiteral("Take transmit"));
         m_takeTransmitBtn->setToolTip(
-            QStringLiteral("Ask to take transmit from the device that has it, so MOX and "
-                           "TUNE work here."));
+            QStringLiteral("Take transmit for this window, from the device that has it or "
+                           "when no device does, so MOX, TUNE and programs transmit from here."));
         m_takeTransmitBtn->setVisible(false);
         connect(m_takeTransmitBtn, &QPushButton::clicked, this,
                 &TxApplet::takeTransmitRequested);
@@ -722,6 +733,7 @@ void TxApplet::buildUI()
         m_voxLvlLabel->setFixedWidth(38);
         m_voxLvlLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxLvlLabel);
+        new InsetValueLabelFit(m_voxLvlLabel, m_voxSlider, QStringLiteral(" dB"), 38);
 
         m_voxDlySlider = new QSlider(Qt::Horizontal, this);
         // From Thetis setup.designer.cs:45005-45013 [v2.10.3.13]:
@@ -738,6 +750,7 @@ void TxApplet::buildUI()
         m_voxDlyLabel->setFixedWidth(42);
         m_voxDlyLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_voxDlyLabel);
+        new InsetValueLabelFit(m_voxDlyLabel, m_voxDlySlider, QStringLiteral(" ms"), 42);
 
         vbox->addLayout(row);
     }
@@ -1932,32 +1945,12 @@ void TxApplet::wireControls()
     // light from the Core's state (its `transmitting`, the transmit object's
     // `tune`, PureSignal's two-tone), and a refused press puts them back.
     if (m_model && m_model->role() == RadioModel::Role::Remote) {
-        const auto syncFromCore = [this]() {
-            if (!m_model) { return; }
-            m_updatingFromModel = true;
-            if (m_moxBtn) {
-                QSignalBlocker b(m_moxBtn);
-                m_moxBtn->setChecked(m_model->isTransmitting());
-            }
-            if (m_tuneBtn) {
-                const bool tuning = m_model->transmitModel().isTune();
-                QSignalBlocker b(m_tuneBtn);
-                m_tuneBtn->setChecked(tuning);
-                m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...")
-                                          : QStringLiteral("TUNE"));
-            }
-            if (m_twoToneBtn) {
-                const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
-                QSignalBlocker b(m_twoToneBtn);
-                m_twoToneBtn->setChecked(ps && ps->twoToneOn());
-            }
-            m_updatingFromModel = false;
-        };
-        connect(m_model, &RadioModel::transmittingChanged, this, syncFromCore);
-        connect(&m_model->transmitModel(), &TransmitModel::tuneChanged, this, syncFromCore);
-        connect(m_model, &RadioModel::remoteTransmitRefused, this, syncFromCore);
+        connect(m_model, &RadioModel::transmittingChanged, this, &TxApplet::syncRemoteIndicators);
+        connect(&m_model->transmitModel(), &TransmitModel::tuneChanged,
+                this, &TxApplet::syncRemoteIndicators);
+        connect(m_model, &RadioModel::remoteTransmitRefused, this, &TxApplet::syncRemoteIndicators);
         if (PureSignalSessionFacade* ps = m_model->pureSignalFacade()) {
-            connect(ps, &PureSignalSessionFacade::statusChanged, this, syncFromCore);
+            connect(ps, &PureSignalSessionFacade::statusChanged, this, &TxApplet::syncRemoteIndicators);
         }
     }
 
@@ -2102,6 +2095,30 @@ void TxApplet::refreshMicSourceBadge()
     }
 }
 
+void TxApplet::syncRemoteIndicators()
+{
+    if (!m_model || m_model->role() != RadioModel::Role::Remote) { return; }
+
+    const bool wasUpdating = m_updatingFromModel;
+    m_updatingFromModel = true;
+    if (m_moxBtn) {
+        QSignalBlocker b(m_moxBtn);
+        m_moxBtn->setChecked(m_model->isTransmitting());
+    }
+    if (m_tuneBtn) {
+        const bool tuning = m_model->transmitModel().isTune();
+        QSignalBlocker b(m_tuneBtn);
+        m_tuneBtn->setChecked(tuning);
+        m_tuneBtn->setText(tuning ? QStringLiteral("TUNING...") : QStringLiteral("TUNE"));
+    }
+    if (m_twoToneBtn) {
+        const PureSignalSessionFacade* ps = m_model->pureSignalFacade();
+        QSignalBlocker b(m_twoToneBtn);
+        m_twoToneBtn->setChecked(ps && ps->twoToneOn());
+    }
+    m_updatingFromModel = wasUpdating;
+}
+
 void TxApplet::syncFromModel()
 {
     if (!m_model) { return; }
@@ -2206,7 +2223,9 @@ void TxApplet::syncFromModel()
     refreshMicSourceBadge();
 
     // MOX / TUNE button state
-    if (mox) {
+    if (m_model->role() == RadioModel::Role::Remote) {
+        syncRemoteIndicators();
+    } else if (mox) {
         QSignalBlocker bm(m_moxBtn);
         m_moxBtn->setChecked(m_desktopMoxOn ? m_desktopMoxOn() : mox->isMox());
 
@@ -2856,12 +2875,22 @@ void TxApplet::setTwoToneController(TwoToneController* controller)
     if (m_twoToneCtrl) {
         connect(m_twoToneCtrl, &TwoToneController::twoToneActiveChanged,
                 this, [this](bool active) {
+            if (m_model && m_model->role() == RadioModel::Role::Remote) {
+                syncRemoteIndicators();
+                return;
+            }
             if (!m_twoToneBtn) { return; }
             QSignalBlocker blk(m_twoToneBtn);
             m_updatingFromModel = true;
             m_twoToneBtn->setChecked(active);
             m_updatingFromModel = false;
         });
+
+        // Remote indicators keep the Core facade as their authority.
+        if (m_model && m_model->role() == RadioModel::Role::Remote) {
+            syncRemoteIndicators();
+            return;
+        }
 
         // Sync initial state.
         QSignalBlocker blk(m_twoToneBtn);

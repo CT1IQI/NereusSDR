@@ -1,5 +1,18 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
+//               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//   2026-10-12: TX mini identity follows the Core's versioned txState or
+//               unique legacy TX flag, never the local arbiter's cache.
+//               Its exact TX analyzer window is admitted separately from
+//               the inclusive RX FFT crop.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12: reset collector stall diagnostics between runs, so an
+//               intentional pause is not counted as a stall. J.J. Boyd
+//               (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12: the microphone pump reports, once per stall, a collector
+//               that takes no audio while capture is ready. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (fourth wave): a pan forgets the picture it
 //               shows when its receiver changes stream or stream epoch, so a
 //               late context of that picture is not drawn. J.J. Boyd
@@ -219,11 +232,20 @@
 //               is down and count from its return, so a radio dropout no
 //               longer moves media back to the tunnel or starts it over.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: a pan's saved C-Tune setting is no longer sent for a
+//               receiver whose setting is not this window's (a slice it
+//               only listens to, or a receiver another device holds): the
+//               Core refuses that pin every time. The setting waits and
+//               goes in when the receiver becomes this window's, and the
+//               switch is shown held with the Core's reason
+//               (ctunHeldReason). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 
 #include "gui/RemoteMediaController.h"
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
+#include "core/WdspEngine.h"
 #include "core/Resampler.h"
 #include "core/audio/CaptureSupervisor.h"
 #include "core/audio/MicUplinkCollector.h"
@@ -1162,6 +1184,31 @@ struct RemoteMediaController::Private {
         const TransmitState* tx = client->transmitState();
         return tx && (tx->keyed() || tx->tuning() || tx->txEnding());
     }
+    bool miniUsesTransmit(const SliceModel* slice) const
+    {
+        if (!model || !slice) { return false; }
+        if (model->role() != RadioModel::Role::Remote) {
+            return model->isTransmitting() && model->txBoundSlice() == slice;
+        }
+        // Same authority as MoxDisplayController::followStation: txState
+        // precedes slice mirrors in a snapshot, so resolve its stable ID
+        // only once that slice exists. The remote arbiter cache is not
+        // populated by the mirrored TX flags.
+        if (client && client->capabilities().txStateVersion >= 1) {
+            const TransmitState* state = client->transmitState();
+            return state && state->keyed() && state->txSliceId() >= 0
+                && model->sliceById(state->txSliceId()) == slice;
+        }
+        if (!model->isTransmitting()) { return false; }
+        const SliceModel* transmitSlice = nullptr;
+        for (const SliceModel* candidate : model->slices()) {
+            if (candidate && candidate->isTxSlice()) {
+                if (transmitSlice) { return false; }
+                transmitSlice = candidate;
+            }
+        }
+        return transmitSlice == slice;
+    }
     bool replaceStartFailed = false;
     QTimer* replaceRetry = nullptr;
     std::unique_ptr<DualPathAudio> dual;
@@ -1266,7 +1313,7 @@ struct RemoteMediaController::Private {
         constexpr double kTxSpanHz = 40'000.0;
         constexpr int kPixels = 1024;
         constexpr int kFps = 30;
-        const bool transmit = model->isTransmitting() && model->txBoundSlice() == slice;
+        const bool transmit = miniUsesTransmit(slice);
         const double span = transmit ? kTxSpanHz : kRxSpanHz;
         const double centre = transmit ? double(model->txFrequencyForSlice(slice))
                                        : slice->frequency();
@@ -1391,6 +1438,20 @@ struct RemoteMediaController::Private {
         bool refused = false;
     };
     QHash<int, CtunState> ctunStreams;
+    // The receiver's C-Tune setting is not always this window's to change:
+    // a slice it only listens to is its controller's (StationServer::
+    // changeRefusal), and a receiver another device holds is that device's
+    // (ruling 6.3), so the Core refuses a pin on either. The Core's words
+    // for why, or empty when the setting is this window's. While it is not,
+    // nothing is asked for, the pan's saved setting waits, and the switch
+    // is shown held with these words. The Core checks in this order too.
+    QString ctunHeldReason(const SliceModel* slice) const
+    {
+        if (slice == nullptr) { return {}; }
+        if (slice->isReadOnlyListener()) { return slice->readOnlyListenerReason(); }
+        const SliceAccessMirror* access = client ? client->sliceAccess() : nullptr;
+        return access != nullptr ? access->receiverHeldReason(slice->sliceIndex()) : QString();
+    }
     // R-R3-18/21: one C-Tune centre request in flight per stream. A gesture
     // runs at mouse or wheel rate; the Core answers each request, and while
     // one is out the newest wanted centre waits here. A refusal drops it, so
@@ -1601,6 +1662,13 @@ struct RemoteMediaController::Private {
     // What the collector had dropped when the line last started or
     // reported: the rest is this key's.
     quint64 micDroppedReported = 0;
+    // 2026-10-12: the collector's frames and wakes when its count last
+    // moved, for the one report of a collector that takes nothing while
+    // capture is ready (-1: not being timed).
+    quint64 micCollectedSeen = 0;
+    quint64 micWakesAtProgress = 0;
+    qint64 micCollectedMovedMs = -1;
+    bool micStallReported = false;
     quint16 micSequence = 0;
     quint32 micTimestamp = 0;
     quint64 micPacketsSent = 0;
@@ -2011,6 +2079,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     // display budget's holder is the Core's, from `txState`'s holderEpoch
     // and holderAway (0 and not away while unheld or not sent).
     if (TransmitState* txState = client->transmitState()) {
+        // Read the completed snapshot/delta, including a TX-slice change
+        // while keyed, rather than its individual property notifications.
+        connect(txState, &TransmitState::stateChanged, this,
+                &RemoteMediaController::refreshSubscriptions, Qt::QueuedConnection);
         connect(txState, &TransmitState::stateChanged, this, [this, client] {
             if (d->client != client) { return; }
             const bool onAir = d->coreTransmitting();
@@ -2170,6 +2242,21 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             refreshCtunState();
         });
     }
+    // The pin delta may follow its command result. Budgeted displays do
+    // not re-project CTUN on every planner tick, so observe the mirror
+    // itself. This path only projects: it never restores a preference or
+    // turns a received pin into another request. Sender destruction retires
+    // each watcher when a snapshot replaces its slice.
+    const auto watchCtunPin = [this](int sliceId) {
+        if (SliceModel* slice = d->model->sliceById(sliceId)) {
+            connect(slice, &SliceModel::streamCtunPinnedChanged, this,
+                    [this](bool) { refreshCtunState(false); });
+        }
+    };
+    for (SliceModel* slice : model->slices()) {
+        if (slice) { watchCtunPin(slice->sliceIndex()); }
+    }
+    connect(model, &RadioModel::sliceAdded, this, watchCtunPin);
     connect(client, &StationClient::streamCentreFinished,
             this, &RemoteMediaController::finishCentreRequest);
     connect(client, &QObject::destroyed, this, &RemoteMediaController::stop);
@@ -2199,6 +2286,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     });
     connect(model, &RadioModel::transmittingChanged, this,
             &RemoteMediaController::refreshSubscriptions);
+    connect(client, &StationClient::stateSnapshotApplied, this,
+            &RemoteMediaController::refreshSubscriptions, Qt::QueuedConnection);
     if (client && client->mediaAvailable()) {
         start();
     }
@@ -2940,6 +3029,31 @@ void RemoteMediaController::reconcileMicUplink()
                 break;
             }
         }
+        // 2026-10-12: a collector thread that takes nothing while capture
+        // is ready leaves the helper's ring unread and the uplink silent.
+        // Said once per stall, with whether the thread still wakes, and
+        // again when it ends.
+        const bool captureReady = d->micCollector->isRunning()
+            && d->model->audioEngine()->captureStatus().state
+                == CaptureSupervisor::Status::State::Ready;
+        const quint64 collected = d->micCollector->collectedFrames();
+        if (!captureReady || d->micCollectedMovedMs < 0 || collected != d->micCollectedSeen) {
+            if (d->micStallReported && captureReady) {
+                qCWarning(lcRemoteMedia) << "Microphone collector is taking audio again after"
+                                         << (nowMs - d->micCollectedMovedMs) << "ms";
+            }
+            d->micStallReported = false;
+            d->micCollectedSeen = collected;
+            d->micWakesAtProgress = d->micCollector->wakes();
+            d->micCollectedMovedMs = captureReady ? nowMs : -1;
+        } else if (!d->micStallReported && nowMs - d->micCollectedMovedMs >= kMicCollectorStallMs) {
+            d->micStallReported = true;
+            const quint64 wakes = d->micCollector->wakes() - d->micWakesAtProgress;
+            qCWarning(lcRemoteMedia) << "Microphone collector took no audio for"
+                                     << (nowMs - d->micCollectedMovedMs)
+                                     << "ms while capture is ready; its thread woke" << wakes
+                                     << "times in that time";
+        }
     }
     if (!d->micRunning) {
         return;
@@ -3024,6 +3138,7 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine)
         return;
     }
     if (!d->micCollector || d->micCollectorEngine != engine) {
+        stopMicCollector();
         d->micCollector.reset();
         d->micCollectorEngine = engine;
         d->micCollector = std::make_unique<MicUplinkCollector>(
@@ -3046,6 +3161,11 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine)
 
 void RemoteMediaController::stopMicCollector()
 {
+    // The next run starts its diagnostic clock when capture is ready.
+    d->micCollectedSeen = 0;
+    d->micWakesAtProgress = 0;
+    d->micCollectedMovedMs = -1;
+    d->micStallReported = false;
     if (!d->micCollector) {
         return;
     }
@@ -5948,7 +6068,7 @@ void RemoteMediaController::finishCentreRequest(int sliceId, quint64 streamEpoch
     refreshSubscriptions();
 }
 
-void RemoteMediaController::refreshCtunState()
+void RemoteMediaController::refreshCtunState(bool restorePreference)
 {
     if (!d->model || !d->client || !d->stack) { return; }
     const QPointer<RemoteMediaController> self(this);
@@ -5981,8 +6101,11 @@ void RemoteMediaController::refreshCtunState()
         const bool available = d->client->remoteCtunAvailable()
             && d->model->isConnected() && stream >= 0 && epoch != 0
             && (state.initialized || state.pending || currentContext);
-        if (available && currentContext && !state.initialized && !state.pending
-            && !state.refused
+        // A setting that is another's to change is never asked for: the Core
+        // would refuse it at every sign-in, and the window would tell the
+        // operator of a change nobody made.
+        if (restorePreference && available && currentContext && !state.initialized && !state.pending
+            && !state.refused && d->ctunHeldReason(binding.slice).isEmpty()
             && (state.rejectedContext == 0
                 || isNewerGeneration(binding.context.codec.contextGeneration, state.rejectedContext))) {
             // One hardware stream has one effective pin, even when several
@@ -6020,7 +6143,8 @@ void RemoteMediaController::refreshCtunState()
             || !found->second.slice) { continue; }
         QPointer<SpectrumWidget> widget = found->second.widget;
         const bool pinned = found->second.slice->streamCtunPinned();
-        widget->applyRemoteCtunState(available, pinned);
+        widget->applyRemoteCtunState(available, pinned,
+                                     d->ctunHeldReason(found->second.slice));
         if (!self) { return; }
     }
 }
@@ -7022,8 +7146,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             : binding.context.codec.contextGeneration;
         if (!isNewerGeneration(context.codec.contextGeneration, drawn)) { return; }
         if (binding.isMini()) {
-            const bool wantsTx = d->model && d->model->isTransmitting()
-                && d->model->txBoundSlice() == binding.slice;
+            const bool wantsTx = d->miniUsesTransmit(binding.slice);
             if (!d->miniWanted.contains(binding.miniSliceId)
                 || binding.slice->sliceIndex() != binding.miniSliceId || wantsTx
                 || decoded->traceSamples <= 0
@@ -7069,37 +7192,50 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         : std::nullopt;
     if (binding.isMini()) {
         const QJsonObject target = budgetMode ? binding.acceptedRequest : binding.observed;
-        const bool wantsTx = d->model && binding.slice && d->model->isTransmitting()
-            && d->model->txBoundSlice() == binding.slice;
+        const bool wantsTx = d->miniUsesTransmit(binding.slice);
         const double expectedCentre = target.value(QStringLiteral("centreHz")).toDouble();
         const double expectedSpan = target.value(QStringLiteral("spanHz")).toDouble();
         const int fftSize = decoded->grant ? decoded->grant->grantedFftSize
             : target.value(QStringLiteral("fftSize")).toInt();
-        // Core reports the exact inclusive FFT-bin crop, which can differ
-        // from the requested RF window by several bins. Recompute that crop
-        // from the same SpectrumReducer rule rather than allowing a broad
-        // tolerance that could admit a stale, shifted context.
-        ReducerConfig crop;
-        crop.centreHz = expectedCentre;
-        crop.spanHz = expectedSpan;
-        crop.streamCentreHz = decoded->sourceCentreHz;
-        crop.sampleRateHz = decoded->sampleRateHz;
-        const auto bins = fftSize > 0
-            ? SpectrumReducer::visibleBinRange(fftSize, crop)
-            : std::pair<int, int>{0, -1};
         const double binHz = fftSize > 0 ? decoded->sampleRateHz / fftSize : 0.0;
-        const double cropCentre = decoded->sourceCentreHz - decoded->sampleRateHz * 0.5
-            + (bins.first + bins.second + 1) * binHz * 0.5;
-        const double cropSpan = (bins.second - bins.first + 1) * binHz;
         const double rfEpsilon = std::max(1.0e-6, binHz * 1.0e-9);
+        bool coordinatesMatch = false;
+        if (wantsTx) {
+            // DaemonMediaController::transmitContextFor sends miniView's
+            // exact fixed window, not a SpectrumReducer crop. Its source
+            // origin is the Core's NCO, including signed Tune compensation;
+            // the request centre is still the operator's dial plus XIT.
+            // The span comes from requestMini's existing fixed TX contract.
+            coordinatesMatch = fftSize > 0
+                && decoded->sampleRateHz == static_cast<double>(WdspEngine::kTxDspSampleRate)
+                && std::abs(decoded->centreHz - decoded->sourceCentreHz) <= rfEpsilon
+                && std::abs(decoded->spanHz - expectedSpan) <= rfEpsilon;
+        } else {
+            // Core reports the exact inclusive FFT-bin crop, which can differ
+            // from the requested RF window by several bins. Recompute that crop
+            // from the same SpectrumReducer rule rather than allowing a broad
+            // tolerance that could admit a stale, shifted context.
+            ReducerConfig crop;
+            crop.centreHz = expectedCentre;
+            crop.spanHz = expectedSpan;
+            crop.streamCentreHz = decoded->sourceCentreHz;
+            crop.sampleRateHz = decoded->sampleRateHz;
+            const auto bins = fftSize > 0
+                ? SpectrumReducer::visibleBinRange(fftSize, crop)
+                : std::pair<int, int>{0, -1};
+            const double cropCentre = decoded->sourceCentreHz - decoded->sampleRateHz * 0.5
+                + (bins.first + bins.second + 1) * binHz * 0.5;
+            const double cropSpan = (bins.second - bins.first + 1) * binHz;
+            coordinatesMatch = bins.second >= bins.first
+                && std::abs(decoded->centreHz - cropCentre) <= rfEpsilon
+                && std::abs(decoded->spanHz - cropSpan) <= rfEpsilon;
+        }
         if (!d->miniWanted.contains(binding.miniSliceId) || !binding.slice
             || binding.slice->sliceIndex() != binding.miniSliceId
             || decoded->sourceStream != binding.slice->streamIndex()
             || binding.observedStreamEpoch != binding.slice->streamEpoch()
             || decoded->transmit.value_or(false) != wantsTx
-            || bins.second < bins.first
-            || std::abs(decoded->centreHz - cropCentre) > rfEpsilon
-            || std::abs(decoded->spanHz - cropSpan) > rfEpsilon
+            || !coordinatesMatch
             || decoded->traceSamples <= 0
             || decoded->traceSamples != decoded->waterfallSamples
             || decoded->wideSamples != 0) {
@@ -7334,8 +7470,7 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         const bool budgetMode = d->client->remoteDisplayBudgetLimits().has_value();
         const QJsonObject wanted = d->requestMini(mini.slice);
         if (!d->miniWanted.contains(mini.miniSliceId) || wanted.isEmpty()
-            || mini.transmit != (d->model->isTransmitting()
-                && d->model->txBoundSlice() == mini.slice)
+            || mini.transmit != d->miniUsesTransmit(mini.slice)
             // A context taken for drawing only answers a request the mini
             // display has since changed, by its nature.
             || (!mini.drawing
@@ -7536,9 +7671,7 @@ void RemoteMediaController::presentDueDisplay()
             if (it == d->bindings.end()) { break; }
             if (it->second.isMini()) {
                 auto& mini = it->second;
-                const bool currentTx = d->model && mini.slice
-                    && d->model->isTransmitting()
-                    && d->model->txBoundSlice() == mini.slice;
+                const bool currentTx = d->miniUsesTransmit(mini.slice);
                 const bool budgetMode = d->client
                     && d->client->remoteDisplayBudgetLimits().has_value();
                 const QJsonObject wanted = d->requestMini(mini.slice);

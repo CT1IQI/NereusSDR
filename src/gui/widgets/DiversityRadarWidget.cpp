@@ -69,6 +69,10 @@
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "gui/widgets/DiversityRadarWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 
@@ -184,8 +188,11 @@ void DiversityRadarWidget::paintEvent(QPaintEvent* /*event*/)
     p.drawLine(QPointF(c.x(), c.y() - r), QPointF(c.x(), c.y() + r));
 
     // Compass labels (NereusSDR-original chrome).
-    QFont labelFont = p.font();
-    labelFont.setPointSizeF(labelFont.pointSizeF() * 0.85);
+    QFont labelFont = WorkspacePreview::readableFont(p.font(), p.device());
+    if (labelFont.pointSizeF() > 0) {
+        labelFont.setPointSizeF(labelFont.pointSizeF() * 0.85);
+    }
+    labelFont = WorkspacePreview::readableFont(labelFont, p.device());
     p.setFont(labelFont);
     p.setPen(QColor(200, 220, 230));
     const QString labels[4] = {QStringLiteral("N"), QStringLiteral("E"),

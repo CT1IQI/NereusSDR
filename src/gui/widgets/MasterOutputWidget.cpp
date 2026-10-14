@@ -10,6 +10,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-04-20 — Written by J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Anthropic Claude Code.
 //                Phase 3O Sub-Phase 10 Task 10b.
@@ -62,6 +65,8 @@
 #include <QAction>
 #include <QChar>
 #include <QFont>
+#include <QFontMetrics>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLayout>
@@ -190,6 +195,38 @@ QString chosenNameOf(const AudioRoleStatus& status)
 
 namespace HeaderVolumeStyle {
 
+namespace {
+class ReadoutFit final : public QObject {
+public:
+    explicit ReadoutFit(QLabel* readout) : QObject(readout) {
+        readout->installEventFilter(this);
+    }
+    static void fit(QLabel* readout) {
+        const bool stacked = readout->property("nereusHeaderReadoutStacked").toBool();
+        if (!WorkspacePreview::enabled()) {
+            readout->setFixedWidth(stacked ? 20 : 22);
+            readout->setMinimumHeight(stacked ? 13 : 0);
+            readout->setMaximumHeight(stacked ? 13 : QWIDGETSIZE_MAX);
+            return;
+        }
+        const QFontMetrics metrics(WorkspacePreview::readableFont(readout->font(), readout), readout);
+        // Reserve the widest possible value, both border pixels and padding.
+        readout->setFixedWidth(std::max(stacked ? 20 : 22,
+                                       metrics.horizontalAdvance(QStringLiteral("100")) + 6));
+        readout->setMinimumHeight(metrics.height() + (stacked ? 2 : 4));
+        readout->setMaximumHeight(stacked ? readout->minimumHeight() : QWIDGETSIZE_MAX);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange
+            || event->type() == QEvent::Polish || event->type() == QEvent::Show) {
+            fit(static_cast<QLabel*>(watched));
+        }
+        return false;
+    }
+};
+}
+
 const char* const kIconButton =
     "QPushButton { background: transparent; border: none; padding: 0; }";
 
@@ -240,6 +277,11 @@ const char* const kReadoutStacked =
 int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readout,
               bool stacked, int stackedLabelWidth, const char* readoutStyle)
 {
+    if (!readout->property("nereusHeaderReadoutFitted").toBool()) {
+        new ReadoutFit(readout);
+        readout->setProperty("nereusHeaderReadoutFitted", true);
+    }
+    readout->setProperty("nereusHeaderReadoutStacked", stacked);
     if (QLayout* row = button->parentWidget()->layout()) {
         row->setSpacing(stacked ? 3 : 4);
     }
@@ -254,6 +296,7 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
         } else {
             word->setVisible(false);
         }
+        ReadoutFit::fit(readout);
         return kStackedIconPx;
     }
     button->setFixedSize(20, 20);
@@ -265,6 +308,7 @@ int applyForm(QPushButton* button, QLabel* word, QSlider* slider, QLabel* readou
     word->setMinimumWidth(0);
     word->setMaximumWidth(QWIDGETSIZE_MAX);
     word->setVisible(true);
+    ReadoutFit::fit(readout);
     return kIconPx;
 }
 
@@ -343,6 +387,8 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
     m_dbLabel->setAlignment(Qt::AlignCenter);
     m_dbLabel->setStyleSheet(QLatin1String(kDbLabelStyle));
     layout->addWidget(m_dbLabel);
+    HeaderVolumeStyle::applyForm(m_speakerBtn, m_pcLabel, m_slider, m_dbLabel,
+                                false, 0, kDbLabelStyle);
 
     // ── Seed the engine with the saved values BEFORE wiring widget→model ──
     // so the engine matches the UI state at startup (same contract as

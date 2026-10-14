@@ -62,19 +62,34 @@
 //   2026-10-12 - The switch is on unless NEREUS_WORKSPACE_PREVIEW is "0";
 //                 enabledFromEnvironmentValue() is the rule. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Shared 11 px text floor, J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #pragma once
 
 #include <QColor>
 #include <QHash>
+#include <QFont>
 #include <QString>
 
 class QApplication;
 class QObject;
 class QWidget;
+class QPaintDevice;
 
 namespace NereusSDR::WorkspacePreview {
+
+// JJ's option B (2026-10-12): an 11 logical-pixel text floor.
+// Point fonts are compared using Qt's logical font DPI, without device
+// pixel ratio scaling. Fonts at or above the floor are returned exactly;
+// smaller fonts retain their other attributes and become pixel-sized.
+// Both helpers return the original value with the classic look.
+QFont readableFont(const QFont& font);
+// Painter callsites pass their actual device to compare point sizes at
+// that device's logical DPI (e.g. a 96 DPI image versus a 72 DPI widget).
+QFont readableFont(const QFont& font, const QPaintDevice* device);
+int readableTextPixelSize(int pixels);
 
 bool enabled();
 void setEnabledForTest(bool on);

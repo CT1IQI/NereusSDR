@@ -16,6 +16,10 @@
 //               packet writer's size and high-water mark, for remote
 //               playback's room check (R-AUD-15). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: MatcherPacketTiming, what a packet writer tells the clock
+//               matcher of each packet: its wait for room, how long ago it
+//               arrived and its place in the source's stream (R-AUD-15).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -60,6 +64,22 @@ struct DeviceRateMatcherStats {
     int packetFrames = 0;
     int packetOutFrames = 0;
     int packetHighWaterFrames = 0;
+};
+
+// What a writer of whole packets (remote playback) knows of the packet it
+// is about to write (DeviceRateMatcher::setWritePacketFrames).
+struct MatcherPacketTiming {
+    // How long it was kept back for room in the matcher, itself or behind
+    // one that was; 0: it was not, it is written in its own time.
+    std::int64_t waitedNs = 0;
+    // How long ago it arrived from its source, whatever kept it since (a
+    // jitter queue's hold, the wait for room); negative: nothing arrived
+    // (a concealed interval), or the writer cannot say.
+    std::int64_t arrivedAgoNs = -1;
+    // Its first frame's place in the source's stream, in input frames from
+    // any fixed origin (an RTP timestamp, unwrapped).  Read only with an
+    // arrival.
+    std::int64_t sourceFrame = 0;
 };
 
 } // namespace NereusSDR
