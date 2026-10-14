@@ -474,6 +474,7 @@ nereus_add_test(tst_ps3_display_codec EXTRA_LABELS core)
 nereus_add_test(tst_ps3_display_transform EXTRA_LABELS core)
 nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_ps3_two_tone_completion EXTRA_LABELS session)
+nereus_add_test(tst_station_ps3_two_tone_keepalive fakes/LoopbackTransport.cpp CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
 nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
@@ -9118,7 +9119,8 @@ nereus_add_test(tst_remote_keying
 # the transmit watchdog's rules and the per-mode starvation action, on an
 # injected clock; and the watchdog on each path that exists, severed with
 # a key on (real time).
-nereus_add_test(tst_remote_tx_watchdog EXTRA_LABELS session)
+# The watchdog's wording check needs only this text table from the GUI.
+nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp
@@ -10040,7 +10042,7 @@ endif()
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
 # side of the transmit verbs (copies, epochs, releases) on its own.
-nereus_add_test(tst_remote_transmit_client EXTRA_LABELS session)
+nereus_add_test(tst_remote_transmit_client CORE_ONLY EXTRA_LABELS session)
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): a remote
 # window keys a real in-process Core (MOX, TUNE, two-tone, the microphone,
