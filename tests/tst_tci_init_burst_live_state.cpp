@@ -24,6 +24,7 @@
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
 #include "core/RadioConnection.h"
+#include "core/TxSliceArbiter.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "TestMockRadioModel.h"
@@ -77,6 +78,9 @@ private slots:
     void agc_drives_agc_mode_and_gain_lines();
     // RED #5 -- mox + rit/xit + lock + globalMute drive their lines.
     void global_toggles_drive_their_lines();
+    void late_client_after_completed_handoff_gets_bound_tx_frequency_data();
+    void late_client_after_completed_handoff_gets_bound_tx_frequency();
+    void initial_tx_frequency_without_binding_retains_rx1_fallback();
     void production_tx_slice_drives_trx_and_tune_lines_data();
     void production_tx_slice_drives_trx_and_tune_lines();
     // RED #6 -- per-rx flags: sql, rxMute, nr, anf, apf, bin, nf, ctun, split.
@@ -291,6 +295,147 @@ void TestTciInitBurstLiveState::global_toggles_drive_their_lines()
              "VFOALock on must flow into lock:0,true");
     QVERIFY2(burst.contains(QStringLiteral("mute:true;")),
              "Global mute on must flow into mute:true");
+}
+
+// PR #293 missed P2: a fresh connection after a completed handoff must
+// receive the bound slice's dial, even for an internal slice. Reading RX0
+// instead, or adding XIT to the dial already announced separately from
+// xit_enable/offset, points the app at another frequency/band. Only the
+// transport is fake; the model and arbiter are real.
+void TestTciInitBurstLiveState::late_client_after_completed_handoff_gets_bound_tx_frequency_data()
+{
+    QTest::addColumn<int>("txSliceId");
+    QTest::addColumn<bool>("xitEnabled");
+    QTest::addColumn<qint64>("expectedHz");
+    QTest::addColumn<QString>("expectedBand");
+    QTest::newRow("slice-b-with-xit") << 1 << true << qint64(21250000) << QStringLiteral("15m");
+    QTest::newRow("internal-slice-with-xit") << 2 << true << qint64(28500000) << QStringLiteral("10m");
+    QTest::newRow("internal-slice-xit-disabled") << 2 << false << qint64(28500000) << QStringLiteral("10m");
+}
+
+void TestTciInitBurstLiveState::late_client_after_completed_handoff_gets_bound_tx_frequency()
+{
+    QFETCH(int, txSliceId);
+    QFETCH(bool, xitEnabled);
+    QFETCH(qint64, expectedHz);
+    QFETCH(QString, expectedBand);
+    pinAppSettingsToCaptureConditions();
+    InitBurstFakeConnection connection;
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    radio.injectConnectionForTest(&connection);
+    const auto detachConnection = qScopeGuard([&radio] {
+        radio.injectConnectionForTest(nullptr);
+    });
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 1);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 2);
+    SliceModel* const first = radio.sliceById(0);
+    SliceModel* const second = radio.sliceById(1);
+    SliceModel* const internal = radio.sliceById(2);
+    first->setFrequency(7150000.0);
+    second->setFrequency(21250000.0);
+    internal->setFrequency(28500000.0);
+    SliceModel* const txSlice = radio.sliceById(txSliceId);
+    txSlice->setXitHz(600);
+    txSlice->setXitEnabled(xitEnabled);
+    QVERIFY(radio.txBoundSlice() == first);
+    QVERIFY(!radio.mox());
+
+    // Capture receive and separate XIT state before the handoff. It must
+    // survive the handoff and the TX initialization repair unchanged, including stream
+    // centres (DDS), which need not equal a slice's receive dial.
+    TciProtocol beforeHandoff(&radio);
+    QStringList receiveLines;
+    for (const QString& line : beforeHandoff.buildInitBurst()) {
+        if (line.startsWith(QStringLiteral("vfo:"))
+            || line.startsWith(QStringLiteral("dds:"))
+            || line.startsWith(QStringLiteral("if:"))
+            || line.startsWith(QStringLiteral("xit_enable:"))
+            || line.startsWith(QStringLiteral("xit_offset:"))) {
+            receiveLines.append(line);
+        }
+    }
+    QVERIFY(!receiveLines.isEmpty());
+    QVERIFY(radio.requestTxHandoffToSlice(txSliceId));
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), txSliceId);
+    QCOMPARE(radio.txSliceArbiter()->pendingHandoffSliceId(), -1);
+    QCOMPARE(radio.txBoundSlice(), txSlice);
+    QVERIFY(!radio.mox());
+
+    // Attach the server after the handoff has completed. There is no
+    // queued handoff/VFO event to correct or mask a wrong initial burst.
+    TciServer server(&radio);
+    QVERIFY(server.start(0));
+    QWebSocket client;
+    QStringList frames;
+    connect(&client, &QWebSocket::textMessageReceived, this,
+            [&frames](const QString& frame) {
+                for (const QString& line : frame.split(QLatin1Char(';'), Qt::SkipEmptyParts)) {
+                    frames.append(line.trimmed() + QLatin1Char(';'));
+                }
+            });
+    QSignalSpy connected(&client, &QWebSocket::connected);
+    client.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    QTRY_VERIFY_WITH_TIMEOUT(frames.contains(QStringLiteral("ready;")), 3000);
+    const QStringList initial = frames.mid(0, frames.indexOf(QStringLiteral("ready;")) + 1);
+    QCOMPARE(initial.count(QStringLiteral("tx_frequency:%1;").arg(expectedHz)), 1);
+    QCOMPARE(initial.count(QStringLiteral("tx_frequency_thetis:%1,%2,true,false;")
+                               .arg(expectedHz).arg(expectedBand)), 1);
+    QVERIFY(!initial.contains(QStringLiteral("tx_frequency:7150000;")));
+    QVERIFY(initial.contains(QStringLiteral("trx_count:2;")));
+    QVERIFY(initial.contains(QStringLiteral("vfo:0,0,7150000;")));
+    QVERIFY(initial.contains(QStringLiteral("vfo:1,0,21250000;")));
+    QStringList actualReceiveLines;
+    for (const QString& line : initial) {
+        if (line.startsWith(QStringLiteral("vfo:"))
+            || line.startsWith(QStringLiteral("dds:"))
+            || line.startsWith(QStringLiteral("if:"))
+            || line.startsWith(QStringLiteral("xit_enable:"))
+            || line.startsWith(QStringLiteral("xit_offset:"))) {
+            actualReceiveLines.append(line);
+        }
+        QVERIFY(!line.startsWith(QStringLiteral("vfo:2,")));
+        QVERIFY(!line.startsWith(QStringLiteral("dds:2,")));
+    }
+    QCOMPARE(actualReceiveLines, receiveLines);
+    QCOMPARE(first->frequency(), 7150000.0);
+    QCOMPARE(second->frequency(), 21250000.0);
+    QCOMPARE(internal->frequency(), 28500000.0);
+    QCOMPARE(radio.txBoundSlice(), txSlice);
+    QCOMPARE(txSlice->xitEnabled(), xitEnabled);
+    QCOMPARE(txSlice->xitHz(), 600);
+    QVERIFY(!radio.mox());
+    client.close();
+    server.stop();
+}
+
+// Preserve the legacy RX1 dial fallback when no TX-bound slice resolves;
+// an initialization repair must not introduce a new zero-frequency default.
+void TestTciInitBurstLiveState::initial_tx_frequency_without_binding_retains_rx1_fallback()
+{
+    pinAppSettingsToCaptureConditions();
+    InitBurstFakeConnection connection;
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    radio.injectConnectionForTest(&connection);
+    const auto detachConnection = qScopeGuard([&radio] {
+        radio.injectConnectionForTest(nullptr);
+    });
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    radio.sliceById(0)->setFrequency(7150000.0);
+    radio.txSliceArbiter()->releaseBinding();
+    QVERIFY(radio.txBoundSlice() == nullptr);
+    QVERIFY(!radio.mox());
+    TciProtocol protocol(&radio);
+    const QStringList burst = protocol.buildInitBurst();
+    QVERIFY(burst.contains(QStringLiteral("tx_frequency:7150000;")));
+    QVERIFY(burst.contains(QStringLiteral("tx_frequency_thetis:7150000,40m,false,false;")));
+    QVERIFY(burst.contains(QStringLiteral("vfo:0,0,7150000;")));
+    QVERIFY(!burst.contains(QStringLiteral("tx_frequency:0;")));
+    QVERIFY(radio.txBoundSlice() == nullptr);
+    QVERIFY(!radio.mox());
 }
 
 // The production slice flags, including a desktop receiver map, choose
