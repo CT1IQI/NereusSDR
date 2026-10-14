@@ -122,17 +122,17 @@ const Expected kExpectedDifferences[] = {
     {"cap.coreSpeakerVersion", Kind::OnPurpose, "1", "",
      "A desktop that hosts a Core plays through its own window's speakers. The Core speaker is "
      "for a Core with no window.",
-     "src/core/session/StationServer.cpp:9807 (peerGetsCoreSpeaker)"},
+     "src/core/session/StationServer.cpp:9814 (peerGetsCoreSpeaker)"},
     {"coreSpeaker.host", Kind::OnPurpose, "true", "false",
      "A desktop that hosts a Core plays through its own window's speakers. The Core speaker is "
      "for a Core with no window.",
-     "src/core/daemon/DaemonApp.cpp:337 (setCoreSpeakerHost) and "
-     "src/core/session/StationServer.cpp:9807 (peerGetsCoreSpeaker)"},
+     "src/core/daemon/DaemonApp.cpp:340 (setCoreSpeakerHost) and "
+     "src/core/session/StationServer.cpp:9814 (peerGetsCoreSpeaker)"},
     {"cap.vaxVersion", Kind::OnPurpose, "0", "1",
      "VAX devices belong to a desktop. The headless Core publishes none: outputs there would be "
      "devices nothing on the Core's computer feeds.",
-     "src/core/daemon/DaemonApp.cpp:309 (setVaxOutputsAllowed) and "
-     "src/core/session/StationServer.cpp:13987 (vaxVersion)"},
+     "src/core/daemon/DaemonApp.cpp:315 (setVaxOutputsAllowed) and "
+     "src/core/session/StationServer.cpp:13996 (vaxVersion)"},
 
     {"cap.stationTciVersion", Kind::KnownGap, "2", "0", kTciWhy, kTciWho},
     {"cap.stationTciSettingsVersion", Kind::KnownGap, "1", "", kTciWhy, kTciWho},
@@ -141,8 +141,8 @@ const Expected kExpectedDifferences[] = {
     {"pcCapture.allowed", Kind::OnPurpose, "false", "true",
      "The headless Core has nobody at its computer to speak, so it never opens a microphone. A "
      "desktop Core's own window may use its computer's microphone.",
-     "src/core/daemon/DaemonApp.cpp:301 (setPcCaptureAllowed) and "
-     "src/models/RadioModel.h:1088 (setPcCaptureAllowed)"},
+     "src/core/daemon/DaemonApp.cpp:307 (setPcCaptureAllowed) and "
+     "src/models/RadioModel.h:1106 (setPcCaptureAllowed)"},
 };
 
 const Expected* expectedFor(const QString& key)
