@@ -149,6 +149,9 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix round 1 (minor 5): m_psBoardUnknown,
 //                PS-A shown disabled while the board is not known.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Expose the window-owned DUP presentation and click signal.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -322,6 +325,9 @@ public:
     // button's clicked-state drives controller.setActive(checked); the
     // controller's twoToneActiveChanged signal mirrors back into the button.
     void setTwoToneController(TwoToneController* controller);
+
+    // The window owns this display preference; the applet only presents it.
+    void setDisplayDuplexState(bool checked, bool available, const QString& tooltip);
 
     // ── Phase 3M-3a-ii Batch 6 (Task A): TxCfcDialog launch ─────────────────
     // Public slot so external surfaces (CfcSetupPage's [Configure CFC bands…]
@@ -540,6 +546,7 @@ signals:
     // PureSignal…); the same singleton dialog instance is opened by the
     // [PS-A] button right-click and the matching control on PureSignalApplet.
     void openPureSignalDialogRequested();
+    void displayDuplexRequested(bool on);
 
 private slots:
     /// Phase 3M-3a-iii bench polish (2026-05-04): 100 ms timer slot — pulls
@@ -696,6 +703,7 @@ private:
     QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (Phase 3M-4 Task 13)
     QPushButton* m_psaBtn     = nullptr;
+    QPushButton* m_dupBtn     = nullptr;
     // Shared session facade owned by RadioModel. setPureSignal() changes its
     // local coordinator only for the established standalone test seam.
     QPointer<NereusSDR::PureSignalSessionFacade> m_psFacade;
