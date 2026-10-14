@@ -37,8 +37,15 @@ int main(void)
            "two channel-descriptor blocks must fit allocator");
     expect(nereusPaBufferSizesFit(1, 4, 2, 16, 0, 64), 1,
            "exact channel-descriptor allocation fits");
-    expect(nereusPaBufferSizesFit(1, 1, 2, 1, 1, 2), 0,
-           "noninterleaved channel-pointer table must fit allocator");
+    /* Two one-byte descriptors per channel need only 4 bytes. On the
+     * supported 4/8-byte pointer platforms, both limits below fit those
+     * descriptors, so only the rejected pointer-table boundary can fail.
+     */
+    const unsigned long pointerTableBytes = 2UL * sizeof(void*);
+    expect(nereusPaBufferSizesFit(1, 1, 2, 1, 1, pointerTableBytes), 1,
+           "exact noninterleaved channel-pointer table allocation fits");
+    expect(nereusPaBufferSizesFit(1, 1, 2, 1, 1, pointerTableBytes - 1), 0,
+           "noninterleaved channel-pointer table beyond allocation limit");
     expect(nereusPaBufferSizesFit(1, 4, 0, 16, 0, winLongMax), 0,
            "active side requires positive channels");
     expect(nereusPaBufferSizesFit(1, 0, 2, 16, 0, winLongMax), 0,
