@@ -573,8 +573,9 @@ private slots:
 
     // Receiver 1: channel 0 is RX2 on or off, channel 1 always false
     // ("no subrx"). A set would turn RX2 on or off in Thetis (RX2Enabled);
-    // TCI does not open or close receiver 1's slice, so nothing changes,
-    // and the requested value is echoed as Thetis does.
+    // TCI does not open or close receiver 1's slice, so nothing changes.
+    // An available receiver echoes the request as Thetis does; RX2 off
+    // means the synthetic receiver is unavailable and must answer false.
     void rxChannelEnableSecondReceiver_data()
     {
         QTest::addColumn<bool>("rx2On");
@@ -596,7 +597,9 @@ private slots:
         QCOMPARE(protocol.handleCommand(QStringLiteral("rx_channel_enable:1,0,false;")),
                  QStringLiteral("rx_channel_enable:1,0,false;"));
         QCOMPARE(protocol.handleCommand(QStringLiteral("rx_channel_enable:1,1,true;")),
-                 QStringLiteral("rx_channel_enable:1,1,true;"));
+                 QStringLiteral("rx_channel_enable:1,1,%1;").arg(on));
+        QCOMPARE(protocol.handleCommand(QStringLiteral("rx_channel_enable:1,1;")),
+                 QStringLiteral("rx_channel_enable:1,1,false;"));
         QCOMPARE(protocol.handleCommand(QStringLiteral("rx_channel_enable:1,0;")),
                  QStringLiteral("rx_channel_enable:1,0,%1;").arg(on));
         QCOMPARE(protocol.handleCommand(QStringLiteral("rx_enable:1;")),

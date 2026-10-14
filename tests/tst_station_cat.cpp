@@ -26,6 +26,11 @@
 //                                    the result, device reads at most once
 //                                    a second.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  A refused change is answered with
+//                                    the rule it broke; the general
+//                                    sentence only when there is none.
+//                                    AI-assisted via Anthropic Claude
+//                                    Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -60,6 +65,8 @@ const QString kChannelRefused = QStringLiteral(
     "Configuration refused: check address, port, format and exclusive device assignment.");
 const QString kGlobalRefused = QStringLiteral(
     "Configuration refused: check PTT source, sampled inputs and device assignment.");
+const QString kSerialNoDevice = QStringLiteral(
+    "This serial port has no device. Choose a device, then turn the port on.");
 const QString kNotDeclared = QStringLiteral("This Core cannot set up its CAT from here.");
 const QString kOlderApp = QStringLiteral("Update this app to set up CAT on this Core.");
 
@@ -262,8 +269,8 @@ private slots:
     }
 
     // Each command applies through CatService, and each refuses in plain
-    // words: the local pages' own text for a refused channel or global
-    // change.
+    // words: the rule the change broke, or the local pages' general text
+    // for a refused channel or global change with no rule to name.
     void eachCommandAppliesAndRefuses()
     {
         RadioModel model;
@@ -290,15 +297,47 @@ private slots:
         QVERIFY2(result.accepted, qPrintable(result.reason));
         QCOMPARE(service.channelConfig(2).serialBaud, 9600);
         QCOMPARE(service.channelConfig(2).tcpPort, int(port));
-        // Refused by CatService: the page's words, nothing kept.
+        // Refused by CatService: the rule it broke, nothing kept.
         channel.insert(QStringLiteral("tcpPort"), 0);
         QTest::ignoreMessage(QtWarningMsg,
                              QRegularExpression(QStringLiteral("Invalid CAT listener address")));
         result = run(dispatcher, "setStationCatChannel",
                      {intArg("channel", 2), textArg("config", text(channel))});
         QVERIFY(!result.accepted);
-        QCOMPARE(result.reason, kChannelRefused);
+        QCOMPARE(result.reason, QStringLiteral("Invalid CAT listener address or port."));
         QCOMPARE(service.channelConfig(2).tcpPort, int(port));
+        // A serial port turned on before it has a device.
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("This serial port has no device")));
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 3),
+                      textArg("config", text({{QStringLiteral("serialEnabled"), true}}))});
+        QVERIFY(!result.accepted);
+        QCOMPARE(result.reason, kSerialNoDevice);
+        QVERIFY(!service.channelConfig(3).serialEnabled);
+        // A serial device another port already has.
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 3),
+                      textArg("config", text({{QStringLiteral("serialEnabled"), true},
+                                              {QStringLiteral("serialDevice"),
+                                               QStringLiteral("shared-device")}}))});
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("CAT 4 refused: serial device")));
+        result = run(dispatcher, "setStationCatChannel",
+                     {intArg("channel", 4),
+                      textArg("config", text({{QStringLiteral("serialEnabled"), true},
+                                              {QStringLiteral("serialDevice"),
+                                               QStringLiteral("shared-device")}}))});
+        QVERIFY(!result.accepted);
+        QCOMPARE(result.reason, QStringLiteral("That serial device is already used by CAT 3."));
+        QVERIFY(!service.channelConfig(4).serialEnabled);
+        // Refused with no rule to name (the controller asked for a port the
+        // Core does not have): the general sentence.
+        QVERIFY(model.stationCatController() != nullptr);
+        QString general;
+        QVERIFY(!model.stationCatController()->setChannel(5, text(channel), &general));
+        QCOMPARE(general, kChannelRefused);
         // Not understood: a channel the Core does not have, a config that
         // is not an object or has a field of the wrong kind.
         for (const QList<MirrorUpdate>& arguments :
@@ -327,7 +366,21 @@ private slots:
                                               {QStringLiteral("pttDeviceSource"),
                                                QStringLiteral("None")}}))});
         QVERIFY(!result.accepted);
-        QCOMPARE(result.reason, kGlobalRefused);
+        QCOMPARE(result.reason, QStringLiteral(
+            "Input PTT has no input source. Choose a source, then turn it on."));
+        QVERIFY(!service.globalConfig().pttEnabled);
+        // Input PTT asks for a device a port already has.
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("CAT PTT refused: serial device")));
+        result = run(dispatcher, "setStationCatGlobal",
+                     {textArg("config", text({{QStringLiteral("pttEnabled"), true},
+                                              {QStringLiteral("pttDeviceSource"),
+                                               QStringLiteral("Physical")},
+                                              {QStringLiteral("pttUseCts"), true},
+                                              {QStringLiteral("pttSerialDevice"),
+                                               QStringLiteral("shared-device")}}))});
+        QVERIFY(!result.accepted);
+        QCOMPARE(result.reason, QStringLiteral("That serial device is already used by CAT 3."));
         QVERIFY(!service.globalConfig().pttEnabled);
         result = run(dispatcher, "setStationCatGlobal",
                      {textArg("config", text({{QStringLiteral("aiEnabled"), 1}}))});
@@ -384,6 +437,96 @@ private slots:
 
         QVERIFY(OperatorWording::isPlain(kChannelRefused));
         QVERIFY(OperatorWording::isPlain(kGlobalRefused));
+    }
+
+    // Every sentence a refused CAT setting is answered with is written for
+    // the operator. Each is the answer to the one setting that breaks its
+    // rule, so a sentence that changes is seen here.
+    void everyRefusalSentenceIsPlain()
+    {
+        RadioModel model;
+        model.addSlice();
+        CatService& service = *model.catService();
+        SessionCommandDispatcher dispatcher(&model);
+        // Each refusal is also logged once; the log line is not this test's.
+        const auto expectLogLine = []() {
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral(".")));
+        };
+        const auto channelAnswer = [&](int channel, const QJsonObject& change) {
+            return run(dispatcher, "setStationCatChannel",
+                       {intArg("channel", channel), textArg("config", text(change))});
+        };
+        const auto globalAnswer = [&](const QJsonObject& change) {
+            return run(dispatcher, "setStationCatGlobal", {textArg("config", text(change))});
+        };
+        const auto plain = [](const SessionMessage& result, const QString& sentence) {
+            return !result.accepted && result.reason == sentence
+                && OperatorWording::isPlain(result.reason);
+        };
+        const QJsonObject serialOn{{QStringLiteral("serialEnabled"), true}};
+        const auto serialOnWith = [](const QString& device) {
+            return QJsonObject{{QStringLiteral("serialEnabled"), true},
+                               {QStringLiteral("serialDevice"), device}};
+        };
+        expectLogLine();
+        SessionMessage result = channelAnswer(1, serialOn);
+        QVERIFY2(plain(result, kSerialNoDevice), qPrintable(result.reason));
+        expectLogLine();
+        result = channelAnswer(1, {{QStringLiteral("serialParity"), QStringLiteral("invented")}});
+        QVERIFY2(plain(result, QStringLiteral("The serial port's baud rate, parity, data bits or "
+                                              "stop bits are not valid.")),
+                 qPrintable(result.reason));
+        result = channelAnswer(1, serialOnWith(QStringLiteral("device-one")));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        expectLogLine();
+        result = channelAnswer(2, serialOnWith(QStringLiteral("device-one")));
+        QVERIFY2(plain(result, QStringLiteral("That serial device is already used by CAT 1.")),
+                 qPrintable(result.reason));
+
+        const QJsonObject pttOn{{QStringLiteral("pttEnabled"), true},
+                                {QStringLiteral("pttDeviceSource"), QStringLiteral("Physical")},
+                                {QStringLiteral("pttUseCts"), true},
+                                {QStringLiteral("pttSerialDevice"), QStringLiteral("device-ptt")}};
+        const auto with = [&pttOn](const QString& key, const QJsonValue& value) {
+            QJsonObject change = pttOn;
+            change.insert(key, value);
+            return change;
+        };
+        const QList<QPair<QJsonObject, QString>> globals{
+            {with(QStringLiteral("pttDeviceSource"), QJsonValue(QStringLiteral("None"))),
+             QStringLiteral("Input PTT has no input source. Choose a source, then turn it on.")},
+            {with(QStringLiteral("pttUseCts"), QJsonValue(false)),
+             QStringLiteral("Input PTT has no input to watch. Tick the CTS or the DSR input, "
+                            "then turn it on.")},
+            {with(QStringLiteral("pttSerialDevice"), QJsonValue(QString())),
+             QStringLiteral("Input PTT has no physical device. Enter the device, then turn it "
+                            "on.")},
+            {with(QStringLiteral("pttSerialBaud"), QJsonValue(0)),
+             QStringLiteral("Input PTT's baud rate, parity, data bits or stop bits are not "
+                            "valid.")},
+            {with(QStringLiteral("pttSerialDevice"), QJsonValue(QStringLiteral("device-one"))),
+             QStringLiteral("That serial device is already used by CAT 1.")},
+            {with(QStringLiteral("rttyDiguHz"), QJsonValue(3001)),
+             QStringLiteral("The RTTY offset is out of range.")},
+            {with(QStringLiteral("rigIdentity"), QJsonValue(QStringLiteral("invented"))),
+             QStringLiteral("The CAT radio model is not valid.")},
+            {with(QStringLiteral("pttChannel"), QJsonValue(5)),
+             QStringLiteral("The Input PTT CAT port number is not valid.")},
+            {with(QStringLiteral("pttDeviceSource"), QJsonValue(QStringLiteral("CAT5"))),
+             QStringLiteral("The Input PTT source is not valid.")},
+        };
+        for (const auto& [change, sentence] : globals) {
+            expectLogLine();
+            result = globalAnswer(change);
+            QVERIFY2(plain(result, sentence), qPrintable(result.reason));
+        }
+        QVERIFY(!service.globalConfig().pttEnabled);
+        result = globalAnswer(pttOn);
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        expectLogLine();
+        result = channelAnswer(2, serialOnWith(QStringLiteral("device-ptt")));
+        QVERIFY2(plain(result, QStringLiteral("That serial device is already used by Input PTT.")),
+                 qPrintable(result.reason));
     }
 
     // A binding arrives as slice ids: a new slice binds to its live

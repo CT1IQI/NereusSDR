@@ -23,7 +23,10 @@
 //   * a dry run's slew tail is played by the reader from its own state
 //     instead of being written back into the ring;
 //   * the ring size steps through 2, 3, 5, 10, 20 and 40 ms (automatic or
-//     fixed), and a dry run is followed by silence up to the new target.
+//     fixed), and a dry run is followed by silence up to the new target;
+//   * a writer of whole packets has its own control (packetControl): the
+//     feed-forward is a fit through when its packets came, not a count of
+//     frames, and a backlog standing behind it is played down.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -63,6 +66,27 @@
 //               dry run.  The block writer is as it was.  Bench regression
 //               (R-AUD-15).  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: A packet writer's control held a wrong ratio for as long as
+//               a stream lasted (a backlog that never cleared, or a dry run
+//               every few seconds): its feed-forward counted frames between
+//               packets that each came late by their own amount.  The
+//               feed-forward is now a fit through the earliest packet of
+//               each second of audio (clockPacket), by when each arrived
+//               from the source and its place in the source's stream, so a
+//               packet that waited for room counts too and nothing the
+//               writer's queue does to its hold or its packets moves the
+//               fit; setWritePacketFrames() takes a MatcherPacketTiming,
+//               where it took only whether the packet had waited.
+//               A backlog standing behind the writer is played down at up
+//               to 0.5% (standingDrainFrames), its deviation is taken as it
+//               is and the fill is brought down from the mark after it
+//               (packetLanding), and a dry run no longer restarts a packet
+//               writer's control.  The block writer is as it was (R-AUD-15).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13: BLOCK starvation starts a fresh control epoch before old
+//               reader requests are replayed, retaining the existing size,
+//               padding and fade. Public packet playback is unchanged.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 //
 // --- From rmatch.c ---
@@ -126,6 +150,7 @@ warren@wpratt.com
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numbers>
 
 #ifdef HAVE_WDSP
@@ -177,6 +202,19 @@ constexpr double kVarMin = 0.96;
 // From Thetis Project Files/Source/wdsp/varsamp.c:60 [v2.10.3.15 @3759d09]
 // a->rsize = (int)(140.0 * norm_rate / min_rate);
 constexpr double kVarsampTapsAtUnity = 140.0;
+
+// NereusSDR: the most a backlog standing behind a packet writer may speed
+// the audio up (packetControl): 0.5%, a twelfth of a semitone.
+constexpr double kPacketDrainMaxRatio = 0.005;
+// NereusSDR: a packet writer's feed-forward (clockPacket).  The seconds of
+// audio its fit runs over, the seconds of audio a new fit spans before it
+// has its full weight, the seconds a fit has before a step is looked for,
+// and what a step is: this much of a second off the fit, beyond the
+// device's callback.
+constexpr int kPacketClockSeconds = 256;        // POWER OF TWO
+constexpr int kPacketClockTrustSeconds = 8;
+constexpr int kPacketClockGuardSeconds = 3;
+constexpr double kPacketClockStepSeconds = 0.005;
 
 // NereusSDR limits on a configuration.  Outside them the matcher is
 // invalid and the caller fails the open.
@@ -596,10 +634,24 @@ struct DeviceRateMatcher::Writer {
         readSamps = 0;
         writeSamps = 0;
         controlFlag = false;
-        spanOpen = false;
+        clockCount = 0;
+        clockFirst = 0;
+        clockHeld = 1.0;
+        clockTrust = 0.0;
+        clockStepSeen = false;
+        clockBased = false;
+        clockSourceBase = 0;
+        clockSecondFrames = 0;
+        clockSecondHas = false;
         packetOwnTime = false;
+        packetStanding = false;
+        packetLanding = 0.0;
         packetDeviation = 0;
         sinceOwnTimeFrames = 0;
+        standingFrames = 0;
+        standingLeastNow = kNoWait;
+        standingLeastBefore = kNoWait;
+        standingCountedFrames = 0;
         m.m_controlActive.store(false, std::memory_order_relaxed);
         ring().ratio.store(var, std::memory_order_relaxed);
         // The automatic size is chosen again from the gaps seen after the
@@ -704,7 +756,7 @@ struct DeviceRateMatcher::Writer {
         }
         if (controlFlag) {
             if (packetFrames > 0) {
-                packetControl(isRead, change);
+                packetControl(isRead ? -change : 0);
             } else {
                 control(change, deviation);
             }
@@ -721,43 +773,36 @@ struct DeviceRateMatcher::Writer {
     //
     // The proportional term's deviation is the packet's (processChunk):
     // the fill a packet met when it came in its own time, plus half a
-    // packet, against the target.
+    // packet, against the target, through control()'s average.  A backlog
+    // that stands behind the writer is added to it as it is
+    // (standingDrainFrames).
     //
-    // The feed-forward counts whole spans, from one packet that came in
-    // its own time to the next.  Every frame the source sent in a span was
-    // written in it and the fill ends where it began, so the device's
-    // frames over the span's are the clocks' ratio, whether the span is
-    // one packet or a batch from the link.  A span is counted when it
-    // closes, its reads and writes in turn as the block writer's come.  A
-    // span longer than a second of audio is a backlog standing behind the
-    // writer (after a stall): its frames were written at the device's pace
-    // and only repeat the ratio in use, so it is left out and the
-    // feed-forward holds.
-    void packetControl(bool isRead, int change)
+    // While no packet comes in its own time the fill is the mark's (the
+    // writer fills up to it), the mark's slack above the working level.
+    // That slack is then the deviation, as it is and not through the
+    // average: the average would carry it on for many seconds after the
+    // backlog had gone, and the audio then ran on fast until the device
+    // ran dry.  When packets come in their own time again the fill is
+    // still at the mark and has that slack to fall.  It falls as this term
+    // alone would take it (packetLanding, by its own gain for each frame
+    // the device reads), and the average, started afresh (processChunk),
+    // hears only what the fill is off that fall.
+    //
+    // The feed-forward is the packets' clock against the device's
+    // (clockPacket).
+    void packetControl(int framesRead)
     {
-        if (!isRead && packetBlock == 0 && packetOwnTime) {
-            if (spanOpen
-                && spanWriteBlocks * static_cast<std::uint64_t>(cfg.writeBlockFrames)
-                    <= static_cast<std::uint64_t>(cfg.inRate)) {
-                countSpan();
-            }
-            spanOpen = true;
-            spanWriteBlocks = 0;
-            spanReadCalls = 0;
-            spanReadFrames = 0;
-        }
-        if (spanOpen) {
-            if (isRead) {
-                ++spanReadCalls;
-                spanReadFrames += static_cast<std::uint64_t>(-change);
-            } else {
-                ++spanWriteBlocks;
-            }
-        }
         // From Thetis Project Files/Source/wdsp/rmatch.c:264-272 [v2.10.3.15 @3759d09]
         // control()'s proportional term and its limits.
-        avDeviation = propmav.x(packetDeviation);
-        var = feedForward - prGain * avDeviation;
+        if (packetStanding) {
+            packetLanding = static_cast<double>(cfg.callbackFrames + maxNewsamps);
+            avDeviation = 0.0;
+        } else {
+            packetLanding -= packetLanding * prGain * static_cast<double>(framesRead);
+            avDeviation = propmav.x(
+                packetDeviation - static_cast<int>(std::lround(packetLanding)));
+        }
+        var = feedForward - prGain * (avDeviation + packetLanding + standingDrainFrames());
         if (var > kVarMax) {
             var = kVarMax;
         }
@@ -766,31 +811,188 @@ struct DeviceRateMatcher::Writer {
         }
     }
 
-    // The closed span's events into the feed-forward: each write block,
-    // and the reads shared out evenly among them.
-    void countSpan()
+    // NereusSDR: a backlog standing behind a packet writer, in device
+    // frames, for the proportional term.  The fill a waiting packet meets
+    // is the mark's, however much stands behind it, so the deviation alone
+    // stops at the mark's slack and a larger backlog was played out no
+    // faster than a small one.  What stands is the least any packet of the
+    // last one to two seconds of audio waited (countWait): a packet that
+    // did not wait makes it nothing.  It is taken as it is, not through
+    // the deviation's average, which would go on speeding the audio up for
+    // seconds after the backlog had gone.  With the slack it is held to
+    // kPacketDrainMaxRatio.
+    double standingDrainFrames() const
     {
-        const std::uint64_t per = spanReadCalls > 0 ? spanReadFrames / spanReadCalls : 0;
-        std::uint64_t counted = 0;
-        for (std::uint64_t block = 1; block <= spanWriteBlocks; ++block) {
-            feedForwardEvent(cfg.writeBlockFrames);
-            const std::uint64_t upTo = spanReadCalls * block / spanWriteBlocks;
-            for (; counted < upTo; ++counted) {
-                const std::uint64_t frames = (counted + 1 == spanReadCalls)
-                    ? spanReadFrames - per * (spanReadCalls - 1) : per;
-                feedForwardEvent(-static_cast<int>(frames));
-            }
+        const double most = kPacketDrainMaxRatio / prGain
+            - static_cast<double>(cfg.callbackFrames + maxNewsamps);
+        return std::clamp(static_cast<double>(standingFrames), 0.0, std::max(0.0, most));
+    }
+
+    // One packet's wait into what stands: the least of this second of
+    // audio and of the one before it.
+    void countWait(std::int64_t waitedNs)
+    {
+        const std::int64_t frames = std::clamp<std::int64_t>(
+            waitedNs * cfg.outRate / 1'000'000'000, 0, kNoWait - 1);
+        standingLeastNow = std::min(standingLeastNow, static_cast<int>(frames));
+        standingCountedFrames += static_cast<std::uint64_t>(packetFrames);
+        const int least = std::min(standingLeastNow, standingLeastBefore);
+        standingFrames = least == kNoWait ? 0 : least;
+        if (standingCountedFrames >= static_cast<std::uint64_t>(cfg.inRate)) {
+            standingLeastBefore = standingLeastNow;
+            standingLeastNow = kNoWait;
+            standingCountedFrames = 0;
         }
     }
 
-    // From Thetis Project Files/Source/wdsp/rmatch.c:258-263 [v2.10.3.15 @3759d09]
-    // control()'s feed-forward term, for one event.
-    void feedForwardEvent(int change)
+    // A point of the feed-forward's fit: a packet's place in the source's
+    // frames, at the nominal ratio, and the device's frames asked for when
+    // it arrived less that place.
+    struct ClockPoint {
+        double position = 0.0;
+        double offset = 0.0;
+    };
+
+    // NereusSDR: a packet writer's feed-forward, one packet at a time.
+    // When a packet arrived from the source (its write, less the time
+    // since) the device had asked for so many frames, and the packet stands
+    // so many frames into the source's stream.  The difference moves as
+    // the clocks drift apart, and by as much as the link kept the packet.
+    // A link keeps packets and never hurries them, so the earliest packet
+    // of each second of audio carries the least of the link, and the slope
+    // through those is the clocks' ratio (closeClockSecond).  A packet
+    // counts whether or not it waited, so a backlog does not stop the
+    // measurement; and it counts by its arrival and its own place, so
+    // neither does a queue ahead of the writer that changes how long it
+    // holds packets, drops some or plays an interval twice.  A packet with
+    // no arrival (a concealed interval) gives no point.
+    //
+    // rmatch's feed-forward counts the frames in and the frames out
+    // (control()), which is right for a writer in step with its device.  A
+    // packet writer's packets each come late by their own amount, and that
+    // difference between the first packet counted and the last, over the
+    // few seconds counted at a start, read as clocks thousands of ppm
+    // apart.  The proportional term could not overrule it: the stream then
+    // stood with a backlog (played too slowly) or ran dry every few
+    // seconds (too fast) for as long as it lasted.
+    void clockPacket(std::uint64_t requestedNow)
     {
-        double current_ratio;
-        current_ratio = ffmav.x(change);
-        current_ratio *= invNomRatio;
-        feedForward = kFfAlpha * current_ratio + (1.0 - kFfAlpha) * feedForward;
+        if (packetArrivedAgoNs >= 0) {
+            if (!clockBased) {
+                clockBased = true;
+                clockDeviceBase = requestedNow;
+                clockSourceBase = packetSourceFrame;
+            }
+            const double position
+                = static_cast<double>(packetSourceFrame - clockSourceBase) * nomRatio;
+            // The device's count moves a callback at a time.  A packet that
+            // waited is written as a read makes room, with the count at the
+            // top of its step; a packet in its own time comes anywhere in
+            // the step, and the earliest of a second near its foot.  The
+            // waiting packet is put there too.
+            const double ago
+                = static_cast<double>(packetArrivedAgoNs) * 1.0e-9 * static_cast<double>(cfg.outRate)
+                + (packetWaitedNs > 0 ? static_cast<double>(cfg.callbackFrames) : 0.0);
+            const double offset
+                = static_cast<double>(requestedNow - clockDeviceBase) - ago - position;
+            if (!clockSecondHas || offset < clockSecondLeast.offset) {
+                clockSecondHas = true;
+                clockSecondLeast = {position, offset};
+            }
+        }
+        clockSecondFrames += static_cast<std::uint64_t>(packetFrames);
+        if (clockSecondFrames >= static_cast<std::uint64_t>(cfg.inRate)) {
+            closeClockSecond();
+        }
+    }
+
+    // The second's earliest packet joins the fit, and the feed-forward is
+    // the fit's slope.  A new fit is blended in as the audio it runs over
+    // grows, from the ratio held before it (nominal at a start): a slope
+    // through points close together is worth little.  A second that lies a
+    // step off the fit is left out, and a second one off it the same way
+    // says the stream's timing moved (a stall, the jitter hold changing,
+    // an interval skipped): the fit starts again from the two, and a ratio
+    // that had its full weight is the one held.
+    void closeClockSecond()
+    {
+        clockSecondFrames = 0;
+        if (!clockSecondHas) {
+            return;
+        }
+        clockSecondHas = false;
+        if (clockCount >= kPacketClockGuardSeconds) {
+            const double step = static_cast<double>(cfg.callbackFrames)
+                + kPacketClockStepSeconds * static_cast<double>(cfg.outRate);
+            const double off = clockSecondLeast.offset - clockFitAt(clockSecondLeast.position);
+            if (std::abs(off) > step) {
+                if (!clockStepSeen || clockStepUp != (off > 0.0)) {
+                    clockStepSeen = true;
+                    clockStepUp = off > 0.0;
+                    clockStepPoint = clockSecondLeast;
+                    return;
+                }
+                if (clockTrust >= 1.0) {
+                    clockHeld = feedForward;
+                }
+                clockCount = 0;
+                clockFirst = 0;
+                addClockPoint(clockStepPoint);
+            }
+        }
+        clockStepSeen = false;
+        addClockPoint(clockSecondLeast);
+        feedForward = clockHeld;
+        clockTrust = 0.0;
+        if (clockCount >= 2) {
+            fitClock();
+            clockTrust = std::min(
+                1.0, (clockPointAt(clockCount - 1).position - clockPointAt(0).position)
+                         / (kPacketClockTrustSeconds * static_cast<double>(cfg.outRate)));
+            feedForward += clockTrust * (1.0 + clockSlope - clockHeld);
+        }
+    }
+
+    void addClockPoint(const ClockPoint& point)
+    {
+        if (clockCount < kPacketClockSeconds) {
+            clockPoints[static_cast<std::size_t>((clockFirst + clockCount) & (kPacketClockSeconds - 1))]
+                = point;
+            ++clockCount;
+        } else {
+            clockPoints[static_cast<std::size_t>(clockFirst)] = point;
+            clockFirst = (clockFirst + 1) & (kPacketClockSeconds - 1);
+        }
+    }
+
+    // The least-squares line through the fit's points, about their means.
+    void fitClock()
+    {
+        const ClockPoint& origin = clockPoints[static_cast<std::size_t>(clockFirst)];
+        double sumPosition = 0.0;
+        double sumOffset = 0.0;
+        for (int i = 0; i < clockCount; ++i) {
+            const ClockPoint& point = clockPointAt(i);
+            sumPosition += point.position - origin.position;
+            sumOffset += point.offset - origin.offset;
+        }
+        clockMeanPosition = origin.position + sumPosition / clockCount;
+        clockMeanOffset = origin.offset + sumOffset / clockCount;
+        double sxx = 0.0;
+        double sxy = 0.0;
+        for (int i = 0; i < clockCount; ++i) {
+            const ClockPoint& point = clockPointAt(i);
+            const double dx = point.position - clockMeanPosition;
+            sxx += dx * dx;
+            sxy += dx * (point.offset - clockMeanOffset);
+        }
+        clockSlope = sxx > 0.0 ? sxy / sxx : 0.0;
+    }
+
+    // Where the fit made at the last second puts a packet at `position`.
+    double clockFitAt(double position) const
+    {
+        return clockMeanOffset + clockSlope * (position - clockMeanPosition);
     }
 
     // Replays the reads since the last write into the control.
@@ -886,6 +1088,21 @@ struct DeviceRateMatcher::Writer {
             lastWriteNs = nowNs;
         }
 
+        // NereusSDR: unlike rmatch's continuing underflow control, a BLOCK
+        // starvation starts a new clock epoch. The absent source interval
+        // cannot measure drift: do not replay its reader requests into the
+        // restarted averages. Adopt only writer-owned baselines from the
+        // values sampled above; the separate atomics are not a transactional
+        // callback snapshot. A later observed dry run starts another epoch.
+        if (packetFrames == 0 && dryRunsNow != dryRunsSeen) {
+            restartControl();
+            readAtLast = readNow;
+            requestedAtLast = requestedNow;
+            readCallsAtLast = readCallsNow;
+            haveLastWrite = true;
+            lastWriteNs = nowNs;
+        }
+
         // NereusSDR: a packet writer's deviation, one for the packet and
         // the reads ahead of it (packetControl).  What the clocks move is
         // the fill a packet meets when it comes in its own time (it did
@@ -895,20 +1112,29 @@ struct DeviceRateMatcher::Writer {
         // say nothing new and stand at the last such packet's deviation.
         // When no packet has come in its own time for a second of audio a
         // backlog is standing behind the writer, which holds the fill the
-        // mark's slack above its working level: that slack is then the
-        // deviation, so the backlog is played out.
+        // mark's slack above its working level: the control then takes
+        // that slack as it is, and starts its average afresh with the
+        // first packet that comes in its own time again (packetControl).
+        // Every packet's wait and its place against the device's count go
+        // to the backlog's measure and the feed-forward's fit.
         if (packetFrames > 0) {
             if (packetBlock == 0) {
-                packetOwnTime = !packetWaited && readCallsNow != readCallsAtLast;
+                packetOwnTime = packetWaitedNs == 0 && readCallsNow != readCallsAtLast;
                 if (packetOwnTime) {
                     const std::uint64_t writtenNow = r.written.load(std::memory_order_relaxed);
                     const std::int64_t met = static_cast<std::int64_t>(
                         writtenNow - std::min(writtenNow, effectiveRead(readNow)));
                     packetDeviation = static_cast<int>(met + packetOutNominal / 2 - rsize / 2);
                     sinceOwnTimeFrames = 0;
+                    if (packetStanding) {
+                        packetStanding = false;
+                        propmav.flush();
+                    }
                 } else if (sinceOwnTimeFrames > static_cast<std::uint64_t>(cfg.inRate)) {
-                    packetDeviation = cfg.callbackFrames + maxNewsamps;
+                    packetStanding = true;
                 }
+                countWait(packetWaitedNs);
+                clockPacket(requestedNow);
             }
             sinceOwnTimeFrames += static_cast<std::uint64_t>(cfg.writeBlockFrames);
         }
@@ -922,17 +1148,12 @@ struct DeviceRateMatcher::Writer {
         // before the count is and is not used to arm it.
         if (dryRunsNow != dryRunsSeen) {
             dryRunsSeen = dryRunsNow;
-            // NereusSDR: a packet writer's dry run is its source stopping
-            // (a stalled link or worker), not the clocks drifting.  The
-            // frames the device asked for meanwhile would read as a faster
-            // device for as long as the feed-forward average holds them,
-            // and the backlog that follows is written at the device's
-            // pace, so the control starts again from the audio after it.
-            if (packetFrames > 0) {
-                restartControl();
-                haveLastWrite = true;
-                lastWriteNs = nowNs;
-            }
+            // NereusSDR: a packet writer's control goes on through a dry
+            // run, as rmatch's does through an underflow.  Its dry run is
+            // most often its source stopping (a stalled link or worker),
+            // and the clocks are then where they were: the feed-forward's
+            // fit runs on the frames the device asked for, which a dry run
+            // does not stop, and on when each packet came (clockPacket).
             if (automatic && stepIndex + 1 < static_cast<int>(DeviceRateMatcher::kDelayStepsMs.size())) {
                 setStep(stepIndex + 1);
             }
@@ -1060,20 +1281,56 @@ struct DeviceRateMatcher::Writer {
     int packetOutMax = 0;
     // The write block of the packet being written.
     int packetBlock = 0;
-    // Whether the packet being written waited for room, and its deviation
-    // for the control.
-    bool packetWaited = false;
+    // How long the packet being written waited for room (0: it did not),
+    // how long ago it arrived (negative: it has no arrival) and its place
+    // in the source's stream (MatcherPacketTiming).
+    std::int64_t packetWaitedNs = 0;
+    std::int64_t packetArrivedAgoNs = -1;
+    std::int64_t packetSourceFrame = 0;
+    // What stands behind the writer, in device frames (countWait): the
+    // least wait of this second of audio and of the one before, and the
+    // input frames counted into this one.
+    static constexpr int kNoWait = std::numeric_limits<int>::max();
+    int standingFrames = 0;
+    int standingLeastNow = kNoWait;
+    int standingLeastBefore = kNoWait;
+    std::uint64_t standingCountedFrames = 0;
     // Whether it came in its own time, the deviation the control hears,
     // and the input frames written since a packet last did.
     bool packetOwnTime = false;
     int packetDeviation = 0;
     std::uint64_t sinceOwnTimeFrames = 0;
-    // The span being measured for the feed-forward (packetControl): its
-    // write blocks, and the device's reads and the frames they asked for.
-    bool spanOpen = false;
-    std::uint64_t spanWriteBlocks = 0;
-    std::uint64_t spanReadCalls = 0;
-    std::uint64_t spanReadFrames = 0;
+    // No packet has come in its own time for a second of audio, and what
+    // the fill has left to fall from the mark after that (packetControl).
+    bool packetStanding = false;
+    double packetLanding = 0.0;
+    // The feed-forward's fit (clockPacket): each second's earliest packet,
+    // oldest first from clockFirst.
+    const ClockPoint& clockPointAt(int index) const
+    {
+        return clockPoints[static_cast<std::size_t>((clockFirst + index) & (kPacketClockSeconds - 1))];
+    }
+    std::array<ClockPoint, kPacketClockSeconds> clockPoints{};
+    int clockCount = 0;
+    int clockFirst = 0;
+    double clockSlope = 0.0;
+    double clockMeanPosition = 0.0;
+    double clockMeanOffset = 0.0;
+    // The ratio a new fit is blended in from, and the fit's weight.
+    double clockHeld = 1.0;
+    double clockTrust = 0.0;
+    // A second that lay a step off the fit, and to which side.
+    bool clockStepSeen = false;
+    bool clockStepUp = false;
+    ClockPoint clockStepPoint;
+    // The device's count and the source's place at the first packet since
+    // the control started, and the second being gathered.
+    bool clockBased = false;
+    std::uint64_t clockDeviceBase = 0;
+    std::int64_t clockSourceBase = 0;
+    std::uint64_t clockSecondFrames = 0;
+    bool clockSecondHas = false;
+    ClockPoint clockSecondLeast;
     bool haveLastWrite = false;
     std::int64_t lastWriteNs = 0;
     std::int64_t maxGapNs = 0;
@@ -1178,9 +1435,12 @@ void DeviceRateMatcher::write(const float* interleavedStereo, int frames, std::i
         w.applyWritePacket(m_writePacketRequested.load(std::memory_order_acquire));
         m_writePacketApplied.store(packetGeneration, std::memory_order_release);
     }
-    // One write is one packet: its first block, and whether it waited.
+    // One write is one packet: its first block, and what its writer said
+    // of it.
     w.packetBlock = 0;
-    w.packetWaited = m_writePacketWaited.load(std::memory_order_acquire);
+    w.packetWaitedNs = m_writePacketWaitedNs.load(std::memory_order_acquire);
+    w.packetArrivedAgoNs = m_writePacketArrivedAgoNs.load(std::memory_order_acquire);
+    w.packetSourceFrame = m_writePacketSourceFrame.load(std::memory_order_acquire);
     const bool restart = m_restartRequested.exchange(false, std::memory_order_acq_rel)
         || packetChanged;
     const bool flush = m_flushRequested.exchange(false, std::memory_order_acq_rel);
@@ -1230,9 +1490,12 @@ void DeviceRateMatcher::requestRestart()
     m_restartRequested.store(true, std::memory_order_release);
 }
 
-void DeviceRateMatcher::setWritePacketFrames(int frames, bool waited)
+void DeviceRateMatcher::setWritePacketFrames(int frames, const MatcherPacketTiming& timing)
 {
-    m_writePacketWaited.store(waited, std::memory_order_release);
+    m_writePacketWaitedNs.store(
+        std::max<std::int64_t>(0, timing.waitedNs), std::memory_order_release);
+    m_writePacketArrivedAgoNs.store(timing.arrivedAgoNs, std::memory_order_release);
+    m_writePacketSourceFrame.store(timing.sourceFrame, std::memory_order_release);
     const int packet = std::clamp(frames, 0, kMaxWritePacketFrames);
     // The value first, then the count: a writer that sees the new count
     // reads the new value.

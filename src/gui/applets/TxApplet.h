@@ -562,6 +562,7 @@ private:
     static QString micSourceBadgeStyle(bool amber);
     void wireControls();  // called after buildUI() — attaches signals/slots
     void syncPsaFromFacade();
+    void syncRemoteIndicators();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
     void removePsaFacadeReason();
     // R-R3-45: show the MON output choice (true = headphones) without

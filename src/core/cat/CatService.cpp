@@ -78,6 +78,10 @@ Added extended CAT commands for APF funtions - May 2017.
 // 2026-10-11 - One serial device under two spellings is one assignment; ports,
 //              PTT input and refused settings are logged. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - A refused channel or global setting hands back the rule it
+//              broke (the validator's sentence, or the serial device already
+//              in use), and a refused global setting is logged. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatService.h"
 #include "RigctlProtocol.h"
 #include "core/AppSettings.h"
@@ -137,25 +141,28 @@ bool CatService::applyChannelConfig(int channel, const CatEndpointConfig& config
     CatEndpointConfig captured=config; captured.binding=m_adapter.snapshotBinding(config.binding);
     return reconfigureChannel(channel, captured);
 }
-bool CatService::reconfigureChannel(int channel, const CatEndpointConfig& supplied)
+bool CatService::reconfigureChannel(int channel, const CatEndpointConfig& supplied, QString* refusal)
 {
+    // Said only for a cause the operator can act on; every other path leaves it empty.
+    if (refusal) { refusal->clear(); }
+    const auto refuse = [refusal](const QString& text) { if (refusal) { *refusal = text; } return false; };
     if (m_destroying || !m_model || !m_model->ownsLocalDsp() || !validChannel(channel)) { return false; }
     CatEndpointConfig config = supplied; config.channel = channel;
     QString reason;
-    if (!CatSettings::validate(config, &reason)) { qCWarning(lcCat) << reason; return false; }
+    if (!CatSettings::validate(config, &reason)) { qCWarning(lcCat) << reason; return refuse(reason); }
     for (int other = 1; other <= 4; ++other) {
         if (other == channel) { continue; }
         const CatEndpointConfig& existing = m_channels[other - 1].config;
         if (config.serialEnabled && existing.serialEnabled && CatSettings::sameSerialDevice(config.serialDevice, existing.serialDevice)) {
             qCWarning(lcCat) << "CAT" << channel << "refused: serial device" << config.serialDevice << "is CAT" << other << "'s";
-            return false;
+            return refuse(QStringLiteral("That serial device is already used by CAT %1.").arg(other));
         }
     }
     const CatGlobalConfig global = globalConfig();
     if (config.serialEnabled && global.pttEnabled && global.pttDeviceSource == "Physical"
         && CatSettings::sameSerialDevice(config.serialDevice, global.pttSerialDevice)) {
         qCWarning(lcCat) << "CAT" << channel << "refused: serial device" << config.serialDevice << "is the physical PTT input's";
-        return false;
+        return refuse(QStringLiteral("That serial device is already used by Input PTT."));
     }
     const CatEndpointConfig previous = channelConfig(channel);
     if (!m_channels[channel - 1].configured) { config.binding = m_adapter.snapshotBinding(config.binding); }
@@ -616,16 +623,20 @@ bool CatService::applyGlobalConfig(const CatGlobalConfig& config)
     if (m_started && !samePttIngress(config, globalConfig())) { return false; }
     return reconfigureGlobal(config);
 }
-bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied)
+bool CatService::reconfigureGlobal(const CatGlobalConfig& supplied, QString* refusal)
 {
+    // Said only for a cause the operator can act on; every other path leaves it empty.
+    if (refusal) { refusal->clear(); }
+    const auto refuse = [refusal](const QString& text) { if (refusal) { *refusal = text; } return false; };
     if (m_destroying || !m_model || !m_model->ownsLocalDsp()) { return false; }
     const CatGlobalConfig config = supplied;
-    if (!CatSettings::validateGlobal(config)) { return false; }
+    QString reason;
+    if (!CatSettings::validateGlobal(config, &reason)) { qCWarning(lcCat) << reason; return refuse(reason); }
     if (config.pttEnabled && config.pttDeviceSource == "Physical") {
         for (const Channel& endpoint : m_channels) {
             if (endpoint.config.serialEnabled && CatSettings::sameSerialDevice(endpoint.config.serialDevice, config.pttSerialDevice)) {
                 qCWarning(lcCat) << "CAT PTT refused: serial device" << config.pttSerialDevice << "is CAT" << endpoint.config.channel << "'s";
-                return false;
+                return refuse(QStringLiteral("That serial device is already used by CAT %1.").arg(endpoint.config.channel));
             }
         }
     }

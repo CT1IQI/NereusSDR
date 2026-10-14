@@ -14,6 +14,9 @@
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -710,6 +713,14 @@
 //                its pan shows, and a pan whose view does not hold the slice
 //                moves onto it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11 - A pan shows the stream of its own slice. Bench-caught on
+//                the Anvelina Pro 3: two pans on 40 m and 20 m went to one,
+//                the 20 m slice took the remaining pan's view while the pan
+//                still tuned its 40 m slice, and a drag sent the 40 m
+//                receiver to 20 m. The view, the frames drawn and the drag
+//                now all go by the pan's own slice (streamShownOnPan); a
+//                slice on another stream is a flag and an edge marker there.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - The bottom RX chooser's rows: the row of a slice this
 //                window plays reveals it (SliceChooser::showRequested).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1462,6 +1473,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
                              "transmit. %1")
                               .arg(OperatorReasonText::forDisplay(reason)),
                           ToastSeverity::Warning, 5000);
+                return;
+            }
+            // Nobody holds transmit and a program asked to key: what it
+            // asked for, why nothing keyed, and the control that fixes it.
+            // The radio stays in receive, so it is kept up longer than a
+            // passing notice.
+            if (m_stationClient && m_stationClient->transmitTakeOffered()
+                && reason == TxRefusals::programNeedsTransmit().text) {
+                showToast(tr("A program using TCI asked to transmit, but this window does not "
+                             "have transmit. Click Take transmit, then try again."),
+                          ToastSeverity::Warning, 10000);
                 return;
             }
             showToast(tr("TCI: %1").arg(OperatorReasonText::forDisplay(reason)),
@@ -3885,15 +3907,22 @@ void MainWindow::refreshRemoteDeviceScreens()
         }
     }
 
-    // Take transmit: the TX applet's button and every pan's TX pill.
-    const QString holderName = badge.shown ? badge.label : QString();
+    // Take transmit: the TX applet's button and every pan's TX pill, while
+    // this window does not hold transmit, whether another device does or
+    // nobody does (a program's key is refused until it is taken).
+    const bool takeOffered = m_stationClient->transmitTakeOffered();
+    QString holderName;
+    if (elsewhere) {
+        holderName = badge.shown && !badge.label.isEmpty() ? badge.label
+                                                           : QStringLiteral("Another device");
+    }
     if (m_txApplet) {
-        m_txApplet->setTakeTransmitOffered(elsewhere, elsewhere && tx.keyed());
+        m_txApplet->setTakeTransmitOffered(takeOffered, elsewhere && tx.keyed());
     }
     if (m_panStack) {
         for (PanadapterApplet* applet : m_panStack->allApplets()) {
             if (applet) {
-                applet->setTakeTransmitOffered(elsewhere, holderName, elsewhere && tx.keyed());
+                applet->setTakeTransmitOffered(takeOffered, holderName, elsewhere && tx.keyed());
             }
         }
     }
@@ -4673,6 +4702,16 @@ SpectrumWidget* MainWindow::spectrumForSlice(SliceModel* s) const
     return activeSpectrumWidget();  // fallback to active pan
 }
 
+QString MainWindow::panIdOfSpectrum(const SpectrumWidget* sw) const
+{
+    if (!sw || !m_panStack) { return QString(); }
+    const QList<PanadapterApplet*> pans = m_panStack->allApplets();
+    for (const PanadapterApplet* applet : pans) {
+        if (applet && applet->spectrumWidget() == sw) { return applet->panId(); }
+    }
+    return QString();
+}
+
 SliceModel* MainWindow::sliceForAddedIdForTest(RadioModel* model, int sliceId)
 {
     return model ? model->sliceById(sliceId) : nullptr;
@@ -4900,6 +4939,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     if (markerOnlyPlacement(sliceIndex)) {
         // A listened slice a layout change placed here: its flag and its own
         // edge marker, never this pan's VFO.
+        sw->setEdgeMarkedSlice(sliceIndex, true);
+    } else if (sliceIsOffPanStream(panIdOfSpectrum(sw), slice)) {
+        // On a stream this pan does not show (a slice on another band moved
+        // here): its flag and its own edge marker, never this pan's VFO.
         sw->setEdgeMarkedSlice(sliceIndex, true);
     } else if (m_radioModel->ownsLocalDsp() || !slice->panKey().isEmpty()) {
         sw->setVfoFrequency(slice->frequency());
@@ -5163,6 +5206,16 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
             // own flag and edge marker: never this pan's VFO, view or DDC
             // centre, and never its own demodulator shift, which
             // bindSliceToStream set from its own stream.
+            host->setEdgeMarkedSlice(slice->sliceIndex(), true);
+            host->refreshSliceFlags();
+            return;
+        }
+        // So does a slice on a stream this pan does not show (another band
+        // on the same pan). The pan keeps its own slice's view, VFO and DDC
+        // center; following this one would leave the pan on one stream's
+        // band while it draws and drags another's. bindSliceToStream has
+        // already run for this tune, so the stream asked about is current.
+        if (sliceIsOffPanStream(panIdOfSpectrum(host), slice)) {
             host->setEdgeMarkedSlice(slice->sliceIndex(), true);
             host->refreshSliceFlags();
             return;
@@ -5659,6 +5712,82 @@ void MainWindow::applyStreamWindowToPan(const QString& panId, int streamIndex)
     // same clamp on this branch, each found in a different review round; the
     // shared helper is what stops a fourth. Codex, PR #318.
     sw->setDisplayWindowClamped(it->centreHz, sw->bandwidth());
+}
+
+int MainWindow::streamShownOnPan(const QString& panId) const
+{
+    if (!m_panStack || !m_radioModel) { return -1; }
+    // A remote window's pans take the Core's geometry (RemoteMediaController
+    // and followRemoteSliceFrequency); nothing here picks a stream for them.
+    if (!m_radioModel->ownsLocalDsp()) { return -1; }
+    // The pan's active slice first, whoever controls it: a slice this window
+    // only listens to and revealed is the one its pan shows
+    // (showSliceOnItsPan), though the pan's controls never act on it. A
+    // marker-only slice never is.
+    if (const PanadapterApplet* applet = m_panStack->panadapter(panId)) {
+        const int active = applet->activeSliceIndex();
+        if (active >= 0 && !markerOnlyPlacement(active)
+            && (windowControlsSlice(active) || windowListensTo(active))) {
+            const SliceModel* slice = m_radioModel->sliceById(active);
+            if (slice && slice->streamIndex() >= 0) { return slice->streamIndex(); }
+        }
+    }
+    const SliceModel* own = sliceForPan(panId);
+    return own ? own->streamIndex() : -1;
+}
+
+bool MainWindow::panShowsStream(const QString& panId, int streamIndex) const
+{
+    const int shown = streamShownOnPan(panId);
+    return shown < 0 || shown == streamIndex;
+}
+
+bool MainWindow::sliceIsOffPanStream(const QString& panId, const SliceModel* slice) const
+{
+    if (!slice || slice->streamIndex() < 0) { return false; }
+    return !panShowsStream(panId, slice->streamIndex());
+}
+
+void MainWindow::showOwnStreamOnPan(const QString& panId, const QList<int>& gained)
+{
+    if (!m_panStack || !m_radioModel) { return; }
+    PanadapterApplet* applet = m_panStack->panadapter(panId);
+    SpectrumWidget* sw = m_panStack->spectrum(panId);
+    if (!applet || !sw) { return; }
+    const int shown = streamShownOnPan(panId);
+    if (shown < 0) {
+        // Nothing picks a stream (see streamShownOnPan): the pan takes the
+        // ones it was just given, as it did before it had a rule.
+        m_panShownStream.remove(panId);
+        for (int stream : gained) { applyStreamWindowToPan(panId, stream); }
+        return;
+    }
+    // A slice hosted here on another stream is a flag and its own edge
+    // marker, as a listened slice a layout change placed is (JJ's ruling,
+    // 2026-09-30): it never moves this pan. Marker-only slices keep the
+    // mark the placement gave them.
+    const SliceModel* own = sliceForPan(panId);
+    const QSet<int> hosted = applet->associatedSlices();
+    for (int id : hosted) {
+        if (markerOnlyPlacement(id)) { continue; }
+        const SliceModel* slice = m_radioModel->sliceById(id);
+        if (!slice || !sw->vfoWidget(id)) { continue; }
+        sw->setEdgeMarkedSlice(id, slice->streamIndex() >= 0 && slice->streamIndex() != shown);
+    }
+    // Only a change moves the pan. This runs on every binding, so on every
+    // VFO tick, and re-applying the stream's center each time would yank a
+    // CTUN pan back after the operator panned it.
+    const int previous = m_panShownStream.value(panId, -1);
+    if (previous == shown && !gained.contains(shown)) { return; }
+    m_panShownStream.insert(panId, shown);
+    applyStreamWindowToPan(panId, shown);
+    // Switched from one stream to another: the pan's VFO, passband and
+    // transmit mode are its own slice's too.
+    if (previous >= 0 && previous != shown && own && own->streamIndex() == shown) {
+        sw->setVfoFrequency(own->frequency());
+        sw->setTxMode(own->dspMode());
+        sw->setFilterOffset(own->filterLow(), own->filterHigh());
+    }
 }
 
 // Phase 3F: WIDE badge fan-out. See RadioModel::panBypassState for the
@@ -6268,6 +6397,10 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
     if (PanadapterApplet* applet = m_panStack ? m_panStack->panadapter(panId) : nullptr) {
         connect(applet, &PanadapterApplet::activeSliceChanged, sw,
                 [refreshStep](const QString&, int) { refreshStep(); });
+        // The pan shows its own slice's stream, so another slice becoming
+        // its own takes it to that slice's stream.
+        connect(applet, &PanadapterApplet::activeSliceChanged, sw,
+                [this](const QString& id, int) { showOwnStreamOnPan(id); });
     }
     refreshStep();
 
@@ -6303,6 +6436,12 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
         if (m_handlingBandJump) { return; }
         SliceModel* s = sliceForPan(panId);
         if (!s) { return; }
+        // A drag moves the stream this pan shows and no other. The view it
+        // reports is that stream's, so on any other stream the center is
+        // another band's: it would take that receiver off its slices. (The
+        // pan can show a slice its controls do not act on: one this window
+        // only listens to.)
+        if (!panShowsStream(panId, s->streamIndex())) { return; }
         if (!sw->ctunEnabled()) {
             s->setFrequency(centerHz);
             return;
@@ -6314,6 +6453,13 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
         if (stream >= 0 && m_radioModel->receiverManager()) {
             m_radioModel->receiverManager()->forceHardwareFrequency(
                 stream, static_cast<quint64>(centerHz));
+            // The DDC sits here now, so a pan put back on this stream later
+            // (its own slice changes and changes back) maps its bins from
+            // here, not from the center the allocator last published.
+            if (const auto window = m_streamWindows.find(stream);
+                window != m_streamWindows.end()) {
+                window->centreHz = centerHz;
+            }
         }
         sw->setDdcCenterFrequency(centerHz);
         // Re-shift the WHOLE stream, not just this pan's slice. Addressing the
@@ -6340,6 +6486,10 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
     // peak hold changes on its slice's pan, from the overlay or elsewhere.
     connect(sw, &SpectrumWidget::peakHoldEnabledChanged, this,
             [this](bool) { refreshContainerControls(); });
+    // A Core mirror update is not a CTUN gesture, but it must refresh
+    // container state before an unrelated slice selection does so.
+    connect(sw, &SpectrumWidget::remoteCtunStateChanged, this,
+            [this]() { refreshContainerControls(); });
     connect(sw, &SpectrumWidget::ctunEnabledChanged, this,
             [this, panId, sw](bool enabled) {
         // R-R3-21: a container's CTUN button lights from its slice's pan.
@@ -6350,6 +6500,8 @@ void MainWindow::wireSpectrumSliceControls(SpectrumWidget* sw,
         }
         if (enabled) { return; }
         if (SliceModel* s = sliceForPan(panId)) {
+            // This pan's DDC center is the center of the stream it shows.
+            if (!panShowsStream(panId, s->streamIndex())) { return; }
             m_radioModel->reshiftSlicesOnStream(s->streamIndex(),
                                                 sw->ddcCenterFrequency());
         }
@@ -6836,6 +6988,8 @@ void MainWindow::rebuildFftRouting()
     for (const SpectrumSubscription& sub : m_topology.subscriptions()) {
         before[sub.consumerId].append(sub.streamIndex);
     }
+    // The subscriptions this pass adds, per pan, in slice order.
+    QHash<QString, QList<int>> gained;
 
     // Wholesale rebuild, not an incremental edit. A pan can host several
     // slices, and unsubscribing one pan at a time here (rather than
@@ -6900,8 +7054,30 @@ void MainWindow::rebuildFftRouting()
         // sharing a stream and a pan collapse to the one subscription
         // applyTo() below actually applies.
         m_topology.subscribe(panId, stream);
-        if (isNewSubscription) {
-            applyStreamWindowToPan(panId, stream);
+        if (isNewSubscription && !gained[panId].contains(stream)) {
+            gained[panId].append(stream);
+        }
+    }
+
+    // A pan shows the stream of its own slice. It may carry others (two
+    // bands on one pan, or a slice a layout change moved onto it), and a
+    // stream it gained used to take its view whichever slice brought it.
+    // Bench-caught 2026-10-11 (J.J. Boyd, KG4VCF): two pans on 40 m and
+    // 20 m went to one, the 20 m slice's stream took the remaining pan's
+    // view, and the pan went on tuning its own 40 m slice, so a drag sent
+    // the 40 m receiver to 20 m. This also moves a pan whose own slice
+    // changed stream without a new subscription (it joined one the pan
+    // already carried).
+    if (m_panStack) {
+        const QList<PanadapterApplet*> pans = m_panStack->allApplets();
+        QSet<QString> live;
+        for (const PanadapterApplet* applet : pans) {
+            if (!applet) { continue; }
+            live.insert(applet->panId());
+            showOwnStreamOnPan(applet->panId(), gained.value(applet->panId()));
+        }
+        for (auto it = m_panShownStream.begin(); it != m_panShownStream.end();) {
+            it = live.contains(it.key()) ? std::next(it) : m_panShownStream.erase(it);
         }
     }
 
@@ -7034,6 +7210,10 @@ void MainWindow::dispatchFftFrameToPans(int streamIndex,
             && panId == m_moxDisplay->transmitPanId()) {
             continue;
         }
+        // A pan carrying two streams draws its own slice's only. The other
+        // one's frames are another band's, and against this pan's one DDC
+        // center they would alternate with its own, frame by frame.
+        if (!panShowsStream(panId, streamIndex)) { continue; }
         if (SpectrumWidget* sw = m_panStack->spectrum(panId)) {
             // R-R3-46 / R-R3-11: the receive offset of this stream's ADC
             // (unchanged values return early in setDbmCalOffset).
@@ -8264,6 +8444,15 @@ void MainWindow::buildUI()
                     m_panStack->addPanadapter(dest);
                 }
                 m_panStack->moveSliceToPan(idx, dest);
+                // The active slice is the own slice of the pan hosting it
+                // (the activeSliceChanged rule, setActiveSliceOnHostingPan).
+                // Moving it to another pan changes no active slice, so the
+                // rule is applied here too, or the pan it lands on goes on
+                // showing and tuning another slice while the operator's
+                // controls tune this one.
+                if (!desktopHosting() && m_radioModel->activeSlice() == slice) {
+                    m_panStack->setActiveSliceOnHostingPan(idx);
+                }
             }
             // VFO flag crash lane fix round (2026-10-01): Slice A moves too
             // (the early return that sat here for it is gone), and a flag
@@ -8566,6 +8755,9 @@ void MainWindow::buildUI()
         if (m_radioModel) {
             if (auto* router = m_radioModel->fftRouter()) {
                 for (const QString& panId : router->pansForReceiver(streamIndex)) {
+                    // Only a pan that shows this stream follows it; one that
+                    // merely carries it for another slice stays put.
+                    if (!panShowsStream(panId, streamIndex)) { continue; }
                     applyStreamWindowToPan(panId, streamIndex);
                 }
             }
