@@ -1074,7 +1074,7 @@ jobs:
           case "${{ runner.os }}" in
             Linux)   printf 'binary<<EOF\nbuild/NereusSDR\nbuild/libNereusSDRLib.so\nbuild/libNereusCore.so\nEOF\n' >> "$GITHUB_OUTPUT" ;;
             macOS)   echo "binary=build/NereusSDR.app" >> "$GITHUB_OUTPUT" ;;
-            Windows) printf 'binary<<EOF\nbuild/NereusSDR.exe\nbuild/NereusSDRLib.dll\nbuild/NereusCore.dll\nEOF\n' >> "$GITHUB_OUTPUT" ;;
+            Windows) printf 'binary<<EOF\nbuild/NereusSDR.exe\nbuild/libNereusSDRLib.dll\nbuild/libNereusCore.dll\nEOF\n' >> "$GITHUB_OUTPUT" ;;
           esac
 
       - name: Upload PR build artifact
