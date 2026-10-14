@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -8050,6 +8052,10 @@ private:
     void onBackgroundSettingsSaveFinished(quint64 ticket, bool saved, const QString& error);
     QString m_settingsSaveError;
     QSet<int> m_dirtySettingsSliceIds;
+    // Latest captured value for each fully qualified per-band key. No map
+    // change hooks run until the existing save/explicit recall boundary.
+    QHash<int, QMap<QString, QVariant>> m_pendingBandSettings;
+    void materializePendingBandSettings(int sliceId);
     // Phase 3P-I-a — dirty flag for AlexController persistence.
     // AlexController::antennaChanged can fire 14× during load(); the
     // flag + scheduleSettingsSave() timer coalesces them into a single
