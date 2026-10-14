@@ -9,6 +9,10 @@
 //   2026-10-08  J.J. Boyd / KG4VCF. Rotor control plan Task 8: the Rotor
 //                applet is shown by default. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF. A pan shows the stream of its own
+//                slice: the two-band bench case, where a layout change moved
+//                a 20 m slice onto a 40 m pan and a drag sent the 40 m
+//                receiver to 20 m. AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF. Run as nine ctest entries
 //                (TestFunctionGroups), past the 120 s limit as one under
 //                load. AI-assisted via Anthropic Claude Code.
@@ -17,6 +21,7 @@
 #include "gui/MainWindow.h"
 
 #include "core/FFTRouter.h"
+#include "core/ReceiverManager.h"
 #include "core/TxSliceArbiter.h"
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
@@ -314,6 +319,104 @@ int edgeMarkerPixels(SpectrumWidget* pan, int id, bool rightSide)
 double ownStreamShift(RadioModel* model, SliceModel* slice)
 {
     return slice->frequency() - model->streamCentreHz(slice->streamIndex());
+}
+
+// Bench case of 2026-10-11 (JJ, Anvelina Pro 3): a window that owns the
+// radio with two pans, Slice A on 40 m on pan-0 and Slice B on 20 m on
+// pan-1, each on its own receiver, A the active slice. Going to layout "1"
+// moves B onto pan-0.
+struct TwoBands
+{
+    std::unique_ptr<MainWindow> window;
+    RadioModel* model{nullptr};
+    PanadapterStack* stack{nullptr};
+    SliceModel* a{nullptr};
+    SliceModel* b{nullptr};
+    SpectrumWidget* kept{nullptr};
+    double viewCenter{0.0};
+    double viewSpan{0.0};
+};
+
+constexpr double kFortyMetersHz = 7'254'400.0;
+constexpr double kTwentyMetersHz = 14'074'000.0;
+
+// The frequency last sent to the receiver a slice is on.
+double receiverHz(RadioModel* model, SliceModel* slice)
+{
+    return double(model->receiverManager()->receiverConfig(slice->streamIndex()).frequencyHz);
+}
+
+// True while every slice sits inside the window of its own receiver.
+bool receiverCovers(RadioModel* model, SliceModel* slice)
+{
+    const double halfWindow = model->streamSampleRateHz(slice->streamIndex()) / 2.0;
+    return std::abs(slice->frequency() - receiverHz(model, slice)) <= halfWindow;
+}
+
+void prepareTwoBands(TwoBands& f)
+{
+    f.window = std::make_unique<MainWindow>(RemoteStationOptions{}, nullptr,
+                                            MainWindow::ConnectionStartup::Deferred);
+    f.model = f.window->radioModel();
+    f.model->setBoardForTest(HPSDRHW::Saturn);
+    f.model->configureStreamPool(5, 5, 192000);
+    f.model->setConnectionStateForTest(ConnectionState::Connected);
+    const int aId = f.model->addSlice(QStringLiteral("pan-0"));
+    const int bId = f.model->addSlice(QStringLiteral("pan-1"));
+    QVERIFY(applyLayout(*f.window, QStringLiteral("2v")));
+    f.stack = f.window->findChild<PanadapterStack*>();
+    QVERIFY(f.stack);
+    f.a = f.model->sliceById(aId);
+    f.b = f.model->sliceById(bId);
+    QVERIFY(f.a && f.b);
+    f.a->setFrequency(kFortyMetersHz);
+    f.b->setFrequency(kTwentyMetersHz);
+    QVERIFY(f.a->streamIndex() >= 0);
+    QVERIFY(f.b->streamIndex() >= 0);
+    QVERIFY(f.a->streamIndex() != f.b->streamIndex());
+    f.model->setActiveSlice(f.model->slices().indexOf(f.a));
+    QCOMPARE(f.model->activeSlice(), f.a);
+    QVERIFY(f.model->receiverManager());
+    QVERIFY(receiverCovers(f.model, f.a));
+    QVERIFY(receiverCovers(f.model, f.b));
+    f.kept = f.stack->spectrum(QStringLiteral("pan-0"));
+    QVERIFY(f.kept);
+    QVERIFY(f.kept->ctunEnabled());
+    QTRY_COMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.a->streamIndex()));
+    f.viewCenter = f.kept->centerFrequency();
+    f.viewSpan = f.kept->bandwidth();
+    QVERIFY(std::abs(f.viewCenter - kFortyMetersHz) <= f.viewSpan / 2.0);
+}
+
+// Layout "1": B moves onto pan-0, and `own` is that pan's own slice after.
+void shrinkToOnePan(TwoBands& f, SliceModel* own)
+{
+    const int aStream = f.a->streamIndex();
+    const int bStream = f.b->streamIndex();
+    QVERIFY(applyLayout(*f.window, QStringLiteral("1")));
+    QCOMPARE(f.stack->currentLayoutId(), QStringLiteral("1"));
+    QCOMPARE(f.stack->spectrum(QStringLiteral("pan-0")), f.kept);
+    PanadapterApplet* pan = f.stack->panadapter(QStringLiteral("pan-0"));
+    QVERIFY(pan);
+    QVERIFY(pan->associatedSlices().contains(f.b->sliceIndex()));
+    QCOMPARE(pan->activeSliceIndex(), own->sliceIndex());
+    QCOMPARE(f.a->streamIndex(), aStream);
+    QCOMPARE(f.b->streamIndex(), bStream);
+}
+
+// What a pan drag does: the widget moves its view, then reports the center.
+void dragPan(SpectrumWidget* pan, double byHz)
+{
+    const double center = pan->centerFrequency() + byHz;
+    pan->setFrequencyRange(center, pan->bandwidth());
+    emit pan->centerChanged(center);
+}
+
+// One FFT frame from `stream`, as its engine hands it to the window.
+bool feedFrame(MainWindow& window, int stream)
+{
+    const QVector<float> frame(4096, 1.0e-12f);
+    return QMetaObject::invokeMethod(&window, "dispatchFftFrameToPans", stream, frame, 1.0, 0.0);
 }
 
 class TstDesktopStationWindow final : public QObject {
@@ -2155,6 +2258,157 @@ private slots:
         emit applet->sliceActivationRequested(aId);
         emit applet->sliceActivationRequested(bId);
         QCOMPARE(sw->centerFrequency(), offCentre);
+    }
+
+    // A pan shows the receiver of its own slice. A slice a layout change
+    // moves onto the pan, on another band and another receiver, leaves the
+    // pan's view where the operator had it.
+    void aSliceMovedOntoAPanLeavesItsViewAlone()
+    {
+        TwoBands f;
+        prepareTwoBands(f);
+        if (QTest::currentTestFailed()) { return; }
+        shrinkToOnePan(f, f.a);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(f.kept->centerFrequency(), f.viewCenter);
+        QCOMPARE(f.kept->bandwidth(), f.viewSpan);
+        QCOMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.a->streamIndex()));
+        // B is on the pan as its flag, and off this view as its own edge
+        // marker, on the right, in its own color. A is the pan's VFO.
+        VfoWidget* flagB = flagOn(f.kept, f.b->sliceIndex());
+        QVERIFY(flagB);
+        QVERIFY(flagB->isHidden());
+        QVERIFY(f.kept->isEdgeMarkedSlice(f.b->sliceIndex()));
+        QVERIFY(!f.kept->isEdgeMarkedSlice(f.a->sliceIndex()));
+        QVERIFY(edgeMarkerPixels(f.kept, f.b->sliceIndex(), true) > 0);
+        QCOMPARE(edgeMarkerPixels(f.kept, f.b->sliceIndex(), false), 0);
+        QVERIFY(flagOn(f.kept, f.a->sliceIndex()));
+        QVERIFY(!flagOn(f.kept, f.a->sliceIndex())->isHidden());
+        // B tuned, inside its receiver and to another one, moves only B.
+        for (const double step : {5'000.0, 150'000.0, 3'000'000.0}) {
+            f.b->setFrequency(f.b->frequency() + step);
+            QCOMPARE(f.kept->centerFrequency(), f.viewCenter);
+            QCOMPARE(f.kept->bandwidth(), f.viewSpan);
+            QCOMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.a->streamIndex()));
+            QCOMPARE(f.b->shiftOffsetHz(), ownStreamShift(f.model, f.b));
+            QVERIFY(edgeMarkerPixels(f.kept, f.b->sliceIndex(), true) > 0);
+        }
+        QCOMPARE(f.a->frequency(), kFortyMetersHz);
+        QCOMPARE(f.a->shiftOffsetHz(), ownStreamShift(f.model, f.a));
+    }
+
+    // The slice the operator is tuning (the active slice) is the one the
+    // layout change moves: it becomes the own slice of the pan it lands
+    // on, so that pan shows it, and a drag moves its receiver.
+    void theActiveSliceMovedOntoAPanBecomesItsOwn()
+    {
+        TwoBands f;
+        prepareTwoBands(f);
+        if (QTest::currentTestFailed()) { return; }
+        f.model->setActiveSlice(f.model->slices().indexOf(f.b));
+        QCOMPARE(f.model->activeSlice(), f.b);
+        shrinkToOnePan(f, f.b);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.b->streamIndex()));
+        QVERIFY(std::abs(f.kept->centerFrequency() - kTwentyMetersHz)
+                <= f.kept->bandwidth() / 2.0);
+        QVERIFY(!f.kept->isEdgeMarkedSlice(f.b->sliceIndex()));
+        QVERIFY(f.kept->isEdgeMarkedSlice(f.a->sliceIndex()));
+        QVERIFY(edgeMarkerPixels(f.kept, f.a->sliceIndex(), false) > 0);
+        QVERIFY(feedFrame(*f.window, f.b->streamIndex()));
+        QVERIFY(feedFrame(*f.window, f.a->streamIndex()));
+        QCOMPARE(f.kept->localSpectrumSourceForTest(), f.b->streamIndex());
+        const double aReceiver = receiverHz(f.model, f.a);
+        const double draggedTo = f.kept->centerFrequency() + 5'000.0;
+        dragPan(f.kept, 5'000.0);
+        QCOMPARE(receiverHz(f.model, f.b), draggedTo);
+        QCOMPARE(receiverHz(f.model, f.a), aReceiver);
+        QVERIFY(receiverCovers(f.model, f.a));
+        QVERIFY(receiverCovers(f.model, f.b));
+    }
+
+    // The bench fault itself: the pan had gone to B's band while it still
+    // tuned A, so a drag sent A's receiver to 20 m with A on 40 m. After
+    // any drag, each slice is still inside its own receiver's window.
+    void aPanDragNeverTakesAReceiverOffItsSlice()
+    {
+        TwoBands f;
+        prepareTwoBands(f);
+        if (QTest::currentTestFailed()) { return; }
+        shrinkToOnePan(f, f.a);
+        if (QTest::currentTestFailed()) { return; }
+        const double bReceiver = receiverHz(f.model, f.b);
+        dragPan(f.kept, 5'000.0);
+        for (SliceModel* slice : {f.a, f.b}) {
+            QVERIFY2(receiverCovers(f.model, slice),
+                     qPrintable(QStringLiteral("Slice %1 at %2 Hz, its receiver at %3 Hz")
+                                    .arg(QChar(u'A' + slice->sliceIndex()))
+                                    .arg(slice->frequency(), 0, 'f', 0)
+                                    .arg(receiverHz(f.model, slice), 0, 'f', 0)));
+        }
+        // The drag moved the receiver the pan shows, A's, and only that one.
+        QCOMPARE(receiverHz(f.model, f.a), f.viewCenter + 5'000.0);
+        QCOMPARE(receiverHz(f.model, f.b), bReceiver);
+        QCOMPARE(f.a->frequency(), kFortyMetersHz);
+        QCOMPARE(f.a->shiftOffsetHz(), kFortyMetersHz - (f.viewCenter + 5'000.0));
+    }
+
+    // Two receivers feed the pan's slices; it draws only its own slice's,
+    // never the other band's frames on its own slice's scale.
+    void aPanDrawsOnlyItsOwnSlicesReceiver()
+    {
+        TwoBands f;
+        prepareTwoBands(f);
+        if (QTest::currentTestFailed()) { return; }
+        shrinkToOnePan(f, f.a);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(feedFrame(*f.window, f.a->streamIndex()));
+        QCOMPARE(f.kept->localSpectrumSourceForTest(), f.a->streamIndex());
+        QVERIFY(feedFrame(*f.window, f.b->streamIndex()));
+        QCOMPARE(f.kept->localSpectrumSourceForTest(), f.a->streamIndex());
+    }
+
+    // The operator makes the other slice the pan's own: the pan goes to
+    // that slice's receiver, draws it, and a drag moves it and no other.
+    void aPanFollowsItsOwnSliceToThatSlicesReceiver()
+    {
+        TwoBands f;
+        prepareTwoBands(f);
+        if (QTest::currentTestFailed()) { return; }
+        shrinkToOnePan(f, f.a);
+        if (QTest::currentTestFailed()) { return; }
+        PanadapterApplet* pan = f.stack->panadapter(QStringLiteral("pan-0"));
+        const auto holds = [&f](double hz) {
+            return std::abs(f.kept->centerFrequency() - hz) <= f.kept->bandwidth() / 2.0;
+        };
+        // B becomes the active slice, from the model alone (a CAT command,
+        // a keyboard shortcut): nothing reveals it.
+        f.model->setActiveSlice(f.model->slices().indexOf(f.b));
+        QCOMPARE(f.model->activeSlice(), f.b);
+        QCOMPARE(pan->activeSliceIndex(), f.b->sliceIndex());
+        QCOMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.b->streamIndex()));
+        QVERIFY(holds(kTwentyMetersHz));
+        QVERIFY(feedFrame(*f.window, f.b->streamIndex()));
+        QVERIFY(feedFrame(*f.window, f.a->streamIndex()));
+        QCOMPARE(f.kept->localSpectrumSourceForTest(), f.b->streamIndex());
+        const double aReceiver = receiverHz(f.model, f.a);
+        const double draggedTo = f.kept->centerFrequency() + 5'000.0;
+        dragPan(f.kept, 5'000.0);
+        QCOMPARE(receiverHz(f.model, f.b), draggedTo);
+        QCOMPARE(receiverHz(f.model, f.a), aReceiver);
+        QVERIFY(receiverCovers(f.model, f.a));
+        QVERIFY(receiverCovers(f.model, f.b));
+        // And back to A, then to B again: the pan maps B's receiver from
+        // where the drag left it.
+        f.model->setActiveSlice(f.model->slices().indexOf(f.a));
+        QCOMPARE(pan->activeSliceIndex(), f.a->sliceIndex());
+        QCOMPARE(f.kept->ddcCenterFrequency(), f.model->streamCentreHz(f.a->streamIndex()));
+        QVERIFY(holds(kFortyMetersHz));
+        QVERIFY(f.kept->isEdgeMarkedSlice(f.b->sliceIndex()));
+        QVERIFY(!f.kept->isEdgeMarkedSlice(f.a->sliceIndex()));
+        f.model->setActiveSlice(f.model->slices().indexOf(f.b));
+        QCOMPARE(f.kept->ddcCenterFrequency(), draggedTo);
+        QVERIFY(holds(kTwentyMetersHz));
     }
 
     // The bottom RX area's chooser in a window that runs its own radio.

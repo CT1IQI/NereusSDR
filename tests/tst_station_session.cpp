@@ -5516,9 +5516,9 @@ void TstStationSession::clientCapsWhatAStationCanMakeItAllocate()
     QVERIFY2(transport != nullptr, "the dial did not produce a WebSocketTransport");
     QVERIFY(transport->socket() != nullptr);
     QCOMPARE(transport->socket()->maxAllowedIncomingMessageSize(),
-             StationClient::kMaxIncomingMessageBytes);
+             static_cast<quint64>(StationClient::kMaxIncomingMessageBytes));
     QCOMPARE(transport->socket()->maxAllowedIncomingFrameSize(),
-             StationClient::kMaxIncomingMessageBytes);
+             static_cast<quint64>(StationClient::kMaxIncomingMessageBytes));
 
     // And the daemon's own accepted socket carries the smaller cap, so the
     // two constants are not accidentally the same number.
@@ -7592,7 +7592,7 @@ void TstStationSession::windowShowsTheCoresIoBoard()
     coreBoard.setDetected(true);
 
     NEREUS_TRY_VERIFY(windowBoard.isDetected());
-    QCOMPARE(windowBoard.hardwareVersion(), IoBoardHl2::kHardwareVersion1);
+    QCOMPARE(windowBoard.hardwareVersion(), static_cast<quint8>(IoBoardHl2::kHardwareVersion1));
     QCOMPARE(windowBoard.registerValue(IoBoardHl2::Register::REG_FIRMWARE_MAJOR), quint8(0x02));
     QCOMPARE(windowBoard.registerValue(IoBoardHl2::Register::REG_FIRMWARE_MINOR), quint8(0x07));
     QCOMPARE(windowBoard.registerValue(IoBoardHl2::Register::REG_ANTENNA), quint8(0x03));

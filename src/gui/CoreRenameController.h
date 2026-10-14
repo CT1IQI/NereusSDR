@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original.
 // 2026-10-02 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// Modification history (NereusSDR):
+// 2026-10-13 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+// Extract the production deadline handler into a private Qt slot.
 #include "gui/CoreTargetStore.h"
 #include "core/session/StationClient.h"
 #include <QPointer>
@@ -58,6 +61,8 @@ signals:
     void finished(NereusSDR::CoreRenameController::Request request,
                   NereusSDR::CoreRenameController::Outcome outcome,
                   const QString& acceptedName, const QString& reason);
+private slots:
+    void deadlineExpired();
 private:
     struct Operation {
         Request request;

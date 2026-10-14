@@ -391,7 +391,8 @@ public:
 
     // R-R3-46 / R-R3-11: save this radio's settings a short while after an
     // operator change, not only at teardown.  Off by default; the Core
-    // (DaemonApp) turns it on so a change made from a remote window is on
+    // (DaemonApp, and DesktopStationController while a desktop Core runs)
+    // turns it on so a change made from a remote window is on
     // disk without waiting for the Core to stop.  Auto-attenuate's own
     // moves never schedule a save.
     void setDebouncedSaveEnabled(bool on);

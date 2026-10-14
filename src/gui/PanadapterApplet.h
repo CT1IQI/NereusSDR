@@ -19,6 +19,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd / KG4VCF  Export the applet's Qt signal
+//                addresses from the Windows GUI DLL. AI-assisted via
+//                OpenAI Codex.
 //   2026-05-27  J.J. Boyd / KG4VCF  Phase 3F Sub-Epic D Task 1.
 //                                    Per-pan container skeleton ported
 //                                    structurally from AetherSDR
@@ -69,6 +72,7 @@
 // =================================================================
 #pragma once
 
+#include "gui/NereusGuiExport.h"
 #include "gui/PanStatusText.h"
 
 #include <QWidget>
@@ -93,7 +97,7 @@ class SpectrumStatusOverlay;
 /// FFT, any slice whose freq falls within visible range overlays as a flag.
 /// See docs/architecture/2026-05-26-phase3f-multi-pan-multi-slice-design.md §3
 /// (Slice / Pan binding).
-class PanadapterApplet : public QWidget {
+class NEREUS_GUI_EXPORT PanadapterApplet : public QWidget {
     Q_OBJECT
     Q_PROPERTY(QString panId READ panId CONSTANT)
     Q_PROPERTY(int activeSliceIndex READ activeSliceIndex WRITE setActiveSliceIndex NOTIFY activeSliceChanged)

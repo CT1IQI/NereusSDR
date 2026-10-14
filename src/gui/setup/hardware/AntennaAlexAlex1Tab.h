@@ -105,6 +105,8 @@
 #include <QWidget>
 #include <vector>
 
+#include "gui/NereusGuiExport.h"
+
 class QCheckBox;
 class QDoubleSpinBox;
 class QFrame;
@@ -128,7 +130,7 @@ class RadioModel;
 // and hardware/<mac>/alex/master/{hpfBypass,...}.
 //
 // Source: Thetis Console/setup.designer.cs:23385-25538 (tpAlexFilterControl) [@501e3f5]
-class AntennaAlexAlex1Tab : public QWidget {
+class NEREUS_GUI_EXPORT AntennaAlexAlex1Tab : public QWidget {
     Q_OBJECT
 public:
     explicit AntennaAlexAlex1Tab(RadioModel* model, QWidget* parent = nullptr);
