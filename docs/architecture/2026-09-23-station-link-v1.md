@@ -1209,6 +1209,7 @@ table.
 | `radioSpeakerVersion` | 1 |
 | `coreSpeakerVersion` | 1 |
 | `spectrumPictureVersion` | 1 |
+| `waveformVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2573,7 +2574,8 @@ older window sees only the values it was built for.
 | 110 | `radioSpeakerVersion` | `i64` |
 | 111 | `coreSpeakerVersion` | `i64` |
 | 112 | `spectrumPictureVersion` | `i64` |
-| 113 | `coreBuildInfo` | `utf8` |
+| 113 | `waveformVersion` | `i64` |
+| 114 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2957,7 +2959,7 @@ An enum property lists the values its domain allows.
 | 4 | `ownerKind` | `utf8` | outbound |  |
 | 5 | `ownerAway` | `bool` | outbound |  |
 | 6 | `frequency` | `f64` | outbound |  |
-| 7 | `dspMode` | `enum` | outbound | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 |
+| 7 | `dspMode` | `enum` | outbound | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 |
 | 8 | `filterLow` | `i64` | outbound |  |
 | 9 | `filterHigh` | `i64` | outbound |  |
 | 10 | `txSlice` | `bool` | outbound |  |
@@ -2971,7 +2973,7 @@ An enum property lists the values its domain allows.
 | --- | --- | --- | --- | --- |
 | 0 | `outputRoute` | `enum` | bidirectional | 0, 1 |
 | 1 | `frequency` | `f64` | bidirectional |  |
-| 2 | `dspMode` | `enum` | bidirectional | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 |
+| 2 | `dspMode` | `enum` | bidirectional | 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 |
 | 3 | `filterLow` | `i64` | bidirectional |  |
 | 4 | `filterHigh` | `i64` | bidirectional |  |
 | 5 | `agcMode` | `enum` | bidirectional | 0, 1, 2, 3, 4, 5 |
@@ -6877,9 +6879,10 @@ Client to station:
 | `monitor-audio` | `txMonitorAudioVersion` | `connectionId`, `op`, `revision`, `route` | none | none |
 | `receiver-audio` | `receiverAudioVersion` | `connectionId`, `enabled`, `op`, `profile`, `revision`, `sliceId` | none | none |
 | `replace` | `mediaReplaceVersion` | `connectionId`, `op`, `replaces` | `mediaDirectVersion` with mediaDirectVersion | none |
-| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion | none |
+| `start` | `remoteMediaVersion` | `connectionId`, `op` | `audioProfileVersion` with audioProfileVersion; `headphonesMixVersion` with headphonesMixVersion; `mediaRelayRoutingVersion` with mediaRelayRoutingVersion; `mediaTunnelVersion` with mediaTunnelVersion; `miniDisplayVersion` with miniDisplayVersion; `receiverAudioVersion` with receiverAudioVersion; `remoteIqVersion` with remoteIqVersion; `remoteTxVersion` with remoteTxVersion; `spectrumPictureVersion` with spectrumPictureVersion; `txDisplayVersion` with txDisplayVersion; `txMonitorAudioVersion` with txMonitorAudioVersion; `waveformVersion` with waveformVersion | none |
 | `subscribe` | `remoteMediaVersion` | `centreHz`, `connectionId`, `endpointId`, `fftSize`, `fps`, `framesPerLine`, `maxDbm`, `minDbm`, `op`, `pixels`, `revision`, `sliceId`, `spanHz`, `tier`, `trace`, `waterfall`, `wideSpanFactor`, `windowType` | `activePeakHold` with displayExtrasVersion; `averageTimeMs` with displayExtrasVersion; `calibrationOffsetDb` with displayExtrasVersion; `decimation` with spectrumGrantVersion; `displayRole` with miniDisplayVersion; `duplex` with txDisplayVersion; `extendedView` with remoteWidebandDisplayVersion; `noiseFloor` with displayExtrasVersion; `normalize` with displayExtrasVersion; `peakBlobs` with displayExtrasVersion; `txMaxDbm` with txDisplayVersion; `txMinDbm` with txDisplayVersion; `waterfallAverageTimeMs` with displayExtrasVersion; `waterfallLevels` with displayExtrasVersion | `activePeakHold`: {enabled, fallDbPerSec, holdMs, onTx} or {enabled, fallDbPerSec, holdMs}; `noiseFloor`: {enabled, fastAttack, shiftDb} or {enabled, shiftDb}; `peakBlobs`: {count, fallDbPerSec, holdMs, insideOnly}; `trace`: {averageAlpha, averageMode, detector}; `waterfall`: {averageAlpha, averageMode, detector}; `waterfallLevels`: {highDbm, lowDbm, mode, offsetDb} |
 | `unsubscribe` | `remoteMediaVersion` | `connectionId`, `endpointId`, `op` | `revision` with remoteDisplayBudgetVersion | none |
+| `waveform-stream` | `waveformVersion` | `connectionId`, `enabled`, `kind`, `op`, `revision`, `sliceId` | none | none |
 
 Station to client:
 
@@ -6898,6 +6901,7 @@ Station to client:
 | `receiver-audio-context` | `receiverAudioVersion` | `connectionId`, `enabled`, `firstSequence`, `firstTimestamp`, `generation`, `op`, `profile`, `revision`, `sliceId`, `ssrc` | `encoder` with enabled=true; `profileRefusal` with profile=opus, profileRefused; `reason` with enabled=false | `encoder`: {audioBandwidthHz, channels, codec, frameSamples, sampleRate, targetBitrate} or {bitsPerSample, channels, codec, frameSamples, payloadType, sampleRate} |
 | `rejected` | `remoteMediaVersion` | `connectionId`, `endpointId`, `op`, `reason`, `revision` | none | none |
 | `replace` | `mediaReplaceVersion` | `connectionId`, `op`, `replaces` | none | none |
+| `waveform-stream-context` | `waveformVersion` | `availability`, `connectionId`, `deliveryGeneration`, `enabled`, `kind`, `op`, `reason`, `revision`, `sampleRateHz`, `sliceId`, `sourceGeneration` | none | none |
 
 <!-- /surface -->
 
