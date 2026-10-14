@@ -4769,13 +4769,15 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
     if (!spectrum || !model || !stack) { return; }
     const QPointer<RadioModel> modelRef(model);
     const QPointer<PanadapterStack> stackRef(stack);
+    const QPointer<SpectrumWidget> spectrumRef(spectrum);
     const auto resolve = [modelRef, stackRef, panId]() -> SliceModel* {
         if (!modelRef || !stackRef) { return nullptr; }
         PanadapterApplet* applet = stackRef->panadapter(panId);
         if (!applet) { return nullptr; }
-        if (SliceModel* active =
-                modelRef->sliceById(applet->activeSliceIndex())) {
-            return active;
+        if (applet->associatedSlices().contains(applet->activeSliceIndex())) {
+            if (SliceModel* active = modelRef->sliceById(applet->activeSliceIndex())) {
+                return active;
+            }
         }
         for (SliceModel* slice : modelRef->slices()) {
             if (slice
@@ -4785,11 +4787,73 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         }
         return nullptr;
     };
-    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
-            spectrum, [resolve](bool on) {
-        if (SliceModel* slice = resolve()) {
-            slice->setWidebandExtensionRequested(on);
+    // Local slices have one hosting pan (PanadapterStack::moveSliceToPan).
+    // Track the actual owner object so a selection/removal without another
+    // extension edge retires its old intent. Remote endpoints own separate
+    // model leases; accepted remote state must never write local intent.
+    const auto requestedSlice = std::make_shared<QPointer<SliceModel>>();
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestedSlice]() {
+        if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
+            return;
         }
+        const QPointer<SliceModel> next(resolve());
+        const QPointer<SliceModel> previous(*requestedSlice);
+        if (previous != next) {
+            *requestedSlice = next;
+            if (previous) { previous->setWidebandExtensionRequested(false); }
+        }
+        // A direct observer of the retirement may have changed selection or
+        // removed the model/widget. Let the nested reconciliation win.
+        if (!modelRef || !spectrumRef || *requestedSlice != next) { return; }
+        if (!next) {
+            spectrumRef->setLocalWidebandAvailable(false);
+            return;
+        }
+        const RadioInfo& info = modelRef->currentRadioInfo();
+        // Before discovery there is no protocol fact to apply. Retain the
+        // restored geometry until currentRadioChanged supplies that fact.
+        if (info.boardType != HPSDRHW::Unknown) {
+            const BoardCapabilities& caps = modelRef->boardCapabilities();
+            const int adc = modelRef->sliceAdcIndex(next->sliceIndex());
+            const int chain = modelRef->sliceChainIndex(next->sliceIndex());
+            const bool available = adc >= 0 && adc < caps.adcCount
+                && adc < BoardCapsTable::widebandAdcsFor(caps, info.protocol)
+                && chain >= 0 && chain < caps.rxFilterChainCount;
+            if (available) { spectrumRef->setWidebandAdcIndex(adc); }
+            spectrumRef->setLocalWidebandAvailable(available);
+        }
+        if (modelRef && spectrumRef && next && *requestedSlice == next) {
+            next->setWidebandExtensionRequested(spectrumRef->extendedMode());
+        }
+    };
+    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
+            spectrum, [reconcile](bool) { reconcile(); });
+    if (PanadapterApplet* applet = stack->panadapter(panId)) {
+        connect(applet, &PanadapterApplet::activeSliceChanged, spectrum,
+                [reconcile](const QString&, int) { reconcile(); });
+    }
+    connect(model, &RadioModel::currentRadioChanged, spectrum,
+            [reconcile](const RadioInfo&) { reconcile(); });
+    connect(model, &RadioModel::streamAdcRoutingChanged, spectrum, reconcile);
+    connect(model, &RadioModel::streamBindingsChanged, spectrum,
+            [reconcile](int, const QVector<int>&) { reconcile(); });
+    connect(model, &RadioModel::sliceRemoved, spectrum,
+            [reconcile](int) { reconcile(); });
+    const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
+        if (!modelRef || !spectrumRef) { return; }
+        if (SliceModel* slice = modelRef->sliceById(sliceId)) {
+            connect(slice, &SliceModel::streamIndexChanged, spectrumRef.data(),
+                    [reconcile](int) { reconcile(); });
+        }
+        reconcile();
+    };
+    for (SliceModel* slice : model->slices()) {
+        if (slice) { watchSlice(slice->sliceIndex()); }
+    }
+    connect(model, &RadioModel::sliceAdded, spectrum, watchSlice);
+    connect(spectrum, &QObject::destroyed, model, [requestedSlice]() {
+        if (*requestedSlice) { (*requestedSlice)->setWidebandExtensionRequested(false); }
+        requestedSlice->clear();
     });
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
             spectrum, [resolve](double freqHz) {
@@ -4799,9 +4863,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
     });
     // Settings restore and rate seeding may have derived the actual state
     // before this bridge existed, so seed the resolved slice immediately.
-    if (SliceModel* slice = resolve()) {
-        slice->setWidebandExtensionRequested(spectrum->extendedMode());
-    }
+    reconcile();
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
