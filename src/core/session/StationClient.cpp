@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
+//                                    session ends even if its capability was
+//                                    already unavailable. AI-assisted via
+//                                    OpenAI Codex.
 //   2026-10-12  J.J. Boyd / KG4VCF  The radio's second firmware number: the
 //                                    hello declares firmwareBeta.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -530,6 +534,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13: Route PS two-tone through the transmit keepalive tracker,
+//               preserving PS wire/result phases. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -1016,6 +1023,11 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // copies rule); the Core acts on the first and answers every copy.
     m_remoteTransmit = new RemoteTransmitClient(
         [this](const QByteArray& verb, const QList<MirrorUpdate>& arguments) -> quint32 {
+            if (verb == "ps3.twoTone") {
+                // PS's asynchronous stop handler refuses a same-ID copy
+                // while pending. Preserve its existing single submission.
+                return invokeCommand(verb, arguments);
+            }
             if (!remoteTransmitAvailable()) {
                 return 0;
             }
@@ -2295,6 +2307,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     if (!m_sessionActive) {
         return;  // already reported for this attach
     }
+    const quint32 retiringEpoch = m_sessionEpoch;
     // Retire the operation now, but notify only as this teardown returns.
     // A completion handler may destroy this client or reconnect it. Emitting
     // before clearing mirrors/proxy/coalescer let that new session inherit
@@ -2375,7 +2388,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     m_coreValues.clear();
     // Desktop remote transmit: the Core unkeys this device when the link
     // drops and never keys it again by itself; nothing of it is kept.
-    refreshRemoteTransmit();
+    if (m_remoteTransmit != nullptr) {
+        m_remoteTransmit->retireSession();
+        if (!watchSelf || m_sessionEpoch != retiringEpoch || m_sessionActive) { return; }
+    }
     if (m_radioModel) {
         m_radioModel->dspAssets()->resetSession();
         m_radioModel->dspAssets()->setRemoteNr3ModelsSupported(false);
@@ -3687,6 +3703,11 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         [self](Ps3Action action, const QVariantMap& arguments) -> quint32 {
         if (!self || !self->propertyResultsAvailable() || self->m_capabilities.psAlgorithmVersion != 3) {
             return 0;
+        }
+        if (action == Ps3Action::SetTwoTone
+            && PureSignalSessionFacade::argumentsFit(action, arguments)) {
+            return self->m_remoteTransmit->requestPureSignalTwoTone(
+                arguments.value(QStringLiteral("enabled")).toBool());
         }
         const auto values = dspCommandValues(arguments);
         return values ? self->invokeCommand(PureSignalSessionFacade::actionVerb(action), *values) : 0;
@@ -7910,6 +7931,14 @@ void StationClient::handleCommandResult(const SessionMessage& message)
         m_pendingCommands.remove(message.commandId);
         return;
     }
+    if (message.commandVerb == "ps3.twoTone" && m_remoteTransmit != nullptr) {
+        const QPointer<StationClient> self(this);
+        const quint32 epoch = m_sessionEpoch;
+        m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,
+                                          message.accepted, message.reason, message.updates);
+        if (!self || m_sessionEpoch != epoch || !m_sessionActive) { return; }
+        // Continue through the PS facade's phase/operation-result path below.
+    }
     if (message.commandVerb == "tx.key" || message.commandVerb == "tx.unkey"
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
         || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource") {
@@ -8653,7 +8682,13 @@ QString StationClient::transmitHolderText() const
                    : QStringLiteral("Transmit is changing hands.");
     }
     if (tx.holderDeviceId().isEmpty()) {
-        return {};
+        // Nobody holds transmit. MOX and TUNE take it as they key
+        // (TransmitHolder::askKey); a program's key never does, and until
+        // 2026-10-12 nothing on screen said so or offered the take.
+        return transmitTakeAvailable()
+                   ? QStringLiteral("No device has transmit. MOX and TUNE take it here. A "
+                                    "program needs Take transmit first.")
+                   : QString();
     }
     const QString self = thisDeviceWireId();
     if (!self.isEmpty() && tx.holderDeviceId() == self) {
@@ -8742,6 +8777,11 @@ bool StationClient::transmitHeldElsewhere() const
 {
     return transmitTakeAvailable() && !m_transmitState->holderDeviceId().isEmpty()
         && !holdsTransmitHere();
+}
+
+bool StationClient::transmitTakeOffered() const
+{
+    return transmitTakeAvailable() && !holdsTransmitHere();
 }
 
 quint32 StationClient::requestTakeTransmit(bool shown, qint64 holderEpoch, bool shownKeyed)

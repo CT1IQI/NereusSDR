@@ -24,6 +24,10 @@
 // 2026-10-09 - "Always recenter VFOs" takes the check box style and height
 //              the other option rows take, so its indicator sits in their
 //              column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12 - "Enable serial CAT" waits for a device and "Enable input PTT"
+//              for its source, input and physical device: until then the
+//              tick is disabled and its tooltip says what is missing.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
 #include "core/cat/CatPtyDialects.h"
@@ -196,6 +200,8 @@ CatChannelSetupPage::CatChannelSetupPage(RadioModel* model, bool serial, QWidget
         connect(row.primary,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1,CatRebind{pickedSlice(m_rows[i].primary),false}); });
         connect(row.secondary,&QComboBox::currentIndexChanged,this,[this,i] { apply(i+1,CatRebind{false,pickedSlice(m_rows[i].secondary)}); });
         if (row.device) { row.device->installEventFilter(this); connect(row.device->lineEdit(),&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); connect(row.device,&QComboBox::activated,this,[this,i] { apply(i+1); }); }
+        // The Enable tick follows the Device box as a device is typed or picked.
+        if (row.device) { connect(row.device,&QComboBox::currentTextChanged,this,[this,i] { syncEnableWaits(i); }); }
         if (row.rigctld) { connect(row.rigctld,&QCheckBox::toggled,this,[this,i] { apply(i+1); }); }
         if (row.rigAddress) { connect(row.rigAddress,&QLineEdit::editingFinished,this,[this,i] { apply(i+1); }); }
         if (row.rigPort) { row.rigPort->installEventFilter(this); connect(row.rigPort,&QSpinBox::valueChanged,this,[this,i] { apply(i+1); }); }
@@ -294,6 +300,8 @@ void CatChannelSetupPage::syncPlatform(bool keepTyped) {
                 if (keepTyped) { row.device->setCurrentText(shown); } else { setChoice(row.device,shown); }
             }
             serialPlatformChoices(row.parity,row.stops,platform,remote);
+            // The Device box is set with its signals blocked, here and in syncFromModel().
+            syncEnableWaits(i);
         } else {
             // PTYs are the computer running CAT's (the Core's, from a connected desktop).
             if (available && !platform.pty) { row.pty->setEnabled(false); row.pty->setToolTip(noPtyReason(remote)); }
@@ -304,6 +312,14 @@ void CatChannelSetupPage::syncPlatform(bool keepTyped) {
         }
     }
     m_syncing=wasSyncing;
+}
+void CatChannelSetupPage::syncEnableWaits(int index) {
+    if (!m_serial || !m_control) { return; }
+    Row& row=m_rows[index]; const bool available=m_control->available();
+    // The page's own reasons come first: CAT cannot be set up from here, or there is no serial port support.
+    if (!available || !m_control->platform().serial) { row.enabled->setEnabled(true); row.enabled->setToolTip(!available ? m_control->unavailableReason() : QString()); return; }
+    const bool waits=!row.enabled->isChecked() && row.device->currentText().trimmed().isEmpty();
+    row.enabled->setEnabled(!waits); row.enabled->setToolTip(waits ? tr("Choose a device first.") : QString());
 }
 CatGlobalSetupPage::CatGlobalSetupPage(const QString& title,RadioModel* model,QWidget* parent)
     : SetupPage(title,model,parent),m_control(model ? model->catControl() : nullptr) {
@@ -358,7 +374,7 @@ void CatGlobalSetupPage::syncFromModel() {
     for (QWidget* widget:m_controls) { widget->setEnabled(available); widget->setToolTip(available ? QString() : reason); }
     const CatGlobalConfig config=m_control->globalConfig(); for (const auto& update:m_updates) { update(config); }
     m_syncing=false;
-    syncPlatform(); syncPtt();
+    syncPlatform(); syncPtt(); syncPttEnableWaits();
 }
 void CatGlobalSetupPage::syncPlatform() {
     if (!m_control) { return; }
@@ -375,6 +391,20 @@ void CatGlobalSetupPage::syncPlatform() {
     }
     if (m_parity && m_stops) { serialPlatformChoices(m_parity,m_stops,platform,remote); }
     m_syncing=wasSyncing;
+    syncPttEnableWaits();
+}
+void CatGlobalSetupPage::syncPttEnableWaits() {
+    if (!m_control || !m_pttEnabled || !m_pttSource || !m_pttCts || !m_pttDsr || !m_pttDevice) { return; }
+    const bool available=m_control->available();
+    // The page's own reasons come first: CAT cannot be set up from here, or there is no serial port support.
+    if (!available || !m_control->platform().serial) { m_pttEnabled->setEnabled(available); m_pttEnabled->setToolTip(available ? QString() : m_control->unavailableReason()); return; }
+    // From what the page shows, the first thing missing.
+    QString waits; const QString source=m_pttSource->currentText();
+    if (m_pttEnabled->isChecked()) { waits.clear(); }
+    else if (source=="None") { waits=tr("Choose an input source first."); }
+    else if (!m_pttCts->isChecked() && !m_pttDsr->isChecked()) { waits=tr("Tick the CTS or the DSR input first."); }
+    else if (source=="Physical" && m_pttDevice->text().trimmed().isEmpty()) { waits=tr("Enter the separate physical device first."); }
+    m_pttEnabled->setEnabled(waits.isEmpty()); m_pttEnabled->setToolTip(waits);
 }
 void CatGlobalSetupPage::syncPtt() {
     if (m_control && m_status) { m_status->setText(tr("PTT: %1").arg(m_control->pttState())); }
@@ -419,11 +449,15 @@ CatOptionsSetupPage::CatOptionsSetupPage(RadioModel* model,QWidget* parent) : Ca
 }
 CatPttSetupPage::CatPttSetupPage(RadioModel* model,QWidget* parent) : CatGlobalSetupPage(tr("CAT PTT"),model,parent) {
     auto* group=addSection(tr("Input PTT")); auto* form=sectionForm(group); m_serialGroup=group;
-    addCheck(form,tr("Enable input PTT"),"catPttEnabled",&CatGlobalConfig::pttEnabled);
-    addChoice(form,tr("Input source:"),"catPttSource",{"None","CAT1","CAT2","CAT3","CAT4","Physical"},&CatGlobalConfig::pttDeviceSource);
-    addCheck(form,tr("Legacy RTS wiring — samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
-    addCheck(form,tr("Legacy DTR wiring — samples DSR input"),"catPttDsr",&CatGlobalConfig::pttUseDsr);
-    addText(form,tr("Separate physical device:"),"catPttDevice",&CatGlobalConfig::pttSerialDevice);
+    m_pttEnabled=addCheck(form,tr("Enable input PTT"),"catPttEnabled",&CatGlobalConfig::pttEnabled);
+    m_pttSource=addChoice(form,tr("Input source:"),"catPttSource",{"None","CAT1","CAT2","CAT3","CAT4","Physical"},&CatGlobalConfig::pttDeviceSource);
+    m_pttCts=addCheck(form,tr("Legacy RTS wiring — samples CTS input"),"catPttCts",&CatGlobalConfig::pttUseCts);
+    m_pttDsr=addCheck(form,tr("Legacy DTR wiring — samples DSR input"),"catPttDsr",&CatGlobalConfig::pttUseDsr);
+    m_pttDevice=addText(form,tr("Separate physical device:"),"catPttDevice",&CatGlobalConfig::pttSerialDevice);
+    // The Enable tick follows these four as they change.
+    connect(m_pttSource,&QComboBox::currentTextChanged,this,[this] { syncPttEnableWaits(); });
+    connect(m_pttCts,&QCheckBox::toggled,this,[this] { syncPttEnableWaits(); }); connect(m_pttDsr,&QCheckBox::toggled,this,[this] { syncPttEnableWaits(); });
+    connect(m_pttDevice,&QLineEdit::textChanged,this,[this] { syncPttEnableWaits(); });
     addNumber(form,tr("Physical device's CAT channel:"),"catPttChannel",1,4,&CatGlobalConfig::pttChannel);
     // Source serial choices are the same as the ordinary CAT ports, cited above.
     auto* baud=combo(group,baudChoices(),"catPttBaud"); baud->installEventFilter(this); m_controls.push_back(baud); form->addRow(tr("Baud:"),baud); m_updates.emplace_back([baud](const CatGlobalConfig& c) { setChoice(baud,QString::number(c.pttSerialBaud)); });

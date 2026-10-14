@@ -13,6 +13,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
 //   2026-10-11  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
 // =================================================================
@@ -125,6 +128,89 @@ private slots:
         QCOMPARE(ModeButtonItem::modeLabel(mode->activeMode()), QStringLiteral("LSB"));
         model->setActiveSlice(0);
         QCOMPARE(ModeButtonItem::modeLabel(mode->activeMode()), QStringLiteral("USB"));
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    // A Core update reaches the pan without being an operator gesture.
+    // The container must show it immediately, before selecting another
+    // slice and returning happens to refresh the controls.
+    void aContainersCtunButtonFollowsMirroredPinWithoutReselecting()
+    {
+        using Id = OtherButtonItem::ButtonId;
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        RadioModel* model = window->radioModel();
+        SliceModel* slice = ensureSlice(model);
+        QVERIFY(slice != nullptr);
+        model->addSlice();
+        QVERIFY(model->slices().size() >= 2);
+        model->setActiveSlice(0);
+        SpectrumWidget* spectrum = window->spectrumForSlice(slice);
+        QVERIFY(spectrum != nullptr);
+        spectrum->applyRemoteCtunState(true, false);
+        ContainerWidget* container = model->containerManager()->createContainer(
+            1, DockMode::OverlayDocked);
+        QVERIFY(container != nullptr);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* buttons = new OtherButtonItem();
+        meter->addItem(buttons);
+        QVERIFY(!buttons->buttonState(Id::Ctun));
+        QSignalSpy gestures(spectrum, &SpectrumWidget::ctunEnabledChanged);
+
+        QSignalSpy presentation(spectrum, &SpectrumWidget::remoteCtunStateChanged);
+        spectrum->applyRemoteCtunState(true, true);
+        QCOMPARE(presentation.count(), 1);
+        spectrum->applyRemoteCtunState(true, true);
+        QCOMPARE(presentation.count(), 1);
+        QVERIFY(spectrum->ctunEnabled());
+        const bool immediatelyOn = buttons->buttonState(Id::Ctun);
+        model->setActiveSlice(1);
+        model->setActiveSlice(0);
+        QVERIFY(buttons->buttonState(Id::Ctun));
+        QCOMPARE(gestures.count(), 0);
+        QVERIFY2(immediatelyOn, "CTUN only lights after selecting another slice and returning");
+        QVERIFY(sessions.replace({}, false));
+    }
+
+    void aContainersCtunButtonFollowsMirroredAvailability()
+    {
+        using Id = OtherButtonItem::ButtonId;
+        GuiSessionCoordinator sessions;
+        QVERIFY(sessions.replace({}, false));
+        MainWindow* window = sessions.window();
+        RadioModel* model = window->radioModel();
+        SliceModel* slice = ensureSlice(model);
+        QVERIFY(slice != nullptr);
+        SpectrumWidget* spectrum = window->spectrumForSlice(slice);
+        QVERIFY(spectrum != nullptr);
+        spectrum->applyRemoteCtunState(true, false);
+        ContainerWidget* container = model->containerManager()->createContainer(
+            1, DockMode::OverlayDocked);
+        QVERIFY(container != nullptr);
+        auto* meter = new MeterWidget();
+        container->setContent(meter);
+        auto* buttons = new OtherButtonItem();
+        meter->addItem(buttons);
+        QVERIFY(buttons->isButtonAvailable(Id::Ctun));
+        QSignalSpy gestures(spectrum, &SpectrumWidget::ctunEnabledChanged);
+        const QString held = QStringLiteral("This panadapter shows STRIX's receiver. Its C-Tune setting is STRIX's.");
+        spectrum->applyRemoteCtunState(true, false, held);
+        QVERIFY(!buttons->isButtonAvailable(Id::Ctun));
+        QCOMPARE(buttons->buttonUnavailableReason(buttons->indexOf(Id::Ctun)), held);
+        spectrum->setCtunEnabled(true);
+        QVERIFY(!spectrum->ctunEnabled());
+        spectrum->applyRemoteCtunState(true, false);
+        QVERIFY(buttons->isButtonAvailable(Id::Ctun));
+        spectrum->applyRemoteCtunState(false, false);
+        QVERIFY(!buttons->isButtonAvailable(Id::Ctun));
+        spectrum->applyRemoteCtunState(true, true);
+        QVERIFY(buttons->isButtonAvailable(Id::Ctun));
+        QVERIFY(buttons->buttonState(Id::Ctun));
+        spectrum->applyRemoteCtunState(true, false);
+        QVERIFY(!buttons->buttonState(Id::Ctun));
+        QCOMPARE(gestures.count(), 0);
         QVERIFY(sessions.replace({}, false));
     }
 

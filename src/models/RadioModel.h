@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
+//                sharing its input on the Anvelina Pro 3. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -2112,6 +2115,18 @@ public:
     QString lowPassHoldReason(const SliceModel* top,
                               const QList<const SliceModel*>& held,
                               const QList<const SliceModel*>& highPassOff = {}) const;
+
+    /// Where the radio's band filters combine and a 6 m slice shares an
+    /// input with other bands (codec::alex::combineRxBandSelections): what
+    /// the 6 m BPF/LNA costs the slices on that input, as sentences for
+    /// the shared-input reason. `lna` are the slices it is in for, `low`
+    /// those behind another row, which read lower, and `noFilter` those
+    /// whose row is not sent. `lnaDisabled`: Disable 6m LNA on RX took the
+    /// BPF/LNA out, and `noFilter` are the 6 m slices.
+    QString sharedLnaReason(const QList<const SliceModel*>& lna,
+                            const QList<const SliceModel*>& low,
+                            const QList<const SliceModel*>& noFilter,
+                            bool lnaDisabled) const;
 
     // Band-plan overlay manager — loaded once on construction from bundled
     // Qt resource JSON files. Active plan persists in AppSettings under

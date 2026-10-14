@@ -15,6 +15,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: Export signal addresses for Windows DLL consumers.
+//               J.J. Boyd / KG4VCF, AI-assisted via OpenAI Codex.
+//   2026-10-12: Refresh CTUN container state on mirrored pan changes without
+//               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//
+//   2026-10-11 : localSpectrumSourceForTest(), so a test can tell which
+//                 receiver's frame a pan drew. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-11 : m_wfHistoryRescales, waterfallHistoryForTest() and its
 //                 companions, for the waterfall history's resize tests.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -147,6 +155,11 @@
 //                 static overlay dirty, as AetherSDR [@1e0718ad] does, so
 //                 the spot labels follow them. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12: C-Tune switch held: applyRemoteCtunState takes the reason
+//                 the receiver's C-Tune setting is not this window's to
+//                 change (ctunHeldReason), and setCtunEnabled then changes
+//                 nothing. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // =================================================================
@@ -304,6 +317,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "gui/RemoteSpectrumCapture.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QElapsedTimer>
 #include <QPointer>
@@ -453,7 +467,7 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count);
 //   20px  - frequency scale bar
 //
 // From gpu-waterfall.md lines 274-289
-class SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
+class NEREUS_GUI_EXPORT SpectrumWidget : public SpectrumBaseClass, public NereusSDR::ISpectrumSink {
     Q_OBJECT
     friend class ::TestDssRowTee;
     friend class ::TestWorkspaceSpectrumFontMinimum;
@@ -1097,6 +1111,8 @@ public:
     }
     void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
     int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
+    // The receiver whose frame this pan took last (-1 before the first).
+    int  localSpectrumSourceForTest() const { return m_localSpectrumSource; }
     // R-R3-21: the remote row queue, and the ticker run by hand.
     int  remoteRowQueueDepthForTest() const { return int(m_remoteRowQueue.size()); }
     quint64 remoteRowsDroppedForTest() const { return m_remoteRowsDropped; }
@@ -1724,7 +1740,13 @@ public:
     bool ctunAvailable() const { return m_ctunAvailable; }
     // Core's effective stream state must not emit a gesture or overwrite the
     // per-pan preference restored when a new station stream is acquired.
-    void applyRemoteCtunState(bool available, bool pinned);
+    // `heldReason` is not empty when the receiver's C-Tune setting is not
+    // this window's to change (another holder's receiver, or a slice it
+    // only listens to): the pan shows the receiver's setting, its switch is
+    // disabled with these words, and setCtunEnabled changes nothing.
+    void applyRemoteCtunState(bool available, bool pinned, const QString& heldReason = QString());
+    // Why the C-Tune switch is held; empty when it is free or unavailable.
+    QString ctunHeldReason() const { return m_ctunHeldReason; }
     void recenterOnVfo();
     // R-R3-18/19: true while centerChanged comes from a zoom (wheel zoom or
     // frequency-scale drag) re-centring the view on the VFO, not from the
@@ -2465,6 +2487,10 @@ signals:
 
     // Emitted when CTUN mode changes
     void ctunEnabledChanged(bool enabled);
+
+    // Mirrored presentation changed, without an operator gesture. Keep
+    // container lights and availability current without sending a pin.
+    void remoteCtunStateChanged();
 
     // R-R3-21 (R3 unfinished controls fix wave M3): peak hold was turned
     // on or off, so a container's Peak button lights at once.
@@ -3457,6 +3483,7 @@ private:
     bool   m_ctunEnabled{true};  // true = SmartSDR-style (pan independent of VFO)
     bool   m_ctunPreference{true};
     bool   m_ctunAvailable{true};
+    QString m_ctunHeldReason;   // see applyRemoteCtunState()
     enum class VfoOffScreen { None, Left, Right };
     VfoOffScreen m_vfoOffScreen{VfoOffScreen::None};
     void drawOffScreenIndicator(QPainter& p, const QRect& specRect, const QRect& wfRect);

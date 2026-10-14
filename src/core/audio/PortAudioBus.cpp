@@ -61,6 +61,12 @@
 //   2026-10-12: open() starts PortAudio when it is not running (first
 //               need). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setClockMatchWritePacket() takes the packet's timing
+//               (MatcherPacketTiming: its wait for room, its arrival, its
+//               place in the stream), where it said only whether it had
+//               waited, for the matcher's clock fit and its
+//               standing-backlog rule (R-AUD-15). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PortAudioBus.h"
@@ -764,10 +770,10 @@ void PortAudioBus::restartClockMatch()
     }
 }
 
-void PortAudioBus::setClockMatchWritePacket(int frames, bool waited)
+void PortAudioBus::setClockMatchWritePacket(int frames, const MatcherPacketTiming& timing)
 {
     if (m_outputMatcher) {
-        m_outputMatcher->setWritePacketFrames(frames, waited);
+        m_outputMatcher->setWritePacketFrames(frames, timing);
     }
 }
 

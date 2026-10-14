@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF. Take transmit offered and taken with
+//                nobody holding transmit; a program's refused key names
+//                the button. AI-assisted via Anthropic Claude Code.
 //   2026-10-02  J.J. Boyd / KG4VCF. Real window/fake Core TX-letter Take
 //                regressions: cancellation, current refusal, unchanged RX
 //                history, and target lifetime. AI-assisted via OpenAI Codex.
@@ -201,6 +204,9 @@
 #include "gui/applets/RadeApplet.h"
 #include "gui/applets/RxApplet.h"
 #include "core/TxSliceArbiter.h"
+#ifdef HAVE_WEBSOCKETS
+#include "core/TciServer.h"
+#endif
 #include "core/safety/TransmitHolder.h"
 #include "gui/setup/DeviceCard.h"
 #include "gui/setup/GeneralOptionsPage.h"
@@ -2626,6 +2632,63 @@ private slots:
         QVERIFY(!h.remoteModel()->isTune());
     }
 
+    // 2026-10-12: nobody holds transmit, as at a Core that has just
+    // started. A program's key is refused until this window has transmit,
+    // so the TX applet's Take transmit button and holder line are there
+    // before any device holds it, a program's refused key is toasted in
+    // words that name the button, and the button takes transmit at once
+    // with no question. Before, the button showed only while another
+    // device held transmit, and the refusal was a five-second "TCI:" line.
+    // Nothing keys.
+    void takeTransmitIsOfferedAndTakenWhenNobodyHoldsTransmit()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        StationClient* client = h.client();
+        QVERIFY(client);
+        QVERIFY(connectSharing(h));
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        TransmitHolder* holder = h.server().transmitHolder();
+        QCOMPARE(holder->state(), TransmitHolder::State::Unheld);
+        const QByteArray self = QByteArrayLiteral("token:1");
+
+        auto* takeButton =
+            h.window()->findChild<QPushButton*>(QStringLiteral("TxTakeTransmitButton"));
+        QVERIFY(takeButton != nullptr);
+        QTRY_VERIFY(client->transmitTakeOffered());
+        QVERIFY(!client->transmitHeldElsewhere());
+        QTRY_VERIFY(!takeButton->isHidden());
+        QVERIFY(takeButton->isEnabled());
+        QCOMPARE(client->transmitHolderText(),
+                 QStringLiteral("No device has transmit. MOX and TUNE take it here. A program "
+                                "needs Take transmit first."));
+
+#ifdef HAVE_WEBSOCKETS
+        // A program's key the Core refused for this reason.
+        auto* tci = h.window()->findChild<TciServer*>();
+        QVERIFY(tci != nullptr);
+        emit tci->operatorNotice(QStringLiteral("127.0.0.1:50000"),
+                                 TxRefusals::programNeedsTransmit().text, true);
+        QTRY_COMPARE(toastsSaying(h, QStringLiteral(
+                         "A program using TCI asked to transmit, but this window does not "
+                         "have transmit. Click Take transmit, then try again.")), 1);
+#endif
+
+        takeButton->click();
+        QTRY_VERIFY(client->holdsTransmitHere());
+        QVERIFY(holder->isHeldBy(self));
+        QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
+        QTRY_VERIFY(takeButton->isHidden());
+        QVERIFY(!client->transmitTakeOffered());
+        QCOMPARE(client->transmitHolderText(), QStringLiteral("This computer holds transmit."));
+        QVERIFY(!h.station().mox());
+    }
+
     // TX badge take fix round 1: a window the Core lets transmit (the
     // bench window counted as paired). Case 2: the take question's take
     // brings transmit here and then tx.setTxSlice. Case 3 on the phone's
@@ -3651,7 +3714,8 @@ int main(int argc, char** argv)
          {QStringLiteral("refusals"),
           {QStringLiteral("remoteTxLettersPreserveCurrentCoreRefusals")}},
          {QStringLiteral("take"),
-          {QStringLiteral("remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying")}},
+          {QStringLiteral("remoteTxLettersTakeThenSelectOnTheCoreWithoutKeying"),
+           QStringLiteral("takeTransmitIsOfferedAndTakenWhenNobodyHoldsTransmit")}},
          {QStringLiteral("badges"),
           {QStringLiteral("remoteTxBadgeTakesTransmitOnASessionTheCoreLetsTransmit"),
            QStringLiteral("remoteTxBadgeTakeDoesNotOutliveTheLink"),

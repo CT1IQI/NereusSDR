@@ -2959,7 +2959,7 @@ An enum property lists the values its domain allows.
 | 10 | `revision` | `i64` | outbound |  |
 | 11 | `pa` | `utf8` | outbound |  |
 
-**SliceAccess** (8 properties)
+**SliceAccess** (9 properties)
 
 | Ordinal | Property | Wire kind | Direction | Enum values |
 | --- | --- | --- | --- | --- |
@@ -2971,6 +2971,7 @@ An enum property lists the values its domain allows.
 | 5 | `activeRxDeviceIds` | `utf8` | outbound |  |
 | 6 | `txSelected` | `bool` | outbound |  |
 | 7 | `onAir` | `bool` | outbound |  |
+| 8 | `receiverHolderDeviceId` | `utf8` | outbound |  |
 
 **SliceMarker** (14 properties)
 
@@ -4091,7 +4092,17 @@ Notes on the keys:
   JSON array of every joined device's id, the controller first, then in
   join order); `activeRxDeviceIds` (utf8, a JSON array of the devices
   whose active receive slice this is); `txSelected` (the marker's
-  `txSlice` rule, ruling 5.4a); `onAir` (the slice is transmitting now).
+  `txSlice` rule, ruling 5.4a); `onAir` (the slice is transmitting now);
+  `receiverHolderDeviceId` (the id, as `connectedDevices` names it, of the
+  device that anchors the receiver the slice is on (section 7.5), `""`
+  when the slice has no receiver or nobody anchors it, `station` for the
+  Core's own operating position). The receiver's C-Tune pin is that
+  device's, so the desktop's remote window shows the pin held for any other
+  and does not send `requestStreamCtunPinned`. A phone that reads this
+  property can do the same; the current phone kit ignores it.
+  It was added after `sliceAccessVersion` 3
+  without a new version: a client reads properties by name, and one sent
+  no value takes the anchor as unknown and asks as before.
 - **A change of owner** (a device adopting slices nobody owned, a slice
   passing to the station for a device that left, a held slice returning,
   a take or a release) reaches each session as `object.destroy` of the
@@ -4846,7 +4857,11 @@ panadapter shows <anchor's name>'s receiver. Its C-Tune setting is
 <anchor's name>'s.", or while the anchor is not connected "This
 panadapter shows the receiver of <anchor's name>, which is not connected
 now. Its C-Tune setting stays with <anchor's name> until it is back or
-its three minutes are up.".
+its three minutes are up.". The desktop's remote window with
+`sliceAccessVersion` 1 or later reads the anchor of each slice's receiver
+from `receiverHolderDeviceId` on its `access:<id>` (section 7.1), shows the
+pin held with these words, and does not ask. A phone that reads this
+property can do the same; the current phone kit ignores it.
 A pin lasts through its anchor's link dropping and its coming back as the
 same device (its `streamCtunPinned` is as it left it); it ends when the
 anchor leaves for good (`session.leave`, a token window's end, the end of
