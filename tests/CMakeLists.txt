@@ -1762,6 +1762,15 @@ if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
 endif()
 
+# Device-free ownership regression: its own tiny target, private namespaces and
+# command/API doubles; never invokes the historical host-FIFO cleanup test.
+if(UNIX)
+    add_subdirectory(linux_pipe_ownership EXCLUDE_FROM_ALL)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS tst_linux_pipe_ownership)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES core)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_core tst_linux_pipe_ownership)
+endif()
+
 # ── Linux audio backend detection (PipeWire-native bridge, Task 3) ───────────
 # Pure unit test: injects stub probe callbacks into detectLinuxBackend() to
 # cover all 8 (pipewire × pactl × forced-override) combinations plus the

@@ -649,3 +649,14 @@ transient lookup, excluded from transport enumeration, AI and GUID registration;
 TX/Tune/TwoTone, VOX enable and PureSignal single/calibration are denied.
 These changes are original adaptation by J.J. Boyd (KG4VCF), AI-assisted via
 OpenAI Codex. Existing source headers, inline comments and constants are retained.
+
+## PulseAudio API surface (2026-10-14)
+
+| NereusSDR file | Upstream source | Type | Notes |
+| --- | --- | --- | --- |
+| [src/core/audio/PulseControlAbi.h](../../src/core/audio/PulseControlAbi.h) | PulseAudio `src/pulse/{def,mainloop,context,operation,introspect}.h` [v17.0] | selected public declarations | LGPL-2.1-or-later notices and inline comments retained separately for each source; [exact mapping and hashes](PULSEAUDIO-PROVENANCE.md). Linux VAX control/ownership logic is NereusSDR-original. |
+
+This cross-reference is a linked inventory row because the Thetis header verifier
+applies Thetis-specific marker rules to bare first-column paths. PulseAudio
+notices are verified against its own upstream headers, rather than adding false
+Thetis or `Copyright (C)` text to the upstream notices.
