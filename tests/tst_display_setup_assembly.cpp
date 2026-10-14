@@ -269,19 +269,19 @@ private slots:
         QWidget* fft = selected(dialog, QStringLiteral("FFT & Engine"));
         QLabel* fftBanner = fft->findChild<QLabel*>(QStringLiteral("setupDisplayOwnerBanner"));
         QVERIFY(fftBanner);
-        QCOMPARE(fftBanner->text(), QStringLiteral("The station holds these. Every pan uses them, and so does every window connected to this station."));
+        QCOMPARE(fftBanner->text(), QStringLiteral("The Core holds these. Every pan uses them, and so does every window connected to this Core."));
         QVERIFY(fftBanner->isVisibleTo(fft));
         QWidget* transmit = selected(dialog, QStringLiteral("Transmit Display"));
         QLabel* txBanner = transmit->findChild<QLabel*>(QStringLiteral("setupDisplayOwnerBanner"));
         QVERIFY(txBanner);
-        QCOMPARE(txBanner->text(), QStringLiteral("The pan that transmits is drawn with these while it transmits. The station holds the groups marked STATION; this computer holds the rest."));
+        QCOMPARE(txBanner->text(), QStringLiteral("The pan that transmits is drawn with these while it transmits. The Core holds the three shared groups; this computer holds the rest."));
         QVERIFY(txBanner->isVisibleTo(transmit));
         QWidget* meter = selected(dialog, QStringLiteral("Multimeter"));
         QWidget* polling = byId(meter, QStringLiteral("display.multimeter.pollingDelay"));
         QVERIFY(polling);
-        QVERIFY(polling->toolTip().contains(QStringLiteral("station"), Qt::CaseInsensitive));
+        QVERIFY(polling->toolTip().contains(QStringLiteral("Core"), Qt::CaseInsensitive));
         const QList<QPair<QString, QString>> rowOwners = {
-            {QStringLiteral("display.multimeter.pollingDelay"), QStringLiteral("the station holds this")},
+            {QStringLiteral("display.multimeter.pollingDelay"), QStringLiteral("the Core holds this")},
             {QStringLiteral("display.multimeter.showDecimal"), QStringLiteral("this computer holds this")}};
         for (const auto& expected : rowOwners) {
             QVERIFY(byId(meter, expected.first));
