@@ -2445,7 +2445,12 @@ void SpectrumOverlayPanel::updatePillOwnIndicators()
         reset->ensurePolished();
         const QString longest = QStringLiteral("Reset this pan (%1)").arg(maximum);
         reset->setProperty("pillMaximumFooterText", longest);
-        const int padding = std::max(2, reset->sizeHint().width() - reset->fontMetrics().horizontalAdvance(reset->text()));
+        int padding = reset->property("pillFooterTextPadding").toInt();
+        if (padding <= 0) {
+            padding = std::max(2, reset->sizeHint().width()
+                                      - reset->fontMetrics().horizontalAdvance(reset->text()));
+            reset->setProperty("pillFooterTextPadding", padding);
+        }
         reset->setFixedWidth(reset->fontMetrics().horizontalAdvance(longest) + padding);
         const QString summary = total
             ? QStringLiteral("Pan %1 has %2 own values; %3 are on rows only Setup shows.")

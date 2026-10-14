@@ -308,13 +308,13 @@ struct DisplayMoreTests {
         page.copyLevelsToScale()
         #expect(band.settings.scaleTopDbm == -60 && band.settings.scaleBottomDbm == -110)
         page.addCustomStop()
-        #expect(band.settings.customPalette.count == PaletteStop.customDefault.count + 1)
+        #expect(band.settings.customPalette.count == BandDisplaySettings.desktopDefaults.customPalette.count + 1)
         rig.main.display.selectPalette(BandPalette.customPaletteId)
         #expect(rig.main.display.paletteName == BandPalette.customPaletteName)
         page.change { $0.showFps = true }
         page.resetDisplay()
         #expect(!band.settings.showFps)
-        #expect(band.settings.customPalette == PaletteStop.customDefault)
+        #expect(band.settings.customPalette == BandDisplaySettings.desktopDefaults.customPalette)
         #expect(band.settings.scaleTopDbm == -60)
         #expect(DisplayOnThisPhonePage.resetTitle == "Reset to defaults")
         // The new words are plain and promise nothing to come.

@@ -38,7 +38,15 @@ struct SetupDescribedPagesTests {
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("resources/setup")
         let ceilings = ["hardware": 6, "pa": 5, "appearance": peer >= 12 ? 12 : 7, "display": min(peer, 12)]
         return try FakeStation.setupCategoryIds.map { id in
-            let data = try Data(contentsOf: folder.appendingPathComponent("\(id).json"))
+            // V29 rebuilt Display and Appearance as closed documents. The
+            // Core restores the frozen V28/V27 resources before applying its
+            // older-peer projections, so this fake must start from the same
+            // resource rather than filtering every live V29 row away.
+            let legacy = peer < 29 && (id == "display" || id == "appearance")
+            let resource = legacy
+                ? folder.appendingPathComponent("legacy/\(id)-v\(id == "display" ? 28 : 27).json")
+                : folder.appendingPathComponent("\(id).json")
+            let data = try Data(contentsOf: resource)
             var root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
             var pages: [[String: Any]] = []
             for var page in root["pages"] as? [[String: Any]] ?? [] {
@@ -163,11 +171,14 @@ struct SetupDescribedPagesTests {
                 root["version"] = min(root["version"] as? Int ?? 3, 15)
             } else if id == "display" {
                 // Display changed at 26 (Waterfall Defaults' level gates) and 28
-                // (Sizing): 12 to 25 see 12, 26 and 27 see 26.
-                root["version"] = peer < 26 ? 12 : peer < 28 ? 26 : 28
+                // (Sizing), then V29 rebuilt the whole category: 12 to 25 see
+                // 12, 26 and 27 see 26, and 28 sees the frozen V28 document.
+                root["version"] = peer < 26 ? 12 : peer < 28 ? 26 : peer < 29 ? 28 : 29
             } else if id == "appearance" {
-                // Appearance changed at 27 (Trace Color beside Fill Color): 12 to 26 see 12.
-                root["version"] = peer < 27 ? 12 : 27
+                // Appearance changed at 27 (Trace Color beside Fill Color),
+                // then V29 rebuilt the category: 12 to 26 see 12 and 27/28
+                // see the frozen V27 document.
+                root["version"] = peer < 27 ? 12 : peer < 29 ? 27 : 29
             } else {
                 root["version"] = max(root["version"] as? Int ?? 3, ceilings[id] ?? 3)
             }
@@ -410,7 +421,8 @@ struct SetupDescribedPagesTests {
         #expect(await controls.edit(grid, in: "appearance", to: .text("#10203040")) == .applied)
         #expect(band.settings.gridColour == "#10203040")
         let edge = try control("appearance", "appearance.colorsTheme.bandEdgeColor")
-        #expect(controls.state(of: edge, in: "appearance").reason == SetupControlDispatcher.notOnThisPhoneReason)
+        #expect(await controls.edit(edge, in: "appearance", to: .text("#50607080")) == .applied)
+        #expect(band.settings.bandEdgeColour == "#50607080")
         let rxFilter = try control("appearance", "appearance.colorsTheme.rxFilterColor")
         #expect(controls.state(of: rxFilter, in: "appearance").value == .text("#00B4D850"))
 
@@ -527,12 +539,12 @@ struct SetupDescribedPagesTests {
         app.mirror.apply(.capabilities(LinkMessage.Capabilities(properties: entries)))
     }
 
-    @Test("V22: the phone asks for 22 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
+    @Test("V29: the phone asks for 29 and draws every V12 row; a V11 Core stays V11 with 3D View greyed")
     func v12DrawsEveryRow() async throws {
-        #expect(LinkFeatures.app["setupDescription"] == 28)
+        #expect(LinkFeatures.app["setupDescription"] == 29)
         #expect(LinkFeatures.app["alexLpf"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
-        #expect(SetupDescription.highestVersion == 28)
+        #expect(SetupDescription.highestVersion == 29)
         #expect(SetupDescribedPages.notDrawnYet.isEmpty)
         let rig = try await Self.connected()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
@@ -724,7 +736,8 @@ struct SetupDescribedPagesTests {
         }
         let settings = app.main.band.settings
         #expect(!settings.clarityEnabled && !settings.waterfallAgc && settings.waterfallNfAgc)
-        #expect(settings.waterfallLevelMode == .noiseFloorAgc && settings.waterfallOffsetDb == -12)
+        #expect(settings.waterfallLevelMode == .manual && settings.waterfallNfAgc
+                && settings.waterfallOffsetDb == -12)
         #expect(!settings.showCursorFrequency && settings.showBinWidth && settings.noiseFloorLine)
         #expect(settings.noiseFloorShiftDb == -2.5 && settings.noiseFloorLineWidth == 2.5)
         #expect(settings.noiseFloorColour == "#11223344" && settings.noiseFloorTextColour == "#22334455")
@@ -739,20 +752,20 @@ struct SetupDescribedPagesTests {
         #expect(settings.gridKeepsRange)
         #expect(settings.txWaterfallLowDbm == -80 && settings.txWaterfallHighDbm == 40)
         #expect(settings.txWaterfallPaletteId == 0 && settings.txWaterfallLowColour == "#0A0B0CFF")
-        // The desktop's Custom scheme: shown disabled with its reason, never chosen,
-        // and never this phone's own gradient.
+        // The V29 phone maps the described Custom choice to its own editable
+        // gradient, including when an older Core sends the V12 row.
         for id in ["waterfallDefaults.colorScheme", "txDisplay.wfPalette"] {
             let row = try control(id)
-            #expect(controls.unavailableOptions(of: row) == [6: PhoneSetupKeys.customSchemeReason], "\(id)")
-            #expect(await controls.edit(row, in: "display", to: .integer(6))
-                    == .notSent(PhoneSetupKeys.customSchemeReason), "\(id)")
+            #expect(controls.unavailableOptions(of: row).isEmpty, "\(id)")
+            #expect(await controls.edit(row, in: "display", to: .integer(6)) == .applied, "\(id)")
         }
-        #expect(app.main.band.settings.waterfallPaletteId == 7 && app.main.band.settings.txWaterfallPaletteId == 0)
+        #expect(app.main.band.settings.waterfallPaletteId == BandPalette.customPaletteId
+                && app.main.band.settings.txWaterfallPaletteId == BandPalette.customPaletteId)
         #expect(controls.unavailableOptions(of: try control("gridScales.freqLabelAlign")).isEmpty)
-        // This phone's own gradient, chosen on its sheet, is none of the Core's options.
+        // The local custom ID reads back through the described Custom option.
         app.main.changeDisplay { $0.waterfallPaletteId = BandPalette.customPaletteId }
         #expect(controls.state(of: try control("waterfallDefaults.colorScheme"), in: "display").value
-                == .integer(Int64(BandPalette.customPaletteId)))
+                == .integer(Int64(PhoneSetupKeys.desktopCustomScheme)))
         // Outside the Core's range or options: refused, nothing kept.
         #expect(await controls.edit(try control("waterfallDefaults.historyDepth"), in: "display", to: .integer(600_000))
                 == .notSent(SetupControlDispatcher.outOfRangeReason))
@@ -894,12 +907,12 @@ struct SetupDescribedPagesTests {
         #expect(app.main.band.settings.traceLineColour == "#FFFFFF")
         #expect(app.main.band.settings.traceLineColourDrawn == "#FFFFFF")
 
-        // Reset all colors: the fill's colour back to the desktop's cyan,
-        // the chosen trace colour kept.
+        // Reset all colors owns Appearance's nine colours. Trace/fill stay
+        // on Display, and the chosen trace colour stays too.
         var coloursReset = app.main.band.settings
         coloursReset.traceLineColour = "#ABCDEF"
         PhoneSetupKeys.resetColours(&coloursReset)
-        #expect(coloursReset.traceColour == "#00E5FF")
+        #expect(coloursReset.traceColour == "#FFFFFF")
         #expect(coloursReset.traceLineColour == "#ABCDEF")
         // With no trace color chosen, Smooth Defaults draws the white
         // trace it drew before, now as the trace's own color.

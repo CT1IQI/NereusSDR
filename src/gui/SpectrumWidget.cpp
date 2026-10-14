@@ -3038,10 +3038,14 @@ void SpectrumWidget::syncDisplaySettingsFromWidget()
     // Every native grid write site reflects here, including menu, strip and
     // wheel paths. A MOX edge merely selects the already-shared pair, so it
     // does not write; an inactive save cannot publish its cached TX value.
+    // A strip drag reflects through every live pan while it moves, but the
+    // release path owns the one persistent write for the completed gesture.
     if (m_moxOverlay && !m_loadingTransmitDisplayScale
             && (std::abs(m_refLevel - m_txRefLevel) >= 1e-6f
                 || std::abs(m_dynamicRange - m_txDynamicRange) >= 1e-6f)) {
-        setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+        const bool dragging = m_draggingDbm || m_draggingDbmRange
+            || m_draggingDbmRangeZoom;
+        applyTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel, !dragging);
     }
 }
 
@@ -3208,6 +3212,11 @@ void SpectrumWidget::loadTransmitDisplayScale(bool retirePanKeys)
 
 void SpectrumWidget::setTransmitDbmRange(float minDbm, float maxDbm)
 {
+    applyTransmitDbmRange(minDbm, maxDbm, true);
+}
+
+void SpectrumWidget::applyTransmitDbmRange(float minDbm, float maxDbm, bool persist)
+{
     if (!std::isfinite(minDbm) || !std::isfinite(maxDbm)) { return; }
     // Same native storage bounds as the named setters and loader. Setup's
     // Min editor stops at Max - 200; endpoint UI bounds do not authorize a
@@ -3219,11 +3228,13 @@ void SpectrumWidget::setTransmitDbmRange(float minDbm, float maxDbm)
     static quint64 revision = 0;
     const quint64 thisRevision = ++revision;
     const QPointer<SpectrumWidget> sourceGuard(this);
-    scheduleSettingsSave();
-    PanDisplayKeys::writeDefault(QStringLiteral("DisplayTxGridRefLevel"), QString::number(ref));
-    if (revision != thisRevision || !sourceGuard) { return; }
-    PanDisplayKeys::writeDefault(QStringLiteral("DisplayTxGridDynamicRange"), QString::number(range));
-    if (revision != thisRevision || !sourceGuard) { return; }
+    if (persist) {
+        scheduleSettingsSave();
+        PanDisplayKeys::writeDefault(QStringLiteral("DisplayTxGridRefLevel"), QString::number(ref));
+        if (revision != thisRevision || !sourceGuard) { return; }
+        PanDisplayKeys::writeDefault(QStringLiteral("DisplayTxGridDynamicRange"), QString::number(range));
+        if (revision != thisRevision || !sourceGuard) { return; }
+    }
     std::vector<QPointer<SpectrumWidget>> pans;
     for (SpectrumWidget* pan : spectrumPeaksPans()) { pans.emplace_back(pan); }
     // Set every cache before calling listeners. No old inactive cache can
@@ -12785,19 +12796,31 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         m_draggingDbm = false;
         setCursor(Qt::ArrowCursor);
         emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
-        scheduleSettingsSave();
+        if (m_moxOverlay) {
+            setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+        } else {
+            scheduleSettingsSave();
+        }
     }
     if (m_draggingDbmRange && !(event->buttons() & Qt::RightButton)) {
         m_draggingDbmRange = false;
         setCursor(Qt::ArrowCursor);
         emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
-        scheduleSettingsSave();
+        if (m_moxOverlay) {
+            setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+        } else {
+            scheduleSettingsSave();
+        }
     }
     if (m_draggingDbmRangeZoom && !(event->buttons() & Qt::LeftButton)) {
         m_draggingDbmRangeZoom = false;
         setCursor(Qt::ArrowCursor);
         emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
-        scheduleSettingsSave();
+        if (m_moxOverlay) {
+            setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+        } else {
+            scheduleSettingsSave();
+        }
     }
 
     // Ctrl-drag zooms the dBm span with the bottom pinned. This runs in
@@ -13381,7 +13404,11 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
         m_draggingDbmRange = false;
         setCursor(Qt::ArrowCursor);
         emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
-        scheduleSettingsSave();
+        if (m_moxOverlay) {
+            setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+        } else {
+            scheduleSettingsSave();
+        }
         event->accept();
         return;
     }
@@ -13474,7 +13501,11 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             emit dbmRangeChangeRequested(m_refLevel - m_dynamicRange, m_refLevel);
         }
         if (m_draggingDbm || m_draggingDbmRangeZoom || m_draggingDivider) {
-            scheduleSettingsSave();
+            if (m_moxOverlay && (m_draggingDbm || m_draggingDbmRangeZoom)) {
+                setTransmitDbmRange(m_refLevel - m_dynamicRange, m_refLevel);
+            } else {
+                scheduleSettingsSave();
+            }
         }
 
         // Hybrid zoom: replan FFT on drag-end for sharp resolution

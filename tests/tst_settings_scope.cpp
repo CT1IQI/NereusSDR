@@ -105,6 +105,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSet>
 #include <QString>
@@ -486,12 +487,24 @@ struct ThisComputerPage {
 
 // Every `registerPage(parent, "Label", SetupScope::ThisComputer, ...)` in
 // SetupDialog.cpp, with the classes its factory constructs (`new Class(`
-// up to the next registration).
+// up to the next registration). Display's composed factories return a
+// class kept in m_displaySourcePages, so resolve those source-map entries
+// too instead of treating the factory as classless.
 QList<ThisComputerPage> thisComputerPages(const QString& setupDialogSource)
 {
     static const QRegularExpression registration(QStringLiteral(
         "registerPage\\(\\s*[\\w>-]+\\s*,\\s*\"([^\"]+)\"\\s*,\\s*SetupScope::(\\w+)"));
     static const QRegularExpression constructed(QStringLiteral("\\bnew\\s+([A-Z]\\w+)\\s*[({;]"));
+    static const QRegularExpression sourceEntry(QStringLiteral(
+        "m_displaySourcePages\\.insert\\(\\s*QStringLiteral\\(\"([^\"]+)\"\\)\\s*,\\s*new\\s+([A-Z]\\w+)"));
+    static const QRegularExpression sourceValue(QStringLiteral(
+        "m_displaySourcePages\\.value\\(\\s*QStringLiteral\\(\"([^\"]+)\"\\)"));
+    QHash<QString, QString> displaySourceClasses;
+    auto sourceEntries = sourceEntry.globalMatch(setupDialogSource);
+    while (sourceEntries.hasNext()) {
+        const QRegularExpressionMatch entry = sourceEntries.next();
+        displaySourceClasses.insert(entry.captured(1), entry.captured(2));
+    }
     QList<QRegularExpressionMatch> matches;
     auto it = registration.globalMatch(setupDialogSource);
     while (it.hasNext()) { matches << it.next(); }
@@ -502,12 +515,18 @@ QList<ThisComputerPage> thisComputerPages(const QString& setupDialogSource)
         const qsizetype end = (i + 1 < matches.size()) ? matches.at(i + 1).capturedStart(0)
                                                         : setupDialogSource.size();
         ThisComputerPage page{matches.at(i).captured(1), {}};
-        auto classes = constructed.globalMatch(setupDialogSource.mid(begin, end - begin));
+        const QString factory = setupDialogSource.mid(begin, end - begin);
+        auto classes = constructed.globalMatch(factory);
         while (classes.hasNext()) {
             const QString name = classes.next().captured(1);
             if (!name.startsWith(QLatin1Char('Q')) && !page.classes.contains(name)) {
                 page.classes << name;
             }
+        }
+        auto sourceValues = sourceValue.globalMatch(factory);
+        while (sourceValues.hasNext()) {
+            const QString name = displaySourceClasses.value(sourceValues.next().captured(1));
+            if (!name.isEmpty() && !page.classes.contains(name)) { page.classes << name; }
         }
         pages << page;
     }

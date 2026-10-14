@@ -440,7 +440,9 @@ private slots:
         s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
         MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
         window.resize(1280, 800);
-        window.show();
+        // Keep the synthetic readiness seam isolated from a shown
+        // offscreen QRhiWidget, whose real no-QRhi lifecycle is allowed to
+        // clear readiness asynchronously.
         QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
                                           Q_ARG(QString, QStringLiteral("2v"))));
         PanadapterStack* stack = window.findChild<PanadapterStack*>();
@@ -449,6 +451,10 @@ private slots:
         SpectrumWidget* second = stack->spectrum(QStringLiteral("pan-1"));
         QVERIFY(first);
         QVERIFY(second);
+        // These are 3D-only rows. Put both pans in 3D so mesh readiness is
+        // the sole capability gate exercised below.
+        first->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
+        second->setSpectrumRenderMode(static_cast<int>(SpectrumRenderMode::Mode3D));
         const auto span = [](SpectrumWidget* pan) {
             return pan->findChild<QSlider*>(QStringLiteral("pillDisplay3DSpan"));
         };
@@ -502,6 +508,21 @@ private slots:
         QVERIFY(!second->dssMeshReady());
         QTRY_VERIFY(!span(second)->isEnabled());
         QVERIFY(!shadow(second)->isEnabled());
+
+        // The real shown-window state on a QRhi-unavailable test runner is
+        // still covered: both controls remain present, disabled, and
+        // explanatory after the renderer reports that no mesh exists.
+        window.show();
+        QCoreApplication::processEvents();
+        QTRY_VERIFY(!first->dssMeshReady());
+        QTRY_VERIFY(!second->dssMeshReady());
+        for (SpectrumWidget* pan : {first, second}) {
+            QTRY_VERIFY(!span(pan)->isEnabled());
+            QVERIFY(!shadow(pan)->isEnabled());
+            QVERIFY(!span(pan)->isHidden());
+            QVERIFY(!shadow(pan)->isHidden());
+            QVERIFY(!span(pan)->toolTip().isEmpty());
+        }
         QVERIFY(!span(second)->isHidden());
     }
 };

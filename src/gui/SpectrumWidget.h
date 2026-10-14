@@ -4397,6 +4397,7 @@ private:
     void rebuildRxWfGradient();
     void rebuildTxWfGradient();
     void loadSharedWaterfallGradients(bool retirePanKeys);
+    void applyTransmitDbmRange(float minDbm, float maxDbm, bool persist);
     static void visitPerPanSettings(const SpectrumWidget* source,
                                     const PerPanSettingVisitor& visit);
     void resetPanDisplayOverridesImpl(const QStringList& bases);

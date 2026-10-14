@@ -36,6 +36,7 @@
 #include <QHash>
 #include <QLabel>
 #include <QList>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QScopeGuard>
@@ -68,7 +69,9 @@ public:
 
     int count(QEvent::Type type) const { return m_counts.value(int(type)); }
     // Everything but hover moves: Qt sends a widget with WA_Hover its own
-    // hover event beside each mouse move, and the pan does nothing with it.
+    // hover event beside each mouse move, and Linux's offscreen plugin can
+    // also synthesize a buttonless MouseMove when hiding a popup. Neither
+    // can continue a press or pan the spectrum.
     int total() const
     {
         int sum = 0;
@@ -97,7 +100,15 @@ protected:
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonRelease:
         case QEvent::MouseButtonDblClick:
+            ++m_counts[int(event->type())];
+            return false;
         case QEvent::MouseMove:
+            if (static_cast<QMouseEvent*>(event)->buttons() == Qt::NoButton) {
+                ++m_counts[int(QEvent::HoverMove)];
+                return false;
+            }
+            ++m_counts[int(event->type())];
+            return false;
         case QEvent::HoverMove:
         case QEvent::Wheel:
             ++m_counts[int(event->type())];

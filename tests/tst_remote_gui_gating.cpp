@@ -474,9 +474,36 @@ QList<QWidget*> controlsGatedWith(QWidget* page, const QString& reason)
 {
     QList<QWidget*> gated;
     for (QWidget* w : page->findChildren<QWidget*>()) {
+        bool hiddenSourceOwner = false;
+        for (QWidget* parent = w->parentWidget(); parent && parent != page;
+             parent = parent->parentWidget()) {
+            if (parent->objectName() == QStringLiteral("displayBoundSourceOwners")) {
+                hiddenSourceOwner = true;
+                break;
+            }
+        }
+        if (hiddenSourceOwner) { continue; }
         if (w->accessibleDescription() == reason) { gated << w; }
     }
     return gated;
+}
+
+QWidget* setupControl(QWidget* page, const QString& id)
+{
+    for (QWidget* control : page->findChildren<QWidget*>()) {
+        bool hiddenSourceOwner = false;
+        for (QWidget* parent = control->parentWidget(); parent && parent != page;
+             parent = parent->parentWidget()) {
+            if (parent->objectName() == QStringLiteral("displayBoundSourceOwners")) {
+                hiddenSourceOwner = true;
+                break;
+            }
+        }
+        if (!hiddenSourceOwner && control->property("nereusSetupId").toString() == id) {
+            return control;
+        }
+    }
+    return nullptr;
 }
 
 // R3 Setup fix wave: the reason shown while connected to a Core that has
@@ -2283,10 +2310,13 @@ private slots:
             // Task 38, gated as one), Extended (addendum G-42) and Prevent
             // TX'ing on a different band (the Core's setting since 2026-09-29).
             {QStringLiteral("Options"), 6},
-            {QStringLiteral("Spectrum Defaults"), 6},   // Sizing, FFT size, window, Hz/bin, fps x2
-            {QStringLiteral("Grid & Scales"), 3},       // dB max, dB min, copy
+            // Display's accepted composition keeps picture controls local
+            // and moves the Core controls to the named assembled pages.
+            {QStringLiteral("Spectrum"), 0},            // Cal Offset has its own Core reason
+            {QStringLiteral("Levels"), 3},              // dB max, dB min, copy
+            {QStringLiteral("FFT & Engine"), 5},        // Sizing, size, window, Hz/bin, fps
             {QStringLiteral("Multimeter"), 1},          // sample interval
-            {QStringLiteral("TX Display"), 9},          // TX analyzer
+            {QStringLiteral("Transmit Display"), 9},    // TX analyzer
             // Without a negotiated hygiene capability, this page uses its
             // feature-specific reason rather than the generic Core reason.
             {QStringLiteral("Settings Validation"), 0},
@@ -2379,6 +2409,61 @@ private slots:
                 for (QWidget* control : gated) {
                     QVERIFY2(!control->isEnabled(), qPrintable(label));
                     QCOMPARE(control->toolTip(), kStationReason);
+                }
+                if (label == QStringLiteral("Spectrum")) {
+                    QWidget* const calibration = setupControl(
+                        page, QStringLiteral("display.spectrumDefaults.calOffset"));
+                    QWidget* const trace = setupControl(
+                        page, QStringLiteral("display.spectrumDefaults.detector"));
+                    QVERIFY(calibration != nullptr);
+                    QVERIFY(trace != nullptr);
+                    QVERIFY(!calibration->isEnabled());
+                    QVERIFY(calibration->accessibleDescription().contains(QStringLiteral("Core")));
+                    QVERIFY(trace->isEnabled());
+                } else if (label == QStringLiteral("Levels")) {
+                    for (const QString& id : {QStringLiteral("display.gridScales.dbMax"),
+                                              QStringLiteral("display.gridScales.dbMin"),
+                                              QStringLiteral("display.gridScales.copyWaterfallThresholds")}) {
+                        QWidget* const control = setupControl(page, id);
+                        QVERIFY2(control != nullptr, qPrintable(id));
+                        QCOMPARE(control->accessibleDescription(), kStationReason);
+                    }
+                    QWidget* const trackFloor = setupControl(
+                        page, QStringLiteral("display.levels.spectrumMode.1"));
+                    QVERIFY(trackFloor != nullptr);
+                    QVERIFY(trackFloor->isEnabled());
+                } else if (label == QStringLiteral("FFT & Engine")) {
+                    QWidget* const fftSize = setupControl(
+                        page, QStringLiteral("display.spectrumDefaults.fftSize"));
+                    QWidget* const priority = setupControl(
+                        page, QStringLiteral("display.spectrumDefaults.threadPriority"));
+                    QVERIFY(fftSize != nullptr);
+                    QVERIFY(priority != nullptr);
+                    QCOMPARE(fftSize->accessibleDescription(), kStationReason);
+                    QVERIFY(!priority->isEnabled());
+                    QVERIFY(priority->accessibleDescription() != kStationReason);
+                } else if (label == QStringLiteral("Transmit Display")) {
+                    QWidget* const analyzer = setupControl(
+                        page, QStringLiteral("display.txDisplay.fftSize"));
+                    QWidget* const scale = setupControl(
+                        page, QStringLiteral("display.txDisplay.dbMax"));
+                    QWidget* const waterfall = setupControl(
+                        page, QStringLiteral("display.txDisplay.wfLowLevel"));
+                    QVERIFY(analyzer != nullptr);
+                    QVERIFY(scale != nullptr);
+                    QVERIFY(waterfall != nullptr);
+                    QCOMPARE(analyzer->accessibleDescription(), kStationReason);
+                    QVERIFY(scale->isEnabled());
+                    QVERIFY(waterfall->isEnabled());
+                } else if (label == QStringLiteral("Multimeter")) {
+                    QWidget* const polling = setupControl(
+                        page, QStringLiteral("display.multimeter.pollingDelay"));
+                    QWidget* const units = setupControl(
+                        page, QStringLiteral("display.multimeter.unitMode"));
+                    QVERIFY(polling != nullptr);
+                    QVERIFY(units != nullptr);
+                    QCOMPARE(polling->accessibleDescription(), kStationReason);
+                    QVERIFY(units->isEnabled());
                 }
                 break;
             }
@@ -2778,11 +2863,13 @@ private slots:
             pages.insert(label, dialog.realizedPageForTest(label));
             QVERIFY2(pages.value(label) && !pages.value(label)->isEnabled(), qPrintable(label));
         }
-        // Another page is rebuilt by the same snapshot, so the rebuild ran.
-        dialog.selectPage(QStringLiteral("Multimeter"));
-        QPointer<QWidget> multimeter = dialog.realizedPageForTest(QStringLiteral("Multimeter"));
+        // A non-retained page is rebuilt by the same snapshot, so the
+        // rebuild ran. Display's retained source owners intentionally are
+        // refreshed in place.
+        dialog.selectPage(QStringLiteral("Options"));
+        QPointer<QWidget> options = dialog.realizedPageForTest(QStringLiteral("Options"));
         proxy.applySnapshot({{QStringLiteral("Region"), QStringLiteral("Italy")}});
-        QTRY_VERIFY(multimeter.isNull());
+        QTRY_VERIFY(options.isNull());
         for (auto it = pages.cbegin(); it != pages.cend(); ++it) {
             QVERIFY2(it.value(), qPrintable(it.key()));
             QCOMPARE(dialog.realizedPageForTest(it.key()), it.value().data());
@@ -2799,7 +2886,7 @@ private slots:
         SetupDialog dialog(&local);
         QVERIFY(dialog.stationSettingsAvailableForTest());
         dialog.setStationSettingsAvailable(false, kStationReason);
-        for (const char* label : {"NB/SNB", "Multimeter", "Options", "Spectrum Defaults"}) {
+        for (const char* label : {"NB/SNB", "Multimeter", "Options", "Spectrum"}) {
             const QString name = QString::fromLatin1(label);
             dialog.selectPage(name);
             QWidget* const page = dialog.realizedPageForTest(name);

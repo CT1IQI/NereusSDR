@@ -174,6 +174,10 @@ private slots:
         w.resize(1000, height);
         w.setMoxOverlay(tx);
         w.setDbmRange(ref - range, ref);
+        w.cancelScheduledSettingsSave();
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("DisplayTxGridRefLevel"), QStringLiteral("17.25"));
+        settings.setValue(QStringLiteral("DisplayTxGridDynamicRange"), QStringLiteral("63.5"));
         const int applies = w.displaySettingsApplyCountForTest();
         const auto button = right ? Qt::RightButton : Qt::LeftButton;
         const int x = w.width() - 18;
@@ -185,9 +189,24 @@ private slots:
         QCOMPARE(w.displaySettings()->dynamicRange(), expectedRange);
         QCOMPARE(w.displaySettingsApplyCountForTest(), applies);
         QVERIFY(!w.m_settingsSaveScheduled); // Only gesture completion owns its save.
+        QCOMPARE(settings.value(QStringLiteral("DisplayTxGridRefLevel")).toString(),
+                 QStringLiteral("17.25"));
+        QCOMPARE(settings.value(QStringLiteral("DisplayTxGridDynamicRange")).toString(),
+                 QStringLiteral("63.5"));
         if (right) { QCOMPARE(w.refLevel() - w.dynamicRange(), ref - range); }
         sendMouse(&w, QEvent::MouseButtonRelease, QPoint(x, 60 + dy), button, Qt::NoButton);
         QVERIFY(w.m_settingsSaveScheduled);
+        if (tx) {
+            QCOMPARE(settings.value(QStringLiteral("DisplayTxGridRefLevel")).toString(),
+                     QString::number(expectedRef));
+            QCOMPARE(settings.value(QStringLiteral("DisplayTxGridDynamicRange")).toString(),
+                     QString::number(expectedRange));
+        } else {
+            QCOMPARE(settings.value(QStringLiteral("DisplayTxGridRefLevel")).toString(),
+                     QStringLiteral("17.25"));
+            QCOMPARE(settings.value(QStringLiteral("DisplayTxGridDynamicRange")).toString(),
+                     QStringLiteral("63.5"));
+        }
     }
 
     void arrowAndWheel_keepNativeFiniteStateBeyondEditorBounds()

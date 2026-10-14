@@ -308,19 +308,24 @@ private slots:
         QSignalSpy spyB(&b, &SpectrumWidget::displaySettingChanged);
         QSignalSpy spyC(&c, &SpectrumWidget::displaySettingChanged);
 
-        a.setShowNoiseFloor(true);
+        const QColor first(17, 34, 51, 68);
+        const QColor second(85, 102, 119, 136);
+        a.setRxFilterColor(first);
 
-        QVERIFY(b.showNoiseFloor());
-        QVERIFY(c.showNoiseFloor());
+        QCOMPARE(a.rxFilterColor(), first);
+        QCOMPARE(b.rxFilterColor(), first);
+        QCOMPARE(c.rxFilterColor(), first);
         for (const QSignalSpy* spy : { &spyA, &spyB, &spyC }) {
             QVERIFY2(spy->count() == 1, qPrintable(u"saw [%1]"_s.arg(seen(*spy))));
-            QCOMPARE(spy->at(0).at(0).toString(), u"DisplayShowNoiseFloor"_s);
+            QCOMPARE(spy->at(0).at(0).toString(), u"DisplayRxFilterColor"_s);
         }
 
         // From another pan, back the other way.
-        b.setShowNoiseFloor(false);
+        b.setRxFilterColor(second);
 
-        QVERIFY(!a.showNoiseFloor());
+        QCOMPARE(a.rxFilterColor(), second);
+        QCOMPARE(b.rxFilterColor(), second);
+        QCOMPARE(c.rxFilterColor(), second);
         QCOMPARE(spyA.count(), 2);
         QCOMPARE(spyB.count(), 2);
         QCOMPARE(spyC.count(), 2);

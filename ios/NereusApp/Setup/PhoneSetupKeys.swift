@@ -55,6 +55,10 @@ final class PhoneSetupKeys: SetupPhoneKeys {
     static let filterPresetsModeDefault = "SetupFilterPresetsMode"
     static let filterPresetsModeStart: Int64 = 1
 
+    /// The app-owned Display grid choices, in hertz. These describe the
+    /// phone's drawing and are independent of the connected radio.
+    static let frequencyGridSpacingChoices = [0, 1000, 2000, 5000, 10000, 25000, 50000, 100000]
+
     /// Colours kept here without their own alpha: the trace's fill and its
     /// line, drawn opaque.
     static let opaqueColourKeys: Set<String> = ["DisplayFillColor", "DisplayTraceColor"]
@@ -204,7 +208,7 @@ final class PhoneSetupKeys: SetupPhoneKeys {
         let whole = value.whole.flatMap { Int(exactly: $0) }
         switch key {
         case "DisplayFreqGridSpacing":
-            guard let spacing = whole, [0, 1000, 2000, 5000, 10000, 25000, 50000, 100000].contains(spacing) else { return false }
+            guard let spacing = whole, Self.frequencyGridSpacingChoices.contains(spacing) else { return false }
             changeDisplay(forPhoneKey: key) { $0.frequencyGridSpacingHz = spacing }
         case "DisplayFreqScaleFontPx":
             guard let size = whole, (8...14).contains(size) else { return false }

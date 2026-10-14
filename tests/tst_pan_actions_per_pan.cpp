@@ -873,13 +873,8 @@ private slots:
         const auto badge = [&window](const QString& panId) -> QLabel* {
             SpectrumOverlayPanel* strip = stripFor(window.get(), panId);
             if (!strip) { return nullptr; }
-            for (QLabel* label : strip->parentWidget()->findChildren<QLabel*>()) {
-                if (label->toolTip()
-                    == QStringLiteral("Clarity status: green = active, amber = paused")) {
-                    return label;
-                }
-            }
-            return nullptr;
+            return strip->parentWidget()->findChild<QLabel*>(
+                QStringLiteral("pillClarityBadge"));
         };
         QVERIFY(badge(QStringLiteral("pan-0")) && badge(QStringLiteral("pan-1")));
         // Display pill plan Task 17: the badge is always shown. It is grey

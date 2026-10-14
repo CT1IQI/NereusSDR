@@ -2095,10 +2095,12 @@ void SetupDialog::buildTree()
         QStringLiteral("FFT & Engine"), QStringLiteral("Transmit Display"), QStringLiteral("Multimeter")}) {
         registerPage(display, page, SetupScope::Mixed,
                      [this, page]() { return buildDisplayAssembly(page); });
-        // These rows retain one set of callback owners. Snapshot changes
-        // refresh their providers/readouts/gates instead of reconstructing
-        // owners whose bound rows now live on different pages.
-        m_pages.back().retainsDisplaySources = true;
+        // The seven assembled pages retain one set of callback owners.
+        // Snapshot changes refresh their providers/readouts/gates instead
+        // of reconstructing owners whose bound rows now live on different
+        // pages. Multimeter owns an ordinary page, so it follows the normal
+        // snapshot rebuild and reads the Core's latest values.
+        m_pages.back().retainsDisplaySources = page != QStringLiteral("Multimeter");
     }
 
     tick("Display");

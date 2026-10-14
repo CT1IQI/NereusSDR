@@ -96,12 +96,9 @@ private slots:
         // sets it. No pan key holds it, so no save, keyed or not, can
         // write the transmit grid into it.
         w.setReceiveDbmRange(-116.5f, -43.5f);
-        // The pan's own key, pan 0 included. The bare keys seeded above are
-        // the Setup default both pans start from.
         const auto key = [pan](const QString& base) {
             return PanDisplayKeys::panKey(base, pan);
         };
-        // What the pan would load: its own key, else the Setup default.
         const auto stored = [pan](const QString& base) {
             return PanDisplayKeys::read(base, pan, QString()).toString();
         };
@@ -119,11 +116,12 @@ private slots:
         QCOMPARE(stored("DisplayTxGridRefLevel"), QStringLiteral("125.5"));
         QCOMPARE(stored("DisplayTxGridDynamicRange"), QStringLiteral("91"));
         QCOMPARE(stored("DisplayTxViewBandwidth"), QStringLiteral("12500"));
-        // The transmit reference level is the one value of the six that
-        // changed, so it is the one key of the six the pan now owns. A
-        // keyed save that leaked the transmit grid or span into the receive
-        // keys would show up here as a receive key of the pan's own.
-        QCOMPARE(s.value(key("DisplayTxGridRefLevel")).toString(), QStringLiteral("125.5"));
+        // The transmit scale is one computer-wide pair. A keyed save must
+        // neither recreate historical numbered TX-scale keys nor leak it
+        // into the receive scale.
+        QCOMPARE(s.value("DisplayTxGridRefLevel").toString(), QStringLiteral("125.5"));
+        QCOMPARE(s.value("DisplayTxGridDynamicRange").toString(), QStringLiteral("91"));
+        QVERIFY(!s.contains(key("DisplayTxGridRefLevel")));
         QVERIFY(!s.contains(key("DisplayGridMax")));
         QVERIFY(!s.contains(key("DisplayGridMin")));
         QVERIFY(!s.contains(key("DisplayBandwidth")));
@@ -136,24 +134,25 @@ private slots:
         QCOMPARE(stored("DisplayTxViewBandwidth"), QStringLiteral("12500"));
         QVERIFY(!s.contains(key("DisplayBandwidth")));
         QVERIFY(!s.contains(key("DisplayTxViewBandwidth")));
-        // No pan writes the Setup default, pan 0 included.
-        QCOMPARE(s.value("DisplayTxGridRefLevel").toString(), QStringLiteral("123.5"));
+        QCOMPARE(s.value("DisplayTxGridRefLevel").toString(), QStringLiteral("125.5"));
         QVERIFY(!s.contains("DisplayGridMax"));
         QVERIFY(!s.contains("DisplayGridMin"));
         QVERIFY(!s.contains(key("DisplayGridMax")));
         QVERIFY(!s.contains(key("DisplayGridMin")));
-        // The keyed widget still comes back to its receive range.
+        // Another pan sees the shared TX scale and keeps an independent
+        // receive range when it leaves the transmit overlay.
         {
-            SpectrumWidget unkeyed;
-            unkeyed.setPanIndex(pan);
-            unkeyed.loadSettings();
-            unkeyed.setReceiveDbmRange(-116.5f, -43.5f);
-            unkeyed.setMoxOverlay(true);
-            QCOMPARE(unkeyed.refLevel(), 125.5f);
-            unkeyed.saveSettings();
-            unkeyed.setMoxOverlay(false);
-            QCOMPARE(unkeyed.refLevel(), -43.5f);
-            QCOMPARE(unkeyed.dynamicRange(), 73.0f);
+            SpectrumWidget other;
+            other.setPanIndex(pan == 0 ? 2 : 0);
+            other.loadSettings();
+            other.setReceiveDbmRange(-118.5f, -41.5f);
+            other.setMoxOverlay(true);
+            QCOMPARE(other.refLevel(), 125.5f);
+            QCOMPARE(other.dynamicRange(), 91.0f);
+            other.saveSettings();
+            other.setMoxOverlay(false);
+            QCOMPARE(other.refLevel(), -41.5f);
+            QCOMPARE(other.dynamicRange(), 77.0f);
         }
         SpectrumWidget restarted;
         restarted.setPanIndex(pan);
@@ -242,7 +241,7 @@ private slots:
                  QStringLiteral("45"));
     }
 
-    void twelveKeys_byteForByte_pan0OwnKeysThenPan2InheritsDefaultThenOwnSave()
+    void twelveKeys_byteForByte_masterClearsPan0ThenPan2InheritsAndSavesOwn()
     {
         // ---- Phase 1: pan 0, all twelve to non-defaults, byte for byte ----
         SpectrumWidget w0;
@@ -297,7 +296,24 @@ private slots:
         // The Setup default, holding the same twelve strings.
         for (const Golden& g : pan0Golden) {
             PanDisplayKeys::writeDefault(g.base, g.text);
+            QVERIFY2(!s.contains(g.base + QStringLiteral("_0")), qPrintable(g.base));
         }
+
+        SpectrumWidget inheritedPan0;
+        inheritedPan0.setPanIndex(0);
+        inheritedPan0.loadSettings();
+        QCOMPARE(static_cast<int>(inheritedPan0.wfColorScheme()), 2);
+        QCOMPARE(inheritedPan0.wfColorGain(), 62);
+        QCOMPARE(inheritedPan0.wfBlackLevel(), 77);
+        QVERIFY(qFuzzyCompare(inheritedPan0.fillAlpha() + 1.0f, 1.35f));
+        QCOMPARE(inheritedPan0.panFillEnabled(), false);
+        QVERIFY(qFuzzyCompare(inheritedPan0.spectrumFrac() + 1.0f, 1.62f));
+        QCOMPARE(inheritedPan0.spectrumRenderMode(), static_cast<int>(SpectrumRenderMode::Mode3D));
+        QCOMPARE(inheritedPan0.dssGain(), 55);
+        QCOMPARE(inheritedPan0.dssRowSpan(), 65);
+        QCOMPARE(inheritedPan0.dssAngle(), 82);
+        QCOMPARE(inheritedPan0.dssRowDivider(), 7);
+        QCOMPARE(inheritedPan0.threeDSliceDepth(), true);
 
         // ---- Phase 2: an untouched pan 2 inherits the Setup default ----
         SpectrumWidget w2;
@@ -367,11 +383,11 @@ private slots:
         QCOMPARE(s.value(QStringLiteral("Display3DSliceShadow_2")).toString(),
                  QStringLiteral("False"));
 
-        // The Setup default and pan 0's own keys must be untouched by pan
-        // 2's save.
+        // Pan 2's save leaves the master intact and does not recreate the
+        // pan 0 overrides that the explicit master write retired.
         for (const Golden& g : pan0Golden) {
             QCOMPARE(s.value(g.base).toString(), g.text);
-            QCOMPARE(s.value(g.base + QStringLiteral("_0")).toString(), g.text);
+            QVERIFY2(!s.contains(g.base + QStringLiteral("_0")), qPrintable(g.base));
         }
     }
 

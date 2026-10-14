@@ -829,7 +829,7 @@ QMap<F, QList<Surface>> surfaces()
                                       text(QStringLiteral("Low Level Color:")))};
     map[F::MultimeterAveraging] = {onPage(QStringLiteral("Multimeter"), QStringLiteral("averaging"),
                                          text(QStringLiteral("Averaging window:")))};
-    map[F::TxGridScale] = {onPage(QStringLiteral("TX Display"), QStringLiteral("grid scale"),
+    map[F::TxGridScale] = {onPage(QStringLiteral("Transmit Display"), QStringLiteral("grid scale"),
                                  [](QWidget* p) { return groupShown(p, QStringLiteral("TX Grid Scale")); })};
     return map;
 }

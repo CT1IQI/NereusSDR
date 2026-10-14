@@ -49,16 +49,10 @@ private slots:
         QCOMPARE(w.dssAngle(), 70);
     }
 
-    // Display pill plan Task 21 rewrote this case (it was
-    // widgetChange_updatesTheSetupPage). The page holds the Setup default
-    // for every pan, so the pan's own change leaves it where it was; a
-    // default set on another page moves it.
-    // Fix wave M1 changed the last line: it said the default also moved the
-    // pan to 40. That held only because the pan's 25 had not been stored
-    // yet (it is stored half a second after the change); the pan's own
-    // change is a value of its own whether or not it is stored, so the
-    // default leaves the pan on 25.
-    void widgetChange_leavesTheSetupDefaultShown() {
+    // The page has All pans selected. Its explicit master write replaces
+    // the pan's prior sparse value while the first page follows without an
+    // echo through the model binding.
+    void allPansChange_replacesThePanValueWithoutAnEcho() {
         SpectrumWidget w;
         Display3DSetupPage page(&w);
         auto* gain = page.findChild<QSlider*>(QStringLiteral("setup3DGainSlider"));
@@ -70,7 +64,7 @@ private slots:
         other.findChild<QSlider*>(QStringLiteral("setup3DGainSlider"))->setValue(40);
         QCOMPARE(gain->value(), 40);
         QCOMPARE(echoes.count(), 0);
-        QCOMPARE(w.dssGain(), 25);
+        QCOMPARE(w.dssGain(), 40);
     }
 
     // The guard that stops the two surfaces echoing each other forever.
@@ -139,12 +133,10 @@ private slots:
         QCOMPARE(slider->value(), 6);
         QCOMPARE(modelSpy.count(), 1);
 
-        // Fix wave M1: Reset stores the Setup defaults. The pan's own 9
-        // above is a value of its own (stored or not), so it stays; the
-        // slider shows the default. (This expected 0 on the pan, which held
-        // only while the 9 was still waiting to be stored.)
+        // Reset is an explicit All-pans write, so it replaces the pan's
+        // prior sparse value with the master default.
         page.resetToDefaultsForTest();
-        QCOMPARE(w.displaySettings()->dssRowDivider(), 9);
+        QCOMPARE(w.displaySettings()->dssRowDivider(), 0);
         QCOMPARE(slider->value(), 0);
         QCOMPARE(AppSettings::instance().value(QStringLiteral("Display3DSpeed")).toString(),
                  QStringLiteral("0"));

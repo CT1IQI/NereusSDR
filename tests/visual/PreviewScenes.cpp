@@ -5115,23 +5115,32 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         LanScanDialog::setDiscoveryStartSkippedForTest(false);
     }});
 
-    // The one non-native colour dialog: the pan's fill colour
-    // (SpectrumOverlayPanel.cpp:821-823, DontUseNativeDialog).
+    // The one non-native colour dialog: Display > Spectrum's Fill colour.
     scenes.append({QStringLiteral("dialog-overlay-colour"), QStringLiteral("2v"), true,
                    [](SceneContext& ctx) {
         prepareForDialog(ctx);
+        SetupDialog* setup = openSetupDialog(ctx.window);
+        if (setup == nullptr) {
+            ctx.failure = QStringLiteral("Setup did not open");
+            return;
+        }
+        setup->selectPage(QStringLiteral("Spectrum"));
+        QCoreApplication::processEvents();
         QPushButton* fill = nullptr;
-        for (QPushButton* b : ctx.window->findChildren<QPushButton*>()) {
-            if (b->toolTip() == QLatin1String("Choose spectrum fill color")) {
+        for (QPushButton* b : setup->findChildren<QPushButton*>()) {
+            if (b->property("nereusSetupId").toString()
+                == QLatin1String("display.spectrum.fillColor")) {
                 fill = b;
                 break;
             }
         }
         if (fill == nullptr) {
             ctx.failure = QStringLiteral("no fill colour button");
+            setup->close();
             return;
         }
         captureModal<QColorDialog>(ctx, QStringLiteral("dialog-overlay-colour"), [fill] { fill->click(); });
+        setup->close();
         ctx.notes.append(QStringLiteral("the file dialogs and the other colour dialogs are native on "
                                         "macOS and are not captured"));
     }});

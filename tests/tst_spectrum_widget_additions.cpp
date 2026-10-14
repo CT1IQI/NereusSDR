@@ -886,20 +886,36 @@ private slots:
         QCOMPARE(pan2.freqGridSpacingHz(), 0);
         QCOMPARE(pan2.freqScaleFontPx(), 10);
 
-        // With a Setup default it inherits that; pan 1 keeps its own.
+        // An explicit All-pans write replaces every pan override for the
+        // affected setting.
         PanDisplayKeys::writeDefault(u"WaterfallBlankingEnabled"_s, u"True"_s);
         PanDisplayKeys::writeDefault(u"WaterfallBlankingThresholdDb"_s, u"9"_s);
         PanDisplayKeys::writeDefault(u"DisplayFreqGridSpacing"_s, u"10000"_s);
         PanDisplayKeys::writeDefault(u"DisplayFreqScaleFontPx"_s, u"12"_s);
+        for (const QString& key : keys) {
+            QVERIFY2(!PanDisplayKeys::hasOverride(key, 1), qPrintable(key));
+        }
         pan2.loadSettings();
         QCOMPARE(pan2.waterfallBlankingEnabled(), true);
         QCOMPARE(pan2.waterfallBlankingThresholdDb(), 9);
         QCOMPARE(pan2.freqGridSpacingHz(), 10000);
         QCOMPARE(pan2.freqScaleFontPx(), 12);
         again.loadSettings();
-        QCOMPARE(again.waterfallBlankingThresholdDb(), 12);
-        QCOMPARE(again.freqGridSpacingHz(), 5000);
-        QCOMPARE(again.freqScaleFontPx(), 14);
+        QCOMPARE(again.waterfallBlankingEnabled(), true);
+        QCOMPARE(again.waterfallBlankingThresholdDb(), 9);
+        QCOMPARE(again.freqGridSpacingHz(), 10000);
+        QCOMPARE(again.freqScaleFontPx(), 12);
+
+        // Recreate pan 1's own values so Reset still proves that it drops
+        // sparse overrides and returns to the All-pans values.
+        again.setWaterfallBlankingEnabled(false);
+        again.setWaterfallBlankingThresholdDb(12);
+        again.setFreqGridSpacingHz(5000);
+        again.setFreqScaleFontPx(14);
+        again.saveSettings();
+        for (const QString& key : keys) {
+            QVERIFY2(PanDisplayKeys::hasOverride(key, 1), qPrintable(key));
+        }
 
         // "Reset this pan" drops pan 1's own values: it follows the default.
         QSignalSpy spy(&again, &SpectrumWidget::displaySettingChanged);
@@ -1322,20 +1338,42 @@ private slots:
         QCOMPARE(pan2.backgroundOpacity(), 80);
         QCOMPARE(pan2.backgroundFillColor(), kDefaultBackground);
 
-        // With a Setup default it inherits that; pan 1 keeps its own.
+        // An explicit All-pans write replaces pan overrides for the settings
+        // it changes. The picture path is untouched and remains per pan.
         PanDisplayKeys::writeDefault(u"DisplayTraceColor"_s, u"#ff00ff00"_s);
         PanDisplayKeys::writeDefault(u"DisplayBackgroundEnabled"_s, u"True"_s);
         PanDisplayKeys::writeDefault(u"DisplayBackgroundOpacity"_s, u"60"_s);
         PanDisplayKeys::writeDefault(u"DisplayBackgroundColor"_s, u"#ff000040"_s);
+        for (const QString& key : {u"DisplayTraceColor"_s,
+                                   u"DisplayBackgroundEnabled"_s,
+                                   u"DisplayBackgroundOpacity"_s,
+                                   u"DisplayBackgroundColor"_s}) {
+            QVERIFY2(!PanDisplayKeys::hasOverride(key, 1), qPrintable(key));
+        }
+        QVERIFY(PanDisplayKeys::hasOverride(u"DisplayBackgroundImage"_s, 1));
         pan2.loadSettings();
         QCOMPARE(pan2.traceColor(), QColor(0, 255, 0));
         QCOMPARE(pan2.backgroundEnabled(), true);
         QCOMPARE(pan2.backgroundOpacity(), 60);
         QCOMPARE(pan2.backgroundFillColor(), QColor(0, 0, 0x40));
         again.loadSettings();
-        QCOMPARE(again.traceColor(), QColor(255, 0, 0));
-        QCOMPARE(again.backgroundOpacity(), 35);
-        QCOMPARE(again.backgroundFillColor(), QColor(0x10, 0x20, 0x30));
+        QCOMPARE(again.traceColor(), QColor(0, 255, 0));
+        QCOMPARE(again.backgroundEnabled(), true);
+        QCOMPARE(again.backgroundImagePath(), picture);
+        QCOMPARE(again.backgroundOpacity(), 60);
+        QCOMPARE(again.backgroundFillColor(), QColor(0, 0, 0x40));
+
+        // Recreate a complete set of pan overrides so Reset exercises every
+        // member of the per-pan picture group.
+        again.setTraceColor(QColor(255, 0, 0));
+        again.setBackgroundEnabled(false);
+        again.setBackgroundImagePath(picture);
+        again.setBackgroundOpacity(35);
+        again.setBackgroundFillColor(QColor(0x10, 0x20, 0x30));
+        again.saveSettings();
+        for (const QString& key : keys) {
+            QVERIFY2(PanDisplayKeys::hasOverride(key, 1), qPrintable(key));
+        }
 
         // "Reset this pan" drops pan 1's own values: it follows the default,
         // and its picture is gone.

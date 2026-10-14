@@ -188,10 +188,11 @@ private slots:
         // Getter returns the new color.
         QCOMPARE(w.txFilterColor(), testColor);
 
-        // AppSettings key was written: pan 0's own key, "<base>_0".
+        // Appearance colours are shared, so the bare key is written and
+        // no numbered pan override remains.
         auto& s = AppSettings::instance();
-        const QString stored = s.value(QStringLiteral("DisplayTxFilterColor_0")).toString();
-        QVERIFY(!s.contains(QStringLiteral("DisplayTxFilterColor")));
+        const QString stored = s.value(QStringLiteral("DisplayTxFilterColor")).toString();
+        QVERIFY(!s.contains(QStringLiteral("DisplayTxFilterColor_0")));
         QVERIFY2(!stored.isEmpty(), "DisplayTxFilterColor not persisted");
         const QColor roundTrip = QColor::fromString(stored);
         QVERIFY2(roundTrip.isValid(), "Stored color is not a valid color string");
@@ -214,10 +215,11 @@ private slots:
         // Getter returns the new color.
         QCOMPARE(w.rxFilterColor(), testColor);
 
-        // AppSettings key was written: pan 0's own key, "<base>_0".
+        // Appearance colours are shared, so the bare key is written and
+        // no numbered pan override remains.
         auto& s = AppSettings::instance();
-        const QString stored = s.value(QStringLiteral("DisplayRxFilterColor_0")).toString();
-        QVERIFY(!s.contains(QStringLiteral("DisplayRxFilterColor")));
+        const QString stored = s.value(QStringLiteral("DisplayRxFilterColor")).toString();
+        QVERIFY(!s.contains(QStringLiteral("DisplayRxFilterColor_0")));
         QVERIFY2(!stored.isEmpty(), "DisplayRxFilterColor not persisted");
         const QColor roundTrip = QColor::fromString(stored);
         QVERIFY2(roundTrip.isValid(), "Stored color is not a valid color string");
@@ -240,8 +242,8 @@ private slots:
         QCOMPARE(w.rxZeroLineColor(), testColor);
 
         auto& s = AppSettings::instance();
-        const QString stored = s.value(QStringLiteral("DisplayRxZeroLineColor_0")).toString();
-        QVERIFY(!s.contains(QStringLiteral("DisplayRxZeroLineColor")));
+        const QString stored = s.value(QStringLiteral("DisplayRxZeroLineColor")).toString();
+        QVERIFY(!s.contains(QStringLiteral("DisplayRxZeroLineColor_0")));
         QVERIFY2(!stored.isEmpty(), "DisplayRxZeroLineColor not persisted");
         const QColor roundTrip = QColor::fromString(stored);
         QVERIFY2(roundTrip.isValid(), "Stored RX zero-line color is not valid");
@@ -264,8 +266,8 @@ private slots:
         QCOMPARE(w.txZeroLineColor(), testColor);
 
         auto& s = AppSettings::instance();
-        const QString stored = s.value(QStringLiteral("DisplayTxZeroLineColor_0")).toString();
-        QVERIFY(!s.contains(QStringLiteral("DisplayTxZeroLineColor")));
+        const QString stored = s.value(QStringLiteral("DisplayTxZeroLineColor")).toString();
+        QVERIFY(!s.contains(QStringLiteral("DisplayTxZeroLineColor_0")));
         QVERIFY2(!stored.isEmpty(), "DisplayTxZeroLineColor not persisted");
         const QColor roundTrip = QColor::fromString(stored);
         QVERIFY2(roundTrip.isValid(), "Stored TX zero-line color is not valid");

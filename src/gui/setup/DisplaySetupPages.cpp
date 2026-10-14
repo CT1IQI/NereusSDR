@@ -4220,9 +4220,9 @@ DisplayAssemblyPage::DisplayAssemblyPage(const QString& title, RadioModel* model
     installEventFilter(this);
     QString banner;
     if (title == QStringLiteral("FFT & Engine")) {
-        banner = QStringLiteral("The station holds these. Every pan uses them, and so does every window connected to this station.");
+        banner = QStringLiteral("The Core holds these. Every pan uses them, and so does every window connected to this Core.");
     } else if (title == QStringLiteral("Transmit Display")) {
-        banner = QStringLiteral("The pan that transmits is drawn with these while it transmits. The station holds the groups marked STATION; this computer holds the rest.");
+        banner = QStringLiteral("The pan that transmits is drawn with these while it transmits. The Core holds the three shared groups; this computer holds the rest.");
     }
     if (!banner.isEmpty()) {
         auto* label = new QLabel(banner, this);
@@ -5109,7 +5109,7 @@ void DisplayAssemblyPage::pairNumberRows(QWidget* page)
     if (title == QStringLiteral("Multimeter")) {
         for (QWidget* control : page->findChildren<QWidget*>()) {
             if (control->property("nereusSetupId").toString() == QStringLiteral("display.multimeter.pollingDelay") && !control->property("nativeOwnerTooltipReady").toBool()) {
-                control->setToolTip(control->toolTip() + QStringLiteral(" The station holds this."));
+                control->setToolTip(control->toolTip() + QStringLiteral(" The Core holds this."));
                 control->setProperty("nativeOwnerTooltipReady", true);
             }
         }
@@ -5170,7 +5170,7 @@ void DisplayAssemblyPage::pairNumberRows(QWidget* page)
     }
     if (title == QStringLiteral("Multimeter")) {
         const QHash<QString, QString> captions = {
-            {QStringLiteral("display.multimeter.pollingDelay"), QStringLiteral("the station holds this")},
+            {QStringLiteral("display.multimeter.pollingDelay"), QStringLiteral("the Core holds this")},
             {QStringLiteral("display.multimeter.showDecimal"), QStringLiteral("this computer holds this")}};
         for (QWidget* control : page->findChildren<QWidget*>()) {
             const QString id = control->property("nereusSetupId").toString();
