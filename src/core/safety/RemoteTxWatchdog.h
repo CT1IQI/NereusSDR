@@ -94,11 +94,12 @@
 
 #include <functional>
 
+#include "core/NereusCoreExport.h"
 #include "core/session/media/RemoteMicReceiver.h"
 
 namespace NereusSDR {
 
-class RemoteTxWatchdog : public QObject {
+class NEREUS_CORE_EXPORT RemoteTxWatchdog : public QObject {
     Q_OBJECT
 
 public:
