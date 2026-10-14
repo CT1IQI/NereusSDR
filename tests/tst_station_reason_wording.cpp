@@ -1477,6 +1477,9 @@ const QList<ReasonSource>& reasonSources()
          19, {},
          {// Parameters and fields that carry this file's own reasons.
           QStringLiteral("reason"), QStringLiteral("prior.reason"),
+          // RadeWaveformModel::endpointState() and the display stream's
+          // waveform refusal/retirement state carry reasons into this file.
+          QStringLiteral("state.reason"), QStringLiteral("stream.reason"),
           QStringLiteral("admitted.refusal"), QStringLiteral("stream.profileRefusal"),
           QStringLiteral("m_headphones.profileRefusal"), QStringLiteral("m_audioProfileRefusal"),
           // iPhone app plan Task 23: a refused opusBitrate's words, scanned

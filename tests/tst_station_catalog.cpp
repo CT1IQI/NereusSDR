@@ -98,7 +98,8 @@ using NereusSDR::Test::LoopbackTransport;
 namespace {
 
 const QSet<QString> kTopLevelKeys{
-    QStringLiteral("modes"),       QStringLiteral("filterPresets"), QStringLiteral("tuneSteps"),
+    QStringLiteral("modes"),       QStringLiteral("radeV2Enabled"), QStringLiteral("filterPresets"),
+    QStringLiteral("tuneSteps"),
     QStringLiteral("agc"),         QStringLiteral("receive"),       QStringLiteral("meters"),
     QStringLiteral("display"),     QStringLiteral("noiseReduction"),
     QStringLiteral("board"),       QStringLiteral("bands"),
@@ -251,11 +252,12 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
                  QString::fromLatin1(grid.at(i)->label));
     }
 
-    // Historical pre-gate fixture: all 16 declared modes, including V2.
-    // Current builder OFF/ON tables are checked separately below.
+    // Session fixtures exercise the shipped default-off table. Current
+    // builder OFF/ON tables are checked separately below.
+    QCOMPARE(catalog.value(QStringLiteral("radeV2Enabled")).toBool(), false);
     const QJsonArray modes = catalog.value(QStringLiteral("modes")).toArray();
-    QCOMPARE(modes.size(), 16);
-    for (int id = 0; id < 16; ++id) {
+    QCOMPARE(modes.size(), 14);
+    for (int id = 0; id < 14; ++id) {
         const QJsonObject mode = modes.at(id).toObject();
         QCOMPARE(mode.value(QStringLiteral("id")).toInt(), id);
         QCOMPARE(mode.value(QStringLiteral("label")).toString(),
@@ -268,12 +270,9 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     QCOMPARE(modes.at(6).toObject().value(QStringLiteral("sideband")).toString(),
              QStringLiteral("both"));
 
-    QCOMPARE(modes.at(14).toObject().value(QStringLiteral("sideband")).toString(), QStringLiteral("upper"));
-    QCOMPARE(modes.at(15).toObject().value(QStringLiteral("sideband")).toString(), QStringLiteral("lower"));
-
     // Filter presets: the store's, per mode label, F1 onwards.
     const QJsonObject presets = catalog.value(QStringLiteral("filterPresets")).toObject();
-    QCOMPARE(presets.size(), 16);
+    QCOMPARE(presets.size(), 14);
     const QJsonArray usb = presets.value(QStringLiteral("USB")).toArray();
     const QList<FilterPreset> usbDefaults = FilterPresetStore().presetsForMode(DSPMode::USB);
     QCOMPARE(usb.size(), usbDefaults.size());
@@ -286,12 +285,8 @@ void checkDesktopValues(const QJsonObject& catalog, HPSDRModel model, ProtocolVe
     }
     QCOMPARE(presets.value(QStringLiteral("RADE-U")).toArray().size(), 1);
 
-    const QJsonObject rade2Upper = presets.value(QStringLiteral("RADE2-U")).toArray().first().toObject();
-    QCOMPARE(rade2Upper.value(QStringLiteral("lowHz")).toInt(), 650);
-    QCOMPARE(rade2Upper.value(QStringLiteral("highHz")).toInt(), 2350);
-    const QJsonObject rade2Lower = presets.value(QStringLiteral("RADE2-L")).toArray().first().toObject();
-    QCOMPARE(rade2Lower.value(QStringLiteral("lowHz")).toInt(), -2350);
-    QCOMPARE(rade2Lower.value(QStringLiteral("highHz")).toInt(), -650);
+    QVERIFY(!presets.contains(QStringLiteral("RADE2-U")));
+    QVERIFY(!presets.contains(QStringLiteral("RADE2-L")));
 
     // Tune steps: SliceModel's list.
     const QJsonArray steps = catalog.value(QStringLiteral("tuneSteps")).toArray();
