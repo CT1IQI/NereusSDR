@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Modification history (NereusSDR):
 // 2026-10-11  J.J. Boyd / KG4VCF; original waveform observation. AI tooling: OpenAI Codex.
+// 2026-10-14  J.J. Boyd / KG4VCF; widen normalized geometry before pixel scaling. AI tooling: OpenAI Codex.
 // no-port-check: Original native painter; FreeDV fixed amplitude/time plot facts
 // studied at freedv-gui a8d8424 main.cpp:1377-1382, defines.h:54-56.
 #include "WaveformMeterItem.h"
@@ -128,7 +129,8 @@ void WaveformMeterItem::paint(QPainter& painter, int width, int height)
 void WaveformMeterItem::paintForLayer(QPainter& painter, int width, int height, Layer layer)
 {
     using namespace WaveformMeterStyle;
-    const QRectF face(x() * width, y() * height, itemWidth() * width, itemHeight() * height);
+    const QRectF face(qreal(x()) * width, qreal(y()) * height,
+                      qreal(itemWidth()) * width, qreal(itemHeight()) * height);
     const QRectF plot = face.adjusted(48, 38, -16, -42);
     if (plot.width() <= 0 || plot.height() <= 0) {
         return;
