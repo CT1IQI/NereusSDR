@@ -1211,6 +1211,8 @@ nereus_add_test(tst_receiver_manager_ps_ddc)
 
 # ── Phase 3P-B Task 7: regression-freeze gate ────────────────────────────
 nereus_add_test(tst_p2_regression_freeze)
+nereus_add_test(tst_p2_command_zero)
+target_compile_definitions(tst_p2_command_zero PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 8: Alex-1 Filters sub-sub-tab smoke test ─────────────
 nereus_add_test(tst_alex1_filters_tab)

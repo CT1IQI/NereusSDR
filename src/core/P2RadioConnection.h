@@ -40,6 +40,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Share the four command construction boundaries with
+//                 focused in-memory tests. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. NereusSDR-original.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -553,6 +556,11 @@ private:
     void composeCmdHighPriority(char buf[1444]) const;        // network.c:913  (1444 == kBufLen)
     void composeCmdRx(char buf[1444]) const;                  // network.c:1066 (1444 == kBufLen)
     void composeCmdTx(char buf[60]) const;                    // network.c:1181
+
+    QByteArray buildCmdGeneralPacket();
+    QByteArray buildCmdHighPriorityPacket();
+    QByteArray buildCmdRxPacket();
+    QByteArray buildCmdTxPacket();
 
     // --- Command senders (compose + UDP dispatch) ---
     void sendCmdGeneral();       // network.c:821 → port 1024
@@ -1278,6 +1286,11 @@ public:
         m_hardwareProfile.effectiveBoard = board;
         selectCodec();
     }
+    QByteArray cmdGeneralPacketForTest() { return buildCmdGeneralPacket(); }
+    QByteArray cmdHighPriorityPacketForTest() { return buildCmdHighPriorityPacket(); }
+    QByteArray cmdRxPacketForTest() { return buildCmdRxPacket(); }
+    QByteArray cmdTxPacketForTest() { return buildCmdTxPacket(); }
+
     // Expose compose methods for regression-freeze capture (Task 1) and gate test (Task 7).
     void composeCmdGeneralForTest(quint8 buf[60]) const {
         char tmp[60];
