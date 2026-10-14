@@ -32,6 +32,8 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QPushButton>
+#include <QMap>
+#include <QMetaProperty>
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
@@ -41,6 +43,7 @@
 #include "core/TxChannel.h"
 #include "core/WdspTypes.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 #include "models/TransmitModel.h"
@@ -124,6 +127,107 @@ private slots:
         }
         QVERIFY(sawDefault);
         QVERIFY(sawCustom);
+    }
+
+    void existingBankLoadedAfterAppletInjection_restoresBothCombos()
+    {
+        // Startup builds the applets before connect assigns a radio's MAC.
+        // An existing bank must refresh them without applying its snapshot.
+        const QString activeName = QStringLiteral("Saved Custom");
+        TransmitModel savedTx;
+        savedTx.setTxEqEnabled(true);
+        savedTx.setTxEqPreamp(9);
+        savedTx.setTxEqBand(0, 7);
+        savedTx.setCfcEnabled(true);
+        savedTx.setCfcCompression(0, 11);
+        MicProfileManager seed;
+        seed.setMacAddress(kMacA);
+        seed.load();
+        QVERIFY(seed.saveProfile(activeName, &savedTx));
+        QVERIFY(seed.setActiveProfile(activeName, &savedTx));
+        const QStringList expectedNames = seed.profileNames();
+        const QString secondMac = QStringLiteral("aa:bb:cc:44:55:66");
+        const QString secondActiveName = QStringLiteral("Other Radio Custom");
+        MicProfileManager secondSeed;
+        secondSeed.setMacAddress(secondMac);
+        secondSeed.load();
+        QVERIFY(secondSeed.saveProfile(secondActiveName, &savedTx));
+        QVERIFY(secondSeed.setActiveProfile(secondActiveName, &savedTx));
+        const QStringList secondExpectedNames = secondSeed.profileNames();
+
+        RadioModel radio;
+        TxApplet txApplet(&radio);
+        txApplet.setMicProfileManager(radio.micProfileManager());
+        PhoneCwApplet phoneApplet(&radio);
+        QComboBox* phoneCombo = nullptr;
+        for (QComboBox* combo : phoneApplet.findChildren<QComboBox*>()) {
+            if (combo->accessibleName() == QStringLiteral("Microphone profile")) {
+                phoneCombo = combo;
+                break;
+            }
+        }
+        QVERIFY(phoneCombo != nullptr);
+        QCOMPARE(txApplet.profileCombo()->count(), 0);
+        QCOMPARE(phoneCombo->count(), 0);
+
+        // The production sequence restores live fields before scoping the bank.
+        TransmitModel& liveTx = radio.transmitModel();
+        liveTx.loadFromSettings(kMacA);
+        liveTx.setTxEqEnabled(false);
+        liveTx.setTxEqPreamp(2);
+        liveTx.setTxEqBand(0, -4);
+        liveTx.setCfcEnabled(false);
+        liveTx.setCfcCompression(0, 3);
+        const auto snapshotLive = [&liveTx] {
+            QMap<QString, QVariant> values;
+            const QMetaObject* meta = liveTx.metaObject();
+            for (int index = 0; index < meta->propertyCount(); ++index) {
+                const QMetaProperty property = meta->property(index);
+                const QString name = QString::fromLatin1(property.name());
+                // Publishing the bank legitimately updates only its metadata.
+                if (name == QStringLiteral("activeTxProfile")
+                    || name == QStringLiteral("txProfilesJson")) { continue; }
+                values.insert(name, property.read(&liveTx));
+            }
+            return values;
+        };
+        const auto snapshotSettings = [] {
+            QMap<QString, QVariant> values;
+            AppSettings& settings = AppSettings::instance();
+            for (const QString& key : settings.allKeys()) {
+                values.insert(key, settings.value(key));
+            }
+            return values;
+        };
+        const QMap<QString, QVariant> liveBefore = snapshotLive();
+        const QMap<QString, QVariant> settingsBefore = snapshotSettings();
+        MicProfileManager* manager = radio.micProfileManager();
+        QSignalSpy activeSpy(manager, &MicProfileManager::activeProfileChanged);
+        QSignalSpy listSpy(manager, &MicProfileManager::profileListChanged);
+
+        // Switching MACs must replace stale names and selection; a repeated
+        // load keeps the same scope without another list notification or echo.
+        QString previousMac;
+        for (const QString& mac : {kMacA, secondMac, secondMac}) {
+            listSpy.clear();
+            radio.scopeTxProfiles(mac);
+
+            QCOMPARE(activeSpy.count(), 0);
+            QCOMPARE(snapshotLive(), liveBefore);
+            QCOMPARE(snapshotSettings(), settingsBefore);
+            const QStringList wantedNames = mac == kMacA ? expectedNames : secondExpectedNames;
+            const QString wantedActive = mac == kMacA ? activeName : secondActiveName;
+            for (QComboBox* combo : {txApplet.profileCombo(), phoneCombo}) {
+                QStringList shownNames;
+                for (int index = 0; index < combo->count(); ++index) {
+                    shownNames.append(combo->itemText(index));
+                }
+                QCOMPARE(shownNames, wantedNames);
+                QCOMPARE(combo->currentText(), wantedActive);
+            }
+            QCOMPARE(listSpy.count(), mac == previousMac ? 0 : 1);
+            previousMac = mac;
+        }
     }
 
     // ── J.1.3 ─ User-driven combo change calls setActiveProfile ──────────────
