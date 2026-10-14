@@ -18,6 +18,13 @@ foreach(_file IN LISTS _files)
 endforeach()
 
 nereus_stage_portaudio("${SOURCE}" _built)
+foreach(_file IN LISTS _files)
+    file(READ "${_built}/${_file}" _staged_text)
+    string(FIND "${_staged_text}" "\r" _carriage_return)
+    if(NOT _carriage_return EQUAL -1)
+        message(FATAL_ERROR "staged PortAudio source is not LF-normalized: ${_file}")
+    endif()
+endforeach()
 file(SHA256 "${_built}/src/common/pa_process.c" _first_common)
 file(SHA256 "${_built}/src/hostapi/alsa/pa_linux_alsa.c" _first_alsa)
 file(SHA256 "${ROOT}/cmake/patches/portaudio-bounds.h" _helper)
@@ -70,5 +77,28 @@ execute_process(COMMAND "${CMAKE_COMMAND}"
     RESULT_VARIABLE _bad OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
 if(_bad EQUAL 0 OR NOT "${_out}${_err}" MATCHES "pinned preimage mismatch")
     message(FATAL_ERROR "unexpected changed-preimage result: ${_bad} ${_out}${_err}")
+endif()
+
+# PortAudio marks C and header sources as text, so a native Windows checkout
+# presents CRLF bytes. The pin check must accept that checkout while staging an
+# LF-normalized build copy for the checked patch, without changing the source.
+if(NOT BAD_PREIMAGE AND NOT CRLF_INPUT)
+    set(_crlf_source "${WORK}/crlf-source")
+    file(REMOVE_RECURSE "${_crlf_source}")
+    file(MAKE_DIRECTORY "${_crlf_source}")
+    file(COPY "${SOURCE}/" DESTINATION "${_crlf_source}" PATTERN ".git" EXCLUDE)
+    foreach(_file IN LISTS _files)
+        file(READ "${_crlf_source}/${_file}" _text)
+        string(REPLACE "\r\n" "\n" _text "${_text}")
+        string(REPLACE "\n" "\r\n" _text "${_text}")
+        file(WRITE "${_crlf_source}/${_file}" "${_text}")
+    endforeach()
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+        "-DROOT=${ROOT}" "-DSOURCE=${_crlf_source}" "-DWORK=${WORK}/crlf-work"
+        -DCRLF_INPUT=ON -P "${CMAKE_CURRENT_LIST_FILE}"
+        RESULT_VARIABLE _crlf OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
+    if(NOT _crlf EQUAL 0)
+        message(FATAL_ERROR "Windows-style PortAudio checkout was rejected: ${_crlf} ${_out}${_err}")
+    endif()
 endif()
 message(STATUS "Pinned PortAudio staging, repeatability and source preservation passed")

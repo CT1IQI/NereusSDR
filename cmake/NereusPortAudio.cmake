@@ -6,6 +6,12 @@ if(NOT COMMAND _nereus_apply_vendor_patch)
 endif()
 set(_NEREUS_PORTAUDIO_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
+function(_nereus_read_portaudio_lf path out_var)
+    file(READ "${path}" _content)
+    string(REPLACE "\r\n" "\n" _content "${_content}")
+    set(${out_var} "${_content}" PARENT_SCOPE)
+endfunction()
+
 function(nereus_stage_portaudio source_dir out_var)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${_NEREUS_PORTAUDIO_CMAKE_DIR}/patches/portaudio-0001-check-setup-representation.patch")
@@ -20,9 +26,13 @@ function(nereus_stage_portaudio source_dir out_var)
         string(REPLACE "|" ";" _parts "${_entry}")
         list(GET _parts 0 _relative)
         list(GET _parts 1 _expected)
+        list(APPEND _pinned_paths "${_relative}")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${source_dir}/${_relative}")
-        file(SHA256 "${source_dir}/${_relative}" _actual)
+        # PortAudio marks C and header files as text. A native Windows clone
+        # therefore has CRLF bytes even at the pinned commit.
+        _nereus_read_portaudio_lf("${source_dir}/${_relative}" _pinned_content)
+        string(SHA256 _actual "${_pinned_content}")
         if(NOT _actual STREQUAL _expected)
             message(FATAL_ERROR "PortAudio pinned preimage mismatch: ${_relative}")
         endif()
@@ -50,6 +60,12 @@ function(nereus_stage_portaudio source_dir out_var)
     file(REMOVE_RECURSE "${_built}")
     file(MAKE_DIRECTORY "${_built}")
     file(COPY "${source_dir}/" DESTINATION "${_built}" PATTERN ".git" EXCLUDE)
+    # Apply the checked LF patch to an LF build copy on every platform. Keep
+    # the fetched source pristine because FetchContent may share that checkout.
+    foreach(_relative IN LISTS _pinned_paths)
+        _nereus_read_portaudio_lf("${_built}/${_relative}" _staged_content)
+        file(WRITE "${_built}/${_relative}" "${_staged_content}")
+    endforeach()
     _nereus_apply_vendor_patch("${_built}" "portaudio-0001-check-setup-representation.patch")
     configure_file("${_NEREUS_PORTAUDIO_CMAKE_DIR}/patches/portaudio-bounds.h"
         "${_built}/src/common/portaudio-bounds.h" COPYONLY)
