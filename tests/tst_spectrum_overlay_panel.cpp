@@ -36,6 +36,10 @@
 // keys; the readout; Hz/bin; the station and old-Core gates; every
 // Waterfall row seeded, followed and written once; each tab's size.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
+// 2026-10-14: align the tall-pan geometry and wheel assertions with the
+// contained scrolling Display pill used by short docked pans. J.J. Boyd
+// (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -54,6 +58,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSlider>
 #include <QStyle>
 #include <QStyleOptionSpinBox>
@@ -122,10 +127,12 @@ private:
         QWidget* page(const char* name) {
             return pill()->findChild<QWidget*>(QString::fromLatin1(name));
         }
+        QScrollArea* scroll() {
+            return pill()->findChild<QScrollArea*>(QStringLiteral("displayPillScroll"));
+        }
         // The pan is never shown, so nothing lays the pill's rows out:
         // do it by hand, parents first, before reading a child's place.
         void layOut() {
-            pill()->adjustSize();
             if (QLayout* layout = pill()->layout()) {
                 layout->setGeometry(pill()->rect());
             }
@@ -1239,7 +1246,7 @@ private slots:
             "pillDisplaySpectrumAverageTimeMs", "pillDisplayLineWidth", "pillDisplayPeakHoldEnabled",
             "pillDisplayPeakHoldResetMs", "pillDisplayCalOffset", "pillDisplayGridEnabled",
             "pillDisplayFreqGridSpacing", "pillDisplayFreqScaleFontPx", "pillDisplayShowNoiseFloor",
-            "pillDisplayShowBinWidth", "pillDisplayShowPeakValueOverlay", "pillDisplayShowCursorFreq"
+            "pillDisplayShowBinWidth", "pillDisplayShowCursorFreq", "pillDisplayShowPeakValueOverlay"
         };
         int previous = 0;
         for (const char* name : order) {
@@ -1329,10 +1336,13 @@ private slots:
         QVERIFY(note);
         QCOMPARE(note->text(), QStringLiteral(
             "At this Rate the waterfall keeps 2:43 (16384 rows). Slow Rate to keep more."));
-        QCOMPARE(h.pill()->height(), h.pill()->sizeHint().height());
+        QVERIFY(h.pill()->height() <= h.pan.height());
+        QVERIFY(h.scroll());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         h.pan.setWfUpdatePeriodMs(500);
         QCOMPARE(note->text(), QStringLiteral("Keeps 20:00 at this Rate."));
-        QCOMPARE(h.pill()->height(), h.pill()->sizeHint().height());
+        QVERIFY(h.pill()->height() <= h.pan.height());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
     }
 
     void approvedLiveMockupHasFiveTabsAndKeepsBothLevelJobsTogether() {
@@ -1564,16 +1574,16 @@ private slots:
         QVERIFY(texts.contains(QStringLiteral("background")));
     }
 
-    // Follow-up wave F4: Gradient, Noise Floor, Bin Width and Peak Value
-    // share one line, and none of them is squeezed below its own width.
-    void theFourOverlayPillsShareOneLineUnclipped() {
+    // Follow-up wave F4: the marker pills retain their text when Peak Value
+    // takes the preferred overflow row.
+    void theMarkerPillsStayUnclippedWhenPeakValueWraps() {
         PillHarness h;
         h.panel->setDisplayPillTab(Tab::Spectrum);
         h.panel->openDisplayPill();
         h.layOut();
         QWidget* page = h.page("displayPageSpectrum");
         const char* names[] = {"pillDisplayShowNoiseFloor", "pillDisplayShowBinWidth",
-                               "pillDisplayShowPeakValueOverlay", "pillDisplayShowCursorFreq"};
+                               "pillDisplayShowCursorFreq", "pillDisplayShowPeakValueOverlay"};
         int lastRow = -1;
         int right = 0;
         for (const char* name : names) {
@@ -1610,6 +1620,17 @@ private slots:
         h.pan.setPeakHoldDelayMs(10000);
         h.pan.setDbmCalOffset(-30.0f);
         h.pan.setDisplayKeyed(true, 0, 0);
+        QWidget* spectrumPage = h.page("displayPageSpectrum");
+        const int firstMarkerRow = gridRowOf(
+            spectrumPage, QStringLiteral("pillDisplayShowNoiseFloor"));
+        const int peakRow = gridRowOf(
+            spectrumPage, QStringLiteral("pillDisplayShowPeakValueOverlay"));
+        const int cursorRow = gridRowOf(
+            spectrumPage, QStringLiteral("pillDisplayShowCursorFreq"));
+        QCOMPARE(cursorRow, firstMarkerRow);
+        QVERIFY2(peakRow > firstMarkerRow,
+                 qPrintable(QStringLiteral("rows first=%1 peak=%2 cursor=%3")
+                     .arg(firstMarkerRow).arg(peakRow).arg(cursorRow)));
         for (const Tab tab : {Tab::Spectrum, Tab::Levels, Tab::Waterfall, Tab::View3D, Tab::Fft}) {
             h.panel->setDisplayPillTab(tab);
             h.layOut();
@@ -1618,13 +1639,16 @@ private slots:
             QWidget* page = h.page(pages[static_cast<int>(tab)]);
             QCOMPARE(h.pill()->width(), 268);
             QVERIFY2(h.pill()->height() <= 480, qPrintable(QString::number(h.pill()->height())));
-            QVERIFY(h.pill()->findChildren<QScrollArea*>().isEmpty());
+            QVERIFY(h.scroll());
+            QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
             for (QPushButton* button : page->findChildren<QPushButton*>()) {
                 if (button->text().isEmpty() || button->isHidden()) { continue; }
                 const QRect rect(button->mapTo(page, QPoint(0, 0)), button->size());
                 QVERIFY2(rect.left() >= 0 && rect.right() < page->width(), qPrintable(button->objectName()));
                 QVERIFY2(button->width() >= button->fontMetrics().horizontalAdvance(button->text()) + 2,
-                         qPrintable(button->objectName()));
+                         qPrintable(QStringLiteral("%1: %2 px available, %3 px needed")
+                             .arg(button->objectName()).arg(button->width())
+                             .arg(button->fontMetrics().horizontalAdvance(button->text()) + 2)));
             }
             for (QLabel* label : page->findChildren<QLabel*>()) {
                 if (label->text().isEmpty() || label->isHidden() || label->wordWrap()) { continue; }
@@ -1747,7 +1771,9 @@ private slots:
         QVERIFY(note->isHidden());
         QCOMPARE(note->text(), QString());
         const int emptyHeight = pill->height();
-        QCOMPARE(emptyHeight, pill->sizeHint().height());
+        QVERIFY(emptyHeight <= 480);
+        QVERIFY(h.scroll());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         // The fixed reason area sits between Decimation and the divider.
         QWidget* page = h.page("displayPageFft");
         QWidget* reset = page->findChild<QWidget*>(QStringLiteral("pillResetPan"));
@@ -1770,7 +1796,7 @@ private slots:
         QCOMPARE(note->text(), reason);
         // One 12 px line and its 4 px of spacing.
         QCOMPARE(pill->height(), emptyHeight + 12 + 4);
-        QCOMPARE(pill->height(), pill->sizeHint().height());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         QCOMPARE(note->height(), 12);
         QVERIFY(note->width()
                 >= QFontMetrics(note->font()).horizontalAdvance(reason));
@@ -1829,7 +1855,7 @@ private slots:
             "pillDisplaySpectrumAverageTimeMs", "pillDisplayLineWidth", "pillDisplayPeakHoldEnabled",
             "pillDisplayPeakHoldResetMs", "pillDisplayCalOffset", "pillDisplayGridEnabled",
             "pillDisplayFreqGridSpacing", "pillDisplayFreqScaleFontPx", "pillDisplayShowNoiseFloor",
-            "pillDisplayShowBinWidth", "pillDisplayShowPeakValueOverlay", "pillDisplayShowCursorFreq",
+            "pillDisplayShowBinWidth", "pillDisplayShowCursorFreq", "pillDisplayShowPeakValueOverlay",
         };
         int last = 0;
         for (const char* name : order) {
@@ -2496,12 +2522,18 @@ private slots:
         // Every child, on every tab.
         for (const Tab tab : {Tab::Spectrum, Tab::Levels, Tab::Fft, Tab::Waterfall, Tab::View3D}) {
             h.panel->setDisplayPillTab(tab);
+            QScrollArea* scroll = h.scroll();
+            QVERIFY(scroll);
             for (QWidget* child : h.pill()->findChildren<QWidget*>()) {
                 if (child->window() != h.pill()->window()) {
                     continue;   // a combo's own list, a window of its own
                 }
+                if (child == scroll->viewport() || child == scroll->verticalScrollBar()) {
+                    continue;   // wheel input belongs to the containment scroller
+                }
                 QVERIFY2(sendWheel(child), qPrintable(child->objectName()));
             }
+            QVERIFY(!sendWheel(scroll->viewport()));
         }
         for (QSlider* slider : h.pill()->findChildren<QSlider*>()) {
             QVERIFY2(!(slider->focusPolicy() & Qt::WheelFocus & ~Qt::StrongFocus),
@@ -2603,7 +2635,7 @@ private slots:
         QCOMPARE(lastTab(), QStringLiteral("Waterfall"));
     }
 
-    // 268 px wide; the Spectrum tab no taller than 480 px; no tab scrolls.
+    // 268 px wide; every tab fits a tall pan without needing page scrolling.
     void thePillIs268WideAndTheSpectrumTabFitsIn480() {
         PillHarness h;
         h.panel->setDisplayPillTab(Tab::Spectrum);
@@ -2615,19 +2647,19 @@ private slots:
         // The rows fit that width: nothing is squeezed or cut off.
         QVERIFY2(pill->layout()->minimumSize().width() <= 268,
                  qPrintable(QString::number(pill->layout()->minimumSize().width())));
-        QVERIFY2(pill->sizeHint().height() <= 480,
-                 qPrintable(QString::number(pill->sizeHint().height())));
-        QCOMPARE(pill->height(), pill->sizeHint().height());
-        qInfo() << "Spectrum tab size hint" << pill->sizeHint();
+        QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
+        QVERIFY(h.scroll());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
+        qInfo() << "Spectrum tab height" << pill->height();
 
         for (const Tab tab : {Tab::Levels, Tab::Fft, Tab::Waterfall, Tab::View3D}) {
             h.panel->setDisplayPillTab(tab);
             QCOMPARE(pill->width(), 268);
-            QVERIFY(pill->sizeHint().height() < 480);
+            QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
+            QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
             QVERIFY2(pill->layout()->minimumSize().width() <= 268,
                      qPrintable(QString::number(pill->layout()->minimumSize().width())));
         }
-        QVERIFY(pill->findChildren<QScrollArea*>().isEmpty());
     }
 
     // No string the pill shows carries an em dash, and its tooltips are in
@@ -3639,7 +3671,9 @@ private slots:
         QCOMPARE(note->text(), perBand);
         QCOMPARE(note->height(), 12);
         const int restHeight = h.pill()->height();
-        QCOMPARE(restHeight, h.pill()->sizeHint().height());
+        QVERIFY(restHeight <= 480);
+        QVERIFY(h.scroll());
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         const QString maxTip = h.slider("pillDisplayGridMax")->toolTip();
         const QString minTip = h.slider("pillDisplayGridMin")->toolTip();
         QVERIFY(!maxTip.isEmpty() && maxTip != keyed);
@@ -3670,9 +3704,8 @@ private slots:
         QVERIFY2(drawn.width() <= room, qPrintable(QString::number(drawn.width())));
         QVERIFY2(drawn.height() <= note->height(), qPrintable(QString::number(drawn.height())));
         QCOMPARE(h.pill()->height(), restHeight + 12);
-        QCOMPARE(h.pill()->height(), h.pill()->sizeHint().height());
-        QVERIFY2(h.pill()->sizeHint().height() <= 480,
-                 qPrintable(QString::number(h.pill()->sizeHint().height())));
+        QVERIFY2(h.pill()->height() <= 480, qPrintable(QString::number(h.pill()->height())));
+        QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         // The values shown are still the band's, and nothing was asked.
         QCOMPARE(h.slider("pillDisplayGridMax")->value(), -40);
         QCOMPARE(h.slider("pillDisplayGridMin")->value(), -140);
@@ -3972,9 +4005,10 @@ private slots:
         QWidget* pill = h.pill();
         for (const Tab tab : {Tab::Spectrum, Tab::Levels, Tab::Fft, Tab::Waterfall, Tab::View3D}) {
             h.panel->setDisplayPillTab(tab);
-            qInfo() << "tab" << static_cast<int>(tab) << "size hint" << pill->sizeHint();
-            QVERIFY(pill->sizeHint().height() < 480);
-            QCOMPARE(pill->height(), pill->sizeHint().height());
+            qInfo() << "tab" << static_cast<int>(tab) << "height" << pill->height();
+            QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
+            QVERIFY(h.scroll());
+            QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
         }
         // 268 less the frame's border and the page's margins.
         const int room = 268 - 2 - 16;

@@ -21,6 +21,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Keep Peak Value as the preferred wide-font overflow and
+//                 retain each Display choice's two-pixel text margin after
+//                 enabled-state styling. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-10-13 - Keep runtime level and unchanged Clarity status refreshes
 //                 from restyling and reflowing Display rows. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
@@ -1261,6 +1265,17 @@ int pillTextHeight(QLabel* label, const QString& text, int width)
         Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text).height();
 }
 
+void retainPillButtonTextWidths(QWidget* flyout, const QVector<QPushButton*>& tabButtons)
+{
+    if (!flyout) { return; }
+    for (QPushButton* button : flyout->findChildren<QPushButton*>()) {
+        if (button->text().isEmpty() || tabButtons.contains(button)) { continue; }
+        button->ensurePolished();
+        button->setMinimumWidth(std::max(button->minimumWidth(),
+            button->fontMetrics().horizontalAdvance(button->text()) + 2));
+    }
+}
+
 } // namespace
 
 void SpectrumOverlayPanel::scheduleDisplayPillGeometryRefresh()
@@ -1463,12 +1478,7 @@ void SpectrumOverlayPanel::refreshDisplayPillGeometry()
             if (widget->maximumHeight() < height) { widget->setFixedHeight(height); }
         }
     }
-    for (QPushButton* button : m_displayFlyout->findChildren<QPushButton*>()) {
-        if (button->text().isEmpty() || m_pillTabBtns.contains(button)) { continue; }
-        button->ensurePolished();
-        button->setMinimumWidth(std::max(button->minimumWidth(),
-            button->fontMetrics().horizontalAdvance(button->text()) + 2));
-    }
+    retainPillButtonTextWidths(m_displayFlyout, m_pillTabBtns);
     int tabsWidth = 0;
     for (QPushButton* button : std::as_const(m_pillTabBtns)) {
         button->setMinimumWidth(0);
@@ -2616,6 +2626,7 @@ void SpectrumOverlayPanel::updatePillEnables()
     if (!hasTarget) {
         updateBandGridNote();
         updatePillOwnIndicators();
+        retainPillButtonTextWidths(m_displayFlyout, m_pillTabBtns);
         return;
     }
     setPillRowEnabled(QStringLiteral("DisplayDispNormalize"),
@@ -2797,6 +2808,7 @@ void SpectrumOverlayPanel::updatePillEnables()
     updateWaterfallNote();
     updatePillModeNotes();
     updatePillOwnIndicators();
+    retainPillButtonTextWidths(m_displayFlyout, m_pillTabBtns);
 }
 
 // One line under Color Gain says who is setting the waterfall's levels.
@@ -3261,7 +3273,8 @@ void SpectrumOverlayPanel::buildPillSpectrumPage()
                                  "Every panadapter follows."),
                   [](const SpectrumWidget* w) { return w->showBinWidth(); },
                   [](SpectrumWidget* w, bool on) { w->setShowBinWidth(on); });
-    tight << addPillToggle(line, QStringLiteral("DisplayShowPeakValueOverlay"), QStringLiteral("Peak Value"),
+    QPushButton* peakValue = addPillToggle(
+        line, QStringLiteral("DisplayShowPeakValueOverlay"), QStringLiteral("Peak Value"),
                   QStringLiteral("Show the strongest signal's level and frequency. "
                                  "Every panadapter follows."),
                   [](const SpectrumWidget* w) { return w->showPeakValueOverlay(); },
@@ -3270,6 +3283,9 @@ void SpectrumOverlayPanel::buildPillSpectrumPage()
                   QStringLiteral("Show frequency at mouse cursor position"),
                   [](const SpectrumWidget* w) { return w->cursorFreqVisible(); },
                   [](SpectrumWidget* w, bool on) { w->setCursorFreqVisible(on); });
+    // Keep the visible order above. Peak Value is the preferred overflow,
+    // so it is last only in the fitting order that removes from the end.
+    tight << peakValue;
     fitPillLine(page, line, tight);
     QLabel* markersNote = addPillNote(page, QStringLiteral(
         "In Setup, Cursor Freq is on Spectrum; the other three and their details are on "
