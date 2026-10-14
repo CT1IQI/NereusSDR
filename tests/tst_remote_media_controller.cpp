@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-14  J.J. Boyd / KG4VCF  Wait for the asynchronous microphone
+//                                    pump to start the default-PC preview
+//                                    collector after media readiness.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-12  J.J. Boyd / KG4VCF  Check cross-DLL signal metadata and
 //                                    explicitly simulate VAX availability
 //                                    in microphone pause fixtures.
@@ -13027,7 +13031,9 @@ private slots:
                                   CaptureSupervisor::Status::State::Ready,
                                   Test::kFakeCaptureChildStartMs);
         const quint32 generation = engine->captureStatus().generation;
-        QVERIFY(media.micCollectorThreadRunningForTest());
+        // Media readiness and the capture helper can both settle before the
+        // 20 ms microphone pump reconciles the default PC-preview lease.
+        QTRY_VERIFY_WITH_TIMEOUT(media.micCollectorThreadRunningForTest(), 1000);
         media.pumpMicUplinkForTest();
 
         g_remoteMediaMessages.clear();
