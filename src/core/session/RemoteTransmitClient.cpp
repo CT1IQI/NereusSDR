@@ -47,6 +47,12 @@
 //               records programAudio on the program key before it is
 //               published; programAudioKey(). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-13: Track PS two-tone requests, asynchronous release results
+//               and superseded intent. J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
+//   2026-10-14: Retire a station session even when remote transmit was
+//               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -239,26 +245,34 @@ void RemoteTransmitClient::setAvailable(bool available)
     if (m_available == available) {
         return;
     }
+    if (!available) {
+        retireSession();
+        return;
+    }
     m_available = available;
     const QPointer<RemoteTransmitClient> self(this);
     reset();
     if (!self || m_available != available) {
         return;
     }
-    if (!available) {
-        // The Core unkeys a device whose link drops and never keys it
-        // again by itself; nothing here survives.
-        // Task 37: a new link starts its keepalives from 1.
-        m_keepaliveSequence = 0;
-        m_channelKeepalives = 0;
-        m_sessionKeepalives = 0;
-        m_auxiliaryKeepalives = 0;
-    }
     refreshKeepalive();
 }
 
+void RemoteTransmitClient::retireSession()
+{
+    m_available = false;
+    // The Core unkeys a device whose link drops and never keys it
+    // again by itself; nothing here survives.
+    // Task 37: a new link starts its keepalives from 1.
+    m_keepaliveSequence = 0;
+    m_channelKeepalives = 0;
+    m_sessionKeepalives = 0;
+    m_auxiliaryKeepalives = 0;
+    reset();
+}
+
 quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpdate>& arguments,
-                                   Kind kind, bool releaseIntent)
+                                   Kind kind, bool releaseIntent, bool allowUnavailableRelease)
 {
     if (m_releaseFailureSticky && !releaseIntent) {
         return 0;
@@ -272,7 +286,8 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
     // Keep the callable alive if it synchronously destroys its owner.
     const Sender sender = m_sender;
     const QPointer<RemoteTransmitClient> self(this);
-    const quint32 id = m_available && sender ? sender(verb, arguments) : 0;
+    const bool canSend = m_available || (releaseIntent && allowUnavailableRelease);
+    const quint32 id = canSend && sender ? sender(verb, arguments) : 0;
     if (!self) {
         return 0;
     }
@@ -459,18 +474,42 @@ void RemoteTransmitClient::tunerTuneEnded()
 
 void RemoteTransmitClient::setTwoTone(bool on)
 {
+    requestTwoTone(QByteArrayLiteral("tx.twoTone"), "on", on);
+}
+
+quint32 RemoteTransmitClient::requestPureSignalTwoTone(bool on)
+{
+    return requestTwoTone(QByteArrayLiteral("ps3.twoTone"), "enabled", on);
+}
+
+quint32 RemoteTransmitClient::requestTwoTone(const QByteArray& verb, const char* argument, bool on)
+{
     const QPointer<RemoteTransmitClient> self(this);
-    const quint32 id =
-        send(QByteArrayLiteral("tx.twoTone"), {boolArgument("on", on)}, Kind::TwoTone,
-             /*releaseIntent=*/!on);
-    if (!self) { return; }
+    const quint64 generation = m_sessionGeneration;
+    const quint64 request = ++m_twoToneRequestSerial;
+    // PS stop remains usable on a Core without remote transmit support.
+    // Its sender still checks the primary session's transport/authentication.
+    const quint32 id = send(verb, {boolArgument(argument, on)}, Kind::TwoTone,
+                            /*releaseIntent=*/!on,
+                            /*allowUnavailableRelease=*/verb == "ps3.twoTone");
+    if (!self || generation != m_sessionGeneration || request != m_twoToneRequestSerial) {
+        return 0;
+    }
     m_twoToneAsked = on && id != 0;
+    m_twoToneCommandId = m_twoToneAsked ? id : 0;
     if (id == 0 && on) {
         emit refused(QString::fromLatin1(m_releaseFailureSticky ? kReleaseFailedReason
                                                                 : kNoLinkReason),
                      QString(), QString());
     }
+    if (!self || generation != m_sessionGeneration || request != m_twoToneRequestSerial) {
+        return 0;
+    }
     refreshKeepalive();
+    if (!self || generation != m_sessionGeneration || request != m_twoToneRequestSerial) {
+        return 0;
+    }
+    return id;
 }
 
 void RemoteTransmitClient::keyForProgram(bool programAudio,
@@ -548,6 +587,15 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
     const auto pending = m_pending.constFind(commandId);
     if (pending == m_pending.cend() || pending->verb != verb) {
         return;
+    }
+    if (verb == "ps3.twoTone") {
+        const QString phase = utf8Value(values, "phase");
+        if (accepted && (phase == QLatin1String("pending") || phase == QLatin1String("accepted"))) {
+            // PS actions can answer before completing. An off stays fenced
+            // until its terminal result; that result must still find its ID.
+            return;
+        }
+        accepted = accepted && phase == QLatin1String("completed");
     }
     const Pending command = pending.value();
     const Kind kind = command.kind;
@@ -653,11 +701,15 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
         [[fallthrough]];
     case Kind::Release:
     case Kind::TwoTone:
-        if (kind == Kind::TwoTone && !command.releaseIntent && !accepted && m_twoToneAsked) {
+        if (kind == Kind::TwoTone && !command.releaseIntent && !accepted && m_twoToneAsked
+            && commandId == m_twoToneCommandId) {
             m_twoToneAsked = false;
+            m_twoToneCommandId = 0;
             refreshKeepalive();
         }
-        if (!accepted) {
+        // PS reports its own phase/result to the operator; only its intent
+        // and release fence belong here, not a second refusal notification.
+        if (!accepted && verb != "ps3.twoTone") {
             emit refused(shown, code, fix);
         }
         return;
@@ -755,13 +807,14 @@ void RemoteTransmitClient::reset()
     m_program = Key{};
     m_tuneAsked = false;
     m_twoToneAsked = false;
+    m_twoToneCommandId = 0;
     forgetReleases();
     m_pending.clear();
     m_pendingReleases = 0;
     m_releaseDispatches = 0;
     m_releaseFailureSticky = false;
     m_releaseFailureNotified = false;
-    ++m_sessionGeneration;
+    const quint64 generation = ++m_sessionGeneration;
     m_micSourceAvailable = false;
     m_micSourcePending = false;
     m_micSourceSettled = true;
@@ -770,7 +823,7 @@ void RemoteTransmitClient::reset()
     m_micSourceReason.clear();
     const QPointer<RemoteTransmitClient> sourceSelf(this);
     emit micSourceChanged(m_acceptedMicSource, true, {});
-    if (!sourceSelf) { return; }
+    if (!sourceSelf || m_sessionGeneration != generation) { return; }
     auto reply = std::exchange(m_programAnswer, {});
     const QPointer<RemoteTransmitClient> self(this);
     publish();
