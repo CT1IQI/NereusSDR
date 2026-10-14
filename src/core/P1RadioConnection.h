@@ -99,6 +99,8 @@
 //   2026-10-06 - Issue #351: inPlaceRecoveryMs, and reconnect attempts 1 s
 //                apart (was 5 s). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
+//                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 /*
@@ -353,6 +355,8 @@ public slots:
     // G-07: Protocol 1 keeps only the full-ring loss count
     // (TxSendStats::overflowOnly); the rest of the counters are Protocol 2's.
     TxSendStats txSendStats() const override;
+    // R-IOS-13: current send-ring fill for the remote microphone consumer.
+    double txIqQueuedMs() const override;
     // G-05: the unkey's wait for the send ring (RadioConnection).
     bool txIqRingDrained() const override;
     double txIqRingLengthMs() const override;

@@ -34,15 +34,23 @@
 //   2026-09-25 -- R-R3-39: wait for the receive lane before reading
 //                 state it owns (NNR tuning, NR slot). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 -- A connect keeps the saved FFT plans in the folder the
+//                 process was given (DspCacheLocation). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
+#include <QScopeGuard>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/DspCacheLocation.h"
 #include "core/PureSignal.h"
 #include "core/RxChannel.h"
 #include "core/dsp/DspAssetService.h"
@@ -300,6 +308,27 @@ private slots:
         // teardownConnection()) and P1FakeRadio's destructor both run here,
         // under this test's watch, rather than implicitly after the last
         // assertion above.
+        harness.reset();
+    }
+
+    // A background Core started by the app is told where the app keeps its
+    // saved FFT plans (nereusd --dsp-cache-dir). The radio connection has to
+    // look there, or the Core builds every plan again, for minutes, while
+    // the radio waits. The engine makes the folder it is handed and nothing
+    // else makes this one, so its existence after a connect says which
+    // folder the connection asked for.
+    void connectKeepsThePlansInTheFolderTheProcessWasGiven() {
+        QTemporaryDir scratch;
+        QVERIFY(scratch.isValid());
+        const QString folder = QDir(scratch.path()).filePath(QStringLiteral("the app's plans"));
+        DspCacheLocation::setDirectory(folder);
+        const auto restore = qScopeGuard([] { DspCacheLocation::setDirectory({}); });
+        QVERIFY(!QFileInfo::exists(folder));
+
+        std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create();
+        QVERIFY(harness != nullptr);
+        QCOMPARE(harness->model().connectionState(), ConnectionState::Connected);
+        QVERIFY2(QFileInfo(folder).isDir(), qPrintable(folder));
         harness.reset();
     }
 };

@@ -166,6 +166,9 @@
 //   2026-10-09: native audio plan Task 7 (R-AUD-02): the engine builds its
 //               audio engines for nereusd (setAudioBackendContext).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the hosted Core keeps its security files in the folder
+//               setSecurityDirectory() names. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -480,6 +483,7 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // way, but there is no reason to make it the only cover.
     StationHostOptions hosting;
     hosting.settings = &AppSettings::instance();
+    hosting.securityDirectory = m_securityDirectory;
     hosting.stationRadios = m_stationRadios.get();
     hosting.selectedRadioMac = [this] { return m_selectedRadioMac; };
     hosting.coreName = cfg.coreName;
