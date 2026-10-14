@@ -474,6 +474,7 @@ nereus_add_test(tst_ps3_display_codec EXTRA_LABELS core)
 nereus_add_test(tst_ps3_display_transform EXTRA_LABELS core)
 nereus_add_test(tst_ps3_session fakes/LoopbackTransport.cpp EXTRA_LABELS session)
 nereus_add_test(tst_ps3_two_tone_completion EXTRA_LABELS session)
+nereus_add_test(tst_station_ps3_two_tone_keepalive fakes/LoopbackTransport.cpp CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
 nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
@@ -2066,6 +2067,20 @@ if(TEST tst_device_rate_matcher)
     set_property(TEST tst_device_rate_matcher APPEND PROPERTY ENVIRONMENT
         "QTEST_FUNCTION_TIMEOUT=540000")
 endif()
+# The same matcher's packet writer on a link: clocks that agree, packets
+# that come up to 20 ms late, and the receiver's eight-packet queue behind
+# the writer.  No backlog may stand and no packet may be dropped.
+# Deterministic, two simulated clocks, no device; in its own binary so the
+# drift test above keeps its time.
+nereus_add_test(tst_device_rate_matcher_link)
+# TIMEOUT 300: seventeen 4-minute simulations, one after another, about 2 s
+# each on the Mac (35 s in all).  The drift test above takes six times its
+# Mac time in a loaded Linux container; at that rate this one takes about
+# 180 s, past the 120 s every test starts with.  Each simulation is its own
+# data row, so the per-function watchdog sees about 12 s at most.
+if(TEST tst_device_rate_matcher_link)
+    set_tests_properties(tst_device_rate_matcher_link PROPERTIES TIMEOUT 300)
+endif()
 # Native audio plan Task 3 (R-AUD-03, R-AUD-07, R-AUD-32, V-SW-1): engine
 # keys and labels, the pair model, sample format conversion, the no-device
 # rule and the live device catalogue (its debounce, its own thread, the
@@ -3559,6 +3574,9 @@ target_compile_definitions(tst_tx_applet_binding PRIVATE NEREUS_BUILD_TESTS)
 # unkeys cleanly; a refused press does not spoil the next one.
 nereus_add_test(tst_tx_applet_tune_state)
 target_compile_definitions(tst_tx_applet_tune_state PRIVATE NEREUS_BUILD_TESTS)
+
+# Remote Core indicators seed from existing mirrors and retain authority on resync.
+nereus_add_test(tst_tx_applet_remote_indicators)
 
 # ── Phase 3M-1b (relocated): PhoneCwApplet Mic Gain slider ──────────────────
 # Verifies the model-layer contracts that PhoneCwApplet's Mic Gain slider depends on
@@ -9101,7 +9119,8 @@ nereus_add_test(tst_remote_keying
 # the transmit watchdog's rules and the per-mode starvation action, on an
 # injected clock; and the watchdog on each path that exists, severed with
 # a key on (real time).
-nereus_add_test(tst_remote_tx_watchdog EXTRA_LABELS session)
+# The watchdog's wording check needs only this text table from the GUI.
+nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp
@@ -10023,7 +10042,7 @@ endif()
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
 # side of the transmit verbs (copies, epochs, releases) on its own.
-nereus_add_test(tst_remote_transmit_client EXTRA_LABELS session)
+nereus_add_test(tst_remote_transmit_client CORE_ONLY EXTRA_LABELS session)
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): a remote
 # window keys a real in-process Core (MOX, TUNE, two-tone, the microphone,

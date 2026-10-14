@@ -34,6 +34,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13: export the catalogue's Qt signal addresses from the Windows
+//               Core DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -66,6 +68,7 @@
 
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
+#include "core/NereusCoreExport.h"
 #include "core/RadioDiscovery.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include "models/BandPlan.h"
@@ -86,7 +89,7 @@ namespace NereusSDR {
 
 class RadioModel;
 
-class StationCatalog final : public QObject {
+class NEREUS_CORE_EXPORT StationCatalog final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString json READ json NOTIFY catalogChanged)
     Q_PROPERTY(quint32 revision READ revision NOTIFY catalogChanged)
