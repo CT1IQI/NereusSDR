@@ -451,6 +451,10 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | tests/tst_detector_modes.cpp | Project Files/Source/Console/specHPSDR.cs | 383-415 | port | thetis-samphire | Companion to retired tst_averaging_modes; tests SpectrumWidget detector modes |
 | tests/tst_peak_blob_detector.cpp | Project Files/Source/Console/display.cs | 5453-5508; 5483 | port | thetis-samphire | Task 2.6 — tests PeakBlobDetector: top-N peak selection, decay math (entry.max_dBm -= fallDbPerSec / fps), hold/decay state machine, render call; test code is NereusSDR-original but tests directly ported logic |
 | tests/tst_spectrum_overlays.cpp | Project Files/Source/Console/display.cs; Project Files/Source/Console/console.cs | 2304; 20073; 7061 | port | thetis-samphire | Task 2.3 — tests SpectrumWidget overlay setters (ShowNoiseFloor, ShowBinWidth, ShowMHzOnCursor, PeakValueOverlay) and FFTEngine decimation; display.cs:2304 m_bShowNoiseFloorDBM, console.cs:20073 PeakTextDelay, display.cs lblDisplayBinWidth |
+| src/gui/ImdOverlay.h | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Two-tone peak matching and readout; partial matches extend the existing analytical subset without changing aggregate formulas. Verbatim upstream notice added for the previously exempt derivative. |
+| src/gui/ImdOverlay.cpp | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Peak detection/search/EMA/format implementation; independent product presence and static cached formatting retain source geometry/formulas. |
+| src/gui/ImdMeasurementPresenter.cpp | Project Files/Source/Console/display.cs | 5223 [v2.10.3.15] | port | thetis-samphire | Trigger constant for GUI cached acceptance; search/EMA remain in ImdOverlay. GUI status/freshness policy is NereusSDR-original. |
+| src/gui/ImdMeasurementPresenter.h | Project Files/Source/Console/display.cs | paired implementation trigger at 5223 [v2.10.3.15] | port | thetis-samphire | Original GUI cached-frame API paired with the implementation derivative; exact notice preserved on both siblings. |
 
 ## Files derived from mi0bot/Thetis-HL2
 
@@ -650,8 +654,3 @@ transient lookup, excluded from transport enumeration, AI and GUID registration;
 TX/Tune/TwoTone, VOX enable and PureSignal single/calibration are denied.
 These changes are original adaptation by J.J. Boyd (KG4VCF), AI-assisted via
 OpenAI Codex. Existing source headers, inline comments and constants are retained.
-
-| src/gui/ImdOverlay.h | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Two-tone peak matching and readout; partial matches extend the existing analytical subset without changing aggregate formulas. Verbatim upstream notice added for the previously exempt derivative. |
-| src/gui/ImdOverlay.cpp | Project Files/Source/Console/display.cs | 5217; 5523-5561; 5575-5687; 5730-5767 [v2.10.3.15] | port | thetis-samphire | Peak detection/search/EMA/format implementation; independent product presence and static cached formatting retain source geometry/formulas. |
-| src/gui/ImdMeasurementPresenter.cpp | Project Files/Source/Console/display.cs | 5223 [v2.10.3.15] | port | thetis-samphire | Trigger constant for GUI cached acceptance; search/EMA remain in ImdOverlay. GUI status/freshness policy is NereusSDR-original. |
-| src/gui/ImdMeasurementPresenter.h | Project Files/Source/Console/display.cs | paired implementation trigger at 5223 [v2.10.3.15] | port | thetis-samphire | Original GUI cached-frame API paired with the implementation derivative; exact notice preserved on both siblings. |
