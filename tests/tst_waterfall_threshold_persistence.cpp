@@ -9,9 +9,10 @@
 // runtime AGC state (_RX1waterfallPreviousMinValue) and renders into
 // per-draw locals at display.cs:6575-6594 [v2.10.3.13]. NereusSDR
 // previously collapsed both roles into m_wfLow/HighThreshold, so AGC /
-// Clarity / "Use spectrum min/max" silently overwrote the user's saved
-// values; the next scheduleSettingsSave() debounce persisted the
-// overwrite. These tests verify the Thetis-faithful split.
+// Clarity silently overwrote the user's saved values; the next
+// scheduleSettingsSave() debounce persisted the overwrite. The Display
+// rebuild's Scale mode likewise reads the live spectrum range without
+// overwriting Manual's saved endpoints. These tests verify that split.
 
 #include <QtTest/QtTest>
 #include <QRegularExpression>
@@ -46,19 +47,17 @@ private slots:
     // the floor that is drawn.
     void nfAgcLowTakesTheCalibratedNoiseFloor();
 
-    // "Use spectrum min/max" is Thetis-faithful: the grid-change path
-    // writes the persistent thresholds via setDbmRange(); per-frame
-    // render code never mutates them.
-    void useSpectrumMinMaxOnSetDbmRangeUpdatesPersistentThresholds();
+    // Scale mode reads the live spectrum range while setDbmRange() leaves
+    // Manual's saved endpoints intact.
+    void scaleModeSetDbmRangeUsesLiveRangeAndPreservesManualThresholds();
 
     // When useSpectrumMinMax is OFF, setDbmRange() must not touch the
     // user's waterfall thresholds.
     void useSpectrumMinMaxOffSetDbmRangeLeavesThresholdsAlone();
 
-    // Toggling useSpectrumMinMax on syncs once from the current dB
-    // range (mirrors Thetis console.cs:9098-9101 [v2.10.3.13] called
-    // on the checkbox event via WaterfallUseRX1SpectrumMinMax setter).
-    void enablingUseSpectrumMinMaxSyncsFromCurrentRange();
+    // Toggling Scale mode on uses the current dB range immediately while
+    // preserving the endpoints Manual will restore.
+    void enablingScaleModeUsesCurrentRangeAndPreservesManualThresholds();
 };
 
 // Active getters mirror the user thresholds on construction so the
@@ -198,25 +197,39 @@ void TestWaterfallThresholdPersistence::nfAgcLowTakesTheCalibratedNoiseFloor()
              qPrintable(QString::number(w.wfActiveLowThreshold())));
 }
 
-void TestWaterfallThresholdPersistence::useSpectrumMinMaxOnSetDbmRangeUpdatesPersistentThresholds()
+void TestWaterfallThresholdPersistence::scaleModeSetDbmRangeUsesLiveRangeAndPreservesManualThresholds()
 {
     SpectrumWidget w;
+    // The chooser makes its five modes exclusive. Drive that same state
+    // explicitly: the widget defaults request Clarity and Auto until the
+    // chooser applies Scale.
+    w.setClarityEnabled(false);
+    w.setWfAgcEnabled(false);
+    w.setWaterfallNFAGCEnabled(false);
     w.setWfLowThreshold(-122.0f);
     w.setWfHighThreshold(-62.0f);
     w.setWfUseSpectrumMinMax(true);
 
-    // Mirrors a user dragging the spectrum dB range; Thetis routes
-    // this through setWaterfallGainsIfLinkedToSpectrum at
-    // console.cs:9098-9101 [v2.10.3.13].
+    // Mirrors a user dragging the spectrum dB range while Scale owns the
+    // effective levels.
     w.setDbmRange(-150.0f, -30.0f);
 
-    QCOMPARE(w.wfLowThreshold(),  -150.0f);
-    QCOMPARE(w.wfHighThreshold(), -30.0f);
+    // Scale follows the live range without destroying Manual's saved pair.
+    const std::pair<float, float> effective = w.effectiveWaterfallLevelsForTest();
+    QCOMPARE(effective.first, -150.0f);
+    QCOMPARE(effective.second, -30.0f);
+    QCOMPARE(w.wfLowThreshold(), -122.0f);
+    QCOMPARE(w.wfHighThreshold(), -62.0f);
 }
 
 void TestWaterfallThresholdPersistence::useSpectrumMinMaxOffSetDbmRangeLeavesThresholdsAlone()
 {
     SpectrumWidget w;
+    // Match the chooser's Manual state rather than the widget's requested
+    // Clarity/Auto defaults.
+    w.setClarityEnabled(false);
+    w.setWfAgcEnabled(false);
+    w.setWaterfallNFAGCEnabled(false);
     w.setWfLowThreshold(-122.0f);
     w.setWfHighThreshold(-62.0f);
     w.setWfUseSpectrumMinMax(false);
@@ -225,11 +238,18 @@ void TestWaterfallThresholdPersistence::useSpectrumMinMaxOffSetDbmRangeLeavesThr
 
     QCOMPARE(w.wfLowThreshold(),  -122.0f);
     QCOMPARE(w.wfHighThreshold(), -62.0f);
+    const std::pair<float, float> effective = w.effectiveWaterfallLevelsForTest();
+    QCOMPARE(effective.first, -122.0f);
+    QCOMPARE(effective.second, -62.0f);
 }
 
-void TestWaterfallThresholdPersistence::enablingUseSpectrumMinMaxSyncsFromCurrentRange()
+void TestWaterfallThresholdPersistence::enablingScaleModeUsesCurrentRangeAndPreservesManualThresholds()
 {
     SpectrumWidget w;
+    // Begin in the chooser's Manual state, then select Scale below.
+    w.setClarityEnabled(false);
+    w.setWfAgcEnabled(false);
+    w.setWaterfallNFAGCEnabled(false);
     w.setWfLowThreshold(-122.0f);
     w.setWfHighThreshold(-62.0f);
     w.setWfUseSpectrumMinMax(false);
@@ -239,13 +259,18 @@ void TestWaterfallThresholdPersistence::enablingUseSpectrumMinMaxSyncsFromCurren
     w.setDbmRange(-140.0f, -20.0f);
     QCOMPARE(w.wfLowThreshold(),  -122.0f);
     QCOMPARE(w.wfHighThreshold(), -62.0f);
+    std::pair<float, float> effective = w.effectiveWaterfallLevelsForTest();
+    QCOMPARE(effective.first, -122.0f);
+    QCOMPARE(effective.second, -62.0f);
 
-    // Flipping the flag on must sync once from the current range
-    // (Thetis behavior: checkbox toggle invokes the same property
-    // setter chain that the grid-changed handler does).
+    // Flipping Scale on must use the current range immediately and must not
+    // overwrite the pair Manual restores.
     w.setWfUseSpectrumMinMax(true);
-    QCOMPARE(w.wfLowThreshold(),  -140.0f);
-    QCOMPARE(w.wfHighThreshold(), -20.0f);
+    effective = w.effectiveWaterfallLevelsForTest();
+    QCOMPARE(effective.first, -140.0f);
+    QCOMPARE(effective.second, -20.0f);
+    QCOMPARE(w.wfLowThreshold(), -122.0f);
+    QCOMPARE(w.wfHighThreshold(), -62.0f);
 }
 
 QTEST_MAIN(TestWaterfallThresholdPersistence)
