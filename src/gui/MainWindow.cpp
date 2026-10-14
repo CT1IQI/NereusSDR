@@ -4802,7 +4802,6 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         }
         const QPointer<SliceModel> next(resolve());
         const QPointer<SliceModel> previous(requestOwner->slice);
-        if (next) { requestOwner->hasBoundSlice = true; }
         if (previous != next) {
             requestOwner->slice = next;
             if (previous) { previous->setWidebandExtensionRequested(false); }
@@ -4824,18 +4823,27 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             }
             return;
         }
-        // Before discovery there is no protocol fact to apply. Retain the
-        // restored geometry until currentRadioChanged supplies that fact.
-        if (info.boardType != HPSDRHW::Unknown) {
-            const BoardCapabilities& caps = modelRef->boardCapabilities();
-            const int adc = modelRef->sliceAdcIndex(next->sliceIndex());
-            const int chain = modelRef->sliceChainIndex(next->sliceIndex());
-            const bool available = adc >= 0 && adc < caps.adcCount
-                && adc < BoardCapsTable::widebandAdcsFor(caps, info.protocol)
-                && chain >= 0 && chain < caps.rxFilterChainCount;
-            if (available) { spectrumRef->setWidebandAdcIndex(adc); }
-            spectrumRef->setLocalWidebandAvailable(available);
+        // Discovery and actual stream binding are separate startup stages.
+        // connectToRadioImpl publishes Slice A before opening the stream pool;
+        // a selected object with no ADC yet is unresolved, not unsupported.
+        if (info.boardType == HPSDRHW::Unknown) {
+            next->setWidebandExtensionRequested(false);
+            return;
         }
+        const BoardCapabilities& caps = modelRef->boardCapabilities();
+        const int adc = modelRef->sliceAdcIndex(next->sliceIndex());
+        const int chain = modelRef->sliceChainIndex(next->sliceIndex());
+        const int widebandAdcs = BoardCapsTable::widebandAdcsFor(caps, info.protocol);
+        const bool routingKnown = adc >= 0 && chain >= 0;
+        if (widebandAdcs > 0 && !routingKnown && !requestOwner->hasBoundSlice) {
+            next->setWidebandExtensionRequested(false);
+            return;
+        }
+        if (routingKnown) { requestOwner->hasBoundSlice = true; }
+        const bool available = adc >= 0 && adc < caps.adcCount
+            && adc < widebandAdcs && chain >= 0 && chain < caps.rxFilterChainCount;
+        if (available) { spectrumRef->setWidebandAdcIndex(adc); }
+        spectrumRef->setLocalWidebandAvailable(available);
         if (modelRef && spectrumRef && next && requestOwner->slice == next) {
             next->setWidebandExtensionRequested(spectrumRef->extendedMode());
         }
