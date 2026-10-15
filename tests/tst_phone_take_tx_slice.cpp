@@ -306,14 +306,16 @@ private slots:
         QCOMPARE(ownership->activeFor(phoneId), 0);
         QVERIFY(ownership->isActive(0));
         QVERIFY(!ownership->isActive(2));
-        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
 
-        const bool wire0 =
-            latest(app->received(), QStringLiteral("slice:0"), QStringLiteral("active")).toBool();
-        const bool wire2 =
-            latest(app->received(), QStringLiteral("slice:2"), QStringLiteral("active")).toBool();
-        QVERIFY(wire0);
-        QVERIFY(!wire2);
+        // Each slice's `active` has reached the phone (the create carries
+        // it) before its value is read, so a missing property never passes
+        // as false.
+        const auto wire = [app](const char* key) {
+            return latest(app->received(), QString::fromLatin1(key), QStringLiteral("active"));
+        };
+        QTRY_VERIFY(wire("slice:0").isBool() && wire("slice:2").isBool());
+        QTRY_VERIFY(wire("slice:0").toBool());
+        QTRY_VERIFY(!wire("slice:2").toBool());
         QVERIFY(core.model->sliceById(0)->isActive());
         QVERIFY(!core.model->sliceById(2)->isActive());
     }
@@ -322,8 +324,11 @@ private slots:
     // by its paired key and admitted the same way (saved slice 2 restored,
     // slice 0 adopted). It moves its active slice on each `active` true
     // edge (StationClient applyMirroredValue, applyStationActiveSlice), so
-    // with two flags it lands on whichever arrives last. After admission
-    // the Core sends it one flag, on slice 0, and the window stays there.
+    // with two flags it lands on whichever arrives last. This case guards
+    // the wire the window is sent: before the fix it was sent two flags but
+    // happened to land on slice 0 anyway, from the order they arrived in, so
+    // only the wire check failed without the fix. Where the window lands is
+    // checked too, as the outcome the single flag gives.
     void aDesktopWindowLandsOnTheCoresActiveSlice()
     {
         Core core;
@@ -368,20 +373,23 @@ private slots:
         QCOMPARE(ownership->mark(2).owner, record.id);
 
         QTRY_VERIFY(remote.sliceById(0) != nullptr && remote.sliceById(2) != nullptr);
-        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
-        // What the Core sent the window: one slice marked active. Which of
-        // two flags a window ends on depends on the order they arrive in, so
-        // the wire is checked as well as where the window landed.
-        QVERIFY(latest(app->received(), QStringLiteral("slice:0"), QStringLiteral("active"))
-                    .toBool());
-        QVERIFY(!latest(app->received(), QStringLiteral("slice:2"), QStringLiteral("active"))
-                     .toBool());
-        QVERIFY(remote.activeSlice() != nullptr);
-        QCOMPARE(remote.activeSlice()->sliceIndex(), 0);
+        // What the Core sent the window: one slice marked active. Both
+        // properties have arrived before their values are read.
+        const auto wire = [app](const char* key) {
+            return latest(app->received(), QString::fromLatin1(key), QStringLiteral("active"));
+        };
+        QTRY_VERIFY(wire("slice:0").isBool() && wire("slice:2").isBool());
+        QTRY_VERIFY(wire("slice:0").toBool());
+        QTRY_VERIFY(!wire("slice:2").toBool());
+        QTRY_VERIFY(remote.activeSlice() != nullptr && remote.activeSlice()->sliceIndex() == 0);
         QVERIFY(remote.sliceById(0)->isActive());
         QVERIFY(!remote.sliceById(2)->isActive());
-        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
+        // It stays there: a later change from the Core reaches the window,
+        // and its active slice has not moved.
+        core.model->sliceById(0)->setFrequency(14230000.0);
+        QTRY_COMPARE(remote.sliceById(0)->frequency(), 14230000.0);
         QCOMPARE(remote.activeSlice()->sliceIndex(), 0);
+        QVERIFY(!remote.sliceById(2)->isActive());
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 };

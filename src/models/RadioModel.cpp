@@ -20,8 +20,10 @@
 //   2026-10-14 - One slice marked active per device after every ownership
 //                change (ruling 5.10): adoptUnowned at admission moved a
 //                phone's active slice without re-marking, so its wire
-//                carried active=true on two slices. J.J. Boyd (KG4VCF),
-//                with AI-assisted implementation via Anthropic Claude Code.
+//                carried active=true on two slices. A layout restore
+//                re-marks once after its owners, and a removal that ends
+//                early still re-marks. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -15650,6 +15652,12 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
         if (removalRole == Role::Local) {
             self->m_sliceOwnership->completeRemove(sliceId, originalIncarnation);
             if (!self) { return; }
+            // Ruling 5.10: an early return after the slice left the list
+            // skipped the re-mark below, and completeRemove emits nothing.
+            // The sequence is closed by now (closeRemarkOnExit runs first),
+            // and on the normal path this finds nothing left to change.
+            self->remarkActiveSlicesForOwnership();
+            if (!self) { return; }
         }
         if (self->m_receiveLayoutManaged && persist) { self->scheduleSettingsSave(); }
     });
@@ -26095,6 +26103,14 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     // it when it signs in (ruling 5.2 step 1); an entry with no owner (a
     // manifest from before owners) restores with none, for the first
     // device admitted alone to adopt.
+    // Ruling 5.10: the owners below come back one slice at a time, so the
+    // slices are re-marked once, after the last of them and the order, not
+    // after each (remarkActiveSlicesForOwnership).
+    bool layoutSequenceOpen = true;
+    ++m_activeSliceSequences;
+    const auto closeLayoutSequence = qScopeGuard([self, &layoutSequenceOpen] {
+        if (self && layoutSequenceOpen) { --self->m_activeSliceSequences; }
+    });
     QList<int> order;
     for (const ReceiveSliceState& state : layout.slices) {
         order.append(state.id);
@@ -26123,6 +26139,8 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     }
     m_sliceOwnership->setOrder(order);
     if (!self) { return false; }
+    layoutSequenceOpen = false;
+    --m_activeSliceSequences;
     // Descriptor order is authoritative, so an unchanged active identity can
     // still have a different list position. Publish the final pair together.
     if (!m_activeSlice || !m_slices.contains(m_activeSlice)) {
@@ -26130,6 +26148,9 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     } else {
         emitActiveSliceChanged(m_slices.indexOf(m_activeSlice));
     }
+    if (!self) { return false; }
+    // Ruling 5.10: the one re-mark for the owners and order restored above.
+    remarkActiveSlicesForOwnership();
     if (!self) { return false; }
     {
         const bool previousCommit = m_diversityCommitting;
