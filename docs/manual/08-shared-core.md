@@ -11,7 +11,7 @@ A Core serves multiple paired phones and computers, but receiver capacity is fin
 
 ## Inspect shared administration from a desktop
 
-For a saved Core, open **File > Settings… > Cores > Your Cores**, select it,
+For a saved Core, open **File > Settings... > Cores > Your Cores**, select it,
 and use **Overview**, **Radio** and **Devices**. Inspection does not connect
 this window. Radio/device administration applies only to the Core currently
 connected in this window; disconnected entries show the unavailable reason.
@@ -147,7 +147,7 @@ If a device goes away unexpectedly, its connection row can show it as away/stale
 
 A Core computer with a sound card can play the receive audio through its own speaker, for listening where the Core sits. The **Core speaker** is shared: its volume, mute and device are the Core's, and a change from any desktop window or phone reaches every window and the phone. Each slice's AF level and mute still apply on top of it.
 
-On a desktop connected to a remote Core, open **File > Settings… > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there. In a remote window the **Radio speaker** card's note starts **This is the radio's own speaker, at the Core.** That card sets the radio's speaker output, not the Core computer's sound card.
+On a desktop connected to a remote Core, open **File > Settings... > Audio > Outputs**. The **Core speaker** card sits between **Headphones** and **Radio speaker**. A window that runs the radio itself has no separate Core, so it has no card; **This computer** is the speaker there. In a remote window the **Radio speaker** card's note starts **This is the radio's own speaker, at the Core.** That card sets the radio's speaker output, not the Core computer's sound card.
 
 1. Set **Volume** and, to silence it, tick **Mute Core speaker**. The change shows in every other window and on the phone.
 2. Choose **Device**. **(the Core's default)** follows the Core computer's own default, **(none)** plays nothing, and each sound card plugged into the Core is listed by name. A card plugged in later appears by itself. Open **Device details** for **Driver** (**ALSA, direct** on a Core with no desktop), **Sample rate**, **Channels**, **Buffer size**, **Delay** and **Negotiated**.
@@ -160,6 +160,8 @@ A Core computer that starts into a desktop uses its sound cards for the desktop.
 The controls are greyed with **Connect to the Core to change these.** when the Core's settings are not available to this window, and an older Core that cannot set its speaker greys them with **This Core can't set its speaker from here. Update the Core.**
 
 On the phone the same controls are in the **Sound** panel; see [Operate from an iPhone](07-iphone-operate.md#route-receive-audio-on-the-phone). The phone has no card when the Core is not playing on a sound card.
+
+The antenna rotor is also the Core's, and it is shared like the Core speaker. Set it up once under **File > Settings... > CAT & Network > Rotor**; the **Rotor** applet and a **Rotator** meter item in every window connected to that Core show and turn the same rotor. The phone has its own rotor page for the same Core rotor.
 
 ## Release, stop listening, or disconnect
 

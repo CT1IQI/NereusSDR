@@ -6,35 +6,39 @@ Use this chapter to locate common commands and distinguish which part of the sta
 
 | Task | Desktop path | iPhone or iPad path | Scope |
 | --- | --- | --- | --- |
-| Select speakers and headphones | **Setup > Audio > Outputs**; **PC** in the header (right-click for the speakers menu) | **Sound** | This computer / this phone |
-| Radio speaker and Core speaker | **Setup > Audio > Outputs**; **RADIO** in the header | **Sound** | Radio and Core; shared with every window and the phone |
-| Select the microphone | **Setup > Audio > Microphone** | **Setup > Audio > On this phone** | This computer / this phone |
-| Configure VAX audio | **Tools > VAX Audio...** or **Setup > Audio > Digital modes** | **Tools > VAX Audio** | Desktop: this computer, including remote windows. Phone: Core computer. |
-| Configure TCI audio streams | **Setup > Audio > Digital modes** | **Tools > TCI Server** for Core server options | Desktop audio setup is this computer; iOS server is Core |
-| Enable TCI server | **Tools > TCI Server...** or **Setup > CAT & Network > TCI Server** | **Tools > TCI Server** | This computer on desktop; Core on phone |
+| Select speakers and headphones | **File > Settings... > Audio > Outputs**; **PC** in the header (right-click for the speakers menu) | **Sound** | This computer / this phone |
+| Radio speaker and Core speaker | **File > Settings... > Audio > Outputs**; **RADIO** in the header | **Sound** | Radio and Core; shared with every window and the phone |
+| Select the microphone | **File > Settings... > Audio > Microphone** | **Setup > Audio > On this phone** | This computer / this phone |
+| Configure VAX audio | **Tools > VAX Audio...** or **File > Settings... > Audio > Digital modes** | **Tools > VAX Audio** | Desktop: this computer, including remote windows. Phone: Core computer. |
+| Configure TCI audio streams | **File > Settings... > Audio > Digital modes** | **Tools > TCI Server** for Core server options | Desktop audio setup is this computer; iOS server is Core |
+| Enable TCI server | **Tools > TCI Server...** or **File > Settings... > CAT & Network > TCI Server** | **Tools > TCI Server** | This computer on desktop; Core on phone |
 | Spot sources and filters | **Tools > Spot Hub...** | **Tools > Spot Hub** | Core station data |
 | FreeDV station list | **Tools > FreeDV Reporter...** | **Tools > FreeDV Reporter** | Core station service |
 | Link and audio diagnostics | **Tools > Network Diagnostics...** | **Tools > Connection and performance** | Desktop network view / phone and Core measurements |
 | PureSignal status and controls | **Tools > PureSignal...** | **Tools > PureSignal** | Radio/Core; requires compatible capability |
+| Control NereusSDR from a CAT program | **Tools > CAT Control...**, **File > Settings... > CAT & Network > Serial Ports / TCP/IP CAT / CAT Options / CAT PTT**; **CAT** applet | No phone page | CAT channels and their transmit rules; see [chapter 9](09-tools.md#control-nereussdr-from-cat-programs) |
+| Rotor setup and control | **File > Settings... > CAT & Network > Rotor**; **Rotor** applet (**TURN TO**, **STOP**, **PRESETS**); **Turn beam to <call>** on a spot's right-click menu | Rotor page | The Core's rotor, shared with every window and the phone |
+| Turn the beam when tuning to a spot | **File > Settings... > General > Options > Turn the beam when I tune to a spot** (off by default) | None | This computer |
+| Workspace profiles and arranging | **Containers > Arrange Workspace**, **Containers > Manage Workspace Profiles…**; the profile rail; Ctrl+1 to Ctrl+9 | No desktop workspace on phone | Desktop layout on this computer; see [chapter 2](02-desktop-window.md#workspace-profiles) |
 | Support diagnostics | **Tools > Support Bundle...** | **Tools > Support Bundle** | Bundle identifies phone and Core contents |
-| Display and appearance | **Setup > Display**; **Setup > Appearance** | **Setup > Display** | Page labels identify phone/Core scope |
-| Inspect saved Core, retain addresses and rename | **Setup > Cores > Your Cores** | Saved Core row actions; **Setup > Devices** when connected | Desktop inspection is local; accepted rename changes the shared Core. |
-| Core audio quality and media recovery | **Setup > Cores > Audio with the Core** | **Sound**, **Setup > Data use** | Current window/device preference; read actual format/health. |
+| Display and appearance | **File > Settings... > Display**; **File > Settings... > Appearance** | **Setup > Display** | Page labels identify phone/Core scope |
+| Inspect saved Core, retain addresses and rename | **File > Settings... > Cores > Your Cores** | Saved Core row actions; **Setup > Devices** when connected | Desktop inspection is local; accepted rename changes the shared Core. |
+| Core audio quality and media recovery | **File > Settings... > Cores > Audio with the Core** | **Sound**, **Setup > Data use** | Current window/device preference; read actual format/health. |
 | Canvas, meter sources and individual controls | **Containers > New / Edit Container** | No desktop Canvas editor on phone | Desktop arrangement; live controls retain their ordinary receiver/TX authority. |
-| Core service and pairing | **Setup > CAT & Network > Remote Access** | Welcome/connect flow; **Setup > Devices** for paired-device administration | Service on this computer; device registry on Core |
+| Core service and pairing | **File > Settings... > CAT & Network > Remote Access** | Welcome/connect flow; **Setup > Devices** for paired-device administration | Service on this computer; device registry on Core |
 | Radio selection and saved targets | **Radio > Connections…** (or **Manage Radios…** in a radio-panel window) | **Radio > More > Manage Radios** for the radio the connected Core runs; **Your Cores** list for saved connection targets | Choosing a different radio changes the Core's shared radio and reconnects devices; this is not the same as choosing a saved Core target. |
-| Microphone source and route | **Setup > Audio > Microphone** | Main **TX**, **Modes** transmit section; **Setup > Audio > On this phone** for the phone microphone | Mixed input/device and Core transmit settings |
-| TX/mic profiles | **File > Profiles > TX Profiles... / Mic Profiles...**, **Setup > Audio > TX Profile** | Offered Core-described profile settings | Core transmit configuration |
-| Filter bank | **Setup > DSP > Filter Presets** | Offered Core-described Setup page; quick presets in Modes | Shared Core bank; choosing a preset applies to one slice |
-| Advanced receive DSP | **Setup > DSP > AGC/ALC, NR/ANF, NB/SNB, CW, TNF, Options** | **Modes**, then offered Core Setup pages | Core receive processing; some pages include separate TX groups |
-| Antennas and radio hardware | **Setup > Hardware > Hardware Config** | **Radio**, **Setup > Hardware** as offered | Physical radio/front end, often shared by several slices |
-| PA calibration and readings | **Setup > PA > PA Gain / Watt Meter / PA Values** | Offered Core Setup pages | Radio/Core; compatible PA profile required |
-| Voice processor, expander, VOX | **Setup > Transmit > Speech Processor / DEXP/VOX**; **Setup > DSP > CFC** | Offered Core controls, Modes transmit section | Core TX, subject to transmit-settings permission |
-| External amplifiers and tuners | **Setup > CAT & Network > 4O3A / RF-Kit**, accessory applets | **Radio** accessory pages, offered Core Setup | Core station accessories |
-| Waterfall history and 3D | Band display; **Setup > Display > Waterfall Defaults / 3D View** | Main Display; **Setup > Display > On this phone** | Local picture/history; Core capability governs feeds |
+| Microphone source and route | **File > Settings... > Audio > Microphone** | Main **TX**, **Modes** transmit section; **Setup > Audio > On this phone** for the phone microphone | Mixed input/device and Core transmit settings |
+| TX/mic profiles | **File > Profiles > TX Profiles... / Mic Profiles...**, **File > Settings... > Audio > TX Profile** | Offered Core-described profile settings | Core transmit configuration |
+| Filter bank | **File > Settings... > DSP > Filter Presets** | Offered Core-described Setup page; quick presets in Modes | Shared Core bank; choosing a preset applies to one slice |
+| Advanced receive DSP | **File > Settings... > DSP > AGC/ALC, NR/ANF, NB/SNB, CW, TNF, Options** | **Modes**, then offered Core Setup pages | Core receive processing; some pages include separate TX groups |
+| Antennas and radio hardware | **File > Settings... > Hardware > Hardware Config** | **Radio**, **Setup > Hardware** as offered | Physical radio/front end, often shared by several slices |
+| PA calibration and readings | **File > Settings... > PA > PA Gain / Watt Meter / PA Values** | Offered Core Setup pages | Radio/Core; compatible PA profile required |
+| Voice processor, expander, VOX | **File > Settings... > Transmit > Speech Processor / DEXP/VOX**; **File > Settings... > DSP > CFC** | Offered Core controls, Modes transmit section | Core TX, subject to transmit-settings permission |
+| External amplifiers and tuners | **File > Settings... > CAT & Network > 4O3A / RF-Kit**, accessory applets | **Radio** accessory pages, offered Core Setup | Core station accessories |
+| Waterfall history and 3D | Band display; **File > Settings... > Display > Waterfall Defaults / 3D View** | Main Display; **Setup > Display > On this phone** | Local picture/history; Core capability governs feeds |
 | Meter containers | **Containers > New Container... / Edit Container** | No desktop container designer on phone | Desktop layout and item sources |
-| Settings validation and backup | **Setup > Diagnostics > Settings Validation / Export / Import** | Offered Core hygiene controls; device-key backup in Devices | Operation-dependent scope, explained before confirmation |
-| Logs | **Setup > Diagnostics > Logs**, Support dialog | **Setup > Diagnostics > Logs**; Support Bundle | Desktop/phone view; Core categories are shared |
+| Settings validation and backup | **File > Settings... > Diagnostics > Settings Validation / Export / Import** | Offered Core hygiene controls; device-key backup in Devices | Operation-dependent scope, explained before confirmation |
+| Logs | **File > Settings... > Diagnostics > Logs**, Support dialog | **Setup > Diagnostics > Logs**; Support Bundle | Desktop/phone view; Core categories are shared |
 
 ## iPhone and iPad operator procedures
 
@@ -83,7 +87,7 @@ until that readback is ready.
 | **Display** | Spectrum Defaults; Spectrum Peaks; Waterfall Defaults; Grid & Scales; Multimeter; TX Display; 3D View. | [Display and layout](10-customize.md). |
 | **Transmit** | Power; Speech Processor; DEXP/VOX. | [Transmit](05-transmit.md), [voice processing](14-voice-profiles.md). TX Profile is under Audio. |
 | **Appearance** | Colors & Theme; Meter Styles. | [Display and layout](10-customize.md). |
-| **CAT & Network** | TCI Server when built; 4O3A; Remote Access; RF-Kit. | [Digital routing](09-tools.md), [phone connection](06-iphone-connect.md), [accessories](19-amplifiers-tuners.md). The category name does not imply implemented serial CAT. |
+| **CAT & Network** | Serial Ports; TCI Server when built; 4O3A; Remote Access; RF-Kit; Rotor; TCP/IP CAT; CAT Options; CAT PTT. | [CAT and digital routing](09-tools.md), [phone connection](06-iphone-connect.md), [accessories](19-amplifiers-tuners.md), [shared rotor](08-shared-core.md). |
 | **Test** | Two-Tone IMD, with transmit/radio gates. | [PureSignal](18-puresignal-diversity.md). |
 | **Diagnostics** | Radio Status; Connection Quality; Settings Validation; Export / Import; Logs. | [Troubleshooting and support](11-troubleshooting.md). |
 
@@ -104,8 +108,8 @@ sessions, Data use, PTT buttons, Devices, Logs and About pages are covered in
 | **Band** | Choose available HF/GEN/WWV band targets. |
 | **Mode** | Set active slice's demodulation. FM availability here is receive support, not FM transmit. |
 | **DSP** | Quick NR/NB/ANF/SNB/APF/AGC/TNF actions for the selected receiver or stated master function. |
-| **Containers** | Applet visibility, container creation/editing and default-layout reset. |
-| **Tools** | VAX/TCI when built, Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
+| **Containers** | Applet visibility, container creation/editing, default-layout reset, Arrange Workspace, Align to 8 px Grid, Manage Workspace Profiles… and the Hidden list. |
+| **Tools** | VAX/TCI when built, CAT Control..., TX Equalizer..., Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
 | **Help** | What's New, About and platform-specific diagnostics. Integrated Getting Started/Help/Data Modes pages remain unbuilt. |
 
 The **Containers** menu's **Applets** section and the panel **☰** menu show
@@ -142,13 +146,15 @@ confirmation and an accepted readback are different states.
 | **Ctrl+,** | Open **Settings...** |
 | **Ctrl+K** | Connect to the remembered target when actionable. |
 | **Ctrl+Shift+K** | Disconnect. |
-| **Ctrl+L** | Open **Pan Layout...** |
+| **Ctrl+L** | Open **Pan Layout…** |
 | **Ctrl+R** | Add a slice |
 | **Ctrl+Shift+S** | Open **Spot Hub...** |
 | **Ctrl+Shift+R** | Open **FreeDV Reporter...** |
 | **Ctrl+Shift+D** | Open **Diversity...** |
 | **Ctrl+Shift+X** | Clear all spots. |
 | **Ctrl+Shift+N** | Toggle TNF master processing. |
+| **Ctrl+Shift+A** | Arrange Workspace (on and off). |
+| **Ctrl+1** to **Ctrl+9** | Switch to the first to ninth workspace profile. |
 | **Ctrl+Q** | Quit NereusSDR |
 
 These actions are present in the desktop menus of the source build covered by this draft. The current build has no shortcut-remapping page. macOS may display the platform's Command modifier in place of Ctrl; use the shortcut shown in the menu.
@@ -184,7 +190,7 @@ The operator-facing exclusions below explain common missing controls.
 
 | Missing/unimplemented surface | Supported alternative or boundary |
 | --- | --- |
-| Serial/TCP CAT, MIDI and their status/tool pages. | Use supported TCI where suitable; it is its own interface and build dependency. |
+| MIDI and its status/tool pages. | Use CAT or supported TCI where suitable; each is its own interface. |
 | CWX, Phone/CW keyer page, CW keyer settings. | CW receive mode/filter/APF controls remain separately usable. Do not infer a working software keyer from CW modes. |
 | Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
 | FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page. | FM receive/squelch remain; do not plan repeater transmission with these shells. |
@@ -206,7 +212,7 @@ The operator-facing exclusions below explain common missing controls.
 
 Capability-held features such as PureSignal, diversity, PA profiles, specific
 antenna controls and neural noise processors require their compatible hardware,
-Core or installed assets. TCI/Client Chain availability also depends on the
+Core or installed assets. TCI and TCI Clients availability also depends on the
 desktop build. Those are different from the explicit unbuilt surfaces above.
 
 ## Abbreviations used on operating controls

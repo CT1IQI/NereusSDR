@@ -14,7 +14,7 @@ Before connecting, power the radio and attach it to the network. A local desktop
 
 1. Open **Radio > Connections…**. This opens the **Connections** picker. In a normal local window, its **This computer's Core** row means that the local Core is selected as the operating context; it is not itself a radio. Select a radio under **Radios on this network**. If the list is stale, press **Scan** and wait for discovery to refresh.
 2. Select the radio row and press **Connect**. If the model or address is not discovered, use **Add Radio…**, enter the radio address and model requested by the editor, save it, then select the saved row and connect. Check the address and model against the radio/Core information you have; a saved row is only a target record, not proof that the endpoint is reachable.
-3. Read **Current connection** in the picker. It should identify the connected radio and say the window is connected using this computer's Core. Close the picker and wait for the panadapter trace to update. Open **RX** or select the active VFO's audio controls and unmute a suitable output; a moving spectrum alone confirms data, not that the selected speaker is audible.
+3. Read **Current connection** in the picker. For a radio on this computer's Core it reads **Connected using this computer's Core**, followed by the radio's IP address and port; it does not show the radio's name, so confirm the radio from the address. Close the picker and wait for the panadapter trace to update. Open **RX** or select the active VFO's audio controls and unmute a suitable output; a moving spectrum alone confirms data, not that the selected speaker is audible.
 
 Some desktop windows present **Connect to Radio** directly instead of the full picker. In that dialog select a row under **Discovered Radios**, use **↻ Scan** to refresh, or choose **Add Manually...** to enter a target, then press **Connect**. The dialog's own **Connected** state is the readback. Follow the labels actually displayed by the window.
 
@@ -26,11 +26,11 @@ Use this route when another computer owns the radio connection and DSP. In **Rad
 
 After pairing, select that Core and press **Connect**. Confirm its name and connection state in **Current connection** before operating; the radio is remote through that Core. Later, **Radio > Connect** in a dedicated remote window reconnects the window's Core target. Reopen **Connections…** when choosing among saved targets. **Radio > Disconnect** leaves the Core session. A connection attempt can fail even when the target is saved: verify that the Core is online, the address/path is current, and that the Core has remote access enabled. Retry from the picker after correcting reachability rather than repeatedly changing the radio's saved identity.
 
-In a dedicated remote window that retains **Radio > Manage Radios…**, that command can open the **This Core** radio-management page. **Change radio…**, **Edit radio…**, and **Forget radio** there affect the radio configured on that Core, rather than this computer's local radio list. A change to the radio attached to a shared Core changes the station endpoint for its connected operators. The action can be held while transmitting, while a Core change is busy, or when the Core does not offer that operation; read the reason displayed by the page and resolve that condition first. Reconnect the window when the page says a Core radio change requires it.
+In a dedicated remote window that retains **Radio > Manage Radios…**, that command can open the **This Core** radio-management page (also under **File > Settings... > General > This Core**). Its **Change radio** section lists the radios the Core can see; **Use this radio**, **Scan again** and **Forget radio** act on the radio configured on that Core, rather than this computer's local radio list, and the **Model:** box sets the model the Core runs the selected radio as. The **Radio** menu carries the same three actions as **Change radio…**, **Edit radio…** and **Forget radio**. In a window that runs its own radio they are greyed with the reason **This computer runs its own radio. Change it in Radio > Connections.**; change that radio there instead. A change to the radio attached to a shared Core changes the station endpoint for its connected operators. The action can be held while transmitting, while a Core change is busy, or when the Core does not offer that operation; read the reason displayed by the page and resolve that condition first. Reconnect the window when the page says a Core radio change requires it.
 
 ## Inspect a saved Core and the actual connection path
 
-Open **File > Settings… > Cores > Your Cores**, or select a saved Core in
+Open **File > Settings... > Cores > Your Cores**, or select a saved Core in
 **Connections** and click **Manage…**. This is the Core Settings area. Selecting
 an entry for inspection does not connect this window or change its target.
 The selected Core has **Overview**, **Addresses**, **Radio** and **Devices** tabs.
@@ -97,15 +97,15 @@ second rename merely because the saved label has not caught up.
 
 ## Start a Core service on this computer
 
-To host a local radio for phone/tablet clients or remote desktop clients, connect this desktop to the local radio first, then open **File > Settings… > CAT & Network > Remote Access**. Under **Core on this computer**, enable **Run a Core on this computer**. The **Core** section reports the Core name and reachability. **Keep it running when NereusSDR is closed** and **Start it with the computer** control the service lifecycle beyond this application session; enable them only when that persistent behavior is intended. The **Connections…** button on this page only opens the target picker. It does not enable the Core.
+To host a local radio for phone/tablet clients or remote desktop clients, connect this desktop to the local radio first, then open **File > Settings... > CAT & Network > Remote Access**. Under **Core on this computer**, enable **Run a Core on this computer**. The **Core** section reports the Core name and reachability. **Keep it running when NereusSDR is closed** and **Start it with the computer** control the service lifecycle beyond this application session; enable them only when that persistent behavior is intended. The **Connections…** button on this page only opens the target picker. It does not enable the Core.
 
 Use **Rename** to give the Core a recognizable station name. For phone enrollment, use **Add a device** or provide the current pairing code shown on the page. Codes rotate and should be read from the current Core page. **Paired devices** lists enrolled devices; **Connected now** reports active sessions. The key-backup section gives its own file location and **I've backed it up** acknowledgement. Follow the displayed backup instruction and store that Core key safely: ordinary desktop settings export is not a substitute for a Core key backup. If the Core controls are disabled, the page states why, for example that no local radio is connected, a Core change is in progress, or the station is transmitting. See [Core sharing and device management](08-shared-core.md) for pairing, ownership, and revocation procedures.
 
 ## Choose this computer's receive and transmit audio routes
 
-Open **File > Settings… > Audio > Outputs**. The **Sound system** line at the top names what this computer plays through: **Core Audio** on a Mac, **Windows audio (WASAPI)** on Windows (with **ASIO** and its driver named when one is in use), and **PipeWire** or **PulseAudio** on Linux. If neither is running on Linux it reads **None found. Start PipeWire or PulseAudio, then click Rescan devices.** If a card uses an older driver, the line adds **Older drivers in use:** and their names.
+Open **File > Settings... > Audio > Outputs**. The **Sound system** line at the top names what this computer plays through: **Core Audio** on a Mac; **Windows audio (WASAPI)** on Windows, which becomes **Windows audio (WASAPI) and ASIO (<driver>)** when an ASIO driver is in use; and on Linux **PipeWire. NereusSDR talks to it directly.** or, when PipeWire was not found, **PulseAudio. PipeWire was not found, so NereusSDR talks to PulseAudio directly.** If neither is running on Linux it reads **None found. Start PipeWire or PulseAudio, then click Rescan devices.** If a card uses an older driver, the line adds **Older drivers in use:** and their names.
 
-The page has a card for each output. **This computer** is the speakers: set **Volume**, **Mute** and **Device** here. It is the same control as **PC** in the header. **Headphones** is a separate destination; tick **Enabled** to use it. The PC volume does not change the headphones. **Radio speaker** is the radio's own speaker output. In a window connected to a remote Core a **Core speaker** card sits between them; see [the Core speaker](08-shared-core.md#play-the-core-speaker). These are this computer's output routes. They do not choose a radio input or change another connected device's output.
+The page has a card for each output. **This computer** is the speakers: set **Volume**, **Mute** and **Device** here. It is the same control as **PC** in the header. **Headphones** is a separate destination; tick **Enabled** to use it. The PC volume does not change the headphones. **Radio speaker** is the radio's own speaker output: its note reads **Same control as RADIO in the header.** and it adds a **Speaker amplifier:** choice of **Normal**, **Off while transmitting** or **Always off**, which is greyed with its reason when the radio has no speaker amplifier to switch. In a window connected to a remote Core a **Core speaker** card sits between them; see [the Core speaker](08-shared-core.md#play-the-core-speaker). These are this computer's output routes. They do not choose a radio input or change another connected device's output.
 
 [![Desktop Outputs page with the Sound system line and the This computer, Headphones and Radio speaker cards](images/desktop-audio-outputs.png)](images/desktop-audio-outputs.png)
 
@@ -113,7 +113,7 @@ The page has a card for each output. **This computer** is the speakers: set **Vo
 
 ### Pick the driver, then the device
 
-Open **Device details** on a card and read **Driver**. It lists only what exists on this computer, and a choice that does not apply is greyed with its reason when you point at it.
+On each card, **Driver** sits directly above **Device** and is always showing. **Device details**, below them, holds the sample rate, bit depth, channels, buffer size, **Delay** and **Negotiated**. **Driver** lists only what exists on this computer, and a choice that does not apply is greyed with its reason when you point at it.
 
 | System | Driver list |
 | --- | --- |
@@ -149,7 +149,7 @@ NereusSDR uses one ASIO driver at a time. If you pick a pair on a second driver,
 
 ### Choose the microphone
 
-Computer playback and microphone capture are separate from the radio's speaker output. Open **File > Settings… > Audio > Microphone**, choose **PC Mic**, and set the **PC microphone** card: **Driver**, **Device** and **Mic is on:** **Left**, **Right** or **Both**, which is greyed with its reason when the mic is off or has one channel. The **Delay** line reads **Now N ms from <device> to the radio**. The page shows capture status and **Retry microphone** if the stream failed. See [Set up and transmit](05-transmit.md) for the mic test, gain, TX ownership and keying sequence.
+Computer playback and microphone capture are separate from the radio's speaker output. Open **File > Settings... > Audio > Microphone**, choose **PC Mic**, and set the **PC microphone** card: **Driver**, **Device** and **Mic is on:** **Left**, **Right** or **Both**, which is greyed with its reason when the mic is off or has one channel. The **Delay** line reads **Now N ms from <device> to the radio**. The page shows capture status and **Retry microphone** if the stream failed. See [Set up and transmit](05-transmit.md) for the mic test, gain, TX ownership and keying sequence.
 
 A microphone that is missing or held by another program never switches to another mic. The card says **<name> is not connected. The mic stays silent until it comes back; NereusSDR never switches to another mic on its own.** (or **is in use by another program**), and capture resumes by itself when the device returns. The TX applet's badge reads **PC mic not connected** or **PC mic in use by another program** in amber.
 
@@ -157,12 +157,12 @@ A Bluetooth headset switches to phone-call quality, for listening too, while it 
 
 ### Choose cables for digital modes
 
-Open **File > Settings… > Audio > Digital modes**. The **VAX** part has a card for each of **VAX 1** to **VAX 4**.
+Open **File > Settings... > Audio > Digital modes**. The **VAX** part has a card for each of **VAX 1** to **VAX 4**.
 
 - **Mac and Linux:** each channel is made for you and other programs (WSJT-X, fldigi and so on) see an audio device named **NereusSDR VAX 1** to **4**. No virtual cable is needed. If the Mac driver did not load, the page says **The NereusSDR VAX driver did not load. Allow it in System Settings > Privacy & Security or reinstall NereusSDR, then restart NereusSDR.**
 - **Windows:** each channel uses a virtual audio cable you install (VB-CABLE, Voicemeeter or VAC). Pick one cable per channel in **Device**, under **Virtual cables**, then turn the channel **On**. WSJT-X and others use the other end of that cable. With no cable the page says **No virtual cable found. Install one, then click Rescan.** and **Device** reads **(pick a cable)** with **Pick a cable first.** on the card. A cable already used by another channel asks **Use this cable here?** before it moves. ASIO pairs are listed under their driver's name. A pair the radio's speakers or headphones use is greyed with **Radio audio and digital-mode audio never share a pair.** and an ASIO pair carries the note **Most digital-mode apps cannot open ASIO, so pass this pair on in the ASIO app's own mixer (a Voicemeeter strip, for example).**
 
-**Rescan** at the foot of the VAX list looks again for cables. **Detected virtual cables** names what was found. If NereusSDR notices a new cable the first-run window **Virtual cables detected** offers **Apply suggested**, **Customize…** or **Skip**, and **Rescan now** under **Already have one?** after you install one.
+**Rescan** at the foot of the VAX list looks again for cables. **Detected virtual cables** names what was found. On Windows the first-run window **Set up VAX channels** appears in one of two forms. When cables are found it offers **Apply suggested**, **Customize…** or **Skip**. When none are found it offers **Why do I need this?** and **Continue without VAX**, and an **Already have one?** card with **Rescan now** to use after you install one. If NereusSDR later notices a new cable, the window **Virtual cables detected** offers **Skip for now** and **Apply to VAX N** (or **Apply to VAX 1 & 2** when two cables are new); it falls back to **Apply suggested** when nothing can be bound.
 
 [![Desktop Digital modes page with the VAX 1 to 4 cards and the TCI audio settings](images/desktop-modes-audio.png)](images/desktop-modes-audio.png)
 
@@ -170,11 +170,11 @@ Open **File > Settings… > Audio > Digital modes**. The **VAX** part has a card
 
 **Used by:** reads **An app is reading this channel** or **No app is reading this channel** where the system reports it. See [Digital audio and external applications](09-tools.md) for routing a slice to a channel.
 
-If Linux audio will not open, **Help > Diagnose audio backend** is the available Linux-specific diagnostic. It reports backend information and provides a starting point for checking PipeWire or PulseAudio selection; it is not a general connection test. For broader link diagnosis, use **Tools > Network Diagnostics** after the radio or Core target has been selected.
+If Linux audio will not open, **Help > Diagnose audio backend…** (present only on Linux) is the available Linux-specific diagnostic. It reports backend information and provides a starting point for checking PipeWire or PulseAudio selection; it is not a general connection test. For broader link diagnosis, use **Tools > Network Diagnostics...** after the radio or Core target has been selected.
 
 ## Choose audio quality for this window's Core connection
 
-Open **File > Settings… > Cores > Audio with the Core**, or use the matching
+Open **File > Settings... > Cores > Audio with the Core**, or use the matching
 button in **Your Cores > Overview**. Check the heading naming this window's
 Core; inspecting another saved Core does not redirect this page.
 
@@ -198,7 +198,7 @@ Core; inspecting another saved Core does not redirect this page.
 ## Choose whether a saved target connects at startup
 
 After successfully saving/connecting the intended target, open **File >
-Settings… > General > Startup & Preferences** and set **Auto-connect to last
+Settings... > General > Startup & Preferences** and set **Auto-connect to last
 radio**. Read its tooltip to confirm which target it names. In a local window
 it saves the last radio's launch choice; in a dedicated remote window it saves
 the selected Core target's choice on this computer. It does not start a Core
