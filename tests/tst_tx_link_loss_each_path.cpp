@@ -70,6 +70,11 @@
 //               key through the same hold; the cut's catch-up and the
 //               watchdog stop once in either order. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: review fix wave: a release read after the cut's post is a
+//               normal end, not a lost link; the cut's handling waits one
+//               turn, so the order tests wait for it; why the feeder may
+//               call the window's sendTx off its thread. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -733,6 +738,15 @@ private slots:
 
         // Sequences above anything the window's own keepalives reach in this
         // test, so the watchdog counts the fed ones when main runs again.
+        // The feeder calls the window's sendTx off the transport's own
+        // thread. That is safe here: sendTx only reads the transport's
+        // members, and nothing writes them while the feeder runs (the
+        // transport neither starts nor stops before the feeder is joined),
+        // and the libdatachannel calls it makes are safe from any thread
+        // (libdatachannel v0.24.5: DataChannel::isOpen reads atomics,
+        // impl/datachannel.cpp:149; bufferedAmount is atomic,
+        // impl/channel.hpp:43; DataChannel::outgoing sends under the
+        // channel's shared lock, impl/datachannel.cpp:181-184).
         std::atomic<bool> feeding{true};
         std::atomic<int> fed{0};
         std::thread feeder([window, keyEpoch, &feeding, &fed]() {
@@ -795,7 +809,8 @@ private slots:
         h.station.transmitCutLine()->cut();
         QVERIFY(rig.conn.transmitCut());
         h.server.onTransmitCutOffMain(mediaEpoch, h.server.txCutGuard()->armSerial(), 450);
-        QCOMPARE(tripped.count(), 1);
+        // Its handling runs one event-loop turn later.
+        QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 3000);
         QVERIFY(!tripOf(tripped).linkClosed);
         QVERIFY(!h.server.txWatchdog()->isWatching(device));
         QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
@@ -843,6 +858,74 @@ private slots:
         QCOMPARE(stopped.first().at(0).toString(), kStopSentence);
         QCOMPARE(h.client.transmitState()->stopSerial(), quint32(1));
         QCOMPARE(h.client.transmitState()->stopReason(), QStringLiteral("linkLost"));
+    }
+
+    // The window releases while the Core's main thread is held: its
+    // keepalives stop with the release, which waits on the session link
+    // (only the Core's main thread reads it), so the guard cuts while main
+    // is held, as it must for RF. The cut's post runs before the Core
+    // reads the release; its handling waits one turn, reads the release
+    // first, and records nothing: one MOX-off edge, no link-lost stop, the
+    // window never told linkLost, VOX untouched, the connection's cut
+    // cleared, and the next key reaches the connection.
+    void aReleaseReadAfterTheCutIsNotALostLink()
+    {
+        CutRig rig;
+        QVERIFY(rig.keyOnTheTxChannel());
+        Test::RemoteAudioSessionHarness& h = rig.h;
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
+        QSignalSpy moxSpy(h.station.moxController(), &MoxController::moxStateChanged);
+        QSignalSpy voxSpy(&h.server, &StationServer::voxArmedByChanged);
+        const bool voxBefore = h.station.transmitModel().voxEnabled();
+        const quint32 stopSerialBefore = h.client.transmitState()->stopSerial();
+        const std::size_t mark = rig.conn.count();
+
+        // The release leaves the window and waits on the link, as it does
+        // behind a stalled Core's socket.
+        windowEnd->setHoldsOutgoing(true);
+        h.remote.setMoxFromButton(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        // Before the main thread runs anything again.
+        const bool cutDuringHold = rig.conn.transmitCut();
+        const std::vector<RecordingConnection::Entry> during = rig.conn.since(mark);
+        // The release reaches the Core behind the cut's post.
+        windowEnd->setHoldsOutgoing(false);
+
+        QVERIFY2(cutDuringHold, "the guard did not cut while main was held");
+        QVERIFY(hasEntry(during, QStringLiteral("MOX off")));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox()
+                                     && h.station.moxController()->state() == MoxState::Rx,
+                                 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!rig.conn.transmitCut(), 3000);
+        QTRY_VERIFY(!h.client.transmitState()->keyed());
+
+        // A second later: nothing recorded as a lost link.
+        QTest::qWait(1000);
+        QCOMPARE(tripped.count(), 0);
+        QCOMPARE(stopped.count(), 0);
+        int moxOffEdges = 0;
+        for (const QList<QVariant>& args : moxSpy) {
+            QCOMPARE(args.at(0).toBool(), false);
+            ++moxOffEdges;
+        }
+        QCOMPARE(moxOffEdges, 1);
+        QCOMPARE(h.client.transmitState()->stopSerial(), stopSerialBefore);
+        QVERIFY(h.client.transmitState()->stopReason() != QLatin1String("linkLost"));
+        QCOMPARE(voxSpy.count(), 0);
+        QCOMPARE(h.station.transmitModel().voxEnabled(), voxBefore);
+        QVERIFY(!rig.conn.transmitCut());
+
+        // The next key reaches the connection.
+        const std::size_t beforeKey = rig.conn.count();
+        h.remote.setMoxFromButton(true);
+        QTRY_VERIFY_WITH_TIMEOUT(hasEntry(rig.conn.since(beforeKey), QStringLiteral("MOX on")),
+                                 5000);
+        QVERIFY(h.station.moxController()->isMox());
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
     }
 
     // ---- The Part E paths --------------------------------------------------

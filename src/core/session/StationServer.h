@@ -556,6 +556,10 @@
 //               the cut guard, its receipt hook, onTransmitCutOffMain
 //               and mediaEpochOfDevice. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-15: review fix wave: onTransmitCutOffMain hands its work to
+//               finishTransmitCutOnMain one event-loop turn later, so a
+//               release already on its way is read first. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1555,11 +1559,11 @@ public:
     txChannelReceiptHook(quint64 mediaEpoch) const;
     /// Remote transmit cut off the main thread (main thread): the guard cut
     /// transmit for media session `mediaEpoch` under arm `armSerial` after
-    /// `silentMs` without a "tx" message. While that arm is current and its
-    /// device still keyed and watched, the watchdog trips it now (its stop
-    /// and its record, once); then the model catches up with the cut
-    /// (RadioModel::catchUpTransmitCut), always, so the connection's cut is
-    /// cleared. Public for tests.
+    /// `silentMs` without a "tx" message. The radio is already off the air,
+    /// so the rest waits one event-loop turn (a 0 ms timer, as the
+    /// watchdog's late check gives queued input a turn), and a release
+    /// that arrived during the stall is read first:
+    /// finishTransmitCutOnMain. Public for tests.
     void onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs);
     /// Remote transmit cut off the main thread: the media epoch of
     /// `deviceId`'s current media session (the newest), 0 without one.
@@ -2221,6 +2225,13 @@ private:
     // counted for `deviceId`, `ageUs` after its receipt, also moves the
     // guard's last-heard when the guard is armed for that device.
     void noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs);
+    // Remote transmit cut off the main thread, one turn after the cut's
+    // post: while that arm is current and its device still keyed and
+    // watched, the watchdog trips it (its stop and its record, once); a key
+    // that ended normally records nothing. Then the model catches up with
+    // the cut (RadioModel::catchUpTransmitCut), always, so the connection's
+    // cut is cleared.
+    void finishTransmitCutOnMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs);
     // Task 37: turns VOX off when `deviceId` armed it (its session ended,
     // its link went quiet, its microphone line closed).
     void disarmVoxArmedBy(const QByteArray& deviceId, const char* why);

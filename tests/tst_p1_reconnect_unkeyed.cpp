@@ -22,9 +22,16 @@
 //      while m_mox is still set, every ep2 frame after it is unkeyed, a key
 //      is refused while it is set, and after clearTransmitCut a key goes
 //      out.
+//   5. The transmit cut on every composer (no socket): the Hermes and HL2
+//      codecs, the HL2 I2C frame and the legacy compose path all compose
+//      C0 MOX = 0 while cut with m_mox still set, and both ep2 TX I/Q zones
+//      stay zero although the ring holds samples.
 //
 // Modification history (NereusSDR):
 //   2026-10-15: transmitCutUnkeysTheWireAndRefusesAKey. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: review fix wave: transmitCutUnkeysEveryComposer (HL2 I2C
+//               frame, legacy compose, I/Q zones). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
@@ -32,9 +39,11 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "core/P1RadioConnection.h"
 #include "core/HpsdrModel.h"
+#include "core/IoBoardHl2.h"
 #include "fakes/P1FakeRadio.h"
 
 using namespace NereusSDR;
@@ -356,6 +365,123 @@ private slots:
         conn.setMox(false);
         conn.disconnect();
         fake.stop();
+    }
+
+    void transmitCutUnkeysEveryComposer_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::addColumn<bool>("legacy");
+        QTest::addColumn<bool>("i2c");
+        QTest::newRow("hermes codec") << int(HPSDRHW::Hermes) << false << false;
+        QTest::newRow("hl2 codec") << int(HPSDRHW::HermesLite) << false << false;
+        QTest::newRow("hl2 i2c frame") << int(HPSDRHW::HermesLite) << false << true;
+        QTest::newRow("legacy compose") << int(HPSDRHW::Hermes) << true << false;
+    }
+
+    void transmitCutUnkeysEveryComposer()
+    {
+        QFETCH(int, board);
+        QFETCH(bool, legacy);
+        QFETCH(bool, i2c);
+
+        // The legacy compose path is chosen when the codec is selected
+        // (selectCodec, from setBoardForTest).
+        if (legacy) {
+            qputenv("NEREUS_USE_LEGACY_P1_CODEC", "1");
+        }
+        IoBoardHl2 io;   // outlives the connection that points at it
+        P1RadioConnection conn;
+        conn.setBoardForTest(static_cast<HPSDRHW>(board));
+        qunsetenv("NEREUS_USE_LEGACY_P1_CODEC");
+        conn.setIoBoard(&io);
+
+        // One I2C write queued before each compose: the I2C frame replaces
+        // the bank's payload. Its C0 is the MOX bit with the chip select:
+        //   From mi0bot networkproto1.c:895 [@c26a8a4]: C0 = (unsigned char)XmitBit;
+        //   From mi0bot networkproto1.c:914 [@c26a8a4]: C0 |= (0x3c << 1) | (prn->i2c.ctrl_request << 7);    //I2C1 0x3c
+        const auto queueI2c = [&io, i2c]() {
+            if (!i2c) {
+                return;
+            }
+            IoBoardHl2::I2cTxn txn;
+            txn.bus = 0;
+            txn.address = 0x1D;
+            txn.control = 0x05;
+            txn.writeData = 0x42;
+            txn.isRead = false;
+            txn.needsResponse = false;
+            io.enqueueI2c(txn);
+        };
+        const auto c0Of = [&conn, &queueI2c](int bank) {
+            queueI2c();
+            quint8 out[5] = {};
+            conn.composeCcForBankForTest(bank, out);
+            return out[0];
+        };
+
+        // Keyed: bank 0 and bank 1 (or the I2C frame) carry MOX.
+        conn.setMox(true);
+        QVERIFY(conn.moxForTest());
+        if (i2c) {
+            QCOMPARE(int(c0Of(0)), 0x79);
+        }
+        // Bank 0 and bank 10 carry MOX on every composer; bank 1 (the TX
+        // frequency) carries it on the codecs only (the legacy path's
+        // frequency banks never set it, composeCcBankTxFreq).
+        QCOMPARE(int(c0Of(0) & 0x01), 1);
+        QCOMPARE(int(c0Of(10) & 0x01), 1);
+        if (!legacy) {
+            QCOMPARE(int(c0Of(1) & 0x01), 1);
+        }
+
+        // TX I/Q queued (I 0.5, Q 0.25) and drained past the key's zero
+        // cushion until a zone carries it: the zone check below can fail.
+        std::vector<float> iq(2 * 2000);
+        for (std::size_t i = 0; i < iq.size(); i += 2) {
+            iq[i] = 0.5f;
+            iq[i + 1] = 0.25f;
+        }
+        const auto iqZonesZero = [](const QByteArray& frame) {
+            for (const int zone : {16, 528}) {
+                for (int slot = 0; slot < 63; ++slot) {
+                    for (int b = 4; b < 8; ++b) {
+                        if (frame.at(zone + slot * 8 + b) != 0) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        };
+        bool carried = iqZonesZero(conn.sendTxIqAndCapture(iq.data(), 2000)) == false;
+        for (int i = 0; i < 12 && !carried; ++i) {
+            carried = !iqZonesZero(conn.sendTxIqAndCapture(nullptr, 0));
+        }
+        QVERIFY2(carried, "no TX I/Q reached a zone before the cut");
+        QVERIFY(conn.txIqBufferedSamplesForTest() >= 126);
+
+        // Cut: the unkey is queued, m_mox still set, yet every composer
+        // reads unkeyed and the zones stay zero with samples in the ring.
+        conn.cutTransmit();
+        QVERIFY(conn.transmitCut());
+        QVERIFY(conn.moxForTest());
+        if (i2c) {
+            QCOMPARE(int(c0Of(0)), 0x78);
+        }
+        QCOMPARE(int(c0Of(0) & 0x01), 0);
+        QCOMPARE(int(c0Of(10) & 0x01), 0);
+        QCOMPARE(int(c0Of(1) & 0x01), 0);
+        QVERIFY(conn.txIqBufferedSamplesForTest() >= 126);
+        QVERIFY(iqZonesZero(conn.sendTxIqAndCapture(iq.data(), 126)));
+        QVERIFY(iqZonesZero(conn.sendTxIqAndCapture(nullptr, 0)));
+
+        // The queued unkey runs; the cut stays until it is cleared.
+        QTRY_VERIFY_WITH_TIMEOUT(!conn.moxForTest(), 2000);
+        QVERIFY(conn.transmitCut());
+        conn.clearTransmitCut();
+        conn.setMox(true);
+        QCOMPARE(int(c0Of(0) & 0x01), 1);
+        conn.setMox(false);
     }
 
     void staleKeyBeforeConnectDoesNotReachTheRadio()

@@ -171,6 +171,11 @@
 //               main and "tx" receipts off main, its cut posted to
 //               onTransmitCutOffMain. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-15: review fix wave: the cut's main-thread handling waits one
+//               event-loop turn and re-checks the key, so a release read in
+//               that turn records no link loss; a server destroyed with a
+//               cut still set clears it. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -4269,6 +4274,19 @@ StationServer::~StationServer()
         m_txCutTarget->line.reset();
     }
     m_txCutGuard.reset();
+    // Its thread has stopped, so no new cut can start. A cut whose post
+    // (onTransmitCutOffMain) or its turn after (finishTransmitCutOnMain)
+    // has not run goes with this object, and nothing else would clear the
+    // connection's cut: every later key would be refused on the wire while
+    // the model and the windows show MOX on. The model catches up here
+    // instead, with the watchdog's sentence.
+    if (m_radioModel && m_radioModel->connection() != nullptr
+        && m_radioModel->connection()->transmitCut()) {
+        const QString sentence = RemoteTxWatchdog::stopMessage(
+            m_txCutGuardDevice.isEmpty() ? QStringLiteral("a device")
+                                         : deviceNameForStop(m_txCutGuardDevice));
+        m_radioModel->catchUpTransmitCut(sentence);
+    }
 
     const bool canonical = m_radioModel && m_radioModel->m_diversityStationServer == this;
     if (canonical) { m_radioModel->m_diversityStationServer.clear(); }
@@ -10294,7 +10312,13 @@ void StationServer::followKeyedForWatchdog()
     // Remote transmit cut off the main thread: the guard is armed for the
     // remote key on the air, with that device's media session (0 without
     // one: then it never judges), and armed afresh for each new key; no
-    // remote key disarms it.
+    // remote key disarms it. A media replacement mid-key keeps the
+    // session's epoch (DaemonMediaController::handleReplace hands the
+    // replacement peer m_epoch), so the guard keeps hearing it. A media
+    // session that starts after the key re-arms nothing until the key
+    // changes: the guard then never judges this key (epoch 0) or judges
+    // the older session's, which fails safe (a cut, never a missed cut);
+    // the watchdog still watches the key.
     if (m_txCutGuard) {
         if (remoteKey) {
             const quint64 mediaEpoch = mediaEpochOfDevice(keyedBy.deviceId);
@@ -10362,6 +10386,22 @@ std::chrono::steady_clock::time_point StationServer::lastTxChannelReceiptForTest
 
 void StationServer::onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs)
 {
+    // The radio is already off the air (the cut ran on the guard's thread),
+    // so the model may learn one event-loop turn later. A release the
+    // device sent as its keepalives stopped rides the session link, which
+    // only this thread reads; after a stall it can still wait behind this
+    // post. A 0 ms timer runs after the input already due, as the
+    // watchdog's late check gives queued keepalives their turn
+    // (RemoteTxWatchdog::onTimer), so such a release is read first and the
+    // key it ended is not recorded as a lost link.
+    QTimer::singleShot(0, this, [this, mediaEpoch, armSerial, silentMs]() {
+        finishTransmitCutOnMain(mediaEpoch, armSerial, silentMs);
+    });
+}
+
+void StationServer::finishTransmitCutOnMain(quint64 mediaEpoch, quint64 armSerial,
+                                            qint64 silentMs)
+{
     // The device the cut was for: the armed one while its media session is
     // the cut's, otherwise whoever that media session is.
     const QByteArray deviceId = mediaEpoch != 0 && mediaEpoch == m_txCutGuardMediaEpoch
@@ -10379,6 +10419,7 @@ void StationServer::onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, 
     }
     const bool current = m_txCutGuard && armSerial == m_txCutGuard->armSerial();
     const bool keyedByDevice = !deviceId.isEmpty() && m_radioModel->keyedBy().deviceId == deviceId;
+    const bool watched = !deviceId.isEmpty() && m_txWatchdog && m_txWatchdog->isWatching(deviceId);
     qCWarning(lcStation).noquote()
         << QStringLiteral("Transmit cut off the main thread: no \"tx\" message from %1 for %2 ms "
                           "(arm %3, %4)")
@@ -10393,15 +10434,17 @@ void StationServer::onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, 
     // longer watches it, so its own check for the same silence, due while
     // the main thread was held, finds nothing. When the watchdog tripped
     // first, it is not watching and nothing more is stopped or recorded.
-    if (current && keyedByDevice && m_txWatchdog) {
+    // When the device's release was read in the turn this waited, the key
+    // ended normally: no longer keyed by it, nothing is recorded.
+    if (current && keyedByDevice && watched) {
         m_txWatchdog->tripQuiet(deviceId);
     }
-    if (!m_radioModel) {
-        return;
-    }
-    // Always: the model and the radio agree (a key that came in after the
-    // cut was refused on the wire), and the connection's cut is cleared so
-    // the next key reaches the radio.
+    // Always: the model and the radio agree, and the connection's cut is
+    // cleared so the next key reaches the radio. With nothing keyed (the
+    // key ended normally, or the watchdog's stop ran) the catch-up stops
+    // nothing. A stale cut (an earlier arm's) still catches up a key that
+    // slipped in after it: the wire already refused that key while the
+    // cut was set, so stopping it makes the model agree with the radio.
     const QString sentence = RemoteTxWatchdog::stopMessage(
         deviceId.isEmpty() ? QStringLiteral("a device") : deviceNameForStop(deviceId));
     m_radioModel->catchUpTransmitCut(sentence);
