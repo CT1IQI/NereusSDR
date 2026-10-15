@@ -1036,6 +1036,9 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
           cmake --build build-hal
+          # 2026-10-12: J.J. Boyd / OpenAI Codex; check metadata before signing.
+          python3 scripts/verify_vax_factory.py --plist hal-plugin/Info.plist \
+            --plist build-hal/NereusSDRVAX.driver/Contents/Info.plist
 
       - name: Sign HAL plugin
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
@@ -1635,14 +1638,50 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="${{ needs.prepare.outputs.tag }}"
           PRERELEASE_FLAG=""
           if [[ "${{ needs.prepare.outputs.is_prerelease }}" == "true" ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          # GraphQL resolves pending draft tags as well as published releases.
+          RELEASE_LOOKUP=$(gh api graphql \
+            -f owner="${GITHUB_REPOSITORY%/*}" \
+            -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$TAG" \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                id
+                release(tagName: $tag) { databaseId tagName isDraft }
+              }
+            }')
+          RELEASE_ID=$(jq -er --arg tag "$TAG" '
+            if type != "object" or has("errors")
+              or (.data.repository | type) != "object"
+              or (.data.repository.id | type) != "string"
+              or (.data.repository.id | length) == 0
+              or (.data.repository | has("release") | not)
+            then error("Cannot establish existing release state")
+            elif .data.repository.release == null then "absent"
+            else .data.repository.release |
+              if type != "object" or .tagName != $tag
+                or (.isDraft | type) != "boolean"
+                or (.databaseId | type) != "number"
+                or .databaseId <= 0 or .databaseId != (.databaseId | floor)
+              then error("Malformed release response")
+              elif .isDraft == false then error("Refusing to replace a published release")
+              else .databaseId
+              end
+            end' <<< "$RELEASE_LOOKUP")
           # Delete existing draft for this tag if rerunning
-          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          if [[ "$RELEASE_ID" != "absent" ]]; then
+            if ! [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Invalid draft release ID"
+              exit 1
+            fi
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          fi
           gh release create "$TAG" \
             --title "NereusSDR ${VERSION}" \
             --notes-file artifacts/release_notes.md \

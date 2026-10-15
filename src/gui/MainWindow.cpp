@@ -7610,8 +7610,20 @@ void MainWindow::buildUI()
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState s) {
             if (s != ConnectionState::Connected) { return; }
-            QMetaObject::invokeMethod(this, [this]() { populateEmptyPans(); },
-                                      Qt::QueuedConnection);
+            const QString mac = m_radioModel->currentRadioMac();
+            QMetaObject::invokeMethod(this, [this, mac]() {
+                if (m_radioModel->connectionState() != ConnectionState::Connected
+                    || m_radioModel->currentRadioMac() != mac) { return; }
+                const QPointer<MainWindow> self(this);
+                populateEmptyPans();
+                if (!self) { return; }
+                // Population can emit callbacks which disconnect/switch radios.
+                if (m_radioModel->connectionState() != ConnectionState::Connected
+                    || m_radioModel->currentRadioMac() != mac) { return; }
+                if (TxSliceArbiter* arbiter = m_radioModel->txSliceArbiter()) {
+                    arbiter->finishRestore();
+                }
+            }, Qt::QueuedConnection);
         });
     }
 
