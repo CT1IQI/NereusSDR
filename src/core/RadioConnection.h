@@ -1055,8 +1055,10 @@ signals:
     // ADC overflow detected.
     void adcOverflow(int adc);
 
-    // Mic-jack PTT input from the radio hardware, decoded from the status
-    // frame on every frame receipt.  Emitted unconditionally each frame;
+    // Mic-jack PTT input from the radio hardware, decoded from status.
+    // P2 emits on every High-Priority packet. P1 emits when an EP6 packet
+    // contains at least one ordinary status subframe. For an HL2 packet made
+    // entirely of I2C responses, the I2C branch emits no PTT update.
     // MoxController::onMicPttFromRadio() is idempotent on repeated same-state
     // calls (setPttMode(Mic) is a no-op when mode unchanged; setMox(x) only
     // advances the state machine when x differs from m_mox).
@@ -1065,8 +1067,9 @@ signals:
     // in setupMoxController() (H.5).  The MoxController drives MOX state when
     // mic-jack PTT changes state.
     //
-    // P1 source: C0 byte (ControlBytesIn[0]) bit 0 of each EP6 sub-frame.
-    //   Cite: Thetis networkproto1.c:329 [v2.10.3.13]:
+    // P1 source: C0 byte (ControlBytesIn[0]) bit 0 of each ordinary EP6
+    // subframe; I2C response subframes (C0 bit 7) do not update PTT.
+    //   Cite: mi0bot-Thetis networkproto1.c:478-496 [@c26a8a4]:
     //     prn->ptt_in = ControlBytesIn[0] & 0x1;
     //   + console.cs:25426 [v2.10.3.13]:
     //     bool mic_ptt = (dotdashptt & 0x01) != 0; // PTT from radio

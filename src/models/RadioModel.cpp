@@ -3041,8 +3041,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
     // ── H.5: P1/P2 status-frame mic_ptt → MoxController PTT-source dispatch ──
     //
-    // RadioConnection::micPttFromRadio(bool) is emitted unconditionally on every
-    // status frame (P1 EP6, P2 High-Priority) with the instantaneous PTT state.
+    // RadioConnection::micPttFromRadio(bool) is emitted for each P1 packet
+    // carrying ordinary status and every P2 High-Priority packet, with the
+    // instantaneous PTT state. The P1 all-I2C path publishes no PTT update.
     // MoxController::onMicPttFromRadio is idempotent on repeated same-state calls.
     //
     // The actual connect() is deferred to wireConnectionSignals() where
