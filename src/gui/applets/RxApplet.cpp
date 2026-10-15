@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
+//                 capability changes as well as remote changes. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 //   2026-10-14 - Preserve SKU-specific RX-only selections during antenna
 //                 read-back and initial populate (PR #262 review finding).
 //                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -2022,6 +2025,16 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
     m_popupCaps = caps;
 
+    // The same late-capability lifecycle also applies to local windows.
+    // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
+    // applet was usually built before the Core's board was known.
+    if (caps.p2PreampPerAdc) {
+        ensureRx1PreampToggle();
+    }
+    if (m_rx1PreampToggle) {
+        m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
+    }
+
     // R-R3-46: a remote window has no radio connection of its own, so
     // connectSlice()'s per-board rebuild below never runs there; the Core's
     // radio arrives through here instead. Same tables as that rebuild
@@ -2031,14 +2044,6 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_model && !m_model->ownsLocalDsp()) {
         rebuildPreampAndAttRangeForBoard(caps.board, caps.hasAlexFilters,
                                          caps.attenuator.minDb);
-        // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
-        // applet was usually built before the Core's board was known.
-        if (caps.p2PreampPerAdc) {
-            ensureRx1PreampToggle();
-        }
-        if (m_rx1PreampToggle) {
-            m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
-        }
         // R-R3-46 / R-R3-21: then the Core's own range and values, once it
         // offers its attenuator (the rebuild may have reset the combo), and
         // whether the row (the toggle too) takes edits now.
