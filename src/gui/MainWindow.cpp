@@ -4361,8 +4361,16 @@ void MainWindow::ensureRemoteSession()
             // Fix wave M8: and VOX the Core would not arm (no microphone
             // line from this window yet), whose button drops back.
             const bool voxWrite = objectKey == "transmit" && property == "voxEnabled";
+            // Step persistence lane (2026-10-15): a slice change the Core
+            // refused (another device controls the slice, the transmit
+            // slice is frozen) goes back to the Core's value and says why,
+            // never a silent snap-back. NNR edits say it on their own page
+            // (SliceModel::reportNnrEditResult).
+            const bool sliceWrite = objectKey.startsWith("slice:")
+                && !property.startsWith("nnr") && property != "activeNr";
             // Task 78: a write held for the Core's question is not refused.
-            if ((objectKey == "stepAtt" || objectKey == "alexAntennas" || voxWrite) && !accepted
+            if ((objectKey == "stepAtt" || objectKey == "alexAntennas" || voxWrite || sliceWrite)
+                && !accepted
                 && !reason.isEmpty() && !StationClient::isAwaitingConfirmation(reason)) {
                 showToast(OperatorReasonText::forDisplay(reason), ToastSeverity::Warning, 4000);
             }
