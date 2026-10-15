@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - Test-only seams for the TGXL autotune RF settle: its
+//                length (setTgxlRfSettleMsForTest) and an observer called
+//                when it fires (setTgxlSettleFiredObserverForTest). Release
+//                behavior unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4986,6 +4991,17 @@ public:
     // schedule on the next event loop iteration, so QCoreApplication::processEvents
     // can drive the deferred completion synchronously.
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
+    // TGXL autotune: the RF settle between the carrier gate opening and the
+    // `autotune` command (kTgxlRfSettleMs in release). A test can lengthen
+    // it so its own setup cannot outrun the window, and observe each settle
+    // callback: `cycle` is the tune cycle that armed it, `stale` is true
+    // when that cycle (or its carrier) is no longer current, so the
+    // callback sends nothing.
+    void setTgxlRfSettleMsForTest(int ms) noexcept { m_tgxlRfSettleMs = ms; }
+    void setTgxlSettleFiredObserverForTest(std::function<void(quint64 cycle, bool stale)> observer)
+    {
+        m_tgxlSettleFiredObserverForTest = std::move(observer);
+    }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
@@ -8792,6 +8808,10 @@ private:
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
     static constexpr int kTgxlCarrierReadyMs = 3000;
     static constexpr int kTgxlRfSettleMs = 150;
+    // The settle length in use: kTgxlRfSettleMs except under
+    // setTgxlRfSettleMsForTest.
+    int m_tgxlRfSettleMs{kTgxlRfSettleMs};
+    std::function<void(quint64, bool)> m_tgxlSettleFiredObserverForTest;
     // Completion ownership: actual channel, its latest run request and
     // the tune cycle that requested it. The completion is always queued.
     QPointer<TxChannel> m_tgxlCarrierChannel;

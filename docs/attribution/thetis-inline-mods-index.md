@@ -1,7 +1,7 @@
 # Thetis Inline Mod Index
 
-**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-04-30T12:51:05+00:00`
-from corpus `docs/attribution/thetis-author-tags.json` (thetis@`501e3f51`, mi0bot@`c26a8a4`).
+**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-10-15T06:27:12+00:00`
+from corpus `docs/attribution/thetis-author-tags.json` (thetis@`501e3f51`, mi0bot@`c26a8a4c`).
 
 **Do NOT hand-edit this file.** To add or correct a contributor, edit `docs/attribution/thetis-author-tags.json` and re-run the generator.
 

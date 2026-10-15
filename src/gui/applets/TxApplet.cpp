@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - The 2-Tone tooltip names the page as the Settings tree
+//                does: Settings > Test > Two-Tone IMD. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Seed and resync remote TX indicators from Core mirrors.
 //                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - Fit live inset threshold/hold readouts to the actual
@@ -1050,7 +1053,7 @@ void TxApplet::buildUI()
         m_twoToneBtn->setAccessibleName(QStringLiteral("2-tone test"));
         m_twoToneBtn->setToolTip(QStringLiteral(
             "Continuous or pulsed two-tone IMD test "
-            "(configure in Setup → Test → Two-Tone)."));
+            "(configure in Settings > Test > Two-Tone IMD)."));
         row->addWidget(m_twoToneBtn, 1);
 
         // PS-A: green when checked — #006030/#008040 are a darker green than kGreenBg=#006040.
