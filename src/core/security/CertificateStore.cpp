@@ -48,14 +48,14 @@ namespace {
 // early-return path below (and there are several -- each OpenSSL call
 // can fail) would need its own manual cleanup, which is exactly the
 // leak-on-early-return shape unique_ptr exists to remove.
-using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
-using X509Ptr    = std::unique_ptr<X509, decltype(&X509_free)>;
+using EvpPkeyPtr  = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+using X509Ptr     = std::unique_ptr<X509, decltype(&X509_free)>;
 using BioPtr      = std::unique_ptr<BIO, decltype(&BIO_free)>;
 using X509NamePtr = std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)>;
 
-EvpPkeyPtr makeEvpPkeyPtr(EVP_PKEY* p) { return EvpPkeyPtr(p, &EVP_PKEY_free); }
-X509Ptr    makeX509Ptr(X509* p)        { return X509Ptr(p, &X509_free); }
-BioPtr     makeBioPtr(BIO* p)          { return BioPtr(p, &BIO_free); }
+EvpPkeyPtr  makeEvpPkeyPtr(EVP_PKEY* p)   { return EvpPkeyPtr(p, &EVP_PKEY_free); }
+X509Ptr     makeX509Ptr(X509* p)          { return X509Ptr(p, &X509_free); }
+BioPtr      makeBioPtr(BIO* p)            { return BioPtr(p, &BIO_free); }
 X509NamePtr makeX509NamePtr(X509_NAME* p) { return X509NamePtr(p, &X509_NAME_free); }
 
 // RSA key size in bits. NereusSDR-original choice (see CertificateStore.h
@@ -475,7 +475,8 @@ bool CertificateStore::generateAndStore()
     }
     // Self-signed: issuer == subject. X509_set_subject_name() and
     // X509_set_issuer_name() each store their own copy of the name, so
-    // the same locally owned name is set as both and then freed with it.
+    // the same locally owned name is set as both, and the local name is
+    // freed when it goes out of scope.
     // (A prior revision edited the certificate's OWN internal subject
     // field and re-set it to itself, a no-op at best and a use-after-free
     // footgun on OpenSSL 1.0.x; the separate name here has no such
