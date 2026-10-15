@@ -21,9 +21,11 @@
 //               deleted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 //   2026-10-15: each race logs the rank it must beat, each address it
-//               admits or drops and why, each attempt's end, and a race
-//               with nothing to try in its own words. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               admits or drops and why, each attempt's end, a cancel with
+//               the attempts still open, and its failure in its own words
+//               (a better-path search's lines say so); the rank is worked
+//               out once per address. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
@@ -67,6 +69,19 @@ QString rankText(int rank)
     default: break;
     }
     return QStringLiteral("%1 (%2)").arg(rank).arg(QLatin1String(name));
+}
+
+// For the log only: a better-path search's lines say so, as the log has
+// no category field to tell them from a first race's.
+QString tagged(const std::optional<int>& bar, const QString& text)
+{
+    return bar ? QStringLiteral("Better-path search: ") + text : text;
+}
+
+// For the log only: the bar a race started with.
+QString barText(const std::optional<int>& bar)
+{
+    return bar ? QStringLiteral("better than rank ") + rankText(*bar) : QStringLiteral("any rank");
 }
 
 // For the log only: how an attempt ended.
@@ -195,24 +210,28 @@ void PathRacer::addDirectUrls(const QList<QUrl>& urls, quint64 maxIncomingBytes)
     QList<QUrl> seen;
     for (const QUrl& url : urls) {
         if (!url.isValid()) {
-            qCInfo(lcPathRacer) << "Address" << url.toDisplayString(QUrl::RemoveUserInfo)
-                                << "dropped: not a valid address";
+            qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+                QStringLiteral("Address %1 dropped: not a valid address")
+                    .arg(url.toDisplayString(QUrl::RemoveUserInfo)));
             continue;
         }
         if (seen.contains(url)) {
-            qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: already in this race";
+            qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+                QStringLiteral("%1 dropped: already in this race").arg(hostPort(url)));
             continue;
         }
         seen.append(url);
         if (!QHostAddress(url.host()).isNull()) {
-            if (!admitDirect(url)) {
+            const std::optional<int> rank = admitDirect(url);
+            if (!rank) {
                 continue;
             }
             const bool ipv4 = !isIpv6Host(url.host());
-            addRung(new DirectPathRung(url, maxIncomingBytes),
+            addRung(new DirectPathRung(url, maxIncomingBytes, *rank),
                     ipv4 && ipv6Present ? kIpv4DelayMs : 0);
         } else {
-            qCInfo(lcPathRacer).noquote() << hostPort(url) << "is a name: looked up at the start";
+            qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+                QStringLiteral("%1 is a name: looked up at the start").arg(hostPort(url)));
             m_pendingLookups.append(url);
         }
     }
@@ -221,7 +240,6 @@ void PathRacer::addDirectUrls(const QList<QUrl>& urls, quint64 maxIncomingBytes)
 
 void PathRacer::resolveAndAdd(const QUrl& url, quint64 maxIncomingBytes, bool ipv6Present)
 {
-    m_lookupsStarted = true;
     ++m_lookupsRunning;
     const QPointer<PathRacer> self(this);
     QHostInfo::lookupHost(url.host(), this, [this, self, url, maxIncomingBytes,
@@ -242,6 +260,8 @@ void PathRacer::resolveAndAdd(const QUrl& url, quint64 maxIncomingBytes, bool ip
         if (v6.isEmpty() && v4.isEmpty()) {
             // A name that does not resolve is an address that does not
             // answer, in the record under its own name.
+            qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+                QStringLiteral("%1 resolved to no address").arg(hostPort(url)));
             addNote(rankFor(url) == ThisNetwork ? PathKind::ThisNetwork : PathKind::Direct,
                     hostPort(url), Outcome::NoAnswer, QString());
             checkAllEnded();
@@ -260,10 +280,12 @@ void PathRacer::resolveAndAdd(const QUrl& url, quint64 maxIncomingBytes, bool ip
             // one reaches nothing without it; QUrl carries it as %25).
             QUrl resolved = url;
             resolved.setHost(address.toString());
-            if (!admitDirect(resolved)) {
+            const std::optional<int> rank = admitDirect(resolved);
+            if (!rank) {
                 continue;
             }
-            const int index = addEntry(new DirectPathRung(resolved, maxIncomingBytes), delay);
+            const int index =
+                addEntry(new DirectPathRung(resolved, maxIncomingBytes, *rank), delay);
             emit linesChanged();
             startRung(*m_entries[static_cast<size_t>(index)]);
         }
@@ -271,31 +293,35 @@ void PathRacer::resolveAndAdd(const QUrl& url, quint64 maxIncomingBytes, bool ip
     });
 }
 
-bool PathRacer::admitDirect(const QUrl& url)
+std::optional<int> PathRacer::admitDirect(const QUrl& url)
 {
     // An upgrade never dials an address whose rank cannot beat the path in
     // use (a connection every five minutes, for ever, for nothing).
     const int rank = rankFor(url);
     if (m_betterThan && rank >= *m_betterThan) {
-        qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: rank" << rankText(rank)
-                                      << "is not below" << rankText(*m_betterThan);
-        return false;
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            QStringLiteral("%1 dropped: rank %2 is not below %3")
+                .arg(hostPort(url), rankText(rank), rankText(*m_betterThan)));
+        return std::nullopt;
     }
     const QHostAddress address(url.host());
     const QString key = (address.isNull() ? url.host().toLower() : address.toString())
         + QLatin1Char('/') + QString::number(url.port());
     if (m_directTargets.contains(key)) {
-        qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: already in this race";
-        return false;
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            QStringLiteral("%1 dropped: already in this race").arg(hostPort(url)));
+        return std::nullopt;
     }
     m_directTargets.insert(key);
     if (m_betterThan) {
-        qCInfo(lcPathRacer).noquote() << hostPort(url) << "admitted: rank" << rankText(rank)
-                                      << "is below" << rankText(*m_betterThan);
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            QStringLiteral("%1 admitted: rank %2 is below %3")
+                .arg(hostPort(url), rankText(rank), rankText(*m_betterThan)));
     } else {
-        qCInfo(lcPathRacer).noquote() << hostPort(url) << "admitted: rank" << rankText(rank);
+        qCInfo(lcPathRacer).noquote()
+            << QStringLiteral("%1 admitted: rank %2").arg(hostPort(url), rankText(rank));
     }
-    return true;
+    return rank;
 }
 
 void PathRacer::startWaitingDirect()
@@ -334,13 +360,9 @@ void PathRacer::start()
         return;
     }
     m_started = true;
-    if (m_betterThan) {
-        qCInfo(lcPathRacer).noquote() << "Race started with" << m_entries.size()
-                                      << "attempt(s), better than rank" << rankText(*m_betterThan);
-    } else {
-        qCInfo(lcPathRacer).noquote() << "Race started with" << m_entries.size()
-                                      << "attempt(s), any rank";
-    }
+    qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+        QStringLiteral("Race started with %1 attempt(s), %2")
+            .arg(m_entries.size()).arg(barText(m_betterThan)));
     bool ipv6Present = false;
     for (const auto& entry : m_entries) {
         if (auto* direct = qobject_cast<DirectPathRung*>(entry->rung.data());
@@ -575,9 +597,10 @@ void PathRacer::endRung(int index, Outcome outcome, const QString& reason)
     }
     line.outcome = outcome;
     line.reason = reason;
-    qCInfo(lcPathRacer).noquote() << "Attempt at" << line.address << "ended:"
-                                  << outcomeText(outcome)
-                                  << (reason.isEmpty() ? QString() : QStringLiteral("(%1)").arg(reason));
+    qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+        QStringLiteral("Attempt at %1 ended: %2%3")
+            .arg(line.address, QLatin1String(outcomeText(outcome)),
+                 reason.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(reason)));
     emit linesChanged();
     checkAllEnded();
 }
@@ -607,13 +630,17 @@ void PathRacer::checkAllEnded()
     if (reason.isEmpty()) {
         reason = QString::fromLatin1(kNoPath);
     }
-    if (m_entries.empty() && !m_lookupsStarted) {
-        // Nothing was admitted: no address beat the bar, and no service
-        // route was added. Not a path that failed.
-        qCInfo(lcPathRacer) << (m_betterThan ? "No address was worth trying for a better path"
-                                             : "Nothing to try: no address and no service route");
+    if (m_entries.empty()) {
+        // Nothing was admitted: no address beat the bar or resolved, and
+        // no service attempt was added (a note, such as a Core too old
+        // for the service, is not an attempt). Not a path that failed.
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            m_betterThan ? QStringLiteral("No address was worth trying for a better path")
+                         : QStringLiteral("Nothing was tried: no address to dial and no service attempt"));
     } else {
-        qCInfo(lcPathRacer) << "No path reached the Core";
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            QStringLiteral("All %1 attempt(s) failed, %2")
+                .arg(m_entries.size()).arg(barText(m_betterThan)));
     }
     emit failed(reason);
 }
@@ -674,10 +701,23 @@ QList<QPair<QString, int>> PathRacer::plannedStartsForTest() const
     return planned;
 }
 
-void PathRacer::cancel()
+void PathRacer::cancel(const QString& why)
 {
     if (m_done && m_finished) {
         return;
+    }
+    QStringList open;
+    for (const auto& entry : m_entries) {
+        if (!entry->ended) {
+            open.append(m_lines.value(entry->line).address);
+        }
+    }
+    if (!open.isEmpty()) {
+        qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
+            QStringLiteral("Race cancelled%1 with %2 attempt(s) still open: %3")
+                .arg(why.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(why))
+                .arg(open.size())
+                .arg(open.join(QStringLiteral(", "))));
     }
     m_done = true;
     m_finished = true;
@@ -701,10 +741,16 @@ void PathRacer::cancel()
 // ── The Core's WebSocket at one address ───────────────────────────────────
 
 DirectPathRung::DirectPathRung(const QUrl& url, quint64 maxIncomingBytes, QObject* parent)
+    : DirectPathRung(url, maxIncomingBytes, PathRacer::rankFor(url), parent)
+{
+}
+
+DirectPathRung::DirectPathRung(const QUrl& url, quint64 maxIncomingBytes, int rank,
+                               QObject* parent)
     : PathRung(parent)
     , m_url(url)
     , m_maxIncomingBytes(maxIncomingBytes)
-    , m_rank(PathRacer::rankFor(url))
+    , m_rank(rank)
 {
 }
 

@@ -45,8 +45,10 @@
 //               web relay's leg (RelayLeg) and its per-connection candidate
 //               sources; the computer's own proxy settings (SystemProxy).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-10-15: whether a race looked up a name, for its last log line.
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: cancel() takes the reason for its log line; admitDirect()
+//               returns the rank it worked out, which a direct rung can
+//               take. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -211,8 +213,9 @@ public:
 
     void start();
     /// Stops everything, closes what was not taken; nothing more is
-    /// signalled.
-    void cancel();
+    /// signalled. `why`, when given, goes in the log line that names the
+    /// attempts still open.
+    void cancel(const QString& why = QString());
     /// The winner reached snapshot.complete: every rung still running
     /// stops (as "another path connected first") and every ready one not
     /// taken closes, except the standby (takeStandby()).
@@ -270,15 +273,14 @@ private:
     int m_lookupsRunning = 0;
     std::optional<int> m_winnerRank;
     std::optional<int> m_betterThan;
-    /// A name was looked up in this race (for the log's last line).
-    bool m_lookupsStarted = false;
     /// Review Minor 8: every direct target (address and port) raced, so a
     /// name that resolves to an address already listed is not dialled
     /// twice; the direct rungs opening now and those waiting their turn.
     QSet<QString> m_directTargets;
     int m_directOpening = 0;
     QList<int> m_directWaiting;
-    bool admitDirect(const QUrl& url);
+    /// The url's rank when admitted, nullopt when dropped (logged).
+    std::optional<int> admitDirect(const QUrl& url);
     void startWaitingDirect();
     void releaseDirectTurn(Entry& entry);
     bool m_started = false;
@@ -295,6 +297,9 @@ class DirectPathRung : public PathRung {
     Q_OBJECT
 public:
     DirectPathRung(const QUrl& url, quint64 maxIncomingBytes, QObject* parent = nullptr);
+    /// With the rank already worked out (PathRacer::rankFor(url)).
+    DirectPathRung(const QUrl& url, quint64 maxIncomingBytes, int rank,
+                   QObject* parent = nullptr);
     ~DirectPathRung() override;
     void start() override;
     void stop() override;

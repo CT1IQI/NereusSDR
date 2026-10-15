@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  A cancelled path race says why in its
+//                                    log line. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
@@ -2333,7 +2336,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         PathRacer* racer = m_upgradeRacer;
         m_upgradeRacer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("the session ended"));
         racer->deleteLater();
     }
     // iPhone app plan Task 27: an address still being tried ended here (the
@@ -9054,14 +9057,14 @@ void StationClient::stopRace()
         PathRacer* racer = m_racer;
         m_racer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("stopped"));
         racer->deleteLater();
     }
     if (m_upgradeRacer) {
         PathRacer* racer = m_upgradeRacer;
         m_upgradeRacer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("stopped"));
         racer->deleteLater();
     }
     m_upgradeTimer->stop();

@@ -224,7 +224,7 @@ struct RacePlans {
     QList<QList<QPair<QString, int>>> first;
     QList<QList<QPair<QString, int>>> upgrades;
     // Milliseconds from each "Looking for a better path" to the racer's
-    // own "No path reached the Core".
+    // own "All N attempt(s) failed".
     QList<qint64> upgradeFailMs;
     QElapsedTimer upgradeClock;
     bool upgradeRunning = false;
@@ -241,7 +241,7 @@ void capturePlans(QtMsgType type, const QMessageLogContext& context, const QStri
             s_plans->upgradeClock.start();
             s_plans->upgradeRunning = true;
         }
-        if (s_plans->upgradeRunning && message.contains(QStringLiteral("No path reached the Core"))
+        if (s_plans->upgradeRunning && message.contains(QStringLiteral("attempt(s) failed"))
             && QByteArray(context.category) == QByteArray("nereus.session.pathracer")) {
             s_plans->upgradeFailMs.append(s_plans->upgradeClock.elapsed());
             s_plans->upgradeRunning = false;
@@ -564,8 +564,9 @@ private slots:
         const QUrl v4(QStringLiteral("wss://192.0.2.106:47910"));
         const QUrl v6a(QStringLiteral("wss://[2001:db8:1:2::4602]:47910"));
         const QUrl v6b(QStringLiteral("wss://[2001:db8:1:2::15f2]:47910"));
-        // As StationClient::setCachedAddresses builds it from the GUI's last
-        // good + learned list, then the entry's url (StationClient.cpp:1411-1422).
+        // The GUI's last good + learned list, repeats included.
+        // StationClient::setCachedAddresses drops the repeats
+        // (StationClient.cpp:1416-1420); the racer drops them too.
         const QList<QUrl> plan{v6a, v6b, v4, v6a, v6b, v4};
         PathRacer racer;
         racer.setBetterThan(rank);
@@ -622,6 +623,10 @@ private slots:
             upgrade.setBetterThan(PathRacer::ThisNetwork);
             upgrade.addDirectUrls({v6}, StationClient::kMaxIncomingMessageBytes);
             const QString joined = log.lines.join(QLatin1Char('\n'));
+            // A search's own lines say they are a better-path search's.
+            QVERIFY2(log.has(QStringLiteral(
+                         "Better-path search: [2001:db8:1:2::4602]:47910 dropped")),
+                     qPrintable(joined));
             QVERIFY2(log.has(QStringLiteral(
                          "[2001:db8:1:2::4602]:47910 dropped: rank %1")
                          .arg(PathRacer::rankFor(v6))), qPrintable(joined));
@@ -642,13 +647,40 @@ private slots:
                      qPrintable(joined));
             QVERIFY2(log.has(QStringLiteral("Race started with 1 attempt(s), any rank")),
                      qPrintable(joined));
+            // The racer's failure is its own line, not the session's.
+            QTRY_VERIFY2(log.has(QStringLiteral("All 1 attempt(s) failed, any rank")),
+                         qPrintable(log.lines.join(QLatin1Char('\n'))));
+            QVERIFY2(!log.has(QStringLiteral("No path reached the Core")), qPrintable(joined));
         }
     }
 
+    // A race cancelled with attempts still open (the session ended, or a
+    // new race stopped it) logs its end, naming them and why.
+    void aCancelledRaceLogsItsOpenAttempts()
+    {
+        RacerLines log;
+        PathRacer racer;
+        racer.addDirectUrls({QUrl(QStringLiteral("wss://127.0.0.1:1")),
+                             QUrl(QStringLiteral("wss://127.0.0.1:2"))},
+                            StationClient::kMaxIncomingMessageBytes);
+        racer.cancel(QStringLiteral("the session ended"));
+        const QString joined = log.lines.join(QLatin1Char('\n'));
+        QVERIFY2(log.has(QStringLiteral(
+                     "Race cancelled (the session ended) with 2 attempt(s) still open: "
+                     "127.0.0.1:1, 127.0.0.1:2")), qPrintable(joined));
+
+        // Cancelled again, or once everything has ended: no second line.
+        log.lines.clear();
+        racer.cancel(QStringLiteral("stopped"));
+        QVERIFY2(!log.has(QStringLiteral("Race cancelled")), qPrintable(log.lines.join(QLatin1Char('\n'))));
+    }
+
     // JJ's entry against every path a session can be on. A search admits
-    // exactly the addresses that rank below the session's path, whatever
-    // this computer's interfaces make of 192.0.2.106; each service
-    // path admits all three.
+    // exactly the addresses that rank below the session's path; each
+    // service path admits all three. The this-network and direct rows
+    // depend on this computer's interfaces (192.0.2.106 is this
+    // network only where an interface holds that subnet), which is why
+    // their expectation comes from rankFor.
     void anUpgradeAdmitsWhatBeatsEachCurrentPath_data()
     {
         QTest::addColumn<int>("rank");
@@ -756,7 +788,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(plans.upgrades.size() >= 2, 20000);
         QCOMPARE(window.client->pathRank(), int(PathRacer::Floor));
         // A search that holds an IPv6 address and the IPv4 one cannot end
-        // before the IPv4 rung's turn: "No path" comes 250 ms or more after
+        // before the IPv4 rung's turn: its failure comes 250 ms or more after
         // "Looking for a better path", never within a few milliseconds.
         // A coarse QTimer may fire up to 5% early.
         constexpr qint64 kEarliestFailMs = PathRacer::kIpv4DelayMs * 19 / 20;
