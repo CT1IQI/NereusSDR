@@ -1632,7 +1632,7 @@ private:
     quint16 m_statusUserAdc0Raw{0};
     // One bit per ADC (bit n = adcOverflow(n)), OR-ed from every packet and
     // cleared at the tick that emits them, as the gateware latches an
-    // overload until it is sent (CC_encoder.v:184-186, 213-215 [@8e86a61]).
+    // overload until it is sent (CC_encoder.v:185-187, 211, 217-219 [@8e86a61]).
     quint8  m_statusOverloadPending{0};
     // The last PTT level emitted, and whether one has been emitted.
     bool    m_statusPttLevel{false};

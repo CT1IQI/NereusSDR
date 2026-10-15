@@ -5872,7 +5872,7 @@ void P1RadioConnection::sendPrimingBurst(int countPerBank)
 //     line 6: "It is sent whenever data changes and every **mS";
 //     lines 173-175: // if Txing or overload then use 1mS update rate,
 //                    otherwise 200mS
-//     lines 184-186, 213-215: an overload is latched until it is sent;
+//     lines 185-187, 211, 217-219: an overload is latched until it is sent;
 //     lines 195-203: a change of PTT, dot or dash (memory[0]) or of the
 //                    user I/O (memory[55]) is sent at once.
 // So: a PTT change is emitted in the packet where it appears (parseEp6Frame),

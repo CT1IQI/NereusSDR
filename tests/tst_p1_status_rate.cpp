@@ -15,7 +15,7 @@
 // otherwise, and at once on a change of PTT:
 //   Anvelina CC_encoder.v:173-175 [@8e86a61]
 //     // if Txing or overload then use 1mS update rate, otherwise 200mS
-//   CC_encoder.v:184-186, 213-215: overloads latched until sent;
+//   CC_encoder.v:185-187, 211, 217-219: overloads latched until sent;
 //   CC_encoder.v:195-203: a change of memory[0] (PTT) sent at once.
 //
 // The cases feed hand-made EP6 packets straight into parseEp6Frame with
