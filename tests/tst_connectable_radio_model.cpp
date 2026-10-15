@@ -66,6 +66,52 @@ class TestConnectableRadioModel : public QObject {
     Q_OBJECT
 
 private slots:
+    void nonActiveSliceDspEditsSurviveTheProductionBandCrossingSignals()
+    {
+        AppSettings::instance().clear();
+        auto harness = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, false);
+        QVERIFY(harness);
+        RadioModel& radio = harness->model();
+        SliceModel* first = radio.slices().first();
+        SliceModel* second = radio.sliceById(radio.addSlice());
+        QVERIFY(second);
+        QVERIFY(radio.setActiveSliceById(second->sliceIndex()));
+        second->setFrequency(14225000.0);
+        second->setFilter(200, 2800);
+        second->setAgcThreshold(-20);
+        radio.requestSettingsSave();
+        radio.flushPendingSettingsSave();
+        const QString prefix = QStringLiteral("Slice%1/").arg(second->sliceIndex());
+        QVERIFY(radio.setActiveSliceById(first->sliceIndex()));
+
+        // No requestSettingsSave seam here: connectToRadio has installed
+        // the actual filter/AGC/frequency handlers for this non-active slice.
+        second->setFilter(350, 2450);
+        second->setAgcThreshold(-37);
+        second->setFrequency(7100000.0);
+        radio.flushPendingSettingsSave();
+
+        AppSettings onDisk(AppSettings::instance().filePath());
+        onDisk.load();
+        QCOMPARE(onDisk.value(prefix + "Band20m/FilterLow").toInt(), 350);
+        QCOMPARE(onDisk.value(prefix + "Band20m/AgcThreshold").toInt(), -37);
+        QCOMPARE(onDisk.value(prefix + "Band20m/Frequency").toDouble(), 14225000.0);
+        QCOMPARE(onDisk.value(prefix + "Band40m/Frequency").toDouble(), 7100000.0);
+        QCOMPARE(onDisk.value(prefix + "LastBand").toString(), QStringLiteral("40m"));
+        QCOMPARE(radio.activeSlice(), first);
+        QCOMPARE(second->frequency(), 7100000.0);
+        QCOMPARE(second->filterLow(), 350);
+        QCOMPARE(second->filterHigh(), 2450);
+        QCOMPARE(second->agcThreshold(), -37);
+        QVERIFY(radio.waitForReceiveLaneForTest());
+        RxChannel* channel = radio.rxChannelForSlice(second->sliceIndex());
+        QVERIFY(channel);
+        QCOMPARE(channel->filterLow(), 350.0);
+        QCOMPARE(channel->filterHigh(), 2450.0);
+        QCOMPARE(channel->agcThreshold(), -37);
+    }
+
     void reconnectPreservesLiveReceivers()
     {
         auto harness = ConnectableRadioModel::create();
