@@ -48,9 +48,59 @@
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
+#ifdef HAVE_WDSP
+// What a receiver runs is read off WDSP's own channel, not off RxChannel's
+// record of what it asked for.
+extern "C" {
+#include "../third_party/wdsp/src/comm.h"
+}
+#undef min
+#undef max
+#endif
+
 using namespace NereusSDR;
 
 namespace {
+
+// The DSP block size WDSP's channel runs (ch[].dsp_size, which
+// SetDSPBuffsize sets, third_party/wdsp/src/channel.c), or -1 when there is
+// no channel.
+int wdspBlockSize(const RxChannel* rx)
+{
+#ifdef HAVE_WDSP
+    if (rx == nullptr || rx->channelId() < 0 || rx->channelId() >= MAX_CHANNELS) {
+        return -1;
+    }
+    return ch[rx->channelId()].dsp_size;
+#else
+    Q_UNUSED(rx);
+    return -1;
+#endif
+}
+
+// The filter size WDSP's receive bandpass runs (rxa[].nbp0.p->nc, which
+// RXASetNC sets through RXANBPSetNC, third_party/wdsp/src/RXA.c), or -1.
+int wdspFilterSize(const RxChannel* rx)
+{
+#ifdef HAVE_WDSP
+    if (rx == nullptr || rx->channelId() < 0 || rx->channelId() >= MAX_CHANNELS
+        || rxa[rx->channelId()].nbp0.p == nullptr) {
+        return -1;
+    }
+    return rxa[rx->channelId()].nbp0.p->nc;
+#else
+    Q_UNUSED(rx);
+    return -1;
+#endif
+}
+
+// True when WDSP's receive bandpass is linear phase: its minimum-phase flag
+// (rxa[].nbp0.p->mp, RxChannel::bandpassMinimumPhaseForTest) is 0. Low
+// Latency is 1.
+bool wdspLinearPhase(const RxChannel* rx)
+{
+    return rx != nullptr && rx->bandpassMinimumPhaseForTest() == 0;
+}
 
 constexpr int kRateHz = 192000;
 constexpr int kOpenedBlock = 4096;   // createRxChannel's dsp_size
@@ -141,8 +191,8 @@ private slots:
 
         QVERIFY(engine->rxChannel(a) != nullptr);
         QVERIFY(engine->rxChannel(b) != nullptr);
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), kPhoneBlock);
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kCwBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), kPhoneBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), kCwBlock);
     }
 
     // With nothing saved, NereusSDR's default of 64 (RxChannel::onModeChanged),
@@ -159,8 +209,8 @@ private slots:
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
 
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 64);
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), 64);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), 64);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), 64);
     }
 
     // A slice added once the pool is open binds to a channel that has been
@@ -185,7 +235,7 @@ private slots:
         const int expected =
             dspOptionsModeGroup(model.sliceById(b)->dspMode()) == QLatin1String("Cw")
                 ? kCwBlock : kPhoneBlock;
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), expected);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), expected);
     }
 
     // A channel no slice uses is left as it was opened.
@@ -203,7 +253,7 @@ private slots:
 
         QVERIFY(engine->rxChannel(a) != nullptr);
         QVERIFY(engine->rxChannel(4) != nullptr);
-        QCOMPARE(engine->rxChannel(4)->dspBlockSize(), kOpenedBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(4)), kOpenedBlock);
     }
 
     // The filter type goes with the block size. WDSP opens a channel linear
@@ -223,10 +273,10 @@ private slots:
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
 
-        QVERIFY(!engine->rxChannel(a)->filterTypeLinearPhase());
-        QVERIFY(!engine->rxChannel(b)->filterTypeLinearPhase());
+        QVERIFY(!wdspLinearPhase(engine->rxChannel(a)));
+        QVERIFY(!wdspLinearPhase(engine->rxChannel(b)));
         // A channel no slice uses is left as it was opened.
-        QVERIFY(engine->rxChannel(4)->filterTypeLinearPhase());
+        QVERIFY(wdspLinearPhase(engine->rxChannel(4)));
     }
 
     // Each receiver takes the type saved for its own slice's mode.
@@ -246,8 +296,8 @@ private slots:
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
 
-        QVERIFY(!engine->rxChannel(a)->filterTypeLinearPhase());
-        QVERIFY(engine->rxChannel(b)->filterTypeLinearPhase());
+        QVERIFY(!wdspLinearPhase(engine->rxChannel(a)));
+        QVERIFY(wdspLinearPhase(engine->rxChannel(b)));
     }
 
     // A mode change reaches a receiver other than the first. The slice's
@@ -268,16 +318,16 @@ private slots:
         model.sliceById(b)->setDspMode(DSPMode::USB);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kPhoneBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), kPhoneBlock);
 
         engine->rxChannel(b)->onModeChanged(DSPMode::CWU);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kCwBlock);
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), kPhoneBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), kCwBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), kPhoneBlock);
 
         engine->rxChannel(b)->onModeChanged(DSPMode::USB);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kPhoneBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), kPhoneBlock);
     }
 
     // A size picked on the local DSP > Options page (DspOptionsPage's combo
@@ -300,24 +350,24 @@ private slots:
         model.sliceById(c)->setDspMode(DSPMode::CWU);
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), kPhoneBlock);
-        QCOMPARE(engine->rxChannel(c)->dspBlockSize(), kCwBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), kPhoneBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(c)), kCwBlock);
 
         auto& s = AppSettings::instance();
         s.setValue(QStringLiteral("DspOptionsBufferSizePhoneRx"), QStringLiteral("128"));
         model.rebuildDspOptionsForMode(DSPMode::USB);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 128);
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), 128);
-        QCOMPARE(engine->rxChannel(c)->dspBlockSize(), kCwBlock);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), 128);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), 128);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(c)), kCwBlock);
 
         // The CW size, with the first slice in a Phone mode.
         s.setValue(QStringLiteral("DspOptionsBufferSizeCwRx"), QStringLiteral("1024"));
         model.rebuildDspOptionsForMode(DSPMode::CWU);
         QVERIFY(laneIdle(model));
-        QCOMPARE(engine->rxChannel(c)->dspBlockSize(), 1024);
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 128);
-        QCOMPARE(engine->rxChannel(b)->dspBlockSize(), 128);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(c)), 1024);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), 128);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(b)), 128);
     }
 
     // With nothing saved, the page shows for every mode group the block size
@@ -346,18 +396,18 @@ private slots:
             const RxChannel* rx = engine->rxChannel(ids[i]);
             QVERIFY(rx != nullptr);
             const QString size = shownOnPage(page, "DspOptionsBufferSize", group, "Rx");
-            QVERIFY2(size.toInt() == rx->dspBlockSize(),
+            QVERIFY2(size.toInt() == wdspBlockSize(rx),
                      qPrintable(QStringLiteral("%1 receive: the page shows a block of \"%2\", "
                                                "the receiver runs %3")
                                     .arg(QLatin1String(group.key), size)
-                                    .arg(rx->dspBlockSize())));
+                                    .arg(wdspBlockSize(rx))));
             const QString type = shownOnPage(page, "DspOptionsFilterType", group, "Rx");
             QVERIFY2(!type.isEmpty()
-                         && (type == QStringLiteral("Linear Phase")) == rx->filterTypeLinearPhase(),
+                         && (type == QStringLiteral("Linear Phase")) == wdspLinearPhase(rx),
                      qPrintable(QStringLiteral("%1 receive: the page shows \"%2\", the receiver "
                                                "runs %3")
                                     .arg(QLatin1String(group.key), type,
-                                         rx->filterTypeLinearPhase()
+                                         wdspLinearPhase(rx)
                                              ? QStringLiteral("Linear Phase")
                                              : QStringLiteral("Low Latency"))));
             QVERIFY(!AppSettings::instance().contains(
@@ -430,7 +480,7 @@ private slots:
         model.openRxChannelPool(5, bufferSizeForRate(kRateHz), kRateHz);
         QVERIFY(laneIdle(model));
         QVERIFY(engine->rxChannel(a) != nullptr);
-        QCOMPARE(engine->rxChannel(a)->dspBlockSize(), 256);
+        QCOMPARE(wdspBlockSize(engine->rxChannel(a)), 256);
 
         WdspEngine txEngine;
         txEngine.m_initialized = true;
