@@ -361,6 +361,30 @@
       "build": "nereus_visual_preview at git 5ad9b0737ed74207edb5b2091487fccd40eff7c7 (sidecar git_dirty false); scene look-dialog-setup-tx-profile-active; profile mac-1512x869@2; 2026-10-15",
       "kind": "offscreen-visual-preview-workspace-look",
       "state": "No radio connected; Default profile active; workspace look; no profile saved or deleted. Crop (404,0)-(1800,520) px of the scene PNG (Settings tree removed); no resampling."
+    },
+    {
+      "file": "desktop-tx-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/visual-preview-scenes/captures/clean-tx/mac-1512x869@2/look-connected-tx--right-panel.png",
+      "sha256": "db6283d4ff8d3cd74a67badfd872816be6974179eef0b57f11b2ea809aa327cc",
+      "dimensions": [
+        612,
+        934
+      ],
+      "build": "nereus_visual_preview at git e874587d9f96b39737a84b4ff3f7f4df1d7354f8 (sidecar git_dirty false); profile mac-1512x869@2; 2026-10-15; scene look-connected-tx, right-panel crop",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; crop (0,78)-(612,1012) px: TX applet title through SWR Prot; no keying."
+    },
+    {
+      "file": "desktop-tci-server-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/visual-preview-scenes/captures/clean-tci/mac-1512x869@2/look-dialog-remote-setup-tci-server.png",
+      "sha256": "87d004b9922d792350874cc7c7d75a9eb8fdffa0744f65e392385ccf91a91dd4",
+      "dimensions": [
+        1396,
+        1520
+      ],
+      "build": "nereus_visual_preview at git e874587d9f96b39737a84b4ff3f7f4df1d7354f8 (sidecar git_dirty false); profile mac-1512x869@2; 2026-10-15; scene look-dialog-remote-setup-tci-server",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; local server disabled and Stopped; workspace look; crop (404,0)-(1800,1520) px, Settings tree and groups below The Core's TCI server removed."
     }
   ]
 }

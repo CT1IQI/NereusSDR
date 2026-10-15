@@ -35,7 +35,7 @@ were actual capture states, not requirements for the procedures.
 | [desktop-tx-profile-original.png](desktop-tx-profile-original.png) | TX Profile page with Default active; no Save/Delete operation. |
 | [desktop-puresignal-original.png](desktop-puresignal-original.png) | PS and MOX off, pump inactive; no feedback calibration. |
 | [desktop-vax-original.png](desktop-vax-original.png) | VAX cards off, no consumers. Backend text is build/platform-specific; no external audio route is demonstrated. |
-| [desktop-tci-server-original.png](desktop-tci-server-original.png) | This-window server stopped with localhost binding, separate Core server options. |
+| [desktop-tci-server-original.png](desktop-tci-server-original.png) | This-window server stopped with localhost binding, separate Core server options (replaced in chapter 9 by the 15 October workspace-look original below; kept unmodified). |
 | [desktop-spot-hub-original.png](desktop-spot-hub-original.png) | Identity setup with callsign/grid empty. |
 | [desktop-freedv-source-original.png](desktop-freedv-source-original.png) | FreeDV source stopped, Auto-start off; no reporter service connection. |
 
@@ -73,10 +73,7 @@ now uses the new files where one exists.
 `desktop-audio-outputs.png` (not a preserved original) was replaced in place
 from `look-dialog-setup-outputs`, trimmed to the page content (the Settings tree removed).
 
-Not recaptured, still the 0.5.2 classic look: the TX applet composite
-(`desktop-tx.*`; the `look-connected` capture cuts the applet off below the
-profile selector, so **TX BW** is not shown), `desktop-tci-server-original.png`
-(a later capture replaces it), and the unreferenced
+Not recaptured, still the 0.5.2 classic look: the unreferenced
 `desktop-audio-devices-original.png` and `desktop-vax-original.png`.
 
 ## Connected-window recapture, 15 October 2026
@@ -93,6 +90,10 @@ data and no radio. The 2 October originals stay byte for byte.
 | [desktop-overview-workspace-original.png](desktop-overview-workspace-original.png) | `look-connected`, the full window, unmodified | `desktop-overview.svg` and `.jpg` (7 callouts re-placed; the SVG embeds a JPEG copy of this window, the `.jpg` is a 1512 px render) |
 | [desktop-vfo-workspace-original.png](desktop-vfo-workspace-original.png) | `look-connected--flag@3x.png`, the tool's own crop of slice A's flag | `desktop-vfo.svg` and `.jpg` (4 callouts re-placed) |
 | [desktop-tx-profile-workspace-original.png](desktop-tx-profile-workspace-original.png) | `look-dialog-setup-tx-profile-active`, crop (404,0)-(1800,520) px, Settings tree removed | `desktop-tx-profile-original.png` in chapter 14 |
+| [desktop-tx-workspace-original.png](desktop-tx-workspace-original.png) | `look-connected-tx--right-panel`, crop (0,78)-(612,1012) px: TX applet title through **SWR Prot** | `desktop-tx.svg` and `.jpg` (8 callouts re-placed; the SVG embeds a JPEG copy, q88) |
+| [desktop-tci-server-workspace-original.png](desktop-tci-server-workspace-original.png) | `look-dialog-remote-setup-tci-server`, crop (404,0)-(1800,1520) px, Settings tree and the groups below **The Core's TCI server** removed | `desktop-tci-server-original.png` in chapter 9 |
+
+The two rows above come from git `e874587d9f96b39737a84b4ff3f7f4df1d7354f8` (sidecars `git_dirty` false), folders `captures/clean-tx` and `captures/clean-tci`, same profile.
 
 `desktop-modes-audio.png` (not a preserved original) was replaced in place from
 `look-dialog-setup-digital-modes-full`, crop (404,0)-(1800,2436) px, Settings

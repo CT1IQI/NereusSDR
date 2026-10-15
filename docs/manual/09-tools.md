@@ -61,9 +61,9 @@ not the main speaker route.
 
 On iPhone/iPad, open **Tools > TCI Server** to inspect or operate the Core computer's server, port, options and connected clients. This is a Core control. A Core may not include or enable the server even when the desktop has its own TCI server. The phone page shows the Core server switch, port, station address when available, error/status, four options, and connected app rows with name, address, subscriptions, last command and TX badge. Use **Disconnect** only after confirming the app; the page asks first. If a control is unavailable, follow its capability/readiness or on-air reason.
 
-[![Desktop TCI Server settings separating this-window and Core server controls](images/desktop-tci-server-original.png)](images/desktop-tci-server-original.png)
+[![Desktop TCI Server settings separating this-window and Core server controls](images/desktop-tci-server-workspace-original.png)](images/desktop-tci-server-workspace-original.png)
 
-*TCI Server distinguishes this window’s local server from the Core server. Here the local server is disabled, bound to localhost and Stopped. A chosen port is not a connected-client readback. This is a desktop development capture; no server was started for the figure.*
+*TCI Server has two groups. **This window's server** is local to the desktop: here it listens on this computer only (127.0.0.1), port 50001, and its status reads Stopped. A note under it says the Core also serves TCI at port 50001 for apps on the Core's computer. **The Core's TCI server** group shows where the Core listens and its options. A chosen port is not a connected-client readback. This is a capture of the workspace-look window; no server was started for the figure, and the groups below these two are not shown.*
 
 ## Set DIG and RTTY offsets
 
