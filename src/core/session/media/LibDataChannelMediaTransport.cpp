@@ -86,6 +86,11 @@
 //               ceiling the phone's 48 kbit/s encoder must respect under
 //               RFC 7587 section 6.1. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: queueTx reports each "tx" message to the
+//               receipt hook on the library's thread
+//               (setTxReceiptHook), for the remote transmit cut guard.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/session/media/LibDataChannelMediaTransport.h"
@@ -244,6 +249,9 @@ struct CallbackBridge {
     bool txChannelWanted = false;
     bool txChannelAssigned = false;
     std::shared_ptr<rtc::DataChannel> txChannel;
+    // Remote transmit cut off the main thread: told of every "tx" message
+    // as it arrives, on the library's thread, under `mutex`.
+    IMediaTransport::TxReceiptHook txReceiptHook;
     bool iqChannelWanted = false;
     bool iqChannelAssigned = false;
     std::shared_ptr<rtc::DataChannel> iqChannel;
@@ -425,6 +433,11 @@ void queueTx(const std::weak_ptr<CallbackBridge>& weak, rtc::binary data)
     if (bridge->cancelled || bridge->receiveSeveredForTest || data.empty()
         || data.size() > static_cast<std::size_t>(IMediaTransport::kMaxTxMessageBytes)) {
         return;
+    }
+    // Remote transmit cut off the main thread: heard now, on this thread,
+    // whatever the owner's event loop is doing. Any "tx" message counts.
+    if (bridge->txReceiptHook) {
+        bridge->txReceiptHook(receivedAt);
     }
     bridge->receivedTxPayloadBytes.fetch_add(
         static_cast<quint64>(data.size()), std::memory_order_relaxed);
@@ -849,6 +862,9 @@ struct LibDataChannelMediaTransport::Private {
     std::shared_ptr<MicLane> micLane;
     std::unique_ptr<QThread> micThread;
     std::shared_ptr<CallbackBridge> bridge;
+    // Remote transmit cut off the main thread: the "tx" receipt hook, kept
+    // across starts and copied to each start's bridge.
+    TxReceiptHook txReceiptHook;
     std::shared_ptr<rtc::PeerConnection> peer;
     std::shared_ptr<rtc::DataChannel> display;
     std::shared_ptr<rtc::DataChannel> iq;
@@ -954,6 +970,7 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
         d->micThread->start();
     }
     d->bridge->txChannelWanted = options.txChannel;
+    d->bridge->txReceiptHook = d->txReceiptHook;
     d->bridge->iqChannelWanted = options.iqChannel;
     // Task 36: the microphone line's packets share the queue with one more
     // stream's worth of room.
@@ -1414,6 +1431,16 @@ bool LibDataChannelMediaTransport::setMicPacketSink(MicPacketSink sink)
     const std::lock_guard sinkLock(d->micLane->sinkMutex);
     d->micLane->hasSink.store(static_cast<bool>(sink), std::memory_order_release);
     d->micLane->sink = std::move(sink);
+    return true;
+}
+
+bool LibDataChannelMediaTransport::setTxReceiptHook(TxReceiptHook hook)
+{
+    d->txReceiptHook = std::move(hook);
+    if (d->bridge) {
+        const std::lock_guard lock(d->bridge->mutex);
+        d->bridge->txReceiptHook = d->txReceiptHook;
+    }
     return true;
 }
 

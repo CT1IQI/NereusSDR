@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - catchUpTransmitCut does not stop a second time when all
+//                that is left is a release already under way. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - The transmit cut line follows the connection and TX
 //                channel wherever they are set or cleared, and
 //                catchUpTransmitCut stops what is keyed and clears the
@@ -28091,7 +28094,18 @@ void RadioModel::stopAllTx(const QString& message)
 // ---------------------------------------------------------------------------
 void RadioModel::catchUpTransmitCut(const QString& stopText)
 {
-    stopAllTx(stopText);
+    // A release already under way (the stop that came first, the
+    // watchdog's say, started it) finishes by itself, and the cut has
+    // already taken the radio off the air: stopping it again would only
+    // report the stop twice. Anything else still keyed is stopped.
+    const bool stillKeyed = mox() || (m_moxController && m_moxController->isManualMox())
+        || m_isTuning
+        || (m_twoToneController
+            && (m_twoToneController->isActive() || m_twoToneController->isActivationInFlight()))
+        || endOfOverTailActive();
+    if (stillKeyed || !transmitReleaseInProgress()) {
+        stopAllTx(stopText);
+    }
     if (m_connection) {
         QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
                                   Qt::QueuedConnection);

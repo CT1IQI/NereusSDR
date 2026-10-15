@@ -46,6 +46,10 @@
 //               line's send from any thread, so the Core's receive audio
 //               leaves on a thread of its own. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setTxReceiptHook, the "tx" channel's
+//               receipts reported off the owner's thread for the remote
+//               transmit cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -59,6 +63,7 @@
 #include <QPair>
 #include <QString>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -445,6 +450,24 @@ public:
     virtual bool setMicPacketSink(MicPacketSink sink)
     {
         Q_UNUSED(sink);
+        return false;
+    }
+
+    /// Remote transmit cut off the main thread (2026-10-15): called on the
+    /// transport's own receive thread for every message the "tx" data
+    /// channel takes, with when it came off the network, so a guard off
+    /// the owner's thread hears the keepalives while the owner's event loop
+    /// is held. A cancelled or severed transport never calls it. The hook
+    /// must be safe on that thread, must not block, and must not call back
+    /// into the transport.
+    using TxReceiptHook = std::function<void(std::chrono::steady_clock::time_point receivedAt)>;
+    /// Installs `hook` (empty: none) for this start and every later one.
+    /// After it returns, the hook it replaced is never called again. False
+    /// when this transport cannot call one off the owner's thread. Owner's
+    /// thread only.
+    virtual bool setTxReceiptHook(TxReceiptHook hook)
+    {
+        Q_UNUSED(hook);
         return false;
     }
 

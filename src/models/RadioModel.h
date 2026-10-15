@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-15 - catchUpTransmitCut does not stop a second time when all that
+//              is left is a release already under way. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
 // 2026-10-15 - The transmit cut line (transmitCutLine) a thread other than
 //              main cuts through, kept on the current connection and TX
 //              channel, and catchUpTransmitCut for the main thread after
@@ -5431,9 +5434,10 @@ public slots:
     // (RadioConnection::cutTransmit), and its targets always follow this
     // model's connection and TX channel. catchUpTransmitCut(stopText) runs
     // on the main thread once it is free again: stopAllTx(stopText) (which
-    // does nothing when nothing is keyed), then clearTransmitCut posted to
-    // the connection, queued behind the MOX off stopAllTx posted, so the
-    // next key keys normally.
+    // does nothing when nothing is keyed, and is skipped when all that is
+    // left is a release already under way, an earlier stop's), then
+    // clearTransmitCut posted to the connection, queued behind the MOX off
+    // stopAllTx posted, so the next key keys normally.
     std::shared_ptr<TransmitCutLine> transmitCutLine() const { return m_transmitCutLine; }
     void catchUpTransmitCut(const QString& stopText);
 

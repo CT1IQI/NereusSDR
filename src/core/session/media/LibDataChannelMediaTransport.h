@@ -36,6 +36,9 @@
 //   2026-10-10: R-AUD-SEND: audioRtpSink(), a sink any thread may send
 //               the receive audio lines through, valid after stop().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setTxReceiptHook for the remote transmit
+//               cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/IMediaTransport.h"
@@ -158,6 +161,7 @@ public:
     bool sendMicRtp(const QByteArray& packet) override;
     bool sendTx(const QByteArray& message) override;
     bool setMicPacketSink(MicPacketSink sink) override;
+    bool setTxReceiptHook(TxReceiptHook hook) override;
 
     bool isReady() const override;
     bool gatherCandidates(const QList<IceRelayServer>& relays) override;

@@ -552,6 +552,10 @@
 //   2026-10-09: Core speaker: peerGetsCoreSpeaker (native audio plan Task
 //               21). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-15: remote transmit cut off the main thread:
+//               the cut guard, its receipt hook, onTransmitCutOffMain
+//               and mediaEpochOfDevice. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -570,6 +574,8 @@
 #include <QSslConfiguration>
 #include <QString>
 
+#include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <functional>
@@ -635,6 +641,7 @@ class TransmitState;
 class StationVax;
 class RemoteKeying;
 class RemoteTxWatchdog;
+class RemoteTxCutGuard;
 class TxWatchServer;
 
 /// Slice control plan Task 10: how the hosting desktop hears what a
@@ -1535,6 +1542,31 @@ public:
     /// keepalives (tx.keepalive on the session, or the media connection's
     /// "tx" data channel) stop for more than 400 ms, or its session ends.
     RemoteTxWatchdog* txWatchdog() const { return m_txWatchdog.get(); }
+    /// Remote transmit cut off the main thread (2026-10-15): the guard that
+    /// judges a keyed remote device's "tx" channel messages on a thread of
+    /// its own, so a stalled main thread still cuts transmit within the
+    /// watchdog's 400 ms; null without a Local model.
+    RemoteTxCutGuard* txCutGuard() const { return m_txCutGuard.get(); }
+    /// Remote transmit cut off the main thread: the hook a media peer of
+    /// session `mediaEpoch` calls on its transport's own thread for each
+    /// "tx" channel message, at its receipt. It holds the guard weakly and
+    /// does nothing once the guard is gone. Empty without a guard.
+    std::function<void(std::chrono::steady_clock::time_point)>
+    txChannelReceiptHook(quint64 mediaEpoch) const;
+    /// Remote transmit cut off the main thread (main thread): the guard cut
+    /// transmit for media session `mediaEpoch` under arm `armSerial` after
+    /// `silentMs` without a "tx" message. While that arm is current and its
+    /// device still keyed and watched, the watchdog trips it now (its stop
+    /// and its record, once); then the model catches up with the cut
+    /// (RadioModel::catchUpTransmitCut), always, so the connection's cut is
+    /// cleared. Public for tests.
+    void onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs);
+    /// Remote transmit cut off the main thread: the media epoch of
+    /// `deviceId`'s current media session (the newest), 0 without one.
+    quint64 mediaEpochOfDevice(const QByteArray& deviceId) const;
+    /// Test seam: when a "tx" channel message last reached a hook from
+    /// txChannelReceiptHook() (the epoch of the clock when none has).
+    std::chrono::steady_clock::time_point lastTxChannelReceiptForTest() const;
     /// Task 37: a keepalive from the media connection's "tx" data channel
     /// (RemoteTxWatchdog::channelKeepalive's 13 bytes), for the device the
     /// media session `epoch` is for. Anything else is ignored. TX mic
@@ -2185,6 +2217,10 @@ private:
     static constexpr int kUnstartedTakeRecheckMs = 50;
     // Task 37: the watchdog follows who is keyed (RadioModel::keyedBy).
     void followKeyedForWatchdog();
+    // Remote transmit cut off the main thread: a keepalive the watchdog
+    // counted for `deviceId`, `ageUs` after its receipt, also moves the
+    // guard's last-heard when the guard is armed for that device.
+    void noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs);
     // Task 37: turns VOX off when `deviceId` armed it (its session ended,
     // its link went quiet, its microphone line closed).
     void disarmVoxArmedBy(const QByteArray& deviceId, const char* why);
@@ -2865,6 +2901,19 @@ private:
     // follows now, and the device that armed VOX.
     std::unique_ptr<RemoteTxWatchdog> m_txWatchdog;
     QTimer* m_txWatchdogTimer = nullptr;
+    // Remote transmit cut off the main thread (2026-10-15): what the
+    // guard's cut reaches (the model's cut line and this object, cleared
+    // under its mutex before this object goes), the guard, the key it is
+    // armed for (device, keying epoch, media epoch), and when a "tx"
+    // message last reached a receipt hook (steady clock ticks, for tests).
+    struct TxCutTarget;
+    std::shared_ptr<TxCutTarget> m_txCutTarget;
+    std::shared_ptr<RemoteTxCutGuard> m_txCutGuard;
+    QByteArray m_txCutGuardDevice;
+    quint32 m_txCutGuardKeyEpoch = 0;
+    quint64 m_txCutGuardMediaEpoch = 0;
+    std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> m_lastTxChannelReceipt =
+        std::make_shared<std::atomic<std::chrono::steady_clock::rep>>(0);
     StarvationPolicy m_starvation;
     QByteArray m_watchedKeyedDevice;
     QByteArray m_voxArmedBy;
