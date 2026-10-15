@@ -4240,6 +4240,10 @@ if(FFTW3_FOUND AND WDSP_FOUND)
     target_compile_definitions(tst_rx_channel_agc_fixed_seed PRIVATE WDSP_STATIC_BUILD)
 endif()
 
+# Settings > DSP > AGC/ALC: the Fixed Gain spinner follows a model change
+# without echoing it back.
+nereus_add_test(tst_agc_alc_fixed_gain_sync)
+
 # ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
 # Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
 # the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always

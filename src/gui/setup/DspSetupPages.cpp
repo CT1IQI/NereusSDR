@@ -73,6 +73,9 @@
 //               Thetis does: a combo box draws its item text as written, so
 //               the doubled ampersand showed twice. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The AGC Fixed Gain spinner follows the slice when another
+//               window or the phone changes it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -437,6 +440,14 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
 
     connect(m_agcFixedGain, QOverload<int>::of(&QSpinBox::valueChanged),
             slice, &SliceModel::setAgcFixedGain);
+    // Follow writes made elsewhere (a remote window, the phone); the blocker
+    // keeps the update from echoing back into the slice.
+    QSpinBox* const fixedGainSpin = m_agcFixedGain;
+    connect(slice, &SliceModel::agcFixedGainChanged,
+            fixedGainSpin, [fixedGainSpin](int dB) {
+        QSignalBlocker b(fixedGainSpin);
+        fixedGainSpin->setValue(dB);
+    });
 
     connect(m_agcHangThresh, &QSlider::valueChanged,
             slice, &SliceModel::setAgcHangThreshold);
