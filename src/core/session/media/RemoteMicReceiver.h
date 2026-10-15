@@ -101,6 +101,7 @@
 // =================================================================
 
 #include "core/audio/AudioRingSpsc.h"
+#include "core/NereusCoreExport.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -616,7 +617,7 @@ private:
 };
 
 /// The receiver of one media connection's microphone line.
-class RemoteMicReceiver final : public QObject {
+class NEREUS_CORE_EXPORT RemoteMicReceiver final : public QObject {
     Q_OBJECT
 
 public:

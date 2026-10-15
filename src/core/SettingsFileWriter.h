@@ -12,6 +12,7 @@
 #include <QThreadPool>
 
 #include <functional>
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -21,7 +22,7 @@ namespace NereusSDR {
 /// Core's main thread, which also sends the receive audio, must not wait
 /// with it. One thread, so saves reach the disk in the order they were asked
 /// for.
-class SettingsFileWriter : public QObject {
+class NEREUS_CORE_EXPORT SettingsFileWriter : public QObject {
     Q_OBJECT
 public:
     explicit SettingsFileWriter(QObject* parent = nullptr);

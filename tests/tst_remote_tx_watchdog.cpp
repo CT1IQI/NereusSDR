@@ -193,6 +193,7 @@ void TestRemoteTxWatchdog::theLinkClosingStopsAtOnce()
     QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel));
     rig.advanceTo(150);
     QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    QVERIFY(tripped.isValid());
     rig.watchdog.linkClosed(kPhone);
     QCOMPARE(rig.stops.size(), size_t(1));
     QCOMPARE(rig.stops.front().atMs, qint64(150));
@@ -315,6 +316,8 @@ void TestRemoteTxWatchdog::lateKeepaliveCannotRescueExpiredWatch()
     QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::Session));
     QSignalSpy heard(&rig.watchdog, &RemoteTxWatchdog::keepaliveHeard);
     QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    QVERIFY(heard.isValid());
+    QVERIFY(tripped.isValid());
 
     // A busy event loop can dispatch socket input before its overdue timer.
     // Move the clock without delivering that timer: arrival must check age.

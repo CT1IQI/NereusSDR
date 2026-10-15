@@ -21,6 +21,7 @@
 #include "AppletWidget.h"
 #include "core/Rf2ksConnection.h"
 #include "models/TunerModel.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QHash>
 #include <QSet>
@@ -55,7 +56,7 @@ class RfKitModel;
 // Section D (Task 9): right-click context menu.
 //
 // Layout patterns from AmpApplet.{h,cpp} (AetherSDR port, GPLv3).
-class Rf2ksApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT Rf2ksApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit Rf2ksApplet(RadioModel* model, QWidget* parent = nullptr);

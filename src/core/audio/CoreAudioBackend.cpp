@@ -4,12 +4,15 @@
 // no-port-check: NereusSDR-original.  See CoreAudioBackend.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//               Add diagnostic-only native query and lock acquisition markers.
 //   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-11, R-AUD-14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/CoreAudioBackend.h"
+#include "core/audio/NativeAudioQueryTrace.h"
 
 #include <utility>
 
@@ -40,7 +43,9 @@ QList<CoreAudioDeviceRecord> CoreAudioBackend::refreshRecords()
 {
     QList<CoreAudioDeviceRecord> records = m_system ? m_system->devices()
                                                     : QList<CoreAudioDeviceRecord>{};
+    NativeAudioQueryTrace lockTrace("cache.mutex-acquire");
     std::lock_guard<std::mutex> lock(m_mutex);
+    lockTrace.finish();
     m_records = records;
     return records;
 }
@@ -100,7 +105,9 @@ std::optional<QString> CoreAudioBackend::defaultDeviceId(AudioDeviceDirection di
     };
     QList<CoreAudioDeviceRecord> known;
     {
+        NativeAudioQueryTrace lockTrace("cache.mutex-acquire");
         std::lock_guard<std::mutex> lock(m_mutex);
+        lockTrace.finish();
         known = m_records;
     }
     if (std::optional<QString> uid = find(known)) {
@@ -142,7 +149,9 @@ std::optional<CoreAudioDeviceRecord> CoreAudioBackend::recordFor(const AudioStre
     };
     QList<CoreAudioDeviceRecord> known;
     {
+        NativeAudioQueryTrace lockTrace("cache.mutex-acquire");
         std::lock_guard<std::mutex> lock(m_mutex);
+        lockTrace.finish();
         known = m_records;
     }
     if (std::optional<CoreAudioDeviceRecord> record = find(known)) {

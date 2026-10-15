@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14: Restore saved spans down to the existing 1 kHz zoom minimum;
+//               re-anchor toasts on window geometry changes and remove a
+//               closing toast before restacking. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -1196,6 +1200,7 @@ warren@wpratt.com
 #include <QScreen>
 #include <QSlider>
 #include <QCloseEvent>
+#include <QMoveEvent>
 #include <QResizeEvent>
 #include <QEvent>
 #include <QHelpEvent>
@@ -4769,13 +4774,15 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
     if (!spectrum || !model || !stack) { return; }
     const QPointer<RadioModel> modelRef(model);
     const QPointer<PanadapterStack> stackRef(stack);
+    const QPointer<SpectrumWidget> spectrumRef(spectrum);
     const auto resolve = [modelRef, stackRef, panId]() -> SliceModel* {
         if (!modelRef || !stackRef) { return nullptr; }
         PanadapterApplet* applet = stackRef->panadapter(panId);
         if (!applet) { return nullptr; }
-        if (SliceModel* active =
-                modelRef->sliceById(applet->activeSliceIndex())) {
-            return active;
+        if (applet->associatedSlices().contains(applet->activeSliceIndex())) {
+            if (SliceModel* active = modelRef->sliceById(applet->activeSliceIndex())) {
+                return active;
+            }
         }
         for (SliceModel* slice : modelRef->slices()) {
             if (slice
@@ -4785,11 +4792,95 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         }
         return nullptr;
     };
-    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
-            spectrum, [resolve](bool on) {
-        if (SliceModel* slice = resolve()) {
-            slice->setWidebandExtensionRequested(on);
+    // Local slices have one hosting pan (PanadapterStack::moveSliceToPan).
+    // Track the actual owner object so a selection/removal without another
+    // extension edge retires its old intent. Remote endpoints own separate
+    // model leases; accepted remote state must never write local intent.
+    struct LocalRequestOwner {
+        QPointer<SliceModel> slice;
+        bool hasBoundSlice{false};
+    };
+    const auto requestOwner = std::make_shared<LocalRequestOwner>();
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner]() {
+        if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
+            return;
         }
+        const QPointer<SliceModel> next(resolve());
+        const QPointer<SliceModel> previous(requestOwner->slice);
+        if (previous != next) {
+            requestOwner->slice = next;
+            if (previous) { previous->setWidebandExtensionRequested(false); }
+        }
+        // A direct observer of the retirement may have changed selection or
+        // removed the model/widget. Let the nested reconciliation win.
+        if (!modelRef || !spectrumRef || requestOwner->slice != next) { return; }
+        const RadioInfo& info = modelRef->currentRadioInfo();
+        if (!next) {
+            // Startup wires the empty pan before discovery. Binding signals
+            // also arrive before sliceAdded associates the first receiver.
+            // Preserve its restored span until that first association, unless
+            // the known board/protocol offers no wideband source at all.
+            const bool knownUnsupported = info.boardType != HPSDRHW::Unknown
+                && BoardCapsTable::widebandAdcsFor(modelRef->boardCapabilities(),
+                                                   info.protocol) == 0;
+            if (requestOwner->hasBoundSlice || knownUnsupported) {
+                spectrumRef->setLocalWidebandAvailable(false);
+            }
+            return;
+        }
+        // Discovery and actual stream binding are separate startup stages.
+        // connectToRadioImpl publishes Slice A before opening the stream pool;
+        // a selected object with no ADC yet is unresolved, not unsupported.
+        if (info.boardType == HPSDRHW::Unknown) {
+            next->setWidebandExtensionRequested(false);
+            return;
+        }
+        const BoardCapabilities& caps = modelRef->boardCapabilities();
+        const int adc = modelRef->sliceAdcIndex(next->sliceIndex());
+        const int chain = modelRef->sliceChainIndex(next->sliceIndex());
+        const int widebandAdcs = BoardCapsTable::widebandAdcsFor(caps, info.protocol);
+        const bool routingKnown = adc >= 0 && chain >= 0;
+        if (widebandAdcs > 0 && !routingKnown && !requestOwner->hasBoundSlice) {
+            next->setWidebandExtensionRequested(false);
+            return;
+        }
+        if (routingKnown) { requestOwner->hasBoundSlice = true; }
+        const bool available = adc >= 0 && adc < caps.adcCount
+            && adc < widebandAdcs && chain >= 0 && chain < caps.rxFilterChainCount;
+        if (available) { spectrumRef->setWidebandAdcIndex(adc); }
+        spectrumRef->setLocalWidebandAvailable(available);
+        if (modelRef && spectrumRef && next && requestOwner->slice == next) {
+            next->setWidebandExtensionRequested(spectrumRef->extendedMode());
+        }
+    };
+    connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
+            spectrum, [reconcile](bool) { reconcile(); });
+    if (PanadapterApplet* applet = stack->panadapter(panId)) {
+        connect(applet, &PanadapterApplet::activeSliceChanged, spectrum,
+                [reconcile](const QString&, int) { reconcile(); });
+    }
+    connect(model, &RadioModel::currentRadioChanged, spectrum,
+            [reconcile](const RadioInfo&) { reconcile(); });
+    connect(model, &RadioModel::streamAdcRoutingChanged, spectrum, reconcile);
+    connect(model, &RadioModel::streamBindingsChanged, spectrum,
+            [reconcile](int, const QVector<int>&) { reconcile(); });
+    connect(model, &RadioModel::sliceRemoved, spectrum,
+            [reconcile](int) { reconcile(); });
+    const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
+        if (!modelRef || !spectrumRef) { return; }
+        if (SliceModel* slice = modelRef->sliceById(sliceId)) {
+            connect(slice, &SliceModel::streamIndexChanged, spectrumRef.data(),
+                    [reconcile](int) { reconcile(); });
+        }
+        reconcile();
+    };
+    for (SliceModel* slice : model->slices()) {
+        if (slice) { watchSlice(slice->sliceIndex()); }
+    }
+    connect(model, &RadioModel::sliceAdded, spectrum, watchSlice);
+    connect(spectrum, &QObject::destroyed, model, [requestOwner]() {
+        if (requestOwner->slice) { (requestOwner->slice)->setWidebandExtensionRequested(false); }
+        requestOwner->slice.clear();
     });
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
             spectrum, [resolve](double freqHz) {
@@ -4799,9 +4890,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
     });
     // Settings restore and rate seeding may have derived the actual state
     // before this bridge existed, so seed the resolved slice immediately.
-    if (SliceModel* slice = resolve()) {
-        slice->setWidebandExtensionRequested(spectrum->extendedMode());
-    }
+    reconcile();
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
@@ -7608,8 +7697,20 @@ void MainWindow::buildUI()
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState s) {
             if (s != ConnectionState::Connected) { return; }
-            QMetaObject::invokeMethod(this, [this]() { populateEmptyPans(); },
-                                      Qt::QueuedConnection);
+            const QString mac = m_radioModel->currentRadioMac();
+            QMetaObject::invokeMethod(this, [this, mac]() {
+                if (m_radioModel->connectionState() != ConnectionState::Connected
+                    || m_radioModel->currentRadioMac() != mac) { return; }
+                const QPointer<MainWindow> self(this);
+                populateEmptyPans();
+                if (!self) { return; }
+                // Population can emit callbacks which disconnect/switch radios.
+                if (m_radioModel->connectionState() != ConnectionState::Connected
+                    || m_radioModel->currentRadioMac() != mac) { return; }
+                if (TxSliceArbiter* arbiter = m_radioModel->txSliceArbiter()) {
+                    arbiter->finishRestore();
+                }
+            }, Qt::QueuedConnection);
         });
     }
 
@@ -13305,8 +13406,12 @@ StatusToast* MainWindow::showToast(const QString& message,
     }
 
     auto* toast = new StatusToast(message, severity, timeoutMs, this);
-    connect(toast, &QObject::destroyed, this, [this]() {
-        m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+    connect(toast, &QObject::destroyed, this, [this](QObject* destroyedToast) {
+        // QWidget's QPointer may still be non-null during destroyed().
+        // Remove the dying window by identity before reading live geometry.
+        m_toasts.removeIf([destroyedToast](const QPointer<StatusToast>& t) {
+            return t.isNull() || t.data() == destroyedToast;
+        });
         restackToasts();
     });
     m_toasts.append(toast);
@@ -14722,7 +14827,8 @@ void MainWindow::wireSliceToSpectrum()
     // persisted zoom level if present. SpectrumWidget::loadSettings()
     // has already read "DisplayBandwidth" from AppSettings into
     // m_bandwidthHz by this point. If the loaded value is sensible
-    // (between 10 kHz and the DDC sample rate), keep it; otherwise
+    // (between the 1 kHz zoom minimum and the permitted ceiling), keep it;
+    // otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     const double freq = slice->frequency();
     if (firstWiring) {
@@ -14733,8 +14839,8 @@ void MainWindow::wireSliceToSpectrum()
 
         // Same ceiling as setDisplayWindowClamped, spelled out here because the
         // FALLBACK differs: an out-of-range stored value goes to the full-span
-        // 768 kHz default rather than to the ceiling, and there is a 10 kHz floor
-        // that only applies to a restored value. The ceiling is the shared part.
+        // 768 kHz default rather than to the ceiling. The 1 kHz floor matches
+        // the operator zoom controls; the ceiling is the shared part.
         //
         // The upper bound is that extended ceiling, not a hardcoded 768 kHz.
         //
@@ -14746,7 +14852,7 @@ void MainWindow::wireSliceToSpectrum()
         // old literal meant to say. Codex, PR #318.
         const double loadedBw = host->bandwidth();
         const double ceiling  = host->maxZoomOutBandwidthHz();
-        const double initialBw = (loadedBw >= 10000.0 && loadedBw <= ceiling)
+        const double initialBw = (loadedBw >= 1000.0 && loadedBw <= ceiling)
                                  ? loadedBw : 768000.0;
         // The provisional remote Slice A has no authoritative hosting key.
         // Preserve this pane's view until its record completes, just as the
@@ -15437,6 +15543,12 @@ double MainWindow::readSystemCpuPercent()
                               / static_cast<double>(totalDelta));
 }
 
+void MainWindow::moveEvent(QMoveEvent* event)
+{
+    QMainWindow::moveEvent(event);
+    restackToasts();
+}
+
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
@@ -15461,6 +15573,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         m_chromeBar->relayout(m_chromeBarWidget->width());
     }
     placeCoreStopBanner();
+    restackToasts();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

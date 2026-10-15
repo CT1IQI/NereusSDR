@@ -185,7 +185,9 @@ function(nereus_add_test name)
     # gets its tests_realtime build target like every other label. Each
     # such test also prints the load average when a case fails
     # (tests/RealtimeTestLoad.h).
-    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME" "" "EXTRA_LABELS" ${ARGN})
+    # DEPENDENCY_ISOLATED compiles a production module with test dependency
+    # doubles, without application linkage, settings helpers or the app PCH.
+    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME;DEPENDENCY_ISOLATED" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
     # all_tests and the per-label targets are built from the list once,
@@ -253,8 +255,12 @@ function(nereus_add_test name)
     # The aggregate `all_tests` target is created at the bottom of
     # this file from a global property each nereus_add_test() call
     # appends to.
-    add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox>
-        $<TARGET_OBJECTS:nereus_test_home_guard> ${_extra_sources})
+    if(_nat_DEPENDENCY_ISOLATED)
+        add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp ${_extra_sources})
+    else()
+        add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox>
+            $<TARGET_OBJECTS:nereus_test_home_guard> ${_extra_sources})
+    endif()
     # R-R3-49 parity mini-round: a test that starts WDSP without its wisdom
     # step gets the shared FFTW wisdom cache (nereus_test_fftw_wisdom above).
     # Found by the names that start WDSP that way, in the test's own source
@@ -267,7 +273,7 @@ function(nereus_add_test name)
     # FFTs the same way (SetAnalyzer's FFTW_PATIENT plans, TxAnalyzer.cpp):
     # tst_remote_tx_display_settings spent 4.8 s of its 9 s at rest there,
     # and passed its 120 s limit at load 342.
-    if(TARGET nereus_test_fftw_wisdom)
+    if(TARGET nereus_test_fftw_wisdom AND NOT _nat_DEPENDENCY_ISOLATED)
         set(_wisdom_scan "${_extra_sources}")
         file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${name}.cpp" _wisdom_text)
         string(APPEND _wisdom_scan "${_wisdom_text}")
@@ -275,7 +281,9 @@ function(nereus_add_test name)
             target_sources(${name} PRIVATE $<TARGET_OBJECTS:nereus_test_fftw_wisdom>)
         endif()
     endif()
-    if(_nat_CORE_ONLY)
+    if(_nat_DEPENDENCY_ISOLATED)
+        target_link_libraries(${name} PRIVATE Qt6::Core)
+    elseif(_nat_CORE_ONLY)
         target_link_libraries(${name} PRIVATE NereusCore Qt6::Test)
     else()
         target_link_libraries(${name} PRIVATE NereusSDRLib Qt6::Test)
@@ -288,7 +296,7 @@ function(nereus_add_test name)
     # across every test target. Gated on NEREUS_USE_PCH so users who turn the
     # PCH off (e.g. for header-hygiene auditing) don't get a broken
     # link.
-    if(NEREUS_USE_PCH)
+    if(NEREUS_USE_PCH AND NOT _nat_DEPENDENCY_ISOLATED)
         target_precompile_headers(${name} REUSE_FROM nereus_test_pch)
     endif()
 
@@ -332,7 +340,7 @@ function(nereus_add_test name)
     # build. Add that directory to PATH so Windows can load both shared
     # libraries. CMake before 3.22 has no ENVIRONMENT_MODIFICATION support.
     # APPEND, not set: the offscreen entry below shares this list property.
-    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+    if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22 AND NOT _nat_DEPENDENCY_ISOLATED)
         set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:NereusSDRLib>")
     endif()
@@ -550,7 +558,7 @@ if(TARGET wdsp_static)
     # before a rebuild never run; the unkey drain is measured. REALTIME: it
     # holds the event loop's 10 ms timer to a wall-clock bound. It plans
     # through the shared wisdom cache, so the default 120 s holds.
-    nereus_add_test(tst_dsp_control_transmit EXTRA_LABELS core REALTIME)
+    nereus_add_test(tst_dsp_control_transmit CORE_ONLY EXTRA_LABELS core REALTIME)
     # Task 33 (R-IOS-03): stopping transmission at once. With both lanes
     # held for 200 ms, stopTransmitNow returns within 2 ms with the RF gate
     # shut and MOX off at the connection before either lane is free, and no
@@ -1211,6 +1219,8 @@ nereus_add_test(tst_receiver_manager_ps_ddc)
 
 # ── Phase 3P-B Task 7: regression-freeze gate ────────────────────────────
 nereus_add_test(tst_p2_regression_freeze)
+nereus_add_test(tst_p2_command_zero)
+target_compile_definitions(tst_p2_command_zero PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 8: Alex-1 Filters sub-sub-tab smoke test ─────────────
 nereus_add_test(tst_alex1_filters_tab)
@@ -1265,6 +1275,10 @@ nereus_add_test(tst_sample_rate_catalog)
 # destruction of RadioConnection (and its worker-affined QTimers).
 nereus_add_test(tst_cross_thread_teardown fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_cross_thread_teardown PRIVATE NEREUS_BUILD_TESTS)
+
+# Device-free ownership coverage for never-started, finished, and running
+# connection workers, including active child timers and cleanup affinity.
+nereus_add_test(tst_connection_teardown_ownership)
 
 # Regression test for the GUI-thread fexchange2 deadlock — verifies
 # that RxDspWorker::processIqBatch runs on its own QThread when driven
@@ -1743,6 +1757,8 @@ endif()
 if(APPLE)
     nereus_add_test(tst_core_audio_backend)
 endif()
+# 2026-10-12: J.J. Boyd / OpenAI Codex; portable off-device query diagnostics.
+nereus_add_test(tst_native_audio_query_trace)
 
 # Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
 # and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
@@ -1760,6 +1776,15 @@ endif()
 # and metering coverage).
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
+endif()
+
+# Device-free ownership regression: its own tiny target, private namespaces and
+# command/API doubles; never invokes the historical host-FIFO cleanup test.
+if(UNIX)
+    add_subdirectory(linux_pipe_ownership EXCLUDE_FROM_ALL)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS tst_linux_pipe_ownership)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES core)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_core tst_linux_pipe_ownership)
 endif()
 
 # ── Linux audio backend detection (PipeWire-native bridge, Task 3) ───────────
@@ -3073,6 +3098,9 @@ nereus_add_test(tst_workspace_colour_sweep
     visual/PreviewData.cpp
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_workspace_colour_sweep PRIVATE NEREUS_BUILD_TESTS)
+# visual/PreviewScenes.cpp includes "fakes/..." headers, which resolve from
+# tests/ only, as on nereus_visual_preview (tests/visual/CMakeLists.txt).
+target_include_directories(tst_workspace_colour_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # One function walks every dialog and Setup scene (161 scenes, 173 grabs)
 # on one window: measured 2026-10-09 on the M5 Max at 531 s, and 872 s
 # with four preview captures running beside it. QtTest's function watchdog (300 s
@@ -4152,10 +4180,12 @@ nereus_add_test(tst_mox_controller_multicast_signals)
 # Verifies end-to-end mic_ptt extraction and dispatch through MoxController.
 #
 # Prong A — RadioConnection-level extraction:
-#   §A.1  P1: C0 bit 0 set in sub-frame 0 → micPttFromRadio(true)
-#   §A.2  P1: C0 bit 0 set in sub-frame 1 only → micPttFromRadio(true) (OR logic)
-#   §A.3  P1: C0 bit 0 clear in both sub-frames → micPttFromRadio(false)
-#   §A.4  P1: ADC overload in C1 does NOT set micPtt (PTT is in C0, not C1)
+#   §A.1  P1: later ordinary sub-frame wins when PTT changes within a packet
+#   §A.2  P1: later ordinary sub-frame can assert PTT
+#   §A.3  P1: I2C response C0 bit 0 does not replace ordinary PTT status
+#   §A.4  P1: an all-I2C packet emits no PTT sample
+#   §A.5  P1: C0 bit 0 clear in both ordinary sub-frames emits false
+#   §A.6  P1: ADC overload in C1 does NOT set micPtt (PTT is in C0, not C1)
 #   §B.1  P2: raw[4] bit 0 set → micPttFromRadio(true)
 #   §B.2  P2: raw[4] bit 0 clear → micPttFromRadio(false)
 #   §B.3  P2: dot/dash bits (bits 1/2) only → micPttFromRadio(false)
@@ -4622,7 +4652,7 @@ target_compile_definitions(tst_tx_channel_dexp_gate PRIVATE NEREUS_BUILD_TESTS)
 #   wdsp/dexp.c:399-403      — SendCBPushDexpVox setter signature
 #   cmaster.cs:1125          — Thetis analogue registration callsite
 #   cmaster.cs:1903-1906     — Thetis VOX.PushVox callback body
-nereus_add_test(tst_tx_channel_pushvox_callback)
+nereus_add_test(tst_tx_channel_pushvox_callback CORE_ONLY)
 target_compile_definitions(tst_tx_channel_pushvox_callback PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-3a-iii Task 18 (bench fix): TxChannel VOX-listening pump gate ──
@@ -6788,22 +6818,22 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
-# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
-# deletes the real cell interfaces of expired native rows while
-# QAccessibleTable keeps their IDs; the next spot insert or trim then
-# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
-# performs that deletion through QAccessible::deleteAccessibleInterface and
-# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
-# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+# Spot List under live spot traffic with accessibility on. The macOS
+# bridge deletes the cell interfaces it holds when its pool drains after a
+# table change, while QAccessibleTable keeps their IDs; the next spot insert
+# or trim then dereferenced them inside SpotTableModel::addSpot. Each case
+# walks the cells, changes rows, lets the queued reset run, deletes the
+# walked cells as the drain does and changes rows again: arrival, cap trim,
+# band filter, clear and a hidden dialog. The selected spot, current spot
+# and top visible spot stay on the same spot across a new spot, a burst (one
+# reset), a trim and an update; with accessibility off nothing is reset.
 nereus_add_test(tst_spot_list_accessibility)
 
-# The same Qt 6.11.0 Cocoa accessibility cache repair
-# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
-# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
-# rows after the cell interfaces were deleted the way the Cocoa bridge
-# deletes them, the real FreeDVReporterDialog's proxied station table, and
-# the gate leaving the cache alone on every other platform.
-nereus_add_test(tst_qt_cocoa_accessible_table_cache)
+# The real model reset item views take before their rows change with
+# accessibility on (resetItemsBeforeRowChange): items, roles, flags,
+# current row and selection kept, no view signals, one modelReset; expired
+# cells then a row change do not crash.
+nereus_add_test(tst_item_view_model_reset)
 
 # Workspace visual review (2026-10-08): the visual preview's dialog seams.
 # ConnectionPanel and LanScanDialog start no discovery with their test seam
@@ -7771,6 +7801,12 @@ nereus_add_test(tst_legacy_iq_tap_is_stream_zero)
 # the file has a stated reason to exist.
 nereus_add_test(tst_status_toast_preserves_bottom_bar)
 
+# Current-main merged-review regressions: valid saved 1 kHz receive spans
+# survive initial Slice A wiring, and live tool-window toasts follow their
+# owning window's actual move/resize events without changing their layout.
+nereus_add_test(tst_display_settings_correctness)
+target_compile_definitions(tst_display_settings_correctness PRIVATE NEREUS_BUILD_TESTS)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice
@@ -8520,6 +8556,10 @@ nereus_add_test(tst_cores_setup_page fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_startup_selection)
 nereus_add_test(tst_gui_session_coordinator fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_session_coordinator PRIVATE NEREUS_BUILD_TESTS)
+# The headless Core (nereusd) and the desktop Core serve the same things,
+# except for the differences the test lists with their reasons.
+nereus_add_test(tst_core_parity fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+target_compile_definitions(tst_core_parity PRIVATE NEREUS_BUILD_TESTS)
 # R3 controls that work, Task 1 (R-R3-21, R-R3-17): shortcut uniqueness in
 # local and remote windows, developer-only Tools test entries, startup
 # apply of saved meter settings, Band > HF band memory, the bundled DXCC
@@ -10730,6 +10770,21 @@ nereus_add_test(tst_cat_rigctld CORE_ONLY)
 # into a single buildable target.
 nereus_add_test(tst_container_content_host)
 nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
+
+# The NR3 regression compiles the production module with bounded dependency
+# doubles and can also be built directly from tests/wdsp_rnnr_state.
+# ENABLE_WDSP=OFF is a supported stub build and has no fetched NR headers.
+if(TARGET wdsp_static AND TARGET rnnoise_static AND TARGET specbleach_static)
+    include(wdsp_rnnr_state/CMakeLists.txt)
+    nereus_add_test(tst_wdsp_rnnr_state DEPENDENCY_ISOLATED
+        ../third_party/wdsp/src/rnnr.c EXTRA_LABELS core)
+    if(TEST tst_wdsp_rnnr_state)
+        nereus_configure_rnnr_state_test(tst_wdsp_rnnr_state)
+    endif()
+endif()
+
+# Pure setup-boundary checks and pin/staging verification; no PortAudio runtime.
+add_subdirectory(portaudio_bounds)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})

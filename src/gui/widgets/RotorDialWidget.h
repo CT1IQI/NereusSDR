@@ -69,6 +69,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QWidget>
+#include "gui/NereusGuiExport.h"
 
 class QContextMenuEvent;
 class QMouseEvent;
@@ -92,7 +93,7 @@ namespace RotorLink { class RotorModel; }
 // asked for (rotateRequested / stopRequested / targetPicked) and shows
 // what it is told (setActualBearing / setState). That split keeps the
 // dial usable with a simulated rotator, a network one, or none at all.
-class RotorDialWidget : public QWidget {
+class NEREUS_GUI_EXPORT RotorDialWidget : public QWidget {
     Q_OBJECT
 public:
     // From Longpath src/gui/widgets/RotorDialWidget.h:49-55 [@551576e]

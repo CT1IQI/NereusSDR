@@ -1072,9 +1072,10 @@ public slots:
     //   _current_ptt_mode = PTTMode.MIC;                   [v2.10.3.13]
     //   From Thetis console.cs:25492 [v2.10.3.13]
     //
-    // RadioConnection::micPttFromRadio calls this on every P1/P2 status
-    // frame (H.5), pressed or not, so the PollPTT pass runs like Thetis's
-    // poll while connected.
+    // RadioConnection::micPttFromRadio calls this for every ordinary P1 PTT
+    // sample and every P2 status frame (H.5), pressed or not, so the PollPTT
+    // pass runs like Thetis's poll while connected. The HL2 I2C-response path
+    // does not publish its retained C0 bit 0 as a PTT update.
     //
     // Note: the slot name is "FromRadio" to distinguish hardware PTT from a
     // future software-only "mic mute" control.

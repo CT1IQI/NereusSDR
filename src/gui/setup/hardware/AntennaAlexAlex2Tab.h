@@ -95,6 +95,8 @@
 #include <QWidget>
 #include <vector>
 
+#include "gui/NereusGuiExport.h"
+
 class QCheckBox;
 class QDoubleSpinBox;
 class QFrame;
@@ -122,7 +124,7 @@ class RadioModel;
 // TODO: add hasAlex2 cap field to BoardCapabilities in a future phase.
 //
 // Source: Thetis Console/setup.designer.cs:25539-26857 (tpAlex2FilterControl) [@501e3f5]
-class AntennaAlexAlex2Tab : public QWidget {
+class NEREUS_GUI_EXPORT AntennaAlexAlex2Tab : public QWidget {
     Q_OBJECT
 public:
     explicit AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent = nullptr);
