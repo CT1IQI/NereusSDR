@@ -194,7 +194,7 @@ private slots:
         // Expected values are Thetis's float results widened to double.
         QTest::newRow("-160 opens most easily, n=0")
             << -160.0 << static_cast<double>(1.0f);
-        QTest::newRow("-150 saved default, n=6")
+        QTest::newRow("-150 old NereusSDR default, n=6")
             << -150.0 << static_cast<double>(static_cast<float>(0.7585775750291838));
         QTest::newRow("-80 midpoint, n=50")
             << -80.0 << static_cast<double>(0.1f);
@@ -207,7 +207,7 @@ private slots:
             << -2.0 << static_cast<double>(static_cast<float>(0.01096478196143185));
         QTest::newRow("-159 truncates to n=0, not 1")
             << -159.0 << static_cast<double>(1.0f);
-        QTest::newRow("0 is the tightest, n=100")
+        QTest::newRow("0 is the tightest and the default, n=100")
             << 0.0 << static_cast<double>(0.01f);
     }
 

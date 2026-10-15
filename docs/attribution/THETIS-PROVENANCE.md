@@ -442,7 +442,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | tests/tst_slice_emnr.cpp | Project Files/Source/Console/radio.cs | 2216-2232 | port | thetis-samphire | |
 | tests/tst_slice_rit_xit.cpp | Project Files/Source/Console/console.cs | full | port | thetis-samphire | RIT behaviour |
 | tests/tst_slice_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
-| tests/tst_slice_squelch.cpp | Project Files/Source/Console/radio.cs | 1185-1329; 1164-1178; 1274-1291; 1293-1329 | port | thetis-samphire | |
+| tests/tst_slice_squelch.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1185-1329; 1164-1178; 1274-1291; 1293-1329; console.cs 171; 47295-47304 | port | thetis-samphire | FM squelch threshold default |
 | tests/tst_preamp_mode.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/enums.cs | 1999-2009; 28401-28466; 236-251 | port | thetis-samphire | Level Cal: ten PreampMode values, SA offsets, comboPreamp_SelectedIndexChanged label map (//MW0LGE_21d, //MW0LGE_22b) [v2.10.3.15] |
 | tests/tst_step_attenuator_controller.cpp | Project Files/Source/Console/console.cs | 21359-21382; 21366; 21369; 21373-21375; 21378; 21548-21567 | port | thetis-samphire | |
 | tests/tst_radio_status.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/HPSDR/NetworkIOImports.cs | 6642-6659; 261-267 | port | multi-source | SWR test vectors from console.cs:6642 SWR(adc_fwd,adc_rev) [@501e3f5]; getFwdPower/getRevPower DllImport declarations from NetworkIOImports.cs:264-267 [@501e3f5] |
