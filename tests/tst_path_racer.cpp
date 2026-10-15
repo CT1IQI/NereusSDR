@@ -38,6 +38,10 @@
 //               Claude Code.
 //   2026-10-02: cover adopted-session retry ownership by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via OpenAI Codex.
+//   2026-10-15: the address list and admitted rungs of a first race and
+//               a better-path search for a saved Core with IPv6-only
+//               learned addresses, on the web relay. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -206,6 +210,46 @@ struct Window {
 quint16 closedPort()
 {
     return freeTcpPort();
+}
+
+// The planned rungs (address, start delay) of each race a window starts,
+// read at the line it logs just before the race starts ("Racing every
+// path to the Core", "Looking for a better path to the Core").
+struct RacePlans {
+    QPointer<StationClient> client;
+    QList<QList<QPair<QString, int>>> first;
+    QList<QList<QPair<QString, int>>> upgrades;
+};
+RacePlans* s_plans = nullptr;
+QtMessageHandler s_previousHandler = nullptr;
+
+void capturePlans(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    if (s_plans != nullptr && s_plans->client) {
+        const bool first = message.contains(QStringLiteral("Racing every path to the Core"));
+        const bool upgrade = message.contains(QStringLiteral("Looking for a better path to the Core"));
+        if (first || upgrade) {
+            const QList<PathRacer*> racers =
+                s_plans->client->findChildren<PathRacer*>(Qt::FindDirectChildrenOnly);
+            if (!racers.isEmpty()) {
+                (first ? s_plans->first : s_plans->upgrades)
+                    .append(racers.last()->plannedStartsForTest());
+            }
+        }
+    }
+    if (s_previousHandler != nullptr) {
+        s_previousHandler(type, context, message);
+    }
+}
+
+int delayFor(const QList<QPair<QString, int>>& plan, const QString& address)
+{
+    for (const auto& [planned, delay] : plan) {
+        if (planned == address) {
+            return delay;
+        }
+    }
+    return -1;
 }
 
 } // namespace
@@ -443,6 +487,113 @@ private slots:
             QVERIFY(sawV4 || sawV6);
             racer.cancel();
         }
+    }
+
+    // A saved Core like JJ's: its own address the IPv4 listener, its
+    // learned addresses two IPv6 ones, its last good addresses all three.
+    // Whatever rank the session has on the service (direct, TURN, or the
+    // web relay), a better-path search admits the IPv4 address, once,
+    // 250 ms after the IPv6 ones. Nothing is started, so nothing is dialled.
+    void anUpgradeOnTheRelayAdmitsTheEntryAddress_data()
+    {
+        QTest::addColumn<int>("rank");
+        QTest::newRow("service direct") << int(PathRacer::ServiceDirect);
+        QTest::newRow("TURN relay") << int(PathRacer::ServiceRelayed);
+        QTest::newRow("web relay") << int(PathRacer::Floor);
+    }
+    void anUpgradeOnTheRelayAdmitsTheEntryAddress()
+    {
+        QFETCH(int, rank);
+        const QUrl v4(QStringLiteral("wss://192.0.2.106:47910"));
+        const QUrl v6a(QStringLiteral("wss://[2001:db8:1:2::4602]:47910"));
+        const QUrl v6b(QStringLiteral("wss://[2001:db8:1:2::15f2]:47910"));
+        // As StationClient::setCachedAddresses builds it from the GUI's last
+        // good + learned list, then the entry's url (StationClient.cpp:1411-1422).
+        const QList<QUrl> plan{v6a, v6b, v4, v6a, v6b, v4};
+        PathRacer racer;
+        racer.setBetterThan(rank);
+        racer.addDirectUrls(plan, StationClient::kMaxIncomingMessageBytes);
+        const auto planned = racer.plannedStartsForTest();
+        QVERIFY2(PathRacer::rankFor(v4) < rank, "the IPv4 address ranks better than the service");
+        QCOMPARE(planned.size(), 3);
+        QCOMPARE(delayFor(planned, QStringLiteral("192.0.2.106:47910")), PathRacer::kIpv4DelayMs);
+        QCOMPARE(delayFor(planned, QStringLiteral("[2001:db8:1:2::4602]:47910")), 0);
+        QCOMPARE(delayFor(planned, QStringLiteral("[2001:db8:1:2::15f2]:47910")), 0);
+    }
+
+    // The same entry shape with a Core on this computer: the IPv6
+    // addresses refuse at once and the IPv4 one is closed. The first race
+    // after a start and each better-path search while the session runs on
+    // the web relay plan the entry's own address, 250 ms after the IPv6
+    // ones, even after it failed in the race before.
+    void aWebRelaySessionsSearchesPlanTheEntryAddress()
+    {
+        LocalService service;
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        Core core;
+        StationRendezvous rendezvous(core.server.get(), {service.url()}, /*relayAllowed=*/true);
+        QSignalSpy registered(rendezvous.client(), &RendezvousClient::registered);
+        QVERIFY(rendezvous.start());
+        QTRY_COMPARE_WITH_TIMEOUT(registered.size(), 1, 10000);
+        Window window(core);
+        MediaIcePath webRelay;
+        webRelay.localType = QStringLiteral("host");
+        webRelay.remoteType = QStringLiteral("host");
+        webRelay.localAddress = QStringLiteral("127.0.0.1");
+        webRelay.remoteAddress = QStringLiteral("127.0.0.1");
+        webRelay.ownedLoopbackShim = true;
+        DataChannelTransport::setSelectedPathOverrideForTest(
+            [webRelay](const DataChannelTransport*) { return std::optional<MediaIcePath>(webRelay); });
+        const auto clearOverride = qScopeGuard([] { DataChannelTransport::setSelectedPathOverrideForTest({}); });
+
+        const quint16 v4Port = closedPort();
+        const QUrl v4(QStringLiteral("wss://127.0.0.1:%1").arg(v4Port));
+        const QUrl v6a(QStringLiteral("wss://[::1]:%1").arg(closedPort()));
+        const QUrl v6b(QStringLiteral("wss://[::1]:%1").arg(closedPort()));
+        const QString v4Line = QStringLiteral("127.0.0.1:%1").arg(v4Port);
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = rendezvous.client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        // As RemoteConnectionController's source gives it for this entry:
+        // directCandidates (last good + learned), last good, learned.
+        window.route(service, rendezvous.client()->stationId());
+        window.client->setCandidateSource([=]() -> std::optional<StationClient::ConnectionCandidates> {
+            return StationClient::ConnectionCandidates{{v6a, v6b, v4}, route};
+        });
+        window.client->setUpgradeScheduleForTest({300});
+
+        RacePlans plans;
+        plans.client = window.client.get();
+        s_plans = &plans;
+        s_previousHandler = qInstallMessageHandler(capturePlans);
+        const auto restore = qScopeGuard([] {
+            qInstallMessageHandler(s_previousHandler);
+            s_previousHandler = nullptr;
+            s_plans = nullptr;
+        });
+
+        window.client->connectToStation(v4, QString(), QString(), false, identityOf(core));
+        QString why;
+        QVERIFY2(waitForHandshake(*window.client, kServiceConnectBudgetMs, &why), qPrintable(why));
+        QVERIFY(!plans.first.isEmpty());
+        const auto first = plans.first.first();
+        QCOMPARE(delayFor(first, v4Line), PathRacer::kIpv4DelayMs);
+        QCOMPARE(delayFor(first, QStringLiteral("[::1]:%1").arg(v6a.port())), 0);
+        QCOMPARE(delayFor(first, QStringLiteral("[::1]:%1").arg(v6b.port())), 0);
+
+        // The GUI hands the window the entry's last good + learned
+        // addresses after the sign-in (GuiConnectionController.cpp:1030-1035).
+        window.client->setCachedAddresses({v6a, v6b, v4});
+        QTRY_VERIFY_WITH_TIMEOUT(plans.upgrades.size() >= 2, 20000);
+        QCOMPARE(window.client->pathRank(), int(PathRacer::Floor));
+        for (const auto& upgrade : std::as_const(plans.upgrades)) {
+            QCOMPARE(delayFor(upgrade, v4Line), PathRacer::kIpv4DelayMs);
+            QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6a.port())), 0);
+            QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6b.port())), 0);
+        }
+        window.client->disconnectFromStation(QStringLiteral("test done"));
     }
 
     // ── A window and a Core on this computer ──────────────────────────
