@@ -227,6 +227,7 @@
 #include <QPointer>
 
 #include <functional>
+#include "gui/NereusGuiExport.h"
 
 class QTabWidget;
 class QLineEdit;
@@ -269,7 +270,7 @@ class SpotBeamTurner;
 // F1 ships the SHELL only. Each `build<Source>Tab()` adds a
 // placeholder QLabel. F2 (per-source tabs), F3 (Spot List),
 // and F4 (Display) build the content.
-class SpotHubDialog : public QDialog {
+class NEREUS_GUI_EXPORT SpotHubDialog : public QDialog {
     Q_OBJECT
 
 public:

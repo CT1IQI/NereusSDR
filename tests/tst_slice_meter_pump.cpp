@@ -72,6 +72,14 @@
 
 using namespace NereusSDR;
 
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr double kNoReadingDbm = NereusSDR::SliceMeterPump::kNoReadingDbm;
+} // namespace
+
 namespace {
 // R-R3-39: the pump reads the receive lane's meter cache, and its reads ask
 // the lane for a fresh one; a slice shows no reading until the lane has read
@@ -175,7 +183,7 @@ private slots:
     // -140.0 default. That default is a floor number the flag bar draws as
     // "-140 dBm", a reading that does not exist. The plan settles that a
     // local flag with no reading shows "-- dBm", so poll() now writes the
-    // -400 dBm no-reading value (SliceMeterPump::kNoReadingDbm) to all
+    // -400 dBm no-reading value (kNoReadingDbm) to all
     // three readings. A bare, never-connected Role::Local model is not
     // Connected, so this exercises the link-down gate; the Connected
     // no-channel branch has its own case below. Not a weakened test: the
@@ -195,10 +203,10 @@ private slots:
 
         pollSettled(model, pump);
 
-        QCOMPARE(slice->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalPeakDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalAverageDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(SliceMeterPump::kNoReadingDbm, -400.0);
+        QCOMPARE(slice->signalStrengthDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalAverageDbm(), kNoReadingDbm);
+        QCOMPARE(kNoReadingDbm, -400.0);
     }
 
     // R-R3-13: the no-channel branch on its own. The model reports
@@ -223,9 +231,9 @@ private slots:
         model.setConnectionStateForTest(ConnectionState::Connected);
         pollSettled(model, pump);
 
-        QCOMPARE(slice->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalPeakDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalAverageDbm(), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(slice->signalStrengthDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalAverageDbm(), kNoReadingDbm);
     }
 
     // R-R3-13: LinkLost with a live channel. A local LinkLost keeps the
@@ -249,7 +257,7 @@ private slots:
 
         // Connected first: a real reading lands.
         pollSettled(model, pump);
-        QVERIFY(slice->signalAverageDbm() > SliceMeterPump::kNoReadingDbm);
+        QVERIFY(slice->signalAverageDbm() > kNoReadingDbm);
 
         model.setConnectionStateForTest(ConnectionState::LinkLost);
         // The channel survives LinkLost; that is exactly why the gate is
@@ -257,9 +265,9 @@ private slots:
         QVERIFY(model.wdspEngine()->rxChannel(slice->sliceIndex()) != nullptr);
         pollSettled(model, pump);
 
-        QCOMPARE(slice->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalPeakDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalAverageDbm(), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(slice->signalStrengthDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalAverageDbm(), kNoReadingDbm);
 
         // Link down while keyed still clears: re-seed, key, poll.
         slice->setSignalStrengthDbm(-73.0);
@@ -267,9 +275,9 @@ private slots:
         slice->setSignalAverageDbm(-75.0);
         model.radioStatus().setTransmitting(true);
         pollSettled(model, pump);
-        QCOMPARE(slice->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalPeakDbm(), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(slice->signalAverageDbm(), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(slice->signalStrengthDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
+        QCOMPARE(slice->signalAverageDbm(), kNoReadingDbm);
         model.radioStatus().setTransmitting(false);
 
         // Recovery: Connected again publishes the live channel's readings.
@@ -282,7 +290,7 @@ private slots:
         QCOMPARE(slice->signalPeakDbm(),
                  ch->getMeter(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
         QCOMPARE(slice->signalAverageDbm(), average);
-        QVERIFY(slice->signalAverageDbm() > SliceMeterPump::kNoReadingDbm);
+        QVERIFY(slice->signalAverageDbm() > kNoReadingDbm);
 
         harness.reset();
     }
@@ -495,7 +503,7 @@ private slots:
         pump->setMaxBinSource([onTwenty, onEighty](const SliceModel* slice) -> double {
             if (slice == onTwenty) { return kQuietBandDbm; }
             if (slice == onEighty) { return kHotBandDbm; }
-            return SliceMeterPump::kNoReadingDbm;
+            return kNoReadingDbm;
         });
         pollSettled(model, pump);
 
@@ -503,7 +511,7 @@ private slots:
                  kQuietBandDbm + model.rxMeterOffsetDbForSlice(onTwenty->sliceIndex()));
         QCOMPARE(onEighty->signalStrengthDbm(),
                  kHotBandDbm + model.rxMeterOffsetDbForSlice(onEighty->sliceIndex()));
-        QCOMPARE(notShown->signalStrengthDbm(), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(notShown->signalStrengthDbm(), kNoReadingDbm);
         // The other two readings are still each channel's own.
         QCOMPARE(onEighty->signalPeakDbm(),
                  engine->rxChannel(onEighty->sliceIndex())->getMeter(RxMeterType::SignalPeak)

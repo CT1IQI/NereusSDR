@@ -183,6 +183,7 @@
 #include <QUrl>
 #include <QVariant>
 #include <QWidget>
+#include "gui/NereusGuiExport.h"
 
 class QAction;
 class QActionGroup;
@@ -251,7 +252,7 @@ enum FreeDVReporterFilterOp : int {
 // Modeless. MainWindow keeps a single instance pointer and toggles
 // visibility; `setAttribute(Qt::WA_DeleteOnClose, false)` in the
 // constructor enforces that.
-class FreeDVReporterDialog : public QWidget {
+class NEREUS_GUI_EXPORT FreeDVReporterDialog : public QWidget {
     Q_OBJECT
 
 public:
