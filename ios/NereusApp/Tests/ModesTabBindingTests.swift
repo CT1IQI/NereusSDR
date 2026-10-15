@@ -47,13 +47,16 @@ struct ModesTabBindingTests {
     @Test("Core V2 opt-in changes choices while preserving current state and closing stale writes")
     func radeV2CatalogTransition() async throws {
         let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
-        var raw = try #require(Self.catalogueObject(Self.anan))
+        let base = try #require(Self.catalogueObject(Self.anan))
+        let enabledRaw = try #require(Self.radeV2Enabled(base))
         let modes = model.main.modes
         var stalePreset: RxPanelModel.Preset?
         #expect(await settle { model.main.catalogFeed.revision == 2 })
         for enabled in [true, false] {
             let publishedRevision: Int64 = enabled ? 3 : 4
-            raw["radeV2Enabled"] = enabled
+            // The Core's ON table adds the V2 modes and their presets; its
+            // OFF table is the suite fixture's, which leaves both out.
+            let raw = enabled ? enabledRaw : base
             let json = String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self)
             await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
                 .init(ordinal: 0, name: "json", value: .utf8(json)),
@@ -2077,6 +2080,30 @@ struct ModesTabBindingTests {
             return nil
         }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// A default-off suite catalogue as a Core with V2 opted in publishes it:
+    /// `radeV2Enabled` true, modes 14 RADE2-U and 15 RADE2-L, and their
+    /// presets, which are RADE-U's and RADE-L's (SliceModel's preset table
+    /// shares one case per sideband). Nil when the catalogue is not the
+    /// default-off table or lacks the V1 presets.
+    static func radeV2Enabled(_ object: [String: Any]) -> [String: Any]? {
+        guard object["radeV2Enabled"] as? Bool == false,
+              var modes = object["modes"] as? [[String: Any]],
+              !modes.contains(where: { ($0["id"] as? Int) == 14 || ($0["id"] as? Int) == 15 }),
+              var presets = object["filterPresets"] as? [String: Any],
+              let upper = presets["RADE-U"], let lower = presets["RADE-L"] else {
+            return nil
+        }
+        modes.append(["id": 14, "label": "RADE2-U", "sideband": "upper"])
+        modes.append(["id": 15, "label": "RADE2-L", "sideband": "lower"])
+        presets["RADE2-U"] = upper
+        presets["RADE2-L"] = lower
+        var enabled = object
+        enabled["radeV2Enabled"] = true
+        enabled["modes"] = modes
+        enabled["filterPresets"] = presets
+        return enabled
     }
 
     /// A suite catalogue, read as plain JSON for comparing with what the tab shows.

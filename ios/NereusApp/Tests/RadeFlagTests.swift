@@ -208,7 +208,13 @@ struct RadeRowMirrorTests {
 
     @Test("experimental sidebands show live reception without a text callsign", arguments: ["RADE2-U", "RADE2-L"])
     func experimentalReception(label: String) async throws {
-        let catalog = try #require(BandFlagShotTests.catalogue())
+        // The suite fixture is the Core's default-off table; a Core with V2
+        // opted in publishes the RADE2 modes this row reads.
+        let raw = try #require(ModesTabBindingTests.catalogueObject(ModesTabBindingTests.anan))
+        let enabled = try #require(ModesTabBindingTests.radeV2Enabled(raw))
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: enabled), as: UTF8.self)
+        let catalog = try #require(StationCatalog.parse(json: json))
+        #expect(catalog.radeV2Enabled)
         let mode = try #require(Self.mode(label, in: catalog))
         let store = MirrorStore(send: { _ in })
         Self.core(store, radeStatus: 1)
