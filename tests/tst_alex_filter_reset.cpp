@@ -165,6 +165,8 @@ private slots:
         QVERIFY(reset1->isEnabled()); QVERIFY(reset2->isEnabled());
         QSignalSpy edits1(&tab1, &AntennaAlexAlex1Tab::settingChanged);
         QSignalSpy edits2(&tab2, &AntennaAlexAlex2Tab::settingChanged);
+        QVERIFY(edits1.isValid());
+        QVERIFY(edits2.isValid());
         reset1->click(); reset2->click();
         QCOMPARE(edits1.count(), 26); QCOMPARE(edits2.count(), 26);
     }
@@ -181,6 +183,7 @@ private slots:
         QVERIFY(!reset1->isEnabled()); QVERIFY(!reset2->isEnabled());
         QCOMPARE(reset1->toolTip(), why); QCOMPARE(reset2->toolTip(), why);
         QSignalSpy changed(&tab1, &AntennaAlexAlex1Tab::settingChanged);
+        QVERIFY(changed.isValid());
         reset1->click(); QCOMPARE(changed.count(), 0);
         tab1.setHpfRowsAvailable(true, {});
         QVERIFY(reset1->isEnabled());
