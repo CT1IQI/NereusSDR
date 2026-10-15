@@ -119,6 +119,15 @@ record. They are WDSP derivatives, covered by the same GPLv2-or-later grant.
 preserved in the files. RNNR links to the separately tracked Xiph RNNoise
 dependency; SBNR links to the separately tracked libspecbleach dependency.
 
+The 2026-10-14 NR3 state-lifetime correction keeps `xrnnr`'s availability
+check inside its existing instance critical section and clears each retired
+RNNoise state before releasing that section. Thetis v2.10.3.15
+(`3759d096`, `wdsp/rnnr.c:238-313,349-385`) shares the earlier check-before-lock
+and retained-pointer ordering; Nereus deliberately differs so a processing
+block waiting for model replacement cannot use its earlier availability
+decision. Model selection, DSP calculations, gain constants and defaults are
+unchanged. Authored by J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
+
 The earlier 2026-04-30 partial `cfcomp.c/.h` sync from that same Thetis commit
 is superseded as a baseline by this full TAPR WDSP 2.10 import. Its independent
 Qg/Qe behavior remains as a deliberate compatibility layer, with the source
