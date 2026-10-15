@@ -290,6 +290,17 @@ function(nereus_add_test name)
     endif()
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
+    # MinGW test executables reserve 2 MB for the main thread, Linux and
+    # macOS 8 MB. Tests that keep two or three SpectrumWidget locals need
+    # 2.3 to 3.1 MB and overflowed it on Windows; give them 8 MB there too.
+    if(WIN32)
+        if(MSVC)
+            target_link_options(${name} PRIVATE "/STACK:8388608")
+        else()
+            target_link_options(${name} PRIVATE "-Wl,--stack,8388608")
+        endif()
+    endif()
+
     # Reuse the shared test PIE/nonpedantic Qt/STL PCH (CMakeLists.txt §PCH).
     # 589 test executables × per-target PCH compile would burn the wins;
     # REUSE_FROM means the PCH is built once and shared
@@ -8799,6 +8810,8 @@ if(_nereus_unsharded_checks_here AND DEFINED libdatachannel_SOURCE_DIR
             -DPC_CPP=${libdatachannel_SOURCE_DIR}/src/peerconnection.cpp
             -DDTLS_CPP=${libdatachannel_SOURCE_DIR}/src/impl/dtlstransport.cpp
             -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libdatachannel-patch
+            "-DGENERATOR=${CMAKE_GENERATOR}"
+            "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             -P ${CMAKE_SOURCE_DIR}/tests/scripts/check-libdatachannel-patch.cmake)
     set_tests_properties(libdatachannel_patch_applies PROPERTIES LABELS "session" TIMEOUT 120)
 endif()
