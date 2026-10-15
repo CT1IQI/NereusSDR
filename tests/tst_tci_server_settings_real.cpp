@@ -216,6 +216,51 @@ private slots:
         app.close();
         server.stop();
     }
+
+    // The shared sensor timers run at the shortest interval among the apps
+    // with sensors on. When the fast app leaves, they go back to the slower
+    // app's interval, and to the 200 ms idle default when none is left. In
+    // Thetis a leaving listener drops out of MinimumRequiredRx/TxSensorInterval
+    // (TCIServer.cs:8092-8130 [v2.10.3.15]) once the purge removes it
+    // (PurgingThreadStart, TCIServer.cs:7199-7221), and its own sensor timers stop
+    // (StopSocketListener, TCIServer.cs:3045-3056).
+    void sensorTimersFollowTheAppsThatAreLeft()
+    {
+        TciServer server(nullptr);
+        QVERIFY(server.start(0));
+        const QUrl url(QStringLiteral("ws://127.0.0.1:%1").arg(server.port()));
+        QWebSocket fast;
+        QWebSocket slow;
+        QSignalSpy fastConnected(&fast, &QWebSocket::connected);
+        QSignalSpy slowConnected(&slow, &QWebSocket::connected);
+        fast.open(url);
+        slow.open(url);
+        QVERIFY(fastConnected.count() == 1 || fastConnected.wait(2000));
+        QVERIFY(slowConnected.count() == 1 || slowConnected.wait(2000));
+        QTRY_COMPARE(server.clients().size(), 2);
+
+        slow.sendTextMessage(QStringLiteral("rx_sensors_enable:true,400;"));
+        slow.sendTextMessage(QStringLiteral("tx_sensors_enable:true,500;"));
+        QTRY_COMPARE(server.rxSensorTimerIntervalForTest(), 400);
+        QTRY_COMPARE(server.txSensorTimerIntervalForTest(), 500);
+        fast.sendTextMessage(QStringLiteral("rx_sensors_enable:true,50;"));
+        fast.sendTextMessage(QStringLiteral("tx_sensors_enable:true,60;"));
+        QTRY_COMPARE(server.rxSensorTimerIntervalForTest(), 50);
+        QTRY_COMPARE(server.txSensorTimerIntervalForTest(), 60);
+
+        // The fast app leaves without turning its sensors off.
+        fast.close();
+        QTRY_COMPARE(server.clients().size(), 1);
+        QCOMPARE(server.rxSensorTimerIntervalForTest(), 400);
+        QCOMPARE(server.txSensorTimerIntervalForTest(), 500);
+
+        // The last one leaves: the idle default.
+        slow.close();
+        QTRY_COMPARE(server.clients().size(), 0);
+        QCOMPARE(server.rxSensorTimerIntervalForTest(), 200);
+        QCOMPARE(server.txSensorTimerIntervalForTest(), 200);
+        server.stop();
+    }
     // Thetis keeps each app's audio stream channel count, 2 until the app
     // sends audio_stream_channels:1 or :2 (m_audioStreamChannels = 2,
     // TCIServer.cs:781; handleAudioStreamChannels, TCIServer.cs:6340-6354
