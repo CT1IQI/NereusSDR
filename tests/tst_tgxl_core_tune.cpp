@@ -658,11 +658,13 @@ private slots:
     // The settle is lengthened here (release: 150 ms) so this setup cannot
     // outrun it under load, and the test waits for A's actual callback
     // rather than a wall-clock guess at when it fires. 450 ms stays below
-    // every bound B arms when it starts: the listener's 500 ms interlock
-    // ACK timeout (a coarse timer, so as early as 475 ms) and the 1.5 s
-    // PGXL standby wait. A's settle, armed earlier with a shorter
-    // interval, therefore always comes due first. B's state is recorded
-    // at that moment and checked.
+    // every bound that can end B or open its gate: the listener's 500 ms
+    // interlock ACK timeout (a coarse timer, so as early as 475 ms) and
+    // the 1.5 s PGXL standby wait. The listener's 400 ms interlock repeat
+    // can fire first, but it only resends the state and cannot end B. A's
+    // settle, armed earlier with a shorter interval, therefore always
+    // comes due before any of those bounds. B's state is recorded at that
+    // moment and checked.
     void cancelledCycleSettleCannotAutotuneNextCycle()
     {
         QFETCH(bool, waitForStandby);
@@ -776,6 +778,7 @@ private slots:
         // B's own bound can end it in the same timer pass under load; then
         // there is nothing left to stop.
         if (core.model->isTgxlAutotuneInProgress()) {
+            QVERIFY(!tx.isRfGateOpen());
             QVERIFY(core.invoke(appA, "tx.tunerTune", {kOff}).value(QStringLiteral("accepted")).toBool());
         }
         QTRY_COMPARE(mox->state(), MoxState::Rx);
