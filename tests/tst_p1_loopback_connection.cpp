@@ -8,9 +8,13 @@
 //   4. the radio's frames reach this connection's socket, and no other
 //      socket on the machine bound to the address the radio answers can
 //      take them (tst_slice_cap_every_path's lost reconnect)
-//   5. onReadyRead reads a bounded batch per call, so the EP2 pacer keeps
-//      sending while EP6 arrives faster than it is read (2026-10-14 HL2
-//      TUNE stall)
+//   5. onReadyRead reads a bounded batch per call, so queued control calls
+//      (an unkey) get a turn while EP6 arrives faster than it is read
+//      (2026-10-14 HL2 TUNE stall)
+//   6. EP2 goes out from its own sender thread: a blocked connection thread
+//      or an EP6 flood while keyed leaves no EP2 gap over 40 ms; the thread
+//      sends the bytes the synchronous seam builds; fifty connect, restart,
+//      reconnect and disconnect rounds never run two senders
 //
 // Uses QTEST_MAIN (not APPLESS_MAIN) — requires QCoreApplication for socket I/O.
 
@@ -18,7 +22,10 @@
 #include <QSignalSpy>
 #include <QUdpSocket>
 #include <QElapsedTimer>
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
@@ -47,6 +54,92 @@ static void countEp6EstablishedLogs(QtMsgType type,
     if (g_previousMsgHandler) {
         g_previousMsgHandler(type, ctx, msg);
     }
+}
+
+qint64 steadyNowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// The EP2 frames that reached the fake in [fromNs, toNs], and the largest
+// gap between them. The window's edges count as arrivals, so a stall at
+// the start or the end of the window shows as a gap.
+struct Ep2Span {
+    int frames{0};
+    qint64 maxGapNs{0};
+};
+
+Ep2Span ep2Span(const QList<qint64>& arrivals, qint64 fromNs, qint64 toNs)
+{
+    Ep2Span span;
+    qint64 prev = fromNs;
+    for (qint64 t : arrivals) {
+        if (t < fromNs || t > toNs) { continue; }
+        ++span.frames;
+        span.maxGapNs = std::max(span.maxGapNs, t - prev);
+        prev = t;
+    }
+    span.maxGapNs = std::max(span.maxGapNs, toNs - prev);
+    return span;
+}
+
+// A transmit pump: feeds the connection 48 kHz TX I/Q from a thread of its
+// own, as TxWorkerThread does, in 126-sample blocks at the wire rate.
+class TxIqPump {
+public:
+    explicit TxIqPump(P1RadioConnection& conn) : m_conn(conn) {}
+    ~TxIqPump() { stop(); }
+
+    void start()
+    {
+        m_run.store(true);
+        m_thread = std::thread([this] {
+            constexpr int kBlock = 126;
+            std::array<float, kBlock * 2> iq{};
+            for (int i = 0; i < kBlock; ++i) {
+                iq[size_t(i) * 2] = 0.25f;  // a quarter-scale carrier
+            }
+            const qint64 startNs = steadyNowNs();
+            qint64 pushed = 0;
+            while (m_run.load()) {
+                const qint64 due = (steadyNowNs() - startNs) * 48 / 1000000;
+                while (pushed + kBlock <= due) {
+                    m_conn.sendTxIq(iq.data(), kBlock);
+                    pushed += kBlock;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        });
+    }
+
+    void stop()
+    {
+        m_run.store(false);
+        if (m_thread.joinable()) { m_thread.join(); }
+    }
+
+private:
+    P1RadioConnection& m_conn;
+    std::atomic<bool> m_run{false};
+    std::thread m_thread;
+};
+
+// Posts work to the connection's thread from another thread, as RadioModel
+// does (QMetaObject::invokeMethod onto the connection).
+template <typename F>
+void postFromAnotherThread(P1RadioConnection& conn, F work)
+{
+    std::thread poster([&conn, work] {
+        QMetaObject::invokeMethod(&conn, work);
+    });
+    poster.join();
+}
+
+// C0 bit 0 is MOX in every bank's C0, in both subframes.
+bool ep2CcKeyed(const QByteArray& cc)
+{
+    return cc.size() >= 6 && (quint8(cc[0]) & 0x01) != 0 && (quint8(cc[5]) & 0x01) != 0;
 }
 } // namespace
 
@@ -222,6 +315,25 @@ private:
         info.firmwareVersion = 72;
         info.name            = QStringLiteral("FakeHL2");
         return info;
+    }
+
+    // Connects to the fake and keys: MOX posted from another thread, and the
+    // fake seeing C0 MOX on the wire. Returns false on a timeout.
+    bool connectAndKey(P1FakeRadio& fake, P1RadioConnection& conn) {
+        conn.connectToRadio(makeInfo(fake));
+        if (!QTest::qWaitFor([&] { return fake.isRunning(); }, 3000)) { return false; }
+        fake.sendEp6Frames(1);
+        if (!QTest::qWaitFor([&] { return conn.state() == ConnectionState::Connected; }, 3000)) {
+            return false;
+        }
+        postFromAnotherThread(conn, [&conn] {
+            conn.setMox(true);
+            conn.setTrxRelay(true);
+        });
+        return QTest::qWaitFor([&] {
+            const QList<QByteArray> cc = fake.ep2CcReceived();
+            return !cc.isEmpty() && ep2CcKeyed(cc.last());
+        }, 3000);
     }
 
 private slots:
@@ -621,12 +733,114 @@ private slots:
         fake.stop();
     }
 
-    // The stall itself: EP6 arrives faster than this thread reads it (each
+    // 2026-10-14, Pi 4 Core, HL2 keyed: EP2 stopped for 12.9 s while the
+    // connection thread was busy, and the HL2 dropped PTT each time its TX
+    // FIFO ran dry. EP2 now goes out from its own thread, so the connection
+    // thread blocked for 500 ms, keyed with TX I/Q flowing, leaves no gap
+    // over 40 ms and the count stays within 10% of the 2625 us cadence.
+    // The block runs on another object on the connection's thread (a busy
+    // thread, as the read loop was), not as a call on the connection.
+    void ep2KeepsFlowingWhileTheConnectionThreadIsBlocked() {
+        P1FakeRadio fake;
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QVERIFY(connectAndKey(fake, conn));
+        TxIqPump pump(conn);
+        pump.start();
+        QTest::qWait(200);
+
+        QObject busy;
+        std::atomic<qint64> blockStart{0};
+        std::atomic<qint64> blockEnd{0};
+        QMetaObject::invokeMethod(&busy, [&blockStart, &blockEnd] {
+            blockStart.store(steadyNowNs());
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            blockEnd.store(steadyNowNs());
+        }, Qt::QueuedConnection);
+        QTRY_VERIFY_WITH_TIMEOUT(blockEnd.load() != 0, 3000);
+        QTest::qWait(50);
+        pump.stop();
+
+        const Ep2Span span = ep2Span(fake.ep2ArrivalNs(), blockStart.load(), blockEnd.load());
+        const double blockMs = (blockEnd.load() - blockStart.load()) / 1e6;
+        const double expected = blockMs * 1000.0 / 2625.0;
+        qInfo().noquote() << QString("MEASURE blocked-thread: block %1 ms, %2 EP2 frames "
+                                     "(expected %3), max gap %4 ms")
+                                 .arg(blockMs, 0, 'f', 1).arg(span.frames)
+                                 .arg(expected, 0, 'f', 1).arg(span.maxGapNs / 1e6, 0, 'f', 2);
+        QVERIFY2(span.frames > 0, "no EP2 frame reached the radio while the thread was blocked");
+        QVERIFY2(span.maxGapNs <= 40'000'000,
+                 qPrintable(QString("EP2 gap of %1 ms").arg(span.maxGapNs / 1e6, 0, 'f', 2)));
+        QVERIFY2(std::abs(span.frames - expected) <= 0.10 * expected,
+                 qPrintable(QString("%1 EP2 frames in %2 ms, expected %3 within 10%")
+                                .arg(span.frames).arg(blockMs, 0, 'f', 1)
+                                .arg(expected, 0, 'f', 1)));
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // An EP6 flood well past the read-loop cap while keyed, read by a
+    // CPU-short thread (3 ms a frame, so one capped batch is 48 ms): no EP2
+    // gap over 40 ms, and receive unchanged (every frame, in order, with the
+    // I/Q as sent).
+    void ep6FloodWhileKeyedLeavesNoEp2Gap() {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        HermesLiteBandwidthMonitor bw;
+        P1RadioConnection conn;
+        conn.init();
+        conn.setBandwidthMonitor(&bw);
+        QVERIFY(connectAndKey(fake, conn));
+        TxIqPump pump(conn);
+        pump.start();
+        QTest::qWait(100);
+        const int gapsBefore = bw.ep6SequenceErrorCount();
+
+        QObject slowReader;
+        connect(&conn, &RadioConnection::frameReceived, &slowReader, [] {
+            QElapsedTimer t;
+            t.start();
+            while (t.nsecsElapsed() < 3000000) {
+            }
+        });
+
+        // The fake's one frame carried sequence 0; the flood goes on from 1.
+        constexpr int kFlood = 200;
+        Ep6Flood flood(conn, kFlood, 1, conn.activeRxCountForTest());
+        const qint64 floodStart = steadyNowNs();
+        QVERIFY(flood.send(fake.clientPort(), kFlood));
+        QVERIFY(flood.waitProcessed(kFlood, 10000));
+        const qint64 floodEnd = steadyNowNs();
+        QObject::disconnect(&conn, &RadioConnection::frameReceived, &slowReader, nullptr);
+        pump.stop();
+
+        const Ep2Span span = ep2Span(fake.ep2ArrivalNs(), floodStart, floodEnd);
+        qInfo().noquote() << QString("MEASURE ep6-flood: %1 ms, %2 EP2 frames, max gap %3 ms")
+                                 .arg((floodEnd - floodStart) / 1e6, 0, 'f', 1).arg(span.frames)
+                                 .arg(span.maxGapNs / 1e6, 0, 'f', 2);
+        QVERIFY2(span.maxGapNs <= 40'000'000,
+                 qPrintable(QString("EP2 gap of %1 ms").arg(span.maxGapNs / 1e6, 0, 'f', 2)));
+        const QString fault = flood.verify();
+        QVERIFY2(fault.isEmpty(), qPrintable(fault));
+        QCOMPARE(bw.ep6SequenceErrorCount(), gapsBefore);
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // Control latency: EP6 arrives faster than this thread reads it (each
     // frame costs 200 us here, about 5,000 a second, while a feeder sends
-    // about twice that), and the EP2 pacer must still send while it lasts.
-    // Before the bound, onReadyRead never returned and almost no EP2 frame
-    // reached the radio until the feeder stopped.
-    void ep2PacerSendsWhileEp6OutrunsTheReader() {
+    // about twice that). An unkey posted from another thread, as RadioModel
+    // posts it, must clear C0 MOX on the wire within 50 ms. The setter runs
+    // on the connection thread, so this is what the read-loop cap is for:
+    // without it onReadyRead never returned and the unkey waited for the
+    // feeder to stop.
+    void unkeyReachesTheWireWhileEp6OutrunsTheReader() {
         P1FakeRadio fake;
         fake.setAutoStreamEnabled(false);
         fake.start();
@@ -634,12 +848,7 @@ private slots:
         P1RadioConnection conn;
         conn.init();
         QSignalSpy frames(&conn, &RadioConnection::frameReceived);
-
-        conn.connectToRadio(makeInfo(fake));
-        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
-        fake.sendEp6Frames(1);
-        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
-        QTRY_COMPARE_WITH_TIMEOUT(frames.count(), 1, 3000);
+        QVERIFY(connectAndKey(fake, conn));
 
         // A CPU-short reader: every frame read costs 200 us on this thread.
         QObject slowReader;
@@ -651,22 +860,24 @@ private slots:
         });
 
         constexpr int kFeedMs = 500;
-        std::atomic<int> ep2AtFeedStart{0};
-        std::atomic<int> ep2AtFeedEnd{0};
-        std::thread feeder([&fake, &ep2AtFeedStart, &ep2AtFeedEnd] {
+        std::atomic<qint64> unkeyPostedNs{0};
+        std::thread feeder([&fake, &conn, &unkeyPostedNs] {
             QElapsedTimer t;
             t.start();
-            // Let the reader fall behind before counting.
+            // Let the reader fall behind before the unkey.
             while (t.elapsed() < 100) {
                 fake.sendEp6Frames(20);
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            ep2AtFeedStart.store(fake.ep2FramesReceived());
+            unkeyPostedNs.store(steadyNowNs());
+            QMetaObject::invokeMethod(&conn, [&conn] {
+                conn.setMox(false);
+                conn.setTrxRelay(false);
+            });
             while (t.elapsed() < 100 + kFeedMs) {
                 fake.sendEp6Frames(20);
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            ep2AtFeedEnd.store(fake.ep2FramesReceived());
         });
 
         // Run this thread's event loop while the feeder runs.
@@ -674,17 +885,199 @@ private slots:
         feeder.join();
         QObject::disconnect(&conn, &RadioConnection::frameReceived, &slowReader, nullptr);
 
-        // 381 frames a second would be about 190 in 500 ms; ask for a fifth.
-        const int ep2During = ep2AtFeedEnd.load() - ep2AtFeedStart.load();
-        QVERIFY2(ep2During >= 40,
-                 qPrintable(QString("only %1 EP2 frames reached the radio in %2 ms "
-                                    "while EP6 outran the reader")
-                                .arg(ep2During).arg(kFeedMs)));
+        // The first frame after the post with C0 MOX clear, and every frame
+        // after it unkeyed.
+        const QList<QByteArray> cc = fake.ep2CcReceived();
+        const QList<qint64> at = fake.ep2ArrivalNs();
+        QCOMPARE(cc.size(), at.size());
+        qint64 clearedAt = -1;
+        for (int i = 0; i < cc.size(); ++i) {
+            if (at[i] < unkeyPostedNs.load()) { continue; }
+            const bool keyed = (quint8(cc[i][0]) & 0x01) != 0 || (quint8(cc[i][5]) & 0x01) != 0;
+            if (clearedAt < 0 && !keyed) {
+                clearedAt = at[i];
+            }
+            QVERIFY2(clearedAt < 0 || !keyed, "a frame after the unkey carried MOX again");
+        }
+        QVERIFY2(clearedAt >= 0, "C0 MOX never cleared on the wire");
+        const double latencyMs = (clearedAt - unkeyPostedNs.load()) / 1e6;
+        qInfo().noquote() << QString("MEASURE unkey-latency: %1 ms").arg(latencyMs, 0, 'f', 2);
+        QVERIFY2(latencyMs <= 50.0,
+                 qPrintable(QString("MOX cleared on the wire %1 ms after the unkey was posted")
+                                .arg(latencyMs, 0, 'f', 2)));
 
         // The backlog left when the feeder stops is read with no new arrivals.
         QTRY_VERIFY_WITH_TIMEOUT(!conn.socketHasPendingDatagramsForTest(), 5000);
 
         conn.disconnect();
+        fake.stop();
+    }
+
+    // Test 4: the sender thread builds the same frames as the synchronous
+    // seam. Two connections in the same state, one sending from its thread
+    // to a local socket, one driven through serviceEp2SendForTest: every
+    // frame, all 1032 bytes, alike, then again after the force-bank setters
+    // (setMox, setTrxRelay, setMicTipRing), on an HL2 and on a Hermes.
+    void senderThreadSendsTheSeamsBytes_data() {
+        QTest::addColumn<int>("board");
+        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite);
+        QTest::newRow("Hermes") << int(HPSDRHW::Hermes);
+    }
+    void senderThreadSendsTheSeamsBytes() {
+        QFETCH(int, board);
+        QUdpSocket wire;
+        QVERIFY(wire.bind(QHostAddress::LocalHost, 0));
+
+        P1RadioConnection threaded;
+        P1RadioConnection seam;
+        for (P1RadioConnection* c : {&threaded, &seam}) {
+            c->init();
+            c->setBoardForTest(HPSDRHW(board));
+            c->armEp2ForTest(QHostAddress::LocalHost, wire.localPort());
+        }
+
+        constexpr int kFrames = 40;
+        const auto compareRound = [&](const char* round) -> bool {
+            if (threaded.roundRobinIdxForTest() != seam.roundRobinIdxForTest()
+                || threaded.ep2NextSequenceForTest() != seam.ep2NextSequenceForTest()) {
+                qWarning() << round << "the two do not start from the same round-robin index";
+                return false;
+            }
+
+            // The thread: send until kFrames have arrived, then stop.
+            QList<QByteArray> fromThread;
+            threaded.resetEp2PacerForTest();
+            threaded.startEp2SenderForTest();
+            const bool arrived = QTest::qWaitFor([&] {
+                while (wire.hasPendingDatagrams()) {
+                    QByteArray d(int(wire.pendingDatagramSize()), Qt::Uninitialized);
+                    wire.readDatagram(d.data(), d.size());
+                    fromThread.append(d);
+                }
+                return fromThread.size() >= kFrames;
+            }, 5000);
+            threaded.stopEp2SenderForTest();
+            QTest::qWait(20);
+            while (wire.hasPendingDatagrams()) {
+                QByteArray d(int(wire.pendingDatagramSize()), Qt::Uninitialized);
+                wire.readDatagram(d.data(), d.size());
+                fromThread.append(d);
+            }
+            if (!arrived) {
+                qWarning() << round << "only" << fromThread.size() << "frames arrived";
+                return false;
+            }
+
+            // The seam: one frame a pass, as many as the thread sent.
+            QList<QByteArray> fromSeam;
+            seam.resetEp2PacerForTest();
+            seam.serviceEp2SendForTest(0, &fromSeam);  // starts the clock
+            for (qint64 t = 0; fromSeam.size() < fromThread.size();) {
+                t += 2625000;
+                if (seam.serviceEp2SendForTest(t, &fromSeam) != 1) {
+                    qWarning() << round << "a seam pass did not send one frame";
+                    return false;
+                }
+            }
+
+            for (int i = 0; i < fromThread.size(); ++i) {
+                if (fromThread[i] != fromSeam[i]) {
+                    qWarning() << round << "frame" << i << "differs:\n thread"
+                               << fromThread[i].left(16).toHex(' ') << fromThread[i].mid(520, 8).toHex(' ')
+                               << "\n seam  " << fromSeam[i].left(16).toHex(' ')
+                               << fromSeam[i].mid(520, 8).toHex(' ');
+                    return false;
+                }
+            }
+            qInfo().noquote() << QString("%1: %2 frames alike").arg(round).arg(fromThread.size());
+            return true;
+        };
+
+        QVERIFY(compareRound("plain"));
+
+        // The force-bank setters, on both, with no sender running.
+        for (P1RadioConnection* c : {&threaded, &seam}) {
+            c->setMox(true);
+            c->setTrxRelay(true);
+            c->setMicTipRing(true);
+            QVERIFY(c->forceBank0NextForTest());
+        }
+        QVERIFY(compareRound("forced"));
+        QVERIFY(!threaded.forceBank0NextForTest());
+        QVERIFY(!seam.forceBank0NextForTest());
+    }
+
+    // Test 5: the sender's lifecycle. Fifty rounds of connect, a
+    // sample-rate change, a receiver-count change, a lost link and its
+    // reconnect, and a disconnect, with the sender running throughout: no
+    // deadlock, the sender stopped and started at each step, never two.
+    void senderLifecycleNeverRunsTwo() {
+        P1FakeRadio fake;
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        conn.setReconnectTimingForTest(/*watchdogSilenceMs=*/150, /*reconnectIntervalMs=*/50);
+        P1RadioConnection::resetMaxLiveEp2SendersForTest();
+        QCOMPARE(P1RadioConnection::liveEp2SendersForTest(), 0);
+
+        constexpr int kCycles = 50;
+        for (int i = 0; i < kCycles; ++i) {
+            const QByteArray where = QByteArray("cycle ") + QByteArray::number(i);
+            const auto at = [&](const char* step) {
+                return where + ": " + step;
+            };
+            quint64 starts = conn.ep2SenderStartsForTest();
+
+            conn.connectToRadio(makeInfo(fake));
+            QVERIFY2(conn.ep2SenderRunningForTest(), at("no sender after connect").constData());
+            QVERIFY2(conn.ep2SenderStartsForTest() > starts, at("connect did not start the sender").constData());
+            QVERIFY2(QTest::qWaitFor([&] { return conn.state() == ConnectionState::Connected; }, 3000),
+                     at("never connected").constData());
+
+            // A sample-rate change (posted, as RadioModel does).
+            starts = conn.ep2SenderStartsForTest();
+            const int rate = (i % 2 == 0) ? 96000 : 48000;
+            postFromAnotherThread(conn, [&conn, rate] { conn.restartStreamWithRate(rate); });
+            QVERIFY2(QTest::qWaitFor([&] { return conn.ep2SenderStartsForTest() > starts; }, 3000),
+                     at("the rate change did not restart the sender").constData());
+            QVERIFY2(conn.ep2SenderRunningForTest(), at("no sender after the rate change").constData());
+
+            // A receiver-count change (the HL2 announces at least two).
+            starts = conn.ep2SenderStartsForTest();
+            const int count = (i % 2 == 0) ? 3 : 2;
+            postFromAnotherThread(conn, [&conn, count] { conn.setActiveReceiverCount(count); });
+            QVERIFY2(QTest::qWaitFor([&] { return conn.ep2SenderStartsForTest() > starts; }, 3000),
+                     at("the receiver-count change did not restart the sender").constData());
+            QVERIFY2(conn.ep2SenderRunningForTest(), at("no sender after the count change").constData());
+
+            // A lost link: the watchdog stops the sender, the reconnect
+            // starts it again.
+            starts = conn.ep2SenderStartsForTest();
+            fake.goSilent();
+            QVERIFY2(QTest::qWaitFor([&] { return conn.state() == ConnectionState::LinkLost; }, 3000),
+                     at("the silence was not seen").constData());
+            fake.resume();
+            QVERIFY2(QTest::qWaitFor([&] {
+                         return conn.state() == ConnectionState::Connected
+                             && conn.ep2SenderStartsForTest() > starts;
+                     }, 5000),
+                     at("never reconnected").constData());
+            QVERIFY2(conn.ep2SenderRunningForTest(), at("no sender after the reconnect").constData());
+
+            conn.disconnect();
+            QVERIFY2(!conn.ep2SenderRunningForTest(), at("a sender after disconnect").constData());
+            QCOMPARE(P1RadioConnection::liveEp2SendersForTest(), 0);
+            QVERIFY2(QTest::qWaitFor([&] { return !fake.isRunning(); }, 1000),
+                     at("the fake never saw the stop").constData());
+        }
+
+        qInfo().noquote() << QString("MEASURE lifecycle: %1 cycles, %2 sender starts, at most %3 alive")
+                                 .arg(kCycles)
+                                 .arg(conn.ep2SenderStartsForTest())
+                                 .arg(P1RadioConnection::maxLiveEp2SendersForTest());
+        QCOMPARE(P1RadioConnection::maxLiveEp2SendersForTest(), 1);
+        QVERIFY(conn.ep2SenderStartsForTest() >= quint64(4 * kCycles));
         fake.stop();
     }
 };

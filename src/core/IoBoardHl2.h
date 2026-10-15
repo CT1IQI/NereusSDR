@@ -32,6 +32,10 @@
 //                SetI2CPollingPause), held while the manual I2C tool waits
 //                on an answer. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-14 - Comments only: the codec now drains the I2C queue and
+//                pushes the pending-read FIFO on P1's EP2 sender thread,
+//                under P1RadioConnection's frame lock. J.J. Boyd (KG4VCF),
+//                with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/HPSDR/IoBoardHl2.cs ---
@@ -393,8 +397,8 @@ signals:
 private:
     // The I2C queue is filled from the main thread (the I2C tool, the
     // output pins) and from the connection thread (the poll, the probe),
-    // and emptied by the codec on the connection thread as it builds each
-    // C&C frame. It is a bounded lock-free queue (each slot carries a
+    // and emptied by the codec on P1's EP2 sender thread (2026-10-14) as
+    // it builds each C&C frame. It is a bounded lock-free queue (each slot carries a
     // sequence number; producers and consumers claim positions with a
     // compare-exchange), so no thread ever waits on a lock and the send
     // path never blocks. FIFO order holds across all producers.
@@ -433,8 +437,10 @@ private:
     I2cReadResponse m_lastI2cRead{};
 
     // Pending-read FIFO — parallel to the I2C queue.  Each codec dequeue of a
-    // read txn pushes a record; each EP6 response pops the oldest.  Both run
-    // on the connection thread, so this FIFO needs no guard.
+    // read txn pushes a record; each EP6 response pops the oldest.  The push
+    // runs on P1's EP2 sender thread and the pop on the connection thread
+    // (2026-10-14), both under P1RadioConnection's frame lock, which is this
+    // FIFO's guard.
     std::array<PendingRead, kMaxI2cQueue> m_pendingReads{};
     int m_pendingHead{0};
     int m_pendingTail{0};

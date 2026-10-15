@@ -23,6 +23,9 @@
 //   2026-10-06: Issue #351: inPlaceRecoveryMs, how long a lost link keeps
 //               trying to come back on the same connection. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14: The ping timestamp is atomic: P1 notes its pings on the
+//               EP2 sender thread. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -1154,8 +1157,9 @@ private:
     // publishAlexLpfBits: what was last reported. -1 = nothing yet.
     mutable int m_publishedLpfBits{-1};
 
-    // Ping RTT state. Zero means no outstanding ping.
-    qint64 m_pingSentMs{0};
+    // Ping RTT state. Zero means no outstanding ping. Atomic: P1 notes its
+    // pings on the EP2 sender thread, and receives them on its own.
+    std::atomic<qint64> m_pingSentMs{0};
     int m_lastPingRttMs{-1};
     QElapsedTimer m_lastPingRttAge;
 

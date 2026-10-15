@@ -191,6 +191,13 @@
 //                on the same thread keeps sending while the EP6 stream
 //                arrives faster than it is read. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14 - EP2 goes out from its own sender thread (P1Ep2Sender), as
+//                the Protocol 2 transmit I/Q does: serviceEp2Send runs the
+//                QTimer pacer's arithmetic, frames are built under one frame
+//                lock and sent with sendto on the socket's descriptor. The
+//                read-loop cap now keeps queued control calls timely.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -531,7 +538,10 @@ mw0lge@grange-lane.co.uk
 #include "WdspTypes.h"
 #include "HermesLiteBandwidthMonitor.h"
 #include "PerfMonitor.h"
+#include "TxIqNativeDest.h"
+#include "audio/RealtimeAudioPriority.h"
 #include "audio/TxMicSource.h"
+#include "platform/ThreadPlacement.h"
 #include "codec/P1CodecStandard.h"
 #include "codec/P1CodecAnvelinaPro3.h"
 #include "codec/P1CodecRedPitaya.h"
@@ -541,11 +551,18 @@ mw0lge@grange-lane.co.uk
 
 #include <array>
 #include <algorithm>
+#include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>    // memset
+#include <optional>
+#include <thread>
 #include <vector>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include <QtEndian>
 #include <QNetworkDatagram>
 #include <QThread>
@@ -849,6 +866,22 @@ P1RadioConnection::~P1RadioConnection()
     if (m_running) {
         disconnect();
     }
+    // A sender left by a path that did not disconnect (a test arming it
+    // directly) is joined before the members it reads go.
+    stopEp2Sender();
+}
+
+// Every queued call on this object (RadioModel's setters, posted with
+// QMetaObject::invokeMethod) runs with the frame lock held, so the frame's
+// inputs change between two EP2 frames. See the frame lock rule in the
+// header.
+bool P1RadioConnection::event(QEvent* e)
+{
+    if (e->type() == QEvent::MetaCall) {
+        FrameLock lock(*this);
+        return RadioConnection::event(e);
+    }
+    return RadioConnection::event(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -890,13 +923,8 @@ void P1RadioConnection::init()
     m_watchdogTimer->setInterval(kWatchdogTickMs);
     connect(m_watchdogTimer, &QTimer::timeout, this, &P1RadioConnection::onWatchdogTick);
 
-    // EP2 pacer — dedicated high-resolution timer that feeds the radio's
-    // 48 kHz audio DAC. Kept separate from the watchdog so silence detection
-    // cadence (25 ms) and EP2 cadence (2 ms) can evolve independently.
-    m_ep2PacerTimer = new QTimer(this);
-    m_ep2PacerTimer->setInterval(kEp2PacerIntervalMs);
-    m_ep2PacerTimer->setTimerType(Qt::PreciseTimer);
-    connect(m_ep2PacerTimer, &QTimer::timeout, this, &P1RadioConnection::onEp2PacerTick);
+    // EP2 pacing is the EP2 sender thread's (startEp2Sender), started by
+    // connectToRadio; there is no pacer timer on this thread.
 
     // Reconnect timer — single-shot; fires kReconnectIntervalMs after watchdog trips.
     // Source: NereusSDR design doc §3.6 — max 3 retries; issue #351 moved the
@@ -1026,9 +1054,12 @@ QHostAddress P1RadioConnection::radioFacingAddress() const
 // ---------------------------------------------------------------------------
 void P1RadioConnection::connectToRadio(const RadioInfo& info)
 {
+    FrameLock frameLock(*this);
     if (m_running) {
         disconnect();
     }
+    // The priming bursts below send on this thread; no sender runs now.
+    stopEp2Sender();
 
     m_radioInfo = info;
     // Listen on the address the radio answers, before anything is sent.
@@ -1157,9 +1188,10 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     sendPrimingBurst(3);
 
     m_watchdogTimer->start();
-    m_ep2PacerClock.restart();
+    m_ep2PacerStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
     m_ep2PacketsSent = 0;
-    m_ep2PacerTimer->start();
+    startEp2Sender();
     // State stays Connecting; onReadyRead() promotes Connecting -> Connected
     // on the first ep6 frame. ConnectionState.h:17-20: Connecting means
     // "metis-start sent, awaiting first ep6"; Connected means "data flowing".
@@ -1184,6 +1216,7 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
 // ---------------------------------------------------------------------------
 void P1RadioConnection::disconnect()
 {
+    FrameLock frameLock(*this);
     m_intentionalDisconnect = true;
 
     if (m_watchdogTimer) {
@@ -1200,9 +1233,9 @@ void P1RadioConnection::disconnect()
     // a clock write it still holds is sent again anyway.
     hl2ClockDropPending();
     hl2ClockMarkUnconfirmed();
-    if (m_ep2PacerTimer) {
-        m_ep2PacerTimer->stop();
-    }
+    // Joined here, so the metis-stop below is the last thing sent.
+    stopEp2Sender();
+    drainEp2BytesSent();
     if (m_reconnectTimer) {
         m_reconnectTimer->stop();
     }
@@ -1683,10 +1716,18 @@ void P1RadioConnection::restartStreamWithRate(int newSampleRate)
         return;  // idempotent
     }
     setSampleRate(newSampleRate);  // updates rate + mic decimation factor
+    // The stop, priming and start go out on this thread with the EP2 sender
+    // stopped, as the pacer timer could not run in the middle of them; the
+    // sender comes back after, on the same pacer clock.
+    const bool senderWasRunning = m_ep2Sender != nullptr;
+    stopEp2Sender();
     sendMetisStop();
     sendPrimingBurst(3);
     sendMetisStart(false);
     sendPrimingBurst(3);
+    if (senderWasRunning) {
+        startEp2Sender();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1733,10 +1774,17 @@ void P1RadioConnection::restartStreamWithCount(int newActiveRxCount)
         return;  // idempotent
     }
     m_activeRxCount = newActiveRxCount;
+    // As restartStreamWithRate: the EP2 sender is stopped while this
+    // thread sends, and comes back after.
+    const bool senderWasRunning = m_ep2Sender != nullptr;
+    stopEp2Sender();
     sendMetisStop();
     sendPrimingBurst(3);
     sendMetisStart(false);
     sendPrimingBurst(3);
+    if (senderWasRunning) {
+        startEp2Sender();
+    }
 }
 
 void P1RadioConnection::setAttenuator(int dB)
@@ -2258,6 +2306,7 @@ void P1RadioConnection::hl2ClockRequest(bool ext10, bool cl2)
 // shared pause the manual I2C tool holds is left alone.
 void P1RadioConnection::hl2ClockPump()
 {
+    FrameLock frameLock(*this);
     if (m_hl2ClockRetryTimer) {
         m_hl2ClockRetryTimer->stop();
     }
@@ -2608,6 +2657,13 @@ void P1RadioConnection::dropTransmitForNewLink()
 // (RadioModel's closeRfGate connection), so one late sendTxIq can land
 // after this discard. At most one 63-sample zone of old audio or zeros
 // then leads the next key.
+//
+// 2026-10-14: fillTxZone now runs on the EP2 sender thread, but only with
+// the frame lock held, and this runs inside setMox, a queued call that
+// holds the same lock (P1RadioConnection::event), or inside
+// dropTransmitForNewLink, whose callers take it. The ring's consumer side
+// is therefore still one consumer at a time, and the unkey drops what is
+// queued between two frames, as before.
 // ---------------------------------------------------------------------------
 void P1RadioConnection::discardTxIqOnUnkey() noexcept
 {
@@ -2994,7 +3050,7 @@ double P1RadioConnection::txIqQueuedMs() const
 // them to the ring buffer m_txIqBuf.  If the buffer is full, excess samples
 // are dropped with a debug log (matches deskhpsdr overflow path).
 //
-// The EP2 pacer (onEp2PacerTick → sendCommandFrame) drains 63+63 = 126
+// The EP2 sender (serviceEp2Send → composeCommandFrame) drains 63+63 = 126
 // samples per frame call via fillTxZone().
 //
 // Cite: deskhpsdr/src/old_protocol.c:458-463 [@120188f]
@@ -3194,7 +3250,11 @@ bool P1RadioConnection::fillTxZone(quint8* zone63) noexcept
     }
     // relaxed: the audio thread observes this via its acquire load on
     // m_txIqCount before deciding whether the buffer has space.
-    m_txIqCount.fetch_sub(kSamplesPerZone, std::memory_order_relaxed);
+    // 2026-10-14: release, not relaxed. The producer's acquire load pairs
+    // with it, so the byte reads above finish before the producer writes
+    // those slots again; with relaxed nothing ordered them (TSAN reported
+    // the write-after-read race once this ran on the EP2 sender thread).
+    m_txIqCount.fetch_sub(kSamplesPerZone, std::memory_order_release);
     return true;
 }
 
@@ -4129,6 +4189,8 @@ void P1RadioConnection::setTxMicSource(TxMicSource* src)
 void P1RadioConnection::parseI2cResponse(quint8 c0, quint8 c1, quint8 c2,
                                           quint8 c3, quint8 c4)
 {
+    // The answer pops the pending-read FIFO the sender's I2C frames push.
+    FrameLock frameLock(*this);
     if (!m_ioBoard) { return; }  // no IoBoard wired (non-HL2 board)
 
     // Persist all 4 response bytes plus the 7-bit returned address into the
@@ -4450,6 +4512,10 @@ void P1RadioConnection::onReadyRead()
             // log message branches on m_reconnectAttempts so an initial
             // connect doesn't claim it was "Reconnected".
             if (cs == ConnectionState::Connecting) {
+                // The state change and the HL2 clock lists it sends are
+                // frame inputs: taken under the frame lock (only here, not
+                // across the read loop).
+                FrameLock frameLock(*this);
                 const bool wasReconnecting = (m_reconnectAttempts > 0);
                 m_reconnectAttempts = 0;
                 if (m_reconnectTimer) { m_reconnectTimer->stop(); }
@@ -4534,8 +4600,8 @@ void P1RadioConnection::onReadyRead()
 // onWatchdogTick
 //
 // Fires every kWatchdogTickMs ms while connected or reconnecting.
-// Silence-detection only — EP2 pacing lives on m_ep2PacerTimer
-// (onEp2PacerTick) to match Thetis' 381 pps audio-clock cadence.
+// Silence-detection only — EP2 pacing is the EP2 sender thread's
+// (serviceEp2Send) to match Thetis' 381 pps audio-clock cadence.
 //
 // Detects ep6 silence: if no frame has arrived for kWatchdogSilenceMs,
 // transitions to LinkLost and arms the reconnect timer (Phase 3Q-1).
@@ -4545,13 +4611,17 @@ void P1RadioConnection::onReadyRead()
 // ---------------------------------------------------------------------------
 void P1RadioConnection::onWatchdogTick()
 {
+    FrameLock frameLock(*this);
+    // The EP2 sender's bytes reach the upload readout here, on this thread.
+    drainEp2BytesSent();
+
     if (!m_running || !m_socket || m_radioInfo.address.isNull()) { return; }
 
     const ConnectionState cs = state();
 
-    // Watchdog is silence-detection only. EP2 pacing lives on m_ep2PacerTimer
-    // (onEp2PacerTick) to match Thetis' 381 pps audio-clock cadence. See
-    // kEp2PacerIntervalMs.
+    // Watchdog is silence-detection only. EP2 pacing is the EP2 sender
+    // thread's (serviceEp2Send) to match Thetis' 381 pps audio-clock
+    // cadence. See kEp2PacerIntervalMs.
 
     // HL2 bandwidth monitor — check for LAN PHY throttle on every watchdog tick.
     // Source: mi0bot bandwidth_monitor.{c,h} — NereusSDR sequence-gap adaptation.
@@ -4599,9 +4669,7 @@ void P1RadioConnection::onWatchdogTick()
                                 << "ms (state=" << static_cast<int>(cs)
                                 << "); transitioning to LinkLost and scheduling reconnect";
         m_watchdogTimer->stop();
-        if (m_ep2PacerTimer) {
-            m_ep2PacerTimer->stop();
-        }
+        stopEp2Sender();
         m_reconnectedLogged = false;
         // TX safety: the lost link drops out of transmit here, before any
         // observer of LinkLost runs, and a link lost keyed refuses a key
@@ -4647,10 +4715,89 @@ void P1RadioConnection::onWatchdogTick()
 }
 
 // ---------------------------------------------------------------------------
-// onEp2PacerTick
+// EP2 sender thread (2026-10-14)
 //
-// Fires every kEp2PacerIntervalMs ms while connected. Uses a catch-up loop
-// against m_ep2PacerClock so the aggregate send rate tracks 380.95 pps
+// EP2 goes out from a thread of its own, P1Ep2Sender, as the Protocol 2
+// transmit I/Q does (P2RadioConnection::txIqSenderMain). On the connection
+// thread, a QTimer pacer could not fire while that thread was busy (a
+// queued call, an EP6 backlog), and the radio's audio DAC and TX FIFO ran
+// dry for as long. Thetis sends EP2 from a dedicated thread too:
+// sendProtocol1Samples (networkproto1.c:700-748 [v2.10.3.15]; mi0bot
+// networkproto1.c:1204-1267 [@c26a8a4]) runs at "Pro Audio" priority and
+// waits on two 126-sample semaphores, so its cadence is the 48 kHz audio
+// clock, not a timer. NereusSDR keeps the pacer's own clock instead.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Sender threads alive in the process, and the most at once (test seams).
+std::atomic<int> g_liveEp2Senders{0};
+std::atomic<int> g_maxLiveEp2Senders{0};
+
+qint64 ep2SteadyNowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// The sender's sink: sendto on the socket's native descriptor. The socket
+// is non-blocking, as QUdpSocket leaves it; a frame the socket refuses is
+// lost and counted, as writeDatagram lost it before.
+struct Ep2NativeSink {
+    TxIqNativeDest dest;
+    std::atomic<quint64>* errors{nullptr};
+};
+
+void sendEp2Native(void* ctx, const quint8* frame, int len)
+{
+    auto* sink = static_cast<Ep2NativeSink*>(ctx);
+    TxIqNativeDest* d = &sink->dest;
+    if (d->addrLen == 0) {
+        sink->errors->fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+#ifdef Q_OS_WIN
+    const int rc = ::sendto(static_cast<SOCKET>(d->fd), reinterpret_cast<const char*>(frame),
+                            len, 0, reinterpret_cast<const sockaddr*>(&d->addr), d->addrLen);
+    if (rc != len) {
+        d->lastError = WSAGetLastError();
+        sink->errors->fetch_add(1, std::memory_order_relaxed);
+    }
+#else
+    const ssize_t rc = ::sendto(static_cast<int>(d->fd), frame, static_cast<size_t>(len), 0,
+                                reinterpret_cast<const sockaddr*>(&d->addr),
+                                static_cast<socklen_t>(d->addrLen));
+    if (rc != len) {
+        d->lastError = errno;
+        sink->errors->fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
+}
+
+} // namespace
+
+#ifdef NEREUS_BUILD_TESTS
+int P1RadioConnection::liveEp2SendersForTest()
+{
+    return g_liveEp2Senders.load();
+}
+
+int P1RadioConnection::maxLiveEp2SendersForTest()
+{
+    return g_maxLiveEp2Senders.load();
+}
+
+void P1RadioConnection::resetMaxLiveEp2SendersForTest()
+{
+    g_maxLiveEp2Senders.store(g_liveEp2Senders.load());
+}
+#endif
+
+// The guard and the catch-up arithmetic of the former QTimer pacer
+// (onEp2PacerTick), one frame at a time.
+//
+// [original comment from onEp2PacerTick:] Uses a catch-up loop against
+// the pacer clock so the aggregate send rate tracks 380.95 pps
 // (48 kHz audio / 126 samples per EP2 frame) even when Qt's PreciseTimer
 // under-delivers on Windows (10-15 ms resolution). Each tick emits a small
 // burst to make up the deficit, capped at kEp2MaxBurstPerTick for safety.
@@ -4662,13 +4809,12 @@ void P1RadioConnection::onWatchdogTick()
 // consult m_hl2Throttled. Thetis never pauses sends, and pausing egress is
 // a weak remedy for an HL2 ingress PHY stall. The throttle flag and
 // bandwidth monitor logic remain in place for future use.
-// ---------------------------------------------------------------------------
-void P1RadioConnection::onEp2PacerTick()
+bool P1RadioConnection::ep2FrameDue(qint64 nowNs)
 {
-    if (!m_running || !m_socket || m_radioInfo.address.isNull()) { return; }
+    if (!m_running || !m_socket || m_radioInfo.address.isNull()) { return false; }
 
     const ConnectionState cs = state();
-    if (cs != ConnectionState::Connected && cs != ConnectionState::Connecting) { return; }
+    if (cs != ConnectionState::Connected && cs != ConnectionState::Connecting) { return false; }
 
     // Catch-up loop: compute how many packets should have been sent by now at
     // the 380.95 pps target, and emit the missing ones. On Windows the Qt
@@ -4676,19 +4822,208 @@ void P1RadioConnection::onEp2PacerTick()
     // each tick typically emits a burst of 3-5 packets. This matches Thetis'
     // sendProtocol1Samples pacing (networkproto1.c:700-747), which is driven
     // by a 48 kHz audio-subsystem semaphore rather than timer precision.
-    if (!m_ep2PacerClock.isValid()) {
-        m_ep2PacerClock.start();
+    if (m_ep2PacerStartNs < 0) {
+        m_ep2PacerStartNs = nowNs;
         m_ep2PacketsSent = 0;
     }
 
-    const qint64 elapsedUs = m_ep2PacerClock.nsecsElapsed() / 1000;
+    const qint64 elapsedUs = (nowNs - m_ep2PacerStartNs) / 1000;
     const qint64 due       = elapsedUs / kEp2PacketIntervalUs;
+    return m_ep2PacketsSent < due;
+}
+
+int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx,
+                                      bool onSenderThread)
+{
     int burst = 0;
-    while (m_ep2PacketsSent < due && burst < kEp2MaxBurstPerTick) {
-        sendCommandFrame();
-        ++m_ep2PacketsSent;
+    while (burst < kEp2MaxBurstPerTick) {
+        quint8 frame[1032];
+        {
+            // One frame under the lock; the send below is outside it.
+            std::unique_lock<std::timed_mutex> senderLock;
+            std::optional<FrameLock> threadLock;
+            if (onSenderThread) {
+                senderLock = lockFrameOnSender();
+                if (!senderLock.owns_lock()) {
+                    break;  // stopping
+                }
+            } else {
+                threadLock.emplace(*this);
+            }
+            if (!ep2FrameDue(nowNs)) {
+                break;
+            }
+            composeCommandFrame(frame);
+            ++m_ep2PacketsSent;
+        }
+        sink(ctx, frame, 1032);
+
+        // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
+        // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
+        // (recordEp2Bytes is an atomic add; m_bwMonitor is set before connect.)
+        if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(1032); }
+
+        // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
+        // recordBytesSent is the connection thread's: drainEp2BytesSent
+        // hands these over from the watchdog tick.
+        m_ep2BytesUnrecorded.fetch_add(1032, std::memory_order_relaxed);
+
+        // Shell-chrome sub-PR-2 B.2: bracket C&C round-trip for ping RTT.
+        // P1 EP2 → EP6 is the existing once-per-frame (380.95 pps) exchange.
+        // We note send here; receive is noted in parseEp6Frame on the success path.
+        notePingSent();
         ++burst;
     }
+    return burst;
+}
+
+std::unique_lock<std::timed_mutex> P1RadioConnection::lockFrameOnSender()
+{
+    std::unique_lock<std::timed_mutex> lock(m_frameMutex, std::defer_lock);
+    while (m_ep2SenderRun.load(std::memory_order_acquire)) {
+        if (lock.try_lock_for(std::chrono::milliseconds(1))) {
+            if (!m_ep2SenderRun.load(std::memory_order_acquire)) {
+                lock.unlock();
+            }
+            return lock;
+        }
+    }
+    return lock;
+}
+
+void P1RadioConnection::drainEp2BytesSent()
+{
+    const qint64 bytes = m_ep2BytesUnrecorded.exchange(0, std::memory_order_relaxed);
+    if (bytes > 0) {
+        recordBytesSent(bytes);
+    }
+}
+
+void P1RadioConnection::startEp2Sender()
+{
+    stopEp2Sender();  // never two
+    if (!m_socket || m_radioInfo.address.isNull()) {
+        return;
+    }
+    bool ipv4Ok = false;
+    const quint32 ipv4 = m_radioInfo.address.toIPv4Address(&ipv4Ok);
+    const qintptr fd = m_socket->socketDescriptor();
+    if (!ipv4Ok || fd < 0) {
+        qCWarning(lcConnection) << "P1: no socket for the EP2 stream; it is not sent";
+        return;
+    }
+    m_ep2SocketFd = fd;
+    m_ep2DestIpv4 = ipv4;
+    m_ep2DestPort = m_radioInfo.port;
+    m_ep2SenderRun.store(true, std::memory_order_release);
+    m_ep2Sender.reset(QThread::create([this]() { ep2SenderMain(); }));
+    m_ep2Sender->setObjectName(QStringLiteral("P1Ep2Sender"));
+    m_ep2SenderStarts.fetch_add(1, std::memory_order_relaxed);
+    m_ep2Sender->start();
+}
+
+void P1RadioConnection::stopEp2Sender()
+{
+    m_ep2SenderRun.store(false, std::memory_order_release);
+    if (!m_ep2Sender) {
+        return;
+    }
+    // The sender may be waiting for the frame lock this thread holds: drop
+    // it for the join (the sender's try loop then sees the run flag down
+    // within 1 ms), and take it again after.
+    const bool held = m_frameLockHeld;
+    if (held) {
+        m_frameLockHeld = false;
+        m_frameMutex.unlock();
+    }
+    m_ep2Sender->wait();
+    m_ep2Sender.reset();
+    if (held) {
+        m_frameMutex.lock();
+        m_frameLockHeld = true;
+    }
+}
+
+void P1RadioConnection::ep2SenderMain()
+{
+    const int live = g_liveEp2Senders.fetch_add(1) + 1;
+    int seen = g_maxLiveEp2Senders.load();
+    while (live > seen && !g_maxLiveEp2Senders.compare_exchange_weak(seen, live)) {
+    }
+
+    // Priority as P2's transmit I/Q sender has it (txIqSenderMain): in
+    // nereusd on Linux thread placement gives this thread a core and raised
+    // priority while transmitting; elsewhere it runs at audio priority, as
+    // Thetis's sendProtocol1Samples runs at "Pro Audio"
+    // (networkproto1.c:703 [v2.10.3.15]).
+    const bool placed = ThreadPlacement::managesThreadPriority();
+    AudioPriorityToken* prio = nullptr;
+    if (placed) {
+        ThreadPlacement::instance().registerCurrentThread(ThreadRole::TxIqSender);
+    } else {
+        prio = elevateAudioThreadPriority();
+    }
+
+    Ep2NativeSink sink;
+    sink.errors = &m_ep2SendErrors;
+    if (!fillTxIqNativeDest(&sink.dest, m_ep2SocketFd, m_ep2DestIpv4, m_ep2DestPort)) {
+        qCWarning(lcConnection) << "P1: the EP2 socket has no usable address; EP2 is not sent";
+    }
+    quint64 errorsLogged = m_ep2SendErrors.load(std::memory_order_relaxed);
+    qint64 errorLogNs = 0;
+
+#ifdef Q_OS_WIN
+    // A 2 ms wait needs a high-resolution timer on Windows (a plain Sleep(2)
+    // can last a whole 15.6 ms scheduler tick).
+#ifdef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr,
+                                          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                          TIMER_ALL_ACCESS);
+#else
+    HANDLE timer = nullptr;  // SDK without it: Sleep below
+#endif
+    if (timer == nullptr) {
+        qCWarning(lcConnection) << "P1: no high-resolution timer; the EP2 send thread"
+                                   " falls back to Sleep";
+    }
+#endif
+    while (m_ep2SenderRun.load(std::memory_order_acquire)) {
+        const qint64 nowNs = ep2SteadyNowNs();
+        serviceEp2Send(nowNs, &sendEp2Native, &sink, /*onSenderThread=*/true);
+        // A socket that refuses EP2: a warning at most once a second.
+        const quint64 errors = m_ep2SendErrors.load(std::memory_order_relaxed);
+        if (errors > errorsLogged && nowNs - errorLogNs >= 1'000'000'000LL) {
+            qCWarning(lcConnection) << "P1: EP2 send failed" << (errors - errorsLogged)
+                                    << "times; last error" << sink.dest.lastError;
+            errorsLogged = errors;
+            errorLogNs = nowNs;
+        }
+        // One pass every kEp2PacerIntervalMs, the pacer timer's interval.
+#ifdef Q_OS_WIN
+        if (timer != nullptr) {
+            LARGE_INTEGER due;
+            due.QuadPart = -10000LL * kEp2PacerIntervalMs;  // relative, in 100 ns units
+            if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+                WaitForSingleObject(timer, INFINITE);
+                continue;
+            }
+        }
+        Sleep(kEp2PacerIntervalMs);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(kEp2PacerIntervalMs));
+#endif
+    }
+#ifdef Q_OS_WIN
+    if (timer != nullptr) {
+        CloseHandle(timer);
+    }
+#endif
+
+    leaveAudioThreadPriority(prio);
+    if (placed) {
+        ThreadPlacement::instance().deregisterCurrentThread();
+    }
+    g_liveEp2Senders.fetch_sub(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -4700,6 +5035,7 @@ void P1RadioConnection::onEp2PacerTick()
 // ---------------------------------------------------------------------------
 void P1RadioConnection::onReconnectTimeout()
 {
+    FrameLock frameLock(*this);
     // Guard: don't retry after an intentional disconnect.
     if (m_intentionalDisconnect) { return; }
 
@@ -4738,6 +5074,10 @@ void P1RadioConnection::onReconnectTimeout()
     // the radio comes back up in ADC-idle state (I=DC, Q=0).
     // Source: networkproto1.c:49-110 SendStopToMetis / SendStartToMetis plus
     // the ForceCandCFrame bracket pattern from MetisReadThreadMainLoop:281.
+    // The watchdog stopped the EP2 sender when it declared the link lost;
+    // stopped here anyway, so these go out with no sender running.
+    const bool senderWasRunning = m_ep2Sender != nullptr;
+    stopEp2Sender();
     sendMetisStop();
     sendPrimingBurst(3);
     sendMetisStart(false);
@@ -4753,11 +5093,12 @@ void P1RadioConnection::onReconnectTimeout()
     if (!m_watchdogTimer->isActive()) {
         m_watchdogTimer->start();
     }
-    if (m_ep2PacerTimer && !m_ep2PacerTimer->isActive()) {
-        m_ep2PacerClock.restart();
+    if (!senderWasRunning) {
+        m_ep2PacerStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         m_ep2PacketsSent = 0;
-        m_ep2PacerTimer->start();
     }
+    startEp2Sender();
 
     // Re-arm the reconnect timer so if this attempt also fails, the next retry
     // is scheduled automatically (the watchdog will stop itself and re-arm this
@@ -4789,6 +5130,7 @@ int P1RadioConnection::inPlaceRecoveryMs() const noexcept
 // ---------------------------------------------------------------------------
 void P1RadioConnection::onConnectTimeout()
 {
+    FrameLock frameLock(*this);
     // Guard: intentional disconnect() races are harmless (disconnect() stops
     // the timer, but if both fire in the same event-loop turn, check here).
     if (m_intentionalDisconnect) { return; }
@@ -4809,7 +5151,7 @@ void P1RadioConnection::onConnectTimeout()
     m_running = false;
     m_intentionalDisconnect = true;
     if (m_watchdogTimer) { m_watchdogTimer->stop(); }
-    if (m_ep2PacerTimer) { m_ep2PacerTimer->stop(); }
+    stopEp2Sender();  // joined before the socket closes
     if (m_reconnectTimer) { m_reconnectTimer->stop(); }
     if (m_socket) { m_socket->close(); }
     setState(ConnectionState::Disconnected);
@@ -5033,6 +5375,7 @@ void P1RadioConnection::setIoBoardAerials(quint8 aerialMode, quint8 aerialPorts)
 
 void P1RadioConnection::ioBoardPollTick()
 {
+    FrameLock frameLock(*this);
     if (!m_caps || !m_caps->hasIoBoardHl2 || !m_ioBoard || !m_ioBoard->isDetected()) {
         return;
     }
@@ -5153,6 +5496,27 @@ void P1RadioConnection::sendCommandFrame()
 {
     if (!m_socket) { return; }
 
+    quint8 frame[1032];
+    composeCommandFrame(frame);
+
+    QByteArray pkt(reinterpret_cast<const char*>(frame), 1032);
+    m_socket->writeDatagram(pkt, m_radioInfo.address, m_radioInfo.port);
+
+    // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
+    // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
+    if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(pkt.size()); }
+
+    // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
+    recordBytesSent(static_cast<qint64>(pkt.size()));
+
+    // Shell-chrome sub-PR-2 B.2: bracket C&C round-trip for ping RTT.
+    // P1 EP2 → EP6 is the existing once-per-frame (380.95 pps) exchange.
+    // We note send here; receive is noted in parseEp6Frame on the success path.
+    notePingSent();
+}
+
+void P1RadioConnection::composeCommandFrame(quint8* frame)
+{
     // Phase 3P-D follow-up: drive the bank ceiling from the active codec's
     // maxBank() so HL2 (18) and AnvelinaPro3 (17) both emit their full bank
     // range. Standard = 16. The legacy compose path (m_codec == nullptr under
@@ -5160,8 +5524,7 @@ void P1RadioConnection::sendCommandFrame()
     // constant to preserve the regression-freeze byte-identical guarantee.
     const int maxBank = ccMaxBank();
 
-    quint8 frame[1032];
-    memset(frame, 0, sizeof(frame));
+    memset(frame, 0, 1032);
 
     // EP2 header (networkproto1.c:223-230)
     frame[0] = 0xEF; frame[1] = 0xFE; frame[2] = 0x01; frame[3] = 0x02;
@@ -5237,21 +5600,6 @@ void P1RadioConnection::sendCommandFrame()
     // receive audio for the radio's own speaker out (fillRadioAudioZone).
     fillRadioAudioZone(frame + 16);
     fillRadioAudioZone(frame + 528);
-
-    QByteArray pkt(reinterpret_cast<const char*>(frame), 1032);
-    m_socket->writeDatagram(pkt, m_radioInfo.address, m_radioInfo.port);
-
-    // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
-    // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
-    if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(pkt.size()); }
-
-    // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
-    recordBytesSent(static_cast<qint64>(pkt.size()));
-
-    // Shell-chrome sub-PR-2 B.2: bracket C&C round-trip for ping RTT.
-    // P1 EP2 → EP6 is the existing once-per-frame (380.95 pps) exchange.
-    // We note send here; receive is noted in parseEp6Frame on the success path.
-    notePingSent();
 }
 
 // ---------------------------------------------------------------------------

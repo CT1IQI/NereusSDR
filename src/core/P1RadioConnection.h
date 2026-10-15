@@ -105,6 +105,11 @@
 //                many datagrams per call, so the EP2 pacer gets a turn.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-14 - EP2 goes out from its own sender thread (P1Ep2Sender), as
+//                the Protocol 2 transmit I/Q does, under one frame lock
+//                (m_frameMutex); the pacer QTimer is gone. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*
@@ -149,6 +154,7 @@ namespace NereusSDR { class TxMicSource; }               // forward decl — ful
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <array>
 #include <QUdpSocket>
 #include <QTimer>
@@ -157,6 +163,8 @@ namespace NereusSDR { class TxMicSource; }               // forward decl — ful
 #include <utility>
 #include <vector>
 
+class QThread;
+
 namespace NereusSDR {
 
 class P1RadioConnection : public RadioConnection {
@@ -164,6 +172,13 @@ class P1RadioConnection : public RadioConnection {
 public:
     explicit P1RadioConnection(QObject* parent = nullptr);
     ~P1RadioConnection() override;
+
+    // Holds the frame lock (m_frameMutex) while a queued call runs on this
+    // object, so every setter RadioModel posts with
+    // QMetaObject::invokeMethod, and any added later, changes the frame's
+    // inputs between two EP2 frames and never in the middle of one. See
+    // the frame lock rule above m_frameMutex.
+    bool event(QEvent* e) override;
 
     // Radio codec (2026-09-30): the EP2 L/R bytes carry the receive audio.
     bool carriesRadioAudio() const noexcept override { return true; }
@@ -539,7 +554,6 @@ signals:
 private slots:
     void onReadyRead();
     void onWatchdogTick();
-    void onEp2PacerTick();
     void onReconnectTimeout();
     // Fires kConnectTimeoutMs after connectToRadio() if no first ep6 frame
     // arrives. Emits connectFailed(Timeout, ...) — Phase 3Q Task 3.
@@ -650,6 +664,51 @@ private:
     // Replaces the old ForceCandCFrame pattern — now simply drives the
     // round-robin forward, ensuring all banks get primed.
     void sendPrimingBurst(int countPerBank);
+    // The 1032-byte EP2 frame sendCommandFrame sends: header, sequence
+    // number, the two C&C subframes and both TX zones. Advances the
+    // sequence number and the round-robin. Called with the frame lock held
+    // (the sender thread, or the connection thread while the sender is
+    // stopped).
+    void composeCommandFrame(quint8* frame);
+
+    // ── EP2 sender thread (2026-10-14) ──────────────────────────────────
+    //
+    // EP2 goes out from a thread of its own (P1Ep2Sender), as the Protocol
+    // 2 transmit I/Q does (P2RadioConnection::txIqSenderMain), so a busy
+    // connection thread never holds it back. Thetis and mi0bot-Thetis also
+    // send EP2 from a dedicated thread at "Pro Audio" priority
+    // (sendProtocol1Samples, Thetis networkproto1.c:700-748 [v2.10.3.15],
+    // mi0bot networkproto1.c:1204-1267 [@c26a8a4]), paced by two 126-sample
+    // semaphores. NereusSDR keeps its own 2625 us cadence instead (the
+    // pacer clock below), as the QTimer pacer had it.
+    //
+    // A sink takes one built frame. The sender's sends it with sendto on
+    // the socket's native descriptor; the test seam captures it.
+    using Ep2FrameSink = void (*)(void* ctx, const quint8* frame, int len);
+    // One sender pass at nowNs (steady_clock nanoseconds): the guard and
+    // the catch-up arithmetic the QTimer pacer (onEp2PacerTick) had, at most
+    // kEp2MaxBurstPerTick frames, each built under the frame lock and handed
+    // to the sink with the lock released. Returns the frames sent. On the
+    // sender thread the lock is taken with a 1 ms try loop that gives up
+    // when the run flag drops; otherwise (the test seam) as the connection
+    // thread takes it.
+    int serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx, bool onSenderThread);
+    // The guard and pacer arithmetic of one frame: true when a frame is due
+    // at nowNs. Starts the pacer clock if it has not started. Frame lock held.
+    bool ep2FrameDue(qint64 nowNs);
+    // Starts the sender (stopping any that runs first, so there is never
+    // more than one). Connection thread.
+    void startEp2Sender();
+    // Stops the sender and joins it. Releases the frame lock while it
+    // joins when this thread holds it, and takes it again after.
+    void stopEp2Sender();
+    void ep2SenderMain();
+    // The sender's frame lock: owned on return unless the run flag dropped.
+    std::unique_lock<std::timed_mutex> lockFrameOnSender();
+    // Hands the bytes the sender sent to recordBytesSent (a QList the
+    // sender must not touch). Connection thread: the watchdog tick and
+    // disconnect.
+    void drainEp2BytesSent();
     // Compose 5 C&C bytes for any bank index 0-17.
     // Dispatcher ported from Thetis networkproto1.c WriteMainLoop cases 0-17.
     void composeCcForBank(int bankIdx, quint8 out[5]) const;
@@ -732,8 +791,11 @@ private:
     // --- State ---
     QUdpSocket* m_socket{nullptr};
     QTimer*     m_watchdogTimer{nullptr};
-    QTimer*       m_ep2PacerTimer{nullptr};
-    QElapsedTimer m_ep2PacerClock;
+    // The EP2 pacer clock: when it started, in steady_clock nanoseconds
+    // (-1: not started; the next sender pass starts it), and how many
+    // frames have gone out since. Restarted by connectToRadio and by each
+    // reconnect attempt, the sender stopped; the sender's while it runs.
+    qint64        m_ep2PacerStartNs{-1};
     qint64        m_ep2PacketsSent{0};
     QTimer*       m_reconnectTimer{nullptr};
     // Single-shot timer — fires kConnectTimeoutMs after connectToRadio() if
@@ -744,6 +806,78 @@ private:
     bool        m_running{false};
     bool        m_intentionalDisconnect{false};
 
+    // ── The frame lock rule (2026-10-14) ──
+    //
+    // m_frameMutex guards every input of the EP2 frame: every member the
+    // compose path (composeCommandFrame and everything it calls, including
+    // buildCodecContext, the codecs, the HL2 I2C queue's pending-read FIFO,
+    // fillTxZone and fillRadioAudioZone) reads or writes, other than the
+    // atomics. The rule:
+    //   - The sender thread holds it while it builds one frame, and never
+    //     while it sleeps or sends. It takes it with try_lock_for(1 ms) in a
+    //     loop that gives up when m_ep2SenderRun drops.
+    //   - The connection thread writes frame inputs only while holding it:
+    //     event() holds it across every queued call (QEvent::MetaCall), and
+    //     the connection thread's own entry points take it themselves
+    //     (FrameLock): connectToRadio, disconnect, the watchdog, reconnect,
+    //     connect timeout and I/O board poll timers, the HL2 clock pump,
+    //     parseI2cResponse, and the first frame's state change in
+    //     onReadyRead. The read loop itself does not hold it.
+    //   - Nothing joins the sender while holding it: stopEp2Sender drops it
+    //     for the join and takes it again after.
+    //   - While the sender runs, m_epSendSeq, m_ccRoundRobinIdx, m_i2cDelay,
+    //     m_ep2PacketsSent and the pacer clock are written only by the
+    //     sender (always under the lock). The connection thread writes them
+    //     only while the sender is stopped (connectToRadio, the priming
+    //     bursts, the reconnect).
+    //   - The force-bank flags are set by the setters and consumed by the
+    //     builder, both under the lock.
+    // Tests that call the setters directly on this thread with the sender
+    // running do so outside the lock; they post them (as RadioModel does)
+    // or stop the sender first.
+    std::timed_mutex m_frameMutex;
+    // True while the connection thread holds m_frameMutex through a
+    // FrameLock. Read and written only by the connection thread, so a
+    // nested FrameLock (a guarded entry point calling another) is a no-op.
+    bool m_frameLockHeld{false};
+    class FrameLock {
+    public:
+        explicit FrameLock(P1RadioConnection& conn)
+            : m_conn(conn), m_owns(!conn.m_frameLockHeld)
+        {
+            if (m_owns) {
+                m_conn.m_frameMutex.lock();
+                m_conn.m_frameLockHeld = true;
+            }
+        }
+        ~FrameLock()
+        {
+            if (m_owns) {
+                m_conn.m_frameLockHeld = false;
+                m_conn.m_frameMutex.unlock();
+            }
+        }
+        FrameLock(const FrameLock&) = delete;
+        FrameLock& operator=(const FrameLock&) = delete;
+    private:
+        P1RadioConnection& m_conn;
+        bool m_owns;
+    };
+
+    // The sender thread, its run flag and its destination (set by
+    // startEp2Sender before the thread starts, read-only while it runs).
+    std::unique_ptr<QThread> m_ep2Sender;
+    std::atomic<bool> m_ep2SenderRun{false};
+    qintptr m_ep2SocketFd{-1};
+    quint32 m_ep2DestIpv4{0};
+    quint16 m_ep2DestPort{0};
+    // Bytes the sender sent that recordBytesSent has not seen yet.
+    std::atomic<qint64> m_ep2BytesUnrecorded{0};
+    // Frames sendto refused (counted, and warned of at most once a second).
+    std::atomic<quint64> m_ep2SendErrors{0};
+    // How many times a sender thread has started on this connection.
+    std::atomic<quint64> m_ep2SenderStarts{0};
+
     // --- Reconnect state machine (§3.6) ---
     // Timing constants are NereusSDR policy (documented in design doc §3.6),
     // not ported from Thetis.
@@ -752,8 +886,8 @@ private:
     bool        m_parseFailLogged{false};                       // diagnostic: log once if first ep6 parse fails
     bool        m_firstEmitLogged{false};                       // diagnostic: log once on first iqDataReceived emit
     int         m_reconnectAttempts{0};                         // how many retries so far this cycle
-    // 25 ms watchdog tick for silence detection only. EP2 pacing has moved
-    // to m_ep2PacerTimer (kEp2PacerIntervalMs) — see onEp2PacerTick.
+    // 25 ms watchdog tick for silence detection only. EP2 pacing is the
+    // EP2 sender thread's (kEp2PacerIntervalMs); see serviceEp2Send.
     static constexpr int kWatchdogTickMs       = 25;            // watchdog silence-detection cadence
     // Connect watchdog: fires this many ms after connectToRadio() if no first
     // ep6 frame arrives → emits connectFailed(Timeout, ...). Design §4.1.
@@ -769,8 +903,9 @@ private:
     static constexpr int kMicLosTimeoutMs      = 3000;
     // EP2 send cadence — target 381 pps (48 kHz audio / 126 samples per
     // EP2 frame) to match Thetis' sendProtocol1Samples semaphore-driven
-    // audio clock. 2 ms PreciseTimer yields ~350-500 pps on Windows under
-    // normal scheduling jitter. Source: networkproto1.c:700-747.
+    // audio clock. The EP2 sender thread makes one pass every 2 ms (a sleep,
+    // or a high-resolution waitable timer on Windows), and each pass sends
+    // what the clock says is due. Source: networkproto1.c:700-747.
     static constexpr int kEp2PacerIntervalMs  = 2;
 
     // Spec rate: 48000 samples/s / 126 samples per EP2 packet = 380.95 pps
@@ -787,18 +922,22 @@ private:
     static constexpr int kEp2MaxBurstPerTick = 16;
 
     // Most datagrams onReadyRead() reads in one call before it returns to
-    // this thread's event loop. The EP2 pacer timer runs on the same thread,
-    // so an unbounded read loop that cannot empty the socket (an HL2 sends
-    // about 5,333 EP6 datagrams a second, and a CPU-short thread reads them
-    // slower than they arrive) never returns, and no EP2 frame goes out: the
-    // radio's TX FIFO runs dry and it drops PTT. At 5,333 per second about 11
-    // datagrams arrive per 2 ms pacer interval, so 16 keeps up with the
-    // stream while letting a due pacer tick run between batches. Datagrams
-    // left behind are read on the next call: each receiveDatagram() re-arms
-    // the socket's read notifier, which fires again while any are pending.
-    // A NereusSDR scheduling bound, not a Thetis value: Thetis reads on a
-    // thread of its own (networkproto1.c MetisReadThreadMainLoop) and sends
-    // from another, so it has no such loop.
+    // this thread's event loop. EP2 goes out from its own thread now, but
+    // the calls that change what EP2 carries still arrive here: RadioModel
+    // posts setMox, the frequencies and every other setter to this thread
+    // with QMetaObject::invokeMethod, and the watchdog, reconnect and HL2
+    // timers run here too. An unbounded read loop that cannot empty the
+    // socket (an HL2 sends about 5,333 EP6 datagrams a second, and a
+    // CPU-short thread reads them slower than they arrive) never returns,
+    // and none of them runs: an unkey would wait on the wire for seconds
+    // while the radio stayed keyed. At 5,333 per second about 11 datagrams
+    // arrive per 2 ms, so 16 keeps up with the stream while letting a queued
+    // call or a due timer run between batches. Datagrams left behind are
+    // read on the next call: each receiveDatagram() re-arms the socket's
+    // read notifier, which fires again while any are pending. A NereusSDR
+    // scheduling bound, not a Thetis value: Thetis reads on a thread of its
+    // own (networkproto1.c MetisReadThreadMainLoop) and sends from another,
+    // so it has no such loop.
     static constexpr int kMaxEp6DatagramsPerRead = 16;
     // Defaults unchanged. As of 2026-07-25 the first two are seeded into
     // instance members so tests can compress the reconnect timeline;
@@ -1230,6 +1369,11 @@ private:
     //
     // CLAUDE.md mandates atomics for cross-thread DSP; deskhpsdr's
     // old_protocol.c:466-469 [@120188f] uses the same atomic_int pattern.
+    //
+    // 2026-10-14: "connection thread" above, on the reading side, now means
+    // whoever holds the frame lock: fillTxZone runs on the EP2 sender
+    // thread, and discardTxIqOnUnkey on the connection thread, both under
+    // m_frameMutex, so the ring still has one consumer at a time.
     static constexpr int kTxIqBufSamples = 126 * 32;  // 4032 samples, 32256 bytes
     static constexpr int kTxIqBytesPerSample = 8;
     // Pre-allocated — no heap in the hot path.
@@ -1591,6 +1735,39 @@ public:
 
     // Access buffer count for buffer-state tests.
     int txIqBufferedSamplesForTest() const { return m_txIqCount.load(std::memory_order_acquire); }
+
+    // ── EP2 sender seams (2026-10-14) ──
+    // One sender pass at nowNs with no thread, every frame it sends
+    // appended to *out. The sender must be stopped.
+    int serviceEp2SendForTest(qint64 nowNs, QList<QByteArray>* out) {
+        Q_ASSERT(!m_ep2Sender);
+        return serviceEp2Send(nowNs, [](void* ctx, const quint8* frame, int len) {
+            static_cast<QList<QByteArray>*>(ctx)->append(
+                QByteArray(reinterpret_cast<const char*>(frame), len));
+        }, out, /*onSenderThread=*/false);
+    }
+    // The next pass starts the pacer clock again.
+    void resetEp2PacerForTest() { m_ep2PacerStartNs = -1; m_ep2PacketsSent = 0; }
+    // Ready to send EP2 to addr:port without a radio: the socket bound,
+    // running, the address set, the state Connected. init() first.
+    void armEp2ForTest(const QHostAddress& addr, quint16 port) {
+        FrameLock lock(*this);
+        m_radioInfo.address = addr;
+        m_radioInfo.port = port;
+        bindToRadioFacingAddress();
+        m_running = true;
+        setState(ConnectionState::Connected);
+    }
+    void startEp2SenderForTest() { startEp2Sender(); }
+    void stopEp2SenderForTest() { stopEp2Sender(); }
+    bool ep2SenderRunningForTest() const { return m_ep2Sender != nullptr; }
+    quint64 ep2SenderStartsForTest() const { return m_ep2SenderStarts.load(); }
+    quint32 ep2NextSequenceForTest() const { return m_epSendSeq; }
+    // Sender threads alive in the process now, and the most ever alive at
+    // once since the last reset.
+    static int liveEp2SendersForTest();
+    static int maxLiveEp2SendersForTest();
+    static void resetMaxLiveEp2SendersForTest();
 #endif
 };
 

@@ -175,15 +175,15 @@ double RadioConnection::rateFromSamples(const QList<ByteSample>& samples, int wi
 
 void RadioConnection::notePingSent()
 {
-    m_pingSentMs = QDateTime::currentMSecsSinceEpoch();
+    m_pingSentMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
 }
 
 void RadioConnection::notePingReceived()
 {
-    if (m_pingSentMs == 0) { return; }
+    const qint64 sentMs = m_pingSentMs.exchange(0, std::memory_order_relaxed);
+    if (sentMs == 0) { return; }
     const qint64 nowMs   = QDateTime::currentMSecsSinceEpoch();
-    const qint64 elapsed = nowMs - m_pingSentMs;
-    m_pingSentMs = 0;
+    const qint64 elapsed = nowMs - sentMs;
     if (elapsed >= 0 && elapsed <= 5000) {
         m_lastPingRttMs = static_cast<int>(elapsed);
         m_lastPingRttAge.start();

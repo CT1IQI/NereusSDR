@@ -26,6 +26,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QUdpSocket>
+#include <chrono>
 #include <cstring>
 
 namespace NereusSDR::Test {
@@ -174,10 +175,17 @@ QList<QByteArray> P1FakeRadio::ep2CcReceived() const
     return m_ep2Cc;
 }
 
+QList<qint64> P1FakeRadio::ep2ArrivalNs() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_ep2ArrivalNs;
+}
+
 void P1FakeRadio::clearEp2CcLog()
 {
     QMutexLocker lock(&m_mutex);
     m_ep2Cc.clear();
+    m_ep2ArrivalNs.clear();
 }
 
 bool P1FakeRadio::isRunning() const
@@ -304,6 +312,7 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
         // The C&C log starts again at each stop, so a test reads what a
         // (re)start sent, not frames that were still in flight before it.
         m_ep2Cc.clear();
+        m_ep2ArrivalNs.clear();
     }
 }
 
@@ -317,6 +326,8 @@ void P1FakeRadio::handleEp2Frame(const QByteArray& pkt)
         QMutexLocker lock(&m_mutex);
         ++m_ep2Count;
         m_ep2Cc.append(pkt.mid(11, 5) + pkt.mid(523, 5));
+        m_ep2ArrivalNs.append(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
     }
 }
 
