@@ -104,6 +104,10 @@
 //   2026-10-12: a Core no desktop hosts names its own position in the
 //               sentences that name a device. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15: anAntennaKeptForTheCoresOwnSliceNamesTheCore: the antenna
+//               notice names the Core's own position on a Core no desktop
+//               hosts. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -113,9 +117,11 @@
 #include "core/P1RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/WdspEngine.h"
+#include "core/accessories/AlexController.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/session/ConfirmStep.h"
 #include "core/safety/TransmitHolder.h"
+#include "models/Band.h"
 #include "models/RfKitModel.h"
 #include "models/TunerModel.h"
 
@@ -2504,6 +2510,47 @@ private slots:
         QCOMPARE(told.value(QStringLiteral("kind")).toString(), QStringLiteral("controlTaken"));
         QCOMPARE(told.value(QStringLiteral("reason")).toString(),
                  QStringLiteral("The Core took control of slice A. You are still listening."));
+        QVERIFY(OperatorWording::isPlain(told.value(QStringLiteral("reason")).toString()));
+    }
+
+    // A slice of the Core's own listens through the relay, and a device
+    // tunes across a band edge: the antenna stays, and the device is told
+    // who listens on it. The Core's own position was left out, and with
+    // nobody else listening no notice was sent at all.
+    void anAntennaKeptForTheCoresOwnSliceNamesTheCore()
+    {
+        Core core;
+        core.model->setCapsForTest(true);
+        core.model->configureStreamPool(2, 5, 192000);
+        AlexController& alex = core.model->alexControllerMutable();
+        alex.setRxAnt(Band::Band40m, 2);
+        core.model->enableBandTrackingForTest();
+        core.model->sliceById(0)->setFrequency(21074000.0);  // 15 m, ANT1
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        ownership->setOwner(0, SliceOwnership::stationDevice());
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(b);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appB));
+        const QList<int> own = ownership->ownedBy(b.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        core.model->sliceById(own.first())->setFrequency(14074000.0);  // 20 m, ANT1
+        QVERIFY(streamOf(core, 0) >= 0 && streamOf(core, own.first()) >= 0);
+        const int before = countOf(appB, QStringLiteral("notice"));
+        const quint32 writeId = 4713;
+        appB->sendText(SessionMessages::encode(SessionMessages::propertyWrite(
+            ObjectRegistry::keyForSlice(own.first()), {f64("frequency", 7074000.0)}, writeId)));
+        QJsonObject written;
+        QVERIFY(QTest::qWaitFor([&]() {
+            written = propertyResult(appB, writeId);
+            return !written.isEmpty();
+        }, 5000));
+        QCOMPARE(firstResultEntry(written).value(QStringLiteral("accepted")).toBool(false), true);
+        QVERIFY(core.model->keptReceiveAntennaBandForTest().has_value());
+        const QJsonObject told = waitForLast(appB, QStringLiteral("notice"), before);
+        QCOMPARE(told.value(QStringLiteral("kind")).toString(), QStringLiteral("antennaKept"));
+        QCOMPARE(told.value(QStringLiteral("reason")).toString(),
+                 QStringLiteral("The antenna stays on ANT1 while the Core listens on it."));
         QVERIFY(OperatorWording::isPlain(told.value(QStringLiteral("reason")).toString()));
     }
 

@@ -118,6 +118,12 @@
 //               a Core no desktop hosts the Core's own position was named
 //               with nothing. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-15: the antennaKept notice names a device with no name by its
+//               words (sliceHolderWords): on a Core no desktop hosts the
+//               Core's own position was left out of it. The older window's
+//               refusal drops a check for an empty name sliceHolderWords
+//               never returns. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1611,7 +1617,7 @@ bool StationServer::handleSharedSetting(SessionTransport* transport, const Sessi
             // still named: the Core's own position on a Core no desktop
             // hosts.
             const QString name = sliceHolderWords(a.device);
-            if (!name.isEmpty() && !names.contains(name)) {
+            if (!names.contains(name)) {
                 names.append(name);
             }
         }
@@ -1995,9 +2001,13 @@ void StationServer::onReceiveAntennaKept(int sliceId, const QString& antenna,
     }
     QStringList names;
     for (const QByteArray& listener : listeners) {
+        // A name reads as it did, its short form first; a device with none
+        // takes its words from sliceHolderWords, so the Core's own position
+        // on a Core no desktop hosts is named ("the Core") and not left out.
         const ReceiverPlanner::DeviceInfo info = planDevice(listener);
-        const QString name = info.shortName.isEmpty() ? info.name : info.shortName;
-        if (!name.isEmpty() && !names.contains(name)) {
+        const QString name =
+            info.shortName.isEmpty() ? sliceHolderWords(listener) : info.shortName;
+        if (!names.contains(name)) {
             names.append(name);
         }
     }

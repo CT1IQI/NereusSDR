@@ -104,6 +104,9 @@
 //               receiver or a slice. On a Core no desktop hosts the Core's
 //               own position was named with nothing. J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15: namesOf drops a check for an empty name sliceHolderWords
+//               never returns. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1032,7 +1035,7 @@ QString StationServer::namesOf(const QList<ReceiverPlanner::Disturbed>& disturbe
         // By its words (sliceHolderWords), so a device with no name is
         // still named: the Core's own position on a Core no desktop hosts.
         const QString name = sliceHolderWords(d.device);
-        if (!name.isEmpty() && !names.contains(name)) {
+        if (!names.contains(name)) {
             names.append(name);
         }
     }

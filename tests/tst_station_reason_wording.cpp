@@ -301,6 +301,11 @@
 //                                    acted (a take, a pan move, a take of
 //                                    control) forward sliceHolderWords'
 //                                    words. AI tooling: Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  takerName and moverName, forwarded by
+//                                    name, are held to sliceHolderWords
+//                                    where they are assigned
+//                                    (deviceWordsNotFromSliceHolderWords).
+//                                    AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -324,6 +329,28 @@ namespace {
 QString sourcePath(const QString& relative)
 {
     return QDir(QStringLiteral(NEREUS_SOURCE_DIR)).filePath(relative);
+}
+
+// StationReceivers.cpp's notices forward takerName and moverName by name
+// (their forwards entries). A bare name in forwards says nothing about
+// where the words came from, so every assignment to one in `code` must
+// take sliceHolderWords' words: a name, or the Core's own words for a
+// device with none. Returns each assignment that does not, and counts them
+// all in `assignments`.
+QStringList deviceWordsNotFromSliceHolderWords(const QString& code, int* assignments)
+{
+    static const QRegularExpression assignment(
+        QStringLiteral("\\b(?:takerName|moverName)\\s*=(?!=)\\s*([^;]*);"));
+    QStringList problems;
+    QRegularExpressionMatchIterator it = assignment.globalMatch(code);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        ++*assignments;
+        if (!match.captured(1).startsWith(QStringLiteral("sliceHolderWords("))) {
+            problems.append(match.captured(0).simplified());
+        }
+    }
+    return problems;
 }
 
 bool identifierChar(QChar c)
@@ -1127,7 +1154,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("olderWindowAskReason(namesOf(check.named))"),
           // takerName and moverName are sliceHolderWords' (StationServer.cpp,
           // scanned there): a name, or the Core's own words for a device
-          // with none.
+          // with none. theDeviceWordsTheNoticesForwardAreSliceHolderWords
+          // holds every assignment to them to that.
           QStringLiteral("takenOverReason(takerName)"),
           QStringLiteral("sliceMovedReason(moverName, letters)"),
           QStringLiteral("sliceClosedReason(moverName, lettersOf(it.value()))"),
@@ -3162,6 +3190,32 @@ private slots:
                            .arg(name);
         told.remove(name);
         QVERIFY2(wordingProblemIn(told).isEmpty(), qPrintable(told));
+    }
+
+    void theDeviceWordsTheNoticesForwardAreSliceHolderWords()
+    {
+        const QString code =
+            codeOf(sourcePath(QStringLiteral("src/core/session/StationReceivers.cpp")));
+        QVERIFY(!code.isEmpty());
+        int assignments = 0;
+        const QStringList problems = deviceWordsNotFromSliceHolderWords(code, &assignments);
+        QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QLatin1Char('\n'))));
+        // The pan move's mover and the two takes' takers, so the scan
+        // cannot pass on nothing.
+        QVERIFY2(assignments >= 3, qPrintable(QString::number(assignments)));
+
+        // The guard fails on a device's name alone.
+        const QString words =
+            QStringLiteral("takerName = sliceHolderWords(taker, WordsPlace::SentenceStart)");
+        QVERIFY(code.contains(words));
+        QString nameAlone = code;
+        nameAlone.replace(nameAlone.indexOf(words), words.size(),
+                          QStringLiteral("takerName = planDevice(taker).name"));
+        int again = 0;
+        const QStringList caught = deviceWordsNotFromSliceHolderWords(nameAlone, &again);
+        QCOMPARE(caught.size(), 1);
+        QVERIFY(caught.first().contains(QStringLiteral("planDevice(taker).name")));
+        QCOMPARE(again, assignments);
     }
 
     void everyReasonTheFixturesRecordIsPlain()
