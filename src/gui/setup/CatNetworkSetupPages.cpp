@@ -443,11 +443,13 @@ void CatTciServerPage::buildCoreGroup()
         m_coreSettings.insert(QByteArrayLiteral("txChannel"), combo);
     }
     addSpin("rxSensorIntervalMs", tr("RX interval:"), 30, 1000, tr(" ms"),
-            tr("How often RX sensor values are sent to an app that turns sensors on without "
-               "choosing its own rate (30 to 1000 ms)."));
+            tr("How often RX sensor values (signal level, AGC gain and so on) are sent "
+               "to an app that turns sensors on without choosing its own rate "
+               "(30 to 1000 ms)."));
     addSpin("txSensorIntervalMs", tr("TX interval:"), 30, 1000, tr(" ms"),
-            tr("How often TX sensor values are sent to an app that turns sensors on without "
-               "choosing its own rate (30 to 1000 ms)."));
+            tr("How often TX sensor values (forward power, SWR, ALC and so on) are sent "
+               "to an app that turns sensors on without choosing its own rate "
+               "(30 to 1000 ms)."));
     // The three RX2 VFO options (TciProtocol.cpp applies them).
     addCheck("forgetRx2VfoBOnDisconnect", rx2VfoForgetLabel(), rx2VfoForgetTip());
     addCheck("useRx1VfoaForRx2Vfoa", rx2VfoUseRx1Label(), rx2VfoUseRx1Tip());
@@ -822,8 +824,9 @@ void CatTciServerPage::buildSensorsGroup()
     m_rxSensorSpin->setRange(30, 1000);
     m_rxSensorSpin->setSuffix(tr(" ms"));
     m_rxSensorSpin->setToolTip(
-        tr("How often RX sensor values are sent to an app that turns sensors on without "
-           "choosing its own rate (30 to 1000 ms)."));
+        tr("How often RX sensor values (signal level, AGC gain and so on) are sent "
+           "to an app that turns sensors on without choosing its own rate "
+           "(30 to 1000 ms)."));
     m_rxSensorSpin->setValue(
         s.value(QStringLiteral("TciRxSensorIntervalMs"), 200).toInt());
     connect(m_rxSensorSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int v) {
@@ -838,8 +841,9 @@ void CatTciServerPage::buildSensorsGroup()
     m_txSensorSpin->setRange(30, 1000);
     m_txSensorSpin->setSuffix(tr(" ms"));
     m_txSensorSpin->setToolTip(
-        tr("How often TX sensor values are sent to an app that turns sensors on without "
-           "choosing its own rate (30 to 1000 ms)."));
+        tr("How often TX sensor values (forward power, SWR, ALC and so on) are sent "
+           "to an app that turns sensors on without choosing its own rate "
+           "(30 to 1000 ms)."));
     m_txSensorSpin->setValue(
         s.value(QStringLiteral("TciTxSensorIntervalMs"), 200).toInt());
     connect(m_txSensorSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int v) {
