@@ -213,6 +213,12 @@
 //                OUT line is printed after the frame lock is released.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - Load-failure findings: the EP2 send trace for tests; on
+//                the Mac the sender is raised to USER_INTERACTIVE QoS
+//                without the output device's workgroup, whose Core Audio
+//                lookup held up the first EP2 frames and the disconnect.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -5085,12 +5091,25 @@ void P1RadioConnection::ep2SenderMain()
     // priority while transmitting; elsewhere it runs at audio priority, as
     // Thetis's sendProtocol1Samples runs at "Pro Audio"
     // (networkproto1.c:703 [v2.10.3.15]).
+    //
+    // On the Mac that is USER_INTERACTIVE QoS without joining the default
+    // output device's audio workgroup. The sender does no work for that
+    // device's I/O cycle, and finding the workgroup is a Core Audio query
+    // (the first in a process starts the audio server connection) that
+    // took 0.25 to 1.9 s at load 60 and over 3 s at load 40 to 54: no EP2
+    // went out until it returned, and stopEp2Sender's join waited for it,
+    // so a disconnect posted right after a connect outran the 3 s teardown
+    // budget (tst_cross_thread_teardown, 2026-10-15).
     const bool placed = ThreadPlacement::managesThreadPriority();
     AudioPriorityToken* prio = nullptr;
     if (placed) {
         ThreadPlacement::instance().registerCurrentThread(ThreadRole::TxIqSender);
     } else {
+#ifdef Q_OS_MAC
+        elevateLatencyCriticalThreadPriority(/*logSuccess=*/false);
+#else
         prio = elevateAudioThreadPriority();
+#endif
     }
 
     Ep2NativeSink sink;
