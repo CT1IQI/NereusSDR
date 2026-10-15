@@ -80,11 +80,9 @@
 
 #include <QCheckBox>
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>

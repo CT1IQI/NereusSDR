@@ -12,11 +12,9 @@
 #include "core/session/StationPairingClient.h"
 
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>

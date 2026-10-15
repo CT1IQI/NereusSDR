@@ -243,7 +243,6 @@
 
 #include <QAction>
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>

@@ -38,7 +38,6 @@
 #include "models/SliceModel.h"
 
 #include <QComboBox>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
