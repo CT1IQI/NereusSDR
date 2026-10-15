@@ -5160,10 +5160,11 @@ void P1RadioConnection::ep2SenderMain()
     // output device's audio workgroup. The sender does no work for that
     // device's I/O cycle, and finding the workgroup is a Core Audio query
     // (the first in a process starts the audio server connection) that
-    // took 0.25 to 1.9 s at load 60 and over 3 s at load 40 to 54: no EP2
-    // went out until it returned, and stopEp2Sender's join waited for it,
-    // so a disconnect posted right after a connect outran the 3 s teardown
-    // budget (tst_cross_thread_teardown, 2026-10-15).
+    // took 0.25 to 1.9 s when timed at load 58 to 68, and over 3 s in the
+    // failing run at load 40 to 54: no EP2 went out until it returned,
+    // and stopEp2Sender's join waited for it, so a disconnect posted right
+    // after a connect outran the 3 s teardown budget
+    // (tst_cross_thread_teardown, 2026-10-15).
     const bool placed = ThreadPlacement::managesThreadPriority();
     AudioPriorityToken* prio = nullptr;
     if (placed) {
