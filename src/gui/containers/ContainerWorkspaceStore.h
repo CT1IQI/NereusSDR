@@ -7,12 +7,13 @@
 //                 ContainerWorkspacePreview key. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
+#include "gui/NereusGuiExport.h"
 #include <QByteArray>
 #include <QObject>
 
 namespace NereusSDR {
 class AppSettings;
-class ContainerWorkspaceStore : public QObject {
+class NEREUS_GUI_EXPORT ContainerWorkspaceStore : public QObject {
     Q_OBJECT
 public:
     explicit ContainerWorkspaceStore(AppSettings& settings, QObject* parent = nullptr);
