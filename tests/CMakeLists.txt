@@ -6832,6 +6832,12 @@ nereus_add_test(tst_spot_list_accessibility)
 # the gate leaving the cache alone on every other platform.
 nereus_add_test(tst_qt_cocoa_accessible_table_cache)
 
+# The real model reset item views take before their rows change with
+# accessibility on (resetItemsBeforeRowChange): items, roles, flags,
+# current row and selection kept, no view signals, one modelReset; expired
+# cells then a row change do not crash.
+nereus_add_test(tst_item_view_model_reset)
+
 # Workspace visual review (2026-10-08): the visual preview's dialog seams.
 # ConnectionPanel and LanScanDialog start no discovery with their test seam
 # set, MainWindow::buildWisdomProgressDialog builds the FFTW wisdom dialog
