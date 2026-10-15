@@ -3431,6 +3431,11 @@ target_compile_definitions(tst_p2_tx_iq_send PRIVATE NEREUS_BUILD_TESTS)
 # clock (REALTIME: run it alone on a loaded machine).
 nereus_add_test(tst_p2_tx_iq_send_realtime REALTIME)
 target_compile_definitions(tst_p2_tx_iq_send_realtime PRIVATE NEREUS_BUILD_TESTS)
+# 2026-10-15: on the Mac the same send thread is raised without the audio
+# workgroup lookup; a lookup made slow by a test hook holds up neither its
+# first frame nor its stop.
+nereus_add_test(tst_p2_tx_iq_sender_priority)
+target_compile_definitions(tst_p2_tx_iq_sender_priority PRIVATE NEREUS_BUILD_TESTS)
 # R-IOS-13, R-R3-42 (2026-09-27): the remote microphone's path from a packet
 # at the Core to the I/Q leaving for the radio, on simulated time: the added
 # latency per stage on a steady link, and after 200 ms stalls of the link,
