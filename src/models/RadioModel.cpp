@@ -11538,9 +11538,10 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 
     // The demodulation-critical subset. Everything here decides whether the
     // audio coming out of fexchange2 is the right signal at all; the rest of
-    // the per-slice DSP surface (NR, SNB, APF, squelch, binaural, pan, and the
+    // the per-slice DSP surface (NR, SNB, APF, binaural, pan, and the
     // NB1 / NB2 / SNB detailed tuning) still follows the active slice and
-    // lands in a later sub-epic. Note this is the INITIAL seed only: once a
+    // lands in a later sub-epic. Squelch is not in that list: the block
+    // after this subset seeds it. Note this is the INITIAL seed only: once a
     // channel is up, every one of those settings has a live per-slice push in
     // wireSliceSignals that resolves rxChannel(slice->sliceIndex()), so
     // operator changes reach the right slice either way.

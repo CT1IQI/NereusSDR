@@ -3257,8 +3257,12 @@ void SliceModel::restoreFromSettings(Band band)
     // model's changed signals (and the per-slice pushes wired to them) come
     // threshold first. Thetis applies its squelch the other way round, run
     // before threshold (console.cs:47361 then 47437, 47303-47315
-    // [v2.10.3.15]). A restore with signals blocked reaches WDSP through
-    // RadioModel's channel seed instead, which also pushes thresholds first.
+    // [v2.10.3.15]). A restore with signals blocked reaches WDSP another
+    // way. For slices B to D it is RadioModel::activateSliceChannel's seed,
+    // which also pushes thresholds first. For slice A it is the initial
+    // push in RadioModel::connectToRadio, which sets each enable before its
+    // threshold; that order is inaudible, because both land before the
+    // channel is switched on.
     // A threshold that is not a number keeps the current value; one out of
     // range is clamped to its ControlRanges.h range, so a hand-edited file
     // cannot push a value the sliders cannot make.
