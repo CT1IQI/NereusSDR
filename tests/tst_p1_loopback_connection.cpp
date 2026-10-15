@@ -40,6 +40,7 @@
 #include "core/IoBoardHl2.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "fakes/P1FakeRadio.h"
+#include "RealtimeTestLoad.h"
 
 using namespace NereusSDR;
 using NereusSDR::Test::P1FakeRadio;
@@ -424,6 +425,11 @@ private:
     }
 
 private slots:
+    // The flood, unkey and soak cases measure the EP2 sender against the
+    // wall clock (REALTIME in tests/CMakeLists.txt): print the load
+    // average when a case fails.
+    void cleanup() { RealtimeTestLoad::printLoadAverageIfFailed(); }
+
     // Test 1: Full RX path end-to-end
     void rxPathEndToEnd() {
         P1FakeRadio fake;
@@ -874,7 +880,7 @@ private slots:
     }
 
     // An EP6 flood well past the read-loop cap while keyed, read by a
-    // CPU-short thread (15 ms a frame, so one capped batch of 16 is 240 ms,
+    // slow thread (15 ms a frame, so one capped batch of 16 is 240 ms,
     // six times the bound): no EP2 gap over 40 ms, and receive unchanged
     // (every frame, in order, with the I/Q as sent). With EP2 sent from the
     // connection thread between batches (the read-loop cap, 238351694) the
@@ -901,10 +907,9 @@ private slots:
         connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
                 [](int rx, const QVector<float>&) {
             if (rx != 0) { return; }
-            QElapsedTimer t;
-            t.start();
-            while (t.nsecsElapsed() < 15000000) {
-            }
+            // A sleep, not a spin, so the reader takes no core from the
+            // sender it is testing.
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
         });
 
         // The fake's one frame carried sequence 0; the flood goes on from 1.
@@ -972,7 +977,8 @@ private slots:
         QSignalSpy frames(&conn, &RadioConnection::frameReceived);
         QVERIFY(connectAndKey(fake, conn));
 
-        // A CPU-short reader: every frame read costs 200 us on this thread.
+        // A slow reader: every frame read takes at least 200 us on this
+        // thread.
         QObject slowReader;
         std::atomic<int> framesRead{0};
         // Per frame: iqDataReceived for receiver 0 (frameReceived is once
@@ -981,10 +987,9 @@ private slots:
                 [&framesRead](int rx, const QVector<float>&) {
             if (rx != 0) { return; }
             framesRead.fetch_add(1);
-            QElapsedTimer t;
-            t.start();
-            while (t.nsecsElapsed() < 200000) {
-            }
+            // A sleep, not a spin, so the reader takes no core from the
+            // sender it is testing.
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
         });
 
         constexpr int kFeedMs = 500;
@@ -1085,7 +1090,9 @@ private slots:
         pump.start();
 
         // Each EP6 frame costs this thread 200 us; the feeder sends about
-        // 10,000 a second, twice what it can read.
+        // 10,000 a second, twice what it can read. A spin here, not the
+        // sleep the timing cases use: the soak means to keep the
+        // connection thread's core busy, as a Pi 4 Core's is while keyed.
         QObject slowReader;
         connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
                 [](int rx, const QVector<float>&) {

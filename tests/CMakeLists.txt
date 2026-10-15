@@ -1236,7 +1236,7 @@ target_compile_definitions(tst_p2_regression_freeze PRIVATE
 nereus_add_test(tst_p1_fake_radio fakes/P1FakeRadio.cpp)
 
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
-nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
+nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp REALTIME)
 target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
 
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
