@@ -59,6 +59,18 @@ THETIS_DIR = Path(os.environ.get(
     "NEREUS_THETIS_DIR", REPO.parent.parent.parent / "Thetis")).expanduser()
 MI0BOT_DIR = Path(os.environ.get(
     "NEREUS_MI0BOT_DIR", REPO.parent.parent.parent / "mi0bot-Thetis")).expanduser()
+# Later ramdor releases that ports cite by version stamp (`[v2.10.3.15]`).
+# THETIS_DIR is pinned to 501e3f5 (v2.10.3.13), as in
+# verify-inline-tag-preservation.py, so a tag that upstream first added
+# in a later release (`//N1GP G2E added`, network.h and console.cs in
+# v2.10.3.15) never reached the corpus, and the verifier did not know
+# to check it in the ports that carry it. These trees only add callsigns
+# and names the pinned trees lack; known entries keep their counts from
+# the pinned trees, so the corpus does not churn.
+THETIS_V21015_DIR = Path(os.environ.get(
+    "NEREUS_THETIS_V21015_DIR",
+    REPO.parent.parent.parent / "Thetis-v2.10.3.15")).expanduser()
+THETIS_RELEASE_DIRS = (THETIS_V21015_DIR,)
 
 CORPUS_PATH = REPO / "docs" / "attribution" / "thetis-author-tags.json"
 SCAN_SUFFIXES = {".cs", ".c", ".h", ".cpp"}
@@ -136,6 +148,16 @@ def classify_match(raw: str) -> str | None:
 
 
 def discover():
+    callsigns, named = scan_trees((THETIS_DIR, MI0BOT_DIR))
+    release_cs, release_named = scan_trees(THETIS_RELEASE_DIRS)
+    for cs, meta in release_cs.items():
+        callsigns.setdefault(cs, meta)
+    for nm, meta in release_named.items():
+        named.setdefault(nm, meta)
+    return callsigns, named
+
+
+def scan_trees(bases):
     callsigns: dict[str, dict] = {}
     named: dict[str, dict] = {}
 
@@ -159,7 +181,7 @@ def discover():
         if entry["first_seen"] is None:
             entry["first_seen"] = f"{src_file.name}:{line_num}"
 
-    for base in (THETIS_DIR, MI0BOT_DIR):
+    for base in bases:
         if not base.is_dir():
             print(f"[discover] WARN: upstream {base} not found",
                   file=sys.stderr)
@@ -245,6 +267,7 @@ def main() -> int:
             timespec="seconds"),
         "thetis_sha": git_sha(THETIS_DIR),
         "mi0bot_sha": git_sha(MI0BOT_DIR),
+        "thetis_v21015_sha": git_sha(THETIS_V21015_DIR),
         "callsign_tags": {
             k: v for k, v in sorted(callsigns.items(),
                                     key=lambda x: (-x[1]["count"], x[0]))

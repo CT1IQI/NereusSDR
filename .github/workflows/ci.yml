@@ -240,13 +240,15 @@ jobs:
           git -C ../deskhpsdr checkout -q FETCH_HEAD
 
       - name: Corpus drift — upstream author tags match committed corpus
-        # Fails if upstream Thetis (ramdor or mi0bot fork) contains
-        # contributor tags that the committed
+        # Fails if upstream Thetis (ramdor or mi0bot fork, or the
+        # v2.10.3.15 tree that `[v2.10.3.15]` cites resolve against)
+        # contains contributor tags that the committed
         # docs/attribution/thetis-author-tags.json does not yet list.
         # Forces corpus refresh before any port can cite a new region.
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
+          NEREUS_THETIS_V21015_DIR: ${{ github.workspace }}/../Thetis-v2.10.3.15
         run: python3 scripts/discover-thetis-author-tags.py --drift
 
       - name: Verify inline author-tag preservation in ported code
