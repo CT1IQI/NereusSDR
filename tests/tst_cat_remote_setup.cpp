@@ -38,6 +38,9 @@
 #include <QtTest/QtTest>
 #include <QAbstractItemView>
 #include <QAccessible>
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformaccessibility.h>
+#include <qpa/qplatformintegration.h>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
@@ -109,11 +112,26 @@ int dropCellsAsTheMacBridgeDoes(QComboBox* box)
     return int(cells.size());
 }
 
+// Turns the platform's accessibility on or off. Qt 6.11's
+// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
+// activation observers and leaves QAccessible::isActive() false, so there
+// the platform's own switch is set, as Qt's tests do.
+void setAccessibilityActive(bool active)
+{
+    QAccessible::setActive(active);
+    if (QAccessible::isActive() == active) {
+        return;
+    }
+    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
+        platform->setActive(active);
+    }
+}
+
 // Accessibility on for one test, as VoiceOver or an accessibility query
 // turns it on in the app; off again after.
 struct AccessibilityOn {
-    AccessibilityOn() { QAccessible::setActive(true); }
-    ~AccessibilityOn() { QAccessible::setActive(false); }
+    AccessibilityOn() { setAccessibilityActive(true); }
+    ~AccessibilityOn() { setAccessibilityActive(false); }
     AccessibilityOn(const AccessibilityOn&) = delete;
     AccessibilityOn& operator=(const AccessibilityOn&) = delete;
 };
