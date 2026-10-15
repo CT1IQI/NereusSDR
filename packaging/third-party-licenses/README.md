@@ -42,6 +42,7 @@ directory alongside NereusSDR's own `LICENSE`.
 | Thetis (ramdor/Thetis) | C# → C++/Qt6 port (logic, DSP integration, protocol, UI behaviour) | GPL-2.0-or-later | `thetis.txt` |
 | mi0bot/Thetis-HL2 fork | HL2-specific discovery + capability ports | GPL-2.0-or-later | `mi0bot-thetis.txt` |
 | AetherSDR (ten9876/AetherSDR) | Qt6 architectural template; ~45 derived files | GPL-3.0 | `aethersdr.txt` |
+| PulseAudio v17.0 | Selected public libpulse ABI declarations for bounded Linux VAX ownership control | LGPL-2.1-or-later | `pulseaudio.txt` (+ `LGPLv2.1.txt`) |
 
 ## Where each library comes from
 

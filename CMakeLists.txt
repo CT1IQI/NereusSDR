@@ -1675,7 +1675,9 @@ endif()
 # PIPEWIRE_FOUND. Linux-only because the whole decision tree is dead code
 # on macOS / Windows (which have their own IAudioBus impls).
 if(UNIX AND NOT APPLE)
-    list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp)
+    list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp
+        src/core/audio/LinuxPipeOwnership.cpp
+        src/core/audio/LinuxPipeControl.cpp)
     list(APPEND CORE_SOURCES src/core/audio/LinuxAudioBackend.cpp)
 endif()
 
