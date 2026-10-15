@@ -10,6 +10,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-15 — Squelch persistence tests (Thetis console.cs:2830-2852
+//                 save, 4164-4193 load [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -56,6 +59,8 @@
 //============================================================================================//
 
 #include <QtTest/QtTest>
+#include "core/AppSettings.h"
+#include "models/Band.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
@@ -63,7 +68,111 @@ using namespace NereusSDR;
 class TestSliceSquelch : public QObject {
     Q_OBJECT
 
+private:
+    // The six saved squelch keys, as SliceModel::saveToSettings writes them.
+    static QStringList squelchKeys() {
+        return {QStringLiteral("SsqlEnabled"), QStringLiteral("SsqlThresh"),
+                QStringLiteral("AmsqEnabled"), QStringLiteral("AmsqThresh"),
+                QStringLiteral("FmsqEnabled"), QStringLiteral("FmsqThresh")};
+    }
+
+    static void resetSquelchKeys() {
+        auto& s = AppSettings::instance();
+        for (const QString& field : squelchKeys()) {
+            s.remove(QStringLiteral("Slice0/") + field);
+        }
+    }
+
 private slots:
+    void init()    { resetSquelchKeys(); }
+    void cleanup() { resetSquelchKeys(); }
+
+    // ── Persistence (Thetis console.cs:2830-2852 save, 4164-4193 load) ───────
+
+    void squelchRoundTripsThroughSettings() {
+        {
+            SliceModel a(0);
+            a.setSsqlEnabled(true);
+            a.setSsqlThresh(42.0);
+            a.setAmsqEnabled(true);
+            a.setAmsqThresh(-77.0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-33.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("Slice0/SsqlEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(s.value(QStringLiteral("Slice0/AmsqEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(s.value(QStringLiteral("Slice0/FmsqEnabled")).toString(),
+                 QStringLiteral("True"));
+
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        QCOMPARE(b.ssqlEnabled(), true);
+        QCOMPARE(b.ssqlThresh(), 42.0);
+        QCOMPARE(b.amsqEnabled(), true);
+        QCOMPARE(b.amsqThresh(), -77.0);
+        QCOMPARE(b.fmsqEnabled(), true);
+        QCOMPARE(b.fmsqThresh(), -33.0);
+    }
+
+    void squelchIsPerSliceNotPerBand() {
+        // Thetis saves squelch per receiver, not per band: a value saved on
+        // one band comes back on another.
+        {
+            SliceModel a(0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-20.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band20m);
+        QCOMPARE(b.fmsqEnabled(), true);
+        QCOMPARE(b.fmsqThresh(), -20.0);
+    }
+
+    void squelchLoadSetsThresholdBeforeEnable() {
+        // A saved enable must not reach WDSP ahead of its saved threshold.
+        {
+            SliceModel a(0);
+            a.setSsqlEnabled(true);
+            a.setSsqlThresh(50.0);
+            a.setAmsqEnabled(true);
+            a.setAmsqThresh(-90.0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-60.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        SliceModel b(0);
+        QStringList order;
+        connect(&b, &SliceModel::ssqlThreshChanged, this, [&] { order << QStringLiteral("ssqlThresh"); });
+        connect(&b, &SliceModel::ssqlEnabledChanged, this, [&] { order << QStringLiteral("ssqlEnabled"); });
+        connect(&b, &SliceModel::amsqThreshChanged, this, [&] { order << QStringLiteral("amsqThresh"); });
+        connect(&b, &SliceModel::amsqEnabledChanged, this, [&] { order << QStringLiteral("amsqEnabled"); });
+        connect(&b, &SliceModel::fmsqThreshChanged, this, [&] { order << QStringLiteral("fmsqThresh"); });
+        connect(&b, &SliceModel::fmsqEnabledChanged, this, [&] { order << QStringLiteral("fmsqEnabled"); });
+        b.restoreFromSettings(Band::Band40m);
+        for (const char* name : {"ssql", "amsq", "fmsq"}) {
+            const int thresh = order.indexOf(QLatin1String(name) + QStringLiteral("Thresh"));
+            const int enabled = order.indexOf(QLatin1String(name) + QStringLiteral("Enabled"));
+            QVERIFY2(thresh >= 0 && enabled >= 0, qPrintable(order.join(QLatin1Char(','))));
+            QVERIFY2(thresh < enabled, qPrintable(order.join(QLatin1Char(','))));
+        }
+    }
+
+    void squelchLoadWithNoSavedKeysKeepsDefaults() {
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        QCOMPARE(b.ssqlEnabled(), false);
+        QCOMPARE(b.ssqlThresh(), 16.0);
+        QCOMPARE(b.amsqEnabled(), false);
+        QCOMPARE(b.amsqThresh(), -150.0);
+        QCOMPARE(b.fmsqEnabled(), false);
+        QCOMPARE(b.fmsqThresh(), -150.0);
+    }
+
     // ── ssqlEnabled ──────────────────────────────────────────────────────────
 
     void ssqlEnabledDefaultIsFalse() {

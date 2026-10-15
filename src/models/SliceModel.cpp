@@ -105,6 +105,11 @@
 //                AGC, step, NB, sample rate and diversity still restore.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-15 - Squelch is saved: saveToSettings and restoreFromSettings
+//                carry the SSQL, AM and FM squelch enables and thresholds
+//                per slice, from Thetis console.cs:2830-2852 and 4164-4193
+//                [v2.10.3.15]. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -2933,6 +2938,28 @@ void SliceModel::saveToSettings(Band band)
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
     s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
+    // Squelch, saved per receiver as Thetis does.
+    // From Thetis console.cs:2830-2852 [v2.10.3.15]:
+    //   a.Add("chkSquelch_checkstate/" + chkSquelch.CheckState.ToString());
+    //   a.Add("rx1_squelch_state/" + _rx1_squelch_state.ToString());
+    //   a.Add("rx1_fm_squelch_state/" + _rx1_fm_squelch_state.ToString());
+    //   a.Add("rx1_squelch_threshold_scroll/" + rx1_squelch_threshold_scroll);
+    //   a.Add("rx1_fm_squelch_threshold_scroll/" + rx1_fm_squelch_threshold_scroll);
+    //   a.Add("rx1_voice_squelch_threshold_scroll/" + rx1_voice_squelch_threshold_scroll);
+    //   (and the rx2 equivalents)
+    // Thetis keeps one squelch state per receiver (OFF/SQL/VSQL) plus a
+    // separate FM state, and three thresholds. NereusSDR keeps one enable
+    // and one threshold per squelch kind on each slice, so the mapping is:
+    // the VSQL state and voice threshold are SsqlEnabled / SsqlThresh, the
+    // SQL state and squelch threshold are AmsqEnabled / AmsqThresh, and the
+    // FM state and FM threshold are FmsqEnabled / FmsqThresh. Like Thetis
+    // they are per receiver (slice), not per band.
+    s.setValue(sp + QStringLiteral("SsqlEnabled"), boolStr(m_ssqlEnabled));
+    s.setValue(sp + QStringLiteral("SsqlThresh"),  m_ssqlThresh);
+    s.setValue(sp + QStringLiteral("AmsqEnabled"), boolStr(m_amsqEnabled));
+    s.setValue(sp + QStringLiteral("AmsqThresh"),  m_amsqThresh);
+    s.setValue(sp + QStringLiteral("FmsqEnabled"), boolStr(m_fmsqEnabled));
+    s.setValue(sp + QStringLiteral("FmsqThresh"),  m_fmsqThresh);
     // NB1 / NB2 / SNB detailed tuning. Per slice per band like everything
     // else here, even though NB1 and NB2 behave as stream-shared while two
     // slices are co-hosted: the mirror lives in RadioModel and only applies
@@ -3218,6 +3245,33 @@ void SliceModel::restoreFromSettings(Band band)
     }
     if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
         setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
+    }
+
+    // Squelch, per receiver. From Thetis console.cs:4164-4193 [v2.10.3.15]
+    // (case "rx1_squelch_state" through case
+    // "rx2_voice_squelch_threshold_scroll"); see saveToSettings for how
+    // Thetis's per-receiver states and thresholds map onto these keys.
+    // Through the public setters, so a restored value reaches WDSP the same
+    // way an edit does. Each threshold loads before its enable, so a saved
+    // enable never runs WDSP's squelch with the default threshold first.
+    // Thetis only stores the parsed values here and applies them later.
+    if (s.contains(sp + QStringLiteral("SsqlThresh"))) {
+        setSsqlThresh(s.value(sp + QStringLiteral("SsqlThresh")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("SsqlEnabled"))) {
+        setSsqlEnabled(s.value(sp + QStringLiteral("SsqlEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("AmsqThresh"))) {
+        setAmsqThresh(s.value(sp + QStringLiteral("AmsqThresh")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("AmsqEnabled"))) {
+        setAmsqEnabled(s.value(sp + QStringLiteral("AmsqEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("FmsqThresh"))) {
+        setFmsqThresh(s.value(sp + QStringLiteral("FmsqThresh")).toDouble());
+    }
+    if (s.contains(sp + QStringLiteral("FmsqEnabled"))) {
+        setFmsqEnabled(s.value(sp + QStringLiteral("FmsqEnabled")).toString() == QLatin1String("True"));
     }
 
     // NB1 / NB2 / SNB detailed tuning, with a one-way migration off the old
