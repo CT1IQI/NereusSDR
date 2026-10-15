@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  Fix wave: a program key leaves the
+//                                    VAX TX device to the program and the
+//                                    VAX feed after it sends nothing old
+//                                    (aProgramAudioKeyLeavesTheVaxDevice-
+//                                    ToTheProgram); the VAX test's settle
+//                                    wait is a condition. AI-assisted via
+//                                    Anthropic Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  VAX as the transmit source sends
 //                                    the VAX TX device's audio, at the
 //                                    local VAX path's level
@@ -11911,7 +11918,13 @@ private slots:
         const MicSource source = vax ? MicSource::Vax : MicSource::Pc;
         h.remote.transmitModel().setMicSource(source);
         QTRY_COMPARE(h.remote.transmitModel().micSource(), source);
-        QTest::qWait(500);
+        // Settled: the Core took the window's audio, and the idle line
+        // drains the chosen source (VAX read, or the microphone's preview
+        // lease held).
+        QTRY_VERIFY_WITH_TIMEOUT(
+            h.client.remoteTransmit()->acceptedMicSource() == RemoteMicSource::ClientAudio
+                && (vax ? vaxDevice->pulledFrames() > 0 : remoteMedia.micCaptureLeaseHeldForTest()),
+            5000);
 
         h.station.setRemoteMicPriming(micDevice, true);
         QVERIFY(feed->inUse());
@@ -11981,6 +11994,84 @@ private slots:
         }
         remoteMedia.setHoldsTransmit(false);
         h.station.setRemoteMicPriming(micDevice, false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-15 (fix wave): the VAX TX device has one reader. With VAX the
+    // transmit source and VOX armed, a program key that brings its own
+    // audio leaves the device alone (a remote window's rigctld key reads it
+    // for the program's audio), and the program's audio still reaches the
+    // Core. When the key ends with VAX still chosen and VOX still wanting
+    // the line, the uplink reads the VAX device again, and what an app
+    // wrote while nothing read it is not sent: the packets after the key
+    // are no more than the time since it.
+    void aProgramAudioKeyLeavesTheVaxDeviceToTheProgram()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.1f, 500.0);
+        auto device = std::make_unique<PacedVaxTxDevice>(0.1f, 0.1f, 700.0);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        const PacedVaxTxDevice* vaxDevice = device.get();
+        h.remote.audioEngine()->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
+        media.setVoxArmed(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        const qint64 beforeKey = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > beforeKey, 5000);
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, true);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        // Nothing here reads the VAX device for the whole key.
+        const qint64 duringKey = vaxDevice->pulledFrames();
+        pushProgramChunks(media, 15, 0.25f);
+        QCOMPARE(vaxDevice->pulledFrames(), duringKey);
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 900);
+        const float highest = *std::max_element(heard.begin(), heard.end());
+        QVERIFY2(highest > 0.2f, qPrintable(QString::number(highest)));   // the program came
+        // Past the program's hold, the key still on: the device fills.
+        QTest::qWait(RemoteMediaController::kProgramAudioHoldMs + 100);
+        QCOMPARE(vaxDevice->pulledFrames(), duringKey);
+
+        QElapsedTimer sinceKey;
+        sinceKey.start();
+        const quint64 sentBefore = media.micPacketsSent();
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QVERIFY(!h.client.remoteTransmit()->programAudioKey());
+        QVERIFY(media.micUplinkRunning());
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > duringKey, 5000);
+        QTest::qWait(10 * RemoteMediaController::kMicPumpIntervalMs);
+        // The collector reads on (not only the drop at the restart).
+        const qint64 resumed = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > resumed, 5000);
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        // 4 ms packets: no more than the time since the key, and some slack;
+        // the program run's backlog alone would be over 125.
+        const quint64 sentAfter = media.micPacketsSent() - sentBefore;
+        const qint64 elapsedMs = sinceKey.elapsed();
+        QVERIFY2(sentAfter <= quint64(elapsedMs * 48 / PcmAudioCodecConfig::kPacketFrames + 10),
+                 qPrintable(QStringLiteral("%1 packets in %2 ms").arg(sentAfter).arg(elapsedMs)));
+        QVERIFY2(sentAfter > 0, qPrintable(QString::number(elapsedMs)));
+        media.setVoxArmed(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
@@ -13025,6 +13116,7 @@ const QStringList kAudioFunctions{
     QStringLiteral("micUplinkRunsOnlyWhileTransmittingOrVoxArmed"),
     QStringLiteral("microphoneAndProgramReachTheCoresRing"),
     QStringLiteral("vaxSourceSendsTheVaxTransmitAudio"),
+    QStringLiteral("aProgramAudioKeyLeavesTheVaxDeviceToTheProgram"),
     QStringLiteral("aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence"),
     QStringLiteral("aProgramAudioKeyNeverSendsTheMicrophone"),
     QStringLiteral("aProgramAudioLapseSendsSilenceNotTheMicrophone"),

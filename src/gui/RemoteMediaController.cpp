@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: fix wave: the VAX collector reads nothing while a program
+//               brings its own audio (the VAX TX device has one reader),
+//               and a VAX feed that starts or comes back first drops what
+//               apps wrote while nothing read it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: VAX as the transmit source in a remote window: the uplink
 //               carries the VAX TX device's audio (pullVaxTxMic, as the
 //               local VAX override feeds the transmitter), never the PC
@@ -1670,6 +1675,10 @@ struct RemoteMediaController::Private {
     // (AudioEngine::pullVaxTxMic) when VAX is the transmit source, with no
     // capture lease: VAX is not the PC microphone.
     bool micCollectorVax = false;
+    // 2026-10-15 (fix wave): the collector reads the VAX TX device now.
+    // False from the moment it stops (stopMicCollector), so the next VAX
+    // feed starts by dropping what apps wrote meanwhile.
+    bool micVaxFed = false;
     // The uplink started with VAX chosen and no VAX TX device open: said
     // once per run.
     bool micVaxMissingReported = false;
@@ -2951,9 +2960,15 @@ void RemoteMediaController::reconcileMicUplink()
     // no gain), and never the PC microphone, so it takes no capture lease.
     // The device is drained while the line is open, as preview drains the
     // microphone, so a key never sends what an app wrote before it.
+    // 2026-10-15 (fix wave): not while a program brings its own audio
+    // (programAudio). The VAX TX device has one reader (its read position
+    // and meter are not shared), and a program key's audio may itself come
+    // from it (a remote window's rigctld key pumps pullVaxTxMic into
+    // pushProgramAudio), so the collector is joined first and reads
+    // nothing until the program's run ends.
     const bool vaxSource = d->model && d->model->audioEngine()
         && d->model->transmitModel().micSource() == MicSource::Vax;
-    const bool vaxFeed = vaxSource && d->model->audioEngine()->isVaxTxBusOpen()
+    const bool vaxFeed = vaxSource && !programAudio && d->model->audioEngine()->isVaxTxBusOpen()
         && (wanted || (micLineOpen() && transmit
                        && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio));
     const bool captureWanted = !vaxSource && ((wanted && !programAudio) || preview);
@@ -2979,9 +2994,28 @@ void RemoteMediaController::reconcileMicUplink()
     // 2026-10-15: or, with VAX the transmit source, while the VAX TX device
     // is fed (vaxFeed).
     if (vaxFeed) {
+        if (!d->micVaxFed) {
+            // 2026-10-15 (fix wave): the VAX feed starts or comes back
+            // (after a program's run, a line that reopens, a move from the
+            // PC microphone). What apps wrote while nothing here read the
+            // device is old: it is read and dropped before the collector
+            // starts, so it never follows into this run. Nothing else here
+            // reads the device now: the collector (on either source) is
+            // joined first.
+            stopMicCollector();
+            AudioEngine* engine = d->model->audioEngine();
+            const int block = static_cast<int>(d->micScratch.size());
+            for (int pull = 0; pull < kVaxBacklogDiscardPulls; ++pull) {
+                if (engine->pullVaxTxMic(d->micScratch.data(), block) < block) {
+                    break;
+                }
+            }
+        }
         startMicCollector(d->model->audioEngine(), true);
+        d->micVaxFed = true;
     } else if (d->micLease.isActive()) {
         startMicCollector(d->model->audioEngine(), false);
+        d->micVaxFed = false;
     } else {
         stopMicCollector();
     }
@@ -3214,6 +3248,9 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine, bool vax)
 
 void RemoteMediaController::stopMicCollector()
 {
+    // 2026-10-15 (fix wave): nothing reads the VAX TX device after this; a
+    // later VAX feed drops what waits there first.
+    d->micVaxFed = false;
     // The next run starts its diagnostic clock when capture is ready.
     d->micCollectedSeen = 0;
     d->micWakesAtProgress = 0;

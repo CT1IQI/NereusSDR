@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: startMicCollector's vax source (VAX as a remote window's
 //               transmit source). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -449,6 +451,9 @@ public:
     // 2026-10-12: how long the microphone's collector may take no audio,
     // with capture ready, before the window says so in its log.
     static constexpr int kMicCollectorStallMs = 1000;
+    // 2026-10-15 (fix wave): the most 20 ms reads a VAX feed that starts
+    // or comes back makes to drop what waits on the VAX TX device (5 s).
+    static constexpr int kVaxBacklogDiscardPulls = 256;
     /// R-R3-37: how long a pan in budget mode may wait for the Core's first
     /// answer before it says "Waiting for the Core". A Core that answers
     /// within this (the usual case at session start) never flashes the line.
