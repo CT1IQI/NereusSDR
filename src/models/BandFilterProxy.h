@@ -54,6 +54,10 @@
 //                                    refresh can reset it in the order it
 //                                    shows. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  invalidateFilterCompat flushes the
+//                                    view's pending accessibility reset
+//                                    first. AI-assisted via Anthropic
+//                                    Claude Code.
 
 #pragma once
 
@@ -81,7 +85,6 @@ public:
     void setSourceVisible(const QString& source, bool visible);
     bool isSourceVisible(const QString& source) const { return !m_hiddenSources.contains(source); }
 
-
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
 
@@ -90,7 +93,10 @@ protected:
     // exist in Qt 6.10+. NereusSDR has no explicit Qt minimum in
     // CMakeLists.txt, so we keep a fallback to invalidateFilter on
     // older Qt builds. NereusSDR-only compat shim; not an upstream port.
+    // The view's accessibility flush runs first (a no-op once the setters
+    // flushed before changing the filter).
     void invalidateFilterCompat() {
+        prepareForRowChange();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         beginFilterChange();
         endFilterChange(QSortFilterProxyModel::Direction::Rows);

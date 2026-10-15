@@ -16,23 +16,84 @@
 //
 // Used by the accessibility-safe refresh of the Spot List and the FreeDV
 // Reporter station table (resetViewAfterRowChanges in
-// gui/QtCocoaAccessibleTableCache.h).
+// gui/QtCocoaAccessibleTableCache.h). It also calls the view's flush
+// (setBeforeRowChange) right before each change of its rows, outside any
+// begin/end of its own.
 //
 // Modification history (NereusSDR):
 //   2026-10-15  J.J. Boyd (KG4VCF)  Created. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  setBeforeRowChange and
+//                                    prepareForRowChange: the flush runs
+//                                    before the source's row changes reach
+//                                    this proxy. AI-assisted via Anthropic
 //                                    Claude Code.
 
 #pragma once
 
 #include <QHash>
+#include <QList>
+#include <QMetaObject>
 #include <QModelIndex>
 #include <QSortFilterProxyModel>
+
+#include <functional>
+#include <utility>
 
 namespace NereusSDR {
 
 class OrderKeepingProxyModel : public QSortFilterProxyModel {
 public:
     using QSortFilterProxyModel::QSortFilterProxyModel;
+
+    // Connects this proxy's hooks to the source before the proxy's own
+    // handling, so the flush runs while neither model has begun a change:
+    // the source is in its rowsAboutToBe* (it still shows its old rows) and
+    // this proxy has not started to follow it. (On a removal Qt removes the
+    // proxy rows from inside the source's rowsAboutToBeRemoved,
+    // qsortfilterproxymodel.cpp _q_sourceRowsAboutToBeRemoved; on an insert
+    // it inserts them at the source's rowsInserted.)
+    void setSourceModel(QAbstractItemModel* source) override
+    {
+        if (source == sourceModel()) {
+            return;
+        }
+        for (const QMetaObject::Connection& hook : std::as_const(m_sourceHooks)) {
+            disconnect(hook);
+        }
+        m_sourceHooks.clear();
+        if (source != nullptr) {
+            const auto before = [this] { prepareForRowChange(); };
+            m_sourceHooks = {
+                connect(source, &QAbstractItemModel::rowsAboutToBeInserted, this, before),
+                connect(source, &QAbstractItemModel::rowsAboutToBeRemoved, this, before),
+                connect(source, &QAbstractItemModel::columnsAboutToBeInserted, this, before),
+                connect(source, &QAbstractItemModel::columnsAboutToBeRemoved, this, before),
+                connect(source, &QAbstractItemModel::dataChanged, this,
+                        [this](const QModelIndex& topLeft, const QModelIndex& bottomRight) {
+                            if (filterWillChangeRows(topLeft, bottomRight)) {
+                                prepareForRowChange();
+                            }
+                        }),
+            };
+        }
+        QSortFilterProxyModel::setSourceModel(source);
+    }
+
+    // Called right before each change of this proxy's rows (the view's
+    // flush from resetViewAfterRowChanges). Subclasses that change their
+    // filter call prepareForRowChange() before they change its state.
+    void setBeforeRowChange(std::function<void()> beforeRowChange)
+    {
+        m_beforeRowChange = std::move(beforeRowChange);
+    }
+
+    void prepareForRowChange()
+    {
+        if (m_beforeRowChange) {
+            m_beforeRowChange();
+        }
+    }
 
     // A real reset (every index this proxy gave out becomes invalid) with
     // the same rows, in the same order.
@@ -69,8 +130,30 @@ protected:
     }
 
 private:
+    // A data change shows or hides rows here when a row's filter result no
+    // longer matches whether it is shown (as Qt decides in
+    // _q_sourceDataChanged with dynamic filtering); any other data change
+    // moves no row.
+    bool filterWillChangeRows(const QModelIndex& topLeft, const QModelIndex& bottomRight) const
+    {
+        if (!m_beforeRowChange || !dynamicSortFilter() || !topLeft.isValid()
+            || sourceModel() == nullptr) {
+            return false;
+        }
+        const QModelIndex parent = topLeft.parent();
+        for (int row = topLeft.row(); row <= bottomRight.row(); ++row) {
+            const bool shown = mapFromSource(sourceModel()->index(row, 0, parent)).isValid();
+            if (shown != filterAcceptsRow(row, parent)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     QHash<int, int> m_shownAt;
     bool m_keepingOrder{false};
+    std::function<void()> m_beforeRowChange;
+    QList<QMetaObject::Connection> m_sourceHooks;
 };
 
 } // namespace NereusSDR

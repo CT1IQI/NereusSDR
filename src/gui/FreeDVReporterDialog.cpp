@@ -87,6 +87,11 @@
 //               keeping the selected station, current station and scroll by
 //               sid (resetViewAfterRowChanges), in place of the cache-only
 //               repair. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): macOS only; the pending reset is
+//               flushed before each row change and before a filter
+//               changes; data updates reset nothing; the place is kept by
+//               the station's row in the table model, and a double-click
+//               survives a reset. AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -734,6 +739,7 @@ public:
         : OrderKeepingProxyModel(parent) {}
 
     void setFilters(const QHash<int, QPair<int, QVariant>>* filters) {
+        prepareForRowChange();
         m_filters = filters;
         invalidateFilterCompat();
     }
@@ -745,7 +751,10 @@ protected:
     // exist in Qt 6.10+. NereusSDR has no explicit Qt minimum in
     // CMakeLists.txt, so we keep a fallback to invalidateFilter on
     // older Qt builds. NereusSDR-only compat shim; not an upstream port.
+    // The view's accessibility flush runs first (a no-op once the dialog
+    // flushed before changing the filters).
     void invalidateFilterCompat() {
+        prepareForRowChange();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         beginFilterChange();
         endFilterChange(QSortFilterProxyModel::Direction::Rows);
@@ -942,18 +951,19 @@ void FreeDVReporterDialog::buildUi() {
     m_table = new QTableView(this);
     m_table->setModel(m_columnFilterProxy);
     // Stations join, change and leave from the reporter feed; the idle
-    // sweep and filters drop and restore rows. With accessibility on, each
-    // burst is followed by one real reset of the top proxy (rows kept in
-    // the order shown), the selected station, current station and scroll
-    // kept by the station's sid, so
-    // accessibility never reads a cell the macOS bridge deleted.
-    resetViewAfterRowChanges(
+    // sweep and filters drop and restore rows. On macOS with accessibility
+    // on, the top proxy takes a real reset (rows kept in the order shown)
+    // right before a row change whenever a change since the last reset left
+    // the accessibility cache stale, and once after each burst of row
+    // changes; the selected station, current station and scroll are kept by
+    // the station's row in the table model, so accessibility never reads a
+    // cell the macOS bridge deleted. Data updates alone reset nothing.
+    m_columnFilterProxy->setBeforeRowChange(resetViewAfterRowChanges(
         m_table, [proxy = QPointer<FreeDVReporterColumnFilterProxy>(m_columnFilterProxy)] {
             if (proxy) {
                 proxy->resetKeepingOrder();
             }
-        },
-        [](const QModelIndex& row) { return row.siblingAtColumn(0).data(Qt::UserRole).toString(); });
+        }));
     m_table->setItemDelegate(m_rowDelegate);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1916,6 +1926,11 @@ void FreeDVReporterDialog::setColumnFilter(int column, int op,
         clearColumnFilter(column);
         return;
     }
+    // Before the filters change, so an accessibility reset keeps the rows
+    // shown now.
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
+    }
     m_columnFilters.insert(column, qMakePair(op, value));
     if (m_columnFilterProxy) {
         m_columnFilterProxy->refresh();
@@ -1925,6 +1940,9 @@ void FreeDVReporterDialog::setColumnFilter(int column, int op,
 }
 
 void FreeDVReporterDialog::clearColumnFilter(int column) {
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
+    }
     m_columnFilters.remove(column);
     if (m_columnFilterProxy) {
         m_columnFilterProxy->refresh();
@@ -1994,6 +2012,9 @@ void FreeDVReporterDialog::loadColumnFiltersFromSettings() {
                QString()).toString();
     if (raw.isEmpty()) {
         return;
+    }
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
     }
     const QStringList rows = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString& row : rows) {

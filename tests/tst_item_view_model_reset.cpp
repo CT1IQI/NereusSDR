@@ -10,7 +10,9 @@
 // current row and the selection, and that the view itself sends no signal
 // (no currentIndexChanged, activated, itemSelectionChanged). The model
 // sends one modelReset. A last case per view deletes the walked cells the
-// way the Cocoa bridge does, then resets and removes a row: no crash.
+// way the Cocoa bridge does, then resets and removes a row: no crash. The
+// helpers act on macOS only; ExpiredAccessibleCells::setActive lets them
+// act on every platform so Linux CI runs these cases too.
 
 #include <QtTest>
 #include <QAccessible>
@@ -245,6 +247,54 @@ private slots:
         delete list.takeItem(0);
         list.addItem(QStringLiteral("d"));
         QCOMPARE(list.count(), 3);
+    }
+
+    // A log of plain text lines (the HL2 I2C log) comes back in one
+    // insert, one table change for the bridge instead of one per line; a
+    // line with any other role or flag takes the clone path.
+    void plainTextListComesBackInOneInsert()
+    {
+        QListWidget list;
+        for (int i = 0; i < 200; ++i) {
+            list.addItem(QStringLiteral("line %1").arg(i));
+        }
+        list.item(7)->setHidden(true);
+        list.setCurrentRow(150);
+        QSignalSpy inserts(list.model(), &QAbstractItemModel::rowsInserted);
+
+        QVERIFY(resetItemsBeforeRowChange(&list));
+
+        QCOMPARE(inserts.count(), 1);
+        QCOMPARE(list.count(), 200);
+        QCOMPARE(list.item(199)->text(), QStringLiteral("line 199"));
+        QVERIFY(list.item(7)->isHidden());
+        QCOMPARE(list.currentRow(), 150);
+
+        list.item(3)->setData(kExtraRole, 3);
+        inserts.clear();
+        QVERIFY(resetItemsBeforeRowChange(&list));
+        QCOMPARE(inserts.count(), 200);
+        QCOMPARE(list.item(3)->data(kExtraRole).toInt(), 3);
+        QCOMPARE(list.item(4)->text(), QStringLiteral("line 4"));
+    }
+
+    // The resets act on macOS only; elsewhere (unless a test forces them)
+    // every helper is a pass-through even with accessibility on.
+    void actsOnMacOnlyUnlessForced()
+    {
+        QListWidget list;
+        list.addItem(QStringLiteral("a"));
+        setItemViewResetsOnEveryPlatformForTest(false);
+#if defined(Q_OS_MAC)
+        const bool expected = true;
+#else
+        const bool expected = false;
+#endif
+        QCOMPARE(itemViewResetsActive(), expected);
+        QCOMPARE(resetItemsBeforeRowChange(&list), expected);
+        setItemViewResetsOnEveryPlatformForTest(true);
+        QVERIFY(itemViewResetsActive());
+        QVERIFY(resetItemsBeforeRowChange(&list));
     }
 
     void treeKeepsChildrenExpansionSelectionAndCurrent()

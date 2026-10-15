@@ -10,6 +10,8 @@
 // through the public QAccessible::deleteAccessibleInterface.
 #pragma once
 
+#include "gui/QtCocoaAccessibleTableCache.h"
+
 #include <QAccessible>
 #include <QAbstractItemView>
 #include <QList>
@@ -21,9 +23,12 @@ namespace NereusSDR::ExpiredAccessibleCells {
 
 // Turns the platform's accessibility on or off. Qt 6.11's
 // QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
-// activation observers, so there the platform's own switch is set.
+// activation observers, so there the platform's own switch is set. The
+// item-view resets act on macOS only; tests let them act on every platform
+// while accessibility is on, so Linux CI runs the same cases.
 inline void setActive(bool active)
 {
+    setItemViewResetsOnEveryPlatformForTest(active);
     QAccessible::setActive(active);
     if (QAccessible::isActive() == active) {
         return;

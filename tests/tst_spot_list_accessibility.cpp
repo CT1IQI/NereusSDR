@@ -11,23 +11,31 @@
 // then reads them (itemviews.cpp:645-741). A spot arriving from the Core
 // crashed inside SpotTableModel::addSpot.
 //
-// SpotHubDialog answers each burst of row changes with one queued real
-// reset of the proxy (resetViewAfterRowChanges), which runs before the
-// drain, so the next change finds an empty accessibility cache. Offscreen
-// there is no bridge, so each crash case walks the cells, changes rows,
-// lets the queued reset run, then deletes the walked cells itself through
-// QAccessible::deleteAccessibleInterface (what the drain does) and changes
-// rows again. Without the reset that last change crashes.
+// On macOS with accessibility on (tests turn it on for every platform),
+// SpotHubDialog resets the proxy for real (resetViewAfterRowChanges) right
+// before a row change whenever a change since the last reset left the
+// accessibility cache stale, and once more after each burst of row changes.
+// Offscreen there is no bridge, so each crash case walks the cells, changes
+// rows, deletes the walked cells itself through
+// QAccessible::deleteAccessibleInterface (what the drain does), then
+// changes rows again. The drain can fall before the queued reset runs (a
+// row change inside one event, the pool drained after it, another event
+// first), so the timing cases delete the cells before the event loop runs.
+// Without the reset that last change crashes.
 //
 // The place cases check what the user sees: the selected spot, the current
 // spot and the top visible spot stay on the same spot across a new spot, a
-// burst of spots (one reset), a trimmed spot and an updated row. With
+// burst of spots, a trimmed spot and an updated row; two spots that read
+// the same stay apart; a double-click to tune survives a reset between its
+// press and its second click. Data updates alone reset nothing. With
 // accessibility off nothing is reset, exactly as before.
 
 #include <QtTest>
 #include <QAccessible>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSortFilterProxyModel>
 #include <QTableView>
 
 #include "ExpiredAccessibleCells.h"
@@ -187,6 +195,61 @@ private slots:
                  QStringLiteral("K4ABC"));
     }
 
+    // The drain falls between a spot and the queued reset: the next spot,
+    // in the same event-loop pass, must not read the drained cells.
+    void spotAfterDrainBeforeQueuedReset()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.dialog->resize(900, 600);
+        f.dialog->show();
+        f.addSpots(1, 2);
+        QCoreApplication::processEvents();
+
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(3));
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(4));
+        QCoreApplication::processEvents();
+
+        QCOMPARE(f.view->model()->rowCount(), 4);
+        QCOMPARE(accessibleCellText(f.view, f.rowOf(QStringLiteral("K4ABC")),
+                                    SpotTableModel::ColDxCall),
+                 QStringLiteral("K4ABC"));
+    }
+
+    // The same with the cap trimming a row, and after a data update alone
+    // (the bridge drops its cells for that too, though nothing resets).
+    void trimAndDataUpdateAfterDrainBeforeQueuedReset()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.table.setMaxSpots(3);
+        f.addSpots(1, 3);
+        QCoreApplication::processEvents();
+
+        QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(4));
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(5));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 3);
+
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.setBearingResolver([](const QString&) { return 42.0; });
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(6));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 3);
+        QVERIFY(f.rowOf(QStringLiteral("K6ABC")) >= 0);
+    }
+
     // The 500-spot cap trims the oldest row: RowsRemoved walks the cache too.
     void trimmedSpotAfterBridgeDrain()
     {
@@ -318,8 +381,10 @@ private slots:
     }
 
     // Several spots in one event-loop pass: each insert still goes out,
-    // one reset follows them, and the place is kept.
-    void burstOfSpotsIsOneReset()
+    // the proxy is reset before every insert after the first (the cells
+    // may have drained between any two), once more after the burst, and
+    // the place is kept.
+    void burstOfSpotsResetsBeforeEachInsert()
     {
         Cells::ActiveScope active;
         SpotListFixture f;
@@ -332,13 +397,14 @@ private slots:
         const QList<QAccessible::Id> walked = Cells::walk(f.view);
         QVERIFY(!walked.isEmpty());
 
-        f.addSpots(61, 65);
-        QCOMPARE(inserts.count(), 5);
-        QCOMPARE(resets.count(), 0);
-        QCoreApplication::processEvents();
+        f.table.addSpot(makeSpot(61));
         Cells::drop(walked);
+        f.addSpots(62, 65);
+        QCOMPARE(inserts.count(), 5);
+        QCOMPARE(resets.count(), 4);
+        QCoreApplication::processEvents();
 
-        QCOMPARE(resets.count(), 1);
+        QCOMPARE(resets.count(), 5);
         QCOMPARE(f.view->model()->rowCount(), 65);
         QCOMPARE(f.topCall(), QStringLiteral("K30ABC"));
         QCOMPARE(f.selectedCall(), QStringLiteral("K28ABC"));
@@ -346,6 +412,116 @@ private slots:
         f.table.addSpot(makeSpot(66));
         QCoreApplication::processEvents();
         QCOMPARE(f.view->model()->rowCount(), 66);
+    }
+
+    // Data updates alone (a bearing for every row, three times) reset
+    // nothing: QAccessibleTable reads no cell for them.
+    void dataUpdatesAreNoReset()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 60);
+        QCoreApplication::processEvents();
+        f.placeOn(QStringLiteral("K20ABC"), QStringLiteral("K22ABC"));
+        QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
+        QSignalSpy changes(f.view->model(), &QAbstractItemModel::dataChanged);
+
+        for (int i = 0; i < 3; ++i) {
+            f.table.setBearingResolver([i](const QString&) { return 10.0 * i; });
+            QCoreApplication::processEvents();
+        }
+
+        QCOMPARE(changes.count(), 3);
+        QCOMPARE(resets.count(), 0);
+        QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K22ABC"));
+    }
+
+    // Two spots that read the same in every column (same call, frequency,
+    // spotter and source in the same minute): the selection stays on the
+    // one the user picked across a reset.
+    void twinSpotsKeepTheChosenOne()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 10);
+        DxSpot twin = makeSpot(20);
+        twin.dxCall = QStringLiteral("K9TWIN");
+        f.table.addSpot(twin);
+        twin.utcTime = twin.utcTime.addSecs(30);
+        f.table.addSpot(twin);
+        f.addSpots(11, 12);
+        QCoreApplication::processEvents();
+        f.dialog->resize(900, 600);
+        f.dialog->show();
+        QCoreApplication::processEvents();
+
+        auto* proxy = qobject_cast<QSortFilterProxyModel*>(f.view->model());
+        QVERIFY(proxy);
+        QList<int> twins;
+        for (int row = 0; row < proxy->rowCount(); ++row) {
+            if (f.callAt(row) == QStringLiteral("K9TWIN")) {
+                twins.append(row);
+            }
+        }
+        QCOMPARE(twins.size(), 2);
+        QCOMPARE(proxy->index(twins.at(0), SpotTableModel::ColTime).data(),
+                 proxy->index(twins.at(1), SpotTableModel::ColTime).data());
+        // The second twin shown: a key by text would find the first one.
+        f.view->selectionModel()->setCurrentIndex(
+            proxy->index(twins.at(1), SpotTableModel::ColDxCall),
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        const QPersistentModelIndex chosen =
+            proxy->mapToSource(proxy->index(twins.at(1), SpotTableModel::ColDxCall));
+        QSignalSpy resets(proxy, &QAbstractItemModel::modelReset);
+
+        f.table.addSpot(makeSpot(13));
+        QCoreApplication::processEvents();
+
+        QCOMPARE(resets.count(), 1);
+        const QModelIndexList selected = f.view->selectionModel()->selectedRows();
+        QCOMPARE(selected.size(), 1);
+        QCOMPARE(proxy->mapToSource(selected.first()).row(), chosen.row());
+        QCOMPARE(proxy->mapToSource(f.view->currentIndex()).row(), chosen.row());
+    }
+
+    // A spot lands between the press and the second click of a
+    // double-click: the reset drops the view's pressed index, yet the
+    // double-click still tunes the spot under the pointer.
+    void doubleClickAcrossResetTunesThatSpot()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 30);
+        QCoreApplication::processEvents();
+        f.placeOn(QStringLiteral("K10ABC"), QStringLiteral("K12ABC"));
+        QSignalSpy tunes(f.dialog.get(), &SpotHubDialog::tuneRequested);
+        QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
+
+        const QPoint at =
+            f.view->visualRect(f.view->model()->index(f.rowOf(QStringLiteral("K15ABC")),
+                                                      SpotTableModel::ColDxCall))
+                .center();
+        const auto send = [&](QEvent::Type type, Qt::MouseButtons buttons) {
+            QMouseEvent event(type, QPointF(at), QPointF(f.view->viewport()->mapToGlobal(at)),
+                              Qt::LeftButton, buttons, Qt::NoModifier);
+            QCoreApplication::sendEvent(f.view->viewport(), &event);
+        };
+        send(QEvent::MouseButtonPress, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, Qt::NoButton);
+        f.table.addSpot(makeSpot(31));
+        QCoreApplication::processEvents();
+        QCOMPARE(resets.count(), 1);
+        QCOMPARE(f.view->indexAt(at).siblingAtColumn(SpotTableModel::ColDxCall).data().toString(),
+                 QStringLiteral("K15ABC"));
+        send(QEvent::MouseButtonDblClick, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, Qt::NoButton);
+
+        QCOMPARE(tunes.count(), 1);
+        QCOMPARE(tunes.first().first().toDouble(), makeSpot(15).freqMhz);
     }
 
     // The cap trims the oldest spot and a bearing update changes every
@@ -361,11 +537,13 @@ private slots:
         f.placeOn(QStringLiteral("K20ABC"), QStringLiteral("K15ABC"));
         QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
 
+        // The insert leaves the cache stale, so the trim right after it
+        // resets first; the queued reset follows.
         f.table.addSpot(makeSpot(61));
         QCoreApplication::processEvents();
         QCOMPARE(f.view->model()->rowCount(), 60);
         QCOMPARE(f.rowOf(QStringLiteral("K1ABC")), -1);
-        QCOMPARE(resets.count(), 1);
+        QCOMPARE(resets.count(), 2);
         QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
         QCOMPARE(f.selectedCall(), QStringLiteral("K15ABC"));
         QCOMPARE(f.currentCall(), QStringLiteral("K15ABC"));
@@ -374,7 +552,7 @@ private slots:
         f.table.setBearingResolver([](const QString&) { return 42.0; });
         QCoreApplication::processEvents();
         Cells::drop(walked);
-        QCOMPARE(resets.count(), 2);
+        QCOMPARE(resets.count(), 2);  // a data update resets nothing
         QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
         QCOMPARE(f.selectedCall(), QStringLiteral("K15ABC"));
         QCOMPARE(f.currentCall(), QStringLiteral("K15ABC"));
