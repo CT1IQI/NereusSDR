@@ -292,6 +292,25 @@ private slots:
         fake.stop();
     }
 
+    // The log line gives the buffer in the terms it was asked and says
+    // whether the system gave all of it, as P2's does (tst_p2_loopback_bind).
+    void theReceiveBufferIsLoggedInTheTermsItWasAsked() {
+        constexpr int asked = RadioConnection::kRadioSocketReceiveBufferBytes;
+        const int granted =
+            RadioConnection::grantedReceiveBufferBytes(expectedReceiveBuffer());
+        QVERIFY2(granted > 0 && granted <= asked, qPrintable(QString::number(granted)));
+        const QString line = granted >= asked
+            ? QStringLiteral("^P1: radio socket receive buffer %1 bytes, all that was asked for$")
+                  .arg(granted)
+            : QStringLiteral("^P1: radio socket receive buffer %1 bytes of the %2 asked for")
+                  .arg(granted).arg(asked);
+        QTest::ignoreMessage(QtInfoMsg, QRegularExpression(line));
+        P1RadioConnection conn;
+        conn.init();
+        QCOMPARE(RadioConnection::grantedReceiveBufferBytes(
+                     conn.socketReceiveBufferForTest()), granted);
+    }
+
     // Issue #258 regression — when a burst of N 1032-byte ep6 datagrams
     // lands in a single readyRead batch while state is still Connecting,
     // the "P1: Connected, ep6 stream established" log line must fire

@@ -12,6 +12,14 @@
 # file states it. <limit file> is where the kernel keeps the limit in force,
 # /proc/sys/net/core/rmem_max unless given; the tests give a temporary file.
 #
+# It gives way to the system's own settings, as the settings file tells an
+# administrator to keep them: when a file of the same name in /etc/sysctl.d
+# or /run/sysctl.d replaces the Core's (a link to /dev/null masks it), or when
+# a file read after it sets the same limit, the limit in force is left as it
+# is. Those checks run when the settings file sits at its installed place,
+# <root>/usr/lib/sysctl.d/10-nereusd.conf; root is / on a system and a
+# temporary directory in the tests.
+#
 # Run as root by the Core's installers: the .deb postinst and the Rock and Pi
 # stage installers. It exits 0 whenever the settings file is sound, raised or
 # not. A limit that cannot be changed now must not fail an install: the
@@ -28,11 +36,73 @@ if [ -z "$wanted" ]; then
     exit 2
 fi
 
+# The file that sets the limit at the next system start, read as
+# systemd-sysctl and sysctl --system read them (sysctl.d(5)): each name from
+# the first directory that has it, every name in byte order, the last setting
+# of a key winning; /etc/sysctl.conf after all of them for sysctl --system.
+# Prints "replaces <file>" when a file of the Core's name replaces it, or
+# "sets <file>" for the file whose setting wins, or nothing for none.
+sets_limit() {
+    grep -Eq '^[[:space:]]*-?net[./]core[./]rmem_max[[:space:]]*=' "$1" 2>/dev/null
+}
+winning_setting() {
+    root=$1
+    dirs="/etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d"
+    names=$(for dir in $dirs; do
+                for file in "$root$dir"/*.conf; do
+                    if [ -e "$file" ] || [ -L "$file" ]; then
+                        echo "${file##*/}"
+                    fi
+                done
+            done | LC_ALL=C sort -u)
+    winner=
+    for name in $names; do
+        found=
+        for dir in $dirs; do
+            if [ -e "$root$dir/$name" ] || [ -L "$root$dir/$name" ]; then
+                found=$root$dir/$name
+                break
+            fi
+        done
+        if [ "$name" = 10-nereusd.conf ] && [ "$found" != "$root$installed" ]; then
+            echo "replaces $found"
+            return
+        fi
+        if sets_limit "$found"; then
+            winner=$found
+        fi
+    done
+    if sets_limit "$root/etc/sysctl.conf"; then
+        winner=$root/etc/sysctl.conf
+    fi
+    if [ -n "$winner" ]; then
+        echo "sets $winner"
+    fi
+}
+
 current=$(cat "$limit_file" 2>/dev/null) || current=
 case "$current" in
     ''|*[!0-9]*)
         echo "Network receive buffer limit ($key): the limit in force could not be read. $conf sets it to $wanted bytes at the next system start."
         exit 0
+        ;;
+esac
+
+installed=/usr/lib/sysctl.d/10-nereusd.conf
+case "$conf" in
+    *"$installed")
+        setting=$(winning_setting "${conf%"$installed"}")
+        case "$setting" in
+            "replaces "*)
+                echo "Network receive buffer limit ($key): ${setting#replaces } replaces the Core's $installed, so the system keeps its own limit. Left unchanged at $current bytes."
+                exit 0
+                ;;
+            "sets $conf") ;;
+            "sets "*)
+                echo "Network receive buffer limit ($key): ${setting#sets } sets this limit and is read after the Core's $installed, so the system keeps its own limit. Left unchanged at $current bytes."
+                exit 0
+                ;;
+        esac
         ;;
 esac
 

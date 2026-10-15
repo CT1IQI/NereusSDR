@@ -187,6 +187,9 @@
 //                reports it doubled) and says when the system cut the request
 //                short and what limit did it. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-15 - A request cut short names the limit to raise, not the
+//                Core's packages, since the desktop app logs it too. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
 //                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-14 - HL2 I2C response subframes no longer update physical PTT;
@@ -952,8 +955,8 @@ void P1RadioConnection::applySocketBufferSizes()
         qCInfo(lcConnection) << "P1: radio socket receive buffer" << granted << "bytes of the"
                              << kRadioSocketReceiveBufferBytes
                              << "asked for. The system's limit, net.core.rmem_max, holds it there;"
-                                " the Core's packages and install scripts raise that limit"
-                                " (/usr/lib/sysctl.d/10-nereusd.conf).";
+                                " raising it to" << kRadioSocketReceiveBufferBytes
+                             << "lets the socket have it all.";
 #else
         qCInfo(lcConnection) << "P1: radio socket receive buffer" << granted << "bytes of the"
                              << kRadioSocketReceiveBufferBytes

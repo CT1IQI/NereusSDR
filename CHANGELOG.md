@@ -111,7 +111,7 @@ Advanced, and each control appears on one page only.
   `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
   apply it at install without lowering a limit that is already higher. This
   is the one system setting the Core's installer changes; removing the
-  package or the file undoes it. The Core's log now says how much of the
+  package or the file undoes it from the next system start. The Core's log now says how much of the
   buffer it was given. See "The system setting the Core's installer changes"
   in the README.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window

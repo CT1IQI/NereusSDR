@@ -173,6 +173,9 @@
 //                reports it doubled) and says when the system cut the request
 //                short and what limit did it. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-15 - A request cut short names the limit to raise, not the
+//                Core's packages, since the desktop app logs it too. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //
@@ -691,8 +694,8 @@ void P2RadioConnection::applySocketBufferSizes()
         qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
                              << kRadioSocketReceiveBufferBytes
                              << "asked for. The system's limit, net.core.rmem_max, holds it there;"
-                                " the Core's packages and install scripts raise that limit"
-                                " (/usr/lib/sysctl.d/10-nereusd.conf).";
+                                " raising it to" << kRadioSocketReceiveBufferBytes
+                             << "lets the socket have it all.";
 #else
         qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
                              << kRadioSocketReceiveBufferBytes

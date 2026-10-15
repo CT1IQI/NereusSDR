@@ -141,6 +141,94 @@ def test_a_settings_file_without_the_limit_is_an_error(shell, tmp_path):
     assert int(limit.read_text()) == STOCK
 
 
+# --- the helper gives way to the system's own settings ----------------------
+#
+# The settings file says how to keep the system's own limit: link
+# /etc/sysctl.d/10-nereusd.conf to /dev/null, or set the limit in a file that
+# is read after it. The helper must honor both at install, or every upgrade
+# raises the limit in force again until the next system start. These run the
+# helper with the settings file at its installed place under a temporary root.
+
+def installed_root(tmp_path):
+    root = tmp_path / "root"
+    conf = root / INSTALLED_CONF.lstrip("/")
+    conf.parent.mkdir(parents=True)
+    shutil.copy(CONF, conf)
+    limit = tmp_path / "rmem_max"
+    limit.write_text(f"{STOCK}\n")
+    return root, conf, limit
+
+
+def put(root, path, text):
+    target = root / path.lstrip("/")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    return target
+
+
+@pytest.mark.parametrize("shell", shells())
+def test_a_masked_settings_file_leaves_the_limit_alone(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    mask = root / "etc/sysctl.d/10-nereusd.conf"
+    mask.parent.mkdir(parents=True)
+    mask.symlink_to("/dev/null")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == STOCK
+    assert f"{mask} replaces" in result.stdout
+    assert "Left unchanged" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+@pytest.mark.parametrize("where", ["/etc/sysctl.d", "/run/sysctl.d"])
+def test_a_same_named_file_that_replaces_it_leaves_the_limit_alone(shell, where, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    own = put(root, f"{where}/10-nereusd.conf", "# the administrator's own\n")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == STOCK
+    assert f"{own} replaces" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+@pytest.mark.parametrize("value", [STOCK, 16777216])
+@pytest.mark.parametrize("path", ["/etc/sysctl.d/60-local.conf", "/usr/lib/sysctl.d/50-vendor.conf",
+                                  "/usr/local/lib/sysctl.d/90-site.conf", "/etc/sysctl.conf"])
+def test_a_file_read_later_that_sets_the_limit_leaves_it_alone(shell, value, path, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    later = put(root, path, f"# local\nnet.core.rmem_max = {value}\n")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == STOCK
+    assert f"{later} sets this limit" in result.stdout
+    assert "Left unchanged" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+def test_the_slash_spelling_counts_too(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    later = put(root, "/etc/sysctl.d/70-slash.conf", "-net/core/rmem_max=212992\n")
+    result = run_helper(shell, conf, limit)
+    assert int(limit.read_text()) == STOCK
+    assert f"{later} sets this limit" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+def test_files_that_do_not_win_do_not_stop_the_raise(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    # Read before the Core's file, so the Core's file wins over it.
+    put(root, "/etc/sysctl.d/05-early.conf", "net.core.rmem_max = 1000\n")
+    # Read later, but sets something else.
+    put(root, "/etc/sysctl.d/60-other.conf", "net.core.wmem_max = 1000000\n")
+    # Would win, but an /etc file of the same name replaces it and sets nothing.
+    put(root, "/usr/lib/sysctl.d/80-shadowed.conf", "net.core.rmem_max = 1000\n")
+    put(root, "/etc/sysctl.d/80-shadowed.conf", "# emptied by the administrator\n")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == asked_by_the_core()
+    assert "Raised the network receive buffer limit" in result.stdout
+
+
 # --- the stage installers (Rock, Pi) -----------------------------------------
 
 def block_of(path: Path) -> str:
