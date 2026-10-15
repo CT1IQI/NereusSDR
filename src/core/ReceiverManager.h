@@ -29,6 +29,10 @@
 //   2026-09-30 - reset() drops a held batch and ends batching. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //                 NereusSDR-original.
+//   2026-10-14 - Complete routing-map synchronization and publish control
+//                 snapshots after unlocking, including callback-safe retunes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 NereusSDR-original synchronization logic.
 // =================================================================
 
 //=================================================================
@@ -137,7 +141,7 @@ public:
 
     // --- Configuration ---
     void setMaxReceivers(int max);
-    int maxReceivers() const { return m_maxReceivers; }
+    int maxReceivers() const;
 
     // --- Receiver Lifecycle ---
     // Create a new receiver. Returns the receiver index, or -1 if at max.
@@ -166,8 +170,8 @@ public:
     // --- DDC frequency lock (CTUN mode) ---
     // When locked, setReceiverFrequency stores the freq but does NOT
     // emit hardwareFrequencyChanged. MainWindow manages DDC directly.
-    void setDdcFrequencyLocked(bool locked) { m_ddcFreqLocked = locked; }
-    bool ddcFrequencyLocked() const { return m_ddcFreqLocked; }
+    void setDdcFrequencyLocked(bool locked);
+    bool ddcFrequencyLocked() const;
 
     // --- Receiver Configuration ---
     void setReceiverFrequency(int receiverIndex, quint64 frequencyHz);
@@ -370,7 +374,15 @@ signals:
 
 private:
     // Rebuild hardware DDC mapping after receiver changes.
-    void rebuildHardwareMapping();
+    struct HardwareMappingSnapshot {
+        int count{0};
+        quint32 slotMask{0};
+        QList<QPair<int, quint64>> frequencies;
+    };
+    // Caller holds m_routingMutex through the state change and snapshot.
+    HardwareMappingSnapshot rebuildHardwareMapping();
+    // Caller has released all routing-mutex ownership before publishing.
+    void publishHardwareMapping(const HardwareMappingSnapshot& snapshot);
 
     // Phase 3M-4 Task 6: re-runs the per-board PS DDC computation by
     // dispatching to the injected codec's applyPureSignalDdcConfig() and
