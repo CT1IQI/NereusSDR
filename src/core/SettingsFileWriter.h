@@ -34,6 +34,13 @@ public:
     /// Returns once every job handed over has finished.
     void waitUntilIdle();
 
+    /// Waits for the jobs already handed over and ends the writer thread.
+    /// Later jobs run on the caller's thread. AppSettings calls this as the
+    /// QCoreApplication ends: on Windows, the process ends its other threads
+    /// before a DLL's static destructors run, so a writer still working at
+    /// that point would be waited for forever.
+    void finish();
+
     /// Reports from the writer thread; a receiver on another thread gets it
     /// queued.
     void report(quint64 ticket, bool saved, const QString& error);
@@ -46,6 +53,7 @@ signals:
 
 private:
     QThreadPool m_pool;
+    bool m_finished{false};
 };
 
 } // namespace NereusSDR
