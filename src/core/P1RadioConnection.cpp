@@ -5151,8 +5151,12 @@ void P1RadioConnection::ep2SenderMain()
     }
 
     // Priority as P2's transmit I/Q sender has it (txIqSenderMain): in
-    // nereusd on Linux thread placement gives this thread a core and raised
-    // priority while transmitting; elsewhere it runs at audio priority, as
+    // nereusd on Linux thread placement owns this thread (role TxIqSender).
+    // While transmitting it gets a signal core and raised priority only if
+    // one is left after the first receiver, the DSP thread and the two
+    // transmit workers. On the Pi 4 (two signal cores) and the Rock (four
+    // fast cores) none is, so it runs on the housekeeping cores at nice 0,
+    // as it does while receiving. Elsewhere it runs at audio priority, as
     // Thetis's sendProtocol1Samples runs at "Pro Audio"
     // (networkproto1.c:703 [v2.10.3.15]).
     //
