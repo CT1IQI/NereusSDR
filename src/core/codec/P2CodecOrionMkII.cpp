@@ -65,6 +65,9 @@
 //                the bench; the gateware's receivers are identical instances
 //                (Orion.v:1921-1956 [@8e86a61]). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The Anvelina note gives the gateware's tested rate budget.
+//                Comment only. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis Console/console.cs header (lines 1-50) ===
@@ -1227,7 +1230,10 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // and Q values, while DDC2, DDC3 and DDC5 in the same capture had none.
     // A display shows that as a comb over a floor about 58 dB too high, on
     // every band. The same picture came back on 2026-10-12 from a third
-    // receiver, the stream the family table above puts on DDC4.
+    // receiver, the stream the family table above puts on DDC4; that
+    // capture records no rate. Four receivers at 1,536 kHz is past what the
+    // gateware's notes say runs clean, two receivers at that rate
+    // (Orion.v:632 [@8e86a61]).
     //
     // The choice is free on the wire. The gateware builds receivers 1 to
     // NR-1 as identical instances of one module (n1gp Anvelina_PROIII

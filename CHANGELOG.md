@@ -126,6 +126,12 @@ Advanced, and each control appears on one page only.
   transmit until the window has transmit; when a program's request is refused
   for that reason, the notice now says so and names the button. Before, the
   button appeared only while another device had transmit.
+- An Anvelina Pro 3's third receiver no longer shows a comb over a floor
+  about 58 dB too high. On the bench the radio's DDC4, which the third
+  receiver used, sent damaged samples; the third and fourth receivers now
+  use DDC5 and DDC6. The fix applies when the radio's model is set to
+  Anvelina Pro 3. The radio reports itself as an Orion MkII, so
+  auto-detect does not choose it.
 
 ## [2026.10.0] - 2026-10-05
 
