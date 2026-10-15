@@ -66,6 +66,7 @@
 #include <QPointer>
 
 #include <functional>
+#include "core/NereusCoreExport.h"
 
 class QTimer;
 
@@ -116,7 +117,7 @@ struct TxMeterReadings {
     bool operator==(const TxMeterReadings& other) const = default;
 };
 
-class TxMeterPump : public QObject {
+class NEREUS_CORE_EXPORT TxMeterPump : public QObject {
     Q_OBJECT
 
 public:

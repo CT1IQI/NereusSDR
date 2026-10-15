@@ -54,6 +54,7 @@
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
+#include "core/NereusCoreExport.h"
 
 #include <QList>
 #include <QObject>
@@ -75,7 +76,7 @@ class DataChannelTransport;
 class RendezvousClient;
 class RelayLeg;
 
-class RendezvousDialer : public QObject {
+class NEREUS_CORE_EXPORT RendezvousDialer : public QObject {
     Q_OBJECT
 
 public:
