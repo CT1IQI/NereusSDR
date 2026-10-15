@@ -219,11 +219,15 @@ so that group shows them, enabled; nothing is dialed. The sidecar's
 receiving 7.185 LSB, the TX applet moved to just under RX in the Main
 Panel, "You control" on the flag (`SliceChooser::flagAccessFor` for a row
 this window controls) and the fixture's ANAN-G2 named in the status bar
-(`StationBlock`). Nothing connects or keys.
+(`StationBlock`). Nothing connects or keys. `baseline-connected-tx` is
+the same window with the Main Panel's S-meter and RX hidden
+(`ContentEntry::visible`), so the whole TX applet, down to TX BW, is in
+view.
 
 ### Workspace look scenes
 
-`look-two-band`, `look-four-rx`, `look-tx`, `look-connected` and
+`look-two-band`, `look-four-rx`, `look-tx`, `look-connected`,
+`look-connected-tx` and
 `look-dialog-*` (one per
 `dialog-*` scene) pose the same state as the scene they are named after
 with the workspace preview switch on, so they show the proposed Longpath

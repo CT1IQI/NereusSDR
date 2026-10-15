@@ -210,6 +210,10 @@
 //                 values, so the Core's group shows them, enabled.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-15 - baseline-connected-tx: the same window with the Main
+//                 Panel's entries above the TX applet hidden, so the whole
+//                 applet shows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -7414,6 +7418,64 @@ void showYouControl(SceneContext& ctx)
                          .arg(flag->accessLineText()));
 }
 
+// The Main Panel's entries above the TX applet (the S-meter and RX, once
+// moveTxUnderRx has run) hidden through the workspace (ContentEntry::visible),
+// so the whole TX applet fits in the panel.
+bool hideMainPanelAboveTx(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return false;
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    QStringList hidden;
+    for (ContainerDocument& c : draft.containers) {
+        if (c.id != draft.mainContainerId) {
+            continue;
+        }
+        for (ContentEntry& entry : c.contents) {
+            if (entry.typeId == QLatin1String("applet:TX")) {
+                break;
+            }
+            if (entry.visible) {
+                entry.visible = false;
+                hidden.append(entry.typeId);
+            }
+        }
+    }
+    if (hidden.isEmpty()) {
+        ctx.failure = QStringLiteral("nothing above the TX applet in the Main Panel");
+        return false;
+    }
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not hide the entries above the TX applet");
+        return false;
+    }
+    ctx.notes.append(QStringLiteral("Main Panel: %1 hidden above applet:TX "
+                                    "(ContentEntry::visible, ContainerManager::commitWorkspace)")
+                         .arg(hidden.join(QStringLiteral(", "))));
+    return true;
+}
+
+// baseline-connected's state before the freeze; with txOnly, the Main
+// Panel's entries above the TX applet are hidden too.
+void poseConnected(SceneContext& c, bool txOnly)
+{
+    if (!moveTxUnderRx(c)) {
+        return;
+    }
+    if (txOnly && !hideMainPanelAboveTx(c)) {
+        return;
+    }
+    nameConnectedRadio(c);
+    // The TX applet's profile selector lists them, "Default" active.
+    const QJsonObject seed = seedTxProfiles(c);
+    if (!seed.isEmpty()) {
+        c.notes.append(QJsonObject{{QStringLiteral("tx_profile_seed"), seed}});
+    }
+}
+
 } // namespace
 
 QVector<Scene> fixedScenes()
@@ -7455,18 +7517,19 @@ QVector<Scene> fixedScenes()
     // flag and the radio named in the status bar. Nothing connects or keys.
     scenes.append({QStringLiteral("baseline-connected"), QStringLiteral("1"), false,
                    [](SceneContext& ctx) {
-        runWindowScene(ctx, {twoBandPoses().first()}, 0, [](SceneContext& c) {
-            if (!moveTxUnderRx(c)) {
-                return;
-            }
-            nameConnectedRadio(c);
-            // The TX applet's profile selector lists them, "Default" active.
-            const QJsonObject seed = seedTxProfiles(c);
-            if (!seed.isEmpty()) {
-                c.notes.append(QJsonObject{{QStringLiteral("tx_profile_seed"), seed}});
-            }
-        }, showYouControl);
+        runWindowScene(ctx, {twoBandPoses().first()}, 0,
+                       [](SceneContext& c) { poseConnected(c, false); }, showYouControl);
         if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-connected")); }
+    }});
+
+    // The manual's TX figure: the same window with the S-meter and RX
+    // hidden from the Main Panel, so the whole TX applet (down to TX BW)
+    // is in view.
+    scenes.append({QStringLiteral("baseline-connected-tx"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, {twoBandPoses().first()}, 0,
+                       [](SceneContext& c) { poseConnected(c, true); }, showYouControl);
+        if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-connected-tx")); }
     }});
 
     scenes.append({QStringLiteral("baseline-arrange"), QStringLiteral("2v"), false,
