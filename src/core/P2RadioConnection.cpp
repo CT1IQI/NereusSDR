@@ -2902,8 +2902,12 @@ void P2RadioConnection::stopTxIqSender()
 void P2RadioConnection::txIqSenderMain()
 {
     // Priority as the TX pump has it (TxWorkerThread::run): in nereusd on
-    // Linux thread placement gives this thread a core and raised priority
-    // while transmitting (R-R3-41); elsewhere it runs at audio priority, as
+    // Linux thread placement owns this thread (R-R3-41, role TxIqSender).
+    // While transmitting it gets a signal core and raised priority only if
+    // one is left after the first receiver, the DSP thread and the two
+    // transmit workers. On the Pi 4 (two signal cores) and the Rock (four
+    // fast cores) none is, so it runs on the housekeeping cores at nice 0,
+    // as it does while receiving. Elsewhere it runs at audio priority, as
     // Thetis's ob_main runs at "Pro Audio" (obbuffs.c:155-158 [v2.10.3.15]).
     //
     // On the Mac that is USER_INTERACTIVE QoS without joining the default
