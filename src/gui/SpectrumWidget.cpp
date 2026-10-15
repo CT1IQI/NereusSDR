@@ -6822,7 +6822,9 @@ double SpectrumWidget::maxZoomOutBandwidthHz() const
             ? std::max(m_sampleRateHz, m_remoteWidebandAdcRateHz / 2.0)
             : m_sampleRateHz;
     }
-    return std::max(m_sampleRateHz, m_widebandAdcRateHz / 2.0);
+    return m_localWidebandAvailable
+        ? std::max(m_sampleRateHz, m_widebandAdcRateHz / 2.0)
+        : m_sampleRateHz;
 }
 
 void SpectrumWidget::setDisplayWindowClamped(double centreHz,
@@ -6999,6 +7001,18 @@ void SpectrumWidget::fillWidebandWings(QVector<float>& linearPixels,
 // for rendering the stored wideband bins as a background fill is
 // deferred to a post-bench polish iteration; for now the flag drives
 // the data-flow side only.
+void SpectrumWidget::setLocalWidebandAvailable(bool available)
+{
+    m_localWidebandAvailable = available;
+    // A known unsupported radio or a remapped ADC must also retire an
+    // already extended view, not merely fence the next zoom gesture.
+    if (!available && !m_remoteSpectrum && m_sampleRateHz > 0.0
+        && m_bandwidthHz > m_sampleRateHz) {
+        applyViewWindowForExtendedClamp(m_sampleRateHz);
+    }
+    recomputeExtendedMode();
+}
+
 void SpectrumWidget::setExtendedViewAllowed(bool allowed)
 {
     if (m_extendedViewAllowed == allowed) {
@@ -7099,8 +7113,8 @@ void SpectrumWidget::recomputeExtendedMode()
     const bool actual = m_remoteSpectrum
         ? m_extendedViewAllowed && m_remoteWidebandAvailable
             && m_remoteWidebandActive
-        : m_extendedViewAllowed && m_sampleRateHz > 0.0
-            && m_bandwidthHz > m_sampleRateHz;
+        : m_extendedViewAllowed && m_localWidebandAvailable
+            && m_sampleRateHz > 0.0 && m_bandwidthHz > m_sampleRateHz;
     if (m_extendedMode == actual) { return; }
     m_extendedMode = actual;
     // Remote demand belongs to the authenticated subscription. Emitting this
