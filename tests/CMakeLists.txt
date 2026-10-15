@@ -9164,6 +9164,11 @@ nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ON
 # The keyed remote device's transmit cut on a thread of its own when the
 # Core's main thread stalls (real time).
 nereus_add_test(tst_remote_tx_cut_guard CORE_ONLY REALTIME EXTRA_LABELS session)
+# The transmit cut line: the connection's cut latch runs its unkey on the
+# connection's thread while main sleeps, and RadioModel's catch-up after it
+# (real time).
+nereus_add_test(tst_transmit_cut_line REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_transmit_cut_line PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp

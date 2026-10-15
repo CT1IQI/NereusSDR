@@ -3,6 +3,11 @@
 // behavioral source-first cites for formula constants; no Thetis logic is
 // reproduced here. The voltage conversion formulae are independently
 // implemented from the Thetis console.cs interface specification.
+//
+// Modification history (NereusSDR):
+//   2026-10-15: The transmit cut latch: cutTransmit, clearTransmitCut and
+//               the default applyTransmitCut. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 
 #include "RadioConnection.h"
 #include "P1RadioConnection.h"
@@ -32,6 +37,35 @@ std::unique_ptr<RadioConnection> RadioConnection::create(const RadioInfo& info)
     }
     qCWarning(lcConnection) << "Unknown protocol version:" << static_cast<int>(info.protocol);
     return nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// The transmit cut (2026-10-15). NereusSDR-original.
+// ---------------------------------------------------------------------------
+void RadioConnection::cutTransmit()
+{
+    // Any thread. Only the first call queues the unkey; posting an event
+    // takes no lock the main thread or this object's thread holds for long,
+    // so the caller never waits on either.
+    if (m_transmitCut.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    QMetaObject::invokeMethod(this, [this]() { applyTransmitCut(); },
+                              Qt::QueuedConnection);
+}
+
+void RadioConnection::clearTransmitCut()
+{
+    if (m_transmitCut.exchange(false, std::memory_order_acq_rel)) {
+        qCInfo(lcConnection) << "Transmit cut cleared; the next key is allowed";
+    }
+}
+
+void RadioConnection::applyTransmitCut()
+{
+    qCWarning(lcConnection) << "Transmit cut: MOX and the T/R relay off";
+    setMox(false);
+    setTrxRelay(false);
 }
 
 void RadioConnection::setState(ConnectionState newState)

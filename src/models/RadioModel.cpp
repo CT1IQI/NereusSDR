@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The transmit cut line follows the connection and TX
+//                channel wherever they are set or cleared, and
+//                catchUpTransmitCut stops what is keyed and clears the
+//                connection's cut. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-15 - The TGXL autotune RF settle reads its length from
 //                m_tgxlRfSettleMs (kTgxlRfSettleMs unless a test sets it)
 //                and calls a test observer when it fires. J.J. Boyd
@@ -4765,6 +4770,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    // The transmit cut line may outlive this model (RemoteTxCutGuard holds
+    // it); nothing it cuts after this may reach this model's objects.
+    m_transmitCutLine->setTargets(nullptr, nullptr);
     AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
@@ -8160,6 +8168,7 @@ void RadioModel::wireTransmitProcessingChain()
 void RadioModel::wireTransmitChainForTest(TxChannel* channel)
 {
     m_txChannel = channel;
+    syncTransmitCutTargets();
     wireMicAndMonitorToTransmit();
     wireTransmitProcessingChain();
 }
@@ -18713,6 +18722,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         return;
     }
     m_connection = conn.release();
+    syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
     if (m_testP2OutboundBase != 0) {
         if (auto* const p2 = qobject_cast<P2RadioConnection*>(m_connection)) {
@@ -18797,6 +18807,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 /*inputSampleRate=*/48000,
                 /*dspSampleRate=*/WdspEngine::kTxDspSampleRate,
                 /*outputSampleRate=*/txOutRate);
+            syncTransmitCutTargets();
             if (!m_txChannel) {
                 return;
             }
@@ -26993,6 +27004,7 @@ void RadioModel::teardownConnection()
     bindCfcProfileChannel(nullptr);
     bindTxEqProfileChannel(nullptr);
     m_txChannel = nullptr;
+    syncTransmitCutTargets();
     // Task 33: nothing reports a TX drain any more.
     if (m_moxController) {
         m_moxController->setAwaitsTxDrain(false);
@@ -27072,6 +27084,9 @@ void RadioModel::teardownConnection()
     // run on the worker — short version: the RadioConnection's QTimers
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
+    // No transmit cut reaches the connection once it is handed to its
+    // teardown (the line's mutex waits out a cut already under way).
+    m_transmitCutLine->setTargets(nullptr, m_txChannel);
     teardownWorkerThreadedConnection(m_connection, m_connThread);
 
     // Parity Task 12 (group B fix wave re-review, Minor 2): the relays of a
@@ -28062,6 +28077,26 @@ void RadioModel::stopAllTx(const QString& message)
 
     // if (!string.IsNullOrEmpty(msg)) infoBar.Warning(msg, false, 10000);
     emit transmitStopped(message);
+}
+
+// ---------------------------------------------------------------------------
+// The transmit cut's catch-up (2026-10-15). NereusSDR-original.
+// A thread other than main cut the transmit through m_transmitCutLine (RF
+// gate closed, the connection's latch set and its MOX and relay off) while
+// this thread was stalled. Now that it runs again, the model's keying state
+// follows: stopAllTx stops whatever is still keyed with the watchdog's
+// stop text (and does nothing when nothing is), then the connection's cut
+// is cleared, queued behind the MOX off stopAllTx posted, so the next key
+// keys normally.
+// ---------------------------------------------------------------------------
+void RadioModel::catchUpTransmitCut(const QString& stopText)
+{
+    stopAllTx(stopText);
+    if (m_connection) {
+        QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
+                                  Qt::QueuedConnection);
+    }
+    qCInfo(lcConnection).noquote() << "Transmit cut caught up on the main thread:" << stopText;
 }
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,14 @@
 //   2. After the loss a key is refused until it is released: setMox(true)
 //      leaves the wire unkeyed; setMox(false) then setMox(true) keys.
 //   3. A stale key set before connectToRadio does not reach the radio.
+//   4. The transmit cut (2026-10-15): keyed, the cut composes C0 MOX = 0
+//      while m_mox is still set, every ep2 frame after it is unkeyed, a key
+//      is refused while it is set, and after clearTransmitCut a key goes
+//      out.
+//
+// Modification history (NereusSDR):
+//   2026-10-15: transmitCutUnkeysTheWireAndRefusesAKey. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QElapsedTimer>
@@ -294,6 +302,53 @@ private slots:
         QVERIFY(!latchedAtLoss);
         QCOMPARE(firstKeyed(fake.ep2CcReceived()), -1);
 
+        conn.setMox(true);
+        QVERIFY(conn.moxForTest());
+        QTRY_VERIFY_WITH_TIMEOUT(anyKeyed(fake.ep2CcReceived()), 3000);
+
+        conn.setMox(false);
+        conn.disconnect();
+        fake.stop();
+    }
+
+    void transmitCutUnkeysTheWireAndRefusesAKey()
+    {
+        P1FakeRadio fake;
+        fake.start();
+        std::unique_ptr<P1RadioConnection> connPtr = bringLinkUp(fake, HPSDRHW::Hermes);
+        QVERIFY2(connPtr != nullptr, "link never reached Connected");
+        P1RadioConnection& conn = *connPtr;
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+
+        conn.setMox(true);
+        QTRY_VERIFY_WITH_TIMEOUT(anyKeyed(fake.ep2CcReceived()), 3000);
+
+        conn.cutTransmit();
+        // The unkey is queued; m_mox is still set, yet the next frame's C0
+        // (bank 0, and a bank whose C0 carries the address) reads unkeyed.
+        QVERIFY(conn.moxForTest());
+        QVERIFY(conn.transmitCut());
+        QCOMPARE(int(quint8(conn.captureBank0ForTest().at(0)) & 0x01), 0);
+        quint8 bank1[5] = {};
+        conn.composeCcForBankForTest(1, bank1);
+        QCOMPARE(int(bank1[0] & 0x01), 0);
+
+        // Every frame after the cut is unkeyed, and the unkey has run.
+        fake.clearEp2CcLog();
+        QTRY_VERIFY_WITH_TIMEOUT(fake.ep2CcReceived().size() >= 20, 3000);
+        QCOMPARE(firstKeyed(fake.ep2CcReceived()), -1);
+        QVERIFY(!conn.moxForTest());
+
+        // Refused while cut.
+        conn.setMox(true);
+        QVERIFY(!conn.moxForTest());
+        fake.clearEp2CcLog();
+        QTRY_VERIFY_WITH_TIMEOUT(fake.ep2CcReceived().size() >= 20, 3000);
+        QCOMPARE(firstKeyed(fake.ep2CcReceived()), -1);
+
+        // Cleared: the next key goes out.
+        conn.clearTransmitCut();
+        QVERIFY(!conn.transmitCut());
         conn.setMox(true);
         QVERIFY(conn.moxForTest());
         QTRY_VERIFY_WITH_TIMEOUT(anyKeyed(fake.ep2CcReceived()), 3000);
