@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 2026-10-12: J.J. Boyd / OpenAI Codex; no audio APIs or installer scripts.
+      - name: Verify VAX factory registration and offline package gates
+        run: python3 scripts/test_vax_factory_identity.py
+
       - name: Verify Thetis license headers
         run: python3 scripts/verify-thetis-headers.py
 
@@ -886,9 +890,12 @@ jobs:
         # above belong to. install-qt-action runs setup-python, which puts
         # a toolcache Python without them first on PATH; the rendezvous
         # test helpers start on this absolute path instead.
+        # Use origin-relative build RPATHs so the flat Linux PR artifact
+        # finds its adjacent Nereus shared libraries after download.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
             -DNEREUS_TEST_PYTHON=/usr/bin/python3 \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \

@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Clear the retired connection's discovery exemption before
+//                publishing intentional disconnect. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 // 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
@@ -4708,10 +4711,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //
     // The lambda runs on the main thread (RadioModel + arbiter both live
     // here), so AppSettings access is safe.  load() may call
-    // requestHandoff() which flips txSlice flags on SliceModel instances;
-    // by the time currentRadioChanged fires, the slice list is already
-    // populated by addSlice() in onConnected() (which runs earlier on the
-    // same callstack inside onConnectionStateChanged).
+    // requestHandoff() which flips txSlice flags on SliceModel instances.
+    // Managed roster admission has normally completed here; legacy desktop
+    // pan population is queued, so a missing saved TX ID waits for that batch.
     connect(this, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo& info) {
         // R-R3-46: a remote model emits this for the Core's radio too. Its
@@ -4721,8 +4723,16 @@ RadioModel::RadioModel(Role role, QObject* parent)
             return;
         }
         if (m_txSliceArbiter) {
-            m_txSliceArbiter->setMacAddress(info.macAddress);
-            m_txSliceArbiter->load();
+            const QPointer<RadioModel> self(this);
+            const QPointer<TxSliceArbiter> arbiter(m_txSliceArbiter);
+            arbiter->setMacAddress(info.macAddress);
+            arbiter->load();
+            if (!self || !arbiter) { return; }
+            // Managed roster admission normally finishes before this signal.
+            // Legacy desktop pan population instead finishes in its queued batch.
+            if (m_receiveLayoutManaged && !m_receiveLayoutPendingAdmission) {
+                arbiter->finishRestore();
+            }
         }
     });
 
@@ -13224,14 +13234,35 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         // binds, so there is nothing to widen yet and nothing to warn about.
         return;
     }
-    if (m_streamAllocator.streamSampleRateHz(stream) == restored) {
+    const int effective = m_streamAllocator.streamSampleRateHz(stream);
+    if (effective == restored) {
         // Already there. Skipping keeps a band change that did not actually
         // change the rate from running the whole rebind transaction, and
         // from emitting a rejection toast for a rate the radio is on.
         return;
     }
 
-    requestSliceSampleRate(slice->sliceIndex(), restored);
+    const int sliceId = slice->sliceIndex();
+    if (m_role == Role::Local && effective > 0) {
+        // Until the request commits, the property describes the effective
+        // stream rate. A rejected or pending request must not display the
+        // restored preference as though it has already been applied.
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const double frequencyHz = slice->frequency();
+        slice->setSampleRateHz(effective);
+        // The reset emits: an observer can retire, rebind, retune or re-rate the
+        // slice. A newer change owns it rather than this saved preference.
+        if (!self || !target || self->sliceById(sliceId) != target.data()
+            || target->streamIndex() != stream
+            || target->frequency() != frequencyHz
+            || target->sampleRateHz() != effective
+            || self->m_streamAllocator.streamSampleRateHz(stream) != effective) {
+            return;
+        }
+    }
+
+    requestSliceSampleRate(sliceId, restored);
 }
 
 // R-R3-49. NereusSDR-original: per-slice per-band rates are a Phase 3F
@@ -25841,6 +25872,11 @@ void RadioModel::completeReceiveLayoutStartup()
         }
     }
     m_receiveLayoutPendingAdmission = false;
+    if (m_txSliceArbiter) {
+        const QPointer<RadioModel> self(this);
+        m_txSliceArbiter->finishRestore();
+        if (!self) { return; }
+    }
     m_receiveLayoutHydratedIds.clear();
     // RADE reason: admission is over, so a RADE slice left without a
     // decoder says why.
@@ -26988,6 +27024,12 @@ void RadioModel::teardownConnection()
     // but isConnected() still read stale-Connected. See design addendum
     // docs/architecture/2026-08-03-remote-daemon-r2-r3-design-addendum.md
     // section 5.
+    // The disconnected callback is severed above, so its discovery cleanup
+    // must also happen here. Clear before observers see Disconnected; an
+    // unsaved radio that has stopped replying may now age out normally.
+    if (m_discovery) {
+        m_discovery->clearConnectedMac();
+    }
     setConnectionState(ConnectionState::Disconnected);
 
     // TX safety fix round 2 (2026-09-30): the forced Disconnected above never
