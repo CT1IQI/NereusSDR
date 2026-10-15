@@ -1219,6 +1219,7 @@ set(CORE_SOURCES
     src/core/safety/TxTimeOutTimer.cpp
     src/core/safety/TransmitHolder.cpp
     src/core/safety/RemoteTxWatchdog.cpp
+    src/core/safety/RemoteTxCutGuard.cpp
     src/core/safety/StarvationPolicy.cpp
     src/core/safety/safety_constants.cpp
     src/core/SpotCollectorClient.cpp

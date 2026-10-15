@@ -9161,6 +9161,9 @@ nereus_add_test(tst_remote_keying
 # a key on (real time).
 # The watchdog's wording check needs only this text table from the GUI.
 nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ONLY EXTRA_LABELS session)
+# The keyed remote device's transmit cut on a thread of its own when the
+# Core's main thread stalls (real time).
+nereus_add_test(tst_remote_tx_cut_guard CORE_ONLY REALTIME EXTRA_LABELS session)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp
