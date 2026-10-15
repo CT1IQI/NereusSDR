@@ -138,11 +138,13 @@ private slots:
     //   prn->ptt_in = ControlBytesIn[0] & 0x1;
     // ════════════════════════════════════════════════════════════════════════
 
-    // §A.1 — P1: C0 bit 0 set in sub-frame 0 → micPttFromRadio(true)
-    void p1_c0Bit0Set_emitsMicPttTrue()
+    // §A.1 — P1: the later ordinary sub-frame is the current PTT level.
+    //
+    // mi0bot-Thetis processes the two sub-frames in order and assigns
+    // prn->ptt_in for each ordinary status sub-frame, so the second ordinary
+    // sub-frame wins when a PTT edge falls inside one UDP packet.
+    void p1_laterOrdinarySubframeReleased_emitsMicPttFalse()
     {
-        // C0 = 0x01: bit 0 = ptt_in=1.  Sub-frame 1 has C0=0x00 (ptt_in=0),
-        // but OR semantics means any sub-frame with ptt_in=1 yields true.
         QByteArray pkt = makeEp6Frame(/*sub0 C0*/ 0x01, /*sub1 C0*/ 0x00);
 
         P1RadioConnection conn;
@@ -152,12 +154,10 @@ private slots:
         conn.parseEp6FrameForTest(pkt);
 
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.at(0).at(0).toBool(), true);
+        QCOMPARE(spy.at(0).at(0).toBool(), false);
     }
 
-    // §A.2 — P1: C0 bit 0 set in sub-frame 1 only → micPttFromRadio(true)
-    //
-    // OR logic: either sub-frame asserting ptt_in yields a pressed signal.
+    // §A.2 — P1: later ordinary sub-frame asserts PTT.
     void p1_c0Bit0SetInSub1Only_emitsMicPttTrue()
     {
         QByteArray pkt = makeEp6Frame(/*sub0 C0*/ 0x00, /*sub1 C0*/ 0x01);
@@ -172,7 +172,45 @@ private slots:
         QCOMPARE(spy.at(0).at(0).toBool(), true);
     }
 
-    // §A.3 — P1: C0 bit 0 clear in both sub-frames → micPttFromRadio(false)
+    // §A.3 — mi0bot does not update stored PTT from HL2 I2C responses.
+    //
+    // Source: mi0bot-Thetis networkproto1.c:478-496 [@c26a8a4]. When C0
+    // bit 7 is set, the sub-frame is routed as an I2C response and ptt_in is
+    // not assigned. A response whose C0 bit 0 is set must therefore not
+    // override an ordinary status sub-frame that reports released.
+    void p1_i2cResponseBit0_doesNotReplaceOrdinaryMicPtt()
+    {
+        QByteArray pkt = makeEp6Frame(/*I2C response, bit 0 set*/ 0x81,
+                                      /*ordinary released*/ 0x00);
+
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &P1RadioConnection::micPttFromRadio);
+
+        conn.parseEp6FrameForTest(pkt);
+
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toBool(), false);
+    }
+
+    // §A.4 — mi0bot's all-I2C path does not assign prn->ptt_in.
+    // The previous radio PTT level must remain untouched, which the parser
+    // expresses by emitting no micPttFromRadio signal for this packet.
+    void p1_onlyI2cResponses_doesNotEmitMicPtt()
+    {
+        QByteArray pkt = makeEp6Frame(/*I2C response, bit 0 clear*/ 0x80,
+                                      /*I2C response, bit 0 set*/ 0x81);
+
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &P1RadioConnection::micPttFromRadio);
+
+        conn.parseEp6FrameForTest(pkt);
+
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // §A.5 — P1: C0 bit 0 clear in both sub-frames → micPttFromRadio(false)
     void p1_c0Bit0Clear_emitsMicPttFalse()
     {
         // C0 = 0x00 in both sub-frames: ptt_in=0.
@@ -188,7 +226,7 @@ private slots:
         QCOMPARE(spy.at(0).at(0).toBool(), false);
     }
 
-    // §A.4 — P1: ADC-overload bit (bit 0 in case 0x00 C1) does NOT affect
+    // §A.6 — P1: ADC-overload bit (bit 0 in case 0x00 C1) does NOT affect
     //         micPttFromRadio — the PTT bit is in C0, not C1.
     //
     // C0 = 0x00 (bank 0 decode selector — NOT the PTT bit), C1 = 0x01

@@ -44,7 +44,9 @@ VirtualCableProduct VirtualCableDetector::matchProduct(const QString& n) {
         { QRegularExpression("Hi-?Fi Cable", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::VbHiFiCable },
         { QRegularExpression("^CABLE ",    QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::VbCable },
         { QRegularExpression("Virtual Audio Cable", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::MuzychenkoVac },
-        { QRegularExpression("^Line \\d+", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::MuzychenkoVac },
+        // Generic Line N names can be hardware; VAC's documented endpoint has the product suffix.
+        // https://vac.muzychenko.net/en/manual/install.htm (Checking the result)
+        { QRegularExpression("^Line \\d+ \\(Virtual Audio Cable\\)$", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::MuzychenkoVac },
         { QRegularExpression("VoiceMeeter", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::Voicemeeter },
         { QRegularExpression("^Dante ",    QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::Dante },
         { QRegularExpression("^DAX Audio", QRegularExpression::CaseInsensitiveOption), VirtualCableProduct::FlexRadioDax },

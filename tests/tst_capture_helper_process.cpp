@@ -31,6 +31,8 @@
 //               drivers' mic adds the two channels for Both
 //               (pickOlderDriverMic).  J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: inherited debug rules reach fake native queries and commands.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -48,6 +50,7 @@
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
 #include "core/audio/MatcherRing.h"
+#include "core/audio/NativeAudioQueryTrace.h"
 #include "fakes/FakeCaptureChild.h"
 
 // Exercise the real entry point, as tst_daemon_signals does for nereusd.
@@ -223,6 +226,48 @@ private slots:
         stereo.fill(-9.0f);
         pickOlderDriverMic(nullptr, 2, 2, 1, MicChannelPick::Both, stereo.data());
         QCOMPARE(stereo, (std::array<float, 4>{}));
+    }
+
+    void inheritedDebugRulesReachHelper_data()
+    {
+        QTest::addColumn<QByteArray>("rules");
+        QTest::addColumn<bool>("enabled");
+        QTest::newRow("enabled") << QByteArray("nereus.audio.debug=true") << true;
+        QTest::newRow("disabled") << QByteArray("nereus.audio.debug=false") << false;
+    }
+
+    void inheritedDebugRulesReachHelper()
+    {
+        QFETCH(QByteArray, rules);
+        QFETCH(bool, enabled);
+        // The launcher's environment is inherited by a default QProcess,
+        // exactly as CaptureSupervisor::spawn starts the capture helper.
+        const bool wasSet = qEnvironmentVariableIsSet("QT_LOGGING_RULES");
+        const QByteArray previous = qgetenv("QT_LOGGING_RULES");
+        struct RestoreRules {
+            bool wasSet;
+            QByteArray previous;
+            ~RestoreRules()
+            {
+                if (wasSet) {
+                    qputenv("QT_LOGGING_RULES", previous);
+                } else {
+                    qunsetenv("QT_LOGGING_RULES");
+                }
+            }
+        } restore{wasSet, previous};
+        qputenv("QT_LOGGING_RULES", rules);
+        Child helper;
+        QVERIFY(helper.start({QStringLiteral("--capture-helper")}));
+        QVERIFY(helper.next(3000).has_value());
+        helper.send(configureRecord(4, kListedDevice));
+        helper.send(P::encodeShutdown());
+        QVERIFY(helper.finishes(3000));
+        QCOMPARE(helper.process().exitCode(), 0);
+        const QByteArray diagnostics = helper.diagnostics();
+        QCOMPARE(diagnostics.contains("native-audio-query begin stage=test.no-device-query"), enabled);
+        QCOMPARE(diagnostics.contains("native-audio-query end stage=test.no-device-query"), enabled);
+        QCOMPARE(diagnostics.contains("capture-command execute"), enabled);
     }
 
     void helperSendsHelloFirstWithinDeadline()
@@ -665,6 +710,13 @@ int main(int argc, char* argv[])
 {
     if (argc > 1 && std::strcmp(argv[1], "--capture-helper") == 0) {
         NereusSDR::setCaptureHelperTestDevices({kListedDevice});
+        // LogManager::applyFilterRules applies this parent-app default.
+        // An explicit launch environment rule must still enable the query,
+        // then remain inherited by the helper's default QProcess launch.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.*.debug=false"));
+        // Fake query only: exercise logging before the real entry point,
+        // without reaching a platform device API.
+        NereusSDR::tracedNativeAudioQuery("test.no-device-query", -1, [] { return 0; });
         return captureHelperEntryPointForTest(argc - 1, argv + 1);
     }
     if (argc > 2 && std::strcmp(argv[1], "--fake-capture-child") == 0) {

@@ -26,6 +26,9 @@
 //                         Open, Shutdown still ends it.
 //   hang-open-after-step  As hang-open, after one "open step" line on
 //                         stderr ("devices listed at 12 ms"); no marker file.
+//   hang-open-after-tagged-steps
+//                         As hang-open with current, stale-generation,
+//                         wrong-process and malformed open-step tags.
 //   no-hello              Never writes anything and ignores every command.
 //   permission-then-ready Hello; on Open: Permission, 300 ms later as ready.
 //   permission-while-marked
@@ -109,6 +112,8 @@
 //   2026-10-11: kFakeCaptureChildStartMs; the permission-while-marked
 //               scenario.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-12: generation-tagged open-step diagnostic regression.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #pragma once

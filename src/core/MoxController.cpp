@@ -2817,7 +2817,9 @@ void MoxController::primeWdspState()
 //   _current_ptt_mode = PTTMode.MIC;  console.cs:25492 [v2.10.3.13]
 //   chkMOX.Checked = true;            console.cs:25494 [v2.10.3.13]
 //
-// RadioConnection::micPttFromRadio calls this on every P1/P2 status frame.
+// RadioConnection::micPttFromRadio calls this for every ordinary P1 PTT
+// update and every P2 status frame; the P1 HL2 I2C-response path does not
+// publish its retained C0 bit 0 as a PTT update.
 // ---------------------------------------------------------------------------
 void MoxController::onMicPttFromRadio(bool pressed)
 {

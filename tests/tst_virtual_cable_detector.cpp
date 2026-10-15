@@ -72,9 +72,45 @@ private slots:
         QVERIFY(VirtualCableDetector::matchProduct("CABLE-A Input") == VirtualCableProduct::VbCableA);
         QVERIFY(VirtualCableDetector::matchProduct("CABLE-B Input") == VirtualCableProduct::VbCableB);
     }
+    void detectsOtherVbCableVariants()
+    {
+        QCOMPARE(VirtualCableDetector::matchProduct("CABLE-C Input"), VirtualCableProduct::VbCableC);
+        QCOMPARE(VirtualCableDetector::matchProduct("CABLE-D Input"), VirtualCableProduct::VbCableD);
+        QCOMPARE(VirtualCableDetector::matchProduct("Hi-Fi Cable Input"), VirtualCableProduct::VbHiFiCable);
+        QCOMPARE(VirtualCableDetector::matchProduct("HiFi Cable Output"), VirtualCableProduct::VbHiFiCable);
+    }
     void detectsVac() {
         QVERIFY(VirtualCableDetector::matchProduct("Line 1 (Virtual Audio Cable)")
                 == VirtualCableProduct::MuzychenkoVac);
+    }
+    void genericLineIsNotVac_data()
+    {
+        QTest::addColumn<QString>("name");
+        QTest::newRow("bare-line-1") << QStringLiteral("Line 1");
+        QTest::newRow("bare-line-2") << QStringLiteral("Line 2");
+        QTest::newRow("hardware-stereo-pair") << QStringLiteral("Line 1/2 (USB Audio CODEC)");
+        QTest::newRow("hardware-numbered-input") << QStringLiteral("Line 2 (USB Audio CODEC)");
+        QTest::newRow("hardware-case-insensitive") << QStringLiteral("line 12 (High Definition Audio Device)");
+    }
+    void genericLineIsNotVac()
+    {
+        QFETCH(QString, name);
+        QCOMPARE(VirtualCableDetector::matchProduct(name), VirtualCableProduct::None);
+    }
+    void vacProductNames_data()
+    {
+        QTest::addColumn<QString>("name");
+        QTest::newRow("line-1") << QStringLiteral("Line 1 (Virtual Audio Cable)");
+        QTest::newRow("line-12") << QStringLiteral("Line 12 (Virtual Audio Cable)");
+        QTest::newRow("line-case-insensitive") << QStringLiteral("line 2 (virtual audio cable)");
+        QTest::newRow("microphone-source") << QStringLiteral("Mic 1 (Virtual Audio Cable)");
+        QTest::newRow("digital-source") << QStringLiteral("S/PDIF 1 (Virtual Audio Cable)");
+        QTest::newRow("product-name") << QStringLiteral("Virtual Audio Cable");
+    }
+    void vacProductNames()
+    {
+        QFETCH(QString, name);
+        QCOMPARE(VirtualCableDetector::matchProduct(name), VirtualCableProduct::MuzychenkoVac);
     }
     void detectsVoicemeeter() {
         QVERIFY(VirtualCableDetector::matchProduct("VoiceMeeter Input (VB-Audio VoiceMeeter VAIO)")
@@ -372,6 +408,42 @@ private slots:
         const QList<DetectedCable> found = VirtualCableDetector::detect(cat);
         QCOMPARE(found.size(), 1);
         QCOMPARE(found[0].backend, AudioBackendId::PortAudio);
+    }
+    void catalogueRejectsPhysicalLinesAndKeepsKnownCables()
+    {
+        FixedCatalogue cat;
+        cat.order = {AudioBackendId::Wasapi, AudioBackendId::PortAudio};
+        cat.running = cat.order;
+        AudioDeviceInfo vac = makeDevice(AudioBackendId::PortAudio, AudioDeviceDirection::Output,
+                                         QStringLiteral("pa:vac"), QStringLiteral("Line 2 (Virtual Audio Cable)"));
+        vac.hostApi = QStringLiteral("MME");
+        cat.all = {
+            makeDevice(AudioBackendId::Wasapi, AudioDeviceDirection::Output,
+                       QStringLiteral("physical-out"), QStringLiteral("Line 1/2 (USB Audio CODEC)")),
+            makeDevice(AudioBackendId::Wasapi, AudioDeviceDirection::Input,
+                       QStringLiteral("physical-in"), QStringLiteral("Line 2 (USB Audio CODEC)")),
+            makeDevice(AudioBackendId::Wasapi, AudioDeviceDirection::Input,
+                       QStringLiteral("vb-in"), QStringLiteral("CABLE Output (VB-Audio Virtual Cable)")),
+            makeDevice(AudioBackendId::Wasapi, AudioDeviceDirection::Input,
+                       QStringLiteral("nereus-in"), QStringLiteral("NereusSDR VAX 1")),
+            vac,
+        };
+        const QList<DetectedCable> found = VirtualCableDetector::detect(cat);
+        QCOMPARE(found.size(), 3);
+        QCOMPARE(found[0].product, VirtualCableProduct::VbCable);
+        QCOMPARE(found[0].deviceId, QStringLiteral("vb-in"));
+        QCOMPARE(found[0].backend, AudioBackendId::Wasapi);
+        QVERIFY(found[0].isInput);
+        QCOMPARE(found[1].product, VirtualCableProduct::NereusSdrVax);
+        QCOMPARE(found[1].deviceId, QStringLiteral("nereus-in"));
+        QCOMPARE(found[2].product, VirtualCableProduct::MuzychenkoVac);
+        QCOMPARE(found[2].deviceId, QStringLiteral("pa:vac"));
+        QCOMPARE(found[2].backend, AudioBackendId::PortAudio);
+        QCOMPARE(found[2].hostApi, QStringLiteral("MME"));
+        QVERIFY(!found[2].isInput);
+        const QVector<DetectedCable> bindable = VirtualCableDetector::bindableEnds(found);
+        QCOMPARE(bindable.size(), 1);
+        QCOMPARE(bindable[0].deviceId, QStringLiteral("pa:vac"));
     }
     void diffIgnoresRemovedCables() {
         QVector<DetectedCable> prev;
