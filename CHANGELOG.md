@@ -18,6 +18,15 @@
   are saved for each pan. Level calibration temporarily suspends tracking and
   restores each pan's own choice afterward.
 
+### Wideband view
+
+- Local pans keep the DDC zoom limit when the radio's protocol or selected
+  ADC does not offer a wideband stream, while retaining the operator's
+  Extended view preference.
+- An extended pan transfers its wideband request when its active receiver
+  changes and releases the request when the pan or receiver is removed.
+
+
 ### CAT control
 
 Logging, contest and digital-mode programs can now control NereusSDR with
