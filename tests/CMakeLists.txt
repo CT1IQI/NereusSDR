@@ -1223,6 +1223,10 @@ nereus_add_test(tst_p2_command_zero)
 target_compile_definitions(tst_p2_command_zero PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 8: Alex-1 Filters sub-sub-tab smoke test ─────────────
+
+# Filter-page reset is restricted to the selected page's frequency edges.
+nereus_add_test(tst_alex_filter_reset)
+
 nereus_add_test(tst_alex1_filters_tab)
 
 # ── Phase 3P-B Task 9: Alex-2 Filters sub-sub-tab smoke test ─────────────
