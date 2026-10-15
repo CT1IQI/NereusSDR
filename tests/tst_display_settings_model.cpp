@@ -16,6 +16,11 @@
 // each saved value's stored text is pinned. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
 //
+// 2026-10-15 - The FFT fill alpha and spectrum fraction keys are pinned by
+// their stored text ("0.23", "0.61"), not compared as numbers, as the
+// stored-text check says. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
+//
 // Isolation: AppSettings::instance() is a process-wide in-memory
 // singleton with no automatic load()/save() in this test process
 // (TestSandboxInit.cpp also sandboxes QStandardPaths so nothing here
@@ -302,8 +307,8 @@ private slots:
         for (auto it = expectedText.cbegin(); it != expectedText.cend(); ++it) {
             QCOMPARE(s.value(it.key()).toString(), it.value());
         }
-        QCOMPARE(s.value(QStringLiteral("DisplayFftFillAlpha_4")).toFloat(), 0.23f);
-        QCOMPARE(s.value(QStringLiteral("DisplaySpectrumFrac_4")).toFloat(), 0.61f);
+        QCOMPARE(s.value(QStringLiteral("DisplayFftFillAlpha_4")).toString(), QStringLiteral("0.23"));
+        QCOMPARE(s.value(QStringLiteral("DisplaySpectrumFrac_4")).toString(), QStringLiteral("0.61"));
         DisplaySettingsModel reopened;
         reopened.setPanIndex(4);
         reopened.load();

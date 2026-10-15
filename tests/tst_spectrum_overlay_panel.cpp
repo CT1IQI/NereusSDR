@@ -46,6 +46,12 @@
 // styled content rectangle, not only its outer width, and every tab's
 // pill stays inside the pan. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+//
+// 2026-10-15: whenPeakValueWrapsTheKeyedSpectrumTabStillFits steps the
+// letter spacing up from 1.5 px, at most 13 steps, until the four marker
+// pills overflow their line, as Combined K (fe27683af) does; a fixed
+// 1.5 px did not force the wrap on every platform font. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1633,14 +1639,50 @@ private slots:
     // toggles' size, and the Spectrum tab still fits the pill's 480 px
     // with the pan keyed (the keyed note is two lines) and nothing cut off.
     // The font here is the application's with its letters spaced out, so
-    // every pill is wider than this computer's font makes it.
+    // every pill is wider than this computer's font makes it. Measure the
+    // styled pills before choosing the extra letter spacing: 1.5 px alone
+    // does not force a wrap with every platform's default font. The
+    // stepping is bounded at 13 steps (1.5 px to 4.5 px).
     void whenPeakValueWrapsTheKeyedSpectrumTabStillFits() {
         struct FontRestore {
             QFont saved{QApplication::font()};
             ~FontRestore() { QApplication::setFont(saved); }
         } restore;
         QFont wide = restore.saved;
-        wide.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
+        constexpr int kMarkerRoom = 268 - 2 - 2 * 8;
+        constexpr int kMinimumGap = 2;
+        constexpr int kMaxSpacingSteps = 13;
+        int firstThreeWidth = 0;
+        int allFourWidth = 0;
+        for (int step = 0; step < kMaxSpacingSteps; ++step) {
+            wide.setLetterSpacing(QFont::AbsoluteSpacing, 1.5 + step * 0.25);
+            QApplication::setFont(wide);
+            PillHarness probe;
+            firstThreeWidth = 2 * kMinimumGap;
+            const char* names[] = {"pillDisplayShowNoiseFloor", "pillDisplayShowBinWidth",
+                                   "pillDisplayShowCursorFreq", "pillDisplayShowPeakValueOverlay"};
+            for (int index = 0; index < 4; ++index) {
+                QPushButton* button = probe.toggle(names[index]);
+                QVERIFY(button);
+                QString style = button->styleSheet();
+                style.replace(QRegularExpression(QStringLiteral("padding: 0 [0-9]+px;")),
+                              QStringLiteral("padding: 0 1px;"));
+                button->setStyleSheet(style);
+                button->ensurePolished();
+                if (index < 3) {
+                    firstThreeWidth += button->sizeHint().width();
+                } else {
+                    allFourWidth = firstThreeWidth + kMinimumGap + button->sizeHint().width();
+                }
+            }
+            qInfo("marker wrap fixture: spacing=%.2f three=%d four=%d room=%d",
+                  wide.letterSpacing(), firstThreeWidth, allFourWidth, kMarkerRoom);
+            if (allFourWidth > kMarkerRoom) { break; }
+        }
+        QVERIFY2(allFourWidth > kMarkerRoom,
+                 "The fixture font must make four marker pills exceed even the tightest line");
+        QVERIFY2(firstThreeWidth <= kMarkerRoom,
+                 "The fixture font must still let the first three marker pills share a line");
         QApplication::setFont(wide);
         PillHarness h;
         h.panel->openDisplayPill();
