@@ -619,6 +619,33 @@ jobs:
         # fftw already is declared.
         run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
 
+      # Homebrew's default openssl formula is OpenSSL 4 on some macOS runner
+      # images, linked into the Homebrew prefix, so its libcrypto.dylib and
+      # include/openssl sit where the configure below searches
+      # (CMAKE_PREFIX_PATH on the arm64 row) and where CMakeLists.txt points
+      # every compile on both rows (include_directories on the Homebrew
+      # prefix, which on the x86_64 row would also put arm64 Homebrew headers
+      # ahead of its own OpenSSL 3.0.21). Every bench and Mac build links
+      # openssl@3 (3.6.x), as Homebrew Qt does. Unlink both formulas so the
+      # shared prefix holds no OpenSSL headers or libraries at all; each row
+      # reaches its OpenSSL only through -DOPENSSL_ROOT_DIR at Configure.
+      # Unlinking leaves the opt/ paths that other formulas link against in
+      # place.
+      - name: Unlink Homebrew OpenSSL from the shared prefix
+        run: |
+          for f in openssl openssl@3; do
+            if brew list --formula "$f" >/dev/null 2>&1; then
+              brew unlink "$f"
+            fi
+          done
+          P="$(brew --prefix)"
+          for p in include/openssl lib/libcrypto.dylib lib/libssl.dylib lib/pkgconfig/openssl.pc; do
+            if [ -e "$P/$p" ] || [ -L "$P/$p" ]; then
+              echo "::error::$P/$p is still present after unlinking openssl and openssl@3: $(ls -l "$P/$p")"
+              exit 1
+            fi
+          done
+
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
         # autoconf/automake/libtool/wget required by third_party/rade
@@ -823,12 +850,15 @@ jobs:
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
-            # needed because brew's lib dir is in the default search path,
-            # and openssl@3 is not keg-only (fix round 3 correction; see
-            # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
-            # no OPENSSL_ROOT_DIR hint either.
+            # needed because brew's lib dir is in the default search path.
+            # OpenSSL comes from the openssl@3 keg by explicit
+            # -DOPENSSL_ROOT_DIR: Homebrew's default openssl formula is
+            # OpenSSL 4 on some runner images, and a find through the
+            # Homebrew prefix alone picked its libcrypto. With the root set,
+            # FindOpenSSL searches only the keg, and CMakeLists.txt fails the
+            # configure if the headers it found are not under it.
             CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$(brew --prefix)"
-            EXTRA_CMAKE_ARGS=""
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)"
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -843,6 +873,37 @@ jobs:
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      # Proves each row linked the OpenSSL its Configure named, before
+      # macdeployqt rewrites the references into the bundle: every libcrypto
+      # or libssl reference in the app bundle, its helpers, nereusd and the
+      # build's own dylibs must be libcrypto.3.dylib or libssl.3.dylib from
+      # openssl@3's keg (arm64) or from the OpenSSL 3.0.21 built above
+      # (x86_64). ci.yml's macOS leg runs the arm64 check on every pull
+      # request.
+      - name: Check OpenSSL link
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            EXPECT="${{ github.workspace }}/openssl-x86_64/lib"
+          else
+            EXPECT="$(brew --prefix openssl@3)/lib"
+          fi
+          refs=$( { find build/NereusSDR.app -type f; find build -maxdepth 1 -type f \( -name '*.dylib' -o -name nereusd \); } \
+            | while IFS= read -r BIN; do
+                file -b "$BIN" | grep -q '^Mach-O' || continue
+                otool -L "$BIN" | tail -n +2 | awk -v b="$BIN" '{print b ": " $1}'
+              done | grep -E '/lib(crypto|ssl)[.0-9]*[.]dylib$' || true )
+          if [ -z "$refs" ]; then
+            echo "::error::No built binary references libcrypto or libssl, so this check proved nothing; has OpenSSL moved?"
+            exit 1
+          fi
+          echo "$refs"
+          bad=$(echo "$refs" | grep -vE ": $EXPECT/lib(crypto|ssl)[.]3[.]dylib$" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::These OpenSSL references are not $EXPECT/libcrypto.3.dylib or libssl.3.dylib:"
+            echo "$bad"
+            exit 1
+          fi
 
       - name: Test
         working-directory: build
