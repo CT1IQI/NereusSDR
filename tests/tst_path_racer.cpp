@@ -46,6 +46,9 @@
 //               race's admitted, dropped, ended and nothing-to-try log
 //               lines. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: the live sequence: two failed races, the reconnect
+//               retry through the service, then its better-path searches.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -800,6 +803,88 @@ private slots:
             QCOMPARE(delayFor(upgrade, v4Line), PathRacer::kIpv4DelayMs);
             QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6a.port())), 0);
             QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6b.port())), 0);
+        }
+        window.client->disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // The live sequence of 2026-10-15 10:11-10:12: the first race and its
+    // first retry fail (the service not reachable then), the window's own
+    // reconnect retry reaches the Core through the service ("Remote access
+    // service (no direct Core address)": race mode, no direct winner), and
+    // the GUI then hands over the entry's last good + learned addresses.
+    // Every better-path search of that session still admits the entry's
+    // IPv4 address and does not fail before its turn.
+    void theRetrySessionThroughTheServiceSearchesTheEntryAddress()
+    {
+        LocalService service;
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        Core core;
+        StationRendezvous rendezvous(core.server.get(), {service.url()}, /*relayAllowed=*/true);
+        QSignalSpy registered(rendezvous.client(), &RendezvousClient::registered);
+        QVERIFY(rendezvous.start());
+        QTRY_COMPARE_WITH_TIMEOUT(registered.size(), 1, 10000);
+        Window window(core);
+        window.client->setReconnectBackoffUnitMs(50);
+        window.client->setUpgradeScheduleForTest({300});
+
+        const quint16 v4Port = closedPort();
+        const QUrl v4(QStringLiteral("wss://127.0.0.1:%1").arg(v4Port));
+        const QUrl v6a(QStringLiteral("wss://[::1]:%1").arg(closedPort()));
+        const QUrl v6b(QStringLiteral("wss://[::1]:%1").arg(closedPort()));
+        const QString v4Line = QStringLiteral("127.0.0.1:%1").arg(v4Port);
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = rendezvous.client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        // As RemoteConnectionController's source gives this entry: its
+        // direct candidates (last good + learned), last good, learned. The
+        // first two races find no service.
+        auto calls = std::make_shared<int>(0);
+        window.client->setCandidateSource([=]() -> std::optional<StationClient::ConnectionCandidates> {
+            ++*calls;
+            StationClient::ConnectionCandidates candidates;
+            candidates.addresses = {v6a, v6b, v4, v6a, v6b, v4, v6a, v6b};
+            if (*calls > 2) {
+                candidates.service = route;
+            }
+            return candidates;
+        });
+
+        RacePlans plans;
+        plans.client = window.client.get();
+        s_plans = &plans;
+        s_previousHandler = qInstallMessageHandler(capturePlans);
+        const auto restore = qScopeGuard([] {
+            qInstallMessageHandler(s_previousHandler);
+            s_previousHandler = nullptr;
+            s_plans = nullptr;
+        });
+
+        QSignalSpy ended(window.client.get(), &StationClient::sessionEnded);
+        window.client->connectToStation(v4, QString(), QString(), false, identityOf(core));
+        // waitForHandshake() gives up at a session's end; here two end first.
+        QTRY_VERIFY_WITH_TIMEOUT(window.client->isHandshakeComplete(), kServiceConnectBudgetMs);
+        QCOMPARE(ended.size(), 2);
+        QVERIFY(*calls >= 3);
+        // "no direct Core address": the service won, in race mode.
+        QVERIFY(window.client->connectedUrl().isEmpty());
+        QVERIFY(window.client->pathRank() >= int(PathRacer::ServiceDirect));
+        QCOMPARE(plans.first.size(), 3);
+        for (const auto& race : std::as_const(plans.first)) {
+            QCOMPARE(delayFor(race, v4Line), PathRacer::kIpv4DelayMs);
+        }
+
+        // rememberAuthenticatedRadio: last good (IPv6 x2 + IPv4), then
+        // learned (IPv6 x2), repeats removed.
+        window.client->setCachedAddresses({v6a, v6b, v4});
+        QTRY_VERIFY_WITH_TIMEOUT(plans.upgradeFailMs.size() >= 2, 20000);
+        constexpr qint64 kEarliestFailMs = PathRacer::kIpv4DelayMs * 19 / 20;
+        for (const auto& upgrade : std::as_const(plans.upgrades)) {
+            QCOMPARE(delayFor(upgrade, v4Line), PathRacer::kIpv4DelayMs);
+        }
+        for (const qint64 ms : std::as_const(plans.upgradeFailMs)) {
+            QVERIFY2(ms >= kEarliestFailMs, qPrintable(QString::number(ms)));
         }
         window.client->disconnectFromStation(QStringLiteral("test done"));
     }
