@@ -149,6 +149,20 @@ private slots:
         QCOMPARE(spy.at(3).at(0).toBool(), false);
     }
 
+    void s_pushVoxCallback_retiredAfterLookupDoesNotEmit() {
+        TxChannel ch(kChannelId);
+        QSignalSpy spy(&ch, &TxChannel::voxActiveChanged);
+        QVERIFY(spy.isValid());
+
+        // Capture the callback target, then retire it before dispatch. The
+        // fixture owns ch throughout, as the lane retains an in-flight target.
+        TxChannel::invokePushVoxAfterLookupForTest(
+            TxChannel::kDexpId, 1, [&ch]() { ch.markRetired(); });
+
+        QVERIFY(ch.isRetired());
+        QCOMPARE(spy.count(), 0);
+    }
+
     // ---------------------------------------------------------------
     // Post-destruction safety: a callback fired AFTER the TxChannel's
     // destructor has cleared s_voxKeyInstance must be a no-op (the
