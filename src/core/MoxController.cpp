@@ -211,6 +211,9 @@
 //               (ruling 8.9) ends with tunerTakeFinished; admitKey records
 //               a take (lastAdmitTook). J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14: onMicPttFromRadio asks the other-device hook only on a
+//               press edge. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -2854,9 +2857,11 @@ void MoxController::onMicPttFromRadio(bool pressed)
     // (ruling 8.9: the press stops the device first; PollPTT retries the
     // station's key after the take); an unkeyed holder is taken from only
     // when nothing before the gate refuses, as in tryPollKey.
-    const bool otherDeviceHolds = m_otherDeviceHolds
-                                      ? m_otherDeviceHolds()
-                                      : (m_mox && !m_currentKeyer.isStation() && !m_manualKey);
+    // Asked only on a press edge: this runs on every status frame, and the
+    // Core's hook rebuilds device names each time it is asked.
+    const bool otherDeviceHolds = pressEdge
+        && (m_otherDeviceHolds ? m_otherDeviceHolds()
+                               : (m_mox && !m_currentKeyer.isStation() && !m_manualKey));
     const bool onAir = m_mox || m_manualKey || m_state != MoxState::Rx;
     if (pressEdge && otherDeviceHolds && m_keyingGate
         && (onAir || refusalBeforeTheGate().isEmpty())) {

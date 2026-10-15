@@ -7,6 +7,13 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Desktop-host TX dial correction by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: the initial TX dial reads the
+//                bound slice only when it is one of this client's mapped
+//                receivers, so another device's slice never leaks.
+//   2026-10-14 - Initial TX dial correction by J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex: read the arbiter-bound slice
+//                for late clients, preserving RX and separate XIT state.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -800,18 +807,22 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     //       else if (chkVFOATX.Checked)   tx_freq = VFOAFreq;
     //   }
     //
-    // NereusSDR architectural divergence (deferred to Phase 3F multi-pan):
-    //   * VFOBTX and VFOATX checkboxes are not modeled yet
-    //   * VFOASubFreq (Thetis VFO B of RX1, used as sub-RX VFO in split) is
-    //     not modeled -- NereusSDR slice model has one freq per slice
-    //   * VFOSplit is per-slice (split(rx)) rather than radio-global like
-    //     Thetis's chkVFOSplit
-    //
-    // In the !rx2Enabled case with no VFOBTX, Thetis's TXFreq reduces to
-    // VFOAFreq exactly, matching readVfoHz(0, 0).  With RX2 on (receiver 1
-    // has a slice) the burst still reports receiver 0's VFO: the
-    // VFOBTX / VFOATX / split paths above need that state on RadioModel.
-    const qint64 txFreqHz   = rx1FreqHz;
+    // NereusSDR selects transmit through the arbiter's bound slice, which
+    // may be an internal slice beyond the two exposed TCI receivers. Thetis
+    // TXFreq above is the selected dial, without XIT; XIT enable/offset are
+    // sent separately (TCIServer.cs:2587-2594 [v2.10.3.15]). Keep the legacy
+    // RX1 fallback for synthetic models and an unresolved transmit binding.
+    // With a receiver map (desktop-host mode) this client sees only its
+    // mapped slices; a bound slice outside that map belongs to another
+    // device, so its dial is never announced and RX1 is used instead.
+    qint64 txFreqHz = rx1FreqHz;
+    if (const auto* radio = qobject_cast<const RadioModel*>(m_radio)) {
+        if (const SliceModel* txSlice = radio->txBoundSlice()) {
+            if (!m_receiverSliceMap || sliceReceiver(txSlice->sliceIndex()) >= 0) {
+                txFreqHz = static_cast<qint64>(txSlice->frequency());
+            }
+        }
+    }
     // Derive the band label from the TX frequency. Thetis reads
     // consoleThreadSafe.TXBand directly; NereusSDR derives via
     // Band::bandFromFrequency (IARU Region 2 lookup) + bandLabel ("20m"

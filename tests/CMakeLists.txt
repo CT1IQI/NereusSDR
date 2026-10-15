@@ -1276,6 +1276,10 @@ nereus_add_test(tst_sample_rate_catalog)
 nereus_add_test(tst_cross_thread_teardown fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_cross_thread_teardown PRIVATE NEREUS_BUILD_TESTS)
 
+# Device-free ownership coverage for never-started, finished, and running
+# connection workers, including active child timers and cleanup affinity.
+nereus_add_test(tst_connection_teardown_ownership)
+
 # Regression test for the GUI-thread fexchange2 deadlock — verifies
 # that RxDspWorker::processIqBatch runs on its own QThread when driven
 # via Qt::QueuedConnection, and that posting a burst of batches does
@@ -1770,6 +1774,15 @@ endif()
 # and metering coverage).
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
+endif()
+
+# Device-free ownership regression: its own tiny target, private namespaces and
+# command/API doubles; never invokes the historical host-FIFO cleanup test.
+if(UNIX)
+    add_subdirectory(linux_pipe_ownership EXCLUDE_FROM_ALL)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS tst_linux_pipe_ownership)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES core)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_core tst_linux_pipe_ownership)
 endif()
 
 # ── Linux audio backend detection (PipeWire-native bridge, Task 3) ───────────
