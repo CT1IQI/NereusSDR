@@ -59,6 +59,12 @@
 //                 AF level, a departure from Thetis radio.cs, which sets AF
 //                 as SetRXAPanelGain1. By J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14 - The FM squelch threshold sent to WDSP follows Thetis's
+//                 slider mapping (console.cs:47295-47304 [v2.10.3.15]):
+//                 fmsqThresholdForWdsp sends 10^(-2n/100) for n = 0..100
+//                 from the -160..0 slider, replacing a dB-to-linear
+//                 conversion that kept FM muted. By J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -319,6 +325,7 @@ extern "C" {
 #include <fftw3.h>       // fftw_plan_dft_1d, fftw_execute, fftw_alloc_complex, etc.
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string_view>
@@ -2142,19 +2149,58 @@ void RxChannel::setFmsqThresh(double dB)
 {
 #ifdef HAVE_WDSP
     runKeyed(laneParameter("setFmsqThresh"), 0, [=, this]() {
-        // From Thetis Project Files/Source/Console/radio.cs:1274-1291
+        // From Thetis Project Files/Source/Console/radio.cs:1278-1291 [v2.10.3.15]
         //   WDSP.SetRXAFMSQThreshold(WDSP.id(thread, subrx), value)
-        //   Thetis fm_squelch_threshold = 1.0f is LINEAR (0..1 scale).
-        //   SliceModel stores in dB domain (m_fmsqThresh = -150.0 default).
-        //   Convert dB → linear before passing to WDSP.
-        //   -150.0 dB → ~3.16e-8 (effectively muted = squelch open on FM)
-        // WDSP third_party/wdsp/src/fmsq.c:244 — assigns threshold directly to tail_thresh (linear)
-        const double linear = std::pow(10.0, dB / 20.0);
+        // The value is SliceModel fmsqThresh, Thetis's -160..0 squelch
+        // slider position; fmsqThresholdForWdsp maps it to the linear
+        // threshold, as console.cs does before it sets FMSquelchThreshold.
+        // WDSP third_party/wdsp/src/fmsq.c:247-251 stores it as tail_thresh
+        // and 0.9 times it as unmute_thresh; the squelch opens while the
+        // noise average is below unmute_thresh (fmsq.c:162,189).
+        const double linear = fmsqThresholdForWdsp(dB);
         SetRXAFMSQThreshold(m_channelId, linear);
     });
 #else
     Q_UNUSED(dB);
 #endif
+}
+
+namespace {
+// FM squelch slider to WDSP threshold.
+// From Thetis console.cs:47295-47304 [v2.10.3.15]
+//   if (_rx1_dsp_mode == DSPMode.FM) //FM Squelch
+//   //nValue = ptbSquelch.Value; // 0-100
+//   //[2.10.3.5]MW0LGE convert to a 0-100 scale from a -160 to 0 scale
+//   nValue = (int)(((ptbSquelch.Value + 160) / 160f) * 100f);
+//   radio.GetDSPRX(0, 0).FMSquelchThreshold = (float)Math.Pow(10.0, -2.0 * nValue / 100.0);
+// The second receiver does the same at console.cs:47645-47653 [v2.10.3.15].
+constexpr float  kFmsqSliderOffset     = 160.0f;
+constexpr float  kFmsqSliderSpan       = 160.0f;
+constexpr float  kFmsqScaleMaximum     = 100.0f;
+constexpr double kFmsqExponentScale    = -2.0;
+constexpr double kFmsqExponentDivisor  = 100.0;
+} // namespace
+
+double RxChannel::fmsqThresholdForWdsp(double sliderValue)
+{
+    // ptbSquelch holds -160..0, so the value is held to that range first.
+    // From Thetis console.Designer.cs:7572-7573 [v2.10.3.15]
+    const float value = static_cast<float>(std::clamp(
+        sliderValue,
+        static_cast<double>(ControlRanges::kFmsqThreshMinDb),
+        static_cast<double>(ControlRanges::kFmsqThreshMaxDb)));
+
+    // From Thetis console.cs:47295-47304 [v2.10.3.15]
+    //FM Squelch
+    //nValue = ptbSquelch.Value; // 0-100
+    //[2.10.3.5]MW0LGE convert to a 0-100 scale from a -160 to 0 scale
+    const int nValue = static_cast<int>(
+        ((value + kFmsqSliderOffset) / kFmsqSliderSpan) * kFmsqScaleMaximum);
+
+    // Thetis narrows the result to float (the FMSquelchThreshold property,
+    // radio.cs:1278) before SetRXAFMSQThreshold widens it back to double.
+    return static_cast<double>(static_cast<float>(
+        std::pow(10.0, kFmsqExponentScale * nValue / kFmsqExponentDivisor)));
 }
 
 // ---------------------------------------------------------------------------

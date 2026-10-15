@@ -179,6 +179,10 @@ mw0lge@grange-lane.co.uk
 //              AI-assisted via OpenAI Codex.
 // 2026-10-06 - ZZVL with no secondary bound cycles the primary lock on and off.
 //              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-14 - SQ, ZZSQ and ZZSX in FM read and write SliceModel fmsqThresh
+//              as the -160..0 slider value, as console.Squelch does;
+//              RxChannel now maps that value for WDSP (console.cs:47295-47304).
+//              J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 #include "CatDspCommands.h"
 #include "CatModelAdapter.h"
 #include "CatService.h"
@@ -224,7 +228,6 @@ constexpr double kKenwoodSquelchScale = 0.62745;
 constexpr float kVoicePercentMaximum = 100.0f;
 constexpr float kSliderSpan = 160.0f;
 constexpr double kSliderPerPercent = 1.6;
-constexpr double kFmDbPerPercent = 0.4;
 // From Thetis CAT/CATCommands.cs:5031-5156 [v2.10.3.15].
 constexpr float kNrReductionMaximum = 20.0f;
 // turn off 'auto agc' only if different MW0LGE_21k8
@@ -608,7 +611,7 @@ CatCommandResult CatDspCommands::execute(const CatRequest& request,CatSessionCon
         const double offset=model->rxMeterOffsetDbForSlice(slice->sliceIndex());
         if (!std::isfinite(offset)) { return error(); }
         if (get) {
-            const double raw=voice ? kSliderMinimum+kSliderPerPercent*slice->ssqlThresh() : (fm ? kSliderMinimum+kSliderPerPercent*(-slice->fmsqThresh()/kFmDbPerPercent) : slice->amsqThresh()+offset);
+            const double raw=voice ? kSliderMinimum+kSliderPerPercent*slice->ssqlThresh() : (fm ? slice->fmsqThresh() : slice->amsqThresh()+offset);
             const int slider=int(std::clamp(std::nearbyint(raw),double(kSliderMinimum),0.0));
             if (code == "SQ") { return payload(request.suffix.left(1)+number(qint64(std::nearbyint((1.0-std::abs(double(slider)/kSliderSpan))*kKenwoodSquelchMaximum)),width-1)); }
             return payload(number(std::abs(slider),width));
@@ -617,7 +620,7 @@ CatCommandResult CatDspCommands::execute(const CatRequest& request,CatSessionCon
         if (code == "SQ") { const qint64 raw=request.suffix.mid(1).toLongLong(&parsed); if (!parsed) { return error(); } slider=int(std::nearbyint(kSliderMinimum+std::clamp(raw,qint64(0),qint64(kKenwoodSquelchMaximum))*kKenwoodSquelchScale)); }
         else { slider=-int(std::clamp(input,qint64(0),qint64(fm ? kPercentMaximum : -kSliderMinimum))); }
         const int sqlPercent=int(((slider+kSliderSpan)/kSliderSpan)*kVoicePercentMaximum);
-        if (voice) { slice->setSsqlThresh(sqlPercent); } else if (fm) { slice->setFmsqThresh(-kFmDbPerPercent*sqlPercent); } else { slice->setAmsqThresh(slider-offset); }
+        if (voice) { slice->setSsqlThresh(sqlPercent); } else if (fm) { slice->setFmsqThresh(slider); } else { slice->setAmsqThresh(slider-offset); }
         return result();
     }
 //-W2PA  Out of alphabetical order a bit, but related to ZZVL above. 

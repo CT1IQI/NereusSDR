@@ -222,9 +222,9 @@ private slots:
     // ── fmsqThresh ───────────────────────────────────────────────────────────
 
     void fmsqThreshDefaultValue() {
-        // SliceModel default -150.0 dB (maps to ~3.16e-8 linear; near squelch open)
-        // Note: Thetis fm_squelch_threshold = 1.0f is linear — conversion happens
-        // in RxChannel::setFmsqThresh via pow(10.0, dB/20.0)
+        // SliceModel default -150.0, a -160..0 squelch slider position.
+        // RxChannel::fmsqThresholdForWdsp maps it to Thetis's linear WDSP
+        // threshold (about 0.76); tst_rxchannel_squelch pins that value.
         SliceModel s;
         QCOMPARE(s.fmsqThresh(), -150.0);
     }
