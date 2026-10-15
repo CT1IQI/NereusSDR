@@ -2864,7 +2864,8 @@ void MoxController::onMicPttFromRadio(bool pressed)
     // (ruling 8.9: the press stops the device first; PollPTT retries the
     // station's key after the take); an unkeyed holder is taken from only
     // when nothing before the gate refuses, as in tryPollKey.
-    // Asked only on a press edge: this runs on every status frame, and the
+    // Asked only on a press edge: this runs on every PTT report (each P2
+    // status frame; for P1, each change and each status tick), and the
     // Core's hook rebuilds device names each time it is asked.
     const bool otherDeviceHolds = pressEdge
         && (m_otherDeviceHolds ? m_otherDeviceHolds()

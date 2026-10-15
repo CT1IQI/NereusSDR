@@ -1040,8 +1040,9 @@ public slots:
     // Mic PTT, CAT, VOX and TCI record their source's level and run one
     // PollPTT pass (console.cs:25463-25623 [v2.10.3.15]) over the recorded
     // levels. Thetis polls every millisecond; NereusSDR runs the pass on
-    // every source event, and the radio's status frames (mic PTT, sent on
-    // every frame) keep it running like a poll while connected.
+    // every source event, and the radio's PTT reports (each P2 status
+    // frame; for P1, each change and each status tick, 1 ms keyed and
+    // 200 ms idle) keep it running like a poll while connected.
     //
     // The pass follows Thetis:
     //   - Nothing happens while a manual key is on (isManualKey(), Thetis
