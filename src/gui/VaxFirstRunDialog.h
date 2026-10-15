@@ -38,6 +38,7 @@
 
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/setup/SoundSystemLine.h"
+#include "gui/NereusGuiExport.h"
 
 class QPushButton;
 class QVBoxLayout;
@@ -55,7 +56,7 @@ enum class FirstRunScenario {
     RescanNewCables,      // E: App-startup rescan, NEW cables appeared since last run
 };
 
-class VaxFirstRunDialog : public QDialog {
+class NEREUS_GUI_EXPORT VaxFirstRunDialog : public QDialog {
     Q_OBJECT
 
 public:

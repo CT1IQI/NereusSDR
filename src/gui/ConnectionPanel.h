@@ -20,6 +20,8 @@
 //               Claude Code.
 //   2026-10-10  J.J. Boyd (KG4VCF): pillStyleSheet(), the state pill's
 //               sheet per state. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): resetRadioTableBeforeRowChange.
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -175,6 +177,7 @@ private:
     void buildUI();
     QWidget* buildStatusStrip();    // Phase 3Q Task 5 — top-of-panel connection status widget
     void setPillIconForRow(int row, const QString& mac);  // Pixmap pill icon (3Q polish)
+    void resetRadioTableBeforeRowChange();
     void updateButtonStates();
     void applyRowColor(int row, const RadioInfo& info);
     void populateRow(int row, const RadioInfo& info);

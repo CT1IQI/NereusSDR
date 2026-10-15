@@ -6,6 +6,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: sliceDrivesTx names receiver
+//                0's slice while TX is on a slice the client cannot see.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -614,6 +617,10 @@ private slots:
     /// Codex review round 6, PR #293. tx_frequency must come from the slice
     /// TxSliceArbiter has bound TX to, not from slice 0. Before 3F they were
     /// always the same slice and the distinction did not exist.
+    ///
+    /// Desktop hosting: while TX is bound to a slice the client has no
+    /// receiver for (TciProtocol::announcesTxSlice), the slice whose dial
+    /// tx_frequency follows is receiver 0's, as the init burst reports.
     bool sliceDrivesTx(int sliceId) const;
 
     // hookGlobalBroadcasts wires the radio-global signals that aren't tied to

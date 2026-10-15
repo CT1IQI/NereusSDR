@@ -7,6 +7,8 @@
 // watch.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//               Add diagnostic-only native query and lock acquisition markers.
 //   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-07, R-AUD-11, R-AUD-14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -17,6 +19,7 @@
 // =================================================================
 
 #include "core/audio/CoreAudioSystem.h"
+#include "core/audio/NativeAudioQueryTrace.h"
 
 #include "core/audio/AudioTestBarrier.h"
 #include "core/audio/CoreAudioInputStream.h"
@@ -33,6 +36,7 @@
 #include <dispatch/dispatch.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <mutex>
 #include <set>
 #include <utility>
@@ -98,7 +102,9 @@ QString readString(AudioObjectID object, AudioObjectPropertySelector selector)
     const AudioObjectPropertyAddress where = coreaudio::address(selector);
     CFStringRef value = nullptr;
     UInt32 size = sizeof(value);
-    if (AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, &value) != noErr
+    if (tracedNativeAudioQuery("hal.get-property-data", -1, [&] {
+            return AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, &value);
+        }) != noErr
         || value == nullptr) {
         return {};
     }
@@ -131,19 +137,27 @@ public:
     ~MacCoreAudioSystem() override
     {
         {
+            NativeAudioQueryTrace lockTrace("watcher.mutex-acquire");
             std::lock_guard<std::mutex> lock(m_mutex);
+            lockTrace.finish();
             if (m_systemListening) {
                 const AudioObjectPropertyAddress devices = coreaudio::address(kAudioHardwarePropertyDevices);
                 const AudioObjectPropertyAddress output =
                     coreaudio::address(kAudioHardwarePropertyDefaultOutputDevice);
                 const AudioObjectPropertyAddress input =
                     coreaudio::address(kAudioHardwarePropertyDefaultInputDevice);
-                AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &devices, m_queue,
+                tracedNativeAudioQuery("listener.system.devices.remove", -1, [&] {
+                    AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &devices, m_queue,
                                                        m_devicesListener);
-                AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &output, m_queue,
+                });
+                tracedNativeAudioQuery("listener.system.default-output.remove", -1, [&] {
+                    AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &output, m_queue,
                                                        m_defaultOutputListener);
-                AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &input, m_queue,
+                });
+                tracedNativeAudioQuery("listener.system.default-input.remove", -1, [&] {
+                    AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &input, m_queue,
                                                        m_defaultInputListener);
+                });
                 m_systemListening = false;
             }
             for (const AudioObjectID device : m_watched) {
@@ -168,28 +182,47 @@ public:
             return records;
         }
         const std::vector<AudioObjectID> ids =
-            coreaudio::readArray<AudioObjectID>(kAudioObjectSystemObject, kAudioHardwarePropertyDevices);
+            tracedNativeAudioQuery("system.devices", -1, [&] {
+                return coreaudio::readArray<AudioObjectID>(kAudioObjectSystemObject, kAudioHardwarePropertyDevices);
+            });
         std::set<AudioObjectID> present;
+        int ordinal = -1;
         for (const AudioObjectID id : ids) {
+            ++ordinal;
             CoreAudioDeviceRecord record;
             record.objectId = id;
-            record.uid = readString(id, kAudioDevicePropertyDeviceUID);
+            record.uid = tracedNativeAudioQuery("device.uid", ordinal, [&] {
+                return readString(id, kAudioDevicePropertyDeviceUID);
+            });
             if (record.uid.isEmpty()) {
                 continue;
             }
-            record.name = readString(id, kAudioObjectPropertyName);
-            record.transportType =
-                coreaudio::read<UInt32>(id, kAudioDevicePropertyTransportType).value_or(0);
-            record.outputChannels = coreaudio::channelCount(id, kAudioObjectPropertyScopeOutput);
-            record.inputChannels = coreaudio::channelCount(id, kAudioObjectPropertyScopeInput);
-            record.alive = coreaudio::read<UInt32>(id, kAudioDevicePropertyDeviceIsAlive).value_or(1) != 0;
-            record.hogPid = coreaudio::read<pid_t>(id, kAudioDevicePropertyHogMode).value_or(-1);
+            record.name = tracedNativeAudioQuery("device.name", ordinal, [&] {
+                return readString(id, kAudioObjectPropertyName);
+            });
+            record.transportType = tracedNativeAudioQuery("device.transport", ordinal, [&] {
+                return coreaudio::read<UInt32>(id, kAudioDevicePropertyTransportType).value_or(0);
+            });
+            record.outputChannels = tracedNativeAudioQuery("device.output-channels", ordinal, [&] {
+                return coreaudio::channelCount(id, kAudioObjectPropertyScopeOutput);
+            });
+            record.inputChannels = tracedNativeAudioQuery("device.input-channels", ordinal, [&] {
+                return coreaudio::channelCount(id, kAudioObjectPropertyScopeInput);
+            });
+            record.alive = tracedNativeAudioQuery("device.alive", ordinal, [&] {
+                return coreaudio::read<UInt32>(id, kAudioDevicePropertyDeviceIsAlive).value_or(1);
+            }) != 0;
+            record.hogPid = tracedNativeAudioQuery("device.hog", ordinal, [&] {
+                return coreaudio::read<pid_t>(id, kAudioDevicePropertyHogMode).value_or(-1);
+            });
             present.insert(id);
             records.append(record);
         }
         // Per-device listeners follow the list: added for a new device,
         // removed for one that has gone.
+        NativeAudioQueryTrace lockTrace("watcher.mutex-acquire");
         std::lock_guard<std::mutex> lock(m_mutex);
+        lockTrace.finish();
         for (auto it = m_watched.begin(); it != m_watched.end();) {
             if (present.count(*it) == 0) {
                 unwatchLocked(*it);
@@ -200,10 +233,17 @@ public:
         }
         for (const AudioObjectID id : present) {
             if (m_watched.insert(id).second) {
+                const int listenerOrdinal = lcAudio().isDebugEnabled()
+                    ? static_cast<int>(std::distance(ids.begin(), std::find(ids.begin(), ids.end(), id)))
+                    : -1;
                 const AudioObjectPropertyAddress alive = coreaudio::address(kAudioDevicePropertyDeviceIsAlive);
                 const AudioObjectPropertyAddress hog = coreaudio::address(kAudioDevicePropertyHogMode);
-                AudioObjectAddPropertyListenerBlock(id, &alive, m_queue, m_deviceStateListener);
-                AudioObjectAddPropertyListenerBlock(id, &hog, m_queue, m_deviceStateListener);
+                tracedNativeAudioQuery("listener.device.alive.add", listenerOrdinal, [&] {
+                    AudioObjectAddPropertyListenerBlock(id, &alive, m_queue, m_deviceStateListener);
+                });
+                tracedNativeAudioQuery("listener.device.hog.add", listenerOrdinal, [&] {
+                    AudioObjectAddPropertyListenerBlock(id, &hog, m_queue, m_deviceStateListener);
+                });
             }
         }
         return records;
@@ -217,7 +257,11 @@ public:
         const AudioObjectPropertySelector selector = direction == AudioDeviceDirection::Output
                                                          ? kAudioHardwarePropertyDefaultOutputDevice
                                                          : kAudioHardwarePropertyDefaultInputDevice;
-        const std::optional<AudioObjectID> id = coreaudio::read<AudioObjectID>(kAudioObjectSystemObject, selector);
+        const std::optional<AudioObjectID> id = tracedNativeAudioQuery(
+            direction == AudioDeviceDirection::Output ? "system.default-output" : "system.default-input",
+            -1, [&] {
+                return coreaudio::read<AudioObjectID>(kAudioObjectSystemObject, selector);
+            });
         if (!id || *id == kAudioObjectUnknown) {
             return std::nullopt;
         }
@@ -226,9 +270,13 @@ public:
 
     void setNoticeSink(std::function<void(AudioNotice)> sink) override
     {
+        NativeAudioQueryTrace lockTrace("watcher.mutex-acquire");
         std::lock_guard<std::mutex> lock(m_mutex);
+        lockTrace.finish();
         {
+            NativeAudioQueryTrace sinkLockTrace("watcher.sink-mutex-acquire");
             std::lock_guard<std::mutex> sinkLock(m_sinkMutex);
+            sinkLockTrace.finish();
             m_sink = std::move(sink);
         }
         if (m_systemListening || audioDevicesBarredForTestRun()) {
@@ -237,10 +285,16 @@ public:
         const AudioObjectPropertyAddress devices = coreaudio::address(kAudioHardwarePropertyDevices);
         const AudioObjectPropertyAddress output = coreaudio::address(kAudioHardwarePropertyDefaultOutputDevice);
         const AudioObjectPropertyAddress input = coreaudio::address(kAudioHardwarePropertyDefaultInputDevice);
-        AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &devices, m_queue, m_devicesListener);
-        AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &output, m_queue,
+        tracedNativeAudioQuery("listener.system.devices.add", -1, [&] {
+            AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &devices, m_queue, m_devicesListener);
+        });
+        tracedNativeAudioQuery("listener.system.default-output.add", -1, [&] {
+            AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &output, m_queue,
                                             m_defaultOutputListener);
-        AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &input, m_queue, m_defaultInputListener);
+        });
+        tracedNativeAudioQuery("listener.system.default-input.add", -1, [&] {
+            AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &input, m_queue, m_defaultInputListener);
+        });
         m_systemListening = true;
     }
 
@@ -266,7 +320,9 @@ private:
     {
         std::function<void(AudioNotice)> copy;
         {
+            NativeAudioQueryTrace lockTrace("watcher.sink-mutex-acquire");
             std::lock_guard<std::mutex> lock(m_sinkMutex);
+            lockTrace.finish();
             copy = m_sink;
         }
         if (copy) {
@@ -278,8 +334,12 @@ private:
     {
         const AudioObjectPropertyAddress alive = coreaudio::address(kAudioDevicePropertyDeviceIsAlive);
         const AudioObjectPropertyAddress hog = coreaudio::address(kAudioDevicePropertyHogMode);
-        AudioObjectRemovePropertyListenerBlock(device, &alive, m_queue, m_deviceStateListener);
-        AudioObjectRemovePropertyListenerBlock(device, &hog, m_queue, m_deviceStateListener);
+        tracedNativeAudioQuery("listener.device.alive.remove", -1, [&] {
+            AudioObjectRemovePropertyListenerBlock(device, &alive, m_queue, m_deviceStateListener);
+        });
+        tracedNativeAudioQuery("listener.device.hog.remove", -1, [&] {
+            AudioObjectRemovePropertyListenerBlock(device, &hog, m_queue, m_deviceStateListener);
+        });
     }
 
     dispatch_queue_t m_queue = nullptr;

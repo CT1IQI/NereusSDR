@@ -27,6 +27,11 @@
 //
 // Another instance of the branch's recurring shape, this one inverted:
 // here the SETTER was the thing that looked authoritative and was not.
+//
+// Modification history (NereusSDR):
+//   2026-10-15 - The band-restore case flushes the setup's held per-band
+//                save before seeding its 20m fixture. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -107,6 +112,11 @@ private slots:
         slice->setFrequency(7150000.0);
         QCOMPARE(slice->streamIndex(), 1);
         model.setActiveSlice(a);
+        // Setup tuned slice a through 20m at 768 kHz. RadioModel holds that
+        // band's values until its coalesced save and writes them at the next
+        // band click, so flush the setup save before seeding: otherwise the
+        // held 20m capture replaces the fixture below.
+        model.flushPendingSettingsSave();
         // DspMode is hasSettingsFor's visited-band sentinel. Seed after
         // setup so any rate-change persistence cannot replace this fixture.
         settings.setValue(prefix + QStringLiteral("DspMode"), static_cast<int>(DSPMode::USB));

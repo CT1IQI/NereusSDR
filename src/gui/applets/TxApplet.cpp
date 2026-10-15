@@ -245,6 +245,9 @@
 //   2026-10-13 - Present the window-owned DisplayDuplex preference beside PS-A.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -949,8 +952,6 @@ void TxApplet::buildUI()
         // Right-click → emit txProfileMenuRequested (mirrors Thetis
         // comboTXProfile_MouseDown at console.cs:44519-44522 [v2.10.3.13]).
         m_profileCombo = new QComboBox(this);
-        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
-        installQtCocoaAccessibleTableCacheRepair(m_profileCombo->view());
         m_profileCombo->addItem(QStringLiteral("Default"));
         m_profileCombo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
         m_profileCombo->setFixedHeight(22);
@@ -3372,6 +3373,7 @@ void TxApplet::rebuildProfileCombo()
     const QStringList names = m_micProfileMgr->profileNames();
     const QString active = m_micProfileMgr->activeProfileName();
 
+    resetItemsBeforeRowChange(m_profileCombo);
     m_profileCombo->clear();
     m_profileCombo->addItems(names);
 

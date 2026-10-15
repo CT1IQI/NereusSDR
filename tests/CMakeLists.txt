@@ -1761,6 +1761,8 @@ endif()
 if(APPLE)
     nereus_add_test(tst_core_audio_backend)
 endif()
+# 2026-10-12: J.J. Boyd / OpenAI Codex; portable off-device query diagnostics.
+nereus_add_test(tst_native_audio_query_trace)
 
 # Audited 2026-07-25: tst_linux_pipe_bus, tst_linux_backend_detection (below)
 # and tst_pipewire_stream_config, tst_pipewire_stream_integration (further
@@ -3100,6 +3102,9 @@ nereus_add_test(tst_workspace_colour_sweep
     visual/PreviewData.cpp
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_workspace_colour_sweep PRIVATE NEREUS_BUILD_TESTS)
+# visual/PreviewScenes.cpp includes "fakes/..." headers, which resolve from
+# tests/ only, as on nereus_visual_preview (tests/visual/CMakeLists.txt).
+target_include_directories(tst_workspace_colour_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # One function walks every dialog and Setup scene (161 scenes, 173 grabs)
 # on one window: measured 2026-10-09 on the M5 Max at 531 s, and 872 s
 # with four preview captures running beside it. QtTest's function watchdog (300 s
@@ -6817,22 +6822,22 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
-# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
-# deletes the real cell interfaces of expired native rows while
-# QAccessibleTable keeps their IDs; the next spot insert or trim then
-# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
-# performs that deletion through QAccessible::deleteAccessibleInterface and
-# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
-# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+# Spot List under live spot traffic with accessibility on. The macOS
+# bridge deletes the cell interfaces it holds when its pool drains after a
+# table change, while QAccessibleTable keeps their IDs; the next spot insert
+# or trim then dereferenced them inside SpotTableModel::addSpot. Each case
+# walks the cells, changes rows, lets the queued reset run, deletes the
+# walked cells as the drain does and changes rows again: arrival, cap trim,
+# band filter, clear and a hidden dialog. The selected spot, current spot
+# and top visible spot stay on the same spot across a new spot, a burst (one
+# reset), a trim and an update; with accessibility off nothing is reset.
 nereus_add_test(tst_spot_list_accessibility)
 
-# The same Qt 6.11.0 Cocoa accessibility cache repair
-# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
-# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
-# rows after the cell interfaces were deleted the way the Cocoa bridge
-# deletes them, the real FreeDVReporterDialog's proxied station table, and
-# the gate leaving the cache alone on every other platform.
-nereus_add_test(tst_qt_cocoa_accessible_table_cache)
+# The real model reset item views take before their rows change with
+# accessibility on (resetItemsBeforeRowChange): items, roles, flags,
+# current row and selection kept, no view signals, one modelReset; expired
+# cells then a row change do not crash.
+nereus_add_test(tst_item_view_model_reset)
 
 # Workspace visual review (2026-10-08): the visual preview's dialog seams.
 # ConnectionPanel and LanScanDialog start no discovery with their test seam
@@ -7799,6 +7804,12 @@ nereus_add_test(tst_legacy_iq_tap_is_stream_zero)
 # to StatusToast. Case 1 pins the Qt behaviour that caused it, so the rest of
 # the file has a stated reason to exist.
 nereus_add_test(tst_status_toast_preserves_bottom_bar)
+
+# Current-main merged-review regressions: valid saved 1 kHz receive spans
+# survive initial Slice A wiring, and live tool-window toasts follow their
+# owning window's actual move/resize events without changing their layout.
+nereus_add_test(tst_display_settings_correctness)
+target_compile_definitions(tst_display_settings_correctness PRIVATE NEREUS_BUILD_TESTS)
 
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
