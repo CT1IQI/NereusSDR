@@ -1068,7 +1068,7 @@ private slots:
     // an EP6 flood it cannot keep up with, as a Pi 4 Core's connection
     // thread is while keyed. Reports the worst EP2 gap by the sender's own
     // send stamps, where each gap's time went, and the wakeup lateness of a
-    // control thread raised as the sender is (elevateAudioThreadPriority)
+    // control thread raised as the sender is (ep2SenderMain's elevation)
     // and sleeping 2 ms a pass, so a gap the machine imposes on every
     // raised thread shows in both. CPU load on the other cores comes from
     // outside the test. The 32 ms bound is the HL2's: it drops PTT after
@@ -1115,7 +1115,14 @@ private slots:
         wakes.reserve(size_t(soakS) * 600 + 1000);
         QString controlScheduling;
         std::thread control([&run, &wakes, &controlScheduling] {
-            AudioPriorityToken* prio = elevateAudioThreadPriority();
+            // Raised as ep2SenderMain raises the sender: QoS alone on the
+            // Mac, the audio thread priority elsewhere.
+            AudioPriorityToken* prio = nullptr;
+#ifdef Q_OS_MAC
+            elevateLatencyCriticalThreadPriority(/*logSuccess=*/false);
+#else
+            prio = elevateAudioThreadPriority();
+#endif
             controlScheduling = threadSchedulingNote();
             while (run.load()) {
                 const qint64 from = steadyNowNs();
