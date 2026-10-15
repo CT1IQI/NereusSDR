@@ -5855,8 +5855,11 @@ nereus_add_test(tst_dsp_options_per_mode_apply)
 # before it runs a block (Thetis console.cs:2681-2692 SyncDSP), and on every
 # later mode change, the first receiver and the others alike. Real channels
 # through openRxChannelPool. With nothing saved, the DSP > Options page shows
-# what a receiver and the transmitter start with in every mode group.
-nereus_add_test(tst_dsp_options_first_apply)
+# what a receiver and the transmitter start with in every mode group. Slice
+# A's receiver on a real connect (ConnectableRadioModel) is read off WDSP.
+nereus_add_test(tst_dsp_options_first_apply
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
 
 # ── Task 4.3: Filter Impulse Cache toggle persistence ─────────────────────────
 # AppSettings round-trip for DspOptionsCacheImpulse and

@@ -47,6 +47,7 @@
 #include "gui/setup/DspOptionsPage.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "fakes/ConnectableRadioModel.h"
 
 #ifdef HAVE_WDSP
 // What a receiver runs is read off WDSP's own channel, not off RxChannel's
@@ -59,6 +60,7 @@ extern "C" {
 #endif
 
 using namespace NereusSDR;
+using NereusSDR::Test::ConnectableRadioModel;
 
 namespace {
 
@@ -490,6 +492,40 @@ private slots:
         const int runs = tx->txDspBlockSize();
         txEngine.destroyTxChannel(WdspEngine::kTxChannelId);
         QCOMPARE(runs, 128);
+    }
+
+    // Slice A's receiver on a real connect. The connect path opens channel 0
+    // at WDSP's 4096 block, 4096 coefficients and linear phase (createRxChannel;
+    // RXA.c create_nbp), then seeds it from slice A, DSP > Options included.
+    // The values saved here differ from all three, in every mode group, so
+    // whatever mode slice A comes up in, a channel the seed missed shows it.
+    void slice_a_takes_its_modes_sizes_and_type_on_connect()
+    {
+        constexpr int kSavedBlock = 512;
+        constexpr int kSavedFilter = 1024;
+        auto& s = AppSettings::instance();
+        for (const ModeGroup& group : kRxGroups) {
+            const QString suffix = QLatin1String(group.key) + QStringLiteral("Rx");
+            s.setValue(QStringLiteral("DspOptionsBufferSize") + suffix,
+                       QString::number(kSavedBlock));
+            s.setValue(QStringLiteral("DspOptionsFilterSize") + suffix,
+                       QString::number(kSavedFilter));
+            s.setValue(QStringLiteral("DspOptionsFilterType") + suffix,
+                       QStringLiteral("Low Latency"));
+        }
+
+        auto harness = ConnectableRadioModel::create();
+        QVERIFY(harness);
+        RadioModel& model = harness->model();
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        SliceModel* const sliceA = model.sliceById(0);
+        QVERIFY(sliceA != nullptr);
+        const RxChannel* rx = model.wdspEngine()->rxChannel(0);
+        QVERIFY(rx != nullptr);
+        QCOMPARE(wdspBlockSize(rx), kSavedBlock);
+        QCOMPARE(wdspFilterSize(rx), kSavedFilter);
+        QVERIFY(!wdspLinearPhase(rx));
     }
 };
 
