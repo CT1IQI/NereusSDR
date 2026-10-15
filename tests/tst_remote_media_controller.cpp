@@ -12271,14 +12271,36 @@ private slots:
         QVERIFY(rig.keyed());
         RemoteMicFeed* feed = h.station.remoteMicFeed();
         QVERIFY(feed != nullptr);
-        // 50 of the line's 4 ms packets: 200 ms of the program's audio.
-        const quint64 sentAtKey = media.micPacketsSent();
-        QTRY_VERIFY_WITH_TIMEOUT(media.micPacketsSent() >= sentAtKey + 50, 5000);
-        const std::vector<float> heard = pullFeed(feed, 40);
-        const double vaxPower = tonePower(heard, kVaxHz);
-        const double micPower = tonePower(heard, kMicHz);
-        // The VAX tone came (not silence), and the microphone's did not.
-        QVERIFY2(vaxPower > 1.0, qPrintable(QString::number(vaxPower)));
+        // Everything the Core takes from key-up on, about in real time:
+        // 120 steps of four pump blocks (5.3 ms) each, one letter a step.
+        // The feed starts silent while it fills ('.'), and the block where
+        // the audio starts can be part silence ('?'); after that every step
+        // is the VAX tone ('V'), and no step is ever the microphone's ('M').
+        constexpr int kStepFrames = 4 * RemoteMicConfig::kPumpBlockFrames;
+        QString timeline;
+        std::vector<float> steady;
+        for (int step = 0; step < 120; ++step) {
+            QTest::qWait(5);
+            const std::vector<float> chunk = pullFeed(feed, 4);
+            double sum = 0.0;
+            for (float v : chunk) { sum += static_cast<double>(v) * v; }
+            const double rms = std::sqrt(sum / kStepFrames);
+            const double mic = tonePower(chunk, kMicHz);
+            const double vax = tonePower(chunk, kVaxHz);
+            const QChar mark = rms < 0.02 ? QChar('.')
+                : mic > 4.0 * vax         ? QChar('M')
+                : vax > 4.0 * mic         ? QChar('V')
+                                          : QChar('?');
+            timeline += mark;
+            // The steady part: from the fifth step after the VAX tone came.
+            if (timeline.count(QChar('V')) > 4) {
+                steady.insert(steady.end(), chunk.begin(), chunk.end());
+            }
+        }
+        QVERIFY2(!timeline.contains(QChar('M')), qPrintable(timeline));
+        QVERIFY2(timeline.count(QChar('V')) > 60, qPrintable(timeline));
+        const double vaxPower = tonePower(steady, kVaxHz);
+        const double micPower = tonePower(steady, kMicHz);
         QVERIFY2(vaxPower > 100.0 * micPower,
                  qPrintable(QStringLiteral("VAX %1, microphone %2").arg(vaxPower).arg(micPower)));
         QCOMPARE(vaxDevice->readsBesideTheProgram(), 0);
