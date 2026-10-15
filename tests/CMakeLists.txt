@@ -7796,6 +7796,12 @@ nereus_add_test(tst_legacy_iq_tap_is_stream_zero)
 # the file has a stated reason to exist.
 nereus_add_test(tst_status_toast_preserves_bottom_bar)
 
+# Current-main merged-review regressions: valid saved 1 kHz receive spans
+# survive initial Slice A wiring, and live tool-window toasts follow their
+# owning window's actual move/resize events without changing their layout.
+nereus_add_test(tst_display_settings_correctness)
+target_compile_definitions(tst_display_settings_correctness PRIVATE NEREUS_BUILD_TESTS)
+
 # Phase 3F Sub-Epic C Task 7: RadioModel slice lifecycle.
 # 2 tests: addSliceOnPan_exists_and_is_callable (cap enforcement after
 # the first successful add), removeSlice_refuses_to_remove_last_slice
