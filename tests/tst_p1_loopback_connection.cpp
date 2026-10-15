@@ -62,6 +62,25 @@ qint64 steadyNowNs()
         std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+// EP6 frames the connection parsed: one iqDataReceived for receiver 0 per
+// frame. Since 2026-10-14 frameReceived is emitted once per onReadyRead
+// call (P1 status at P2's rate), so it no longer counts frames.
+class Ep6FrameCounter {
+public:
+    explicit Ep6FrameCounter(P1RadioConnection& conn)
+    {
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &m_ctx,
+                         [this](int rx, const QVector<float>&) {
+                             if (rx == 0) { ++m_count; }
+                         });
+    }
+    int count() const { return m_count; }
+    void clear() { m_count = 0; }
+private:
+    QObject m_ctx;
+    int m_count{0};
+};
+
 // The EP2 frames that reached the fake in [fromNs, toNs], and the largest
 // gap between them. The window's edges count as arrivals, so a stall at
 // the start or the end of the window shows as a gap.
@@ -163,10 +182,11 @@ public:
     Ep6Flood(P1RadioConnection& conn, int count, quint32 firstSeq, int numRx)
         : m_conn(conn), m_count(count), m_firstSeq(firstSeq), m_numRx(numRx)
     {
-        QObject::connect(&conn, &RadioConnection::frameReceived, &m_ctx,
-                         [this] { ++m_framesSeen; });
+        // 2026-10-14: frames are counted on iqDataReceived for receiver 0;
+        // frameReceived is now once per onReadyRead call.
         QObject::connect(&conn, &RadioConnection::iqDataReceived, &m_ctx,
                          [this](int rx, const QVector<float>& samples) {
+                             if (rx == 0) { ++m_framesSeen; }
                              m_iq.append(qMakePair(rx, samples));
                          });
     }
@@ -400,7 +420,7 @@ private slots:
         P1RadioConnection conn;
         conn.init();
         conn.setBandwidthMonitor(&bw);
-        QSignalSpy frames(&conn, &RadioConnection::frameReceived);
+        Ep6FrameCounter frames(conn);
 
         conn.connectToRadio(makeInfo(fake));
         QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
@@ -479,7 +499,7 @@ private slots:
 
         P1RadioConnection conn;
         conn.init();
-        QSignalSpy frames(&conn, &RadioConnection::frameReceived);
+        Ep6FrameCounter frames(conn);
 
         conn.connectToRadio(makeInfo(fake));
         QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
@@ -655,7 +675,8 @@ private slots:
 
         P1RadioConnection conn;
         conn.init();
-        QSignalSpy frames(&conn, &RadioConnection::frameReceived);
+        Ep6FrameCounter frames(conn);
+        QSignalSpy reads(&conn, &RadioConnection::frameReceived);
 
         conn.connectToRadio(makeInfo(fake));
         QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
@@ -663,6 +684,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
         QTRY_COMPARE_WITH_TIMEOUT(frames.count(), 1, 3000);
         frames.clear();
+        reads.clear();
 
         // Four batches' worth, queued on the socket before this thread's
         // event loop runs again (sendEp6Frames returns once they are
@@ -673,6 +695,8 @@ private slots:
 
         conn.onReadyReadForTest();
         QCOMPARE(frames.count(), cap);
+        // One activity tick for the whole read (P1 status at P2's rate).
+        QCOMPARE(reads.count(), 1);
         QVERIFY2(conn.socketHasPendingDatagramsForTest(),
                  "one onReadyRead call read every pending datagram");
 
@@ -802,7 +826,11 @@ private slots:
         const int gapsBefore = bw.ep6SequenceErrorCount();
 
         QObject slowReader;
-        connect(&conn, &RadioConnection::frameReceived, &slowReader, [] {
+        // Per frame: iqDataReceived for receiver 0 (frameReceived is once
+        // per read since 2026-10-14).
+        connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
+                [](int rx, const QVector<float>&) {
+            if (rx != 0) { return; }
             QElapsedTimer t;
             t.start();
             while (t.nsecsElapsed() < 3000000) {
@@ -816,7 +844,7 @@ private slots:
         QVERIFY(flood.send(fake.clientPort(), kFlood));
         QVERIFY(flood.waitProcessed(kFlood, 10000));
         const qint64 floodEnd = steadyNowNs();
-        QObject::disconnect(&conn, &RadioConnection::frameReceived, &slowReader, nullptr);
+        QObject::disconnect(&conn, &RadioConnection::iqDataReceived, &slowReader, nullptr);
         pump.stop();
 
         const Ep2Span span = ep2Span(fake.ep2ArrivalNs(), floodStart, floodEnd);
@@ -852,7 +880,11 @@ private slots:
 
         // A CPU-short reader: every frame read costs 200 us on this thread.
         QObject slowReader;
-        connect(&conn, &RadioConnection::frameReceived, &slowReader, [] {
+        // Per frame: iqDataReceived for receiver 0 (frameReceived is once
+        // per read since 2026-10-14).
+        connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
+                [](int rx, const QVector<float>&) {
+            if (rx != 0) { return; }
             QElapsedTimer t;
             t.start();
             while (t.nsecsElapsed() < 200000) {
@@ -883,7 +915,7 @@ private slots:
         // Run this thread's event loop while the feeder runs.
         QTest::qWait(100 + kFeedMs + 50);
         feeder.join();
-        QObject::disconnect(&conn, &RadioConnection::frameReceived, &slowReader, nullptr);
+        QObject::disconnect(&conn, &RadioConnection::iqDataReceived, &slowReader, nullptr);
 
         // The first frame after the post with C0 MOX clear, and every frame
         // after it unkeyed.

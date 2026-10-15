@@ -110,6 +110,12 @@
 //                (m_frameMutex); the pacer QTimer is gone. J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Anthropic
 //                Claude Code.
+//   2026-10-14 - Radio status reaches the rest of the Core at P2's rate
+//                (kStatusIntervalIdleMs, kStatusIntervalKeyedMs): PTT
+//                changes at once, telemetry, supply, PA volts and ADC
+//                overloads at the status tick, frameReceived once per read.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -713,6 +719,18 @@ private:
     // Dispatcher ported from Thetis networkproto1.c WriteMainLoop cases 0-17.
     void composeCcForBank(int bankIdx, quint8 out[5]) const;
     void parseEp6Frame(const QByteArray& pkt);
+    // The status tick (see kStatusIntervalIdleMs): run once per EP6 packet,
+    // after it is parsed, on the connection thread. When the tick is due it
+    // emits the latched telemetry, supply and PA volts, the pending ADC
+    // overloads and the PTT repeat. hasMicPtt says whether this packet had
+    // an ordinary status subframe; pttEmitted whether it already emitted a
+    // PTT change.
+    void serviceStatusTick(bool hasMicPtt, bool pttEmitted);
+    // Now on the status clock, in steady_clock nanoseconds (or the test's).
+    qint64 statusNowNs() const;
+    // Clears the status latches and makes the next packet a tick. Called
+    // where connectToRadio resets the rest of the receive state.
+    void resetStatusRate();
 
     // --- Command & Control banks (NetworkIO.cs SetC0..SetC4) ---
     void composeCcBank0(quint8* out);
@@ -907,6 +925,21 @@ private:
     // or a high-resolution waitable timer on Windows), and each pass sends
     // what the clock says is due. Source: networkproto1.c:700-747.
     static constexpr int kEp2PacerIntervalMs  = 2;
+
+    // Status rate: how often parseEp6Frame hands radio status (telemetry,
+    // supply and PA volts, ADC overloads, the PTT repeat) to the rest of
+    // the Core. An HL2 sends about 5,333 EP6 packets a second, each with
+    // status; emitting all of it per packet queued that many calls a second
+    // to the main thread. A Protocol 2 radio sends its high-priority status
+    // every 1 ms while transmitting or while an ADC overload is latched,
+    // and every 200 ms otherwise, so P1 now hands status on at that rate:
+    //   From Anvelina CC_encoder.v:173-175 [@8e86a61]:
+    //     // if Txing or overload then use 1mS update rate, otherwise 200mS
+    // PTT changes are never held for the tick: they are emitted in the
+    // packet where they first appear, as the gateware sends a change of
+    // PTT at once (CC_encoder.v:195-203 [@8e86a61]).
+    static constexpr int kStatusIntervalIdleMs  = 200;
+    static constexpr int kStatusIntervalKeyedMs = 1;
 
     // Spec rate: 48000 samples/s / 126 samples per EP2 packet = 380.95 pps
     //   → one packet every 2625 microseconds. Integer math keeps the catch-up
@@ -1514,6 +1547,35 @@ private:
     quint16 m_paUserAdc0Raw{0};   // AIN3 — MKII PA Volts
     quint16 m_paUserAdc1Raw{0};   // AIN4 — MKII PA Amps
     quint16 m_paSupplyRaw{0};     // AIN6 — Hermes supply Volts
+    // 2026-10-14: these latches are now emitted at the status tick
+    // (serviceStatusTick, kStatusIntervalIdleMs), not once per parsed frame.
+
+    // --- Status rate (2026-10-14, see kStatusIntervalIdleMs) ---
+    // All of it is read and written on the connection thread only, in the
+    // EP6 receive path, so none of it needs the frame lock.
+    // When the last status tick ran, steady_clock ns; -1 = the next packet
+    // is the first status of the connection and ticks at once.
+    qint64  m_statusLastTickNs{-1};
+    // Something to emit at the next tick, latched per packet.
+    bool    m_statusTelemetryPending{false};
+    bool    m_statusSupplyPending{false};
+    quint16 m_statusSupplyRaw{0};
+    bool    m_statusUserAdc0Pending{false};
+    quint16 m_statusUserAdc0Raw{0};
+    // One bit per ADC (bit n = adcOverflow(n)), OR-ed from every packet and
+    // cleared at the tick that emits them, as the gateware latches an
+    // overload until it is sent (CC_encoder.v:184-186, 213-215 [@8e86a61]).
+    quint8  m_statusOverloadPending{0};
+    // The last PTT level emitted, and whether one has been emitted.
+    bool    m_statusPttLevel{false};
+    bool    m_statusPttKnown{false};
+    // A tick fell on a packet with no ordinary status subframe (only HL2
+    // I2C responses), so the PTT repeat waits for the next packet with one.
+    bool    m_statusPttRepeatDue{false};
+    // Test seams: a fixed status clock (-1 = steady_clock) and the PTT
+    // repeat switched off.
+    qint64  m_statusClockOverrideNs{-1};
+    bool    m_statusPttRepeat{true};
 
     // --- HL2 bandwidth monitor legacy state (replaced by HermesLiteBandwidthMonitor) ---
     // Retained so hl2IsThrottled() still compiles and existing callers are unbroken
@@ -1590,6 +1652,12 @@ public:
     // hand-crafted 1032-byte ep6 datagram and assert paTelemetryUpdated()
     // emits the expected raw values.  Phase 3P-H Task 4.
     void parseEp6FrameForTest(const QByteArray& pkt) { parseEp6Frame(pkt); }
+    // The status clock parseEp6Frame reads (steady_clock nanoseconds);
+    // -1 goes back to the real clock. The PTT repeat at the status tick can
+    // be switched off to show what it is for.
+    void setStatusClockForTest(qint64 nowNs) { m_statusClockOverrideNs = nowNs; }
+    void setStatusPttRepeatForTest(bool on) { m_statusPttRepeat = on; }
+    void resetStatusRateForTest() { resetStatusRate(); }
 
     // One onReadyRead() call, and whether datagrams are still waiting after
     // it, so a test can show the read loop is bounded.

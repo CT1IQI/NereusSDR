@@ -26,6 +26,10 @@
 //   2026-10-14: The ping timestamp is atomic: P1 notes its pings on the
 //               EP2 sender thread. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-14: P1's status contract at P2's rate: micPttFromRadio on a
+//               change and at each status tick, frameReceived once per
+//               read. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//               via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -945,6 +949,10 @@ signals:
     // The TitleBar activity LED throttles this to ≤10 Hz visible refresh —
     // the emitter fires at the full frame rate; throttling is the receiver's job.
     // Design doc §4.1.
+    // 2026-10-14: both protocols now emit it once per socket read, not per
+    // frame (P2 once per drain, P1 once per onReadyRead call of up to
+    // kMaxEp6DatagramsPerRead datagrams). It is an activity tick, not a
+    // frame count.
     void frameReceived();
 
     // Emitted when connectToRadio() fails to reach the Connected state.
@@ -1062,6 +1070,13 @@ signals:
     // P2 emits on every High-Priority packet. P1 emits when an EP6 packet
     // contains at least one ordinary status subframe. For an HL2 packet made
     // entirely of I2C responses, the I2C branch emits no PTT update.
+    // 2026-10-14, P1 at P2's rate: P1 emits a change of level in the EP6
+    // packet where it first appears (never delayed), and repeats the
+    // current level at each status tick (every 1 ms while keyed, every
+    // 200 ms idle; P1RadioConnection::kStatusIntervalIdleMs), on a packet
+    // with an ordinary status subframe. The repeat is what P2's
+    // High-Priority packets give: MoxController keys a PTT held through a
+    // TX inhibit, PA trip or receive only on the next call after it clears.
     // MoxController::onMicPttFromRadio() is idempotent on repeated same-state
     // calls (setPttMode(Mic) is a no-op when mode unchanged; setMox(x) only
     // advances the state machine when x differs from m_mox).

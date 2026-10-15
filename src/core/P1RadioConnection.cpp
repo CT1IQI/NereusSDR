@@ -198,6 +198,13 @@
 //                read-loop cap now keeps queued control calls timely.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-14 - Radio status reaches the rest of the Core at P2's rate:
+//                PTT changes at once and again at each status tick,
+//                telemetry, supply, PA volts and ADC overloads at the tick
+//                (1 ms keyed or with an overload pending, 200 ms idle, as
+//                Anvelina CC_encoder.v:173-175 [@8e86a61] sends P2 status),
+//                and frameReceived once per read. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -1138,6 +1145,9 @@ void P1RadioConnection::connectToRadio(const RadioInfo& info)
     m_ep6SeqPrimed = false;
     m_parseFailLogged = false;
     m_firstEmitLogged = false;
+    // The status rate starts again with the connection: nothing pending,
+    // and the first status packet ticks at once.
+    resetStatusRate();
 
     // Apply per-board quirks (attenuator clamp, OC zero-force, etc.) now that
     // m_caps is set. Source: specHPSDR.cs per-HPSDRHW branches.
@@ -4466,6 +4476,9 @@ void P1RadioConnection::onReadyRead()
     // and stopped every EP2 frame. The read notifier calls back for the
     // rest. A NereusSDR scheduling bound, not a Thetis value.
     int datagramsRead = 0;
+    // frameReceived is emitted once per read, after the loop, as P2 emits
+    // it once per socket drain (P2RadioConnection::onReadyRead).
+    bool frameReceivedPending = false;
     while (datagramsRead < kMaxEp6DatagramsPerRead && m_socket->hasPendingDatagrams()) {
         ++datagramsRead;
         QNetworkDatagram dg = m_socket->receiveDatagram();
@@ -4494,7 +4507,9 @@ void P1RadioConnection::onReadyRead()
 
             // Per-frame activity signal for TitleBar LED (throttled to 10 Hz
             // by the receiver). Design §4.1.
-            emit frameReceived();
+            // Now one per read: noted here, emitted after the loop. The
+            // LED blinks on its own timer, so it looks the same.
+            frameReceivedPending = true;
 
             // Diagnostic: log the first EP6 frame of this session so
             // remote debugging can tell "connected but no data" apart
@@ -4593,6 +4608,9 @@ void P1RadioConnection::onReadyRead()
 
             parseEp6Frame(data);
         }
+    }
+    if (frameReceivedPending) {
+        emit frameReceived();
     }
 }
 
@@ -5630,6 +5648,109 @@ void P1RadioConnection::sendPrimingBurst(int countPerBank)
 }
 
 // ---------------------------------------------------------------------------
+// Status rate (2026-10-14)
+//
+// parseEp6Frame latches radio status per packet and serviceStatusTick hands
+// it to the rest of the Core at a Protocol 2 radio's rate: every
+// kStatusIntervalKeyedMs (1 ms) while keyed or while an ADC overload is
+// pending, every kStatusIntervalIdleMs (200 ms) otherwise. An HL2 sends
+// about 5,333 EP6 packets a second; one queued call of each status signal
+// per packet kept the main thread busy (1.6 s of lag on the Pi 4 Core while
+// keyed). The P2 rates are the gateware's:
+//   From Anvelina CC_encoder.v [@8e86a61]:
+//     line 6: "It is sent whenever data changes and every **mS";
+//     lines 173-175: // if Txing or overload then use 1mS update rate,
+//                    otherwise 200mS
+//     lines 184-186, 213-215: an overload is latched until it is sent;
+//     lines 195-203: a change of PTT, dot or dash (memory[0]) or of the
+//                    user I/O (memory[55]) is sent at once.
+// So: a PTT change is emitted in the packet where it appears (parseEp6Frame),
+// never delayed; overloads are OR-ed until a tick and none is lost; the
+// telemetry, supply and PA volts emitted are the latest packet's.
+//
+// The PTT repeat: MoxController::onMicPttFromRadio runs one PollPTT pass
+// per call, and setTxInhibited, setPaTripped and setRxOnly do not run one,
+// so a PTT held while one of them is set keys only on a later call. A P2
+// radio's high-priority packet is that call, every 200 ms idle and every
+// 1 ms keyed; the repeat at each tick gives P1 the same.
+//
+// "Keyed" for the interval is the MOX bit the EP2 sender puts on the wire
+// (m_mox, a std::atomic written by setMox on this thread) or the last PTT
+// level from the radio. Everything else here is touched on the connection
+// thread only, in the EP6 receive path, so no frame lock is needed.
+// NereusSDR's own design; no upstream code is ported here.
+// ---------------------------------------------------------------------------
+qint64 P1RadioConnection::statusNowNs() const
+{
+    if (m_statusClockOverrideNs >= 0) {
+        return m_statusClockOverrideNs;
+    }
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void P1RadioConnection::resetStatusRate()
+{
+    m_statusLastTickNs       = -1;
+    m_statusTelemetryPending = false;
+    m_statusSupplyPending    = false;
+    m_statusSupplyRaw        = 0;
+    m_statusUserAdc0Pending  = false;
+    m_statusUserAdc0Raw      = 0;
+    m_statusOverloadPending  = 0;
+    m_statusPttLevel         = false;
+    m_statusPttKnown         = false;
+    m_statusPttRepeatDue     = false;
+}
+
+void P1RadioConnection::serviceStatusTick(bool hasMicPtt, bool pttEmitted)
+{
+    const qint64 now = statusNowNs();
+    const bool keyed = m_mox.load(std::memory_order_relaxed)
+                       || (m_statusPttKnown && m_statusPttLevel);
+    const qint64 intervalMs = (keyed || m_statusOverloadPending != 0)
+                                  ? kStatusIntervalKeyedMs
+                                  : kStatusIntervalIdleMs;
+    const bool due = m_statusLastTickNs < 0
+                     || (now - m_statusLastTickNs) >= intervalMs * 1000000LL;
+    if (due) {
+        m_statusLastTickNs = now;
+        if (m_statusPttRepeat && m_statusPttKnown) {
+            m_statusPttRepeatDue = true;
+        }
+        if (m_statusTelemetryPending) {
+            m_statusTelemetryPending = false;
+            emit paTelemetryUpdated(m_paFwdRaw, m_paRevRaw, m_paExciterRaw,
+                                    m_paUserAdc0Raw, m_paUserAdc1Raw, m_paSupplyRaw);
+        }
+        if (m_statusSupplyPending) {
+            m_statusSupplyPending = false;
+            handleSupplyRaw(m_statusSupplyRaw);
+        }
+        if (m_statusUserAdc0Pending) {
+            m_statusUserAdc0Pending = false;
+            handleUserAdc0Raw(m_statusUserAdc0Raw);
+        }
+        const quint8 overloads = m_statusOverloadPending;
+        m_statusOverloadPending = 0;
+        for (int adc = 0; adc < 3; ++adc) {
+            if (overloads & (1u << adc)) {
+                emit adcOverflow(adc);
+            }
+        }
+    }
+    // The PTT repeat goes out only on a packet that carries PTT (an HL2
+    // packet of I2C responses alone emits no PTT), and not on top of a
+    // change this packet already emitted.
+    if (m_statusPttRepeatDue && hasMicPtt) {
+        m_statusPttRepeatDue = false;
+        if (!pttEmitted) {
+            emit micPttFromRadio(m_statusPttLevel);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // parseEp6Frame (instance method)
 //
 // Calls the static parseEp6Frame helper and emits iqDataReceived for each
@@ -5695,8 +5816,20 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
     //
     // C0 is ControlBytesIn[0]; bit 0 is ptt_in. The later ordinary subframe
     // wins, matching mi0bot's sequential writes to its single ptt_in value.
+    //
+    // Rate (2026-10-14): a change of level is emitted here, in the packet
+    // where it first appears, never held for the status tick. The same
+    // level again is not re-emitted per packet; serviceStatusTick repeats
+    // it at each status tick instead.
+    bool pttEmitted = false;
     if (hasMicPtt) {
-        emit micPttFromRadio(micPtt);
+        if (!m_statusPttKnown || micPtt != m_statusPttLevel) {
+            m_statusPttKnown = true;
+            m_statusPttLevel = micPtt;
+            m_statusPttRepeatDue = false;
+            pttEmitted = true;
+            emit micPttFromRadio(micPtt);
+        }
     }
 
     // Phase 3P-H Task 4: PA telemetry — extract raw 16-bit ADC counts from
@@ -5752,8 +5885,9 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             //   prn->adc[0].adc_overload = prn->adc[0].adc_overload || ControlBytesIn[1] & 0x01;
             //   // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
             observeAdcOverloads(0x01, c1);
+            // Latched until the status tick emits adcOverflow(0).
             if (c1 & 0x01) {
-                emit adcOverflow(0);
+                m_statusOverloadPending |= 0x01;
             }
             // Task 13: the user digital inputs, which carry the TX inhibit
             // input TxInhibitMonitor reads.
@@ -5792,7 +5926,9 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             case HPSDRModel::ANAN_G2:
             case HPSDRModel::ANAN_G2_1K:
             case HPSDRModel::ANVELINAPRO3:
-                handleUserAdc0Raw(userAdc0);
+                // Latched; the status tick calls handleUserAdc0Raw.
+                m_statusUserAdc0Raw     = userAdc0;
+                m_statusUserAdc0Pending = true;
                 break;
             default:
                 break;
@@ -5811,7 +5947,9 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             telemetryDirty  = true;
             // Shell-chrome sub-PR-2 B.3: emit supplyVoltsChanged for all radios.
             // From Thetis networkproto1.c:350 [@501e3f5] — supply_volts AIN6 Hermes Volts //[2.10.3.13]MW0LGE
-            handleSupplyRaw(supply);
+            // Latched; the status tick calls handleSupplyRaw.
+            m_statusSupplyRaw     = supply;
+            m_statusSupplyPending = true;
             break;
         }
         case 0x20: {
@@ -5822,19 +5960,21 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             //   prn->adc[2].adc_overload = prn->adc[2].adc_overload || (ControlBytesIn[3] & 1) << 2; // only cleared by getAndResetADC_Overload(), or'ed with existing state //[2.10.3.13]MW0LGE
             observeAdcOverloads(0x07, static_cast<quint8>((c1 & 0x01)
                                 | ((c2 & 0x01) << 1) | ((c3 & 0x01) << 2)));
-            if (c1 & 0x01) { emit adcOverflow(0); }
-            if (c2 & 0x01) { emit adcOverflow(1); }
-            if (c3 & 0x01) { emit adcOverflow(2); }
+            // Latched until the status tick emits adcOverflow(n).
+            if (c1 & 0x01) { m_statusOverloadPending |= 0x01; }
+            if (c2 & 0x01) { m_statusOverloadPending |= 0x02; }
+            if (c3 & 0x01) { m_statusOverloadPending |= 0x04; }
             break;
         }
         default:
             break;
         }
     }
+    // The latched values go out at the status tick (serviceStatusTick).
     if (telemetryDirty) {
-        emit paTelemetryUpdated(m_paFwdRaw, m_paRevRaw, m_paExciterRaw,
-                                m_paUserAdc0Raw, m_paUserAdc1Raw, m_paSupplyRaw);
+        m_statusTelemetryPending = true;
     }
+    serviceStatusTick(hasMicPtt, pttEmitted);
 
     // Shell-chrome sub-PR-2 B.2: complete the ping RTT measurement.
     // Each valid EP6 frame constitutes the inbound leg of the EP2→EP6 exchange.

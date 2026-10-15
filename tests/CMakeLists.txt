@@ -2874,6 +2874,14 @@ nereus_add_test(tst_radio_model_status_wiring)
 #   case 0x20: adc[0..2] = ControlBytesIn[1..3] & 0x01
 nereus_add_test(tst_p1_adc_overflow_extraction)
 
+# P1 status at a Protocol 2 radio's rate (2026-10-14): PTT changes at once
+# and repeats at the status tick, telemetry, supply and ADC overloads at the
+# tick (1 ms keyed or with an overload pending, 200 ms idle, Anvelina
+# CC_encoder.v:173-175 [@8e86a61]), frameReceived once per read. Simulated
+# time through setStatusClockForTest; one loopback case uses P1FakeRadio.
+nereus_add_test(tst_p1_status_rate fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_status_rate PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
 # (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal
