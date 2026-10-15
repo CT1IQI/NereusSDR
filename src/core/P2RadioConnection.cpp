@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Construct all four command headers with the specified
+//                 zero sequence, including legacy/no-codec paths. Preserve
+//                 dispatch and stream sequences. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex. NereusSDR-original fix.
 //   2026-10-04: Report the longest TX wake interval's worker/acquire split.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -4739,28 +4743,45 @@ void P2RadioConnection::composeCmdTxLegacy(char buf[60]) const
 
 // --- Command Senders (compose + UDP dispatch) ---
 
-void P2RadioConnection::sendCmdGeneral()
+// TAPR openHPSDR Ethernet Protocol v4.4, command packet Sequence Number
+// sections p20/26/29/34 [@e7c6584]: each is a 4-byte integer set to zero.
+constexpr quint32 kCommandSequence = 0;
+
+QByteArray P2RadioConnection::buildCmdGeneralPacket()
 {
     char buf[60];
     memset(buf, 0, sizeof(buf));
-    // Stamp sequence number before compose so wire bytes include it.
-    writeBE32(buf, 0, m_seqGeneral++);
+    // TAPR openHPSDR Ethernet Protocol v4.4, General Packet p20 [@e7c6584].
+    writeBE32(buf, 0, kCommandSequence);
     composeCmdGeneral(buf);
+    QByteArray pkt(buf, sizeof(buf));
+    return pkt;
+}
+
+void P2RadioConnection::sendCmdGeneral()
+{
+    const QByteArray pkt = buildCmdGeneralPacket();
     // From Thetis network.c:910
     // sendPacket(listenSock, packetbuf, sizeof(packetbuf), prn->base_outbound_port);
-    QByteArray pkt(buf, sizeof(buf));
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort);
+}
+
+QByteArray P2RadioConnection::buildCmdHighPriorityPacket()
+{
+    char buf[kBufLen];
+    memset(buf, 0, sizeof(buf));
+    // TAPR openHPSDR Ethernet Protocol v4.4, High Priority Packet p34 [@e7c6584].
+    writeBE32(buf, 0, kCommandSequence);
+    composeCmdHighPriority(buf);
+    QByteArray pkt(buf, sizeof(buf));
+    return pkt;
 }
 
 void P2RadioConnection::sendCmdHighPriority()
 {
-    char buf[kBufLen];
-    memset(buf, 0, sizeof(buf));
-    writeBE32(buf, 0, m_seqHighPri++);
-    composeCmdHighPriority(buf);
+    const QByteArray pkt = buildCmdHighPriorityPacket();
     // From Thetis network.c:1062
     // sendPacket(listenSock, packetbuf, BUFLEN, prn->base_outbound_port + 3);
-    QByteArray pkt(buf, sizeof(buf));
     // 2026-07-27: check the send result.  Previously the return was discarded,
     // so disconnect() logged "SendStop complete" whether or not the run=0 frame
     // ever reached the wire — three rounds of ANAN-G2E lockup debugging trusted
@@ -4780,25 +4801,39 @@ void P2RadioConnection::sendCmdHighPriority()
     notePingSent();
 }
 
-void P2RadioConnection::sendCmdRx()
+QByteArray P2RadioConnection::buildCmdRxPacket()
 {
     char buf[kBufLen];
     memset(buf, 0, sizeof(buf));
-    writeBE32(buf, 0, m_seqRx++);
+    // TAPR openHPSDR Ethernet Protocol v4.4, DDC Specific Packet p26 [@e7c6584].
+    writeBE32(buf, 0, kCommandSequence);
     composeCmdRx(buf);
-    // From Thetis network.c:1178
     QByteArray pkt(buf, sizeof(buf));
+    return pkt;
+}
+
+void P2RadioConnection::sendCmdRx()
+{
+    const QByteArray pkt = buildCmdRxPacket();
+    // From Thetis network.c:1178
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 1);
+}
+
+QByteArray P2RadioConnection::buildCmdTxPacket()
+{
+    char buf[60];
+    memset(buf, 0, sizeof(buf));
+    // TAPR openHPSDR Ethernet Protocol v4.4, DUC Specific Packet p29 [@e7c6584].
+    writeBE32(buf, 0, kCommandSequence);
+    composeCmdTx(buf);
+    QByteArray pkt(buf, sizeof(buf));
+    return pkt;
 }
 
 void P2RadioConnection::sendCmdTx()
 {
-    char buf[60];
-    memset(buf, 0, sizeof(buf));
-    writeBE32(buf, 0, m_seqTx++);
-    composeCmdTx(buf);
+    const QByteArray pkt = buildCmdTxPacket();
     // From Thetis network.c:1247
-    QByteArray pkt(buf, sizeof(buf));
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_baseOutboundPort + 2);
 }
 
