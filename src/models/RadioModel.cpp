@@ -4706,10 +4706,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //
     // The lambda runs on the main thread (RadioModel + arbiter both live
     // here), so AppSettings access is safe.  load() may call
-    // requestHandoff() which flips txSlice flags on SliceModel instances;
-    // by the time currentRadioChanged fires, the slice list is already
-    // populated by addSlice() in onConnected() (which runs earlier on the
-    // same callstack inside onConnectionStateChanged).
+    // requestHandoff() which flips txSlice flags on SliceModel instances.
+    // Managed roster admission has normally completed here; legacy desktop
+    // pan population is queued, so a missing saved TX ID waits for that batch.
     connect(this, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo& info) {
         // R-R3-46: a remote model emits this for the Core's radio too. Its
@@ -4719,8 +4718,16 @@ RadioModel::RadioModel(Role role, QObject* parent)
             return;
         }
         if (m_txSliceArbiter) {
-            m_txSliceArbiter->setMacAddress(info.macAddress);
-            m_txSliceArbiter->load();
+            const QPointer<RadioModel> self(this);
+            const QPointer<TxSliceArbiter> arbiter(m_txSliceArbiter);
+            arbiter->setMacAddress(info.macAddress);
+            arbiter->load();
+            if (!self || !arbiter) { return; }
+            // Managed roster admission normally finishes before this signal.
+            // Legacy desktop pan population instead finishes in its queued batch.
+            if (m_receiveLayoutManaged && !m_receiveLayoutPendingAdmission) {
+                arbiter->finishRestore();
+            }
         }
     });
 
@@ -25866,6 +25873,11 @@ void RadioModel::completeReceiveLayoutStartup()
         }
     }
     m_receiveLayoutPendingAdmission = false;
+    if (m_txSliceArbiter) {
+        const QPointer<RadioModel> self(this);
+        m_txSliceArbiter->finishRestore();
+        if (!self) { return; }
+    }
     m_receiveLayoutHydratedIds.clear();
     // RADE reason: admission is over, so a RADE slice left without a
     // decoder says why.

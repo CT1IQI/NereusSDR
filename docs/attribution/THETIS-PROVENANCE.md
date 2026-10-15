@@ -684,3 +684,14 @@ OpenAI Codex. Existing source headers, inline comments and constants are retaine
 `StackedQuietOverhang.swift`, `StackedTraceHistory.swift`, `BandRenderer.swift` and `Shaders/Band.metal` reuse NereusSDR-original `src/gui/DssQuietOverhang.h` and accepted display-pill-live.html:1610–1613/call56. Real folded exact samples at stride8 select finite sorted index floor(count*0.3), retained per ring slot before resampling. Packed measured/captured metadata distinguishes unavailable bins from uncovered geometry; only extended overhang uses known quiet, after exact/wide captured channels. No demo0.35texture, DSP/transport/thread change. J.J. Boyd (KG4VCF), October12,2026, AI-assisted via OpenAI Codex. Existing renderer/shader notices and comments retained.
 
 Phone quiet repair (October12,2026): the NereusSDR-original retained-column peak reduction in `StackedTraceHistory.swift` now uses an exclusive ceil upper source-bin index, preserving partially overlapping captured carriers and exact bin-edge exclusion, consistent with native `DssRenderer.cpp` peak resampling. No new upstream code port. Actual Metal quiet fixture hides the later opaque dBm scale to expose its existing sampled surface wedge; strong pixel threshold/region and unknown-row control are unchanged. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. Existing notices/comments retained.
+
+## PulseAudio API surface (2026-10-14)
+
+| NereusSDR file | Upstream source | Type | Notes |
+| --- | --- | --- | --- |
+| [src/core/audio/PulseControlAbi.h](../../src/core/audio/PulseControlAbi.h) | PulseAudio `src/pulse/{def,mainloop,context,operation,introspect}.h` [v17.0] | selected public declarations | LGPL-2.1-or-later notices and inline comments retained separately for each source; [exact mapping and hashes](PULSEAUDIO-PROVENANCE.md). Linux VAX control/ownership logic is NereusSDR-original. |
+
+This cross-reference is a linked inventory row because the Thetis header verifier
+applies Thetis-specific marker rules to bare first-column paths. PulseAudio
+notices are verified against its own upstream headers, rather than adding false
+Thetis or `Copyright (C)` text to the upstream notices.
