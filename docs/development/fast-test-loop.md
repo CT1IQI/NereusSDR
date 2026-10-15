@@ -180,11 +180,18 @@ in the test's own ctest environment and overrides any `QT_QPA_PLATFORM`
 you export in your shell.
 
 To watch windows for one run, start the test executable directly instead
-of through ctest; ctest's environment does not apply then:
+of through ctest; ctest's environment does not apply then, so give the
+test a home of its own by hand. All three variables point at one scratch
+folder: on macOS the settings folder follows `CFFIXED_USER_HOME`, not
+`HOME`, and a test started without `NEREUS_TEST_HOME`, or whose settings
+would land outside it, refuses to start with exit code 97 before it writes
+anything (`tests/TestHomeGuard.cpp`). Never run a test binary without
+them: it would use your real NereusSDR settings.
 
 ```bash
-QT_QPA_PLATFORM=cocoa ./build/tests/tst_panadapter_stack_layouts   # macOS
-QT_QPA_PLATFORM=xcb   ./build/tests/tst_panadapter_stack_layouts   # Linux
+T=$(mktemp -d)
+NEREUS_TEST_HOME="$T" HOME="$T" CFFIXED_USER_HOME="$T" QT_QPA_PLATFORM=cocoa ./build/tests/tst_panadapter_stack_layouts   # macOS
+NEREUS_TEST_HOME="$T" HOME="$T" QT_QPA_PLATFORM=xcb ./build/tests/tst_panadapter_stack_layouts   # Linux
 ```
 
 To get windows back for a whole build, turn the option off and
