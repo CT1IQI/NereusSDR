@@ -19,6 +19,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
+//                 window, as start() does, so VAX can be its transmit
+//                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-13 : Owner-thread ASIO output snapshots without role locks.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09  J.J. Boyd / KG4VCF  hasCaptureDemand(): the capture
@@ -3530,6 +3534,18 @@ void AudioEngine::openVaxOutputs()
     }
 #endif
     openVaxOutputSlots();
+    // 2026-10-15: the VAX TX device, as start() opens it, so an app can
+    // write "NereusSDR TX" in a remote window and the uplink can send it
+    // when VAX is the transmit source.
+    if (!m_vaxTxBus && m_vaxOutputsAllowed) {
+        m_vaxTxBus = makeVaxTxBus();
+        if (m_vaxTxBus) {
+            qCInfo(lcAudio) << "VAX TX bus opened (remote window)"
+                            << "[" << m_vaxTxBus->backendName() << "]";
+        } else {
+            qCWarning(lcAudio) << "VAX TX bus open failed in a remote window: VAX cannot be sent";
+        }
+    }
 }
 
 void AudioEngine::openVaxOutputSlots()

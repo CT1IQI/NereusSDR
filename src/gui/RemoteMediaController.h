@@ -3,6 +3,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: startMicCollector's vax source (VAX as a remote window's
+//               transmit source). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-12: Separate mirrored pin projection from preference requests.
 //               J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
@@ -711,7 +714,9 @@ private:
     void reconcileMicUplink();
     /// 2026-10-10: the microphone's collector thread: started while the
     /// capture lease is held, joined before the lease or the engine goes.
-    void startMicCollector(AudioEngine* engine);
+    // 2026-10-15: vax: the collector pulls the VAX TX device
+    // (AudioEngine::pullVaxTxMic) instead of the PC microphone.
+    void startMicCollector(AudioEngine* engine, bool vax);
     void stopMicCollector();
     /// Logs, once, what the collector dropped during the key that ends.
     void reportMicDropped();

@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: VAX as the transmit source in a remote window: the uplink
+//               carries the VAX TX device's audio (pullVaxTxMic, as the
+//               local VAX override feeds the transmitter), never the PC
+//               microphone, and takes no capture lease for it; a line that
+//               moves from VAX onto the microphone retries a failed capture
+//               once, as a key's start does. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -1659,6 +1666,13 @@ struct RemoteMediaController::Private {
     // lease is released and before that engine goes.
     std::unique_ptr<MicUplinkCollector> micCollector;
     AudioEngine* micCollectorEngine = nullptr;
+    // 2026-10-15: the collector pulls the VAX TX device
+    // (AudioEngine::pullVaxTxMic) when VAX is the transmit source, with no
+    // capture lease: VAX is not the PC microphone.
+    bool micCollectorVax = false;
+    // The uplink started with VAX chosen and no VAX TX device open: said
+    // once per run.
+    bool micVaxMissingReported = false;
     // What the collector had dropped when the line last started or
     // reported: the rest is this key's.
     quint64 micDroppedReported = 0;
@@ -2930,10 +2944,22 @@ void RemoteMediaController::reconcileMicUplink()
     const bool preview = micLineOpen() && d->model && d->model->audioEngine()
         && d->model->transmitModel().micSource() == MicSource::Pc
         && transmit && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio;
-    const bool captureWanted = (wanted && !programAudio) || preview;
+    // 2026-10-15: VAX as the transmit source. The line carries what apps
+    // write to this computer's VAX TX device, as a local window's VAX
+    // override feeds its transmitter (TxWorkerThread.cpp, the
+    // isVaxMicOverrideActive branch: pullVaxTxMic, left and right averaged,
+    // no gain), and never the PC microphone, so it takes no capture lease.
+    // The device is drained while the line is open, as preview drains the
+    // microphone, so a key never sends what an app wrote before it.
+    const bool vaxSource = d->model && d->model->audioEngine()
+        && d->model->transmitModel().micSource() == MicSource::Vax;
+    const bool vaxFeed = vaxSource && d->model->audioEngine()->isVaxTxBusOpen()
+        && (wanted || (micLineOpen() && transmit
+                       && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio));
+    const bool captureWanted = !vaxSource && ((wanted && !programAudio) || preview);
     // 2026-10-09: such a key takes no demand of its own, and keeps a lease
     // VOX or preview already holds (its samples are drained and dropped).
-    const bool keepLease = wanted && programAudio;
+    const bool keepLease = wanted && programAudio && !vaxSource;
     const bool leaseWasActive = d->micLease.isActive();
     // 2026-10-09: read before the acquire. A first lease opens a new
     // generation by itself; with demand already held (this window's
@@ -2950,8 +2976,12 @@ void RemoteMediaController::reconcileMicUplink()
         d->micLease.release();
     }
     // 2026-10-10: the collector runs exactly while the lease is held.
-    if (d->micLease.isActive()) {
-        startMicCollector(d->model->audioEngine());
+    // 2026-10-15: or, with VAX the transmit source, while the VAX TX device
+    // is fed (vaxFeed).
+    if (vaxFeed) {
+        startMicCollector(d->model->audioEngine(), true);
+    } else if (d->micLease.isActive()) {
+        startMicCollector(d->model->audioEngine(), false);
     } else {
         stopMicCollector();
     }
@@ -2964,13 +2994,15 @@ void RemoteMediaController::reconcileMicUplink()
         if (wanted) {
             qCInfo(lcRemoteMedia) << "Microphone uplink started"
                                   << (programAudio ? "with the program's audio or silence"
+                                      : vaxSource  ? "with VAX"
                                                    : "with the microphone");
+            d->micVaxMissingReported = false;
             // 2026-10-08: a capture that failed earlier never comes back by
             // itself; a key that will send the microphone asks once.
             // 2026-10-09: only when capture demand was already held:
             // acquiring it from no demand starts a new generation by
             // itself. Both are read before the acquire.
-            retryCapture = !programAudio && demandBefore && captureFailedBefore;
+            retryCapture = !programAudio && !vaxSource && demandBefore && captureFailedBefore;
             d->micDroppedReported = d->micCollector ? d->micCollector->droppedFrames() : 0;
         } else {
             reportMicDropped();
@@ -2984,6 +3016,13 @@ void RemoteMediaController::reconcileMicUplink()
             qCInfo(lcRemoteMedia) << "Microphone uplink stopped";
         }
     }
+    // 2026-10-15: a running line that moves from VAX onto the microphone
+    // takes the lease now, as a key would at its start: the same one retry
+    // when demand was already held.
+    if (wanted && !starting && !programAudio && !vaxSource && !leaseWasActive
+        && demandBefore && captureFailedBefore) {
+        retryCapture = true;
+    }
     const QPointer<RemoteMediaController> self(this);
     if (retryCapture) {
         qCInfo(lcRemoteMedia) << "Microphone capture had failed; retrying for this key";
@@ -2996,14 +3035,19 @@ void RemoteMediaController::reconcileMicUplink()
     if (!self) {
         return;
     }
-    if (!programAudio && !d->micLease.isActive()) {
+    if (d->micRunning && vaxSource && !vaxFeed && !programAudio && !d->micVaxMissingReported) {
+        d->micVaxMissingReported = true;
+        qCWarning(lcRemoteMedia) << "Microphone uplink: VAX is the transmit source but this"
+                                    " computer's VAX TX device is not open; nothing is sent";
+    }
+    if (!programAudio && !d->micLease.isActive() && !vaxFeed) {
         return;
     }
     // A program's audio, while it keeps coming, replaces the microphone:
     // what the microphone captured meanwhile is drained and dropped.
     const qint64 nowMs = micNowMs();
     const bool program = nowMs < d->programUntilMs;
-    if (d->micLease.isActive() && d->micCollector) {
+    if ((d->micLease.isActive() || vaxFeed) && d->micCollector) {
         // 2026-10-10: the collector's thread pulled the microphone; this
         // drains what it queued. (Inline, a test's collector has no thread
         // and collects here, as this pump itself did before.)
@@ -3033,7 +3077,8 @@ void RemoteMediaController::reconcileMicUplink()
         // is ready leaves the helper's ring unread and the uplink silent.
         // Said once per stall, with whether the thread still wakes, and
         // again when it ends.
-        const bool captureReady = d->micCollector->isRunning()
+        // 2026-10-15: not for VAX, which gives nothing while no app writes.
+        const bool captureReady = d->micCollector->isRunning() && !d->micCollectorVax
             && d->model->audioEngine()->captureStatus().state
                 == CaptureSupervisor::Status::State::Ready;
         const quint64 collected = d->micCollector->collectedFrames();
@@ -3131,18 +3176,26 @@ void RemoteMediaController::pumpMicUplinkForTest()
     reconcileMicUplink();
 }
 
-void RemoteMediaController::startMicCollector(AudioEngine* engine)
+void RemoteMediaController::startMicCollector(AudioEngine* engine, bool vax)
 {
     if (engine == nullptr) {
         stopMicCollector();
         return;
     }
-    if (!d->micCollector || d->micCollectorEngine != engine) {
+    // 2026-10-15: a change of source makes a new collector: what the old
+    // one queued is discarded with it, so the two never mix.
+    if (!d->micCollector || d->micCollectorEngine != engine || d->micCollectorVax != vax) {
         stopMicCollector();
         d->micCollector.reset();
         d->micCollectorEngine = engine;
-        d->micCollector = std::make_unique<MicUplinkCollector>(
-            [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        d->micCollectorVax = vax;
+        if (vax) {
+            d->micCollector = std::make_unique<MicUplinkCollector>(
+                [engine](float* dst, int frames) { return engine->pullVaxTxMic(dst, frames); });
+        } else {
+            d->micCollector = std::make_unique<MicUplinkCollector>(
+                [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        }
         d->micDroppedReported = 0;
     }
     if (g_micCollectorInlineForTest.load(std::memory_order_acquire)) {
