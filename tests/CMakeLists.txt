@@ -8870,6 +8870,13 @@ nereus_split_test(tst_remote_window_harness
 nereus_add_test(tst_pan_actions_per_pan fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_pan_actions_per_pan PRIVATE NEREUS_BUILD_TESTS)
 
+# Step persistence lane (2026-10-15): a remote window's tune step is the
+# Core's; a step the Core refuses goes back and says why, a listened slice
+# holds it with the reason, and the controller's step survives a reconnect.
+# Loopback WebSocket and test models only; no RF, no audio device.
+nereus_add_test(tst_remote_step_persistence fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_remote_step_persistence PRIVATE NEREUS_BUILD_TESTS)
+
 # VFO flag crash lane (2026-09-30): Slice A closed from its flag in a remote
 # window leaves no flag writing the freed slice, and a Slice A made again
 # gets a flag and a pan bound to the new slice. Loopback WebSocket and test
