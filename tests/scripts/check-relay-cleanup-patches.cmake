@@ -5,8 +5,8 @@
 # Modification history (NereusSDR):
 #   2026-09-27: original implementation by J.J. Boyd (KG4VCF), with
 #               AI-assisted implementation via OpenAI Codex.
-#   2026-10-15: reverses the patches with Git's line-ending conversion off,
-#               as the build applies them. J.J. Boyd (KG4VCF), with
+#   2026-10-15: reverses the patches with core.autocrlf=input, as the
+#               build applies them. J.J. Boyd (KG4VCF), with
 #               AI-assisted implementation via Anthropic Claude Code.
 foreach(_required IN ITEMS REPO BUILD ORIGINAL_JUICE ORIGINAL_DC PATCHED_JUICE DATACHANNEL WORK)
     if(NOT DEFINED ${_required})
@@ -16,10 +16,10 @@ endforeach()
 # 2026-10-03: include the retained-registry poll-worker patch in exact
 # materialization/reverse proof. J.J. Boyd (KG4VCF), OpenAI Codex.
 find_program(_git git REQUIRED)
-# No line-ending conversion, as in the build's patch step: Git for Windows
-# sets core.autocrlf=true, which would write CRLF into the reversed copies.
+# No CRLF on output, as in the build's patch step: Git for Windows sets
+# core.autocrlf=true, which would write CRLF into the reversed copies.
 set(_git_in_scratch "${CMAKE_COMMAND}" -E env "GIT_CEILING_DIRECTORIES=${WORK}"
-    "LC_ALL=C" "${_git}" -c core.autocrlf=false -c core.eol=lf)
+    "LC_ALL=C" "${_git}" -c core.autocrlf=input)
 
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/juice" "${WORK}/datachannel/src/impl"
