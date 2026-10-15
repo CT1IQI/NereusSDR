@@ -322,6 +322,10 @@
 //                 own equal-value check, so an integer mirror a restore
 //                 held apart from the curve still follows it. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Keep the loaded non-VAX source as its persisted VAX
+//                 restore target; read the old restore key only for an
+//                 active VAX source. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 // =================================================================
 
 #include "TransmitModel.h"
@@ -2368,20 +2372,29 @@ void TransmitModel::loadFromSettings(const QString& mac)
     setMicSource(micSource);
 
     // ── Mic source previous (PhoneCwApplet VAX-toggle restore target) ─────
-    // Lookup order matches Mic_Source: per-MAC -> preconnect -> default Pc.
-    const QString perMacPreVaxStr = s.value(pfx + QLatin1String("Mic_Source_PreVax"),
-                                             QString()).toString();
-    QString preVaxStr;
-    if (perMacPreVaxStr.isEmpty()) {
-        preVaxStr = AppSettings::instance().value(
-            QStringLiteral("tx/preconnect/Mic_Source_PreVax"),
-            QStringLiteral("Pc")).toString();
+    // A loaded non-VAX source is its own restore target. Save it before
+    // entering VAX, so a later load cannot revive a stale restore key.
+    if (m_micSource != MicSource::Vax) {
+        m_previousNonVaxMicSource = m_micSource;
+        persistOne(QStringLiteral("Mic_Source_PreVax"),
+                   m_micSource == MicSource::Radio ? QStringLiteral("Radio")
+                                                   : QStringLiteral("Pc"));
     } else {
-        preVaxStr = perMacPreVaxStr;
+        // Lookup order matches Mic_Source: per-MAC -> preconnect -> default Pc.
+        const QString perMacPreVaxStr = s.value(pfx + QLatin1String("Mic_Source_PreVax"),
+                                                 QString()).toString();
+        QString preVaxStr;
+        if (perMacPreVaxStr.isEmpty()) {
+            preVaxStr = AppSettings::instance().value(
+                QStringLiteral("tx/preconnect/Mic_Source_PreVax"),
+                QStringLiteral("Pc")).toString();
+        } else {
+            preVaxStr = perMacPreVaxStr;
+        }
+        m_previousNonVaxMicSource = (preVaxStr == QLatin1String("Radio"))
+                                        ? MicSource::Radio
+                                        : MicSource::Pc;
     }
-    m_previousNonVaxMicSource = (preVaxStr == QLatin1String("Radio"))
-                                    ? MicSource::Radio
-                                    : MicSource::Pc;
 
     // ── Two-tone test properties (3M-1c B.2) ──────────────────────────────
     // Defaults per design spec §4.4 (option C):

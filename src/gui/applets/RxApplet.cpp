@@ -12,6 +12,9 @@
 //   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
 //                 capability changes as well as remote changes. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-14 - Refuse blocked TX popup choices using the existing local
+//                 or mirrored Alex flags (PR #96 review). J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -210,6 +213,7 @@
 #include "core/SkuUiProfile.h"
 #include "core/P2RadioConnection.h"
 #include "gui/AntennaPopupBuilder.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
@@ -848,6 +852,13 @@ void RxApplet::buildUi()
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
             if (isListening()) { return; }  // Task 15: another device controls it
+            // Follow the Setup grid's blocked-port refusal, using the facade
+            // for both local controller state and the remote Core's mirror.
+            auto isBlocked = [this](const QString& ant) {
+                const AlexAntennaFacade* const alex = m_model ? m_model->alexAntennaFacade() : nullptr;
+                return alex && ((ant == QStringLiteral("ANT2") && alex->blockTxAnt2())
+                             || (ant == QStringLiteral("ANT3") && alex->blockTxAnt3()));
+            };
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
             // Dark popup palette — see RX button above. Issue #98.
@@ -867,13 +878,19 @@ void RxApplet::buildUi()
                     act->setChecked(ant == cur);
                 }
             }
+            for (QAction* action : menu.actions()) {
+                const QString ant = action->data().isValid() ? action->data().toString()
+                                                            : action->text();
+                if (isBlocked(ant)) { action->setEnabled(false); }
+            }
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_txAntBtn->mapToGlobal(QPoint(0, m_txAntBtn->height())));
             if (sel && m_slice) {
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
-                m_slice->setTxAntenna(text);
+                // Block flags can change while the popup's event loop runs.
+                if (!isBlocked(text)) { m_slice->setTxAntenna(text); }
             }
         });
         row->addWidget(m_txAntBtn);
