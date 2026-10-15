@@ -18,6 +18,9 @@
 //   2026-10-15 - New test file: squelch seed for slices B to D and the
 //                 per-slice settings save. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - Added the non-squelch case (SNB, AGC hang, RIT) for the
+//                 per-slice settings save. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -171,6 +174,36 @@ private slots:
         QCOMPARE(reloaded.fmsqThresh(), -25.0);
         QVERIFY(reloaded.fmsqEnabled());
         QVERIFY(reloaded.ssqlEnabled());
+        model.injectConnectionForTest(nullptr);
+    }
+
+    // The same for non-squelch per-slice edits (SNB, AGC hang and RIT),
+    // made on slice B while A is the active slice.
+    void otherDspEditOnInactiveSliceIsSavedToThatSlice()
+    {
+        RadioModel model;
+        auto* mock = new MockConnection(&model);
+        model.injectConnectionForTest(mock);
+        const int a = model.addSlice();
+        const int b = model.addSlice();
+        model.setActiveSliceById(a);
+        model.flushPendingSettingsSave();
+
+        SliceModel* sliceB = model.sliceById(b);
+        QVERIFY(sliceB != nullptr);
+        const bool snb = !sliceB->snbEnabled();
+        const int hang = sliceB->agcHang() + 37;
+        const bool rit = !sliceB->ritEnabled();
+        sliceB->setSnbEnabled(snb);
+        sliceB->setAgcHang(hang);
+        sliceB->setRitEnabled(rit);
+        model.flushPendingSettingsSave();
+
+        SliceModel reloaded(1);
+        reloaded.restoreFromSettings(sliceB->band());
+        QCOMPARE(reloaded.snbEnabled(), snb);
+        QCOMPARE(reloaded.agcHang(), hang);
+        QCOMPARE(reloaded.ritEnabled(), rit);
         model.injectConnectionForTest(nullptr);
     }
 };
