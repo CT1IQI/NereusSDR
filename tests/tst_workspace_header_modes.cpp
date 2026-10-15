@@ -42,6 +42,14 @@
 
 using namespace NereusSDR;
 
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the GUI DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr double kOverlayOpacity = NereusSDR::ContainerWidget::kOverlayOpacity;
+} // namespace
+
 namespace {
 
 // Offline fixture: a store, a registry and a manager over a plain dock
@@ -218,7 +226,7 @@ private slots:
         // As an overlay it is slightly see-through, with a shadow under it.
         auto* overlayOpacity = qobject_cast<QGraphicsOpacityEffect*>(c->workspaceHeader()->graphicsEffect());
         QVERIFY(overlayOpacity && overlayOpacity->isEnabled());
-        QCOMPARE(overlayOpacity->opacity(), ContainerWidget::kOverlayOpacity);
+        QCOMPARE(overlayOpacity->opacity(), kOverlayOpacity);
         QCOMPARE(c->workspaceHeader()->geometry(), QRect(0, 0, c->width(), WorkspaceGroupHeader::kHeight));
         QCOMPARE(content.mapTo(c, QPoint()), idle);
         QCOMPARE(content.size(), idleSize);
