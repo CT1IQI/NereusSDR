@@ -10,7 +10,7 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
-//   2026-10-15 — Squelch persistence tests (Thetis console.cs:2830-2852
+//   2026-10-15 - Squelch persistence tests (Thetis console.cs:2830-2852
 //                 save, 4164-4193 load [v2.10.3.15]). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -78,8 +78,10 @@ private:
 
     static void resetSquelchKeys() {
         auto& s = AppSettings::instance();
-        for (const QString& field : squelchKeys()) {
-            s.remove(QStringLiteral("Slice0/") + field);
+        for (int slice = 0; slice < 4; ++slice) {
+            for (const QString& field : squelchKeys()) {
+                s.remove(QStringLiteral("Slice%1/").arg(slice) + field);
+            }
         }
     }
 
@@ -160,6 +162,35 @@ private slots:
             QVERIFY2(thresh >= 0 && enabled >= 0, qPrintable(order.join(QLatin1Char(','))));
             QVERIFY2(thresh < enabled, qPrintable(order.join(QLatin1Char(','))));
         }
+    }
+
+    void squelchLoadClampsThresholdsToTheirRanges_data() {
+        QTest::addColumn<QString>("field");
+        QTest::addColumn<QString>("stored");
+        QTest::addColumn<double>("expected");
+        // ControlRanges.h: SSQL 0..100 slider units, AM and FM -160..0.
+        QTest::newRow("ssql above") << "SsqlThresh" << "250" << 100.0;
+        QTest::newRow("ssql below") << "SsqlThresh" << "-5" << 0.0;
+        QTest::newRow("am below") << "AmsqThresh" << "-999" << -160.0;
+        QTest::newRow("am above") << "AmsqThresh" << "12" << 0.0;
+        QTest::newRow("fm above") << "FmsqThresh" << "500" << 0.0;
+        QTest::newRow("fm below") << "FmsqThresh" << "-400" << -160.0;
+        // Not a number: the default stays, never 0 (FM fully closed).
+        QTest::newRow("fm garbage") << "FmsqThresh" << "garbage" << -150.0;
+        QTest::newRow("fm nan") << "FmsqThresh" << "nan" << -150.0;
+        QTest::newRow("ssql garbage") << "SsqlThresh" << "x" << 16.0;
+    }
+
+    void squelchLoadClampsThresholdsToTheirRanges() {
+        QFETCH(QString, field);
+        QFETCH(QString, stored);
+        QFETCH(double, expected);
+        AppSettings::instance().setValue(QStringLiteral("Slice0/") + field, stored);
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        const double actual = field == QLatin1String("SsqlThresh") ? b.ssqlThresh()
+            : field == QLatin1String("AmsqThresh") ? b.amsqThresh() : b.fmsqThresh();
+        QCOMPARE(actual, expected);
     }
 
     void squelchLoadWithNoSavedKeysKeepsDefaults() {

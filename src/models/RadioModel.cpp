@@ -1147,6 +1147,10 @@
 //                app reuses the app's plans. A process told nothing keeps
 //                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                squelch (thresholds, then enables), and a squelch edit is
+//                saved to the slice it was made on, not the active slice.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -11576,6 +11580,28 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 
     applyNnrStateToChannel(slice, ch);
     if (!current()) { return; }
+
+    // The slice's saved squelch. WDSP opens every squelch with run 0
+    // (third_party/wdsp/src/RXA.c:163,228,534), and a slice restored with
+    // its signals blocked never fires the per-slice pushes in
+    // wireSliceSignals, so without this a restored slice B to D shows
+    // squelch on while the radio does not squelch. Thresholds first, then
+    // the enables, so a channel never runs a saved enable with WDSP's
+    // default threshold. The same conversions as Slice A's push in
+    // connectToRadio (SSQL slider units / 100, clamped to WDSP's 0..1).
+    ch->setSsqlThresh(std::clamp(slice->ssqlThresh() / 100.0, 0.0, 1.0));
+    if (!current()) { return; }
+    ch->setAmsqThresh(slice->amsqThresh());
+    if (!current()) { return; }
+    ch->setFmsqThresh(slice->fmsqThresh());
+    if (!current()) { return; }
+    ch->setSsqlEnabled(slice->ssqlEnabled());
+    if (!current()) { return; }
+    ch->setAmsqEnabled(slice->amsqEnabled());
+    if (!current()) { return; }
+    ch->setFmsqEnabled(slice->fmsqEnabled());
+    if (!current()) { return; }
+
     ch->setActive(true);
     if (!current()) { return; }
 }
@@ -23461,7 +23487,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setSsqlEnabled(on);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::ssqlThreshChanged, this, [this, slice](double threshold) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
@@ -23471,7 +23497,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             double normalized = std::clamp(threshold / 100.0, 0.0, 1.0);
             rxCh->setSsqlThresh(normalized);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // Squelch — AM → WDSP
@@ -23482,14 +23508,14 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setAmsqEnabled(on);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::amsqThreshChanged, this, [this, slice](double dB) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setAmsqThresh(dB);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // Squelch — FM → WDSP
@@ -23501,14 +23527,14 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setFmsqEnabled(on);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::fmsqThreshChanged, this, [this, slice](double dB) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setFmsqThresh(dB);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // Audio panel — mute / pan / binaural → WDSP PatchPanel

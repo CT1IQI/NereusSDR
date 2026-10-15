@@ -1367,6 +1367,16 @@ nereus_add_test(tst_slice_apf)
 # ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
 nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
+# Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
+# a DSP edit on a slice that is not the active one is saved to that slice.
+nereus_add_test(tst_slice_squelch_channel_seed)
+if(TARGET tst_slice_squelch_channel_seed)
+    target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE NEREUS_BUILD_TESTS)
+    if(FFTW3_FOUND AND WDSP_FOUND)
+        target_include_directories(tst_slice_squelch_channel_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE WDSP_STATIC_BUILD)
+    endif()
+endif()
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
 nereus_add_test(tst_rxchannel_audio_panel)

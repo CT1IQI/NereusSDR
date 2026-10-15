@@ -108,8 +108,9 @@
 //   2026-10-15 - Squelch is saved: saveToSettings and restoreFromSettings
 //                carry the SSQL, AM and FM squelch enables and thresholds
 //                per slice, from Thetis console.cs:2830-2852 and 4164-4193
-//                [v2.10.3.15]. J.J. Boyd (KG4VCF), AI-assisted via
-//                Anthropic Claude Code.
+//                [v2.10.3.15]. A restored threshold is clamped to its
+//                ControlRanges range; one that is not a number is skipped.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3252,24 +3253,42 @@ void SliceModel::restoreFromSettings(Band band)
     // "rx2_voice_squelch_threshold_scroll"); see saveToSettings for how
     // Thetis's per-receiver states and thresholds map onto these keys.
     // Through the public setters, so a restored value reaches WDSP the same
-    // way an edit does. Each threshold loads before its enable, so a saved
-    // enable never runs WDSP's squelch with the default threshold first.
-    // Thetis only stores the parsed values here and applies them later.
-    if (s.contains(sp + QStringLiteral("SsqlThresh"))) {
-        setSsqlThresh(s.value(sp + QStringLiteral("SsqlThresh")).toDouble());
-    }
+    // way an edit does. Each threshold is set before its enable, so the
+    // model's changed signals (and the per-slice pushes wired to them) come
+    // threshold first. Thetis applies its squelch the other way round, run
+    // before threshold (console.cs:47361 then 47437, 47303-47315
+    // [v2.10.3.15]). A restore with signals blocked reaches WDSP through
+    // RadioModel's channel seed instead, which also pushes thresholds first.
+    // A threshold that is not a number keeps the current value; one out of
+    // range is clamped to its ControlRanges.h range, so a hand-edited file
+    // cannot push a value the sliders cannot make.
+    const auto restoreThresh = [&](const QString& key, double lo, double hi,
+                                   auto&& setter) {
+        if (!s.contains(key)) {
+            return;
+        }
+        bool ok = false;
+        const double v = s.value(key).toString().toDouble(&ok);
+        if (!ok || !std::isfinite(v)) {
+            return;
+        }
+        setter(std::clamp(v, lo, hi));
+    };
+    restoreThresh(sp + QStringLiteral("SsqlThresh"),
+                  ControlRanges::kSsqlThreshMin, ControlRanges::kSsqlThreshMax,
+                  [this](double v) { setSsqlThresh(v); });
     if (s.contains(sp + QStringLiteral("SsqlEnabled"))) {
         setSsqlEnabled(s.value(sp + QStringLiteral("SsqlEnabled")).toString() == QLatin1String("True"));
     }
-    if (s.contains(sp + QStringLiteral("AmsqThresh"))) {
-        setAmsqThresh(s.value(sp + QStringLiteral("AmsqThresh")).toDouble());
-    }
+    restoreThresh(sp + QStringLiteral("AmsqThresh"),
+                  ControlRanges::kAmsqThreshMinDb, ControlRanges::kAmsqThreshMaxDb,
+                  [this](double v) { setAmsqThresh(v); });
     if (s.contains(sp + QStringLiteral("AmsqEnabled"))) {
         setAmsqEnabled(s.value(sp + QStringLiteral("AmsqEnabled")).toString() == QLatin1String("True"));
     }
-    if (s.contains(sp + QStringLiteral("FmsqThresh"))) {
-        setFmsqThresh(s.value(sp + QStringLiteral("FmsqThresh")).toDouble());
-    }
+    restoreThresh(sp + QStringLiteral("FmsqThresh"),
+                  ControlRanges::kFmsqThreshMinDb, ControlRanges::kFmsqThreshMaxDb,
+                  [this](double v) { setFmsqThresh(v); });
     if (s.contains(sp + QStringLiteral("FmsqEnabled"))) {
         setFmsqEnabled(s.value(sp + QStringLiteral("FmsqEnabled")).toString() == QLatin1String("True"));
     }

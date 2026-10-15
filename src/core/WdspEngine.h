@@ -58,6 +58,9 @@
 //   2026-10-01 : Leveler lane by J.J. Boyd (KG4VCF): test-only friendship
 //                 for the remote microphone leveler measurement. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-15 : Squelch persistence by J.J. Boyd (KG4VCF): test-only
+//                 friendship for the squelch channel seed test. AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -206,6 +209,8 @@ class TestTxLatencyDsp;
 class TestTxLevelerRemoteMic;
 class TestTxKeyDspOptions;
 class TstRemoteTxDisplay;
+// Squelch persistence: slices B to D open with their saved squelch.
+class TestSliceSquelchChannelSeed;
 #endif
 
 namespace NereusSDR {
@@ -1103,6 +1108,8 @@ private:
     friend class ::TestTxKeyDspOptions;
     // Leveler lane: the remote microphone leveler measurement.
     friend class ::TestTxLevelerRemoteMic;
+    // Squelch persistence: the squelch seed test opens real RX channels.
+    friend class ::TestSliceSquelchChannelSeed;
 #endif
 };
 
