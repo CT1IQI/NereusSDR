@@ -12,7 +12,9 @@
 // sends one modelReset. A last case per view deletes the walked cells the
 // way the Cocoa bridge does, then resets and removes a row: no crash. The
 // helpers act on macOS only; ExpiredAccessibleCells::setActive lets them
-// act on every platform so Linux CI runs these cases too.
+// act on every platform so Linux CI runs these cases too. One case checks
+// that OrderKeepingProxyModel does no extra filter work while its gate
+// (itemViewResetsActive in the app) is false.
 
 #include <QtTest>
 #include <QAccessible>
@@ -25,6 +27,7 @@
 
 #include "ExpiredAccessibleCells.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
+#include "models/OrderKeepingProxyModel.h"
 
 using namespace NereusSDR;
 
@@ -42,6 +45,20 @@ void fillCombo(QComboBox& combo)
     model->item(1)->setData(QStringLiteral("extra"), kExtraRole);
     model->item(2)->setFlags(model->item(2)->flags() & ~Qt::ItemIsEnabled);
 }
+
+// Counts its filter calls, to show what a data change costs.
+class CountingProxy : public OrderKeepingProxyModel {
+public:
+    using OrderKeepingProxyModel::OrderKeepingProxyModel;
+    mutable int filterCalls{0};
+
+protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override
+    {
+        ++filterCalls;
+        return OrderKeepingProxyModel::filterAcceptsRow(sourceRow, sourceParent);
+    }
+};
 
 } // namespace
 
@@ -351,6 +368,43 @@ private slots:
         delete tree.takeTopLevelItem(0);
         new QTreeWidgetItem(&tree, {QStringLiteral("three")});
         QCOMPARE(tree.topLevelItemCount(), 2);
+    }
+
+    // OrderKeepingProxyModel with its gate false (accessibility off): a
+    // data change costs the filter calls a plain proxy makes and nothing
+    // more, and the flush is never called. With the gate true it checks
+    // each changed row once more to flush before a row it will hide.
+    void orderKeepingProxyGateSkipsExtraWork()
+    {
+        QStandardItemModel source(20, 1);
+        for (int row = 0; row < 20; ++row) {
+            source.setItem(row, new QStandardItem(QString::number(row)));
+        }
+        const auto filterCallsForDataChange = [&source](bool gate, int* flushes) {
+            CountingProxy proxy;
+            proxy.setSourceModel(&source);
+            proxy.setBeforeRowChange([flushes] { ++*flushes; }, [gate] { return gate; });
+            static_cast<void>(proxy.rowCount());
+            proxy.filterCalls = 0;
+            emit source.dataChanged(source.index(0, 0), source.index(19, 0));
+            proxy.prepareForRowChange();
+            return proxy.filterCalls;
+        };
+        int plainCalls = 0;
+        {
+            CountingProxy plain;
+            plain.setSourceModel(&source);
+            static_cast<void>(plain.rowCount());
+            plain.filterCalls = 0;
+            emit source.dataChanged(source.index(0, 0), source.index(19, 0));
+            plainCalls = plain.filterCalls;
+        }
+        int offFlushes = 0;
+        int onFlushes = 0;
+        QCOMPARE(filterCallsForDataChange(false, &offFlushes), plainCalls);
+        QCOMPARE(offFlushes, 0);
+        QCOMPARE(filterCallsForDataChange(true, &onFlushes), plainCalls + 20);
+        QCOMPARE(onFlushes, 1);
     }
 
     void doesNothingWithAccessibilityOff()

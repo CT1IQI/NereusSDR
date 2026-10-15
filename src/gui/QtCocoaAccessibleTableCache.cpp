@@ -17,6 +17,9 @@
 //                                    for data changes, double-click across
 //                                    a reset, persistent-index place.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  A data change resets once, at most
+//                                    every kItemViewDataResetIntervalMs.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "QtCocoaAccessibleTableCache.h"
 
@@ -37,6 +40,7 @@
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
+#include <QTimer>
 #include <QTableWidget>
 #include <QTreeWidget>
 
@@ -52,6 +56,8 @@ namespace {
 
 // Set by tests: the helpers act on every platform, not only macOS.
 std::atomic<bool> g_everyPlatform{false};
+// Set by tests: the data-change reset interval for views set up next.
+std::atomic<int> g_dataResetIntervalMs{kItemViewDataResetIntervalMs};
 
 } // namespace
 
@@ -68,6 +74,12 @@ bool itemViewResetsActive()
 void setItemViewResetsOnEveryPlatformForTest(bool everyPlatform)
 {
     g_everyPlatform.store(everyPlatform, std::memory_order_relaxed);
+}
+
+void setItemViewDataResetIntervalForTest(int ms)
+{
+    g_dataResetIntervalMs.store(ms > 0 ? ms : kItemViewDataResetIntervalMs,
+                                std::memory_order_relaxed);
 }
 
 namespace {
@@ -508,14 +520,18 @@ namespace {
 
 // Watches one view's accessibility cache (stale after a table change the
 // bridge hears of, clean after a reset), flushes it on request, queues one
-// reset per event-loop pass after row changes, and keeps a double-click
-// whose press came before a reset.
+// reset per event-loop pass after row changes, resets at most once per
+// interval after data changes, and keeps a double-click whose press came
+// before a reset.
 class RowChangeReset : public QObject {
 public:
     RowChangeReset(QAbstractItemView* view, std::function<void()> resetModel)
         : QObject(view), m_view(view), m_resetModel(std::move(resetModel))
     {
         m_view->viewport()->installEventFilter(this);
+        m_dataTimer.setSingleShot(true);
+        m_dataTimer.setInterval(g_dataResetIntervalMs.load(std::memory_order_relaxed));
+        QObject::connect(&m_dataTimer, &QTimer::timeout, this, [this] { runDataReset(); });
     }
 
     // Before rows move: note the top row once per pass.
@@ -542,10 +558,20 @@ public:
     }
 
     // Data changed: the bridge releases its native rows all the same
-    // (qcocoaaccessibility.mm:78-80), so the cache is stale, but
-    // QAccessibleTable reads nothing for it (itemviews.cpp:745-747) and
-    // nothing is reset now. The next row change flushes first.
-    void dataChanged() { m_stale = true; }
+    // (qcocoaaccessibility.mm:78-80), so the cache is stale, and
+    // QAccessibleTable answers a client's next query for a drained cell
+    // from its cache, with nothing (itemviews.cpp:593-595). Its own
+    // handling reads no cell (itemviews.cpp:745-747), so nothing resets
+    // now: one reset follows within the interval, which later data
+    // changes do not push back. The next row change still flushes first.
+    void dataChanged()
+    {
+        m_stale = true;
+        if (m_dataTimer.isActive() || !itemViewResetsActive()) {
+            return;
+        }
+        m_dataTimer.start();
+    }
 
     // The view announced a reset (a model reset, a layout change or a
     // move): its accessibility cache is empty.
@@ -599,6 +625,13 @@ private:
         }
     }
 
+    void runDataReset()
+    {
+        if (m_stale && !m_resetting && itemViewResetsActive() && m_view->model() != nullptr) {
+            reset();
+        }
+    }
+
     void reset()
     {
         m_resetting = true;
@@ -612,6 +645,7 @@ private:
 
     QAbstractItemView* m_view;
     std::function<void()> m_resetModel;
+    QTimer m_dataTimer;
     TopPlace m_top;
     KeptCell m_pressed;
     bool m_topNoted{false};

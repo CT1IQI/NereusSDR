@@ -27,8 +27,9 @@
 // spot and the top visible spot stay on the same spot across a new spot, a
 // burst of spots, a trimmed spot and an updated row; two spots that read
 // the same stay apart; a double-click to tune survives a reset between its
-// press and its second click. Data updates alone reset nothing. With
-// accessibility off nothing is reset, exactly as before.
+// press and its second click. Data updates reset once per interval
+// (kItemViewDataResetIntervalMs), after which an assistive client's cells
+// are back. With accessibility off nothing is reset, exactly as before.
 
 #include <QtTest>
 #include <QAccessible>
@@ -273,6 +274,76 @@ private slots:
         QVERIFY(f.rowOf(QStringLiteral("K3ABC")) >= 0);
     }
 
+    // A spot (or a data update) and a band or source pill change in the
+    // same event, the cells drained between them: the pill's row change
+    // must not read them.
+    void pillChangesAfterDrainSameEvent()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.dialog->resize(900, 600);
+        f.dialog->show();
+        f.table.addSpot(makeSpot(1));
+        DxSpot forty = makeSpot(2);
+        forty.freqMhz = 7.030;
+        f.table.addSpot(forty);
+        DxSpot rbn = makeSpot(3, QStringLiteral("RBN"));
+        f.table.addSpot(rbn);
+        auto* band = f.dialog->findChild<QPushButton*>(QStringLiteral("spotListBandPill_20m"));
+        auto* source = f.dialog->findChild<QPushButton*>(QStringLiteral("spotListSourcePill_RBN"));
+        QVERIFY(band);
+        QVERIFY(source);
+        const bool bandWas = band->isChecked();
+        const bool sourceWas = source->isChecked();
+        band->setChecked(true);
+        source->setChecked(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 3);
+
+        // A spot, the drain, the band pill hides the 20 m rows.
+        QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(4));
+        Cells::drop(walked);
+        band->setChecked(false);
+        QCOMPARE(f.view->model()->rowCount(), 1);
+
+        // A spot, the drain, the band pill shows them again.
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        DxSpot forty2 = makeSpot(5);
+        forty2.freqMhz = 7.031;
+        f.table.addSpot(forty2);
+        Cells::drop(walked);
+        band->setChecked(true);
+        QCOMPARE(f.view->model()->rowCount(), 5);
+
+        // A data update, the drain, the source pill hides the RBN spot.
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.setBearingResolver([](const QString&) { return 42.0; });
+        Cells::drop(walked);
+        source->setChecked(false);
+        QCOMPARE(f.view->model()->rowCount(), 4);
+
+        // A spot, the drain, the source pill shows it again.
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(6));
+        Cells::drop(walked);
+        source->setChecked(true);
+        QCOMPARE(f.view->model()->rowCount(), 6);
+
+        QCoreApplication::processEvents();
+        const int row = f.rowOf(QStringLiteral("K3ABC"));
+        QVERIFY(row >= 0);
+        QCOMPARE(accessibleCellText(f.view, row, SpotTableModel::ColDxCall),
+                 QStringLiteral("K3ABC"));
+        band->setChecked(bandWas);
+        source->setChecked(sourceWas);
+    }
+
     // A band pill hides and shows rows through the proxy.
     void bandFilterAfterBridgeDrain()
     {
@@ -414,28 +485,49 @@ private slots:
         QCOMPARE(f.view->model()->rowCount(), 66);
     }
 
-    // Data updates alone (a bearing for every row, three times) reset
-    // nothing: QAccessibleTable reads no cell for them.
-    void dataUpdatesAreNoReset()
+    // Data updates (a bearing for every row, three times in one interval)
+    // reset once, an interval after the first: the bridge drained the
+    // cells an assistive client walked, and QAccessibleTable answers for
+    // them from its cache with nothing until the reset. After it every
+    // cell answers again, and the place is the user's.
+    void dataUpdatesResetOncePerInterval()
     {
+        constexpr int kIntervalMs = 100;
+        setItemViewDataResetIntervalForTest(kIntervalMs);
         Cells::ActiveScope active;
         SpotListFixture f;
+        setItemViewDataResetIntervalForTest(0);
         QVERIFY(f.view);
         f.addSpots(1, 60);
         QCoreApplication::processEvents();
         f.placeOn(QStringLiteral("K20ABC"), QStringLiteral("K22ABC"));
         QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
         QSignalSpy changes(f.view->model(), &QAbstractItemModel::dataChanged);
+        const int topRow = f.rowOf(QStringLiteral("K20ABC"));
 
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        QCOMPARE(accessibleCellText(f.view, topRow, SpotTableModel::ColDxCall),
+                 QStringLiteral("K20ABC"));
         for (int i = 0; i < 3; ++i) {
             f.table.setBearingResolver([i](const QString&) { return 10.0 * i; });
             QCoreApplication::processEvents();
         }
-
+        Cells::drop(walked);
         QCOMPARE(changes.count(), 3);
         QCOMPARE(resets.count(), 0);
+        // The window the reset closes: the walked cell is gone.
+        QCOMPARE(accessibleCellText(f.view, topRow, SpotTableModel::ColDxCall), QString());
+
+        QTRY_COMPARE_WITH_TIMEOUT(resets.count(), 1, 20 * kIntervalMs);
+        QTest::qWait(3 * kIntervalMs);
+        QCOMPARE(resets.count(), 1);
         QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
         QCOMPARE(f.selectedCall(), QStringLiteral("K22ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K22ABC"));
+        for (int row = 0; row < f.view->model()->rowCount(); ++row) {
+            QCOMPARE(accessibleCellText(f.view, row, SpotTableModel::ColDxCall), f.callAt(row));
+        }
     }
 
     // Two spots that read the same in every column (same call, frequency,
@@ -552,7 +644,7 @@ private slots:
         f.table.setBearingResolver([](const QString&) { return 42.0; });
         QCoreApplication::processEvents();
         Cells::drop(walked);
-        QCOMPARE(resets.count(), 2);  // a data update resets nothing
+        QCOMPARE(resets.count(), 2);  // its reset is an interval away
         QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
         QCOMPARE(f.selectedCall(), QStringLiteral("K15ABC"));
         QCOMPARE(f.currentCall(), QStringLiteral("K15ABC"));

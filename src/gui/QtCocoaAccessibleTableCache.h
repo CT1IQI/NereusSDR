@@ -30,6 +30,11 @@
 //                                    index into the model below the
 //                                    proxies. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  Data changes reset again, at most
+//                                    once a second per view, so an
+//                                    assistive client never keeps reading
+//                                    drained cells. AI-assisted via
+//                                    Anthropic Claude Code.
 
 #pragma once
 
@@ -112,7 +117,10 @@ NEREUS_GUI_EXPORT bool resetViewKeepingPlace(QAbstractItemView* view,
 // Call once after the view has its model. While itemViewResetsActive():
 //
 // - Any table change the view announces (rows inserted or removed, data
-//   changed) marks the accessibility cache stale; a reset, a layout change
+//   changed) marks the accessibility cache stale: the bridge drains the
+//   cells for each, and QAccessibleTable answers later queries for a
+//   drained cell from its cache, with nothing (itemviews.cpp:593-595).
+//   A reset, a layout change
 //   or a move (which the view announces as a reset, qabstractitemview.cpp:
 //   3835-3848) marks it clean.
 // - The returned function is the flush: called right before the next row
@@ -122,7 +130,11 @@ NEREUS_GUI_EXPORT bool resetViewKeepingPlace(QAbstractItemView* view,
 //   OrderKeepingProxyModel::setBeforeRowChange.
 // - A row insert or removal also queues one reset for the next event-loop
 //   pass, so an assistive client walking the table meanwhile is answered
-//   from fresh cells. Data changes queue nothing.
+//   from fresh cells.
+// - A data change starts one reset kItemViewDataResetIntervalMs later
+//   (a single-shot timer per view, not restarted by later data changes),
+//   so a steady stream of updates resets at most once per interval and
+//   an assistive client's cells come back within it.
 // - A double-click whose press came before a reset still double-clicks the
 //   row pressed (the reset dropped the view's pressed index, which would
 //   turn it into a press: qabstractitemview.cpp:2034-2046).
@@ -132,5 +144,13 @@ NEREUS_GUI_EXPORT bool resetViewKeepingPlace(QAbstractItemView* view,
 // own signals go out as before.
 [[nodiscard]] NEREUS_GUI_EXPORT std::function<void()>
 resetViewAfterRowChanges(QAbstractItemView* view, std::function<void()> resetModel);
+
+// How long after the first data change of a quiet view its reset comes.
+// About a second: VoiceOver's place moves at most that often under a
+// stream of FreeDV reports or bearing updates.
+inline constexpr int kItemViewDataResetIntervalMs = 1000;
+// Test only: another interval for the views set up after this call (0 or
+// less puts kItemViewDataResetIntervalMs back).
+NEREUS_GUI_EXPORT void setItemViewDataResetIntervalForTest(int ms);
 
 } // namespace NereusSDR

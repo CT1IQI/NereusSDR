@@ -92,6 +92,10 @@
 //               changes; data updates reset nothing; the place is kept by
 //               the station's row in the table model, and a double-click
 //               survives a reset. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): data updates reset the station table at most
+//               once a second (so VoiceOver gets fresh cells back), and the
+//               proxy's flush is gated on accessibility being active.
+//               AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -957,13 +961,15 @@ void FreeDVReporterDialog::buildUi() {
     // the accessibility cache stale, and once after each burst of row
     // changes; the selected station, current station and scroll are kept by
     // the station's row in the table model, so accessibility never reads a
-    // cell the macOS bridge deleted. Data updates alone reset nothing.
+    // cell the macOS bridge deleted. Data updates reset it at most once a
+    // second (kItemViewDataResetIntervalMs), so the cells come back.
     m_columnFilterProxy->setBeforeRowChange(resetViewAfterRowChanges(
         m_table, [proxy = QPointer<FreeDVReporterColumnFilterProxy>(m_columnFilterProxy)] {
             if (proxy) {
                 proxy->resetKeepingOrder();
             }
-        }));
+        }),
+        &itemViewResetsActive);
     m_table->setItemDelegate(m_rowDelegate);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);

@@ -28,6 +28,10 @@
 //                                    before the source's row changes reach
 //                                    this proxy. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  setBeforeRowChange takes a gate: while
+//                                    it is false the proxy does no extra
+//                                    work at all. AI-assisted via
+//                                    Anthropic Claude Code.
 
 #pragma once
 
@@ -83,14 +87,20 @@ public:
     // Called right before each change of this proxy's rows (the view's
     // flush from resetViewAfterRowChanges). Subclasses that change their
     // filter call prepareForRowChange() before they change its state.
-    void setBeforeRowChange(std::function<void()> beforeRowChange)
+    // While active (when given) returns false, nothing is called and a
+    // data change costs no extra filter pass (the gui side passes
+    // itemViewResetsActive, so with accessibility off the proxy works as
+    // a plain QSortFilterProxyModel).
+    void setBeforeRowChange(std::function<void()> beforeRowChange,
+                            std::function<bool()> active = {})
     {
         m_beforeRowChange = std::move(beforeRowChange);
+        m_beforeRowChangeActive = std::move(active);
     }
 
     void prepareForRowChange()
     {
-        if (m_beforeRowChange) {
+        if (beforeRowChangeActive()) {
             m_beforeRowChange();
         }
     }
@@ -136,7 +146,7 @@ private:
     // moves no row.
     bool filterWillChangeRows(const QModelIndex& topLeft, const QModelIndex& bottomRight) const
     {
-        if (!m_beforeRowChange || !dynamicSortFilter() || !topLeft.isValid()
+        if (!beforeRowChangeActive() || !dynamicSortFilter() || !topLeft.isValid()
             || sourceModel() == nullptr) {
             return false;
         }
@@ -150,9 +160,15 @@ private:
         return false;
     }
 
+    bool beforeRowChangeActive() const
+    {
+        return m_beforeRowChange && (!m_beforeRowChangeActive || m_beforeRowChangeActive());
+    }
+
     QHash<int, int> m_shownAt;
     bool m_keepingOrder{false};
     std::function<void()> m_beforeRowChange;
+    std::function<bool()> m_beforeRowChangeActive;
     QList<QMetaObject::Connection> m_sourceHooks;
 };
 

@@ -34,6 +34,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QColor>
 #include <QHeaderView>
 #include <QLineEdit>
@@ -108,7 +109,9 @@ private slots:
     void stationTableSurvivesBridgeDrain();
     void stationChangesAfterDrainBeforeQueuedReset();
     void stationTableKeepsPlaceAcrossJoinUpdateLeave();
-    void stationUpdatesAreNoReset();
+    void stationUpdatesResetOncePerInterval();
+    void reportStreamResetsOncePerInterval();
+    void bandAndExactFrequencyChangesAfterDrainSameEvent();
     void stationBurstResetsBeforeEachChange();
     void accessibilityOffLeavesStationTableAlone();
 };
@@ -1167,7 +1170,8 @@ void TestFreeDVReporterDialog::doubleClickOnRowEmitsTuneRequested() {
 // the last reset left the cache stale, and once more after each burst.
 // Offscreen there is no bridge, so the cases walk the cells, change rows,
 // delete the walked cells themselves (before or after the event loop runs)
-// and change rows again. Data updates alone reset nothing.
+// and change rows again. Data updates reset once per interval
+// (kItemViewDataResetIntervalMs), so cells a client walked come back.
 
 namespace {
 
@@ -1204,6 +1208,17 @@ QString currentSid(QTableView* table)
 {
     const QModelIndex current = table->currentIndex();
     return current.isValid() ? sidAt(table, current.row()) : QString();
+}
+
+// Text of the accessible cell at (row, column), empty when there is none.
+QString accessibleCellText(QTableView* table, int row, int column)
+{
+    QAccessibleInterface* iface = QAccessible::queryAccessibleInterface(table);
+    if (iface == nullptr || iface->tableInterface() == nullptr) {
+        return {};
+    }
+    QAccessibleInterface* cell = iface->tableInterface()->cellAt(row, column);
+    return cell != nullptr ? cell->text(QAccessible::Name) : QString();
 }
 
 QString topSid(QTableView* table)
@@ -1398,23 +1413,33 @@ void TestFreeDVReporterDialog::stationTableKeepsPlaceAcrossJoinUpdateLeave() {
     QCOMPARE(accessible.tops, QStringList(3, accessible.top));
 }
 
-void TestFreeDVReporterDialog::stationUpdatesAreNoReset() {
-    // Report and SNR updates for shown stations, and the coloring timer's
-    // repaint, change data only: no reset.
+void TestFreeDVReporterDialog::stationUpdatesResetOncePerInterval() {
+    // Report and SNR updates for every shown station in one pass change
+    // data only. The bridge drains the cells a client walked; the table
+    // answers for them with nothing until one reset, an interval after the
+    // first update, brings them back with the place kept.
+    constexpr int kIntervalMs = 100;
     AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
     Cells::ActiveScope active;
     FreeDVStationModel stations;
+    setItemViewDataResetIntervalForTest(kIntervalMs);
     auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
+    setItemViewDataResetIntervalForTest(0);
     auto* table = dlg->findChild<QTableView*>();
     QVERIFY(table);
     for (int n = 10; n < 30; ++n) {
         stations.onStationAdded(QStringLiteral("sid-%1").arg(n), makeStationWithSnr(n, 4));
     }
     QCoreApplication::processEvents();
+    const QString top = sidAt(table, 2);
     const QString selected = sidAt(table, 5);
-    placeOn(dlg.get(), table, sidAt(table, 2), selected);
+    placeOn(dlg.get(), table, top, selected);
     QSignalSpy resets(table->model(), &QAbstractItemModel::modelReset);
     QSignalSpy changes(table->model(), &QAbstractItemModel::dataChanged);
+    const QString selectedText = table->model()->index(5, 0).data().toString();
+    QCOMPARE(accessibleCellText(table, 5, 0), selectedText);
+    const QList<QAccessible::Id> walked = Cells::walk(table);
+    QVERIFY(!walked.isEmpty());
 
     for (int n = 10; n < 30; ++n) {
         FreeDVStation updated = makeStationWithSnr(n, 4);
@@ -1423,12 +1448,152 @@ void TestFreeDVReporterDialog::stationUpdatesAreNoReset() {
         stations.onStationUpdated(updated.sid, updated);
     }
     QCoreApplication::processEvents();
+    Cells::drop(walked);
 
     QVERIFY(changes.count() > 0);
     QCOMPARE(resets.count(), 0);
+    QCOMPARE(accessibleCellText(table, 5, 0), QString());
+    QTRY_COMPARE_WITH_TIMEOUT(resets.count(), 1, 20 * kIntervalMs);
+    QTest::qWait(3 * kIntervalMs);
+    QCOMPARE(resets.count(), 1);
     QCOMPARE(selectedSid(table), selected);
+    QCOMPARE(currentSid(table), selected);
+    QCOMPARE(topSid(table), top);
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+        QCOMPARE(accessibleCellText(table, row, 0), table->model()->index(row, 0).data().toString());
+    }
 
     AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+}
+
+void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
+    // A steady stream of reports across many stations (eight per interval,
+    // one station after another) for 15 intervals resets about once per
+    // interval, never once per report. The interval is scaled down here
+    // (50 ms); NEREUS_TEST_DATA_RESET_MS=1000 runs it at the app's own
+    // interval in real time. The cells a client walked before the last
+    // reports answer again after the last reset.
+    const int envMs = qEnvironmentVariableIntValue("NEREUS_TEST_DATA_RESET_MS");
+    const int intervalMs = envMs > 0 ? envMs : 50;
+    constexpr int kIntervals = 15;
+    constexpr int kReportsPerInterval = 8;
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+    Cells::ActiveScope active;
+    FreeDVStationModel stations;
+    setItemViewDataResetIntervalForTest(intervalMs);
+    auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
+    setItemViewDataResetIntervalForTest(0);
+    auto* table = dlg->findChild<QTableView*>();
+    QVERIFY(table);
+    for (int n = 10; n < 50; ++n) {
+        stations.onStationAdded(QStringLiteral("sid-%1").arg(n), makeStationWithSnr(n, 4));
+    }
+    QCoreApplication::processEvents();
+    const QString selected = sidAt(table, 7);
+    placeOn(dlg.get(), table, sidAt(table, 3), selected);
+    QSignalSpy resets(table->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy changes(table->model(), &QAbstractItemModel::dataChanged);
+
+    QElapsedTimer clock;
+    clock.start();
+    QList<QAccessible::Id> walked;
+    int reports = 0;
+    const qint64 lastWalkAt = qint64(kIntervals - 1) * intervalMs;
+    while (clock.elapsed() < qint64(kIntervals) * intervalMs) {
+        if (walked.isEmpty() && clock.elapsed() >= lastWalkAt) {
+            walked = Cells::walk(table);
+        }
+        const int n = 10 + (reports % 40);
+        FreeDVStation updated = makeStationWithSnr(n, reports % 20);
+        updated.sid = QStringLiteral("sid-%1").arg(n);
+        updated.lastRxCallsign = QStringLiteral("W%1AW").arg(reports % 10);
+        stations.onStationUpdated(updated.sid, updated);
+        ++reports;
+        QTest::qWait(intervalMs / kReportsPerInterval);
+    }
+    const double seconds = double(clock.elapsed()) / 1000.0;
+    const int streamResets = int(resets.count());
+    Cells::drop(walked);
+    QTRY_COMPARE_WITH_TIMEOUT(resets.count(), streamResets + 1, 20 * intervalMs);
+    qInfo("interval %d ms: %d reports and %d resets in %.2f s (%.2f reports/s, %.2f resets/s)",
+          intervalMs, reports, streamResets, seconds, reports / seconds, streamResets / seconds);
+
+    QVERIFY(changes.count() >= reports);
+    QVERIFY2(streamResets >= kIntervals * 2 / 3,
+             qPrintable(QStringLiteral("only %1 resets").arg(streamResets)));
+    QVERIFY2(streamResets <= kIntervals + 1,
+             qPrintable(QStringLiteral("%1 resets").arg(streamResets)));
+    QCOMPARE(selectedSid(table), selected);
+    QVERIFY(!walked.isEmpty());
+    for (int row = 0; row < table->model()->rowCount(); ++row) {
+        QCOMPARE(accessibleCellText(table, row, 0), table->model()->index(row, 0).data().toString());
+    }
+
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+}
+
+void TestFreeDVReporterDialog::bandAndExactFrequencyChangesAfterDrainSameEvent() {
+    // A station change and a band or exact-frequency filter change in the
+    // same event, the cells drained between them: the filter's row change
+    // (m_bandProxy, below the top proxy) must not read them.
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/BandFilter"));
+    Cells::ActiveScope active;
+    FreeDVStationModel stations;
+    auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
+    auto* table = dlg->findChild<QTableView*>();
+    auto* combo = dlg->findChild<QComboBox*>(QStringLiteral("bandFilterCombo"));
+    auto* exact = dlg->findChild<QRadioButton*>(QStringLiteral("trackFreqRadio"));
+    QVERIFY(table);
+    QVERIFY(combo);
+    QVERIFY(exact);
+    dlg->show();
+    stations.onStationAdded(QStringLiteral("sid-1"), makeStationOnFreq("sid-1", "K1A", 14236000));
+    stations.onStationAdded(QStringLiteral("sid-2"), makeStationOnFreq("sid-2", "K1B", 3573000));
+    stations.onStationAdded(QStringLiteral("sid-3"), makeStationOnFreq("sid-3", "K1C", 14236000));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->model()->rowCount(), 3);
+
+    // A join, the drain, the band filter hides the 80 m station.
+    QList<QAccessible::Id> walked = Cells::walk(table);
+    QVERIFY(!walked.isEmpty());
+    stations.onStationAdded(QStringLiteral("sid-4"), makeStationOnFreq("sid-4", "K1D", 3573000));
+    Cells::drop(walked);
+    combo->setCurrentIndex(combo->findText(QStringLiteral("20m")));
+    QCOMPARE(table->model()->rowCount(), 2);
+
+    // A report, the drain, the band filter shows every station again.
+    walked = Cells::walk(table);
+    QVERIFY(!walked.isEmpty());
+    FreeDVStation updated = makeStationOnFreq("sid-1", "K1A", 14236000);
+    updated.lastRxCallsign = QStringLiteral("W1AW");
+    stations.onStationUpdated(QStringLiteral("sid-1"), updated);
+    Cells::drop(walked);
+    combo->setCurrentIndex(0);
+    QCOMPARE(table->model()->rowCount(), 4);
+
+    // A leave, the drain, exact frequency with no VFO yet hides everything.
+    walked = Cells::walk(table);
+    QVERIFY(!walked.isEmpty());
+    stations.onStationRemoved(QStringLiteral("sid-4"));
+    Cells::drop(walked);
+    exact->setChecked(true);
+    QCOMPARE(table->model()->rowCount(), 0);
+    dlg->setActiveFrequency(14236000);
+    QCOMPARE(table->model()->rowCount(), 2);
+
+    // A join, the drain, the exact frequency moves to the 80 m station.
+    walked = Cells::walk(table);
+    QVERIFY(!walked.isEmpty());
+    stations.onStationAdded(QStringLiteral("sid-5"), makeStationOnFreq("sid-5", "K1E", 14236000));
+    Cells::drop(walked);
+    dlg->setActiveFrequency(3573000);
+    QCOMPARE(table->model()->rowCount(), 1);
+
+    QCoreApplication::processEvents();
+    QCOMPARE(accessibleCellText(table, 0, 0), table->model()->index(0, 0).data().toString());
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+    AppSettings::instance().remove(QStringLiteral("FreeDvReporter/BandFilter"));
 }
 
 void TestFreeDVReporterDialog::stationBurstResetsBeforeEachChange() {

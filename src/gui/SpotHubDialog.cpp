@@ -181,6 +181,10 @@
 //               nothing; the place is kept by the spot's row in
 //               SpotTableModel, and a double-click to tune survives a
 //               reset. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): data updates reset the Spot List at most
+//               once a second (so VoiceOver gets fresh cells back), and the
+//               proxy's flush is gated on accessibility being active.
+//               AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -2539,13 +2543,15 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     // each burst of row changes; the selected spot, current spot and scroll
     // are kept by the spot's row in SpotTableModel, so accessibility never
     // reads a cell the macOS bridge deleted and two spots that read the
-    // same stay apart. Data updates alone reset nothing.
+    // same stay apart. Data updates reset it at most once a second
+    // (kItemViewDataResetIntervalMs), so the cells come back.
     m_spotProxyModel->setBeforeRowChange(resetViewAfterRowChanges(
         m_spotTable, [proxy = QPointer<BandFilterProxy>(m_spotProxyModel)] {
             if (proxy) {
                 proxy->resetKeepingOrder();
             }
-        }));
+        }),
+        &itemViewResetsActive);
 
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {
