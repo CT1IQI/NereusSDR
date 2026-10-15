@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Clear the retired connection's discovery exemption before
+//                publishing intentional disconnect. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -26991,6 +26994,12 @@ void RadioModel::teardownConnection()
     // but isConnected() still read stale-Connected. See design addendum
     // docs/architecture/2026-08-03-remote-daemon-r2-r3-design-addendum.md
     // section 5.
+    // The disconnected callback is severed above, so its discovery cleanup
+    // must also happen here. Clear before observers see Disconnected; an
+    // unsaved radio that has stopped replying may now age out normally.
+    if (m_discovery) {
+        m_discovery->clearConnectedMac();
+    }
     setConnectionState(ConnectionState::Disconnected);
 
     // TX safety fix round 2 (2026-09-30): the forced Disconnected above never
