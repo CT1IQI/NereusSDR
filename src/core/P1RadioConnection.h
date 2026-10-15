@@ -122,6 +122,9 @@
 //                order and the bytes handed to the readout. J.J. Boyd
 //                (KG4VCF), with AI-assisted implementation via Anthropic
 //                Claude Code.
+//   2026-10-15 - Load-failure findings: the EP2 send trace for tests
+//                (recordEp2SendsForTest). J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -1871,6 +1874,40 @@ public:
     static int liveEp2SendersForTest();
     static int maxLiveEp2SendersForTest();
     static void resetMaxLiveEp2SendersForTest();
+
+    // ── EP2 send trace (2026-10-15) ──
+    // What the sender did for each frame it sent, stamped on the sender
+    // thread, so a test can judge EP2 gaps by send time instead of by when
+    // the fake radio's thread got round to reading them, and can tell a
+    // late wakeup from a wait for the frame lock. All times steady_clock.
+    struct Ep2SendStamp {
+        qint64 sentNs{0};       // sendto returned
+        qint64 passNs{0};       // the pass that sent it began (woke)
+        qint64 wakeLateNs{0};   // that pass woke this long after its sleep was due to end
+        qint64 lockWaitNs{0};   // waited this long for the frame lock
+        qint32 lockTimeouts{0}; // try_lock_for(1 ms) attempts that timed out
+        qint64 sendNs{0};       // sendto took this long
+    };
+    // Starts recording up to `capacity` frames. Once per connection, from
+    // the connection thread; the sender may be running.
+    void recordEp2SendsForTest(int capacity);
+    // The frames recorded so far, in send order.
+    QList<Ep2SendStamp> ep2SendStampsForTest() const;
+private:
+    struct Ep2SendTrace {
+        explicit Ep2SendTrace(int cap) : stamps(new Ep2SendStamp[size_t(cap)]), capacity(cap) {}
+        std::unique_ptr<Ep2SendStamp[]> stamps;
+        int capacity;
+        // Entries below count are complete (written before a release store).
+        std::atomic<int> count{0};
+    };
+    std::unique_ptr<Ep2SendTrace> m_ep2TraceOwner;
+    std::atomic<Ep2SendTrace*> m_ep2Trace{nullptr};
+    // The sender's own notes for the trace, written and read only on the
+    // sender thread.
+    qint64 m_ep2TraceWakeLateNs{0};
+    qint64 m_ep2TraceLockWaitNs{0};
+    qint32 m_ep2TraceLockTimeouts{0};
 #endif
 };
 

@@ -1,4 +1,5 @@
 // tests/tst_p1_loopback_connection.cpp
+// no-port-check: NereusSDR-original test; IoBoardHl2.h is NereusSDR's own header.
 //
 // Phase 3I Task 9 — end-to-end integration test for P1RadioConnection.
 // Uses P1FakeRadio (loopback UDP) to verify:
@@ -27,12 +28,17 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <pthread.h>
+#ifdef Q_OS_MAC
+#include <pthread/qos.h>
+#endif
 #include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/HpsdrModel.h"
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/IoBoardHl2.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "fakes/P1FakeRadio.h"
 
 using namespace NereusSDR;
@@ -102,6 +108,66 @@ Ep2Span ep2Span(const QList<qint64>& arrivals, qint64 fromNs, qint64 toNs)
     }
     span.maxGapNs = std::max(span.maxGapNs, toNs - prev);
     return span;
+}
+
+// The frames the sender sent in [fromNs, toNs] by its own send stamps
+// (recordEp2SendsForTest), the largest gap between them, and the frame that
+// ended that gap. The window's edges count as sends, as in ep2Span.
+struct SendSpan {
+    int frames{0};
+    qint64 maxGapNs{0};
+    bool gapEndsWindow{false};
+    P1RadioConnection::Ep2SendStamp after{};
+};
+
+SendSpan sendSpan(const QList<P1RadioConnection::Ep2SendStamp>& stamps, qint64 fromNs,
+                  qint64 toNs)
+{
+    SendSpan span;
+    qint64 prev = fromNs;
+    for (const auto& st : stamps) {
+        if (st.sentNs < fromNs || st.sentNs > toNs) { continue; }
+        ++span.frames;
+        if (st.sentNs - prev > span.maxGapNs) {
+            span.maxGapNs = st.sentNs - prev;
+            span.after = st;
+            span.gapEndsWindow = false;
+        }
+        prev = st.sentNs;
+    }
+    if (toNs - prev > span.maxGapNs) {
+        span.maxGapNs = toNs - prev;
+        span.gapEndsWindow = true;
+    }
+    return span;
+}
+
+// The calling thread's scheduling, for the soak's report: on macOS its QoS
+// class (0x21 user-interactive, 0x19 user-initiated, 0x15 default; Mach's
+// thread_info reports base priority 31 for every class, so it says
+// nothing here), elsewhere its policy and priority.
+QString threadSchedulingNote()
+{
+#ifdef Q_OS_MAC
+    qos_class_t qos = QOS_CLASS_UNSPECIFIED;
+    int rel = 0;
+    pthread_get_qos_class_np(pthread_self(), &qos, &rel);
+    return QString("QoS class 0x%1").arg(int(qos), 0, 16);
+#else
+    int policy = 0;
+    sched_param sp{};
+    pthread_getschedparam(pthread_self(), &policy, &sp);
+    return QString("policy %1, priority %2").arg(policy).arg(sp.sched_priority);
+#endif
+}
+
+// Where the time of the gap before a sent frame went: how late its pass
+// woke, how long it waited for the frame lock, how long sendto took.
+QString describeSend(const P1RadioConnection::Ep2SendStamp& st)
+{
+    return QString("pass woke %1 ms late, lock wait %2 ms (%3 timeouts), sendto %4 ms")
+        .arg(st.wakeLateNs / 1e6, 0, 'f', 2).arg(st.lockWaitNs / 1e6, 0, 'f', 2)
+        .arg(st.lockTimeouts).arg(st.sendNs / 1e6, 0, 'f', 2);
 }
 
 // A transmit pump: feeds the connection 48 kHz TX I/Q from a thread of its
@@ -823,6 +889,7 @@ private slots:
         conn.init();
         conn.setBandwidthMonitor(&bw);
         QVERIFY(connectAndKey(fake, conn));
+        conn.recordEp2SendsForTest(1 << 14);
         TxIqPump pump(conn);
         pump.start();
         QTest::qWait(100);
@@ -851,11 +918,26 @@ private slots:
         pump.stop();
 
         const Ep2Span span = ep2Span(fake.ep2ArrivalNs(), floodStart, floodEnd);
-        qInfo().noquote() << QString("MEASURE ep6-flood: %1 ms, %2 EP2 frames, max gap %3 ms")
+        const SendSpan sent = sendSpan(conn.ep2SendStampsForTest(), floodStart, floodEnd);
+        qInfo().noquote() << QString("MEASURE ep6-flood: %1 ms, %2 EP2 frames, max gap %3 ms;"
+                                     " sent %4, max send gap %5 ms (%6)")
                                  .arg((floodEnd - floodStart) / 1e6, 0, 'f', 1).arg(span.frames)
-                                 .arg(span.maxGapNs / 1e6, 0, 'f', 2);
-        QVERIFY2(span.maxGapNs <= 40'000'000,
-                 qPrintable(QString("EP2 gap of %1 ms").arg(span.maxGapNs / 1e6, 0, 'f', 2)));
+                                 .arg(span.maxGapNs / 1e6, 0, 'f', 2).arg(sent.frames)
+                                 .arg(sent.maxGapNs / 1e6, 0, 'f', 2)
+                                 .arg(sent.gapEndsWindow ? QStringLiteral("at the window's end")
+                                                         : describeSend(sent.after));
+        // Judged by the sender's own send stamps: the fake's thread reads
+        // and stamps at normal priority, and on a loaded machine it was
+        // late by up to 136 ms when the sender was not (2026-10-15). The
+        // arrival gap stays as a weaker bound, under the 240 ms a capped
+        // batch costs this thread, so EP2 sent between batches still fails.
+        QVERIFY2(sent.maxGapNs <= 40'000'000,
+                 qPrintable(QString("EP2 send gap of %1 ms (%2)")
+                                .arg(sent.maxGapNs / 1e6, 0, 'f', 2)
+                                .arg(sent.gapEndsWindow ? QStringLiteral("at the window's end")
+                                                        : describeSend(sent.after))));
+        QVERIFY2(span.maxGapNs <= 200'000'000,
+                 qPrintable(QString("EP2 arrival gap of %1 ms").arg(span.maxGapNs / 1e6, 0, 'f', 2)));
         const QString fault = flood.verify();
         QVERIFY2(fault.isEmpty(), qPrintable(fault));
         QCOMPARE(bw.ep6SequenceErrorCount(), gapsBefore);
@@ -943,6 +1025,145 @@ private slots:
 
         // The backlog left when the feeder stops is read with no new arrivals.
         QTRY_VERIFY_WITH_TIMEOUT(!conn.socketHasPendingDatagramsForTest(), 5000);
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // A soak, skipped unless NEREUS_EP2_SOAK_S gives its length in seconds:
+    // keyed with TX I/Q flowing while this (the connection's) thread reads
+    // an EP6 flood it cannot keep up with, as a Pi 4 Core's connection
+    // thread is while keyed. Reports the worst EP2 gap by the sender's own
+    // send stamps, where each gap's time went, and the wakeup lateness of a
+    // control thread raised as the sender is (elevateAudioThreadPriority)
+    // and sleeping 2 ms a pass, so a gap the machine imposes on every
+    // raised thread shows in both. CPU load on the other cores comes from
+    // outside the test. The 32 ms bound is the HL2's: it drops PTT after
+    // about that long without EP2.
+    void ep2SendGapSoak() {
+        const int soakS = qEnvironmentVariableIntValue("NEREUS_EP2_SOAK_S");
+        if (soakS <= 0) {
+            QSKIP("set NEREUS_EP2_SOAK_S to run the EP2 soak");
+        }
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QVERIFY(connectAndKey(fake, conn));
+        conn.recordEp2SendsForTest(soakS * 400 + 4000);
+        TxIqPump pump(conn);
+        pump.start();
+
+        // Each EP6 frame costs this thread 200 us; the feeder sends about
+        // 10,000 a second, twice what it can read.
+        QObject slowReader;
+        connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
+                [](int rx, const QVector<float>&) {
+            if (rx != 0) { return; }
+            QElapsedTimer t;
+            t.start();
+            while (t.nsecsElapsed() < 200000) {
+            }
+        });
+
+        std::atomic<bool> run{true};
+        std::thread feeder([&fake, &run] {
+            while (run.load()) {
+                fake.sendEp6Frames(20);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        });
+        struct Wake { qint64 atNs; qint64 lateNs; };
+        std::vector<Wake> wakes;
+        wakes.reserve(size_t(soakS) * 600 + 1000);
+        QString controlScheduling;
+        std::thread control([&run, &wakes, &controlScheduling] {
+            AudioPriorityToken* prio = elevateAudioThreadPriority();
+            controlScheduling = threadSchedulingNote();
+            while (run.load()) {
+                const qint64 from = steadyNowNs();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                const qint64 now = steadyNowNs();
+                wakes.push_back({now, now - from - 2'000'000});
+            }
+            leaveAudioThreadPriority(prio);
+        });
+
+        QTest::qWait(500);  // the control thread's priority settles
+        const qint64 fromNs = steadyNowNs();
+        QTest::qWait(soakS * 1000);
+        const qint64 toNs = steadyNowNs();
+        run.store(false);
+        feeder.join();
+        control.join();
+        QObject::disconnect(&conn, &RadioConnection::iqDataReceived, &slowReader, nullptr);
+        pump.stop();
+
+        // Every gap over 10 ms by send time, and the worst.
+        const QList<P1RadioConnection::Ep2SendStamp> stamps = conn.ep2SendStampsForTest();
+        const SendSpan sent = sendSpan(stamps, fromNs, toNs);
+        int over10 = 0;
+        int over20 = 0;
+        int over32 = 0;
+        qint64 prev = fromNs;
+        QList<QPair<qint64, P1RadioConnection::Ep2SendStamp>> big;
+        for (const auto& st : stamps) {
+            if (st.sentNs < fromNs || st.sentNs > toNs) { continue; }
+            const qint64 gap = st.sentNs - prev;
+            over10 += gap > 10'000'000 ? 1 : 0;
+            over20 += gap > 20'000'000 ? 1 : 0;
+            over32 += gap > 32'000'000 ? 1 : 0;
+            if (gap > 10'000'000) { big.append({gap, st}); }
+            prev = st.sentNs;
+        }
+        std::sort(big.begin(), big.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+        });
+        qint64 controlMax = 0;
+        qint64 controlMaxAt = 0;
+        int controlOver10 = 0;
+        int controlWakes = 0;
+        for (const Wake& w : wakes) {
+            if (w.atNs < fromNs || w.atNs > toNs) { continue; }
+            ++controlWakes;
+            controlOver10 += w.lateNs > 10'000'000 ? 1 : 0;
+            if (w.lateNs > controlMax) {
+                controlMax = w.lateNs;
+                controlMaxAt = w.atNs;
+            }
+        }
+        const double seconds = (toNs - fromNs) / 1e9;
+        qInfo().noquote() << QString("MEASURE soak: %1 s, %2 EP2 frames sent (%3 a second),"
+                                     " max send gap %4 ms; gaps over 10/20/32 ms: %5/%6/%7")
+                                 .arg(seconds, 0, 'f', 1).arg(sent.frames)
+                                 .arg(sent.frames / seconds, 0, 'f', 1)
+                                 .arg(sent.maxGapNs / 1e6, 0, 'f', 2)
+                                 .arg(over10).arg(over20).arg(over32);
+        for (int i = 0; i < std::min<qsizetype>(big.size(), 8); ++i) {
+            // The control thread's worst wake in the 50 ms before this send.
+            qint64 controlNear = 0;
+            for (const Wake& w : wakes) {
+                if (w.atNs >= big[i].second.sentNs - 50'000'000
+                    && w.atNs <= big[i].second.sentNs + 5'000'000) {
+                    controlNear = std::max(controlNear, w.lateNs);
+                }
+            }
+            qInfo().noquote() << QString("MEASURE soak gap %1: %2 ms at +%3 s; %4;"
+                                         " control's worst wake nearby %5 ms late")
+                                     .arg(i + 1).arg(big[i].first / 1e6, 0, 'f', 2)
+                                     .arg((big[i].second.sentNs - fromNs) / 1e9, 0, 'f', 3)
+                                     .arg(describeSend(big[i].second))
+                                     .arg(controlNear / 1e6, 0, 'f', 2);
+        }
+        qInfo().noquote() << QString("MEASURE soak control: %1 wakes, worst %2 ms late at +%3 s,"
+                                     " %4 over 10 ms late; raised as the sender is: %5")
+                                 .arg(controlWakes).arg(controlMax / 1e6, 0, 'f', 2)
+                                 .arg((controlMaxAt - fromNs) / 1e9, 0, 'f', 3)
+                                 .arg(controlOver10).arg(controlScheduling);
+        QVERIFY2(sent.maxGapNs <= 32'000'000,
+                 qPrintable(QString("EP2 send gap of %1 ms").arg(sent.maxGapNs / 1e6, 0, 'f', 2)));
 
         conn.disconnect();
         fake.stop();

@@ -4915,7 +4915,27 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
             ++m_ep2PacketsSent;
             i2cLineCount = takeHl2I2cOutLog(i2cLines);
         }
+#ifdef NEREUS_BUILD_TESTS
+        Ep2SendTrace* trace = onSenderThread ? m_ep2Trace.load(std::memory_order_acquire)
+                                             : nullptr;
+        const qint64 sendFromNs = trace != nullptr ? ep2SteadyNowNs() : 0;
+#endif
         sink(ctx, frame, kEp2FrameBytes);
+#ifdef NEREUS_BUILD_TESTS
+        if (trace != nullptr) {
+            const int i = trace->count.load(std::memory_order_relaxed);
+            if (i < trace->capacity) {
+                Ep2SendStamp& st = trace->stamps[size_t(i)];
+                st.sentNs = ep2SteadyNowNs();
+                st.passNs = nowNs;
+                st.wakeLateNs = m_ep2TraceWakeLateNs;
+                st.lockWaitNs = m_ep2TraceLockWaitNs;
+                st.lockTimeouts = m_ep2TraceLockTimeouts;
+                st.sendNs = st.sentNs - sendFromNs;
+                trace->count.store(i + 1, std::memory_order_release);
+            }
+        }
+#endif
         for (int i = 0; i < i2cLineCount; ++i) {
             P1CodecHl2::printI2cOutLine(i2cLines[size_t(i)]);
         }
@@ -4951,16 +4971,53 @@ int P1RadioConnection::takeHl2I2cOutLog(P1CodecHl2::I2cOutLog& out) const
 std::unique_lock<std::timed_mutex> P1RadioConnection::lockFrameOnSender()
 {
     std::unique_lock<std::timed_mutex> lock(m_frameMutex, std::defer_lock);
+#ifdef NEREUS_BUILD_TESTS
+    const bool traced = m_ep2Trace.load(std::memory_order_acquire) != nullptr;
+    const qint64 waitFromNs = traced ? ep2SteadyNowNs() : 0;
+    m_ep2TraceLockTimeouts = 0;
+#endif
     while (m_ep2SenderRun.load(std::memory_order_acquire)) {
         if (lock.try_lock_for(std::chrono::milliseconds(1))) {
             if (!m_ep2SenderRun.load(std::memory_order_acquire)) {
                 lock.unlock();
             }
+#ifdef NEREUS_BUILD_TESTS
+            if (traced) {
+                m_ep2TraceLockWaitNs = ep2SteadyNowNs() - waitFromNs;
+            }
+#endif
             return lock;
         }
+#ifdef NEREUS_BUILD_TESTS
+        ++m_ep2TraceLockTimeouts;
+#endif
     }
     return lock;
 }
+
+#ifdef NEREUS_BUILD_TESTS
+void P1RadioConnection::recordEp2SendsForTest(int capacity)
+{
+    Q_ASSERT(!m_ep2TraceOwner);
+    m_ep2TraceOwner = std::make_unique<Ep2SendTrace>(std::max(1, capacity));
+    m_ep2Trace.store(m_ep2TraceOwner.get(), std::memory_order_release);
+}
+
+QList<P1RadioConnection::Ep2SendStamp> P1RadioConnection::ep2SendStampsForTest() const
+{
+    QList<Ep2SendStamp> out;
+    const Ep2SendTrace* trace = m_ep2Trace.load(std::memory_order_acquire);
+    if (trace == nullptr) {
+        return out;
+    }
+    const int n = trace->count.load(std::memory_order_acquire);
+    out.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        out.append(trace->stamps[size_t(i)]);
+    }
+    return out;
+}
+#endif
 
 void P1RadioConnection::drainEp2BytesSent()
 {
@@ -5082,7 +5139,14 @@ void P1RadioConnection::ep2SenderMain()
         }
         Sleep(kEp2PacerIntervalMs);
 #else
+#ifdef NEREUS_BUILD_TESTS
+        const qint64 sleepFromNs = ep2SteadyNowNs();
+#endif
         std::this_thread::sleep_for(std::chrono::milliseconds(kEp2PacerIntervalMs));
+#ifdef NEREUS_BUILD_TESTS
+        m_ep2TraceWakeLateNs = ep2SteadyNowNs() - sleepFromNs
+                               - qint64(kEp2PacerIntervalMs) * 1'000'000LL;
+#endif
 #endif
     }
 #ifdef Q_OS_WIN
