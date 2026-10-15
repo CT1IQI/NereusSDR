@@ -7,6 +7,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Desktop-host TX dial correction by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: the initial TX dial reads the
+//                bound slice only when it is one of this client's mapped
+//                receivers, so another device's slice never leaks.
 //   2026-10-14 - Initial TX dial correction by J.J. Boyd (KG4VCF),
 //                AI-assisted via OpenAI Codex: read the arbiter-bound slice
 //                for late clients, preserving RX and separate XIT state.
@@ -808,10 +812,15 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // TXFreq above is the selected dial, without XIT; XIT enable/offset are
     // sent separately (TCIServer.cs:2587-2594 [v2.10.3.15]). Keep the legacy
     // RX1 fallback for synthetic models and an unresolved transmit binding.
+    // With a receiver map (desktop-host mode) this client sees only its
+    // mapped slices; a bound slice outside that map belongs to another
+    // device, so its dial is never announced and RX1 is used instead.
     qint64 txFreqHz = rx1FreqHz;
     if (const auto* radio = qobject_cast<const RadioModel*>(m_radio)) {
         if (const SliceModel* txSlice = radio->txBoundSlice()) {
-            txFreqHz = static_cast<qint64>(txSlice->frequency());
+            if (!m_receiverSliceMap || sliceReceiver(txSlice->sliceIndex()) >= 0) {
+                txFreqHz = static_cast<qint64>(txSlice->frequency());
+            }
         }
     }
     // Derive the band label from the TX frequency. Thetis reads

@@ -81,6 +81,8 @@ private slots:
     void late_client_after_completed_handoff_gets_bound_tx_frequency_data();
     void late_client_after_completed_handoff_gets_bound_tx_frequency();
     void initial_tx_frequency_without_binding_retains_rx1_fallback();
+    void desktop_map_tx_frequency_hides_unmapped_bound_slice_data();
+    void desktop_map_tx_frequency_hides_unmapped_bound_slice();
     void production_tx_slice_drives_trx_and_tune_lines_data();
     void production_tx_slice_drives_trx_and_tune_lines();
     // RED #6 -- per-rx flags: sql, rxMute, nr, anf, apf, bin, nf, ctun, split.
@@ -436,6 +438,61 @@ void TestTciInitBurstLiveState::initial_tx_frequency_without_binding_retains_rx1
     QVERIFY(!burst.contains(QStringLiteral("tx_frequency:0;")));
     QVERIFY(radio.txBoundSlice() == nullptr);
     QVERIFY(!radio.mox());
+}
+
+// Desktop-host mode maps this client's receivers to the station's own
+// slices. A TX binding on a slice outside that map (another device's)
+// must not leak its dial: the initial TX dial falls back to receiver 0's
+// mapped slice. A bound slice that is mapped is still announced.
+void TestTciInitBurstLiveState::desktop_map_tx_frequency_hides_unmapped_bound_slice_data()
+{
+    QTest::addColumn<int>("txSliceId");
+    QTest::addColumn<qint64>("expectedHz");
+    QTest::addColumn<QString>("expectedBand");
+    QTest::newRow("unmapped-phone-slice-bound") << 0 << qint64(7074000) << QStringLiteral("40m");
+    QTest::newRow("mapped-receiver-1-bound") << 1 << qint64(21074000) << QStringLiteral("15m");
+}
+
+void TestTciInitBurstLiveState::desktop_map_tx_frequency_hides_unmapped_bound_slice()
+{
+    QFETCH(int, txSliceId);
+    QFETCH(qint64, expectedHz);
+    QFETCH(QString, expectedBand);
+    pinAppSettingsToCaptureConditions();
+    InitBurstFakeConnection connection;
+    RadioModel radio;
+    radio.configureStreamPool(5, 5, 192000);
+    radio.injectConnectionForTest(&connection);
+    const auto detachConnection = qScopeGuard([&radio] {
+        radio.injectConnectionForTest(nullptr);
+    });
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 0);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 1);
+    QCOMPARE(radio.addSlice(QStringLiteral("pan-0")), 2);
+    radio.sliceById(0)->setFrequency(3573000.0);
+    radio.sliceById(1)->setFrequency(21074000.0);
+    radio.sliceById(2)->setFrequency(7074000.0);
+    if (txSliceId != 0) {
+        QVERIFY(radio.requestTxHandoffToSlice(txSliceId));
+        QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), txSliceId);
+    }
+    QCOMPARE(radio.txBoundSlice(), radio.sliceById(txSliceId));
+    QVERIFY(!radio.mox());
+
+    // Receiver 0 is the host's slice 2, receiver 1 its slice 1; slice 0
+    // belongs to another device and has no receiver here.
+    TciProtocol protocol(&radio);
+    protocol.setReceiverSliceMap([](int receiver) {
+        return receiver == 0 ? 2 : (receiver == 1 ? 1 : -1);
+    });
+    const QStringList burst = protocol.buildInitBurst();
+    QVERIFY(burst.contains(QStringLiteral("vfo:0,0,7074000;")));
+    QCOMPARE(burst.count(QStringLiteral("tx_frequency:%1;").arg(expectedHz)), 1);
+    QCOMPARE(burst.filter(QStringLiteral("tx_frequency_thetis:%1,%2,")
+                              .arg(expectedHz).arg(expectedBand)).size(), 1);
+    for (const QString& line : burst) {
+        QVERIFY2(!line.contains(QStringLiteral("3573000")), qPrintable(line));
+    }
 }
 
 // The production slice flags, including a desktop receiver map, choose
