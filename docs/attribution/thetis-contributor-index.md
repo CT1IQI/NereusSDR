@@ -1,6 +1,6 @@
 # Thetis Contributor Index
 
-**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-10-15T06:36:08+00:00`
+**Generated mechanically** by `scripts/generate-contributor-indexes.py` on `2026-10-15T11:31:38+00:00`
 from corpus `docs/attribution/thetis-author-tags.json` (thetis@`3759d096`, mi0bot@`c26a8a4c`).
 
 **Do NOT hand-edit this file.** To add or correct a contributor, edit `docs/attribution/thetis-author-tags.json` and re-run the generator.
@@ -25,7 +25,7 @@ Historical Pass 5/6a snapshot preserved at `thetis-contributor-index-v020-snapsh
 | `W5WC` | Doug Wigley | UI, ChannelMaster, various; naming of 'Thetis' |
 | `WU2O` | Scott | Forum admin; WDSP SSQL default-threshold tuning |
 | `IK4JPN` | Unknown | 2014 console.cs modification (region marked IK4JPN+/IK4JPN-); identity to be researched |
-| `MW0GLE` | Richard Samphire | Typo of MW0LGE (Richie Samphire) in setup.cs:2740 version tag [2.10.3.6_dev4]; preserved verbatim |
+| `MW0GLE` | Richard Samphire | Typo of MW0LGE (Richie Samphire) in setup.cs:2741 version tag [2.10.3.6_dev4]; preserved verbatim |
 | `DK1HLM` | Unknown | OrionMKII/Saturn PA handling contribution; identity to be researched |
 | `K2UE` | George Donadio | EME/antenna authority; ANAN-8000D Hi-Z/Lo-Z load detection idea |
 | `KE9NS` | Darrin | Various contributions including SunTracking and memory-form URL drag-drop |
