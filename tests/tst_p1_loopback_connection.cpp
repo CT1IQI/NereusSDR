@@ -781,8 +781,10 @@ private slots:
         fake.stop();
     }
 
-    // A flood well past the bound: 640 datagrams (40 batches) in one burst,
-    // which a 4 MB receive buffer holds without the kernel dropping any.
+    // A flood well past the bound, in one burst the receive buffer holds
+    // without the kernel dropping any: 640 datagrams (40 batches) where the
+    // socket gets the 4 MB it asks for (the Mac, the Pi 4 Core), fewer where
+    // the system caps it (Linux at its default limit grants 425984 bytes).
     // One onReadyRead call leaves datagrams pending, and the receive path is
     // otherwise unchanged: every frame processed, in sequence order, with the
     // I/Q delivered sample for sample as sent.
@@ -805,14 +807,24 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(first.count(), 1, 3000);
         const int gapsBefore = bw.ep6SequenceErrorCount();
 
-        constexpr int kFlood = 640;
-        // Room for the whole burst with room to spare for kernel overhead.
-        QVERIFY2(conn.socketReceiveBufferForTest() >= 2 * kFlood * 1032,
-                 qPrintable(QString("receive buffer %1 too small for one burst")
-                                .arg(conn.socketReceiveBufferForTest())));
+        constexpr int kMaxFlood = 640;
+        // Buffer charged per queued datagram: its 1032 bytes plus the
+        // kernel's own overhead, with room to spare.
+        constexpr int kBufferBytesPerDatagram = 4096;
+        const int receiveBuffer = conn.socketReceiveBufferForTest();
+        const int floodSize = std::min(kMaxFlood, receiveBuffer / kBufferBytesPerDatagram);
+        // Still well past the bound: four batches at the least.
+        const int minFlood = 4 * P1RadioConnection::maxEp6DatagramsPerReadForTest();
+        qInfo("receive buffer %d bytes, flood of %d datagrams", receiveBuffer, floodSize);
+        if (floodSize < minFlood) {
+            conn.disconnect();
+            fake.stop();
+            QSKIP(qPrintable(QString("receive buffer %1 too small for a burst of %2 datagrams")
+                                 .arg(receiveBuffer).arg(minFlood)));
+        }
 
-        Ep6Flood flood(conn, kFlood, 1, conn.activeRxCountForTest());
-        QVERIFY(flood.send(fake.clientPort(), kFlood));
+        Ep6Flood flood(conn, floodSize, 1, conn.activeRxCountForTest());
+        QVERIFY(flood.send(fake.clientPort(), floodSize));
 
         // Bound: one call reads one batch and leaves the rest pending.
         conn.onReadyReadForTest();
@@ -820,7 +832,7 @@ private slots:
         QVERIFY(conn.socketHasPendingDatagramsForTest());
 
         // Receive unchanged.
-        QVERIFY(flood.waitProcessed(kFlood, 5000));
+        QVERIFY(flood.waitProcessed(floodSize, 5000));
         const QString fault = flood.verify();
         QVERIFY2(fault.isEmpty(), qPrintable(fault));
         QCOMPARE(bw.ep6SequenceErrorCount(), gapsBefore);
