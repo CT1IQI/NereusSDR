@@ -18,7 +18,7 @@ This chapter covers first-time setup, pairing, saved Cores, reconnecting, and th
 ## Install the public preview
 
 1. On your iPhone or iPad, open the [public preview invitation](https://testflight.apple.com/join/61K3p3xn). Install Apple's TestFlight app if prompted, then follow the invitation to install NereusSDR. The app requires iOS or iPadOS 17.4 or later.
-2. Install the published 2026.10.1 desktop application or headless Core on the station computer connected to your radio. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. An older Core still connects, but greys those two tools with a message such as "This Core does not control a rotor. Updating the Core may help." Use the [SBC installation guide](https://nereussdr.com/guides/install-core-sbc.html) for a Raspberry Pi or compatible Armbian system.
+2. Install the published 2026.10.1 desktop application or headless Core on the station computer connected to your radio. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. An older Core still connects, but grays those two tools with a message such as "This Core does not control a rotor. Updating the Core may help." Use the [SBC installation guide](https://nereussdr.com/guides/install-core-sbc.html) for a Raspberry Pi or compatible Armbian system.
 3. Start the Core, open pairing and connect the app using the steps below. Your Core must be running and reachable; the app does not include a demo radio.
 
 ## Start the Core

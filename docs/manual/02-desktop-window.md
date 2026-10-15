@@ -100,7 +100,7 @@ check selection and ownership before repeating the change.
    want visible. The panel's **☰** menu provides the same visibility choices.
 2. If an entry is unavailable, read its reason or check the corresponding
    station feature. For example, the amplifier and tuner applets depend on their
-   enabled accessory connection. The **Rotor** applet is never greyed in the menu. A checked preference does not make an unavailable
+   enabled accessory connection. The **Rotor** applet is never grayed in the menu. A checked preference does not make an unavailable
    device appear.
 3. Applets live in containers. A container's header carries **↗**
    (tooltip **Pop out**); click it to move the container, with its applets,

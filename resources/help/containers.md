@@ -77,8 +77,9 @@ let go where you want it:
 
 * near an edge of the main window, a box shows where it will land, and it
   docks there;
-* over the spectrum, it sits free where you dropped it; with Containers > Align to 8 px Grid on, it settles on an 8 pixel grid
-  (hold **Alt** to place it freely);
+* over the spectrum, it sits free where you dropped it; with
+  **Containers > Align to 8 px Grid** on, it settles on an 8 pixel grid (hold
+  **Alt** to place it freely);
 * outside the main window, it becomes a window of its own.
 
 This works the same for a docked container, a free one and a popped-out window,

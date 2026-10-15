@@ -25,7 +25,7 @@ Thetis-compatible CAT commands.
 - Serial CAT and serial-pin PTT work in every package: the macOS, Windows and
   Linux builds and the `nereusd` packages all include serial-port support.
 - When Setup refuses a CAT setting it now says why, in plain words. The
-  **Enable serial CAT** and **Enable input PTT** boxes stay greyed, with the
+  **Enable serial CAT** and **Enable input PTT** boxes stay grayed, with the
   reason as their tooltip, until the device, input source or CTS/DSR input they
   need is chosen. The same reasons reach a phone or a remote desktop.
 - Thetis commands for features NereusSDR does not have yet (recording, CWX,
@@ -131,7 +131,8 @@ The workspace look is now the default.
 - Remote MOX, TUNE and 2-TONE lights start in the right state.
 - PureSignal status uses less CPU.
 - The Tuner Genius XL's OPERATE and STANDBY follow the tuner's own state.
-- A saved TX slice B is kept through a reconnect.
+- The saved transmit slice is kept when slices are restored on connect,
+  instead of falling back to slice A.
 
 ### Receivers and radios
 
@@ -140,6 +141,8 @@ The workspace look is now the default.
 - Remote receive audio returns at once after you unkey.
 - Anvelina Pro 3: two bands on one input no longer go deaf, and 6 m is
   handled.
+- The RX applet's TX antenna menu grays out a port that Setup blocks for
+  transmit, and refuses it if the block changes while the menu is open.
 - The RX applet's AGC-T AUTO acts on its own slice. A desktop acting as a Core
   no longer shows "NF awaiting measurement".
 - Remote C-Tune controls stay current with receiver authority.
@@ -154,12 +157,12 @@ The workspace look is now the default.
   becomes **Mute this phone**.
 - The picture carries on through a retune.
 
-These need a 2026.10.1 Core. An older Core greys them with a reason, and older
+These need a 2026.10.1 Core. An older Core grays them with a reason, and older
 Cores and apps still connect.
 
 ### Core installs on a Pi, Rock or Linux computer
 
-- Every SBC install and every `.deb` package give the Core sound-card access
+- Every SBC install and every `.deb` package gives the Core sound-card access
   through an audio drop-in. The Pi 4 and Rock installers and the station image
   also add the serial drop-in that rotor and serial CAT need on the Core; the
   `.deb` packages do not ship it. See the Core install guide.
@@ -267,6 +270,9 @@ Advanced, and each control appears on one page only.
   transmit until the window has transmit; when a program's request is refused
   for that reason, the notice now says so and names the button. Before, the
   button appeared only while another device had transmit.
+- The Windows installer and portable zip now include every Qt module the app
+  loads, so it starts without a missing-DLL error such as
+  "Qt6WebSockets.dll was not found".
 
 ## [2026.10.0] - 2026-10-05
 

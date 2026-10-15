@@ -100,7 +100,7 @@ The route and microphone are this phone's settings. The **Modes > Audio > SPEAKE
 
 [![iPhone Sound popover with the mute control, Speaker and Earpiece](images/iphone-sound-original.png)](images/iphone-sound-original.png)
 
-*Sound changes this phone’s listening route. Here Earpiece is selected and mute is off; the microphone stays on the phone. This is a capture of the running app in the simulator, without live Core audio. The grey PTT does not establish transmit readiness.*
+*Sound changes this phone’s listening route. Here Earpiece is selected and mute is off; the microphone stays on the phone. This is a capture of the running app in the simulator, without live Core audio. The gray PTT does not establish transmit readiness.*
 
 ## Prepare and transmit voice from the phone
 
@@ -110,10 +110,10 @@ This procedure is for voice operation when the Core and radio support it and thi
 | --- | --- |
 | This phone already holds transmit | Choose the intended owned slice's **TX** badge, wait for the Core to accept the choice, then prepare the microphone and processing. |
 | Nobody holds transmit, and this phone has an original owned slice | A permitted on-screen PTT request can acquire transmit and key. Verify the Core's indicated transmit frequency/slice and complete microphone, band, power and station checks first. This is a real transmission, not a silent ownership test. |
-| Another device holds transmit | PTT does not take it from that device. This source version does not expose a working phone transmit-takeover action. Continue receiving and coordinate with the station operator. |
-| This phone has only a slice taken from another device, and does not hold transmit | The Core can require an explicit TX-slice choice, but that choice itself requires transmit ownership. Do not treat the highlighted badge as a complete acquisition route in this version. Keep the handoff receive-only. |
+| Another device holds transmit | PTT does not take it from that device. Press **Take transmit** in the TX panel (it sits under the holder's line); the sheet names the holder and says whether it is on the air. Choose **Take transmit**, or **Unkey and take over** when the holder is on the air, or **Cancel**. Taking never keys the radio. |
+| This phone has only a slice taken from another device, and does not hold transmit | When the Core's refusal offers it, the notice carries a **Take transmit** button that opens the same sheet. Taking transmit does not key; press PTT when you want to transmit. |
 
-**Build limitation:** the phone's TX badge selects a transmit slice for an existing holder. It does not acquire transmit. The first permitted human PTT on an unheld transmitter can acquire it, but unkeying afterward leaves the device holding transmit. The covered phone build has no general **Take transmit** or **Release transmit** control. These restrictions matter when changing operators; see [the shared handoff procedure](08-shared-core.md#coordinate-a-second-device-handoff).
+**Taking transmit:** the TX panel's **Take transmit** button appears while another device holds transmit, or when the Core's reason this phone cannot transmit offers it. It is grayed, with the Core's reason beneath it, when the take is not available: an older Core, a Core that is not shared between devices, a receive-only station, a Core that has not said who holds transmit, or no connection. The sheet's **Take transmit** or **Unkey and take over** asks the Core to move transmit to this phone; if the other device was on the air, the Core unkeys it first, which can take a few seconds, and a refusal shows in the sheet in the Core's words with a **Close** button. If something changed after the sheet opened, the Core asks its own question in the same sheet. When you start the take from a slice's TX button, transmit also moves onto that slice; which slice transmits is changing, so confirm the transmit slice and frequency the Core shows before you key. Taking transmit never keys: PTT keys only when you press it. See [the shared handoff procedure](08-shared-core.md#coordinate-a-second-device-handoff).
 
 1. In **Modes > Transmit**, inspect the **TX filter** low/high edges. **Match RX** copies the current receive filter to the transmit filter. The edge values are editable when the Core says the radio is off air and the setting is allowed.
 2. Choose the microphone under **Setup > Audio > On this phone**. Speak and watch the pre-key mic level indication beside **Mic Gain**. Adjust **Mic Gain** only while observing that level; when keyed, the meter shows the Core's transmit reading. If the Core reports the mic muted or this phone lacks microphone permission, resolve that state before keying.
@@ -151,9 +151,9 @@ To end normally, unkey first and verify the PTT state is receive. Open **Radio >
 
 ## Turn the antenna with the Rotor page
 
-The Rotor page turns the antenna rotor the Core controls. It needs a 2026.10.1 Core; an older Core greys it with "This Core does not control a rotor. Updating the Core may help." Open it from **Radio > Accessories > Rotor** or from **Tools > Rotor**. The **Accessories** list always shows a **Rotor** row.
+The Rotor page turns the antenna rotor the Core controls. It needs a 2026.10.1 Core; an older Core grays it with "This Core does not control a rotor. Updating the Core may help." Open it from **Radio > Accessories > Rotor** or from **Tools > Rotor**. The **Accessories** list always shows a **Rotor** row.
 
-1. Read the heading and the status at the top. With no rotor set up on the Core, every control stays greyed and the page says "No rotor is set up on this Core." Set one up first (see below).
+1. Read the heading and the status at the top. With no rotor set up on the Core, every control stays grayed and the page says "No rotor is set up on this Core." Set one up first (see below).
 2. Drag on the dial to pick a heading. The drag only selects; nothing moves yet. Tap **Turn to N°** (the selected heading, three digits, such as **Turn to 030°**) to send the turn.
 3. Tap **Short path** or **Long path** to choose which way around the rotor turns; presets and the **Turn to N°** button follow it.
 4. Tap a preset to turn to it at once, and tap **STOP** to halt the rotor at once.

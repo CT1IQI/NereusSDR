@@ -11,7 +11,7 @@ firmware, and whether you use a local or remote Core.
 
 The Core owns the radio, the station DSP and the accessories. The console runs
 where you operate. Update both. Rotor control, the **CAT Control** page on the
-phone and the Core speaker need a 2026.10.1 Core. An older Core greys them out
+phone and the Core speaker need a 2026.10.1 Core. An older Core grays them out
 with a reason such as "This Core does not control a rotor. Updating the Core
 may help.", and older Cores, desktops and phone apps still connect to each
 other.
@@ -47,7 +47,7 @@ normally so the new version can migrate them once.
 The Core runs as a service account with no groups of its own, so Linux sound
 cards and serial adapters each need a small systemd drop-in.
 
-- **Audio.** Every SBC install and every `.deb` package now ships or write the
+- **Audio.** Every SBC install and every `.deb` package now ships or writes the
   audio drop-in. An older install that lacks it cannot open a sound card, so
   the Core speaker will not work until you add
   `/etc/systemd/system/nereusd.service.d/audio.conf` with `[Service]` and

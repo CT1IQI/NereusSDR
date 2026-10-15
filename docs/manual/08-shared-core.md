@@ -46,7 +46,7 @@ When all receivers are in use and opening another slice requires one, the Core p
 3. Read the impact note: taking a receiver closes the slice on that device and tells its operator who took it. Taking a slice has the same ownership consequence for that slice. Tap the named action to proceed or cancel the sheet to preserve the other session.
 4. Wait for the Core's response. Confirm the new slice is yours and that the other device has received the notice. If refused, use the Core's explanation and coordinate a release rather than repeating the request.
 
-A receiver takeover is not a transmit takeover. When this phone already holds transmit, its **TX** badge can select the newly controlled slice without keying. Without that ownership, the badge can be refused even though the slice is now yours. The Core can highlight the badge after refusing a first key on a taken slice. In this phone version that prompt does not provide a complete route to acquire another device's transmit ownership. Keep that handoff receive-only; see the starting states in [phone voice operation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone).
+A receiver takeover is not a transmit takeover. When this phone already holds transmit, its **TX** badge can select the newly controlled slice without keying. Without that ownership, the badge can be refused even though the slice is now yours. The Core can highlight the badge after refusing a first key on a taken slice. To take another device's transmit ownership, use **Take transmit** in the phone's TX panel or in the refusal notice; see the starting states in [phone voice operation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone).
 
 ## Understand shared-change confirmations
 
@@ -129,17 +129,17 @@ remain separate actions after the session is admitted.
 
 ## Coordinate a second-device handoff
 
-A handoff separates receiver control, listening, and transmit ownership. Agree which operator is taking each role before either changes it. In the covered phone build, a receiver handoff is supported but a general desktop-to-phone transmit takeover is not exposed. The steps below therefore transfer reception. They do not promise that the phone can key afterward.
+A handoff separates receiver control, listening, and transmit ownership. Agree which operator is taking each role before either changes it. The steps below transfer reception. They do not promise that the phone can key afterward: taking transmit is a separate step, the phone's **Take transmit** button.
 
 **Example: the iPhone takes control of the desktop's existing slice A.**
 
 1. The desktop operator unkeys and confirms receive. The iPhone operator checks **Setup > Devices** to identify the desktop and its slice, then selects that slice's **Take control** action on the band.
 2. The phone operator waits for the control request to succeed. The desktop operator checks its flag or **Slices on this Core** chooser for the changed controller. Taking control of an existing slice can leave the desktop listening to it. Do not confuse this with reclaiming an occupied receiver to create a new slice: that separate resource request can close the other operator's slice, and its confirmation names that consequence.
 3. The iPhone operator confirms the slice appears as owned, checks frequency, mode and filter, and tests receive audio. The desktop operator can continue using any unaffected receiver/slice.
-4. Both operators leave transmit in receive and identify its holder separately. The phone operator can inspect the **TX** mark in **Setup > Devices**. The desktop operator reads its TX status/holder and slice chooser. **Setup > Devices** is a phone path. Unkeying the desktop does not release its transmit ownership; tapping the phone's slice badge does not take that ownership.
+4. Both operators leave transmit in receive and identify its holder separately. The phone operator can inspect the **TX** mark in **Setup > Devices**. The desktop operator reads its TX status/holder and slice chooser. **Setup > Devices** is a phone path. Unkeying the desktop does not release its transmit ownership; to take it, the phone operator presses **Take transmit** and confirms in the sheet.
 5. To return receiver control, the phone operator stops tuning and tells the desktop operator it is ready. The desktop operator opens **Slices on this Core**, selects A, and chooses **Take control**, or uses the offered **Take back** notice. Both wait for the result. The desktop verifies its control mark and frequency/mode; the phone verifies that its flag is read-only/listening again. No invented phone **Release** action is required.
 
-If this phone already holds transmit independently, it can choose the returned/taken slice's TX badge and follow the ordinary voice procedure. If another device holds transmit, this source version cannot complete that takeover from the phone. Do not key another slice merely to manufacture ownership. For a fresh unheld transmitter, a human PTT on an original owned slice is the supported first-key path, with all normal RF and microphone prerequisites; it is not an ownership-only button.
+If this phone already holds transmit independently, it can choose the returned/taken slice's TX badge and follow the ordinary voice procedure. If another device holds transmit, press **Take transmit** in the TX panel and confirm in the sheet (**Take transmit**, or **Unkey and take over** if that device is on the air). Taking does not key. For a fresh unheld transmitter, a human PTT on an original owned slice is the first-key path, with all normal RF and microphone prerequisites.
 
 If a device goes away unexpectedly, its connection row can show it as away/stale. Do not revoke it merely to clear a stale mark; first establish whether that operator is reconnecting. Link loss unkeys transmit, but the Core may continue to list a paired identity for later reconnection.
 

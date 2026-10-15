@@ -252,6 +252,7 @@ NereusSDR supports radios using **OpenHPSDR Protocol 1 or Protocol 2**:
 
 - Apache Labs ANAN-G2/Saturn, ANAN-7000DLE, ANAN-8000DLE, ANAN-200D,
   ANAN-100D, ANAN-100, ANAN-10E and other compatible ANAN models.
+- Anvelina Pro 3.
 - Hermes Lite 2.
 - OpenHPSDR Metis, Hermes, Angelia, Orion and Orion MkII hardware.
 
@@ -308,8 +309,7 @@ installers do not have an Authenticode signature and may prompt through SmartScr
 
 PureSignal two-tone runs have an open transmit-stream continuity issue.
 Receive restoration after unkeying still needs physical-radio validation.
-Waterfall brightness can change when selecting a receiver and switching
-between Core and Clarity level ownership. These items remain under investigation.
+These items remain under investigation.
 The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusSDR/issues/235),
 [#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
 [#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
