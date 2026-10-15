@@ -849,15 +849,20 @@ void CatTciServerPage::buildSensorsGroup()
 
     // Informational note — not an AppSettings key
     auto* noteLabel = new QLabel(
-        tr("Effective rate is the minimum across all subscribed clients "
-           "(TciSensorManager aggregation)."),
+        tr("RX and TX interval apply to an app that turns sensors on without asking for "
+           "its own; apps already connected keep theirs. When apps ask for different "
+           "intervals, all of them get updates at the shortest one."),
         group);
     noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     noteLabel->setWordWrap(true);
     form->addRow(noteLabel);
 
     addContent(group);
-    // R-R3-49: the sensor intervals are not applied yet; hidden until they are.
+    // R-R3-49: the sensor intervals are applied and the group is shown.
+    // TciServer copies both into each app's session when it connects; an
+    // rx_sensors_enable / tx_sensors_enable without an interval uses them,
+    // and one shared timer runs at the shortest interval among the apps
+    // with sensors on (TciSensorManager::minimumRequiredInterval).
 }
 
 // ---------------------------------------------------------------------------
