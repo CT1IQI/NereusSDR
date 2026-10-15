@@ -26,6 +26,10 @@
 //               (a better-path search's lines say so); the rank is worked
 //               out once per address. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: an ICE pair not known yet ranks as relayed, so a
+//               better-path search retries ICE; the rung still names it a
+//               service path. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
@@ -146,7 +150,12 @@ PathRacer::~PathRacer()
 int PathRacer::rankForPath(const std::optional<MediaIcePath>& path)
 {
     if (!path) {
-        return ServiceDirect;
+        // Not taken as direct ICE: a better-path search would then leave
+        // the service out, and a pair that is really the relay would
+        // never get ICE again.
+        qCInfo(lcPathRacer).noquote()
+            << "ICE pair not known yet; ranked as relayed so a better-path search retries ICE";
+        return ServiceRelayed;
     }
     if (path->viaLoopbackShim()) {
         return Floor;
@@ -873,6 +882,10 @@ PathRacer::PathKind RendezvousPathRung::kind() const
     if (m_rank == PathRacer::Floor) {
         return PathRacer::PathKind::WebRelay;
     }
+    // A pair not known yet is not called the relay.
+    if (m_pairUnknown) {
+        return PathRacer::PathKind::Service;
+    }
     return m_rank == PathRacer::ServiceRelayed ? PathRacer::PathKind::Relay
                                                : PathRacer::PathKind::Service;
 }
@@ -906,6 +919,7 @@ void RendezvousPathRung::start()
         m_done = true;
         const std::optional<MediaIcePath> path = transport->selectedPath();
         m_rank = PathRacer::rankForPath(path);
+        m_pairUnknown = !path;
         m_dialer = nullptr;
         dialer->deleteLater();
         noteRelay(dialer);

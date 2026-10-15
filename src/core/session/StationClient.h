@@ -859,6 +859,9 @@ public:
     /// The rank of the path the session runs on (PathRacer::Rank), or -1
     /// when it did not come from a race.
     int pathRank() const { return m_pathRank; }
+    /// True while pathRank() is ServiceRelayed only because libjuice had
+    /// not reported the selected ICE pair: not known to be the relay.
+    bool pathPairUnknown() const { return m_pathPairUnknown; }
     /// Moves of this session to a better path (link section 21.2).
     int pathSwitches() const { return m_pathSwitches; }
     /// Test seams: the upgrade schedule (PathRacer::kUpgradeRetryMs; the
@@ -2259,6 +2262,7 @@ private:
     int m_raceWinnerLine = -1;
     QList<PathRacer::Line> m_raceLines;
     int m_pathRank = -1;
+    bool m_pathPairUnknown = false;
     int m_pathSwitches = 0;
     QString m_stationRendezvousId;
     QTimer* m_upgradeTimer = nullptr;

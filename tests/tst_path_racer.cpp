@@ -49,6 +49,10 @@
 //   2026-10-15: the live sequence: two failed races, the reconnect
 //               retry through the service, then its better-path searches.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: an ICE pair not known yet ranks below ServiceDirect, and
+//               a session through the service with no pair known searches
+//               ICE (without the relay); one with a host pair does not.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -231,6 +235,9 @@ struct RacePlans {
     QList<qint64> upgradeFailMs;
     QElapsedTimer upgradeClock;
     bool upgradeRunning = false;
+    // Per better-path search: whether it holds a service rung, and if so
+    // whether that rung may take the relay.
+    QList<std::optional<bool>> upgradeServiceAllowsRelay;
 };
 RacePlans* s_plans = nullptr;
 QtMessageHandler s_previousHandler = nullptr;
@@ -255,6 +262,12 @@ void capturePlans(QtMsgType type, const QMessageLogContext& context, const QStri
             if (!racers.isEmpty()) {
                 (first ? s_plans->first : s_plans->upgrades)
                     .append(racers.last()->plannedStartsForTest());
+                if (upgrade) {
+                    const auto rungs = racers.last()->findChildren<RendezvousPathRung*>();
+                    s_plans->upgradeServiceAllowsRelay.append(
+                        rungs.isEmpty() ? std::nullopt
+                                        : std::optional<bool>(rungs.first()->allowsRelay()));
+                }
             }
         }
     }
@@ -804,6 +817,95 @@ private slots:
             QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6a.port())), 0);
             QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6b.port())), 0);
         }
+        window.client->disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // libjuice may report no selected pair when the service's connection
+    // opens. Such a pair is not ranked as direct ICE: a better-path search
+    // still tries ICE through the service (without the relay). A known
+    // host pair is direct ICE already, and its searches leave the service
+    // out.
+    void anUnknownIcePairRanksBelowServiceDirect()
+    {
+        QVERIFY(PathRacer::rankForPath(std::nullopt) > int(PathRacer::ServiceDirect));
+        MediaIcePath host;
+        host.localType = QStringLiteral("host");
+        host.remoteType = QStringLiteral("host");
+        host.localAddress = QStringLiteral("127.0.0.1");
+        host.remoteAddress = QStringLiteral("127.0.0.1");
+        QCOMPARE(PathRacer::rankForPath(host), int(PathRacer::ServiceDirect));
+    }
+
+    void aServiceSessionSearchesIceWhileItsPairIsUnknown_data()
+    {
+        QTest::addColumn<bool>("pairKnown");
+        QTest::newRow("no selected pair") << false;
+        QTest::newRow("host pair") << true;
+    }
+
+    void aServiceSessionSearchesIceWhileItsPairIsUnknown()
+    {
+        QFETCH(bool, pairKnown);
+        LocalService service;
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        Core core;
+        StationRendezvous rendezvous(core.server.get(), {service.url()}, /*relayAllowed=*/true);
+        QSignalSpy registered(rendezvous.client(), &RendezvousClient::registered);
+        QVERIFY(rendezvous.start());
+        QTRY_COMPARE_WITH_TIMEOUT(registered.size(), 1, 10000);
+        Window window(core);
+        MediaIcePath host;
+        host.localType = QStringLiteral("host");
+        host.remoteType = QStringLiteral("host");
+        host.localAddress = QStringLiteral("127.0.0.1");
+        host.remoteAddress = QStringLiteral("127.0.0.1");
+        DataChannelTransport::setSelectedPathOverrideForTest(
+            [host, pairKnown](const DataChannelTransport*) {
+                return pairKnown ? std::optional<MediaIcePath>(host) : std::nullopt;
+            });
+        const auto clearOverride = qScopeGuard([] { DataChannelTransport::setSelectedPathOverrideForTest({}); });
+
+        const QUrl v4(QStringLiteral("wss://127.0.0.1:%1").arg(closedPort()));
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = rendezvous.client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        window.route(service, rendezvous.client()->stationId());
+        window.client->setCandidateSource([=]() -> std::optional<StationClient::ConnectionCandidates> {
+            return StationClient::ConnectionCandidates{{v4}, route};
+        });
+        window.client->setUpgradeScheduleForTest({300});
+
+        RacePlans plans;
+        plans.client = window.client.get();
+        s_plans = &plans;
+        s_previousHandler = qInstallMessageHandler(capturePlans);
+        const auto restore = qScopeGuard([] {
+            qInstallMessageHandler(s_previousHandler);
+            s_previousHandler = nullptr;
+            s_plans = nullptr;
+        });
+
+        window.client->connectToStation(v4, QString(), QString(), false, identityOf(core));
+        QString why;
+        QVERIFY2(waitForHandshake(*window.client, kServiceConnectBudgetMs, &why), qPrintable(why));
+        QVERIFY(window.client->connectedUrl().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(plans.upgradeFailMs.size() >= 2, 20000);
+        QCOMPARE(plans.upgradeServiceAllowsRelay.size(), plans.upgrades.size());
+        for (const auto& allowsRelay : std::as_const(plans.upgradeServiceAllowsRelay)) {
+            if (pairKnown) {
+                QVERIFY(!allowsRelay.has_value());
+            } else {
+                QVERIFY(allowsRelay.has_value());
+                QVERIFY(!*allowsRelay);
+            }
+        }
+        // ICE through the service with no pair known again is no better.
+        QCOMPARE(window.client->pathSwitches(), 0);
+        QCOMPARE(window.client->pathRank(),
+                 int(pairKnown ? PathRacer::ServiceDirect : PathRacer::ServiceRelayed));
+        QCOMPARE(window.client->pathPairUnknown(), !pairKnown);
         window.client->disconnectFromStation(QStringLiteral("test done"));
     }
 

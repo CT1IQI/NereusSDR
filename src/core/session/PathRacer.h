@@ -49,6 +49,10 @@
 //               returns the rank it worked out, which a direct rung can
 //               take. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-15: rankForPath() ranks a pair not known yet as relayed; the
+//               rendezvous rung still names it a service path, and says
+//               whether it may take the relay. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -337,6 +341,8 @@ public:
     void setAnswerDeadlineMs(int ms) { m_answerDeadlineMs = ms; }
     /// RendezvousDialer::setCoreAnswersIntroductions (review Minor 5).
     void setCoreAnswersIntroductions(bool answers) { m_coreAnswersIntroductions = answers; }
+    /// Whether this rung may take the relay (false for an upgrade).
+    bool allowsRelay() const { return m_allowRelay; }
 
 private:
     void noteRelay(const RendezvousDialer* dialer);
@@ -345,6 +351,8 @@ private:
     std::shared_ptr<const ClientDeviceIdentity> m_device;
     bool m_allowRelay = true;
     int m_rank = PathRacer::ServiceDirect;
+    /// libjuice reported no selected pair at ready (rank ServiceRelayed).
+    bool m_pairUnknown = false;
     int m_dialDeadlineMs = 0;
     int m_answerDeadlineMs = 0;
     bool m_coreAnswersIntroductions = false;
