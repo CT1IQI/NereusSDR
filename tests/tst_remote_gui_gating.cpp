@@ -44,6 +44,9 @@
 //   2026-09-25: iPhone app plan Task 39 run: General > Options gates three
 //               controls now, Task 38's Time Out Timers group the third.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14: the four CAT pages are Core pages (a remote window sets up
+//               the Core's CAT), as Rotor and RF-Kit are. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-03 — Committed container button lifecycle fixtures by J.J. Boyd
@@ -765,6 +768,15 @@ private slots:
         QVERIFY(!labels.contains(QStringLiteral("VAX")));
         QVERIFY(!labels.contains(QStringLiteral("TCI")));
         QCOMPARE(scopeOf(QStringLiteral("TCI Server")), SetupScope::ThisComputer);
+        // The CAT pages set up the Core's CAT from a remote window
+        // (RemoteCatControl), so they are Core pages, as Rotor and RF-Kit
+        // are; MIDI Control stays this computer's.
+        QCOMPARE(scopeOf(QStringLiteral("Rotor")), SetupScope::Core);
+        QCOMPARE(scopeOf(QStringLiteral("RF-Kit")), SetupScope::Core);
+        for (const char* cat : {"Serial Ports", "TCP/IP CAT", "CAT Options", "CAT PTT"}) {
+            QVERIFY2(labels.contains(QLatin1String(cat)), cat);
+            QVERIFY2(scopeOf(QLatin1String(cat)) == SetupScope::Core, cat);
+        }
     }
 
     // R-R3-23: the sweep catches a ThisComputer page that reaches an
@@ -2384,9 +2396,9 @@ private slots:
             }
             }
         }
-        // R-R3-49: eight This Computer leaves (UI Scale & Theme, Navigation,
-        // Skins, Collapsible Display, Serial Ports, TCP/IP CAT, MIDI Control,
-        // Shortcuts) and three Core leaves (TX Profiles, Signal Generator,
+        // R-R3-49: six This Computer leaves (UI Scale & Theme, Navigation,
+        // Skins, Collapsible Display, MIDI Control, Shortcuts) and five Core
+        // leaves (Serial Ports, TCP/IP CAT, TX Profiles, Signal Generator,
         // Hardware Tests) are not registered while their features are not
         // built, so each floor drops by that many.
         QVERIFY(thisComputer >= 12);
