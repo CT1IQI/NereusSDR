@@ -2,15 +2,6 @@
 
 ## [Unreleased]
 
-### Wideband view
-
-- Local pans keep the DDC zoom limit when the radio's protocol or selected
-  ADC does not offer a wideband stream, while retaining the operator's
-  Extended view preference.
-- An extended pan transfers its wideband request when its active receiver
-  changes and releases the request when the pan or receiver is removed.
-
-
 ### CAT control
 
 Logging, contest and digital-mode programs can now control NereusSDR with
@@ -83,6 +74,7 @@ Each system now plays and records through its own audio system.
   its source pauses.
 - On macOS the VAX driver now registers under its own identity, so it no
   longer clashes with another driver built from the same source.
+- On Linux, VAX in two profiles at once no longer breaks the other profile.
 - PortAudio starts when it is first needed, not at launch. The Mac no longer
   shows a "Virtual cables detected" notice with a Windows badge.
 - A migrated microphone choice is kept on first setup, and a working
@@ -124,6 +116,12 @@ The workspace look is now the default.
   brings that slice into view.
 - Tune offset and the TX spectrum stay aligned, and remote TX mini displays
   draw again.
+- Local zoom stops at what the radio can supply, so no empty edges appear when
+  the radio or the chosen ADC has no wideband stream. Your **Extended view (wideband wings)** choice
+  is kept for a radio that offers it.
+- An extended pan's wideband view follows its active receiver, and is released
+  when the pan or the receiver goes away.
+
 
 ### Transmit, two-tone and PureSignal
 
@@ -142,6 +140,7 @@ The workspace look is now the default.
 - The Tuner Genius XL's OPERATE and STANDBY follow the tuner's own state.
 - The saved transmit slice is kept when slices are restored on connect,
   instead of falling back to slice A.
+- A TCI program that connects late gets the transmit slice's frequency at once.
 
 ### Receivers and radios
 
@@ -157,6 +156,7 @@ The workspace look is now the default.
 - Remote C-Tune controls stay current with receiver authority.
 - The attenuator and preamp are saved and sent to the radio when you connect,
   and a desktop Core saves attenuator changes while it runs.
+- The receive sample rate stays correct after a settings restore is refused.
 
 ### iPhone and iPad app
 
