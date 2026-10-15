@@ -101,6 +101,9 @@
 //                 shows the app's own lock / unlock icons (AppIcon) in place
 //                 of colour emoji text. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -224,6 +227,7 @@
 #include "core/accessories/AlexController.h"
 #include "core/session/IStationLink.h"
 #include "gui/ComboStyle.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/AppIcon.h"
@@ -239,7 +243,6 @@
 
 #include <QAction>
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -550,23 +553,7 @@ void RxApplet::fillPreampCombo(bool rx2)
     // starts from the first item, and the caller shows that list's mode.
     const QVariant current = rx2 == m_preampShowsRx2 ? m_preampCombo->currentData() : QVariant();
     QSignalBlocker blk(m_preampCombo);
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
-        // cache through the public API before the combo mutates its model.
-        QAbstractItemView* view = m_preampCombo->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
-        }
-    }
-#endif
+    resetItemsBeforeRowChange(m_preampCombo);
     m_preampCombo->clear();
     const auto items = rx2 ? BoardCapsTable::rx2PreampItemsForBoard(m_preampBoard)
                            : BoardCapsTable::preampItemsForBoard(m_preampBoard, m_preampAlex);
