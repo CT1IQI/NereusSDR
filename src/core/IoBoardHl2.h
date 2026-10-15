@@ -36,6 +36,10 @@
 //                pushes the pending-read FIFO on P1's EP2 sender thread,
 //                under P1RadioConnection's frame lock. J.J. Boyd (KG4VCF),
 //                with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - Load-failure findings: a read given up is kept for the
+//                log (takeGivenUpReads) and printed after the frame lock
+//                is released. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 //
 // --- From Console/HPSDR/IoBoardHl2.cs ---
@@ -301,6 +305,16 @@ public:
     // pending-read FIFO when that next read goes out, so its missing answer
     // cannot take the next read's answer.
     static constexpr qint64 kReadAnswerMs = 21;
+    // The reads pushPendingRead gave up are kept for the log, not printed
+    // there: the push runs under P1RadioConnection's frame lock, and the
+    // connection takes them (takeGivenUpReads, frame lock held) and prints
+    // them (printGivenUpRead) once the lock is released (2026-10-15). A
+    // read given up while kGivenUpLogLines are still kept prints them and
+    // itself at once, so none is lost.
+    static constexpr int kGivenUpLogLines = 4;
+    using GivenUpLog = std::array<PendingRead, kGivenUpLogLines>;
+    int takeGivenUpReads(GivenUpLog& out);
+    static void printGivenUpRead(const PendingRead& r);
     // Tests drive the clock the FIFO ages reads by (milliseconds, any
     // origin, never going back). Null restores the monotonic clock.
     void setClockForTest(std::function<qint64()> nowMs);
@@ -445,6 +459,10 @@ private:
     int m_pendingHead{0};
     int m_pendingTail{0};
     int m_pendingCount{0};
+    // Reads given up and not yet taken for the log; the frame lock guards
+    // them as it does the FIFO.
+    GivenUpLog m_givenUpLog{};
+    int m_givenUpCount{0};
 };
 
 } // namespace NereusSDR

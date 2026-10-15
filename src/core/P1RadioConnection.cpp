@@ -219,6 +219,11 @@
 //                lookup held up the first EP2 frames and the disconnect.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - Load-failure findings: the TX-edge and ocByte lines, the
+//                currentOcByteChanged emit beside them, and the HL2 reads
+//                given up are kept under the frame lock and printed after
+//                it (takeComposeLog, printComposeLog). J.J. Boyd (KG4VCF),
+//                with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -4249,6 +4254,48 @@ void P1RadioConnection::parseI2cResponse(quint8 c0, quint8 c1, quint8 c2,
 // Snapshot all live state into a CodecContext for the codec call.
 // Phase 3P-A Task 12.
 // ---------------------------------------------------------------------------
+struct P1RadioConnection::ComposeLog {
+    std::optional<TxEdgeLogLine> txEdge;
+    std::optional<OcByteLogLine> ocByte;
+    IoBoardHl2::GivenUpLog givenUp{};
+    int givenUpCount{0};
+    P1CodecHl2::I2cOutLog i2cLines{};
+    int i2cLineCount{0};
+};
+
+void P1RadioConnection::takeComposeLog(ComposeLog& out) const
+{
+    out.txEdge = std::exchange(m_pendingTxEdgeLog, std::nullopt);
+    out.ocByte = std::exchange(m_pendingOcByteLog, std::nullopt);
+    out.givenUpCount = m_ioBoard ? m_ioBoard->takeGivenUpReads(out.givenUp) : 0;
+    out.i2cLineCount = takeHl2I2cOutLog(out.i2cLines);
+}
+
+void P1RadioConnection::printComposeLog(const ComposeLog& log)
+{
+    if (log.txEdge) {
+        const TxEdgeLogLine& l = *log.txEdge;
+        qDebug("HL2 TX edge: mox=%d txDrive=%d (0x%02X) txFreq=%llu "
+               "alexLpf=0x%02X activeRx=%d ocByte=0x%02X paEnabled=%d",
+               l.mox, l.txDrive, quint8(l.txDrive & 0xFF), l.txFreqHz,
+               l.alexLpf, l.activeRx, l.ocByte, l.paEnabled);
+    }
+    if (log.ocByte) {
+        const OcByteLogLine& l = *log.ocByte;
+        qDebug("HL2 ocByte=0x%02X band=%d mox=%d (matrix=%p)",
+               l.ocByte, l.bandIdx, int(l.mox), l.matrix);
+        if (l.ioBoard) {
+            emit l.ioBoard->currentOcByteChanged(quint8(l.ocByte), l.bandIdx, l.mox);
+        }
+    }
+    for (int i = 0; i < log.givenUpCount; ++i) {
+        IoBoardHl2::printGivenUpRead(log.givenUp[size_t(i)]);
+    }
+    for (int i = 0; i < log.i2cLineCount; ++i) {
+        P1CodecHl2::printI2cOutLine(log.i2cLines[size_t(i)]);
+    }
+}
+
 CodecContext P1RadioConnection::buildCodecContext() const
 {
     CodecContext ctx;
@@ -4375,27 +4422,46 @@ CodecContext P1RadioConnection::buildCodecContext() const
         // that was never actually zero. ctx.ocByte is the one exception,
         // assigned above this point, and is read from ctx deliberately
         // because the bypass override that rewrites it also lives above.
-        qDebug("HL2 TX edge: mox=%d txDrive=%d (0x%02X) txFreq=%llu "
-               "alexLpf=0x%02X activeRx=%d ocByte=0x%02X paEnabled=%d",
-               int(m_mox), m_txDrive, quint8(m_txDrive & 0xFF),
-               static_cast<unsigned long long>(m_txFreqHz),
-               // effectiveAlexLpfBits(), not a raw member: PR #293 split the
-               // single m_alexLpfBits this diagnostic was written against
-               // into Rx/Tx halves, and the accessor is what bank 10 C4
-               // actually carries. Logging either half directly would print
-               // the wrong one on half the edges.
-               effectiveAlexLpfBits(),
-               m_activeRxCount, ctx.ocByte, int(m_paEnabled));
+        // Kept, not printed: this runs under the frame lock, and the line
+        // prints once it is released (takeComposeLog, printComposeLog;
+        // 2026-10-15). An edge nobody took yet prints now, so none is lost.
+        if (m_pendingTxEdgeLog) {
+            ComposeLog untaken;
+            untaken.txEdge = std::exchange(m_pendingTxEdgeLog, std::nullopt);
+            printComposeLog(untaken);
+        }
+        TxEdgeLogLine line;
+        line.mox = int(m_mox);
+        line.txDrive = m_txDrive;
+        line.txFreqHz = static_cast<unsigned long long>(m_txFreqHz);
+        // effectiveAlexLpfBits(), not a raw member: PR #293 split the
+        // single m_alexLpfBits this diagnostic was written against
+        // into Rx/Tx halves, and the accessor is what bank 10 C4
+        // actually carries. Logging either half directly would print
+        // the wrong one on half the edges.
+        line.alexLpf = int(effectiveAlexLpfBits());
+        line.activeRx = m_activeRxCount;
+        line.ocByte = int(ctx.ocByte);
+        line.paEnabled = int(m_paEnabled);
+        m_pendingTxEdgeLog = line;
     }
 
     if (ctx.ocByte != m_lastOcByteLogged) {
         const int bandIdx = int(bandFromFrequency(static_cast<double>(ocBandFrequencyHz())));
-        qDebug("HL2 ocByte=0x%02X band=%d mox=%d (matrix=%p)",
-               ctx.ocByte, bandIdx, int(m_mox),
-               static_cast<const void*>(m_ocMatrix));
-        if (m_ioBoard) {
-            emit m_ioBoard->currentOcByteChanged(ctx.ocByte, bandIdx, m_mox);
+        // Kept with the emit beside it, both after the frame lock, as the
+        // TX edge above is.
+        if (m_pendingOcByteLog) {
+            ComposeLog untaken;
+            untaken.ocByte = std::exchange(m_pendingOcByteLog, std::nullopt);
+            printComposeLog(untaken);
         }
+        OcByteLogLine line;
+        line.ocByte = int(ctx.ocByte);
+        line.bandIdx = bandIdx;
+        line.mox = m_mox;
+        line.matrix = static_cast<const void*>(m_ocMatrix);
+        line.ioBoard = m_ioBoard;
+        m_pendingOcByteLog = line;
         m_lastOcByteLogged = ctx.ocByte;
     }
     ctx.adcCtrl        = m_adcCtrl;
@@ -4899,9 +4965,9 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
     while (burst < kEp2MaxBurstPerTick) {
         quint8 frame[kEp2FrameBytes];
         // The HL2 I2C OUT lines this frame composed, printed below with the
-        // frame lock released.
-        P1CodecHl2::I2cOutLog i2cLines;
-        int i2cLineCount = 0;
+        // frame lock released; with them the other compose diagnostics
+        // (ComposeLog, 2026-10-15).
+        ComposeLog composeLog;
         {
             // One frame under the lock; the send below is outside it.
             std::unique_lock<std::timed_mutex> senderLock;
@@ -4919,7 +4985,7 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
             }
             composeCommandFrame(frame);
             ++m_ep2PacketsSent;
-            i2cLineCount = takeHl2I2cOutLog(i2cLines);
+            takeComposeLog(composeLog);
         }
 #ifdef NEREUS_BUILD_TESTS
         Ep2SendTrace* trace = onSenderThread ? m_ep2Trace.load(std::memory_order_acquire)
@@ -4942,9 +5008,7 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
             }
         }
 #endif
-        for (int i = 0; i < i2cLineCount; ++i) {
-            P1CodecHl2::printI2cOutLine(i2cLines[size_t(i)]);
-        }
+        printComposeLog(composeLog);
 
         // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
         // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
@@ -5659,12 +5723,10 @@ void P1RadioConnection::sendCommandFrame()
     quint8 frame[kEp2FrameBytes];
     composeCommandFrame(frame);
     // The sender is stopped whenever this runs, so the HL2 I2C OUT lines
-    // can be printed now.
-    P1CodecHl2::I2cOutLog i2cLines;
-    const int i2cLineCount = takeHl2I2cOutLog(i2cLines);
-    for (int i = 0; i < i2cLineCount; ++i) {
-        P1CodecHl2::printI2cOutLine(i2cLines[size_t(i)]);
-    }
+    // can be printed now (with the other compose diagnostics, ComposeLog).
+    ComposeLog composeLog;
+    takeComposeLog(composeLog);
+    printComposeLog(composeLog);
 
     QByteArray pkt(reinterpret_cast<const char*>(frame), kEp2FrameBytes);
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_radioInfo.port);

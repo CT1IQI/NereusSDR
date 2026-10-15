@@ -125,6 +125,11 @@
 //   2026-10-15 - Load-failure findings: the EP2 send trace for tests
 //                (recordEp2SendsForTest). J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - Load-failure findings: the compose diagnostics (TX edge,
+//                ocByte, HL2 reads given up) are kept under the frame lock
+//                and printed after it (takeComposeLog, printComposeLog).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -172,6 +177,7 @@ namespace NereusSDR { class TxMicSource; }               // forward decl — ful
 #include <memory>
 #include <mutex>
 #include <array>
+#include <optional>
 #include <QUdpSocket>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -737,6 +743,15 @@ private:
     // Takes the HL2 I2C OUT lines the last compose kept (none for other
     // boards), so they print once the frame lock is released. Frame lock held.
     int takeHl2I2cOutLog(P1CodecHl2::I2cOutLog& out) const;
+    // Everything the last compose kept for the log: the TX-edge and ocByte
+    // lines buildCodecContext would print, the HL2 reads pushPendingRead
+    // gave up, and the HL2 I2C OUT lines. Taken with the frame lock held
+    // (takeComposeLog) and printed with it released (printComposeLog),
+    // which also emits IoBoardHl2::currentOcByteChanged beside the ocByte
+    // line. Defined in the .cpp.
+    struct ComposeLog;
+    void takeComposeLog(ComposeLog& out) const;
+    static void printComposeLog(const ComposeLog& log);
     // Hands the bytes the sender sent to recordBytesSent (a QList the
     // sender must not touch). Connection thread: the watchdog tick and
     // disconnect.
@@ -1490,6 +1505,26 @@ private:
     // Diagnostic: log the TX-deciding wire bytes on each MOX edge. Same
     // mutable-for-const reason as above. -1 so the first edge always logs.
     mutable int m_lastMoxLogged{-1};
+    // The two lines above, kept by buildCodecContext under the frame lock
+    // and printed after it (takeComposeLog, printComposeLog; 2026-10-15).
+    struct TxEdgeLogLine {
+        int mox{0};
+        int txDrive{0};
+        unsigned long long txFreqHz{0};
+        int alexLpf{0};
+        int activeRx{0};
+        int ocByte{0};
+        int paEnabled{0};
+    };
+    struct OcByteLogLine {
+        int ocByte{0};
+        int bandIdx{0};
+        bool mox{false};
+        const void* matrix{nullptr};
+        IoBoardHl2* ioBoard{nullptr};
+    };
+    mutable std::optional<TxEdgeLogLine> m_pendingTxEdgeLog;
+    mutable std::optional<OcByteLogLine> m_pendingOcByteLog;
     quint16 m_adcCtrl{0};          // ADC-to-DDC assignment bits
 
     // P1-only ADC-to-DDC routing — Thetis `P1_adc_cntrl` global mirror.
