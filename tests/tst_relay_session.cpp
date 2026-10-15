@@ -30,6 +30,14 @@
 //               runs on for twice its timeout after it expires, so a session
 //               the handshake deadline had closed held the test to QTest's
 //               300 s function timeout with no reason given.
+//   2026-10-15: the stand-in relay can hold its datagrams back for a
+//               while (holdDatagramsMs), so in aDirectPairStillWins the
+//               web relay's pair cannot succeed before the direct pair
+//               and win libjuice's 2 s nomination timer on a loaded
+//               runner. The test also checks that the shim's candidate
+//               ranks below every direct one and that its checks reached
+//               the relay, since the hold would hide either fault.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: a Core slow to see its own end open still gets the
 //               session, over the web relay and over a direct pair. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -50,12 +58,14 @@
 #include <QHash>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "RendezvousTestHarness.h"
 #include "core/security/ClientDeviceIdentity.h"
@@ -117,8 +127,32 @@ public:
     QList<QByteArray> forwarded[3];
     int joins = 0;
     std::unique_ptr<QWebSocketServer> server;
+    // Off by default. When set, datagrams (control and media) are kept
+    // this long from the first one, then forwarded in order.
+    int holdDatagramsMs = 0;
 
 private:
+    QElapsedTimer m_holdClock;
+    QList<QPair<QPointer<QWebSocket>, QByteArray>> m_held;
+
+    void forward(QWebSocket* socket, const QByteArray& message)
+    {
+        const QPointer<QWebSocket> other = legs.value(otherKey(keyOf.value(socket)));
+        if (other) {
+            other->sendBinaryMessage(message);
+        }
+    }
+
+    void releaseHeld()
+    {
+        const auto held = std::exchange(m_held, {});
+        for (const auto& [socket, message] : held) {
+            if (socket) {
+                forward(socket, message);
+            }
+        }
+    }
+
     static QByteArray otherKey(const QByteArray& key)
     {
         QByteArray other = key;
@@ -154,12 +188,22 @@ private:
             return;
         }
         if (tag == RelayLeg::kTagControl || tag == RelayLeg::kTagMedia) {
-            const QPointer<QWebSocket> other = legs.value(otherKey(keyOf.value(socket)));
             forwarded[tag].append(message.mid(1));
-
-            if (other) {
-                other->sendBinaryMessage(message);
+            if (holdDatagramsMs > 0) {
+                if (!m_holdClock.isValid()) {
+                    m_holdClock.start();
+                }
+                const qint64 left = holdDatagramsMs - m_holdClock.elapsed();
+                if (left > 0 || !m_held.isEmpty()) {
+                    if (m_held.isEmpty()) {
+                        QTimer::singleShot(static_cast<int>(left), server.get(),
+                                           [this] { releaseHeld(); });
+                    }
+                    m_held.append(qMakePair(QPointer<QWebSocket>(socket), message));
+                    return;
+                }
             }
+            forward(socket, message);
         }
     }
 };
@@ -491,6 +535,35 @@ private slots:
     void aDirectPairStillWins()
     {
         StandInRelay relay;
+        // The web relay's shim is a host candidate on the same libjuice
+        // agent. The controlling side nominates its best succeeded pair
+        // 2 s after selecting it (NOMINATION_TIMEOUT), so a loaded runner
+        // whose direct pair is slower than that ends on the relay. Holding
+        // the relay's datagrams 3 s moves that window rather than closing
+        // it: the direct remote candidates get the hold time to arrive and
+        // succeed. Once the shim's pair succeeds after the release, libjuice
+        // nominates it at once if no higher pair is pending, so a direct
+        // path slower than the hold still loses. That is libjuice working
+        // as designed, not a product fault this test covers.
+        relay.holdDatagramsMs = 3000;
+
+        // With the hold, the direct pair would win even if the shim's
+        // candidate outranked it, so the priority is checked here. The
+        // line the agent is given carries kCandidatePriority, and an agent's
+        // own candidate is never below 255 (RFC 8445 5.1.2.1: type and
+        // local preference 0, component 1 gives 256 - 1), so the shim must
+        // stay under that to rank below every direct candidate.
+        constexpr quint32 kLowestAgentPriority = 255;
+        QCOMPARE(RelayLeg::kCandidatePriority, 1u);
+        const QStringList shimLine =
+            RelayLeg::candidateLine(IceConfiguration::kControlLane, 40000).split(QLatin1Char(' '));
+        QVERIFY(shimLine.size() > 3);
+        bool priorityOk = false;
+        const quint32 shimPriority = shimLine.at(3).toUInt(&priorityOk);
+        QVERIFY(priorityOk);
+        QCOMPARE(shimPriority, RelayLeg::kCandidatePriority);
+        QVERIFY2(shimPriority < kLowestAgentPriority,
+                 qPrintable(QStringLiteral("shim priority %1").arg(shimPriority)));
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
         RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
@@ -518,6 +591,12 @@ private slots:
         QVERIFY2(waitUntil([&relay] { return relay.joins == 2; }, 5000, ends,
                            QStringLiteral("both relay legs to join"), &why),
                  qPrintable(QStringLiteral("%1 (joins: %2)").arg(why).arg(relay.joins)));
+        // The shim's pair was offered and checked: its connectivity checks
+        // reached the relay on the control lane.
+        QVERIFY2(waitUntil([&relay] { return !relay.forwarded[RelayLeg::kTagControl].isEmpty(); },
+                           5000, ends, QStringLiteral("the shim's checks to reach the relay"),
+                           &why),
+                 qPrintable(why));
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
