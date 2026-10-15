@@ -54,6 +54,9 @@
 //   2026-10-15: setLeavesServiceAtOpenForTest(), a window that leaves
 //               the service at its own open, as older ones do. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: ready() says when its receiver must listen for the Core's
+//               hello. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -160,6 +163,13 @@ public:
 signals:
     /// The control channel opened. The receiver takes `transport` (it has
     /// no parent) and runs the session over it.
+    ///
+    /// The receiver connects its textReceived listener before this signal
+    /// returns. Right after it returns the dialer connects its own
+    /// single-shot listener (it leaves the service when the Core speaks),
+    /// and that one counts as someone listening: a message the transport
+    /// holds until it has a listener (the Core's hello) would go to the
+    /// dialer alone, and a listener connected later would never see it.
     void ready(NereusSDR::DataChannelTransport* transport);
     /// The attempt ended without a connection. `reason` is plain words.
     void failed(const QString& reason);

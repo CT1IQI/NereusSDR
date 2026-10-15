@@ -49,6 +49,9 @@
 //               the session is up, so they guard the window's own fix; the
 //               deadline is measured from the Core's answer. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: the slow Core over the web relay with the window racing
+//               every path (PathRacer), as JJ's window dials. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -428,6 +431,66 @@ private slots:
             QVERIFY2(ended.isEmpty(),
                      qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
         }
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // 2026-10-15: the same with the window racing every path, as a saved
+    // Core is dialed (connectToStation with its identity key): the service's
+    // web relay is the only path that works. PathRacer takes the connection
+    // when it opens (and can hold it on standby); the service client the
+    // dialer handed it still stays until the Core speaks, then leaves.
+    void aSlowCoreStillOpensOverTheWebRelayWhenTheWindowRaces()
+    {
+        StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        DataChannelTransport::setAnswererOpenDelayForTest(1000);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        StationClient::ServiceRoute route;
+        route.servers = {service.url()};
+        route.rendezvousId = station.rendezvous->client()->stationId();
+        route.relayAllowed = true;
+        route.controlChannelVersion = 1;
+        window.setServiceRoute(route);
+        QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
+        QTest::ignoreMessage(QtInfoMsg,
+                             "Leaving the remote access service: the Core answered on the new connection");
+        EndWatch ends;
+        ends.watch(&window);
+        // A paired Core's identity key: the window races (link 21.1).
+        window.connectToStation(QUrl(), QString(), QString(), false,
+                                StationIdentity::fingerprintOf(
+                                    station.core.server->stationIdentity().publicKeySpki()));
+        QString why;
+        QVERIFY2(waitForHandshake(window, kServiceConnectBudgetMs, &why, nullptr, &ends),
+                 qPrintable(why));
+        QCOMPARE(window.pathRank(), int(PathRacer::Floor));
+        QVERIFY2(window.connectionAttempt().summary().contains(QLatin1String("web relay")),
+                 qPrintable(window.connectionAttempt().summary()));
+        {
+            const QString code = ended.isEmpty() ? QString() : ended.first().at(1).toString();
+            QVERIFY2(ended.isEmpty(),
+                     qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
+        }
+        // The Core's hello came on the raced connection, and the kept
+        // service client left then (the expected line, checked when this
+        // function ends); the session stays up.
+        QTest::qWait(500);
+        QVERIFY(window.isHandshakeComplete());
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 

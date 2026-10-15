@@ -29,6 +29,10 @@
 //               connection is under way (ICE has a selected pair) keeps the
 //               connection until it opens or kAnswerDeadlineMs. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: at most RendezvousClient::kMaxLiveIntroductions answers
+//               are kept past their introductions; past that one goes at
+//               once, as before. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationRendezvous.h"
@@ -45,6 +49,8 @@
 
 #include <QLoggingCategory>
 #include <QTimer>
+
+#include <algorithm>
 
 Q_LOGGING_CATEGORY(lcStationRendezvous, "nereus.session.stationrendezvous")
 
@@ -66,6 +72,8 @@ struct StationRendezvous::Answer {
     /// introduction, opened when its grant comes; its candidate source
     /// factory rides the ICE settings, so the session's connections keep it.
     std::shared_ptr<RelayLeg> leg;
+    /// Kept past its introduction's end, its connection under way.
+    bool keptPastIntroduction = false;
 };
 
 StationRendezvous::StationRendezvous(StationServer* server, const QList<QUrl>& servers,
@@ -222,11 +230,25 @@ bool StationRendezvous::start()
             // window leaves the service then, before this end has seen its
             // own open (relayed or direct). It opens or goes
             // at kAnswerDeadlineMs.
+            // At most kMaxLiveIntroductions are kept, the bound the live
+            // introductions have: one past it goes at once, as before.
             if (answer->transport->selectedPath().has_value()) {
+                const auto kept = std::count_if(m_answers.cbegin(), m_answers.cend(),
+                                                [](const auto& entry) {
+                                                    return entry.second->keptPastIntroduction;
+                                                });
+                if (kept < RendezvousClient::kMaxLiveIntroductions) {
+                    answer->keptPastIntroduction = true;
+                    qCInfo(lcStationRendezvous)
+                        << "An introduction ended while its connection was being made; "
+                           "keeping the connection:"
+                        << code;
+                    return;
+                }
                 qCInfo(lcStationRendezvous)
-                    << "An introduction ended while its connection was being made; "
-                       "keeping the connection:"
-                    << code;
+                    << "An introduction ended while its connection was being made, and"
+                    << kept << "connections are kept already; ending this one now:" << code;
+                finishAnswer(id, false);
                 return;
             }
             qCInfo(lcStationRendezvous) << "An introduction ended before its connection opened:"
