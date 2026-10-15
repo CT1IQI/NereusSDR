@@ -433,7 +433,7 @@ Template variant (see `HEADER-TEMPLATES.md`):
 | tests/tst_rxchannel_emnr.cpp | Project Files/Source/Console/radio.cs | 2216-2232 | port | thetis-samphire | |
 | tests/tst_rxchannel_nb2_polish.cpp | Project Files/Source/Console/HPSDR/specHPSDR.cs; Project Files/Source/ChannelMaster/cmaster.c | 922-937; 55-68 | port | thetis-no-samphire | both cited sources exclude Samphire (Wigley-only specHPSDR.cs + NR0V-only cmaster.c) |
 | tests/tst_rxchannel_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
-| tests/tst_rxchannel_squelch.cpp | Project Files/Source/Console/radio.cs | 1185; 1293; 1312 | port | thetis-samphire | |
+| tests/tst_rxchannel_squelch.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1185; 1293; 1312; 47295-47304 | port | thetis-samphire | |
 | tests/tst_slice_agc_advanced.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1037-1124; 45977 | port | thetis-samphire | |
 | tests/tst_slice_auto_agc.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/setup.designer.cs | 45913-45954; 38630,39245,39320,39418 | port | thetis-samphire | setup.designer.cs has no GPL header — project-level LICENSE applies |
 | tests/tst_slice_tune_step_list.cpp | Project Files/Source/Console/console.cs | 1953-1984; 6124-6134 | port | thetis-samphire | verbatim tune_step_list parity (26 StepHz/Name pairs), ChangeTuneStepUp/Down wrap, 100 Hz default guard [v2.10.3.15] |

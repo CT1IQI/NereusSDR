@@ -65,6 +65,9 @@
 //                 from the -160..0 slider, replacing a dB-to-linear
 //                 conversion that kept FM muted. By J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude Code.
+//                 Later the same day: the console.cs header block brought
+//                 up to the v2.10.3.15 upstream header (the ApacheLabs G2E
+//                 line and the final-modifications block).
 // =================================================================
 
 //=================================================================
@@ -145,6 +148,7 @@
 // Modifications for using the new database import function.  W2PA, 29 May 2017
 // Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
 // Modfied heavily - Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+// ApacheLabs G2E support added throughout Thetis in various files, all changes marked  //N1GP G2E added
 //
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
@@ -158,6 +162,11 @@
 // its original terms and is not affected by this dual-licensing statement in any way.        //
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
+//
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Final modifictions by MW0LGE Richard Samphire - 19th April 2026
+// Nothing further added by him after this date, and his repo is now in archive https://github.com/ramdor/Thetis
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 

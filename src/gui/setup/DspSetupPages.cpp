@@ -2370,7 +2370,8 @@ FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent,
                                            UnbuiltFeature::FmDeviation);
 
     // R-R3-21: the active slice's FM squelch threshold (SliceModel
-    // fmsqThresh, dB; RxChannel::setFmsqThresh converts it for WDSP).
+    // fmsqThresh): the slider position, -160 to 0, which
+    // RxChannel::fmsqThresholdForWdsp maps to the WDSP threshold.
     auto* squelchThresh = new QSlider(Qt::Horizontal);
     squelchThresh->setProperty("nereusSetupId", "dsp.fm.fmsqThresh");
     squelchThresh->setObjectName(QStringLiteral("fmSquelchThresholdSlider"));

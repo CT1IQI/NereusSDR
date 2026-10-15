@@ -200,6 +200,13 @@ private slots:
             << -80.0 << static_cast<double>(0.1f);
         QTest::newRow("-1 truncates to n=99")
             << -1.0 << static_cast<double>(static_cast<float>(0.010471285480508996));
+        // These two rows tell (int) truncation from rounding: -2 gives 98.75
+        // (truncation n=98, rounding 99) and -159 gives 0.625 (truncation
+        // n=0, rounding 1).
+        QTest::newRow("-2 truncates to n=98, not 99")
+            << -2.0 << static_cast<double>(static_cast<float>(0.01096478196143185));
+        QTest::newRow("-159 truncates to n=0, not 1")
+            << -159.0 << static_cast<double>(1.0f);
         QTest::newRow("0 is the tightest, n=100")
             << 0.0 << static_cast<double>(0.01f);
     }
