@@ -8,13 +8,18 @@
 //   4. the radio's frames reach this connection's socket, and no other
 //      socket on the machine bound to the address the radio answers can
 //      take them (tst_slice_cap_every_path's lost reconnect)
+//   5. onReadyRead reads a bounded batch per call, so the EP2 pacer keeps
+//      sending while EP6 arrives faster than it is read (2026-10-14 HL2
+//      TUNE stall)
 //
 // Uses QTEST_MAIN (not APPLESS_MAIN) — requires QCoreApplication for socket I/O.
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QUdpSocket>
+#include <QElapsedTimer>
 #include <atomic>
+#include <thread>
 #include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
@@ -44,6 +49,147 @@ static void countEp6EstablishedLogs(QtMsgType type,
     }
 }
 } // namespace
+
+// ---------------------------------------------------------------------------
+// EP6 flood check, reusable by any change to the P1 receive path.
+//
+// Ep6Flood builds `count` ep6 datagrams numbered in sequence from
+// `firstSeq`, each sample of each receiver carrying its own 24-bit I and Q
+// (frame, sample and receiver are all encoded in the value, Q negative), and
+// records every frame and every iqDataReceived the connection emits. send()
+// writes them straight to the connection's port in waves of `waveSize`; a
+// wave equal to `count` is one burst. verify() then checks the receive path
+// end to end:
+//   - every frame is processed, with none dropped (frameReceived count, and
+//     no new EP6 sequence gap on the bandwidth monitor);
+//   - they arrive in sequence order (emission k matches frame k);
+//   - the I/Q delivered on iqDataReceived is sample for sample what was sent.
+// ---------------------------------------------------------------------------
+class Ep6Flood {
+public:
+    Ep6Flood(P1RadioConnection& conn, int count, quint32 firstSeq, int numRx)
+        : m_conn(conn), m_count(count), m_firstSeq(firstSeq), m_numRx(numRx)
+    {
+        QObject::connect(&conn, &RadioConnection::frameReceived, &m_ctx,
+                         [this] { ++m_framesSeen; });
+        QObject::connect(&conn, &RadioConnection::iqDataReceived, &m_ctx,
+                         [this](int rx, const QVector<float>& samples) {
+                             m_iq.append(qMakePair(rx, samples));
+                         });
+    }
+
+    static int samplesPerSubframe(int numRx) { return 504 / (6 * numRx + 2); }
+
+    // The 24-bit value a sample carries: frame, sample and receiver in its
+    // bits, so a dropped, repeated or swapped frame or sample shows.
+    static qint32 iValue(int frame, int sample, int rx) {
+        return (qint32(frame) << 11) | (qint32(sample) << 3) | qint32(rx);
+    }
+    static qint32 qValue(int frame, int sample, int rx) {
+        return -(iValue(frame, sample, rx) + 1);
+    }
+
+    QByteArray frame(int f) const {
+        QByteArray d(1032, '\0');
+        auto* b = reinterpret_cast<quint8*>(d.data());
+        const quint32 seq = m_firstSeq + quint32(f);
+        b[0] = 0xEF; b[1] = 0xFE; b[2] = 0x01; b[3] = 0x06;
+        b[4] = quint8(seq >> 24); b[5] = quint8(seq >> 16);
+        b[6] = quint8(seq >> 8);  b[7] = quint8(seq);
+        b[8] = b[9] = b[10] = 0x7F;
+        b[520] = b[521] = b[522] = 0x7F;
+        const int slot = 6 * m_numRx + 2;
+        const int spr = samplesPerSubframe(m_numRx);
+        auto put24 = [b](int off, qint32 v) {
+            const quint32 u = quint32(v) & 0xFFFFFFu;
+            b[off] = quint8(u >> 16); b[off + 1] = quint8(u >> 8); b[off + 2] = quint8(u);
+        };
+        for (int sub = 0; sub < 2; ++sub) {
+            const int base = sub == 0 ? 16 : 528;
+            for (int s = 0; s < spr; ++s) {
+                for (int r = 0; r < m_numRx; ++r) {
+                    const int off = base + s * slot + r * 6;
+                    const int sample = sub * spr + s;
+                    put24(off, iValue(f, sample, r));
+                    put24(off + 3, qValue(f, sample, r));
+                }
+            }
+        }
+        return d;
+    }
+
+    // Sends every frame to `port` on the loopback, `waveSize` at a time,
+    // waiting after each wave until the connection has processed it.
+    bool send(quint16 port, int waveSize) {
+        QUdpSocket out;
+        if (!out.bind(QHostAddress::LocalHost, 0)) { return false; }
+        int sent = 0;
+        while (sent < m_count) {
+            const int n = std::min(waveSize, m_count - sent);
+            for (int i = 0; i < n; ++i) {
+                if (out.writeDatagram(frame(sent + i), QHostAddress::LocalHost, port) != 1032) {
+                    return false;
+                }
+            }
+            sent += n;
+            if (sent < m_count && !waitProcessed(sent, 5000)) { return false; }
+        }
+        return true;
+    }
+
+    bool waitProcessed(int frames, int timeoutMs) {
+        QElapsedTimer t;
+        t.start();
+        while (m_framesSeen < frames && t.elapsed() < timeoutMs) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        }
+        return m_framesSeen >= frames;
+    }
+
+    int framesSeen() const { return m_framesSeen; }
+
+    // Empty when the flood came through whole; otherwise the first fault.
+    QString verify() const {
+        if (m_framesSeen != m_count) {
+            return QString("%1 of %2 frames processed").arg(m_framesSeen).arg(m_count);
+        }
+        if (m_iq.size() != m_count * m_numRx) {
+            return QString("%1 I/Q emissions for %2 frames of %3 receivers")
+                .arg(m_iq.size()).arg(m_count).arg(m_numRx);
+        }
+        const int perFrame = 2 * samplesPerSubframe(m_numRx);
+        for (int f = 0; f < m_count; ++f) {
+            for (int r = 0; r < m_numRx; ++r) {
+                const auto& [rx, v] = m_iq.at(f * m_numRx + r);
+                if (rx != r) {
+                    return QString("frame %1: emission for rx %2, expected rx %3").arg(f).arg(rx).arg(r);
+                }
+                if (v.size() != 2 * perFrame) {
+                    return QString("frame %1 rx %2: %3 floats, expected %4")
+                        .arg(f).arg(r).arg(v.size()).arg(2 * perFrame);
+                }
+                for (int s = 0; s < perFrame; ++s) {
+                    const float ei = float(iValue(f, s, r)) / 8388608.0f;
+                    const float eq = float(qValue(f, s, r)) / 8388608.0f;
+                    if (v[2 * s] != ei || v[2 * s + 1] != eq) {
+                        return QString("frame %1 rx %2 sample %3: got (%4, %5), sent (%6, %7)")
+                            .arg(f).arg(r).arg(s).arg(v[2 * s]).arg(v[2 * s + 1]).arg(ei).arg(eq);
+                    }
+                }
+            }
+        }
+        return {};
+    }
+
+private:
+    P1RadioConnection& m_conn;
+    int m_count;
+    quint32 m_firstSeq;
+    int m_numRx;
+    QObject m_ctx;
+    int m_framesSeen{0};
+    QList<QPair<int, QVector<float>>> m_iq;
+};
 
 class TestP1LoopbackConnection : public QObject {
     Q_OBJECT
@@ -380,6 +526,163 @@ private slots:
         QVERIFY2(delta >= 100,
             qPrintable(QString("EP2 rate too slow: %1 packets in 500 ms (=%2 pps)")
                 .arg(delta).arg(delta * 2)));
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // 2026-10-14, Pi 4 Core, HL2 keyed: the connection thread read EP6
+    // slower than the HL2 sent it, onReadyRead's loop never emptied the
+    // socket, and the EP2 pacer on the same thread sent nothing for 12.9 s.
+    // One call now reads at most kMaxEp6DatagramsPerRead datagrams and
+    // leaves the rest, which are read without any new datagram arriving.
+    void readLoopIsBoundedPerCall() {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy frames(&conn, &RadioConnection::frameReceived);
+
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(frames.count(), 1, 3000);
+        frames.clear();
+
+        // Four batches' worth, queued on the socket before this thread's
+        // event loop runs again (sendEp6Frames returns once they are
+        // written; loopback delivers them at once).
+        const int cap = P1RadioConnection::maxEp6DatagramsPerReadForTest();
+        const int sent = cap * 4;
+        fake.sendEp6Frames(sent);
+
+        conn.onReadyReadForTest();
+        QCOMPARE(frames.count(), cap);
+        QVERIFY2(conn.socketHasPendingDatagramsForTest(),
+                 "one onReadyRead call read every pending datagram");
+
+        // No new arrivals: the read notifier brings the rest in.
+        QTRY_COMPARE_WITH_TIMEOUT(frames.count(), sent, 3000);
+        QVERIFY(!conn.socketHasPendingDatagramsForTest());
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // A flood well past the bound: 640 datagrams (40 batches) in one burst,
+    // which a 4 MB receive buffer holds without the kernel dropping any.
+    // One onReadyRead call leaves datagrams pending, and the receive path is
+    // otherwise unchanged: every frame processed, in sequence order, with the
+    // I/Q delivered sample for sample as sent.
+    void ep6FloodIsReceivedWhole() {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        HermesLiteBandwidthMonitor bw;
+        P1RadioConnection conn;
+        conn.init();
+        conn.setBandwidthMonitor(&bw);
+
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        // The fake's one frame carries sequence 0 and connects.
+        QSignalSpy first(&conn, &RadioConnection::frameReceived);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(first.count(), 1, 3000);
+        const int gapsBefore = bw.ep6SequenceErrorCount();
+
+        constexpr int kFlood = 640;
+        // Room for the whole burst with room to spare for kernel overhead.
+        QVERIFY2(conn.socketReceiveBufferForTest() >= 2 * kFlood * 1032,
+                 qPrintable(QString("receive buffer %1 too small for one burst")
+                                .arg(conn.socketReceiveBufferForTest())));
+
+        Ep6Flood flood(conn, kFlood, 1, conn.activeRxCountForTest());
+        QVERIFY(flood.send(fake.clientPort(), kFlood));
+
+        // Bound: one call reads one batch and leaves the rest pending.
+        conn.onReadyReadForTest();
+        QCOMPARE(flood.framesSeen(), P1RadioConnection::maxEp6DatagramsPerReadForTest());
+        QVERIFY(conn.socketHasPendingDatagramsForTest());
+
+        // Receive unchanged.
+        QVERIFY(flood.waitProcessed(kFlood, 5000));
+        const QString fault = flood.verify();
+        QVERIFY2(fault.isEmpty(), qPrintable(fault));
+        QCOMPARE(bw.ep6SequenceErrorCount(), gapsBefore);
+        QVERIFY(!conn.socketHasPendingDatagramsForTest());
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // The stall itself: EP6 arrives faster than this thread reads it (each
+    // frame costs 200 us here, about 5,000 a second, while a feeder sends
+    // about twice that), and the EP2 pacer must still send while it lasts.
+    // Before the bound, onReadyRead never returned and almost no EP2 frame
+    // reached the radio until the feeder stopped.
+    void ep2PacerSendsWhileEp6OutrunsTheReader() {
+        P1FakeRadio fake;
+        fake.setAutoStreamEnabled(false);
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy frames(&conn, &RadioConnection::frameReceived);
+
+        conn.connectToRadio(makeInfo(fake));
+        QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        fake.sendEp6Frames(1);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.state(), ConnectionState::Connected, 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(frames.count(), 1, 3000);
+
+        // A CPU-short reader: every frame read costs 200 us on this thread.
+        QObject slowReader;
+        connect(&conn, &RadioConnection::frameReceived, &slowReader, [] {
+            QElapsedTimer t;
+            t.start();
+            while (t.nsecsElapsed() < 200000) {
+            }
+        });
+
+        constexpr int kFeedMs = 500;
+        std::atomic<int> ep2AtFeedStart{0};
+        std::atomic<int> ep2AtFeedEnd{0};
+        std::thread feeder([&fake, &ep2AtFeedStart, &ep2AtFeedEnd] {
+            QElapsedTimer t;
+            t.start();
+            // Let the reader fall behind before counting.
+            while (t.elapsed() < 100) {
+                fake.sendEp6Frames(20);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            ep2AtFeedStart.store(fake.ep2FramesReceived());
+            while (t.elapsed() < 100 + kFeedMs) {
+                fake.sendEp6Frames(20);
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            ep2AtFeedEnd.store(fake.ep2FramesReceived());
+        });
+
+        // Run this thread's event loop while the feeder runs.
+        QTest::qWait(100 + kFeedMs + 50);
+        feeder.join();
+        QObject::disconnect(&conn, &RadioConnection::frameReceived, &slowReader, nullptr);
+
+        // 381 frames a second would be about 190 in 500 ms; ask for a fifth.
+        const int ep2During = ep2AtFeedEnd.load() - ep2AtFeedStart.load();
+        QVERIFY2(ep2During >= 40,
+                 qPrintable(QString("only %1 EP2 frames reached the radio in %2 ms "
+                                    "while EP6 outran the reader")
+                                .arg(ep2During).arg(kFeedMs)));
+
+        // The backlog left when the feeder stops is read with no new arrivals.
+        QTRY_VERIFY_WITH_TIMEOUT(!conn.socketHasPendingDatagramsForTest(), 5000);
 
         conn.disconnect();
         fake.stop();

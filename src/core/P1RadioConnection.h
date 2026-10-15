@@ -101,6 +101,10 @@
 //                Anthropic Claude Code.
 //   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
 //                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-14 - kMaxEp6DatagramsPerRead: onReadyRead reads at most this
+//                many datagrams per call, so the EP2 pacer gets a turn.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -781,6 +785,21 @@ private:
     // tick covers 100+ ms; without it one tick could dump 40+ packets into
     // the socket and overrun the radio's UDP receive buffer.
     static constexpr int kEp2MaxBurstPerTick = 16;
+
+    // Most datagrams onReadyRead() reads in one call before it returns to
+    // this thread's event loop. The EP2 pacer timer runs on the same thread,
+    // so an unbounded read loop that cannot empty the socket (an HL2 sends
+    // about 5,333 EP6 datagrams a second, and a CPU-short thread reads them
+    // slower than they arrive) never returns, and no EP2 frame goes out: the
+    // radio's TX FIFO runs dry and it drops PTT. At 5,333 per second about 11
+    // datagrams arrive per 2 ms pacer interval, so 16 keeps up with the
+    // stream while letting a due pacer tick run between batches. Datagrams
+    // left behind are read on the next call: each receiveDatagram() re-arms
+    // the socket's read notifier, which fires again while any are pending.
+    // A NereusSDR scheduling bound, not a Thetis value: Thetis reads on a
+    // thread of its own (networkproto1.c MetisReadThreadMainLoop) and sends
+    // from another, so it has no such loop.
+    static constexpr int kMaxEp6DatagramsPerRead = 16;
     // Defaults unchanged. As of 2026-07-25 the first two are seeded into
     // instance members so tests can compress the reconnect timeline;
     // nothing outside the test suite calls setReconnectTimingForTest(),
@@ -1427,6 +1446,14 @@ public:
     // hand-crafted 1032-byte ep6 datagram and assert paTelemetryUpdated()
     // emits the expected raw values.  Phase 3P-H Task 4.
     void parseEp6FrameForTest(const QByteArray& pkt) { parseEp6Frame(pkt); }
+
+    // One onReadyRead() call, and whether datagrams are still waiting after
+    // it, so a test can show the read loop is bounded.
+    void onReadyReadForTest() { onReadyRead(); }
+    bool socketHasPendingDatagramsForTest() const {
+        return m_socket && m_socket->hasPendingDatagrams();
+    }
+    static constexpr int maxEp6DatagramsPerReadForTest() { return kMaxEp6DatagramsPerRead; }
 
     // ── 3M-1a E.3 MOX wire test seams ────────────────────────────────────────
     // captureBank0ForTest — compose 5 bank-0 C&C bytes from current state

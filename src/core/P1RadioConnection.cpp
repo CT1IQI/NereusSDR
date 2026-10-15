@@ -186,6 +186,11 @@
 //                ordinary EP6 status subframes update it in wire order, as
 //                mi0bot networkproto1.c:478-496 [@c26a8a4] does. J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-14 - onReadyRead reads at most kMaxEp6DatagramsPerRead datagrams
+//                per call and returns to the event loop, so the EP2 pacer
+//                on the same thread keeps sending while the EP6 stream
+//                arrives faster than it is read. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -4383,13 +4388,24 @@ void P1RadioConnection::onReadyRead()
     // Only process ep6 data when Connected or Connecting (reconnect attempt).
     if (cs != ConnectionState::Connected && cs != ConnectionState::Connecting) {
         // Drain the socket anyway to avoid buffering.
-        while (m_socket->hasPendingDatagrams()) {
+        // Bounded like the loop below, so a radio still streaming while the
+        // link is down cannot keep the reconnect timer from firing.
+        int drained = 0;
+        while (drained < kMaxEp6DatagramsPerRead && m_socket->hasPendingDatagrams()) {
             m_socket->receiveDatagram();
+            ++drained;
         }
         return;
     }
 
-    while (m_socket->hasPendingDatagrams()) {
+    // Read at most kMaxEp6DatagramsPerRead datagrams, then return to the
+    // event loop so a due EP2 pacer tick can run. Without the bound, a
+    // stream arriving faster than this thread reads it kept the loop here
+    // and stopped every EP2 frame. The read notifier calls back for the
+    // rest. A NereusSDR scheduling bound, not a Thetis value.
+    int datagramsRead = 0;
+    while (datagramsRead < kMaxEp6DatagramsPerRead && m_socket->hasPendingDatagrams()) {
+        ++datagramsRead;
         QNetworkDatagram dg = m_socket->receiveDatagram();
         const QByteArray& data = dg.data();
 
