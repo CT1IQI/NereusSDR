@@ -17,6 +17,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The HL2 temperature average spans mi0bot's 800 ms (100
+//                samples of the latest reading, 8 ms apart) at any
+//                telemetry rate, and starts fresh when the connection
+//                leaves Connected. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 //   2026-10-14 - Clear the retired connection's discovery exemption before
 //                publishing intentional disconnect. J.J. Boyd (KG4VCF),
 //                AI-assisted via OpenAI Codex.
@@ -2399,6 +2404,23 @@ RadioModel::RadioModel(Role role, QObject* parent)
         if (m_role != Role::Remote && state != ConnectionState::Connected) {
             m_paCurrentReported = false;
             m_paTemperatureReported = false;
+        }
+        // The HL2 temperature average starts fresh on the next connection,
+        // so a reconnect (perhaps to another radio) never averages in the
+        // old readings. mi0bot zeroes the shown temperature when its
+        // reading loop ends but leaves _tempQueue full (it clears only the
+        // volts and amps queues):
+        // From mi0bot console.cs:25022-25024 [v2.10.3.13-beta2 @c26a8a4]:
+        //   _MKIIHL2Temp = 0f;      // MI0BOT: HL2 temperature
+        //
+        //   //there is no clear for ConcurrentQueues, we need to dequeue to clear
+        // Ours clears the samples too, so the old readings are gone.
+        if (state != ConnectionState::Connected) {
+            m_hl2TempRing.fill(0);
+            m_hl2TempCount = 0;
+            m_hl2TempHead = 0;
+            m_hl2TempLastPollNs = 0;
+            m_hl2TempHeld = 0;
         }
         emit paReadingsChanged();
     });
@@ -20771,15 +20793,62 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //   ...
     //   // MI0BOT: temp for HL2
     //   _MKIIHL2Temp = (3.26f * (tempAverage / 4096.0f) - 0.5f) / 0.01f;
+    //
+    // mi0bot samples the latest reading on a fixed schedule, not once per
+    // status frame, so its 100 samples always span 800 ms:
+    // From mi0bot console.cs:24926-24930 [v2.10.3.13-beta2 @c26a8a4]:
+    //   // MW0LGE_21k9c
+    //   // old method ran ~100ms of volts and ~100ms of amps, then waited 600ms, total time for 100 readings of each = 800ms
+    //   // new method takes two readings every 8ms into a threadsafe fifo queue, so those 100 of each will be spread over 800ms
+    //   // MW0LGE [2.9.0.7] changed volts to 150
+    //   //G8NJJ need similar code for Saturn here, but rates from Ssaturn will be different
+    // NereusSDR's telemetry arrives once per status tick (every 200 ms
+    // idle, every 1 ms keyed), so the ring takes one sample of the latest
+    // reading per 8 ms poll that has passed: the reading held from the
+    // last call fills the polls in between, and this call's reading takes
+    // the latest poll. The window is 100 x 8 ms = 800 ms at either rate.
+    // From mi0bot console.cs:24976 [v2.10.3.13-beta2 @c26a8a4]:
+    //   while (_tempQueue.Count > 100 && nTries < 100) //  MI0BOT: HL2 temperature, keep max 100 in the queue
+    // From mi0bot console.cs:24987-24989 [v2.10.3.13-beta2 @c26a8a4]:
+    //   await Task.Delay(8);
+    //
+    //   // [2.10.1.0]MW0LGE log data to VALog.txt
+    // (the Volts/Amps log is VoltsAmpsLog, sampled above.)
+    constexpr int    kHl2TempSamples = 100;                 // console.cs:24976
+    constexpr qint64 kHl2TempPollNs  = 8LL * 1000 * 1000;   // 8 ms, console.cs:24987
+    static_assert(kHl2TempSamples == static_cast<int>(std::tuple_size_v<decltype(m_hl2TempRing)>),
+                  "the HL2 temperature ring holds mi0bot's 100 samples");
     double hl2TempC = 0.0;
     bool   hl2TempValid = false;
     if (model == HPSDRModel::HERMESLITE) {
-        m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = exciterRaw;
-        m_hl2TempHead = (m_hl2TempHead + 1) %
-                        static_cast<int>(m_hl2TempRing.size());
-        if (m_hl2TempCount < static_cast<int>(m_hl2TempRing.size())) {
-            ++m_hl2TempCount;
+        const qint64 nowNs = m_paTelemetryNowNsForTest
+            ? *m_paTelemetryNowNsForTest
+            : static_cast<qint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch()).count());
+        const auto pushHl2Temp = [this](quint16 value) {
+            m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = value;
+            m_hl2TempHead = (m_hl2TempHead + 1) % kHl2TempSamples;
+            if (m_hl2TempCount < kHl2TempSamples) {
+                ++m_hl2TempCount;
+            }
+        };
+        if (m_hl2TempCount == 0) {
+            // First reading since the reset: it is the first sample.
+            pushHl2Temp(exciterRaw);
+            m_hl2TempLastPollNs = nowNs;
+        } else {
+            const qint64 polls = (nowNs - m_hl2TempLastPollNs) / kHl2TempPollNs;
+            if (polls > 0) {
+                const qint64 heldPolls =
+                    std::min<qint64>(polls - 1, kHl2TempSamples);
+                for (qint64 i = 0; i < heldPolls; ++i) {
+                    pushHl2Temp(m_hl2TempHeld);
+                }
+                pushHl2Temp(exciterRaw);
+                m_hl2TempLastPollNs += polls * kHl2TempPollNs;
+            }
         }
+        m_hl2TempHeld = exciterRaw;
         quint64 sum = 0;
         for (int i = 0; i < m_hl2TempCount; ++i) {
             sum += m_hl2TempRing[static_cast<std::size_t>(i)];
