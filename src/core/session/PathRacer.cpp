@@ -20,6 +20,10 @@
 //   2026-09-30: LINK minor 10: a standby the Core closed is released and
 //               deleted. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: each race logs the rank it must beat, each address it
+//               admits or drops and why, each attempt's end, and a race
+//               with nothing to try in its own words. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
@@ -49,6 +53,39 @@ Q_LOGGING_CATEGORY(lcPathRacer, "nereus.session.pathracer")
 namespace {
 
 constexpr const char* kNoPath = "The Core could not be reached from here.";
+
+// For the log only: a rank as its number and its name.
+QString rankText(int rank)
+{
+    const char* name = "unknown";
+    switch (rank) {
+    case PathRacer::ThisNetwork: name = "this network"; break;
+    case PathRacer::Direct: name = "direct"; break;
+    case PathRacer::ServiceDirect: name = "service direct"; break;
+    case PathRacer::ServiceRelayed: name = "service relayed"; break;
+    case PathRacer::Floor: name = "web relay"; break;
+    default: break;
+    }
+    return QStringLiteral("%1 (%2)").arg(rank).arg(QLatin1String(name));
+}
+
+// For the log only: how an attempt ended.
+const char* outcomeText(PathOutcome outcome)
+{
+    switch (outcome) {
+    case PathOutcome::Trying: return "trying";
+    case PathOutcome::Ready: return "ready";
+    case PathOutcome::NoAnswer: return "no answer";
+    case PathOutcome::TimedOut: return "timed out";
+    case PathOutcome::NotThisCore: return "not this Core";
+    case PathOutcome::Failed: return "failed";
+    case PathOutcome::Stopped: return "stopped";
+    case PathOutcome::RelayOff: return "relay off";
+    case PathOutcome::CoreTooOld: return "Core too old";
+    case PathOutcome::WebRelayEnded: return "web relay ended";
+    }
+    return "unknown";
+}
 
 bool isIpv6Host(const QString& host)
 {
@@ -157,7 +194,13 @@ void PathRacer::addDirectUrls(const QList<QUrl>& urls, quint64 maxIncomingBytes)
     }
     QList<QUrl> seen;
     for (const QUrl& url : urls) {
-        if (!url.isValid() || seen.contains(url)) {
+        if (!url.isValid()) {
+            qCInfo(lcPathRacer) << "Address" << url.toDisplayString(QUrl::RemoveUserInfo)
+                                << "dropped: not a valid address";
+            continue;
+        }
+        if (seen.contains(url)) {
+            qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: already in this race";
             continue;
         }
         seen.append(url);
@@ -169,6 +212,7 @@ void PathRacer::addDirectUrls(const QList<QUrl>& urls, quint64 maxIncomingBytes)
             addRung(new DirectPathRung(url, maxIncomingBytes),
                     ipv4 && ipv6Present ? kIpv4DelayMs : 0);
         } else {
+            qCInfo(lcPathRacer).noquote() << hostPort(url) << "is a name: looked up at the start";
             m_pendingLookups.append(url);
         }
     }
@@ -177,6 +221,7 @@ void PathRacer::addDirectUrls(const QList<QUrl>& urls, quint64 maxIncomingBytes)
 
 void PathRacer::resolveAndAdd(const QUrl& url, quint64 maxIncomingBytes, bool ipv6Present)
 {
+    m_lookupsStarted = true;
     ++m_lookupsRunning;
     const QPointer<PathRacer> self(this);
     QHostInfo::lookupHost(url.host(), this, [this, self, url, maxIncomingBytes,
@@ -230,16 +275,26 @@ bool PathRacer::admitDirect(const QUrl& url)
 {
     // An upgrade never dials an address whose rank cannot beat the path in
     // use (a connection every five minutes, for ever, for nothing).
-    if (m_betterThan && rankFor(url) >= *m_betterThan) {
+    const int rank = rankFor(url);
+    if (m_betterThan && rank >= *m_betterThan) {
+        qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: rank" << rankText(rank)
+                                      << "is not below" << rankText(*m_betterThan);
         return false;
     }
     const QHostAddress address(url.host());
     const QString key = (address.isNull() ? url.host().toLower() : address.toString())
         + QLatin1Char('/') + QString::number(url.port());
     if (m_directTargets.contains(key)) {
+        qCInfo(lcPathRacer).noquote() << hostPort(url) << "dropped: already in this race";
         return false;
     }
     m_directTargets.insert(key);
+    if (m_betterThan) {
+        qCInfo(lcPathRacer).noquote() << hostPort(url) << "admitted: rank" << rankText(rank)
+                                      << "is below" << rankText(*m_betterThan);
+    } else {
+        qCInfo(lcPathRacer).noquote() << hostPort(url) << "admitted: rank" << rankText(rank);
+    }
     return true;
 }
 
@@ -279,6 +334,13 @@ void PathRacer::start()
         return;
     }
     m_started = true;
+    if (m_betterThan) {
+        qCInfo(lcPathRacer).noquote() << "Race started with" << m_entries.size()
+                                      << "attempt(s), better than rank" << rankText(*m_betterThan);
+    } else {
+        qCInfo(lcPathRacer).noquote() << "Race started with" << m_entries.size()
+                                      << "attempt(s), any rank";
+    }
     bool ipv6Present = false;
     for (const auto& entry : m_entries) {
         if (auto* direct = qobject_cast<DirectPathRung*>(entry->rung.data());
@@ -513,6 +575,9 @@ void PathRacer::endRung(int index, Outcome outcome, const QString& reason)
     }
     line.outcome = outcome;
     line.reason = reason;
+    qCInfo(lcPathRacer).noquote() << "Attempt at" << line.address << "ended:"
+                                  << outcomeText(outcome)
+                                  << (reason.isEmpty() ? QString() : QStringLiteral("(%1)").arg(reason));
     emit linesChanged();
     checkAllEnded();
 }
@@ -542,7 +607,14 @@ void PathRacer::checkAllEnded()
     if (reason.isEmpty()) {
         reason = QString::fromLatin1(kNoPath);
     }
-    qCInfo(lcPathRacer) << "No path reached the Core";
+    if (m_entries.empty() && !m_lookupsStarted) {
+        // Nothing was admitted: no address beat the bar, and no service
+        // route was added. Not a path that failed.
+        qCInfo(lcPathRacer) << (m_betterThan ? "No address was worth trying for a better path"
+                                             : "Nothing to try: no address and no service route");
+    } else {
+        qCInfo(lcPathRacer) << "No path reached the Core";
+    }
     emit failed(reason);
 }
 

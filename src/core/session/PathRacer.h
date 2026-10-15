@@ -45,6 +45,8 @@
 //               web relay's leg (RelayLeg) and its per-connection candidate
 //               sources; the computer's own proxy settings (SystemProxy).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: whether a race looked up a name, for its last log line.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -268,6 +270,8 @@ private:
     int m_lookupsRunning = 0;
     std::optional<int> m_winnerRank;
     std::optional<int> m_betterThan;
+    /// A name was looked up in this race (for the log's last line).
+    bool m_lookupsStarted = false;
     /// Review Minor 8: every direct target (address and port) raced, so a
     /// name that resolves to an address already listed is not dialled
     /// twice; the direct rungs opening now and those waiting their turn.

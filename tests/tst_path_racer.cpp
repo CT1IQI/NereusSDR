@@ -42,6 +42,10 @@
 //               a better-path search for a saved Core with IPv6-only
 //               learned addresses, on the web relay. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: what a search admits against each current path, and the
+//               race's admitted, dropped, ended and nothing-to-try log
+//               lines. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -265,6 +269,45 @@ int delayFor(const QList<QPair<QString, int>>& plan, const QString& address)
     }
     return -1;
 }
+
+// Every line the racer logs, while a test holds one of these.
+QStringList* s_racerLines = nullptr;
+QtMessageHandler s_racerPrevious = nullptr;
+
+void captureRacerLines(QtMsgType type, const QMessageLogContext& context, const QString& message)
+{
+    if (s_racerLines != nullptr
+        && QByteArray(context.category) == QByteArray("nereus.session.pathracer")) {
+        s_racerLines->append(message);
+    }
+    if (s_racerPrevious != nullptr) {
+        s_racerPrevious(type, context, message);
+    }
+}
+
+struct RacerLines {
+    QStringList lines;
+    RacerLines()
+    {
+        s_racerLines = &lines;
+        s_racerPrevious = qInstallMessageHandler(captureRacerLines);
+    }
+    ~RacerLines()
+    {
+        qInstallMessageHandler(s_racerPrevious);
+        s_racerPrevious = nullptr;
+        s_racerLines = nullptr;
+    }
+    bool has(const QString& text) const
+    {
+        for (const QString& line : lines) {
+            if (line.contains(text)) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
 
 } // namespace
 
@@ -533,6 +576,115 @@ private slots:
         QCOMPARE(delayFor(planned, QStringLiteral("192.0.2.106:47910")), PathRacer::kIpv4DelayMs);
         QCOMPARE(delayFor(planned, QStringLiteral("[2001:db8:1:2::4602]:47910")), 0);
         QCOMPARE(delayFor(planned, QStringLiteral("[2001:db8:1:2::15f2]:47910")), 0);
+    }
+
+    // A search that admits nothing says so in its own words, not as a
+    // path that failed, and says what bar it started with.
+    void aSearchThatAdmitsNothingSaysSo()
+    {
+        RacerLines log;
+        PathRacer racer;
+        QSignalSpy failed(&racer, &PathRacer::failed);
+        racer.setBetterThan(PathRacer::ThisNetwork);
+        racer.addDirectUrls({QUrl(QStringLiteral("wss://192.0.2.106:47910"))},
+                            StationClient::kMaxIncomingMessageBytes);
+        racer.start();
+        QCOMPARE(failed.size(), 1);
+        QVERIFY2(log.has(QStringLiteral("No address was worth trying for a better path")),
+                 qPrintable(log.lines.join(QLatin1Char('\n'))));
+        QVERIFY2(!log.has(QStringLiteral("No path reached the Core")),
+                 qPrintable(log.lines.join(QLatin1Char('\n'))));
+        QVERIFY2(log.has(QStringLiteral("better than rank 0 (this network)")),
+                 qPrintable(log.lines.join(QLatin1Char('\n'))));
+    }
+
+    // Each address is logged as admitted or dropped, with the reason and
+    // the ranks compared, and each attempt's end with its outcome.
+    void eachAddressIsLoggedAdmittedOrDropped()
+    {
+        const QUrl v4(QStringLiteral("wss://192.0.2.106:47910"));
+        const QUrl v6(QStringLiteral("wss://[2001:db8:1:2::4602]:47910"));
+        {
+            RacerLines log;
+            PathRacer racer;
+            racer.setBetterThan(PathRacer::ServiceDirect);
+            racer.addDirectUrls({v6, v4, v4}, StationClient::kMaxIncomingMessageBytes);
+            const QString joined = log.lines.join(QLatin1Char('\n'));
+            QVERIFY2(log.has(QStringLiteral("192.0.2.106:47910 admitted: rank %1")
+                                 .arg(PathRacer::rankFor(v4))), qPrintable(joined));
+            QVERIFY2(log.has(QStringLiteral("is below 2 (service direct)")), qPrintable(joined));
+            QVERIFY2(log.has(QStringLiteral("192.0.2.106:47910 dropped: already in this race")),
+                     qPrintable(joined));
+        }
+        {
+            RacerLines log;
+            PathRacer upgrade;
+            upgrade.setBetterThan(PathRacer::ThisNetwork);
+            upgrade.addDirectUrls({v6}, StationClient::kMaxIncomingMessageBytes);
+            const QString joined = log.lines.join(QLatin1Char('\n'));
+            QVERIFY2(log.has(QStringLiteral(
+                         "[2001:db8:1:2::4602]:47910 dropped: rank %1")
+                         .arg(PathRacer::rankFor(v6))), qPrintable(joined));
+            QVERIFY2(log.has(QStringLiteral("is not below 0 (this network)")), qPrintable(joined));
+        }
+        {
+            // An attempt that ends at once (not a secure address): its end,
+            // with the outcome. Nothing is dialled.
+            RacerLines log;
+            PathRacer first;
+            first.addDirectUrls({QUrl(QStringLiteral("ws://127.0.0.1:1"))},
+                                StationClient::kMaxIncomingMessageBytes);
+            first.start();
+            QTRY_VERIFY2(log.has(QStringLiteral("Attempt at 127.0.0.1:1 ended: failed")),
+                         qPrintable(log.lines.join(QLatin1Char('\n'))));
+            const QString joined = log.lines.join(QLatin1Char('\n'));
+            QVERIFY2(log.has(QStringLiteral("127.0.0.1:1 admitted: rank 0 (this network)")),
+                     qPrintable(joined));
+            QVERIFY2(log.has(QStringLiteral("Race started with 1 attempt(s), any rank")),
+                     qPrintable(joined));
+        }
+    }
+
+    // JJ's entry against every path a session can be on. A search admits
+    // exactly the addresses that rank below the session's path, whatever
+    // this computer's interfaces make of 192.0.2.106; each service
+    // path admits all three.
+    void anUpgradeAdmitsWhatBeatsEachCurrentPath_data()
+    {
+        QTest::addColumn<int>("rank");
+        QTest::newRow("this network") << int(PathRacer::ThisNetwork);
+        QTest::newRow("direct") << int(PathRacer::Direct);
+        QTest::newRow("service direct") << int(PathRacer::ServiceDirect);
+        QTest::newRow("TURN relay") << int(PathRacer::ServiceRelayed);
+        QTest::newRow("web relay") << int(PathRacer::Floor);
+    }
+    void anUpgradeAdmitsWhatBeatsEachCurrentPath()
+    {
+        QFETCH(int, rank);
+        const QList<QUrl> entry{
+            QUrl(QStringLiteral("wss://[2001:db8:1:2::4602]:47910")),
+            QUrl(QStringLiteral("wss://[2001:db8:1:2::15f2]:47910")),
+            QUrl(QStringLiteral("wss://192.0.2.106:47910"))};
+        PathRacer racer;
+        racer.setBetterThan(rank);
+        racer.addDirectUrls(entry + entry, StationClient::kMaxIncomingMessageBytes);
+        QStringList expected;
+        for (const QUrl& url : entry) {
+            if (PathRacer::rankFor(url) < rank) {
+                expected.append(url.port() > 0 ? QStringLiteral("%1:%2").arg(
+                    url.host().contains(QLatin1Char(':')) ? QLatin1Char('[') + url.host() + QLatin1Char(']')
+                                                          : url.host()).arg(url.port())
+                                               : url.host());
+            }
+        }
+        QStringList admitted;
+        for (const auto& [address, delay] : racer.plannedStartsForTest()) {
+            admitted.append(address);
+        }
+        QCOMPARE(admitted, expected);
+        if (rank >= PathRacer::ServiceDirect) {
+            QCOMPARE(admitted.size(), 3);
+        }
     }
 
     // The same entry shape with a Core on this computer: the IPv6
