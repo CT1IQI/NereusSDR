@@ -10,6 +10,12 @@
 // semantics and exercise the full twelve-key lifecycle. J.J. Boyd (KG4VCF),
 // AI-assisted via OpenAI Codex.
 //
+// 2026-10-15 - Carry three checks from Combined K (bf1a3e5ee) onto the
+// master/equality rule: a genuinely different own value survives an
+// unchanged save, the twelve per-pan key names are pinned by name, and
+// each saved value's stored text is pinned. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+//
 // Isolation: AppSettings::instance() is a process-wide in-memory
 // singleton with no automatic load()/save() in this test process
 // (TestSandboxInit.cpp also sandboxes QStandardPaths so nothing here
@@ -198,6 +204,9 @@ private slots:
         pan2.setPanIndex(2);
         pan2.load();
         QCOMPARE(pan2.wfBlackLevel(), 20);
+        // A genuinely different own value stays through an unchanged save.
+        pan2.save();
+        QCOMPARE(s.value(own).toString(), QStringLiteral("20"));
         pan2.setWfBlackLevel(60);
         pan2.save();
         QVERIFY(!s.contains(own));
@@ -241,6 +250,15 @@ private slots:
         QVERIFY(!bases.contains(QStringLiteral("DisplayGridMax")));
         QVERIFY(!bases.contains(QStringLiteral("DisplayGridMin")));
         QVERIFY(!bases.contains(QStringLiteral("Display3DFloorDepth")));
+        // The inventory by name, so a renamed key cannot pass on count.
+        const QSet<QString> expectedBases{
+            QStringLiteral("DisplayWfColorScheme"), QStringLiteral("DisplayWfColorGain"),
+            QStringLiteral("DisplayWfBlackLevel"), QStringLiteral("DisplayFftFillAlpha"),
+            QStringLiteral("DisplayPanFill"), QStringLiteral("DisplaySpectrumFrac"),
+            QStringLiteral("DisplaySpectrumRenderMode"), QStringLiteral("Display3DGain"),
+            QStringLiteral("Display3DSpan"), QStringLiteral("Display3DAngle"),
+            QStringLiteral("Display3DSpeed"), QStringLiteral("Display3DSliceShadow")};
+        QCOMPARE(QSet<QString>(bases.cbegin(), bases.cend()), expectedBases);
 
         // Existing invalid own keys disappear when the saved value is
         // the ship default; equality must resume inheritance for all 12.
@@ -268,6 +286,24 @@ private slots:
         m.setThreeDSliceDepth(true);
         m.save();
         QCOMPARE(s.allKeys().size(), 12);
+        // The stored text itself, not only the model's own spelling of it:
+        // booleans are "True"/"False" and numbers are plain decimal text.
+        const QHash<QString, QString> expectedText{
+            {QStringLiteral("DisplayWfColorScheme_4"), QStringLiteral("6")},
+            {QStringLiteral("DisplayWfColorGain_4"), QStringLiteral("81")},
+            {QStringLiteral("DisplayWfBlackLevel_4"), QStringLiteral("37")},
+            {QStringLiteral("DisplayPanFill_4"), QStringLiteral("False")},
+            {QStringLiteral("DisplaySpectrumRenderMode_4"), QStringLiteral("1")},
+            {QStringLiteral("Display3DGain_4"), QStringLiteral("19")},
+            {QStringLiteral("Display3DSpan_4"), QStringLiteral("64")},
+            {QStringLiteral("Display3DAngle_4"), QStringLiteral("88")},
+            {QStringLiteral("Display3DSpeed_4"), QStringLiteral("3")},
+            {QStringLiteral("Display3DSliceShadow_4"), QStringLiteral("True")}};
+        for (auto it = expectedText.cbegin(); it != expectedText.cend(); ++it) {
+            QCOMPARE(s.value(it.key()).toString(), it.value());
+        }
+        QCOMPARE(s.value(QStringLiteral("DisplayFftFillAlpha_4")).toFloat(), 0.23f);
+        QCOMPARE(s.value(QStringLiteral("DisplaySpectrumFrac_4")).toFloat(), 0.61f);
         DisplaySettingsModel reopened;
         reopened.setPanIndex(4);
         reopened.load();

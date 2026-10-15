@@ -40,6 +40,12 @@
 // 2026-10-14: align the tall-pan geometry and wheel assertions with the
 // contained scrolling Display pill used by short docked pans. J.J. Boyd
 // (KG4VCF), AI-assisted via OpenAI Codex.
+//
+// 2026-10-15: carry two checks from Combined K (55ce07963, 49ce1a80d)
+// onto the contained-scroller rule: each marker pill's text fits its
+// styled content rectangle, not only its outer width, and every tab's
+// pill stays inside the pan. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -61,6 +67,7 @@
 #include <QScrollBar>
 #include <QSlider>
 #include <QStyle>
+#include <QStyleOptionButton>
 #include <QStyleOptionSpinBox>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -183,6 +190,18 @@ private:
         int columnSpan = 0;
         grid->getItemPosition(index, &row, &column, &rowSpan, &columnSpan);
         return row;
+    }
+
+    // The rectangle a styled push button leaves for its text, inside the
+    // style's padding.
+    static QRect pushButtonContents(const QPushButton* button) {
+        QStyleOptionButton option;
+        option.initFrom(button);
+        option.text = button->text();
+        option.icon = button->icon();
+        option.iconSize = button->iconSize();
+        return button->style()->subElementRect(
+            QStyle::SE_PushButtonContents, &option, button);
     }
 
     // Every setting the Spectrum and 3D View tabs show, away from its
@@ -1595,6 +1614,14 @@ private slots:
             QVERIFY(pill->x() >= right);
             QVERIFY2(pill->width() >= pill->sizeHint().width(), name);
             QVERIFY2(pill->width() >= pill->fontMetrics().horizontalAdvance(pill->text()) + 2, name);
+            // The text fits inside the style's padding, not only the
+            // button's outer width.
+            const int textWidth = pill->fontMetrics().horizontalAdvance(pill->text());
+            const int contentWidth = pushButtonContents(pill).width();
+            QVERIFY2(contentWidth >= textWidth,
+                     qPrintable(QStringLiteral("%1: %2 px content width, %3 px needed (%4)")
+                         .arg(pill->text()).arg(contentWidth).arg(textWidth)
+                         .arg(pill->objectName())));
             right = pill->x() + pill->width();
             QVERIFY(right <= 250);
             lastRow = row;
@@ -2650,6 +2677,7 @@ private slots:
         QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
         QVERIFY(h.scroll());
         QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
+        QVERIFY(h.pan.rect().contains(pill->geometry()));
         qInfo() << "Spectrum tab height" << pill->height();
 
         for (const Tab tab : {Tab::Levels, Tab::Fft, Tab::Waterfall, Tab::View3D}) {
@@ -2657,6 +2685,7 @@ private slots:
             QCOMPARE(pill->width(), 268);
             QVERIFY2(pill->height() <= 480, qPrintable(QString::number(pill->height())));
             QCOMPARE(h.scroll()->verticalScrollBar()->maximum(), 0);
+            QVERIFY(h.pan.rect().contains(pill->geometry()));
             QVERIFY2(pill->layout()->minimumSize().width() <= 268,
                      qPrintable(QString::number(pill->layout()->minimumSize().width())));
         }
