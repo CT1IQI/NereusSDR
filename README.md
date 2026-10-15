@@ -19,6 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
 | Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
 | Connect an iPhone or iPad | [Mobile setup](https://nereussdr.com/manual/06-iphone-connect.html) and [mobile operation](https://nereussdr.com/manual/07-iphone-operate.html) |
@@ -30,6 +31,26 @@ The [user guide](https://nereussdr.com/manual/) brings the operating instruction
 together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
+
+## What's new in 2026.10.1
+
+- **CAT and Hamlib rigctld.** Logging, contest and digital-mode programs
+  control NereusSDR over four slice-bound CAT channels, on TCP, serial or a
+  virtual serial port, with a separate rigctld port for Hamlib programs.
+- **Antenna rotor control.** Turn a Yaesu GS-232A/B or Hamlib `rotctld` rotor
+  through the Core, from a Rotor applet, the iPhone or iPad app, or a spot.
+- **Native audio engines.** Each system uses its own audio system, device lists
+  update by themselves, and a Core speaker can be chosen from any window. The
+  header has separate PC and RADIO volumes.
+- **The workspace look is the default.** Show or hide container headers,
+  arrange and dock on all four edges, pop containers out, and switch between
+  workspace profiles.
+- **Fixes.** Display and waterfall, two-tone and PureSignal, remote audio, and
+  Core installs. See the [release notes](CHANGELOG.md).
+
+Read the [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
+before updating a station. Rotor control, CAT Control on the phone and the Core
+speaker need a 2026.10.1 Core; older Cores and apps still connect.
 
 ## What's new in 2026.10.0
 
@@ -120,6 +141,10 @@ Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
   was refused" and runs its signal processing at nice -10. To check a
   kernel: `zcat /proc/config.gz | grep RT_GROUP_SCHED`.
 
+A rotor or serial CAT on the Core also needs the `dialout` group, through a
+`serial.conf` drop-in that the `.deb` packages do not ship. The
+[SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) has it.
+
 ### Take the console with you
 
 The native **iPhone and iPad app** provides live spectrum and waterfall,
@@ -194,6 +219,9 @@ if you want to host the remote-access service yourself.
   CFC frequency selection and undo/redo. PureSignal 3 adds correction assets,
   status and AmpView. AM/SAM/DSB transmit and the AM modulation monitor add
   carrier, envelope and positive/negative modulation readings.
+- **Workspace look.** Headers show or hide with the eye button, an Arrange
+  mode lets you move containers, containers dock on all four edges, pop-out
+  windows have a pin, and workspace profiles save whole layouts.
 - **Applets, Canvas and meters.** Stack or float containers, or arrange
   applets, meters and fifteen individual controls on an editable Canvas.
   Move, resize, layer and lock objects, preview changes, and Apply or Cancel.
@@ -201,6 +229,11 @@ if you want to host the remote-access service yourself.
   bring readings together. Supported objects can follow the selected receiver
   or stay with a fixed receiver. Existing layouts and external MMIO bindings
   survive migration and portable layout exchange.
+- **Native audio and CAT.** Each system plays and records through its own
+  audio system (Core Audio, Windows audio and ASIO, PipeWire or PulseAudio,
+  and ALSA direct on the headless Core) with device lists that update live.
+  The header has separate PC and RADIO volumes. CAT runs on four slice-bound
+  channels, with Hamlib rigctld for loggers.
 - **Audio and digital applications.** Choose receiver mixes, station and
   radio speaker/headphone output, microphone sources and VAX audio buses.
   TCI provides WebSocket control/audio for external applications. Spots from
@@ -210,7 +243,8 @@ if you want to host the remote-access service yourself.
 - **Station accessories.** Operate PGXL, TGXL and RF-Kit RF2K-S through the
   Core, with device authority and tuner sequencing. Hardware controls follow
   the connected radio's capabilities, including attenuation, preamp,
-  microphone inputs and ADC overload indication.
+  microphone inputs and ADC overload indication. Turn a GS-232A/B or Hamlib
+  `rotctld` rotor through the Core, from the Rotor applet, the iPhone or a spot.
 
 ## Radios and downloads
 
@@ -280,7 +314,7 @@ The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusS
 [#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
 [#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
 
-CAT/rigctld follows in the next release. CW transmit/keyer/QSK, FM pre-emphasis,
+CAT/rigctld and rotor control arrive in 2026.10.1. CW transmit/keyer/QSK, FM pre-emphasis,
 legacy skin import and WAV/IQ recording remain future work. Radio-specific and
 on-air checks are recorded in the [feature verification documents](docs/architecture/).
 

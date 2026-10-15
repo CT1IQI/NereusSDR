@@ -19,12 +19,158 @@ Thetis-compatible CAT commands.
   time without a program.
 - CAT keys the radio (PTT, Tune and two-tone) under the same transmit rules as
   every other source. Opening a channel or loading settings never keys.
-- Every listener stays off until you turn it on. CAT runs with the Core, so
-  from a remote console, set it up on the computer running the Core.
-- Serial CAT and serial-pin PTT need serial-port support, which is in the
-  Windows packages for now.
+- Every listener stays off until you turn it on. CAT runs only on the Core. A
+  headless Core's CAT is set up from a connected desktop's Setup pages, applet,
+  tester and log, or from the iPhone or iPad app's Tools tab (CAT Control).
+- Serial CAT and serial-pin PTT work in every package: the macOS, Windows and
+  Linux builds and the `nereusd` packages all include serial-port support.
+- When Setup refuses a CAT setting it now says why, in plain words. The
+  **Enable serial CAT** and **Enable input PTT** boxes stay greyed, with the
+  reason as their tooltip, until the device, input source or CTS/DSR input they
+  need is chosen. The same reasons reach a phone or a remote desktop.
 - Thetis commands for features NereusSDR does not have yet (recording, CWX,
   VAC and memories among them) answer `?;`.
+
+### Antenna rotor control
+
+NereusSDR turns a Yaesu GS-232A or GS-232B rotor over a serial port, or any
+rotor run by Hamlib's `rotctld` (the Core can start `rotctld` itself).
+
+- The Core owns the rotor, so every desktop window and the iPhone or iPad app
+  show one heading. A desktop running its own radio runs the rotor too.
+- The desktop has a Rotor applet with a dial, a Rotor page in Setup > CAT &
+  Network, and drag-to-turn on the compass meter.
+- The Spot List has a Bearing column and a Turn beam to menu item. A switch in
+  Setup > General > Options (off by default) turns the beam when you tune to a
+  spot.
+- Set a north or south end stop and a 360 or 450 degree range. The Rotor
+  applet's Turn to can take the Short path or the Long path.
+- A held turn button stops the rotor when you let go, and a rotor stops if the
+  window that was turning it goes away.
+
+### Native audio engines and live device lists
+
+Each system now plays and records through its own audio system.
+
+- Core Audio on the Mac; Windows audio (shared or exclusive) and ASIO on
+  Windows; PipeWire or PulseAudio on a Linux desktop; ALSA direct on a headless
+  Core. PortAudio stays as **Older drivers**.
+- Device lists update by themselves: AirPods connected mid-session appear.
+  A device that goes away shows "not connected". Speakers fall back to the
+  system default; the microphone and VAX go silent; all switch back when the
+  device returns.
+- Each device card has one **Driver** list above **Device**, replacing the
+  Driver API list and the three WASAPI checkboxes. Your saved choices carry
+  over into it.
+- A remote window's Outputs page has a **Core speaker** card, and the iPhone
+  or iPad Sound panel shows the Core speaker's level and mute. A headless
+  Core's own speaker now plays every receiver routed to the speakers.
+- A missing PC microphone turns the transmit badge amber. A Bluetooth
+  microphone is never opened unless you pick it. On Windows, **VAX TX
+  (virtual device)** is greyed out with a reason.
+- Protocol 2 transmit monitoring is clean while keyed, and remote windows show
+  the six transmit peak readings.
+- Remote listening no longer stutters or lags, and local audio recovers after
+  its source pauses.
+- PortAudio starts when it is first needed, not at launch. The Mac no longer
+  shows a "Virtual cables detected" notice with a Windows badge.
+- A migrated microphone choice is kept on first setup, and a working
+  microphone is not reopened when its reader stalls.
+
+### Workspace look
+
+The workspace look is now the default.
+
+- Containers dock on all four edges, float, or pop out into their own windows.
+  Each header can be shown or hidden with an eye button. Hold Shift, or choose
+  Containers > Arrange Workspace (Ctrl+Shift+A), to arrange. Pop-outs have a
+  pin and a Return button.
+- Workspace profiles, with a profile rail, save and recall whole layouts.
+- With the look on there is no container **Lock**, and saved locks open
+  unlocked.
+- Your saved layout is copied the first time you start with the new look; after
+  that the two looks keep separate layouts.
+- Windows keep their monitor and position in both looks. Text is at least
+  11 px.
+- The S-Meter has a checkbox in Containers and comes back on Reset Default
+  Layout.
+- Fixed two crashes: a pop-out growing during a drag between monitors on
+  Windows, and removing a popped-out container.
+
+### Display and waterfall
+
+- Clarity is per pan, and selecting another receiver no longer changes the
+  waterfall brightness. Clarity returns after you unkey.
+- A remote picture carries on through a retune instead of blanking, and with
+  **Adjust grid min to track noise floor** on, the remote spectrum no longer restarts.
+- The GPU waterfall no longer shimmers or flickers at its bottom line, and
+  resize drags are smooth.
+- Stale noise-floor lines are gone, and tracking the noise floor can no longer
+  invert the dB scale.
+- Deep zoom caps the FFT at about 0.7 s per transform, locally and in a remote
+  window. FFT size changes in a remote window now take effect.
+- Clicking a slice letter, Take control or a row in the bottom RX chooser
+  brings that slice into view.
+- Tune offset and the TX spectrum stay aligned, and remote TX mini displays
+  draw again.
+
+### Transmit, two-tone and PureSignal
+
+- Two-tone level is one Setup value and is no longer part of TX profiles. A
+  level saved at the old -6 dB becomes 0 dB, so PureSignal can calibrate; that
+  is 6 dB more two-tone drive if you never changed it.
+- The Core saves transmit edits made from a remote window.
+- A fast two-tone off and on restarts the test, and a remote window's
+  PureSignal two-tone stays keyed.
+- TUNE clears on the press that stops it.
+- Selecting RADE no longer crashes on Windows.
+- A TCI program's key never needs this computer's microphone: keyed audio from
+  a program is its own audio, or silence.
+- Remote MOX, TUNE and 2-TONE lights start in the right state.
+- PureSignal status uses less CPU.
+- The Tuner Genius XL's OPERATE and STANDBY follow the tuner's own state.
+
+### Receivers and radios
+
+- A short Protocol 1 dropout recovers in place instead of costing about 16
+  seconds.
+- Remote receive audio returns at once after you unkey.
+- Anvelina Pro 3: two bands on one input no longer go deaf, and 6 m is
+  handled.
+- The RX applet's AGC-T AUTO acts on its own slice. A desktop acting as a Core
+  no longer shows "NF awaiting measurement".
+- Remote C-Tune controls stay current with receiver authority.
+- The attenuator and preamp are saved and sent to the radio when you connect,
+  and a desktop Core saves attenuator changes while it runs.
+
+### iPhone and iPad app
+
+- Tools has a **CAT Control** page, and a new **Rotor** page with Rotor setup.
+  A spot's details show its Bearing and a Turn beam button.
+- The Sound panel has Radio speaker and Core speaker sections, and its Mute
+  becomes **Mute this phone**.
+- The picture carries on through a retune.
+
+These need a 2026.10.1 Core. An older Core greys them with a reason, and older
+Cores and apps still connect.
+
+### Core installs on a Pi, Rock or Linux computer
+
+- Every SBC install and both `.deb` packages give the Core sound-card access
+  through an audio drop-in. The Rock installer also adds the serial drop-in
+  that rotor and serial CAT need on the Core; the `.deb` packages do not ship
+  it. See the Core install guide.
+- Building from source on Linux now needs `libpulse-dev`.
+
+### Settings, support and spotting
+
+- Support bundles keep the settings and audio device choices they are allowed
+  to.
+- Import Settings survives the save when you quit.
+- Turning VAX on and off returns to the right microphone.
+- FreeDV and PSK Reporter send one version tag.
+- A window no longer freezes for hours while it redials through the
+  rendezvous route.
 
 ### Separate computer and radio speaker volumes
 
@@ -34,9 +180,9 @@ RADIO for the speaker on the radio.
 - RADIO sets and mutes the radio's own speaker output without changing the
   computer's volume, and PC no longer changes the radio speaker. Each slice's
   AF level and mute still apply to both.
-- RADIO is saved for each radio. With a Core, it is the speaker at the Core:
-  every remote console and the iPhone or iPad app show the same setting, and a
-  change on one reaches the others.
+- RADIO is saved for each radio. With a Core, the Core controls the radio's
+  speaker: every remote console and the iPhone or iPad app show the same
+  setting, and a change on one reaches the others.
 - On a narrow window the two controls stack.
 - Radios with a switchable speaker amplifier (on Protocol 2: the ANAN-G2,
   ANAN-G2 1K, ANAN-7000DLE, ANAN-8000DLE, Anvelina Pro 3 and Red Pitaya) get a
@@ -57,7 +203,8 @@ Advanced, and each control appears on one page only.
 - Microphone holds the PC microphone and the radio's mic jack; the one not in
   use is greyed out, never hidden. Mic gain applies to whichever is picked.
 - Digital modes holds VAX and TCI.
-- Every page opens at the top. Your saved audio settings carry over unchanged.
+- Every page opens at the top. Your saved audio settings carry over, and the
+  Driver choice picks up your saved Driver API and WASAPI choices.
 
 ### Tuner Genius XL firmware 1.2.44
 

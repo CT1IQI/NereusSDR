@@ -6,6 +6,16 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
+## In preparation: 2026.10.1
+
+The next release adds CAT with Hamlib rigctld, antenna rotor control, native
+audio engines with live device lists, the radio speaker volume in the header,
+the workspace look as the default, and reliability fixes across display,
+transmit, remote audio and Core installs. Rotor control, CAT Control on the
+phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
+See the [changelog](../CHANGELOG.md) and the
+[2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
+
 ## Current release: 2026.10.0
 
 The first CalVer release brings together the work since 0.5.2.
@@ -1017,7 +1027,7 @@ Bench verification: matrix at `docs/architecture/phase3r-verification/README.md`
 ### Phase 3K: CAT/rigctld + TCP Server
 **Goal:** External radio control for logging and contest software.
 
-The [approved design](architecture/2026-10-04-thetis-cat-design.md) and [implementation plan](architecture/2026-10-04-thetis-cat-plan.md) are implemented and merge to main with PR #340 (not yet in a release). Four stable slice-bound Thetis channels, native TCP/optional serial/POSIX PTY, live local Setup/applet/status/log/tester and a separate four-channel Hamlib rigctld dialect are delivered. All 419 descriptors have explicit contracts; 349 active registrations execute 783 production fixtures, with 129 unavailable outcomes. This establishes catalogue accounting, not full functional Thetis parity.
+The [approved design](architecture/2026-10-04-thetis-cat-design.md) and [implementation plan](architecture/2026-10-04-thetis-cat-plan.md) are implemented and merged to main (in 2026.10.1, not yet released). Four stable slice-bound Thetis channels, native TCP/optional serial/POSIX PTY, live local Setup/applet/status/log/tester and a separate four-channel Hamlib rigctld dialect are delivered. All 419 descriptors have explicit contracts; 349 active registrations execute 783 production fixtures, with 129 unavailable outcomes. This establishes catalogue accounting, not full functional Thetis parity.
 
 [Verification and limitations](architecture/thetis-cat-verification/README.md) and the [accepted execution ledger](architecture/thetis-cat-verification/progress.md) record rebuilt macOS gates, current Linux Core CAT/official Hamlib 4.7 execution and optional-dependency checks. A full review against Thetis v2.10.3.15 ran before the merge and its findings are fixed or listed in the PR. Windows compilation, Linux GUI/x86, physical serial/PTT, other logging/digital-mode clients and radio/RF/RX-audio bench remain pending.
 
@@ -1026,6 +1036,38 @@ Scope:
 - Four stable slice-bound CAT channels, native TCP/optional serial/PTY transports and source-grounded PTT/reporting settings
 - CatApplet, live setup/status/logging and production model/headless verification
 - Separate four-channel rigctld delivery, studying current AetherSDR `CatPort`/`RigctlProtocol`/`SmartCatSession` transport patterns
+
+### Rotor control
+**Goal:** Turn the station's antenna rotor from every window and the phone.
+
+The [design](architecture/2026-10-07-rotor-control-design.md) and
+[plan](architecture/2026-10-07-rotor-control-plan.md) are implemented and merged
+to main (in 2026.10.1, not yet released). The Core owns the rotor (Yaesu
+GS-232A/B over a serial port, or Hamlib `rotctld` run elsewhere or started by
+the Core). The desktop has a Rotor applet, a Setup page and drag-to-turn on the
+compass meter; the iPhone and iPad app has a Rotor page; spots carry a bearing
+and a Turn beam action. See the
+[remote protocol](architecture/2026-10-07-remote-rotor-control-v1.md).
+
+### Native audio engines
+**Goal:** Use each system's own audio system, with live device lists.
+
+The [design](architecture/2026-10-08-native-audio-engines-design.md) and
+[plan](architecture/2026-10-08-native-audio-engines-plan.md) are implemented and
+merged to main (in 2026.10.1, not yet released): Core Audio, Windows audio
+(shared and exclusive), ASIO, PipeWire, PulseAudio and ALSA direct on the
+headless Core, with PortAudio kept as Older drivers, a Core speaker chosen from
+any window, and the radio speaker volume
+([design](architecture/2026-10-05-radio-speaker-and-audio-setup-design.md)).
+
+### Workspace look
+**Goal:** Containers that dock, float and pop out, arranged by the operator.
+
+The [design](architecture/2026-10-10-container-arrange-design.md) and
+[plan](architecture/2026-10-10-container-arrange-plan.md) are implemented and
+merged to main (in 2026.10.1, not yet released), and the look is the default:
+container headers with an eye button, Arrange mode, docking on all four edges,
+pop-outs with a pin, and workspace profiles.
 
 ### Phase 3L: Protocol 1 Support
 **Goal:** Add P1 support for Hermes Lite 2 and older ANAN radios.
