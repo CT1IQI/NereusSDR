@@ -117,9 +117,9 @@ While typing in an entry, text Undo operates first. The graph shows configured
 settings, not a measured filter response. Confirm processing separately with
 EQ state and the controlled audio evidence described above.
 
-[![Desktop TX Equalizer showing Legacy EQ, pre-gain, band gains and center frequencies](images/desktop-tx-eq-original.png)](images/desktop-tx-eq-original.png)
+[![Desktop TX Equalizer showing Graphic · Legacy mode, pre-gain, band gains and center frequencies](images/desktop-tx-eq-workspace-original.png)](images/desktop-tx-eq-workspace-original.png)
 
-*TX EQ editor: Legacy EQ is selected and Enable TX EQ is off. The existing curve is displayed, not recommended. Check the enable state separately from the visible curve; record a working profile before editing. This is the earlier desktop development editor, captured without curve changes. The release candidate uses Graphic · Legacy / Parametric mode buttons and added edit history; a selected-release screenshot is pending.*
+*TX EQ editor in the workspace look: Graphic · Legacy is selected, Parametric is the other mode button, and Enable TX EQ is off. Undo and Redo and the Advanced section are at the top. The curve shown is the capture's illustrative curve, not a recommendation. Check the enable state separately from the visible curve; record a working profile before editing. Captured from the offscreen preview window with no radio connected, without curve changes; the Parametric mode is not pictured.*
 
 ### Set TX EQ from iPhone or iPad
 
@@ -188,9 +188,9 @@ Use the same controlled phrase and monitor evidence before relying on that chain
 
 The Phone/CW **PROC** button controls CPDR, not all processing stages. TX EQ, leveler, phase rotator, CFC, CESSB and ALC have separate stage states. Open **Setup > Transmit > Speech Processor** for the live stage grid and its **Open TX EQ…**, **Open Phase Rotator…**, **Open CFC…**, **Open CESSB…**, and **Open DEXP/VOX…** links. A green state means the displayed stage is enabled; use its linked Setup page to change parameters. The DEXP row in this dashboard is a stage-state readout; the full controls are on **Transmit > DEXP/VOX**.
 
-[![Desktop CFC editor with compression and post-EQ curves, layout choices and selected band fields](images/desktop-cfc-original.png)](images/desktop-cfc-original.png)
+[![Desktop CFC editor with compression and post-EQ curves, layout choices and selected band fields](images/desktop-cfc-workspace-original.png)](images/desktop-cfc-workspace-original.png)
 
-*CFC editor: selected-band controls, compression and post-EQ curves, and 5/10/18-band layout choices. The captured 10-band curve is an existing setting, not a voice recipe. Save a copy before changing a layout; the figure was captured without edits or keyed audio. This is the earlier editor; the candidate adds pending Apply/Cancel, separate width fields and Undo/Redo. A selected-release screenshot remains pending.*
+*CFC editor: selected-band controls, compression and post-EQ curves, and 5/10/18-band layout choices. The captured 10-band curve is the capture's illustrative setting, not a voice recipe. Save a copy before changing a layout; the figure was captured without edits or keyed audio. The workspace-look capture shows the Undo and Redo buttons, separate compression and post-EQ **Width (Q)** fields and the Advanced section; the pending Apply/Cancel for a band-count change is not pictured. Captured from the offscreen preview window with no radio connected.*
 
 ## Match RX bandwidth to TX once
 

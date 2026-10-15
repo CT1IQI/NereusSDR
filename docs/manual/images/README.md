@@ -5,9 +5,10 @@ Original PNGs are preserved byte for byte. [Capture provenance](capture-provenan
 records each original’s dimensions, SHA-256, build, capture method and state.
 These builds differ from the original reviewed source baseline, `d1608a3de75e`,
 and the bounded desktop reconciliation baseline, `df6590ff12ae`.
-The EQ/CFC figures show the earlier editors. They do not show the candidate's
-mode buttons, pending count reset, width controls or edit history; those
-selected-release captures, Core Settings and Canvas captures remain pending.
+The 2 October EQ/CFC originals show the earlier editors. The 14 October
+workspace-look EQ/CFC captures (below) show the current mode buttons, width
+fields and edit history; the pending count reset is not pictured. Selected-release
+Core Settings and Canvas captures remain pending.
 Screenshots illustrate the stated controls; they are not release compatibility
 or live operating verification.
 
@@ -48,6 +49,37 @@ repository and website compatibility.
 | `desktop-vfo.jpg` | 1 frequency entry; 2 filter width; 3 control ownership; 4 slice control tabs. |
 | `desktop-rx.jpg` | 1 mode; 2 tuning step; 3 filter display/presets; 4 AGC/AUTO; 5 RIT/XIT. |
 | `desktop-tx.jpg` | 1 RF Power; 2 Tune Pwr; 3 TUNE; 4 MOX; 5 monitor output/volume; 6 processing; 7 profile; 8 TX bandwidth. |
+
+## Workspace-look recapture, 14 October 2026
+
+The workspace look is now the default. Six desktop figures were recaptured with
+`tests/visual/capture.py --jobs 4 --profiles mac-1512x869@2` and the offscreen
+`nereus_visual_preview` tool at git `6350e45ce109d36d41c5f43b8c739d8ad8cb93d9`
+(clean tree; the sidecars record it). The tool builds the real window with no
+radio and fixed illustrative data, so these show layout and wording, not a
+connected station, and no window appeared on screen. The 2 October originals above
+stay byte for byte as preserved evidence, with their hashes checked; the manual
+now uses the new files where one exists.
+
+| New original | Scene | Replaces in the manual |
+| --- | --- | --- |
+| [desktop-rx-workspace-original.png](desktop-rx-workspace-original.png) | `look-two-band`, crop (2355,455)-(3024,965) device px | RX applet crop under `desktop-rx.svg` and `desktop-rx.jpg` (callouts 1 to 5 re-placed; SVG embeds this crop, not the full window) |
+| [desktop-tx-eq-workspace-original.png](desktop-tx-eq-workspace-original.png) | `look-dialog-tx-eq` | `desktop-tx-eq-original.png` |
+| [desktop-cfc-workspace-original.png](desktop-cfc-workspace-original.png) | `look-dialog-tx-cfc` | `desktop-cfc-original.png` |
+| [desktop-puresignal-workspace-original.png](desktop-puresignal-workspace-original.png) | `look-dialog-pure-signal` | `desktop-puresignal-original.png` |
+| [desktop-spot-hub-workspace-original.png](desktop-spot-hub-workspace-original.png) | `look-dialog-spot-hub`, Settings tab | `desktop-spot-hub-original.png` |
+| [desktop-freedv-source-workspace-original.png](desktop-freedv-source-workspace-original.png) | `look-dialog-spot-hub`, FreeDV tab | `desktop-freedv-source-original.png` |
+
+`desktop-audio-outputs.png` (not a preserved original) was replaced in place
+from `look-dialog-setup-outputs`, trimmed to the page content (the Settings tree removed).
+
+Not recaptured, still the 0.5.2 classic look: the overview, VFO flag and TX
+applet composites (`desktop-overview.*`, `desktop-vfo.*`, `desktop-tx.*`; the preview window has no TX applet, no
+ownership text and no connected-station state), `desktop-tx-profile-original.png`
+(the preview has no active profile), `desktop-tci-server-original.png` (the
+Core's TCI server group sits below the first screen), `desktop-modes-audio.png`
+(the four VAX cards and TCI settings need a scrolled sequence), and the
+unreferenced `desktop-audio-devices-original.png` and `desktop-vax-original.png`.
 
 ## Native audio captures
 

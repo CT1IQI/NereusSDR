@@ -253,6 +253,78 @@
       "build": "codex/all-prs-radxa-gui@c1991b2d42ea; title 0.5.2; radxa_5c_r3",
       "kind": "running-desktop-app",
       "state": "Receive; no keying or calibration; tool statuses as pictured"
+    },
+    {
+      "file": "desktop-tx-eq-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-dialog-tx-eq.png",
+      "sha256": "a473b3107675544260e89fdef7c4c3a24a0c1d2afb3d61fbc3ce176ed51dffe6",
+      "dimensions": [
+        2000,
+        1440
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-dialog-tx-eq; profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-cfc-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-dialog-tx-cfc.png",
+      "sha256": "6b0086cd2b189ff92cf14017294009148e604c7d20d86ed63a087d362291851b",
+      "dimensions": [
+        1520,
+        1460
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-dialog-tx-cfc; profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-puresignal-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-dialog-pure-signal.png",
+      "sha256": "a32aa767bc45a9216f5359311d1fd560b97a1f660d73b70197f745517d16d1a5",
+      "dimensions": [
+        1552,
+        974
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-dialog-pure-signal; profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-spot-hub-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-dialog-spot-hub--settings.png",
+      "sha256": "a09f284d3c8f0fe5dc03de96c578fab407bd8038f1696d6cafc1982fd61ea335",
+      "dimensions": [
+        1520,
+        1280
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-dialog-spot-hub (Settings tab); profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-freedv-source-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-dialog-spot-hub--freedv.png",
+      "sha256": "a58e89451771fb18f39647d4a80b5093489c41921e50a94b157ebe756ea6fee5",
+      "dimensions": [
+        1520,
+        1280
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-dialog-spot-hub (FreeDV tab); profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-rx-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/docs-release-2026-10-1/captures/mac-1512x869@2/look-two-band.png",
+      "sha256": "dcaaa9462c18984ca36ab576c3792ac8688bca99bbf063c1067e961eda5f238e",
+      "dimensions": [
+        669,
+        510
+      ],
+      "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-two-band; profile mac-1512x869@2; 2026-10-14",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Crop (2355,455)-(3024,965) device px of the scene PNG; no resampling."
     }
   ]
 }

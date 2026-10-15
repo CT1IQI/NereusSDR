@@ -9,7 +9,7 @@ controls; its **Your volume** and mute remain personal to this device.
 
 Figure 3. Mode (1), tuning step (2), filter display and presets (3),
 AGC/AUTO controls (4), and receive/transmit offsets (5). The illustrated
-values are the captured station's settings.
+values are the capture's illustrative settings, taken in the workspace look from the preview window with no radio connected.
 
 ## Start with the right slice and route
 

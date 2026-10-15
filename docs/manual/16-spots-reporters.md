@@ -14,9 +14,9 @@ On the phone, **Tools > Spot Hub > Settings** edits the Core's **Callsign** and 
 
 Use a licensed station callsign and the operating position's actual Maidenhead locator. A callsign alone is not enough for PSK Reporter. FreeDV Reporter also needs the locator for distance and heading calculations. For its live station list, status message, and operator-directed QSY requests, see [Chapter 15](15-rade-freedv.md).
 
-[![Desktop Spot Hub Settings page with station identity fields and Save and Propagate](images/desktop-spot-hub-original.png)](images/desktop-spot-hub-original.png)
+[![Desktop Spot Hub Settings page with station identity fields and Save and Propagate](images/desktop-spot-hub-workspace-original.png)](images/desktop-spot-hub-workspace-original.png)
 
-*Spot Hub identity is configured before starting a feed. Callsign and grid are blank in this desktop development capture; Save and Propagate has not been used. Do not treat an open Settings window as a connected source.*
+*Spot Hub identity is configured before starting a feed. Callsign and grid are blank in this workspace-look capture from the offscreen preview window; Save and Propagate has not been used. Do not treat an open Settings window as a connected source.*
 
 ## Connect the source that supplies the spot
 

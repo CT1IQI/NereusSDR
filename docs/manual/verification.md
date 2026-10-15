@@ -14,13 +14,14 @@ Availability updated for 2026.10.1: the latest published desktop and Core packag
 - Original independently reviewed source baseline: `d1608a3de75e5c307187966110f2e51e8ecb0d17`.
 - Bounded desktop reconciliation: `df6590ff12aeffb7a73f46acc37ca3824dfe3901`, tree `48a41523ce4562c2cad5c7e8be316009e275a913`, the 2026.10 candidate inspected on 4 October.
 - The consolidated candidate includes the accepted signed mobile checkpoint `8e1c06198bf2023cf846cddb5296ef952cc9812c`, tree `6db2011dfac47bf68f36b3fedd672d91acfb51df`, plus the six reviewed logging-privacy annotations from signed `1f6f2be0a4bd8a40d2c62a0b53f17b062dcf58c6` (mobile marketing version 2026.9.0; tested preview build 5801). Native app chapters retain their earlier development/source-verified scope; delivery and release acceptance are separate.
-- Desktop captures: `codex/all-prs-radxa-gui@c1991b2d42ea`, title version 0.5.2.
+- Desktop captures, two sets. The 2 October set came from `codex/all-prs-radxa-gui@c1991b2d42ea`, title version 0.5.2, in the classic look. On 14 October 2026 six of those figures were recaptured in the workspace look (now the default) with the offscreen `nereus_visual_preview` tool at git `6350e45ce109d36d41c5f43b8c739d8ad8cb93d9`, scenes `look-two-band` (RX applet), `look-dialog-tx-eq`, `look-dialog-tx-cfc`, `look-dialog-pure-signal` and `look-dialog-spot-hub` (Settings and FreeDV tabs), profile `mac-1512x869@2`, plus `look-dialog-setup-outputs` for the Outputs figure. These show a no-radio window with fixed illustrative data, not a connected station. The figures with no matching scene or a different state stay in the 0.5.2 classic look: the overview, VFO flag and TX applet composites, TX Profile, TCI Server and Digital modes. The [capture inventory](images/README.md) lists each one.
 - Phone simulator capture source: `46591d6cd62a916a6eef83e65d12fc655259b44d`.
 - iPad simulator build identities and per-image provenance: [capture inventory](images/README.md).
 - Audience: SDR-literate HPSDR hobbyists operating the desktop and iPhone/iPad app.
 - Source: twenty task/reference chapters, operator index, shared image directory.
 
-The source and captured desktop are different development builds. The figures
+The source and captured desktop are different development builds, and the
+figures are from two capture sets (see Documented build). The figures
 illustrate the captioned controls and states; they do not establish release
 availability or the appearance of uncaptured settings. Native phone/iPad
 simulator images include test data, while their procedures are checked against
@@ -105,6 +106,8 @@ The candidate disables **Meter Data Sources (MMIO)** in the new draft editor
 but chapter 10 does not promise a new-endpoint setup path there. That UI gap is
 recorded as a limit rather than filled with a guessed entry point. No new
 Canvas/Core Settings/EQ/CFC release screenshot was captured in this carry.
+The 14 October workspace-look recapture later replaced the EQ and CFC figures
+with current-editor captures; Core Settings and Canvas captures remain pending.
 
 Unchanged source-sensitive DSP, RF, PA, accessories and native-phone procedures
 retain the original reviewed baseline; they need the selected build/equipment
@@ -146,6 +149,8 @@ provenance were unchanged. Chapter and section disclosure controls still carry
 `open`; no new browser inspection or release/runtime certification is claimed.
 
 The 2026.10.1 documentation pass reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 21 preserved screenshot originals matched their recorded hashes. No new browser inspection or release/runtime certification is claimed.
+
+The 14 October 2026 workspace-look recapture reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 27 preserved screenshot originals matched their recorded hashes (the 21 earlier ones plus six new workspace-look originals). The new images were each inspected by eye for the workspace look, no debug overlay and the same subject as the figure replaced. No new browser inspection or release/runtime certification is claimed.
 
 ## Evidence still required for publication
 

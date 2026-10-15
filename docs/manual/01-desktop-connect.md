@@ -109,7 +109,7 @@ The page has a card for each output. **This computer** is the speakers: set **Vo
 
 [![Desktop Outputs page with the Sound system line and the This computer, Headphones and Radio speaker cards](images/desktop-audio-outputs.png)](images/desktop-audio-outputs.png)
 
-*Audio Outputs, rendered for the native audio build on a Mac with no radio connected. The Driver box is greyed because Core Audio is the only choice there. Rescan devices is greyed with its reason beside it. The Negotiated fields show (not applied) because no stream was open.*
+*Audio Outputs in the workspace look, rendered offscreen on a Mac with no radio connected. The Driver box is greyed because Core Audio is the only choice there. Rescan devices is greyed with its reason beside it. Both Device details sections are collapsed.*
 
 ### Pick the driver, then the device
 

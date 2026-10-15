@@ -97,10 +97,11 @@ Check that each screenshot agrees with the steps and expected result.
 State any radio-specific or build-specific limitation where it matters.
 Recheck screenshots when the relevant interface changes. The 4 October carry
 reconciles a bounded set of desktop instructions with the pinned candidate
-listed in [verification](verification.md); its historical EQ/CFC figures do
-not illustrate the revised editors. Preserve their original provenance and
-complete the selected-release Core Settings, Canvas and EQ/CFC captures before
-publication. The tree includes the iOS source under `ios/`, but the phone chapters
+listed in [verification](verification.md); its historical EQ/CFC figures did
+not illustrate the revised editors. The 14 October 2026 workspace-look recapture
+replaced them with current-editor captures from the preview tool, and the older
+originals stay preserved with their provenance. Complete the selected-release
+Core Settings and Canvas captures before publication. The tree includes the iOS source under `ios/`, but the phone chapters
 do not establish native-app release delivery.
 
 For live verification, follow complete sessions rather than merely checking
