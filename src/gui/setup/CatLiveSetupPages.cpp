@@ -28,6 +28,11 @@
 //              for its source, input and physical device: until then the
 //              tick is disabled and its tooltip says what is missing.
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-15 - Echoes of a change no longer empty the selectors row by row:
+//              items change in place, and rows are refilled through a model
+//              reset. With accessibility on, emptying the VFO slice
+//              selectors crashed the window on macOS.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "CatNetworkSetupPages.h"
 #include "core/cat/CatControl.h"
 #include "core/cat/CatPtyDialects.h"
@@ -64,9 +69,26 @@ QComboBox* combo(QWidget* parent, const QStringList& items, const QString& name)
     auto* widget = new QComboBox(parent); widget->addItems(items); widget->setObjectName(name);
     widget->setStyleSheet(QString::fromLatin1(Style::kComboStyle)); return widget;
 }
+// Empties a selector through a model reset, never row by row. With
+// accessibility on (VoiceOver, or any accessibility query), the macOS bridge
+// deletes a list's cell interfaces while Qt's QAccessibleTable still caches
+// their ids, and the next row removal or insertion reads a deleted cell
+// (Qt 6.11 QAccessibleTable::modelChange). A reset drops that cache safely,
+// and rows added right after it find the cache empty.
+void clearItems(QComboBox* widget) {
+    if (auto* items = qobject_cast<QStandardItemModel*>(widget->model())) { items->clear(); } else { widget->clear(); }
+}
+// The selector's texts, refilled through a reset (see clearItems).
+void setItems(QComboBox* widget, const QStringList& texts) {
+    clearItems(widget); widget->addItems(texts);
+}
 void setChoice(QComboBox* widget, const QString& text) {
     const QSignalBlocker blocked(widget);
-    if (widget->findText(text) < 0) { widget->addItem(text); }
+    if (widget->findText(text) < 0) {
+        // Added through a reset; the pages set each item's enabled state again after.
+        QStringList texts; for (int i=0;i<widget->count();++i) { texts << widget->itemText(i); }
+        setItems(widget,texts << text);
+    }
     widget->setCurrentText(text);
 }
 void choiceAvailable(QComboBox* widget, const QString& value, bool available, const QString& reason) {
@@ -76,7 +98,6 @@ void choiceAvailable(QComboBox* widget, const QString& value, bool available, co
         items->item(index)->setEnabled(available); items->item(index)->setToolTip(available ? QString() : reason);
     }
 }
-void unavailableChoice(QComboBox* widget, const QString& value, const QString& reason) { choiceAvailable(widget,value,false,reason); }
 void serialPlatformChoices(QComboBox* parity, QComboBox* stops, const CatPlatform& platform, bool remote) {
     // Native Qt capability facts: https://doc.qt.io/qt-6/qserialport.html#parity-prop
     // and https://doc.qt.io/qt-6/qserialport.html#StopBits-enum
@@ -112,29 +133,38 @@ constexpr int kInvalidRole=Qt::UserRole+2;
 bool pickedSlice(const QComboBox* widget) {
     return widget->currentData().toInt()>=0 && !widget->currentData(kInvalidRole).toBool();
 }
+// One entry of a slice selector.
+struct SliceChoice { QString text; int id; quint64 incarnation; bool invalid; };
 // `valid`: the binding still names the slice it was bound to (the Core's
 // own test, from a connected desktop).
 void fillSlices(QComboBox* widget, RadioModel* model, int selected, quint64 incarnation, bool valid) {
-    const QSignalBlocker blocked(widget); widget->clear(); widget->addItem(QObject::tr("None"),-1);
-    widget->setItemData(0,QVariant::fromValue(quint64(0)),Qt::UserRole+1);
+    const QSignalBlocker blocked(widget);
+    QList<SliceChoice> choices{{QObject::tr("None"),-1,0,false}};
     int index=selected<0 ? 0:-1;
     if (model) {
         for (SliceModel* slice:model->slices()) {
             const int id=slice->sliceIndex(); const quint64 live=model->sliceOwnership()->incarnation(id);
-            widget->addItem(QObject::tr("Slice ID %1").arg(id),id);
-            widget->setItemData(widget->count()-1,QVariant::fromValue(live),Qt::UserRole+1);
-            if (id==selected && valid) { index=widget->count()-1; }
+            choices.push_back({QObject::tr("Slice ID %1").arg(id),id,live,false});
+            if (id==selected && valid) { index=int(choices.size())-1; }
         }
     }
     if (index<0 && valid) {
         // A live slice this window does not show (a connected desktop's slices arrive later).
-        widget->addItem(QObject::tr("Slice ID %1").arg(selected),selected); index=widget->count()-1;
-        widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1);
+        choices.push_back({QObject::tr("Slice ID %1").arg(selected),selected,incarnation,false}); index=int(choices.size())-1;
     }
-    if (index<0) {
-        widget->addItem(QObject::tr("Invalid binding — ID %1").arg(selected),selected); index=widget->count()-1;
-        widget->setItemData(index,QVariant::fromValue(incarnation),Qt::UserRole+1); widget->setItemData(index,true,kInvalidRole);
-        unavailableChoice(widget,widget->itemText(index),QObject::tr("The slice this channel controlled was closed. Pick another slice."));
+    if (index<0) { choices.push_back({QObject::tr("Invalid binding — ID %1").arg(selected),selected,incarnation,true}); index=int(choices.size())-1; }
+    // Each echo of a change fills the selectors again: the items change in
+    // place, and the rows are refilled (through a reset, see clearItems)
+    // only when their number changes.
+    if (widget->count()!=choices.size()) {
+        QStringList texts; for (const SliceChoice& choice:choices) { texts << choice.text; }
+        setItems(widget,texts);
+    }
+    for (int i=0;i<choices.size();++i) {
+        const SliceChoice& choice=choices.at(i);
+        if (widget->itemText(i)!=choice.text) { widget->setItemText(i,choice.text); }
+        widget->setItemData(i,choice.id); widget->setItemData(i,QVariant::fromValue(choice.incarnation),Qt::UserRole+1); widget->setItemData(i,choice.invalid,kInvalidRole);
+        choiceAvailable(widget,choice.text,!choice.invalid,QObject::tr("The slice this channel controlled was closed. Pick another slice."));
     }
     widget->setCurrentIndex(index);
     widget->setToolTip(index>0 && widget->itemText(index).startsWith(QObject::tr("Invalid binding"))
@@ -296,7 +326,7 @@ void CatChannelSetupPage::syncPlatform(bool keepTyped) {
             // The devices are those of the computer running CAT; the path in the box, typed or picked, stays.
             if (row.device->property("devices").toStringList()!=platform.serialDevices) {
                 const QString shown=keepTyped ? row.device->currentText() : config.serialDevice;
-                const QSignalBlocker blocked(row.device); row.device->clear(); row.device->addItems(platform.serialDevices); row.device->setProperty("devices",platform.serialDevices);
+                const QSignalBlocker blocked(row.device); setItems(row.device,platform.serialDevices); row.device->setProperty("devices",platform.serialDevices);
                 if (keepTyped) { row.device->setCurrentText(shown); } else { setChoice(row.device,shown); }
             }
             serialPlatformChoices(row.parity,row.stops,platform,remote);
