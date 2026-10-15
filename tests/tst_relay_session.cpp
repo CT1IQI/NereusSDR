@@ -30,6 +30,12 @@
 //               runs on for twice its timeout after it expires, so a session
 //               the handshake deadline had closed held the test to QTest's
 //               300 s function timeout with no reason given.
+//   2026-10-15: the stand-in relay can hold its datagrams back for a
+//               while (holdDatagramsMs), so in aDirectPairStillWins the
+//               web relay's pair cannot succeed before the direct pair
+//               and win libjuice's 2 s nomination timer on a loaded
+//               runner. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -39,12 +45,14 @@
 #include <QHash>
 #include <QPointer>
 #include <QSignalSpy>
+#include <QTimer>
 #include <QWebSocket>
 #include <QWebSocketServer>
 
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include "RendezvousTestHarness.h"
 #include "core/security/ClientDeviceIdentity.h"
@@ -106,8 +114,32 @@ public:
     QList<QByteArray> forwarded[3];
     int joins = 0;
     std::unique_ptr<QWebSocketServer> server;
+    // Off by default. When set, datagrams (control and media) are kept
+    // this long from the first one, then forwarded in order.
+    int holdDatagramsMs = 0;
 
 private:
+    QElapsedTimer m_holdClock;
+    QList<QPair<QPointer<QWebSocket>, QByteArray>> m_held;
+
+    void forward(QWebSocket* socket, const QByteArray& message)
+    {
+        const QPointer<QWebSocket> other = legs.value(otherKey(keyOf.value(socket)));
+        if (other) {
+            other->sendBinaryMessage(message);
+        }
+    }
+
+    void releaseHeld()
+    {
+        const auto held = std::exchange(m_held, {});
+        for (const auto& [socket, message] : held) {
+            if (socket) {
+                forward(socket, message);
+            }
+        }
+    }
+
     static QByteArray otherKey(const QByteArray& key)
     {
         QByteArray other = key;
@@ -143,12 +175,22 @@ private:
             return;
         }
         if (tag == RelayLeg::kTagControl || tag == RelayLeg::kTagMedia) {
-            const QPointer<QWebSocket> other = legs.value(otherKey(keyOf.value(socket)));
             forwarded[tag].append(message.mid(1));
-
-            if (other) {
-                other->sendBinaryMessage(message);
+            if (holdDatagramsMs > 0) {
+                if (!m_holdClock.isValid()) {
+                    m_holdClock.start();
+                }
+                const qint64 left = holdDatagramsMs - m_holdClock.elapsed();
+                if (left > 0 || !m_held.isEmpty()) {
+                    if (m_held.isEmpty()) {
+                        QTimer::singleShot(std::max<qint64>(left, 0), server.get(),
+                                           [this] { releaseHeld(); });
+                    }
+                    m_held.append(qMakePair(QPointer<QWebSocket>(socket), message));
+                    return;
+                }
             }
+            forward(socket, message);
         }
     }
 };
@@ -323,6 +365,13 @@ private slots:
     void aDirectPairStillWins()
     {
         StandInRelay relay;
+        // The web relay's shim is a host candidate on the same libjuice
+        // agent. The controlling side nominates its best succeeded pair
+        // 2 s after selecting it (NOMINATION_TIMEOUT), so a loaded runner
+        // whose direct pair is slower than that ends on the relay. Holding
+        // the relay's datagrams 3 s gives the direct pair 3 s plus the 2 s
+        // timer, and the relay's pair still succeeds once released.
+        relay.holdDatagramsMs = 3000;
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
         RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
