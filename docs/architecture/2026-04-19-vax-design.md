@@ -712,3 +712,11 @@ For every ported file in §4.1 above, the PR introducing the port must:
 - [ ] Audio-thread RT-safety: no `qDebug`, no allocations, no locks in any callback on the hot path.
 - [ ] TCI integration path is stub-reserved so Phase 3J lands with no refactor to this code.
 - [ ] Help doc `help/install-virtual-cables.md` published and linked from first-run dialog.
+
+## Linux VAX ownership amendment (2026-10-14)
+
+The fixed Linux FIFO paths in the original plan are superseded by private
+per-user/per-generation paths, under an exclusive per-role claim. The five audio
+device names, format and routing remain unchanged. JJ approved this boundary
+change; see [Linux VAX ownership](../development/linux-vax-ownership.md) for
+recovery evidence, unresolved-load behavior, the device-free fixture and limits.
