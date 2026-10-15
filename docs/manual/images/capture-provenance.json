@@ -325,6 +325,42 @@
       "build": "nereus_visual_preview at git 6350e45ce109d36d41c5f43b8c739d8ad8cb93d9 (clean); scene look-two-band; profile mac-1512x869@2; 2026-10-14",
       "kind": "offscreen-visual-preview-workspace-look",
       "state": "No radio connected; fixed illustrative data; workspace look; no keying or calibration. Crop (2355,455)-(3024,965) device px of the scene PNG; no resampling."
+    },
+    {
+      "file": "desktop-overview-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/visual-preview-scenes/captures/clean/mac-1512x869@2/look-connected.png",
+      "sha256": "e2567b6de92be879c045494b6c98334dadfceffa16e07f5e5792ea3bbf660d17",
+      "dimensions": [
+        3024,
+        1738
+      ],
+      "build": "nereus_visual_preview at git 5ad9b0737ed74207edb5b2091487fccd40eff7c7 (sidecar git_dirty false); scene look-connected; profile mac-1512x869@2; 2026-10-15",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data, shown as if connected; workspace look; no keying or calibration. Unmodified scene PNG."
+    },
+    {
+      "file": "desktop-vfo-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/visual-preview-scenes/captures/clean/mac-1512x869@2/look-connected--flag@3x.png",
+      "sha256": "ac07caa4d1c30d444011fdde0f9146623b8be5a51bd78e3f12995d2489963aa6",
+      "dimensions": [
+        1512,
+        804
+      ],
+      "build": "nereus_visual_preview at git 5ad9b0737ed74207edb5b2091487fccd40eff7c7 (sidecar git_dirty false); scene look-connected; profile mac-1512x869@2; 2026-10-15",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; fixed illustrative data, shown as if connected; workspace look; no keying or calibration. The capture tool's own flag crop (look-connected--flag@3x.png), unmodified."
+    },
+    {
+      "file": "desktop-tx-profile-workspace-original.png",
+      "source": "/Users/j.j.boyd/NereusSDR-crew/visual-preview-scenes/captures/clean/mac-1512x869@2/look-dialog-setup-tx-profile-active.png",
+      "sha256": "0d5e9c274ee5563e8a9bdf2d3ceb31fb445daac80eb9c6a6fe9e9aa1cd97a255",
+      "dimensions": [
+        1396,
+        520
+      ],
+      "build": "nereus_visual_preview at git 5ad9b0737ed74207edb5b2091487fccd40eff7c7 (sidecar git_dirty false); scene look-dialog-setup-tx-profile-active; profile mac-1512x869@2; 2026-10-15",
+      "kind": "offscreen-visual-preview-workspace-look",
+      "state": "No radio connected; Default profile active; workspace look; no profile saved or deleted. Crop (404,0)-(1800,520) px of the scene PNG (Settings tree removed); no resampling."
     }
   ]
 }

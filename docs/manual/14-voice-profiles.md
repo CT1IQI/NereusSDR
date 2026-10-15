@@ -230,9 +230,9 @@ own pages.
 
 To delete a profile, select it in the editor and press **Delete**, then confirm the profile name in the prompt. The last remaining profile cannot be deleted. Deleting the active profile selects the first remaining name in sorted order and loads that profile. There is no rename command: save the current values under a new name, switch to it, then delete the old name if no longer needed. If deletion is refused, verify that another profile remains; if activation appears to change the wrong radio, check **Radio Info** and the connected radio's MAC before making further edits.
 
-[![Desktop TX Profile settings with Default active and Save and Delete controls](images/desktop-tx-profile-original.png)](images/desktop-tx-profile-original.png)
+[![Desktop TX Profile settings with Default active and Save and Delete controls](images/desktop-tx-profile-workspace-original.png)](images/desktop-tx-profile-workspace-original.png)
 
-*TX Profile: Default is active in this desktop development capture. Save stores a named snapshot; inspect the active name after selection and separately check excluded global settings. No profile was saved, overwritten or deleted for the image.*
+*TX Profile: Default is active in this capture of the workspace-look window, with the TX Filter group below it. Save stores a named snapshot; inspect the active name after selection and separately check excluded global settings. No profile was saved, overwritten or deleted for the image.*
 
 ## Worked setup: a clean SSB voice profile
 

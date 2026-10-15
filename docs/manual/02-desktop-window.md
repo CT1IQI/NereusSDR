@@ -41,9 +41,9 @@ slice. Later chapters cover tuning, slices, and transmitting in detail.
 
 [![NereusSDR desktop showing connection, VFO flag, spectrum, waterfall, RX and TX applets, and status banner](images/desktop-overview.jpg)](images/desktop-overview.jpg)
 
-Figure 1. A desktop development build receiving LSB through a remote Core.
-The layout includes a 3D spectrum view. The Core-busy and overload messages
-were present at capture time; the settings shown are examples.
+Figure 1. The desktop window in the workspace look, receiving LSB on slice A.
+It was rendered offscreen with fixed illustrative data, so the values shown are
+examples and not a live station. The **OVERLOAD** indicator is present but not lit.
 
 | Callout | Area | What to check |
 | --- | --- | --- |

@@ -73,13 +73,30 @@ now uses the new files where one exists.
 `desktop-audio-outputs.png` (not a preserved original) was replaced in place
 from `look-dialog-setup-outputs`, trimmed to the page content (the Settings tree removed).
 
-Not recaptured, still the 0.5.2 classic look: the overview, VFO flag and TX
-applet composites (`desktop-overview.*`, `desktop-vfo.*`, `desktop-tx.*`; the preview window has no TX applet, no
-ownership text and no connected-station state), `desktop-tx-profile-original.png`
-(the preview has no active profile), `desktop-tci-server-original.png` (the
-Core's TCI server group sits below the first screen), `desktop-modes-audio.png`
-(the four VAX cards and TCI settings need a scrolled sequence), and the
-unreferenced `desktop-audio-devices-original.png` and `desktop-vax-original.png`.
+Not recaptured, still the 0.5.2 classic look: the TX applet composite
+(`desktop-tx.*`; the `look-connected` capture cuts the applet off below the
+profile selector, so **TX BW** is not shown), `desktop-tci-server-original.png`
+(a later capture replaces it), and the unreferenced
+`desktop-audio-devices-original.png` and `desktop-vax-original.png`.
+
+## Connected-window recapture, 15 October 2026
+
+Four more figures come from the same tool at git
+`5ad9b0737ed74207edb5b2091487fccd40eff7c7` (every sidecar records `git_dirty`
+false), profile `mac-1512x869@2`, folder `captures/clean/mac-1512x869@2`.
+The `look-connected` window is the preview shown as if connected: a TX applet,
+the **You control** flag and the ANAN-G2 banner, still with fixed illustrative
+data and no radio. The 2 October originals stay byte for byte.
+
+| New original | Scene | Replaces in the manual |
+| --- | --- | --- |
+| [desktop-overview-workspace-original.png](desktop-overview-workspace-original.png) | `look-connected`, the full window, unmodified | `desktop-overview.svg` and `.jpg` (7 callouts re-placed; the SVG embeds a JPEG copy of this window, the `.jpg` is a 1512 px render) |
+| [desktop-vfo-workspace-original.png](desktop-vfo-workspace-original.png) | `look-connected--flag@3x.png`, the tool's own crop of slice A's flag | `desktop-vfo.svg` and `.jpg` (4 callouts re-placed) |
+| [desktop-tx-profile-workspace-original.png](desktop-tx-profile-workspace-original.png) | `look-dialog-setup-tx-profile-active`, crop (404,0)-(1800,520) px, Settings tree removed | `desktop-tx-profile-original.png` in chapter 14 |
+
+`desktop-modes-audio.png` (not a preserved original) was replaced in place from
+`look-dialog-setup-digital-modes-full`, crop (404,0)-(1800,2436) px, Settings
+tree removed.
 
 ## Native audio captures
 

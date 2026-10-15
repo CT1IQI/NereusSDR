@@ -166,7 +166,7 @@ Open **File > Settings... > Audio > Digital modes**. The **VAX** part has a card
 
 [![Desktop Digital modes page with the VAX 1 to 4 cards and the TCI audio settings](images/desktop-modes-audio.png)](images/desktop-modes-audio.png)
 
-*Digital modes, rendered for the native audio build on a Mac. No VAX channel is on and no program is using one. Each card's Used by line reads Not reported on this computer here because no program had opened a channel.*
+*Digital modes in the workspace look, rendered offscreen for the native audio build on a Mac. No VAX channel is on and no program is using one. Each card's Used by line reads Not reported on this computer here because no program had opened a channel.*
 
 **Used by:** reads **An app is reading this channel** or **No app is reading this channel** where the system reports it. See [Digital audio and external applications](09-tools.md) for routing a slice to a channel.
 
