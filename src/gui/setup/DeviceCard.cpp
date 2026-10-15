@@ -62,6 +62,9 @@
 //               and behind the "Device details" fold it was not found
 //               (ASIO on the Windows mic card). The other rows stay folded.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "DeviceCard.h"
@@ -71,6 +74,7 @@
 #include "core/AudioEngine.h"
 #include "core/audio/IAudioDeviceCatalog.h"
 #include "gui/UnbuiltFeatures.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/setup/AsioSwitchAllDialog.h"
 #include "gui/setup/AudioDriverList.h"
 
@@ -260,45 +264,9 @@ static void setItemEnabled(QComboBox* combo, int index, bool enabled)
     }
 }
 
-static void resetPopupAccessibilityCache(QComboBox* combo)
-{
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved/RowsInserted (itemviews.cpp:645-741). Reset only the
-        // accessibility cache before clearing or replacing retained entries.
-        // The reset below now uses the model to invalidate indexes first.
-        // An accessibility-only reset deletes still-valid cells. Qt's Cocoa
-        // destruction notification can then promote a native cell and delete
-        // that interface reentrantly (Qt 6.11 qaccessiblecache.cpp:193-208).
-        // Reset the actual model first so its persistent cell indexes are
-        // invalid before the view sends its accessibility ModelReset.
-        auto* model = qobject_cast<QStandardItemModel*>(combo->model());
-        if (model == nullptr) { return; }
-        QSignalBlocker blocker(combo);
-        const int selected = combo->currentIndex();
-        std::vector<std::unique_ptr<QStandardItem>> items;
-        items.reserve(model->rowCount());
-        for (int row = 0; row < model->rowCount(); ++row) {
-            items.emplace_back(model->item(row)->clone());
-        }
-        model->clear();
-        for (std::unique_ptr<QStandardItem>& item : items) {
-            model->appendRow(item.release());
-        }
-        combo->setCurrentIndex(selected);
-    }
-#else
-    Q_UNUSED(combo);
-#endif
-}
-
 static void removeKeptEntries(QComboBox* combo)
 {
-    resetPopupAccessibilityCache(combo);
+    resetItemsBeforeRowChange(combo);
     for (int i = combo->count() - 1; i >= 0; --i) {
         if (combo->itemData(i, kKeptEntryRole).toBool()) {
             combo->removeItem(i);
@@ -394,7 +362,7 @@ void setComboChoices(QComboBox* combo, const QList<QPair<QString, int>>& choices
     }
     QSignalBlocker blocker(combo);
     if (!same) {
-        resetPopupAccessibilityCache(combo);
+        resetItemsBeforeRowChange(combo);
         combo->clear();
         for (const auto& [text, value] : choices) {
             combo->addItem(text, QVariant::fromValue(value));
@@ -1189,7 +1157,7 @@ void DeviceCard::populateDriverCombo()
     }
 
     QSignalBlocker blocker(m_driverApiCombo);
-    resetPopupAccessibilityCache(m_driverApiCombo);
+    resetItemsBeforeRowChange(m_driverApiCombo);
     m_driverApiCombo->clear();
     int current = -1;
     int choices = 0;
@@ -1296,7 +1264,7 @@ void DeviceCard::populateDeviceCombo()
         m_role == Role::Output ? AudioDeviceDirection::Output : AudioDeviceDirection::Input, saved);
 
     QSignalBlocker blocker(m_deviceCombo);
-    resetPopupAccessibilityCache(m_deviceCombo);
+    resetItemsBeforeRowChange(m_deviceCombo);
     m_deviceCombo->clear();
     // Settled call 28: an ASIO driver whose sample format NereusSDR cannot
     // convert lists its pairs greyed, with the reason.

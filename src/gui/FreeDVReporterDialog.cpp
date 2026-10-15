@@ -79,6 +79,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -1238,8 +1241,6 @@ void FreeDVReporterDialog::buildBottomBar() {
     row2->addWidget(new QLabel(QStringLiteral("Msg"), m_bottomBarHost));
 
     m_msgDropdown = new QComboBox(m_bottomBarHost);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled after each sent message.
-    installQtCocoaAccessibleTableCacheRepair(m_msgDropdown->view());
     m_msgDropdown->setObjectName(QStringLiteral("msgDropdown"));
     m_msgDropdown->setMaximumWidth(28);
     // Down-arrow only - the user picks a stored MRU entry which copies
@@ -1666,6 +1667,7 @@ void FreeDVReporterDialog::refreshMessageDropdown(const QStringList& msgs) {
     if (!m_msgDropdown) {
         return;
     }
+    resetItemsBeforeRowChange(m_msgDropdown);
     m_msgDropdown->clear();
     for (const QString& m : msgs) {
         m_msgDropdown->addItem(m);
