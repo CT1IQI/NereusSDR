@@ -7,7 +7,7 @@ captures and live operating checks. Passing one does not establish the others.
 
 ## Current availability
 
-Availability updated 6 October 2026: [NereusSDR 2026.10.0](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0) desktop and Core packages are published, and the native iPhone/iPad app is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). The user manual is served at [nereussdr.com/manual/](https://nereussdr.com/manual/). This availability update does not change the source/capture identities or claim additional live station acceptance below.
+Availability updated for 2026.10.1: the latest published desktop and Core packages are [NereusSDR 2026.10.0](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0), and 2026.10.1 is the release this manual describes. The native iPhone/iPad app is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). The user manual is served at [nereussdr.com/manual/](https://nereussdr.com/manual/). This availability update does not change the source/capture identities or claim additional live station acceptance below.
 
 ## Documented build
 
@@ -29,7 +29,7 @@ claim is made.
 
 ## Source and coverage evidence
 
-The implemented-task inventory includes 126 operating areas, plus explicit
+The implemented-task inventory includes 131 operating areas, plus explicit
 unbuilt exclusions. The [coverage record](coverage.md) maps areas to the actual
 chapters and records the integrated review. Registration, handler bindings,
 capability/readiness gates and the unbuilt-feature list establish scope.
@@ -95,7 +95,7 @@ acceptance or physical operating certification.
 | --- | --- | --- |
 | Core Settings and direct addresses | `SetupDialog.cpp:1444–1462`; `ConnectionSelector.cpp:129–175`; `CoresSetupPage.cpp:148–302,307–423,575–661` | Chapter 1 separates inspected Core from this window's connection, verifies identity before retaining addresses and separates manual/worked/Core-supplied address evidence. |
 | Shared Core rename and administration | `CoreSettingsHost.cpp:161–196`; `CoresSetupPage.cpp:190–277,663–745`; `MainWindow.cpp:10365–10396` | Accepted shared rename, temporary authenticated sign-in limits, disabled radio/device administration and actual Connections/Manage Radios contexts are explicit. |
-| Computer audio, Core media and remote mic | `AudioDevicesPage.cpp:43–94`; `RemoteAudioWidget.cpp:41–65,93–128`; `AudioTxInputPage.cpp:441–471,499–518`; `RemoteMicSource.h:20–25`; `BoardCapabilities.h:510–524`; `RadioModel.cpp:9921–9925` | Chapters 1, 5 and 14 distinguish local capture/playback, selected quality versus actual media, session Radio Mic, absent radio-mic VOX/program route and the HL2 audio-add-on prerequisite. |
+| Computer audio, Core media and remote mic | `DeviceCard.cpp:568–780`; `RemoteAudioWidget.cpp:41–65,93–128`; `AudioTxInputPage.cpp:441–471,499–518`; `RemoteMicSource.h:20–25`; `BoardCapabilities.h:510–524`; `RadioModel.cpp:9921–9925` | Chapters 1, 5 and 14 distinguish local capture/playback, selected quality versus actual media, session Radio Mic, absent radio-mic VOX/program route and the HL2 audio-add-on prerequisite. |
 | Canvas/contents/source and cancellation | `ContainerSettingsDialog.cpp:414–450,538–556,1081–1180,2047–2050,2125–2134,2460–2608`; `ContentPropertyEditor.cpp:153–183,234–263`; `ContainerEditSession.cpp:96–136`; `ContainerControlCatalog.h:16–28` | Chapter 10 covers Canvas gestures/geometry/layer/lock, fifteen native controls, singleton moves/return, preview versus live operations, portable append/file replacement and Cancel since last Apply. |
 | EQ/CFC mode, count and reset | `TxEqDialog.cpp:341–367,657–668,1313–1364`; `TxCfcDialog.cpp:303–344,429–518,1122–1124,1193–1209`; `ParametricEqWidget.h:143–149`; `ParametricEqWidget.cpp:207–220`; `tst_tx_cfc_dialog.cpp:436–460` | Chapter 14 uses Graphic · Legacy / Parametric, exact width fields, explicit count Apply/Cancel and Undo/Redo. CFC resets zero the corresponding overall level, preserving frequencies/selection/the other graph; Parametric Reset resets its preamp and frequencies. Historical captions identify the earlier UI. |
 | Transmit takeover, receive tail and radio-side PTT | `TransmitHolder.cpp:123–183`; `StationTransmitTake.cpp:472–499,719–793`; `TakeTransmitDialog.cpp`; `RemoteKeying.cpp:299–328` | Chapters 5 and 8 preserve receiver-versus-TX authority, name take confirmation/recheck, wait for receive and distinguish hosting-desktop radio PTT from headless behavior. Phone first-key/no-general-take limits remain development-app instructions. |
@@ -144,6 +144,8 @@ original-capture hashes. Contributor records remain source downloads rather
 than extra reader chapters. The original PNGs, annotations/exports and capture
 provenance were unchanged. Chapter and section disclosure controls still carry
 `open`; no new browser inspection or release/runtime certification is claimed.
+
+The 2026.10.1 documentation pass reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 21 preserved screenshot originals matched their recorded hashes. No new browser inspection or release/runtime certification is claimed.
 
 ## Evidence still required for publication
 

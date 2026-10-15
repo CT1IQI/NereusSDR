@@ -32,8 +32,8 @@ course.
 Maintain the manual's source in this directory. Website publication should
 render the same chapters and images, avoiding a second independently
 maintained copy of the prose. The local review preview renders these Markdown
-sources with the website's existing colors and type styles. No website
-deployment has been performed.
+sources with the website's existing colors and type styles. The manual is
+published at nereussdr.com/manual/.
 
 ## Screenshot plan
 
@@ -100,8 +100,8 @@ reconciles a bounded set of desktop instructions with the pinned candidate
 listed in [verification](verification.md); its historical EQ/CFC figures do
 not illustrate the revised editors. Preserve their original provenance and
 complete the selected-release Core Settings, Canvas and EQ/CFC captures before
-publication. The candidate does not include iOS source, so phone chapters do
-not establish native-app release delivery.
+publication. The tree includes the iOS source under `ios/`, but the phone chapters
+do not establish native-app release delivery.
 
 For live verification, follow complete sessions rather than merely checking
 that a widget appears: local desktop receive; remote desktop receive; first
@@ -142,6 +142,6 @@ content security policy. They are review output, not a publication step.
 The review build includes the operator index and numbered chapters. Contributor
 notes and the screenshot inventory remain source documents in this directory;
 the preview copies them as Markdown downloads and retains those source links.
-Before publication, finish the pending captures and live procedure checks,
-choose the supported build/version, then add the generated manual to the site's
-navigation and publication process.
+Before each release, finish the pending captures and live procedure checks,
+then regenerate the manual for the website through the site's publication
+process.

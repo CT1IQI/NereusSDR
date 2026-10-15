@@ -2,7 +2,7 @@
 
 The desktop and iPhone/iPad can show and control supported station accessories through the Core. The Core owns the device connections and telemetry. A remote desktop or phone sends a supported command to the Core, then follows the Core's reported state; a click by itself is not confirmation. Read the device state and any refusal beside the control before transmitting.
 
-Desktop setup pages live at **File > Settings > CAT & Network**. 4O3A devices are under **4O3A**. RF2K-S is under **RF-Kit**. The desktop's right-side applets show live operation: **Amp**, **Tuner**, and **RF-Kit**. The phone uses **Radio > Power Genius XL**, **Tuner Genius**, or **RF2K-S**. The phone pages show the Core's device records and use the same shared controls where its Core connection and capability catalogue support them.
+Desktop setup pages live at **File > Settings > CAT & Network**. 4O3A devices are under **4O3A**. RF2K-S is under **RF-Kit**. The desktop's right-side applets show live operation: **Amp**, **Tuner**, **RF-Kit** and **Rotor**. The phone uses **Radio > Power Genius XL**, **Tuner Genius**, or **RF2K-S**. The phone pages show the Core's device records and use the same shared controls where its Core connection and capability catalogue support them.
 
 These are station controls. Coordinate with other operators before changing operating state, antenna, network address, pairing, limits or shared tune settings. The source-verified procedures have not been exercised on live hardware; verify physical cabling, RF path, power limits and amplifier/tuner manuals before operating.
 
@@ -179,10 +179,37 @@ On a remote desktop, a connected Core and catalogue support determine which cont
 
 If band follow says the RF-Kit does not follow the radio, compare the RF-Kit's TCI server address/port with the displayed Core TCI endpoint, then use its own network/interface configuration to make them match. NereusSDR reports the observed follow state; do not infer successful tracking from enabling the applet alone.
 
+## Control a rotor
+
+The Core owns the rotor, so one rotor serves the desktop windows and phones signed in to it. Set it up once, then turn it from the **Rotor** applet, from a spot, or from the phone.
+
+### Set up the rotor
+
+1. Open **File > Settings > CAT & Network > Rotor**. On a remote desktop the page acts on the Core's rotor.
+2. Under **Connection**, choose the **Controller**: **Yaesu GS-232A, serial port**, **Yaesu GS-232B, serial port**, **Hamlib rotctld, already running**, or **Hamlib rotctld, started by the Core**. **No rotor** disconnects it. An Easy Rotor Control box speaks GS-232B at 9600 baud.
+3. For a serial controller, choose the **Serial port** (a port on the computer that runs the Core) and **Baud**. For a running rotctld, enter its **Host** and **Port**. For one the Core starts, choose the **Hamlib model**, or **Another model number**, and the port.
+4. Under **Rotor**, set **Turns in** (**Azimuth only** or **Azimuth and elevation**), **End stop** (**None, turns all the way round**, **North** or **South**), **Travel** (**360 degrees** or **450 degrees, with overlap**) and **Heading offset**, which is added to the heading the rotor reads when its pointer is off.
+5. Choose **Save and connect**. Read the status line above it; the live heading appears there once the rotor answers. With no rotor chosen, **Save and connect** disconnects the rotor and forgets its setup.
+6. Under **Presets**, use **Add** and **Remove** to edit the **Name** and **Heading** rows (0 to 360 degrees), then **Save presets**. They become one-tap buttons in the applet.
+
+On a Core installed from the .deb package, a serial rotor needs the serial drop-in described in the [SBC guide](https://nereussdr.com/guides/install-core-sbc.html).
+
+### Turn the rotor
+
+The **Rotor** applet is shown by default. It shows a status dot and text, a dial with the current heading, and the target while a turn is under way.
+
+- **STOP** halts the rotor.
+- **CCW** and **CW** turn only while you hold the button; on an azimuth and elevation rotor, **Down** and **Up** do the same for elevation.
+- **Short path** and **Long path** choose which way around a bearing is reached.
+- Under **PRESETS**, click a preset to turn to its heading. With no presets the applet says "No presets set up."
+- Under **TURN TO**, type a callsign and click **Turn** to turn to its short-path bearing.
+
+A greyed control carries the reason, such as no rotor set up. To turn the beam from a spot, use **Turn beam to [callsign]** on a panadapter spot label or a Spot List row; see [Spots](16-spots-reporters.md). The phone has its own Rotor page: see [Turn the antenna with the Rotor page](07-iphone-operate.md#turn-the-antenna-with-the-rotor-page). **Rotor** on the phone needs a 2026.10.1 Core.
+
 ## Phone and remote-device availability
 
-The phone reaches the Core's PGXL, TGXL and RF-Kit records and sends documented station actions through its connection. A device row can be absent because the Core does not report that accessory; an action can be grey because the Core lacks a command/capability, is not connected to the device, or the radio is on the air. The page gives the Core's reason. If a request is accepted, wait for the device's status field, state text, antenna indication, relay value or settings record to update. If refused, the previously accepted value remains and the page shows the refusal.
+A desktop window that runs its own radio shares its PGXL, TGXL and RF-Kit with the windows and phones signed in to it, the same way a headless Core does. The phone reaches the Core's PGXL, TGXL and RF-Kit records and sends documented station actions through its connection. A device row can be absent because the Core does not report that accessory; an action can be grey because the Core lacks a command/capability, is not connected to the device, or the radio is on the air. The page gives the Core's reason. If a request is accepted, wait for the device's status field, state text, antenna indication, relay value or settings record to update. If refused, the previously accepted value remains and the page shows the refusal.
 
 Remote desktop forms have their own availability. PGXL/TGXL own-device hardware/network forms are editable only if that Core offers device settings. Their Apply/Revert/Save & Reboot actions require an active Core-to-device link. RF-Kit remote settings use the Core's station-settings catalogue and full-control capability; a Core may support status/control but not a given settings write. Keep the Core connection open while applying a shared change, and do not repeat an action until the current status or refusal has arrived.
 
-For the radio-side front-end, antenna connectors, ADC options and general calibration, see [Chapter 17](17-hardware-antennas-calibration.md). For PureSignal feedback and PA gain/watt-meter calibration, see [Chapter 18](18-puresignal-diversity.md). For transmitting, RF drive, TUNE and protective blocks, see [Chapter 05](05-transmit.md).
+For the radio-side front-end, antenna connectors, ADC options and general calibration, see [Chapter 17](17-hardware-antennas-calibration.md). For PA gain and watt-meter calibration, see [Chapter 17](17-hardware-antennas-calibration.md); for PureSignal feedback, see [Chapter 18](18-puresignal-diversity.md). For transmitting, RF drive, TUNE and protective blocks, see [Chapter 05](05-transmit.md).
