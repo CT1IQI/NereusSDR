@@ -70,6 +70,11 @@
 //                 channel was created with, not its input rate. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-15 - openRxChannelWdsp seeds AGC Fixed Gain (20 dB) and Max
+//                 Gain (90 dB) from RxChannel's cached defaults instead of
+//                 leaving WDSP's create values (60 dB, 80 dB). J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 /*  cmaster.c

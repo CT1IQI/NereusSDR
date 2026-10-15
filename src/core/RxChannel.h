@@ -67,6 +67,10 @@
 //                 AF level, a departure from Thetis radio.cs, which sets AF
 //                 as SetRXAPanelGain1. By J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - AGC Fixed Gain and Max Gain defaults are named constants
+//                 (kDefaultAgcFixedGainDb 20, kDefaultAgcMaxGainDb 90) that
+//                 WdspEngine seeds at channel open. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1390,9 +1394,9 @@ private:
     std::atomic<int> m_agcDecay{250};
     // hangThreshold: From Thetis v2.10.3.13 setup.designer.cs:39418
     std::atomic<int> m_agcHangThreshold{0};
-    // fixedGain: From Thetis v2.10.3.13 setup.designer.cs:39320
+    // fixedGain: From Thetis setup.Designer.cs:39565-39569 [v2.10.3.15] (kDefaultAgcFixedGainDb)
     std::atomic<int> m_agcFixedGain{kDefaultAgcFixedGainDb};
-    // maxGain: From Thetis v2.10.3.13 setup.designer.cs:39245
+    // maxGain: From Thetis setup.Designer.cs:39443-39447 [v2.10.3.15] (kDefaultAgcMaxGainDb)
     std::atomic<int> m_agcMaxGain{kDefaultAgcMaxGainDb};
 
     // ----- NR state (Sub-epic C-1) -----

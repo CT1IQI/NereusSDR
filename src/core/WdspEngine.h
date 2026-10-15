@@ -58,6 +58,9 @@
 //   2026-10-01 : Leveler lane by J.J. Boyd (KG4VCF): test-only friendship
 //                 for the remote microphone leveler measurement. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-15 : AGC seed fix by J.J. Boyd (KG4VCF): test-only friendship
+//                 for the AGC Fixed Gain and Max Gain seed test. AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
