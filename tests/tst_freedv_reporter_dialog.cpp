@@ -1617,16 +1617,23 @@ void TestFreeDVReporterDialog::coloringRecheckAnnouncesOnlyTintChanges() {
         seen.idleChanges = int(changes.count());
         seen.idleResets = int(resets.count());
 
-        // A mode-only receive report 300 ms short of the 5 s timeout.
+        // A mode-only receive report 200 ms short of the 5 s timeout, added
+        // with the recheck stopped, so nothing can clear its tint until
+        // the recheck runs again. The wait lets the add's own reset land
+        // and the report age past the timeout; a longer stall changes
+        // nothing.
+        dlg->setColoringRecheckMsForTest(0);
         FreeDVStation aging = makeStationWithSnr(99, 4);
-        aging.lastRxDate = QDateTime::currentDateTime().addMSecs(-(5'000 - 300));
+        aging.lastRxDate = QDateTime::currentDateTime().addMSecs(-(5'000 - 200));
         stations.onStationAdded(aging.sid, aging);
+        QTest::qWait(400);
         seen.tinted = dlg->rowHighlightColorForTest(aging.sid).isValid();
-        QTest::qWait(150);
         resets.clear();
         changes.clear();
+        // The next recheck must clear the tint.
+        dlg->setColoringRecheckMsForTest(20);
         seen.cleared = QTest::qWaitFor(
-            [&] { return !dlg->rowHighlightColorForTest(aging.sid).isValid(); }, 2'000);
+            [&] { return !dlg->rowHighlightColorForTest(aging.sid).isValid(); }, 3'000);
         QTest::qWait(250);
         seen.flipChanges = int(changes.count());
         seen.flipResets = int(resets.count());
