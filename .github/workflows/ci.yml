@@ -666,32 +666,6 @@ jobs:
           # way fftw already is declared.
           brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
 
-      # Homebrew's default openssl formula is OpenSSL 4 on some macOS runner
-      # images, linked into the Homebrew prefix, so its libcrypto.dylib and
-      # include/openssl sit where the configure below searches
-      # (CMAKE_PREFIX_PATH) and where CMakeLists.txt points every compile
-      # (include_directories on the Homebrew prefix). Every bench and Mac
-      # build links openssl@3 (3.6.x), as Homebrew Qt does. Unlink both
-      # formulas so the shared prefix holds no OpenSSL headers or libraries
-      # at all; the build reaches openssl@3 only through its own keg via
-      # -DOPENSSL_ROOT_DIR below. Unlinking leaves the opt/ paths that
-      # other formulas link against in place.
-      - name: Unlink Homebrew OpenSSL from the shared prefix (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          for f in openssl openssl@3; do
-            if brew list --formula "$f" >/dev/null 2>&1; then
-              brew unlink "$f"
-            fi
-          done
-          P="$(brew --prefix)"
-          for p in include/openssl lib/libcrypto.dylib lib/libssl.dylib lib/pkgconfig/openssl.pc; do
-            if [ -e "$P/$p" ] || [ -L "$P/$p" ]; then
-              echo "::error::$P/$p is still present after unlinking openssl and openssl@3: $(ls -l "$P/$p")"
-              exit 1
-            fi
-          done
-
       # ------------------------------------------------------------------
       # Windows dependencies
       # ------------------------------------------------------------------
@@ -950,11 +924,10 @@ jobs:
       - name: Configure (macOS)
         if: runner.os == 'macOS'
         run: |
-          # -DOPENSSL_ROOT_DIR pins find_package(OpenSSL), and the
-          # libdatachannel build that reuses its cache entries, to the
-          # openssl@3 keg: FindOpenSSL searches only that root once it is
-          # set, and CMakeLists.txt fails the configure if the headers it
-          # found are not under it.
+          # Build against the openssl@3 keg only; the reason is in
+          # scripts/ci/macos-openssl.sh. The unlink runs here, after the
+          # job's last brew install.
+          scripts/ci/macos-openssl.sh unlink
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
@@ -989,32 +962,12 @@ jobs:
         if: runner.os != 'Windows'
         run: cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
-      # Proves the pin above held at link time: every libcrypto or libssl
-      # reference in the app bundle, its helpers, nereusd and the build's
-      # own dylibs must be openssl@3's libcrypto.3.dylib or libssl.3.dylib,
-      # by the keg's own path. release.yml's build-macos runs the same check
-      # on the release build, but only at release time; this leg runs the
-      # same configure on every pull request.
+      # Every libcrypto or libssl the built binaries link must be openssl@3's
+      # libcrypto.3 or libssl.3. release.yml runs the same check, but only
+      # when a release is cut; this leg runs the same configure on every PR.
       - name: Check OpenSSL link (macOS)
         if: runner.os == 'macOS'
-        run: |
-          EXPECT="$(brew --prefix openssl@3)/lib"
-          refs=$( { find build/NereusSDR.app -type f; find build -maxdepth 1 -type f \( -name '*.dylib' -o -name nereusd \); } \
-            | while IFS= read -r BIN; do
-                file -b "$BIN" | grep -q '^Mach-O' || continue
-                otool -L "$BIN" | tail -n +2 | awk -v b="$BIN" '{print b ": " $1}'
-              done | grep -E '/lib(crypto|ssl)[.0-9]*[.]dylib$' || true )
-          if [ -z "$refs" ]; then
-            echo "::error::No built binary references libcrypto or libssl, so this check proved nothing; has OpenSSL moved?"
-            exit 1
-          fi
-          echo "$refs"
-          bad=$(echo "$refs" | grep -vE ": $EXPECT/lib(crypto|ssl)[.]3[.]dylib$" || true)
-          if [ -n "$bad" ]; then
-            echo "::error::These OpenSSL references are not $EXPECT/libcrypto.3.dylib or libssl.3.dylib:"
-            echo "$bad"
-            exit 1
-          fi
+        run: scripts/ci/macos-openssl.sh check-link build "$(brew --prefix openssl@3)/lib"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'

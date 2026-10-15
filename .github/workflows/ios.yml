@@ -82,29 +82,11 @@ jobs:
         # The station build's macOS dependencies, as ci.yml installs them.
         run: brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
 
-      - name: Unlink Homebrew OpenSSL from the shared prefix
-        # As ci.yml does: Homebrew's default openssl formula is OpenSSL 4 on
-        # some runner images, linked into the Homebrew prefix the configure
-        # searches and every compile includes. Unlink both formulas so the
-        # build reaches openssl@3 only through its keg via -DOPENSSL_ROOT_DIR.
-        run: |
-          for f in openssl openssl@3; do
-            if brew list --formula "$f" >/dev/null 2>&1; then
-              brew unlink "$f"
-            fi
-          done
-          P="$(brew --prefix)"
-          for p in include/openssl lib/libcrypto.dylib lib/libssl.dylib lib/pkgconfig/openssl.pc; do
-            if [ -e "$P/$p" ] || [ -L "$P/$p" ]; then
-              echo "::error::$P/$p is still present after unlinking openssl and openssl@3: $(ls -l "$P/$p")"
-              exit 1
-            fi
-          done
-
       - name: Configure the station build
-        # -DOPENSSL_ROOT_DIR pins find_package(OpenSSL), and libdatachannel's
-        # use of the same cache entries, to the openssl@3 keg.
+        # Against the openssl@3 keg only; the reason is in
+        # scripts/ci/macos-openssl.sh.
         run: |
+          scripts/ci/macos-openssl.sh unlink
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
@@ -112,22 +94,9 @@ jobs:
             -DNEREUS_BUILD_TESTS=ON
 
       - name: Check the configure found openssl@3
-        # Before this pin the configure printed "Found OpenSSL:
-        # /opt/homebrew/lib/libcrypto.dylib (found suitable version
-        # "4.0.3" ...)". Both libraries it cached must come from the keg.
-        run: |
-          EXPECT="$(brew --prefix openssl@3)/lib/"
-          for var in OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY; do
-            LIB=$(sed -n "s/^$var:FILEPATH=//p" build/CMakeCache.txt)
-            echo "$var=$LIB"
-            case "$LIB" in
-              "$EXPECT"lib*) ;;
-              *)
-                echo "::error::$var is '$LIB', not under $EXPECT"
-                exit 1
-                ;;
-            esac
-          done
+        # Before the pin this configure printed "Found OpenSSL:
+        # /opt/homebrew/lib/libcrypto.dylib (found suitable version "4.0.3" ...)".
+        run: scripts/ci/macos-openssl.sh check-cache build/CMakeCache.txt "$(brew --prefix openssl@3)/lib"
 
       - name: Interop (MediaPeer, PairingClient against the Core's own code)
         # Builds only the helpers and nereusd in build/, then runs the
