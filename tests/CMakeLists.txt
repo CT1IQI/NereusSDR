@@ -1276,6 +1276,10 @@ nereus_add_test(tst_sample_rate_catalog)
 nereus_add_test(tst_cross_thread_teardown fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_cross_thread_teardown PRIVATE NEREUS_BUILD_TESTS)
 
+# Device-free ownership coverage for never-started, finished, and running
+# connection workers, including active child timers and cleanup affinity.
+nereus_add_test(tst_connection_teardown_ownership)
+
 # Regression test for the GUI-thread fexchange2 deadlock — verifies
 # that RxDspWorker::processIqBatch runs on its own QThread when driven
 # via Qt::QueuedConnection, and that posting a burst of batches does
@@ -1770,6 +1774,15 @@ endif()
 # and metering coverage).
 if(UNIX AND NOT APPLE)
     nereus_add_test(tst_linux_pipe_bus)
+endif()
+
+# Device-free ownership regression: its own tiny target, private namespaces and
+# command/API doubles; never invokes the historical host-FIFO cleanup test.
+if(UNIX)
+    add_subdirectory(linux_pipe_ownership EXCLUDE_FROM_ALL)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS tst_linux_pipe_ownership)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES core)
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_core tst_linux_pipe_ownership)
 endif()
 
 # ── Linux audio backend detection (PipeWire-native bridge, Task 3) ───────────
@@ -4162,10 +4175,12 @@ nereus_add_test(tst_mox_controller_multicast_signals)
 # Verifies end-to-end mic_ptt extraction and dispatch through MoxController.
 #
 # Prong A — RadioConnection-level extraction:
-#   §A.1  P1: C0 bit 0 set in sub-frame 0 → micPttFromRadio(true)
-#   §A.2  P1: C0 bit 0 set in sub-frame 1 only → micPttFromRadio(true) (OR logic)
-#   §A.3  P1: C0 bit 0 clear in both sub-frames → micPttFromRadio(false)
-#   §A.4  P1: ADC overload in C1 does NOT set micPtt (PTT is in C0, not C1)
+#   §A.1  P1: later ordinary sub-frame wins when PTT changes within a packet
+#   §A.2  P1: later ordinary sub-frame can assert PTT
+#   §A.3  P1: I2C response C0 bit 0 does not replace ordinary PTT status
+#   §A.4  P1: an all-I2C packet emits no PTT sample
+#   §A.5  P1: C0 bit 0 clear in both ordinary sub-frames emits false
+#   §A.6  P1: ADC overload in C1 does NOT set micPtt (PTT is in C0, not C1)
 #   §B.1  P2: raw[4] bit 0 set → micPttFromRadio(true)
 #   §B.2  P2: raw[4] bit 0 clear → micPttFromRadio(false)
 #   §B.3  P2: dot/dash bits (bits 1/2) only → micPttFromRadio(false)
@@ -10756,6 +10771,9 @@ if(TARGET wdsp_static AND TARGET rnnoise_static AND TARGET specbleach_static)
         nereus_configure_rnnr_state_test(tst_wdsp_rnnr_state)
     endif()
 endif()
+
+# Pure setup-boundary checks and pin/staging verification; no PortAudio runtime.
+add_subdirectory(portaudio_bounds)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})

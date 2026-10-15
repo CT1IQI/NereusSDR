@@ -527,6 +527,7 @@ FetchContent_Declare(
     portaudio
     GIT_REPOSITORY https://github.com/PortAudio/portaudio.git
     GIT_TAG        v19.7.0  # verified cmake-clean release
+    SOURCE_SUBDIR __nereus_no_add_subdirectory
 )
 
 # PortAudio build options: PortAudio's own ASIO host API stays off,
@@ -561,6 +562,11 @@ endif()
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version for vendored subprojects" FORCE)
 
 FetchContent_MakeAvailable(portaudio)
+include(cmake/NereusPortAudio.cmake)
+# Reject unrepresentable setup sizes in a build-owned copy of the same pin;
+# source overrides/offline caches remain pristine. Runtime targets are unchanged.
+nereus_stage_portaudio("${portaudio_SOURCE_DIR}" _nereus_portaudio_source)
+add_subdirectory("${_nereus_portaudio_source}" "${portaudio_BINARY_DIR}")
 
 # Steinberg ASIO SDK 2.3.4 (third_party/asiosdk, vendored unchanged;
 # GPL-3.0 as NereusSDR takes it, see third_party/asiosdk/VERSION.txt and
@@ -1670,7 +1676,9 @@ endif()
 # PIPEWIRE_FOUND. Linux-only because the whole decision tree is dead code
 # on macOS / Windows (which have their own IAudioBus impls).
 if(UNIX AND NOT APPLE)
-    list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp)
+    list(APPEND CORE_SOURCES src/core/audio/LinuxPipeBus.cpp
+        src/core/audio/LinuxPipeOwnership.cpp
+        src/core/audio/LinuxPipeControl.cpp)
     list(APPEND CORE_SOURCES src/core/audio/LinuxAudioBackend.cpp)
 endif()
 

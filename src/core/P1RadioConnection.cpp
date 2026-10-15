@@ -182,6 +182,10 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Report the known TX I/Q ring fill to the remote microphone
 //                consumer. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-14 - HL2 I2C response subframes no longer update physical PTT;
+//                ordinary EP6 status subframes update it in wire order, as
+//                mi0bot networkproto1.c:478-496 [@c26a8a4] does. J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 /*
@@ -5298,19 +5302,13 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
         return;
     }
 
-    // Cache each subframe's C0 byte for the mic_ptt extraction below.
-    // ADC overflow does NOT live in C0 — per Thetis networkproto1.c:332-355
-    // [v2.10.3.13] it lives in C1 bit 0 of case-0x00 frames and in
-    // C1/C2/C3 bit 0 of case-0x20 frames.  See the C0-type switch lower
-    // in this function.
-    //
-    // Phase 3P-E Task 2: C0 bit 7 = I2C response frame (HL2 only).
-    // Source: mi0bot networkproto1.c:478-493 [@c26a8a4]
-    const quint8 c0_sub0 = frame[11];
-    const quint8 c0_sub1 = frame[523];
-
-    // Check each subframe's C0 for I2C response marker (bit 7).
-    // Source: mi0bot networkproto1.c:478-480 [@c26a8a4]
+    // Walk the subframes in wire order, as mi0bot does. Its I2C-response
+    // branch does not assign ptt_in, so only an ordinary status subframe may
+    // update micPtt. When both take the I2C branch, no PTT update is published
+    // and the previous level remains.
+    // From mi0bot-Thetis networkproto1.c:478-496 [@c26a8a4].
+    bool hasMicPtt = false;
+    bool micPtt = false;
     for (int sub = 0; sub < 2; ++sub) {
         const int base = 8 + sub * 512;  // sync bytes at base+0..2, C&C at base+3..7
         const quint8 c0 = frame[base + 3];
@@ -5319,24 +5317,23 @@ void P1RadioConnection::parseEp6Frame(const QByteArray& pkt)
             // Source: mi0bot networkproto1.c:480-492 [@c26a8a4]
             parseI2cResponse(c0, frame[base + 4], frame[base + 5],
                              frame[base + 6], frame[base + 7]);
+        } else {
+            hasMicPtt = true;
+            micPtt = (c0 & 0x01) != 0;
         }
     }
 
     // H.5: mic_ptt extraction — P1 status frame C0 bit 0 (PTT from radio).
-    // From Thetis networkproto1.c:329 [v2.10.3.13]:
+    // From mi0bot-Thetis networkproto1.c:494-496 [@c26a8a4]:
     //   prn->ptt_in = ControlBytesIn[0] & 0x1;
     // + console.cs:25426 [v2.10.3.13]:
     //   bool mic_ptt = (dotdashptt & 0x01) != 0; // PTT from radio
     //
-    // C0 is ControlBytesIn[0]; bit 0 is ptt_in.  Both sub-frames carry the
-    // same instantaneous PTT state; OR them to produce the frame-level value
-    // (matches Thetis nativeGetDotDashPTT() which reads a single prn->ptt_in
-    // accumulated across all sub-frame writes).
-    //
-    // Emitted unconditionally each frame: MoxController::onMicPttFromRadio
-    // is idempotent, so repeated false→false calls are harmless.
-    const bool micPtt = ((c0_sub0 & 0x01) != 0) || ((c0_sub1 & 0x01) != 0);
-    emit micPttFromRadio(micPtt);
+    // C0 is ControlBytesIn[0]; bit 0 is ptt_in. The later ordinary subframe
+    // wins, matching mi0bot's sequential writes to its single ptt_in value.
+    if (hasMicPtt) {
+        emit micPttFromRadio(micPtt);
+    }
 
     // Phase 3P-H Task 4: PA telemetry — extract raw 16-bit ADC counts from
     // each subframe's C&C status bytes.  Per-board scaling lives in RadioModel

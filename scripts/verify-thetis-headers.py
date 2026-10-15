@@ -6,7 +6,7 @@ Originally this script covered only Thetis-derived files listed in
 ``docs/attribution/THETIS-PROVENANCE.md``. Pass 7 (2026-04-18, Compliance
 Plan T7) extended coverage to two additional lineage kinds:
 
-  * ``aethersdr`` — files in Bucket A of
+  * ``aethersdr`` — files in Buckets A and C of
     ``docs/attribution/aethersdr-reconciliation.md`` (genuine AetherSDR
     derivations). AetherSDR has no per-file copyright headers, so the
     check is for the project-level attribution we require in the port
@@ -63,6 +63,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from header_block import HEADER_WINDOW, header_text, uses_exact_tcp_notice, CAT_TCP_PROJECT_LICENSE  # noqa: E402
+from aethersdr_lineage import aethersdr_derivative_paths  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PROVENANCE = REPO / "docs" / "attribution" / "THETIS-PROVENANCE.md"
@@ -181,43 +182,9 @@ def parse_provenance(text: str):
 
 
 def parse_aethersdr_bucket_a(text: str):
-    """Extract file paths from Bucket A of aethersdr-reconciliation.md.
-
-    Bucket A is delimited by "## Bucket A" ... "## Bucket B". Within,
-    per-topic tables list NereusSDR files in the first column.
-    Returns a list of relative paths.
-    """
-    in_bucket_a = False
-    paths = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.startswith("## Bucket A"):
-            in_bucket_a = True
-            continue
-        if line.startswith("## Bucket "):
-            in_bucket_a = False
-            continue
-        if not in_bucket_a:
-            continue
-        if not line.startswith("|") or line.startswith("|---"):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 2:
-            continue
-        candidate = cells[0].replace("`", "")
-        if not candidate.startswith(("src/", "tests/")):
-            continue
-        if (REPO / candidate).is_file():
-            paths.append(candidate)
-    # De-dupe while preserving order
-    seen = set()
-    out = []
-    for p in paths:
-        if p in seen:
-            continue
-        seen.add(p)
-        out.append(p)
-    return out
+    """Legacy API name: return existing Bucket A/C derivative paths."""
+    return [path for path in aethersdr_derivative_paths(text)
+            if (REPO / path).is_file()]
 
 
 def list_wdsp_sources():
@@ -375,7 +342,7 @@ def verify_aethersdr_kind():
         return None
     paths = parse_aethersdr_bucket_a(AETHERSDR_RECONCILIATION.read_text())
     if not paths:
-        print("ERROR: no Bucket A rows parsed from aethersdr-reconciliation.md",
+        print("ERROR: no Bucket A/C rows parsed from aethersdr-reconciliation.md",
               file=sys.stderr)
         return None
     markers = MARKERS_BY_KIND["aethersdr"]
