@@ -741,6 +741,11 @@ public:
     // n = (int)(((value + 160) / 160f) * 100f), threshold = 10^(-2n/100),
     // so -160 sends 1.0 (opens most easily) and 0 sends 0.01 (tightest).
     static double fmsqThresholdForWdsp(double sliderValue);
+    // Thetis's 0-100 squelch number n for a slider value (held to -160..0
+    // first), from console.cs:47296-47298 [v2.10.3.15]. fmsqThresholdForWdsp
+    // sends 10^(-2n/100); Setup > DSP > FM shows n, as Thetis's SQL button
+    // text does (console.cs:47318).
+    static int fmsqScaleValue(double sliderValue);
 
     // --- Audio panel (mute / pan / binaural) ---
 

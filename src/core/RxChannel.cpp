@@ -68,6 +68,8 @@
 //                 Later the same day: the console.cs header block brought
 //                 up to the v2.10.3.15 upstream header (the ApacheLabs G2E
 //                 line and the final-modifications block).
+//                 2026-10-15: n moved into fmsqScaleValue so
+//                 Setup > DSP > FM can show the number Thetis shows.
 // =================================================================
 
 //=================================================================
@@ -2190,7 +2192,7 @@ constexpr double kFmsqExponentScale    = -2.0;
 constexpr double kFmsqExponentDivisor  = 100.0;
 } // namespace
 
-double RxChannel::fmsqThresholdForWdsp(double sliderValue)
+int RxChannel::fmsqScaleValue(double sliderValue)
 {
     // ptbSquelch holds -160..0, so the value is held to that range first.
     // From Thetis console.Designer.cs:7572-7573 [v2.10.3.15]
@@ -2203,9 +2205,15 @@ double RxChannel::fmsqThresholdForWdsp(double sliderValue)
     //FM Squelch
     //nValue = ptbSquelch.Value; // 0-100
     //[2.10.3.5]MW0LGE convert to a 0-100 scale from a -160 to 0 scale
-    const int nValue = static_cast<int>(
+    return static_cast<int>(
         ((value + kFmsqSliderOffset) / kFmsqSliderSpan) * kFmsqScaleMaximum);
+}
 
+double RxChannel::fmsqThresholdForWdsp(double sliderValue)
+{
+    const int nValue = fmsqScaleValue(sliderValue);
+
+    // From Thetis console.cs:47303-47304 [v2.10.3.15]
     // Thetis narrows the result to float (the FMSquelchThreshold property,
     // radio.cs:1278) before SetRXAFMSQThreshold widens it back to double.
     return static_cast<double>(static_cast<float>(
