@@ -3098,6 +3098,9 @@ nereus_add_test(tst_workspace_colour_sweep
     visual/PreviewData.cpp
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_workspace_colour_sweep PRIVATE NEREUS_BUILD_TESTS)
+# visual/PreviewScenes.cpp includes "fakes/..." headers, which resolve from
+# tests/ only, as on nereus_visual_preview (tests/visual/CMakeLists.txt).
+target_include_directories(tst_workspace_colour_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # One function walks every dialog and Setup scene (161 scenes, 173 grabs)
 # on one window: measured 2026-10-09 on the M5 Max at 531 s, and 872 s
 # with four preview captures running beside it. QtTest's function watchdog (300 s
