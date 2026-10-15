@@ -33,6 +33,9 @@
 //   2026-10-15: review fix wave: transmitCutUnkeysEveryComposer (HL2 I2C
 //               frame, legacy compose, I/Q zones). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: re-review: corrected the networkproto1.c cite for the
+//               MOX bit line. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QElapsedTimer>
@@ -397,7 +400,7 @@ private slots:
 
         // One I2C write queued before each compose: the I2C frame replaces
         // the bank's payload. Its C0 is the MOX bit with the chip select:
-        //   From mi0bot networkproto1.c:895 [@c26a8a4]: C0 = (unsigned char)XmitBit;
+        //   From mi0bot networkproto1.c:896 [@c26a8a4]: C0 = (unsigned char)XmitBit;
         //   From mi0bot networkproto1.c:914 [@c26a8a4]: C0 |= (0x3c << 1) | (prn->i2c.ctrl_request << 7);    //I2C1 0x3c
         const auto queueI2c = [&io, i2c]() {
             if (!i2c) {

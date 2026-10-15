@@ -75,6 +75,9 @@
 //               turn, so the order tests wait for it; why the feeder may
 //               call the window's sendTx off its thread. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: re-review fixes: dropped VOX assertions that could not fail;
+//               noted the order in the stop-once test is not forced.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -795,6 +798,8 @@ private slots:
     // trips the watchdog once (its stop and its record) and the watchdog no
     // longer watches the device, so the check that was due stops nothing
     // more; the connection's cut is cleared.
+    // The cut's handling now runs one pass later, so which of the two comes
+    // first is no longer forced; the one-stop assertions hold in either order.
     void aCutPostedBeforeTheWatchdogsCheckStopsOnce()
     {
         CutRig rig;
@@ -878,8 +883,6 @@ private slots:
         QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
         QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
         QSignalSpy moxSpy(h.station.moxController(), &MoxController::moxStateChanged);
-        QSignalSpy voxSpy(&h.server, &StationServer::voxArmedByChanged);
-        const bool voxBefore = h.station.transmitModel().voxEnabled();
         const quint32 stopSerialBefore = h.client.transmitState()->stopSerial();
         const std::size_t mark = rig.conn.count();
 
@@ -914,8 +917,8 @@ private slots:
         QCOMPARE(moxOffEdges, 1);
         QCOMPARE(h.client.transmitState()->stopSerial(), stopSerialBefore);
         QVERIFY(h.client.transmitState()->stopReason() != QLatin1String("linkLost"));
-        QCOMPARE(voxSpy.count(), 0);
-        QCOMPARE(h.station.transmitModel().voxEnabled(), voxBefore);
+        // tripped == 0 carries the VOX property: VOX is disarmed only by the
+        // watchdog's stop.
         QVERIFY(!rig.conn.transmitCut());
 
         // The next key reaches the connection.

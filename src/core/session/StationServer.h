@@ -560,6 +560,9 @@
 //               finishTransmitCutOnMain one event-loop turn later, so a
 //               release already on its way is read first. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: re-review wording: onTransmitCutOffMain doc says why a
+//               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1560,9 +1563,10 @@ public:
     /// Remote transmit cut off the main thread (main thread): the guard cut
     /// transmit for media session `mediaEpoch` under arm `armSerial` after
     /// `silentMs` without a "tx" message. The radio is already off the air,
-    /// so the rest waits one event-loop turn (a 0 ms timer, as the
-    /// watchdog's late check gives queued input a turn), and a release
-    /// that arrived during the stall is read first:
+    /// so the rest waits one event-loop pass: QTimer::singleShot(0, ...)
+    /// posts a queued call, and Qt runs a call posted during a pass only in
+    /// the next one. QWebSocket reads its socket directly on readyRead, so a
+    /// release that reached the Core during the stall is read first:
     /// finishTransmitCutOnMain. Public for tests.
     void onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs);
     /// Remote transmit cut off the main thread: the media epoch of

@@ -176,6 +176,9 @@
 //               that turn records no link loss; a server destroyed with a
 //               cut still set clears it. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-15: re-review wording: the one-turn deferral comment says why a
+//               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -10390,10 +10393,13 @@ void StationServer::onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, 
     // so the model may learn one event-loop turn later. A release the
     // device sent as its keepalives stopped rides the session link, which
     // only this thread reads; after a stall it can still wait behind this
-    // post. A 0 ms timer runs after the input already due, as the
-    // watchdog's late check gives queued keepalives their turn
-    // (RemoteTxWatchdog::onTimer), so such a release is read first and the
-    // key it ended is not recorded as a lost link.
+    // post. QTimer::singleShot(0, this, ...) posts a queued call (Qt 6.11
+    // qtimer.cpp:368-389), so the rest of the cut runs one event-loop pass
+    // later. Qt runs a call posted during a pass only in the next pass
+    // (qcoreapplication.cpp:1795, 1834-1835), and QWebSocket reads its
+    // socket directly on readyRead (qwebsocket_p.cpp:678), so a release
+    // that reached the Core during the stall is read before this runs and
+    // the key it ended is not recorded as a lost link.
     QTimer::singleShot(0, this, [this, mediaEpoch, armSerial, silentMs]() {
         finishTransmitCutOnMain(mediaEpoch, armSerial, silentMs);
     });
