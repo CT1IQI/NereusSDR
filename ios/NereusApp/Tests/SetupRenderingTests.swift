@@ -156,13 +156,13 @@ struct SetupRenderingTests {
         page.change { $0.activePeakHoldFill = true }
         model.main.display.setSpectrumHeight(55)
         model.main.display.setColorGain(30)
-        model.main.display.setBlackLevel(110)
+        model.main.display.setBlackLevel(80)
         let kept = BandDisplaySettingsStore(defaults: defaults).settings(forPan: BandSubscriber.panId)
         #expect(kept.traceGradient && kept.activePeakHoldFill)
         #expect(kept.spectrumSharePercent == 55)
-        #expect(kept.waterfallColorGain == 30 && kept.waterfallBlackLevel == 110)
+        #expect(kept.waterfallColorGain == 30 && kept.waterfallBlackLevel == 80)
         #expect(DisplayOnThisPhonePage.spectrumHeightRange == 20...80)
-        #expect(DisplayOnThisPhonePage.blackLevelRange == 0...125)
+        #expect(DisplayOnThisPhonePage.blackLevelRange == 0...100)
         #expect(DisplayOnThisPhonePage.hex(Color(red: 1, green: 0, blue: 0.5)) == "#FF0080")
     }
 
