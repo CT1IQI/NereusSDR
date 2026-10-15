@@ -30,6 +30,10 @@
 //               change and at each status tick, frameReceived once per
 //               read. J.J. Boyd (KG4VCF), with AI-assisted implementation
 //               via Anthropic Claude Code.
+//   2026-10-14: The byte-rate samples take a small mutex: the readouts
+//               read them on the main thread while the connection thread
+//               records. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -49,6 +53,7 @@
 #include <atomic>
 #include <array>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace NereusSDR {
@@ -195,6 +200,10 @@ public:
 
     // Hooks the protocol implementations call on each successful packet.
     // Public so subclasses (P1/P2) and tests can drive the counter.
+    // The connection thread records and the main thread reads the rates
+    // (the ▲▼ readouts, the diagnostics dialog), so both take
+    // m_byteSamplesMutex, held only to append, prune and sum. Never called
+    // from an audio callback.
     void recordBytesSent(qint64 n);
     void recordBytesReceived(qint64 n);
 
@@ -1159,6 +1168,8 @@ private:
     bool m_radioAudioFlowing{false};
 
     struct ByteSample { qint64 ms; qint64 bytes; };
+    // Guards m_txSamples and m_rxSamples (recordBytes*, *ByteRate).
+    mutable std::mutex m_byteSamplesMutex;
     mutable QList<ByteSample> m_txSamples;
     mutable QList<ByteSample> m_rxSamples;
 

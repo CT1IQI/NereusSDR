@@ -1147,6 +1147,9 @@
 //                app reuses the app's plans. A process told nothing keeps
 //                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-14 - The HL2 I/O board's I2C signals now come from the P1 EP2
+//                sender thread; still queued, so nothing here changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -32039,8 +32042,8 @@ void RadioModel::wireIoBoardTool()
         return;
     }
     m_ioBoardToolWired = true;
-    // The codec emits these on the connection thread; they arrive queued,
-    // in the order they were sent.
+    // The codec emits these on the P1 EP2 sender thread, where frames are
+    // composed; they arrive queued, in the order they were sent.
     connect(&m_ioBoard, &IoBoardHl2::i2cTxComposed, this,
             [this](quint8 /*c0*/, quint8 c1, quint8 c2, quint8 c3, quint8 /*c4*/) {
                 // A read goes out with C1 0x07; C2 is 0x80 | the address and

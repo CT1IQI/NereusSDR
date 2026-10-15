@@ -116,6 +116,12 @@
 //                overloads at the status tick, frameReceived once per read.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-14 - EP2 sender review fixes: kEp2FrameBytes, FrameLock's
+//                thread check, the compose-input setter rule, the counters
+//                marked as test diagnostics, and seams for the reconnect
+//                order and the bytes handed to the readout. J.J. Boyd
+//                (KG4VCF), with AI-assisted implementation via Anthropic
+//                Claude Code.
 // =================================================================
 
 /*
@@ -150,6 +156,7 @@
 #include "SharedInputLowPass.h"
 #include "codec/IP1Codec.h"
 #include "codec/CodecContext.h"
+#include "codec/P1CodecHl2.h"
 
 namespace NereusSDR { class OcMatrix; }                  // forward decl — full header in .cpp
 namespace NereusSDR { class CalibrationController; }     // R-R3-49: frequency correction
@@ -314,6 +321,14 @@ public:
     void setTxMicSource(TxMicSource* src);
 
 public slots:
+    // The setters below that change what an EP2 frame carries (compose
+    // inputs) must be reached by a queued call, as RadioModel reaches them
+    // (QMetaObject::invokeMethod onto the connection thread), so event()
+    // holds the frame lock while they run; or they take FrameLock
+    // themselves. A direct call on this thread, including a same-thread
+    // invokeMethod with the default AutoConnection, does not go through
+    // event(), so it runs without the lock and races the EP2 sender
+    // thread while one runs.
     void init() override;
     void connectToRadio(const NereusSDR::RadioInfo& info) override;
     void disconnect() override;
@@ -674,8 +689,13 @@ private:
     // number, the two C&C subframes and both TX zones. Advances the
     // sequence number and the round-robin. Called with the frame lock held
     // (the sender thread, or the connection thread while the sender is
-    // stopped).
+    // stopped). frame holds kEp2FrameBytes.
     void composeCommandFrame(quint8* frame);
+    // The size of the EP2 frame (the Metis header and two 512-byte
+    // USB frames), sendCommandFrame's buffer before the sender thread.
+    // From Thetis networkproto1.c:219 [v2.10.3.15]:
+    //   unsigned char framebuf[1032];
+    static constexpr int kEp2FrameBytes = 1032;
 
     // ── EP2 sender thread (2026-10-14) ──────────────────────────────────
     //
@@ -711,6 +731,9 @@ private:
     void ep2SenderMain();
     // The sender's frame lock: owned on return unless the run flag dropped.
     std::unique_lock<std::timed_mutex> lockFrameOnSender();
+    // Takes the HL2 I2C OUT lines the last compose kept (none for other
+    // boards), so they print once the frame lock is released. Frame lock held.
+    int takeHl2I2cOutLog(P1CodecHl2::I2cOutLog& out) const;
     // Hands the bytes the sender sent to recordBytesSent (a QList the
     // sender must not touch). Connection thread: the watchdog tick and
     // disconnect.
@@ -858,11 +881,16 @@ private:
     // FrameLock. Read and written only by the connection thread, so a
     // nested FrameLock (a guarded entry point calling another) is a no-op.
     bool m_frameLockHeld{false};
+    // True on the thread this object lives on (the connection thread).
+    // FrameLock asserts it: m_frameLockHeld is that thread's alone, so a
+    // FrameLock taken on any other thread would break the nesting.
+    bool onConnectionThread() const;
     class FrameLock {
     public:
         explicit FrameLock(P1RadioConnection& conn)
             : m_conn(conn), m_owns(!conn.m_frameLockHeld)
         {
+            Q_ASSERT(conn.onConnectionThread());
             if (m_owns) {
                 m_conn.m_frameMutex.lock();
                 m_conn.m_frameLockHeld = true;
@@ -893,7 +921,9 @@ private:
     std::atomic<qint64> m_ep2BytesUnrecorded{0};
     // Frames sendto refused (counted, and warned of at most once a second).
     std::atomic<quint64> m_ep2SendErrors{0};
-    // How many times a sender thread has started on this connection.
+    // How many times a sender thread has started on this connection. A
+    // diagnostic the tests read (ep2SenderStartsForTest); one relaxed add
+    // per sender start.
     std::atomic<quint64> m_ep2SenderStarts{0};
 
     // --- Reconnect state machine (§3.6) ---
@@ -1828,6 +1858,11 @@ public:
     }
     void startEp2SenderForTest() { startEp2Sender(); }
     void stopEp2SenderForTest() { stopEp2Sender(); }
+    // One reconnect attempt now, as the reconnect timer runs it, whatever
+    // the state (a sender may be running).
+    void onReconnectTimeoutForTest() { onReconnectTimeout(); }
+    // Bytes the sender sent that the upload readout has not seen yet.
+    qint64 ep2BytesUnrecordedForTest() const { return m_ep2BytesUnrecorded.load(); }
     bool ep2SenderRunningForTest() const { return m_ep2Sender != nullptr; }
     quint64 ep2SenderStartsForTest() const { return m_ep2SenderStarts.load(); }
     quint32 ep2NextSequenceForTest() const { return m_epSendSeq; }

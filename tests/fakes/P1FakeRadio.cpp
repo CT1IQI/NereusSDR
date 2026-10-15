@@ -221,6 +221,9 @@ void P1FakeRadio::onReadyRead()
 
     while (m_socket->hasPendingDatagrams()) {
         QNetworkDatagram dg = m_socket->receiveDatagram();
+        // Stamped as it is read, before anything else this thread does.
+        const qint64 arrivalNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         if (dg.data().isEmpty()) { continue; }
 
         {
@@ -248,7 +251,7 @@ void P1FakeRadio::onReadyRead()
                 handleMetisCommand(pkt, from, port);
             } else if (b2 == 0x01 && b3 == 0x02) {
                 // ep2 command frame — EF FE 01 02
-                handleEp2Frame(pkt);
+                handleEp2Frame(pkt, arrivalNs);
             }
         }
     }
@@ -320,14 +323,13 @@ void P1FakeRadio::handleMetisCommand(const QByteArray& pkt,
 // handleEp2Frame — count ep2 command frames from the client and keep their
 // C&C bytes (subframe 0 at offset 11, subframe 1 at offset 523)
 // ---------------------------------------------------------------------------
-void P1FakeRadio::handleEp2Frame(const QByteArray& pkt)
+void P1FakeRadio::handleEp2Frame(const QByteArray& pkt, qint64 arrivalNs)
 {
     if (pkt.size() == 1032) {
         QMutexLocker lock(&m_mutex);
         ++m_ep2Count;
         m_ep2Cc.append(pkt.mid(11, 5) + pkt.mid(523, 5));
-        m_ep2ArrivalNs.append(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
+        m_ep2ArrivalNs.append(arrivalNs);
     }
 }
 

@@ -205,6 +205,14 @@
 //                Anvelina CC_encoder.v:173-175 [@8e86a61] sends P2 status),
 //                and frameReceived once per read. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14 - EP2 sender review fixes: a reconnect stops the sender
+//                before it rebinds the socket; the watchdog takes the frame
+//                lock only for the lost-link change; the sender's bytes
+//                reach the readout when a lost link or a connect timeout
+//                stops it; kEp2FrameBytes names the frame size; the HL2 I2C
+//                OUT line is printed after the frame lock is released.
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -882,6 +890,11 @@ P1RadioConnection::~P1RadioConnection()
 // QMetaObject::invokeMethod) runs with the frame lock held, so the frame's
 // inputs change between two EP2 frames. See the frame lock rule in the
 // header.
+bool P1RadioConnection::onConnectionThread() const
+{
+    return QThread::currentThread() == thread();
+}
+
 bool P1RadioConnection::event(QEvent* e)
 {
     if (e->type() == QEvent::MetaCall) {
@@ -1008,6 +1021,12 @@ void P1RadioConnection::applySocketBufferSizes()
 void P1RadioConnection::bindToRadioFacingAddress()
 {
     if (!m_socket || m_radioInfo.address.isNull()) { return; }
+
+    // The EP2 sender sends on this socket's descriptor, which a rebind
+    // closes: every caller stops the sender first.
+    if (m_ep2Sender) {
+        qCWarning(lcConnection) << "P1: socket rebound while the EP2 sender runs";
+    }
 
     QHostAddress local = radioFacingAddress();
     if (m_socket->state() == QAbstractSocket::BoundState
@@ -4471,10 +4490,12 @@ void P1RadioConnection::onReadyRead()
     }
 
     // Read at most kMaxEp6DatagramsPerRead datagrams, then return to the
-    // event loop so a due EP2 pacer tick can run. Without the bound, a
-    // stream arriving faster than this thread reads it kept the loop here
-    // and stopped every EP2 frame. The read notifier calls back for the
-    // rest. A NereusSDR scheduling bound, not a Thetis value.
+    // event loop so this thread's other work runs: the queued setters
+    // (setMox and the rest RadioModel posts), the watchdog and reconnect
+    // timers, and the HL2 I2C replies. Without the bound, a stream
+    // arriving faster than this thread reads it kept the loop here, and
+    // an unkey waited on the wire for seconds. The read notifier calls back
+    // for the rest. A NereusSDR scheduling bound, not a Thetis value.
     int datagramsRead = 0;
     // frameReceived is emitted once per read, after the loop, as P2 emits
     // it once per socket drain (P2RadioConnection::onReadyRead).
@@ -4618,7 +4639,7 @@ void P1RadioConnection::onReadyRead()
 // onWatchdogTick
 //
 // Fires every kWatchdogTickMs ms while connected or reconnecting.
-// Silence-detection only — EP2 pacing is the EP2 sender thread's
+// Silence-detection only: EP2 pacing is the EP2 sender thread's
 // (serviceEp2Send) to match Thetis' 381 pps audio-clock cadence.
 //
 // Detects ep6 silence: if no frame has arrived for kWatchdogSilenceMs,
@@ -4629,11 +4650,19 @@ void P1RadioConnection::onReadyRead()
 // ---------------------------------------------------------------------------
 void P1RadioConnection::onWatchdogTick()
 {
-    FrameLock frameLock(*this);
+    // The frame lock is taken only where this tick reads or changes what
+    // an EP2 frame carries: the guard's reads below and the lost-link
+    // change. Silence detection, logging and stats run without it, so a
+    // preempted tick cannot hold the sender back.
     // The EP2 sender's bytes reach the upload readout here, on this thread.
     drainEp2BytesSent();
 
-    if (!m_running || !m_socket || m_radioInfo.address.isNull()) { return; }
+    bool hasBandwidthMonitor = false;
+    {
+        FrameLock frameLock(*this);
+        if (!m_running || !m_socket || m_radioInfo.address.isNull()) { return; }
+        hasBandwidthMonitor = m_caps && m_caps->hasBandwidthMonitor;
+    }
 
     const ConnectionState cs = state();
 
@@ -4643,7 +4672,7 @@ void P1RadioConnection::onWatchdogTick()
 
     // HL2 bandwidth monitor — check for LAN PHY throttle on every watchdog tick.
     // Source: mi0bot bandwidth_monitor.{c,h} — NereusSDR sequence-gap adaptation.
-    if (m_caps && m_caps->hasBandwidthMonitor) {
+    if (hasBandwidthMonitor) {
         hl2CheckBandwidthMonitor();
     }
 
@@ -4686,8 +4715,13 @@ void P1RadioConnection::onWatchdogTick()
         qCWarning(lcConnection) << "P1: Watchdog — ep6 silent for" << silenceMs
                                 << "ms (state=" << static_cast<int>(cs)
                                 << "); transitioning to LinkLost and scheduling reconnect";
+        // The lost-link change writes frame inputs (MOX, the state, the
+        // HL2 clock lists): under the frame lock.
+        FrameLock frameLock(*this);
         m_watchdogTimer->stop();
         stopEp2Sender();
+        // Its last frames reach the upload readout, as disconnect does.
+        drainEp2BytesSent();
         m_reconnectedLogged = false;
         // TX safety: the lost link drops out of transmit here, before any
         // observer of LinkLost runs, and a link lost keyed refuses a key
@@ -4748,7 +4782,9 @@ void P1RadioConnection::onWatchdogTick()
 
 namespace {
 
-// Sender threads alive in the process, and the most at once (test seams).
+// Diagnostics the tests read (liveEp2SendersForTest and the max): sender
+// threads alive in the process, and the most at once. A relaxed add and
+// subtract per sender thread, never per frame.
 std::atomic<int> g_liveEp2Senders{0};
 std::atomic<int> g_maxLiveEp2Senders{0};
 
@@ -4855,7 +4891,11 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
 {
     int burst = 0;
     while (burst < kEp2MaxBurstPerTick) {
-        quint8 frame[1032];
+        quint8 frame[kEp2FrameBytes];
+        // The HL2 I2C OUT lines this frame composed, printed below with the
+        // frame lock released.
+        P1CodecHl2::I2cOutLog i2cLines;
+        int i2cLineCount = 0;
         {
             // One frame under the lock; the send below is outside it.
             std::unique_lock<std::timed_mutex> senderLock;
@@ -4873,18 +4913,22 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
             }
             composeCommandFrame(frame);
             ++m_ep2PacketsSent;
+            i2cLineCount = takeHl2I2cOutLog(i2cLines);
         }
-        sink(ctx, frame, 1032);
+        sink(ctx, frame, kEp2FrameBytes);
+        for (int i = 0; i < i2cLineCount; ++i) {
+            P1CodecHl2::printI2cOutLine(i2cLines[size_t(i)]);
+        }
 
         // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
         // Source: mi0bot bandwidth_monitor.c:80-84 bandwidth_monitor_out() [@c26a8a4]
         // (recordEp2Bytes is an atomic add; m_bwMonitor is set before connect.)
-        if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(1032); }
+        if (m_bwMonitor) { m_bwMonitor->recordEp2Bytes(kEp2FrameBytes); }
 
         // Shell-chrome sub-PR-2 B.1: record egress bytes for ▲ Mbps readout.
         // recordBytesSent is the connection thread's: drainEp2BytesSent
         // hands these over from the watchdog tick.
-        m_ep2BytesUnrecorded.fetch_add(1032, std::memory_order_relaxed);
+        m_ep2BytesUnrecorded.fetch_add(kEp2FrameBytes, std::memory_order_relaxed);
 
         // Shell-chrome sub-PR-2 B.2: bracket C&C round-trip for ping RTT.
         // P1 EP2 → EP6 is the existing once-per-frame (380.95 pps) exchange.
@@ -4893,6 +4937,15 @@ int P1RadioConnection::serviceEp2Send(qint64 nowNs, Ep2FrameSink sink, void* ctx
         ++burst;
     }
     return burst;
+}
+
+int P1RadioConnection::takeHl2I2cOutLog(P1CodecHl2::I2cOutLog& out) const
+{
+    if (!m_codec || !m_codec->usesI2cIntercept()) {
+        return 0;
+    }
+    const auto* hl2Codec = dynamic_cast<const P1CodecHl2*>(m_codec.get());
+    return hl2Codec ? hl2Codec->takeI2cOutLog(out) : 0;
 }
 
 std::unique_lock<std::timed_mutex> P1RadioConnection::lockFrameOnSender()
@@ -4964,9 +5017,10 @@ void P1RadioConnection::stopEp2Sender()
 
 void P1RadioConnection::ep2SenderMain()
 {
-    const int live = g_liveEp2Senders.fetch_add(1) + 1;
-    int seen = g_maxLiveEp2Senders.load();
-    while (live > seen && !g_maxLiveEp2Senders.compare_exchange_weak(seen, live)) {
+    const int live = g_liveEp2Senders.fetch_add(1, std::memory_order_relaxed) + 1;
+    int seen = g_maxLiveEp2Senders.load(std::memory_order_relaxed);
+    while (live > seen
+           && !g_maxLiveEp2Senders.compare_exchange_weak(seen, live, std::memory_order_relaxed)) {
     }
 
     // Priority as P2's transmit I/Q sender has it (txIqSenderMain): in
@@ -5041,7 +5095,7 @@ void P1RadioConnection::ep2SenderMain()
     if (placed) {
         ThreadPlacement::instance().deregisterCurrentThread();
     }
-    g_liveEp2Senders.fetch_sub(1);
+    g_liveEp2Senders.fetch_sub(1, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -5068,6 +5122,13 @@ void P1RadioConnection::onReconnectTimeout()
     qCDebug(lcConnection) << "P1: Reconnect attempt" << m_reconnectAttempts
                           << "of" << kMaxReconnectAttempts;
 
+    // The watchdog stopped the EP2 sender when it declared the link lost;
+    // stopped here anyway, so these go out with no sender running.
+    // Stopped before the rebind below, as connectToRadio does: the sender
+    // sends on the socket's descriptor, which a rebind closes.
+    const bool senderWasRunning = m_ep2Sender != nullptr;
+    stopEp2Sender();
+
     // The route to the radio may have changed, and a connect timeout closes
     // the socket; bind it again (returns at once when nothing changed).
     bindToRadioFacingAddress();
@@ -5092,10 +5153,7 @@ void P1RadioConnection::onReconnectTimeout()
     // the radio comes back up in ADC-idle state (I=DC, Q=0).
     // Source: networkproto1.c:49-110 SendStopToMetis / SendStartToMetis plus
     // the ForceCandCFrame bracket pattern from MetisReadThreadMainLoop:281.
-    // The watchdog stopped the EP2 sender when it declared the link lost;
-    // stopped here anyway, so these go out with no sender running.
-    const bool senderWasRunning = m_ep2Sender != nullptr;
-    stopEp2Sender();
+    // (The EP2 sender was stopped above, before the rebind.)
     sendMetisStop();
     sendPrimingBurst(3);
     sendMetisStart(false);
@@ -5170,6 +5228,7 @@ void P1RadioConnection::onConnectTimeout()
     m_intentionalDisconnect = true;
     if (m_watchdogTimer) { m_watchdogTimer->stop(); }
     stopEp2Sender();  // joined before the socket closes
+    drainEp2BytesSent();  // its last frames reach the upload readout
     if (m_reconnectTimer) { m_reconnectTimer->stop(); }
     if (m_socket) { m_socket->close(); }
     setState(ConnectionState::Disconnected);
@@ -5514,10 +5573,17 @@ void P1RadioConnection::sendCommandFrame()
 {
     if (!m_socket) { return; }
 
-    quint8 frame[1032];
+    quint8 frame[kEp2FrameBytes];
     composeCommandFrame(frame);
+    // The sender is stopped whenever this runs, so the HL2 I2C OUT lines
+    // can be printed now.
+    P1CodecHl2::I2cOutLog i2cLines;
+    const int i2cLineCount = takeHl2I2cOutLog(i2cLines);
+    for (int i = 0; i < i2cLineCount; ++i) {
+        P1CodecHl2::printI2cOutLine(i2cLines[size_t(i)]);
+    }
 
-    QByteArray pkt(reinterpret_cast<const char*>(frame), 1032);
+    QByteArray pkt(reinterpret_cast<const char*>(frame), kEp2FrameBytes);
     m_socket->writeDatagram(pkt, m_radioInfo.address, m_radioInfo.port);
 
     // Phase 3P-E Task 3: record ep2 egress bytes for bandwidth monitor.
@@ -5542,7 +5608,7 @@ void P1RadioConnection::composeCommandFrame(quint8* frame)
     // constant to preserve the regression-freeze byte-identical guarantee.
     const int maxBank = ccMaxBank();
 
-    memset(frame, 0, 1032);
+    memset(frame, 0, kEp2FrameBytes);
 
     // EP2 header (networkproto1.c:223-230)
     frame[0] = 0xEF; frame[1] = 0xFE; frame[2] = 0x01; frame[3] = 0x02;

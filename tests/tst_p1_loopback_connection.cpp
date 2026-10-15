@@ -32,6 +32,7 @@
 #include "core/RadioDiscovery.h"
 #include "core/HpsdrModel.h"
 #include "core/HermesLiteBandwidthMonitor.h"
+#include "core/IoBoardHl2.h"
 #include "fakes/P1FakeRadio.h"
 
 using namespace NereusSDR;
@@ -807,9 +808,11 @@ private slots:
     }
 
     // An EP6 flood well past the read-loop cap while keyed, read by a
-    // CPU-short thread (3 ms a frame, so one capped batch is 48 ms): no EP2
-    // gap over 40 ms, and receive unchanged (every frame, in order, with the
-    // I/Q as sent).
+    // CPU-short thread (15 ms a frame, so one capped batch of 16 is 240 ms,
+    // six times the bound): no EP2 gap over 40 ms, and receive unchanged
+    // (every frame, in order, with the I/Q as sent). With EP2 sent from the
+    // connection thread between batches (the read-loop cap, 238351694) the
+    // gap is a whole batch.
     void ep6FloodWhileKeyedLeavesNoEp2Gap() {
         P1FakeRadio fake;
         fake.setAutoStreamEnabled(false);
@@ -833,12 +836,12 @@ private slots:
             if (rx != 0) { return; }
             QElapsedTimer t;
             t.start();
-            while (t.nsecsElapsed() < 3000000) {
+            while (t.nsecsElapsed() < 15000000) {
             }
         });
 
         // The fake's one frame carried sequence 0; the flood goes on from 1.
-        constexpr int kFlood = 200;
+        constexpr int kFlood = 64;
         Ep6Flood flood(conn, kFlood, 1, conn.activeRxCountForTest());
         const qint64 floodStart = steadyNowNs();
         QVERIFY(flood.send(fake.clientPort(), kFlood));
@@ -949,24 +952,72 @@ private slots:
     // seam. Two connections in the same state, one sending from its thread
     // to a local socket, one driven through serviceEp2SendForTest: every
     // frame, all 1032 bytes, alike, then again after the force-bank setters
-    // (setMox, setTrxRelay, setMicTipRing), on an HL2 and on a Hermes.
+    // (setMox, setTrxRelay, setMicTipRing), on an HL2 and on a Hermes. The
+    // HL2 I2C row queues the same I2C reads and a write on both I/O boards
+    // before each round: the I2C subframes go out alike, and the reads
+    // wait in the pending-read FIFO alike. Then, with the sender running,
+    // reads the sender sends are answered on this thread in FIFO order.
     void senderThreadSendsTheSeamsBytes_data() {
         QTest::addColumn<int>("board");
-        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite);
-        QTest::newRow("Hermes") << int(HPSDRHW::Hermes);
+        QTest::addColumn<bool>("i2c");
+        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite) << false;
+        QTest::newRow("Hermes") << int(HPSDRHW::Hermes) << false;
+        QTest::newRow("HermesLite I2C") << int(HPSDRHW::HermesLite) << true;
     }
     void senderThreadSendsTheSeamsBytes() {
         QFETCH(int, board);
+        QFETCH(bool, i2c);
         QUdpSocket wire;
         QVERIFY(wire.bind(QHostAddress::LocalHost, 0));
 
         P1RadioConnection threaded;
         P1RadioConnection seam;
+        // A clock that never moves, so no read is given up unanswered.
+        IoBoardHl2 threadedIo;
+        IoBoardHl2 seamIo;
+        threadedIo.setClockForTest([] { return qint64(0); });
+        seamIo.setClockForTest([] { return qint64(0); });
         for (P1RadioConnection* c : {&threaded, &seam}) {
             c->init();
             c->setBoardForTest(HPSDRHW(board));
+            if (i2c) {
+                c->setIoBoard(c == &threaded ? &threadedIo : &seamIo);
+            }
             c->armEp2ForTest(QHostAddress::LocalHost, wire.localPort());
         }
+
+        // Two reads that ask for an answer and a write, on both boards.
+        constexpr int kReadsPerRound = 2;
+        const auto queueI2c = [&](quint8 reg) -> bool {
+            for (IoBoardHl2* io : {&threadedIo, &seamIo}) {
+                IoBoardHl2::I2cTxn read;
+                read.bus = 1;
+                read.address = 0x41;
+                read.control = reg;
+                read.isRead = true;
+                read.needsResponse = true;
+                IoBoardHl2::I2cTxn write;
+                write.bus = 1;
+                write.address = 0x1d;
+                write.control = quint8(reg + 1);
+                write.writeData = 0x5a;
+                IoBoardHl2::I2cTxn read2 = read;
+                read2.control = quint8(reg + 2);
+                if (!io->enqueueI2c(read) || !io->enqueueI2c(write) || !io->enqueueI2c(read2)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        // The I2C subframes in a frame (C0 bits 1-7 name the I2C chip).
+        const auto i2cSubframes = [](const QByteArray& f) {
+            int n = 0;
+            for (int off : {11, 523}) {
+                const int chip = (quint8(f[off]) >> 1) & 0x3f;
+                if (chip == 0x3c || chip == 0x3d) { ++n; }
+            }
+            return n;
+        };
 
         constexpr int kFrames = 40;
         const auto compareRound = [&](const char* round) -> bool {
@@ -1012,6 +1063,7 @@ private slots:
                 }
             }
 
+            int i2cFrames = 0;
             for (int i = 0; i < fromThread.size(); ++i) {
                 if (fromThread[i] != fromSeam[i]) {
                     qWarning() << round << "frame" << i << "differs:\n thread"
@@ -1020,12 +1072,36 @@ private slots:
                                << fromSeam[i].mid(520, 8).toHex(' ');
                     return false;
                 }
+                i2cFrames += i2cSubframes(fromThread[i]);
             }
-            qInfo().noquote() << QString("%1: %2 frames alike").arg(round).arg(fromThread.size());
+            if (i2c && i2cFrames != 3) {
+                qWarning() << round << i2cFrames << "I2C subframes on the wire, expected 3";
+                return false;
+            }
+            if (!i2c && i2cFrames != 0) {
+                qWarning() << round << i2cFrames << "I2C subframes with nothing queued";
+                return false;
+            }
+            qInfo().noquote() << QString("%1: %2 frames alike, %3 I2C subframes")
+                                     .arg(round).arg(fromThread.size()).arg(i2cFrames);
             return true;
         };
 
+        int readsSent = 0;
+        if (i2c) {
+            QVERIFY(queueI2c(0x00));
+            readsSent += kReadsPerRound;
+        }
         QVERIFY(compareRound("plain"));
+        if (i2c) {
+            // Both sent every read, and both wait for the same answers.
+            QCOMPARE(threadedIo.i2cDequeuedCount(), threadedIo.i2cEnqueuedCount());
+            QCOMPARE(seamIo.i2cDequeuedCount(), seamIo.i2cEnqueuedCount());
+            QCOMPARE(threadedIo.pendingReadDepth(), readsSent);
+            QCOMPARE(seamIo.pendingReadDepth(), readsSent);
+            QVERIFY(queueI2c(0x10));
+            readsSent += kReadsPerRound;
+        }
 
         // The force-bank setters, on both, with no sender running.
         for (P1RadioConnection* c : {&threaded, &seam}) {
@@ -1037,6 +1113,106 @@ private slots:
         QVERIFY(compareRound("forced"));
         QVERIFY(!threaded.forceBank0NextForTest());
         QVERIFY(!seam.forceBank0NextForTest());
+        if (!i2c) {
+            return;
+        }
+        QCOMPARE(threadedIo.pendingReadDepth(), readsSent);
+        QCOMPARE(seamIo.pendingReadDepth(), readsSent);
+
+        // The sender pushes each read it sends; the answers, parsed on this
+        // thread while it runs, pop them oldest first.
+        threadedIo.clearPendingReads();
+        QSignalSpy answered(&threadedIo, &IoBoardHl2::i2cReadAnswered);
+        threaded.resetEp2PacerForTest();
+        threaded.startEp2SenderForTest();
+        constexpr int kLiveReads = 6;
+        for (int i = 0; i < kLiveReads; ++i) {
+            IoBoardHl2::I2cTxn read;
+            read.bus = 1;
+            read.address = 0x41;
+            read.control = quint8(0x20 + i);
+            read.isRead = true;
+            read.needsResponse = true;
+            QVERIFY(threadedIo.enqueueI2c(read));
+        }
+        QVERIFY(QTest::qWaitFor([&] {
+            return threadedIo.i2cDequeuedCount() == threadedIo.i2cEnqueuedCount();
+        }, 3000));
+        for (int i = 0; i < kLiveReads; ++i) {
+            // C0 bit 7 marks an I2C answer; C1-C4 carry the read's bytes.
+            threaded.parseI2cResponseForTest(quint8(0x80 | 0x3d), quint8(i), 0x11, 0x22, 0x33);
+        }
+        threaded.stopEp2SenderForTest();
+        QCOMPARE(answered.size(), kLiveReads);
+        for (int i = 0; i < kLiveReads; ++i) {
+            QCOMPARE(answered.at(i).at(0).value<quint8>(), quint8(0x41));
+            QCOMPARE(answered.at(i).at(1).value<quint8>(), quint8(0x20 + i));
+            QCOMPARE(answered.at(i).at(2).value<quint8>(), quint8(i));
+        }
+        QCOMPARE(threadedIo.pendingReadDepth(), 0);
+    }
+
+    // The reconnect attempt stops the EP2 sender before it rebinds the
+    // socket the sender sends on (the bind warns when a sender runs), and
+    // the attempt brings the link back with the sender running.
+    void reconnectStopsTheSenderBeforeTheRebind() {
+        P1FakeRadio fake;
+        fake.start();
+
+        P1RadioConnection conn;
+        conn.init();
+        conn.connectToRadio(makeInfo(fake));
+        QVERIFY(QTest::qWaitFor([&] { return conn.state() == ConnectionState::Connected; }, 3000));
+        QVERIFY(conn.ep2SenderRunningForTest());
+
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("socket rebound while the EP2 sender runs")));
+        const quint64 starts = conn.ep2SenderStartsForTest();
+        conn.onReconnectTimeoutForTest();
+        QVERIFY(conn.ep2SenderRunningForTest());
+        QVERIFY(conn.ep2SenderStartsForTest() > starts);
+        QVERIFY(QTest::qWaitFor([&] { return conn.state() == ConnectionState::Connected; }, 3000));
+
+        conn.disconnect();
+        fake.stop();
+    }
+
+    // The sender's last frames reach the upload readout when the link is
+    // lost and when a connect times out: nothing is left undrained.
+    void senderBytesAreDrainedWhenItStops() {
+        {
+            P1FakeRadio fake;
+            fake.start();
+            P1RadioConnection conn;
+            conn.init();
+            // A long reconnect interval: no attempt restarts the sender here.
+            conn.setReconnectTimingForTest(/*watchdogSilenceMs=*/150, /*reconnectIntervalMs=*/10000);
+            conn.connectToRadio(makeInfo(fake));
+            QVERIFY(QTest::qWaitFor([&] { return conn.state() == ConnectionState::Connected; }, 3000));
+            QTest::qWait(100);
+            fake.goSilent();
+            QVERIFY(QTest::qWaitFor([&] { return conn.state() == ConnectionState::LinkLost; }, 3000));
+            QVERIFY(!conn.ep2SenderRunningForTest());
+            QCOMPARE(conn.ep2BytesUnrecordedForTest(), qint64(0));
+            QVERIFY(conn.txByteRate(5000) > 0.0);
+            conn.disconnect();
+            fake.stop();
+        }
+        {
+            // A radio that never answers: the connect times out (2 s).
+            P1FakeRadio fake;
+            fake.start();
+            fake.goSilent();
+            P1RadioConnection conn;
+            conn.init();
+            QSignalSpy failed(&conn, &P1RadioConnection::connectFailed);
+            conn.connectToRadio(makeInfo(fake));
+            QVERIFY(conn.ep2SenderRunningForTest());
+            QVERIFY(failed.wait(5000));
+            QCOMPARE(conn.state(), ConnectionState::Disconnected);
+            QVERIFY(!conn.ep2SenderRunningForTest());
+            QCOMPARE(conn.ep2BytesUnrecordedForTest(), qint64(0));
+            fake.stop();
+        }
     }
 
     // Test 5: the sender's lifecycle. Fifty rounds of connect, a

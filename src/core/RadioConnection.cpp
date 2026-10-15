@@ -80,6 +80,7 @@ void RadioConnection::pruneSamples(QList<ByteSample>& samples, qint64 nowMs, int
 void RadioConnection::recordBytesSent(qint64 n)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     pruneSamples(m_txSamples, nowMs, 5000);
     m_txSamples.append({nowMs, n});
 }
@@ -87,17 +88,20 @@ void RadioConnection::recordBytesSent(qint64 n)
 void RadioConnection::recordBytesReceived(qint64 n)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     pruneSamples(m_rxSamples, nowMs, 5000);
     m_rxSamples.append({nowMs, n});
 }
 
 double RadioConnection::txByteRate(int windowMs) const
 {
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     return rateFromSamples(m_txSamples, windowMs);
 }
 
 double RadioConnection::rxByteRate(int windowMs) const
 {
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     return rateFromSamples(m_rxSamples, windowMs);
 }
 
