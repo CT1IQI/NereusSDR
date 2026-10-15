@@ -97,6 +97,14 @@
 #include "fakes/UpgradedCoreToken.h"
 
 using namespace NereusSDR;
+
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr quint8 kTagWatch = NereusSDR::RelayLeg::kTagWatch;
+} // namespace
 using NereusSDR::Test::LinkFixtures;
 using NereusSDR::Test::DataChannelPairEvent;
 using NereusSDR::Test::startDataChannelPair;
@@ -426,7 +434,7 @@ private:
             m_primaryFrames.append(frame);
             return;
         }
-        if (tag != RelayLeg::kTagWatch || frame.size() < 2
+        if (tag != kTagWatch || frame.size() < 2
             || frame.size() > RelayLeg::kMaxDatagramBytes + 1) {
             ++m_rejected;
             socket->close();
@@ -785,7 +793,7 @@ private slots:
         QCOMPARE(atCore.last().first().toByteArray(), heartbeat);
         QVERIFY(!relay.forwardedWatchFrames().isEmpty());
         for (const QByteArray& frame : relay.forwardedWatchFrames()) {
-            QCOMPARE(static_cast<quint8>(frame.at(0)), RelayLeg::kTagWatch);
+            QCOMPARE(static_cast<quint8>(frame.at(0)), kTagWatch);
         }
         QCOMPARE(relay.primaryFrames().size(), 0);
         QCOMPARE(relay.rejected(), 0);
