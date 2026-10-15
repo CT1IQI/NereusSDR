@@ -1,11 +1,11 @@
 {
-  "generated_utc": "2026-10-15T06:27:00+00:00",
-  "thetis_sha": "501e3f51",
+  "generated_utc": "2026-10-15T06:36:00+00:00",
+  "thetis_sha": "3759d096",
   "mi0bot_sha": "c26a8a4c",
-  "thetis_v21015_sha": "3759d096",
+  "thetis_v21013_sha": "501e3f51",
   "callsign_tags": {
     "MW0LGE": {
-      "count": 3070,
+      "count": 3071,
       "first_seen": "version.cpp:13",
       "files": [
         "Alex.cs",
@@ -155,7 +155,7 @@
     },
     "G8NJJ": {
       "count": 132,
-      "first_seen": "console.cs:141",
+      "first_seen": "console.cs:147",
       "files": [
         "Alex.cs",
         "Andromeda.cs",
@@ -185,7 +185,7 @@
     },
     "W4TME": {
       "count": 18,
-      "first_seen": "database.cs:5005",
+      "first_seen": "database.cs:5014",
       "files": [
         "FilterForm.cs",
         "MemoryForm.cs",
@@ -220,7 +220,7 @@
     },
     "G7KLJ": {
       "count": 6,
-      "first_seen": "console.cs:1221",
+      "first_seen": "console.cs:1228",
       "files": [
         "console.cs",
         "setup.cs"
@@ -261,7 +261,7 @@
     },
     "IK4JPN": {
       "count": 4,
-      "first_seen": "console.cs:26345",
+      "first_seen": "console.cs:26394",
       "files": [
         "console.cs"
       ],
@@ -270,7 +270,7 @@
     },
     "MW0GLE": {
       "count": 4,
-      "first_seen": "setup.cs:2740",
+      "first_seen": "setup.cs:2741",
       "files": [
         "setup.cs"
       ],
@@ -279,7 +279,7 @@
     },
     "DK1HLM": {
       "count": 2,
-      "first_seen": "console.cs:6821",
+      "first_seen": "console.cs:6830",
       "files": [
         "console.cs"
       ],
@@ -288,7 +288,7 @@
     },
     "K2UE": {
       "count": 2,
-      "first_seen": "console.cs:26064",
+      "first_seen": "console.cs:26113",
       "files": [
         "console.cs"
       ],
@@ -315,7 +315,7 @@
     },
     "W1CEG": {
       "count": 2,
-      "first_seen": "console.cs:42364",
+      "first_seen": "console.cs:42437",
       "files": [
         "console.cs"
       ],

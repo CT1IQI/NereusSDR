@@ -85,7 +85,7 @@ MI0BOT_DIR = Path(os.environ.get(
 # ---------------------------------------------------------------------
 # Per-version ramdor checkouts
 # ---------------------------------------------------------------------
-# THETIS_DIR is pinned to ONE commit (501e3f5, tag v2.10.3.13). Cites
+# THETIS_DIR is pinned to ONE commit (3759d09, tag v2.10.3.15). Cites
 # stamped against a different release must resolve against THAT release,
 # for exactly the reason resolve_upstream() refuses to cross the
 # ramdor/mi0bot fork boundary: opening a cited line number in the wrong
@@ -111,10 +111,25 @@ MI0BOT_DIR = Path(os.environ.get(
 THETIS_V21015_DIR = Path(os.environ.get(
     "NEREUS_THETIS_V21015_DIR",
     discover_sibling("Thetis-v2.10.3.15"))).expanduser()
+# 2026-10-15: THETIS_DIR moved from 501e3f5 to the CLAUDE.md pin
+# (v2.10.3.15, 3759d09), so local runs against ../Thetis and CI agree.
+# The cites stamped against the old pin (`[v2.10.3.13]`, `[@501e3f5]`,
+# about 2,400 of them) keep resolving against 501e3f5, now its own tree.
+# 501e3f5 is v2.10.3.13 plus seven commits; it is the tree those cites
+# were written against.
+THETIS_V21013_DIR = Path(os.environ.get(
+    "NEREUS_THETIS_V21013_DIR",
+    discover_sibling("Thetis-v2.10.3.13"))).expanduser()
 
 THETIS_VERSION_DIRS = {
     "2.10.3.15": THETIS_V21015_DIR,
     "3759d09":   THETIS_V21015_DIR,
+    "2.10.3.13": THETIS_V21013_DIR,
+    "501e3f5":   THETIS_V21013_DIR,
+}
+THETIS_VERSION_ENV = {
+    "2.10.3.15": "NEREUS_THETIS_V21015_DIR",
+    "2.10.3.13": "NEREUS_THETIS_V21013_DIR",
 }
 
 # The stamp on a cite line: `[v2.10.3.15]`, `[@3759d09]`, or the combined
@@ -527,7 +542,7 @@ def main() -> int:
         if not path.is_dir():
             print(f"WARN: Thetis v{ver} not found at {path}. Every cite "
                   f"stamped [v{ver}] will emit upstream-not-found instead "
-                  f"of being verified. Set NEREUS_THETIS_V21015_DIR or "
+                  f"of being verified. Set {THETIS_VERSION_ENV[ver]} or "
                   f"clone to a sibling directory.", file=sys.stderr)
 
     # deskhpsdr is optional for now — warn if absent so local runs without
