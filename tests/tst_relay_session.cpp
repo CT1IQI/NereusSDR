@@ -34,8 +34,10 @@
 //               while (holdDatagramsMs), so in aDirectPairStillWins the
 //               web relay's pair cannot succeed before the direct pair
 //               and win libjuice's 2 s nomination timer on a loaded
-//               runner. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               runner. The test also checks that the shim's candidate
+//               ranks below every direct one and that its checks reached
+//               the relay, since the hold would hide either fault.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -183,7 +185,7 @@ private:
                 const qint64 left = holdDatagramsMs - m_holdClock.elapsed();
                 if (left > 0 || !m_held.isEmpty()) {
                     if (m_held.isEmpty()) {
-                        QTimer::singleShot(std::max<qint64>(left, 0), server.get(),
+                        QTimer::singleShot(static_cast<int>(left), server.get(),
                                            [this] { releaseHeld(); });
                     }
                     m_held.append(qMakePair(QPointer<QWebSocket>(socket), message));
@@ -369,9 +371,31 @@ private slots:
         // agent. The controlling side nominates its best succeeded pair
         // 2 s after selecting it (NOMINATION_TIMEOUT), so a loaded runner
         // whose direct pair is slower than that ends on the relay. Holding
-        // the relay's datagrams 3 s gives the direct pair 3 s plus the 2 s
-        // timer, and the relay's pair still succeeds once released.
+        // the relay's datagrams 3 s moves that window rather than closing
+        // it: the direct remote candidates get the hold time to arrive and
+        // succeed. Once the shim's pair succeeds after the release, libjuice
+        // nominates it at once if no higher pair is pending, so a direct
+        // path slower than the hold still loses. That is libjuice working
+        // as designed, not a product fault this test covers.
         relay.holdDatagramsMs = 3000;
+
+        // With the hold, the direct pair would win even if the shim's
+        // candidate outranked it, so the priority is checked here. The
+        // line the agent is given carries kCandidatePriority, and an agent's
+        // own candidate is never below 255 (RFC 8445 5.1.2.1: type and
+        // local preference 0, component 1 gives 256 - 1), so the shim must
+        // stay under that to rank below every direct candidate.
+        constexpr quint32 kLowestAgentPriority = 255;
+        QCOMPARE(RelayLeg::kCandidatePriority, 1u);
+        const QStringList shimLine =
+            RelayLeg::candidateLine(IceConfiguration::kControlLane, 40000).split(QLatin1Char(' '));
+        QVERIFY(shimLine.size() > 3);
+        bool priorityOk = false;
+        const quint32 shimPriority = shimLine.at(3).toUInt(&priorityOk);
+        QVERIFY(priorityOk);
+        QCOMPARE(shimPriority, RelayLeg::kCandidatePriority);
+        QVERIFY2(shimPriority < kLowestAgentPriority,
+                 qPrintable(QStringLiteral("shim priority %1").arg(shimPriority)));
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
         RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
@@ -399,6 +423,12 @@ private slots:
         QVERIFY2(waitUntil([&relay] { return relay.joins == 2; }, 5000, ends,
                            QStringLiteral("both relay legs to join"), &why),
                  qPrintable(QStringLiteral("%1 (joins: %2)").arg(why).arg(relay.joins)));
+        // The shim's pair was offered and checked: its connectivity checks
+        // reached the relay on the control lane.
+        QVERIFY2(waitUntil([&relay] { return !relay.forwarded[RelayLeg::kTagControl].isEmpty(); },
+                           5000, ends, QStringLiteral("the shim's checks to reach the relay"),
+                           &why),
+                 qPrintable(why));
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
