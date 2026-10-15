@@ -30,6 +30,9 @@
 //               runs on for twice its timeout after it expires, so a session
 //               the handshake deadline had closed held the test to QTest's
 //               300 s function timeout with no reason given.
+//   2026-10-15: a Core slow to see its own end open still gets the
+//               session, over the web relay and over a direct pair. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -203,6 +206,7 @@ private slots:
     {
         IceConfiguration::setOnlyLoopbackShimCandidatesForTest(false);
         RelayLeg::setRelayUrlForTest(QUrl());
+        DataChannelTransport::setAnswererOpenDelayForTest(0);
     }
 
     // Only the web relay works: the session runs over it, both ends' legs
@@ -315,6 +319,68 @@ private slots:
         QCOMPARE(relay.joins, 2); // one leg per end carried both
         offerer.stop();
         answerer.stop();
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // 2026-10-15: a Core that sees its own end open a second after the
+    // window's (a busy Core, or one whose open came the long way round).
+    // The window keeps its connection to the service until the Core speaks
+    // on the new connection, so the Core's introduction does not end
+    // (clientLeft) before its end opens, and the session comes up over the
+    // web relay. Before, the window left the service at its own open and
+    // the Core closed the connection it was about to accept.
+    void aSlowCoreStillOpensOverTheWebRelay()
+    {
+        StandInRelay relay;
+        QVERIFY(relay.server->isListening());
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        DataChannelTransport::setAnswererOpenDelayForTest(1000);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        QString why;
+        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
+        QCOMPARE(window.pathRank(), int(PathRacer::Floor));
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // 2026-10-15: the same over a direct pair, every path open: the window
+    // leaving the service at its own open ended every introduction the
+    // service brokered, not only the relayed ones.
+    void aSlowCoreStillOpensOverADirectPair()
+    {
+        StandInRelay relay;
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        DataChannelTransport::setAnswererOpenDelayForTest(1000);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        QString why;
+        QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
+        QCOMPARE(window.pathRank(), int(PathRacer::ServiceDirect));
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
