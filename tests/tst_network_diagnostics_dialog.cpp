@@ -10,6 +10,9 @@
 //  of the License, or (at your option) any later version.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - The Audio Backend row names the sound system the Settings
+//                audio pages name, from the engine's device catalogue.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13 — Fake-only ASIO observation guards and delta baselines.
 //                J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-30 — Created for Phase 3Q sub-PR-3 (NetworkDiagnosticsDialog).
@@ -20,8 +23,11 @@
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QLoggingCategory>
+#include <QGridLayout>
+#include <QLabel>
 #include <future>
 
+#include "fakes/FakeAudioEngineBackend.h"
 #include "gui/NetworkDiagnosticsDialog.h"
 #include "core/AudioEngine.h"
 #include "core/RadioConnection.h"
@@ -47,6 +53,30 @@ public:
     DeviceRateMatcherStats stats;
     mutable int reads = 0;
 };
+
+// The value label beside the "Backend" field label in the dialog's grid.
+QLabel* backendValue(QWidget& dialog)
+{
+    for (QLabel* field : dialog.findChildren<QLabel*>()) {
+        if (field->text() != QStringLiteral("Backend")) {
+            continue;
+        }
+        auto* grid = qobject_cast<QGridLayout*>(field->parentWidget()->layout());
+        if (grid == nullptr) {
+            const auto grids = field->parentWidget()->findChildren<QGridLayout*>();
+            grid = grids.isEmpty() ? nullptr : grids.first();
+        }
+        if (grid == nullptr) {
+            return nullptr;
+        }
+        const int index = grid->indexOf(field);
+        int row = 0, column = 0, rowSpan = 0, columnSpan = 0;
+        grid->getItemPosition(index, &row, &column, &rowSpan, &columnSpan);
+        QLayoutItem* item = grid->itemAtPosition(row, 1);
+        return item ? qobject_cast<QLabel*>(item->widget()) : nullptr;
+    }
+    return nullptr;
+}
 
 QStringList* asioMessages = nullptr;
 QtMessageHandler previousMessageHandler = nullptr;
@@ -162,6 +192,36 @@ private slots:
         capture.setEnabled(true);
         QMetaObject::invokeMethod(&dialog, "refresh");
         QVERIFY(capture.messages[6].contains("baseline=true deltaValid=false"));
+    }
+
+    // The Backend row names the engine the device catalogue describes, in
+    // the words of Settings > Audio's "Sound system" line, not the build's
+    // platform ("CoreAudio" / "WASAPI" whatever engine was in use).
+    void audioBackendNamesTheEngineInUse_data()
+    {
+        QTest::addColumn<int>("backend");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("core-audio") << int(AudioBackendId::CoreAudio)
+                                    << QStringLiteral("Core Audio");
+        QTest::newRow("wasapi") << int(AudioBackendId::Wasapi)
+                                << QStringLiteral("Windows audio (WASAPI)");
+        QTest::newRow("pipewire") << int(AudioBackendId::PipeWire)
+                                  << QStringLiteral("PipeWire. NereusSDR talks to it directly.");
+    }
+    void audioBackendNamesTheEngineInUse()
+    {
+        QFETCH(int, backend);
+        QFETCH(QString, expected);
+        AudioEngine engine;
+        engine.setVaxOutputsAllowed(false);
+        auto fake = std::make_shared<FakeAudioEngineBackend>(static_cast<AudioBackendId>(backend));
+        engine.setAudioBackendsForTest({fake});
+        QVERIFY(engine.catalogue() != nullptr);
+        NetworkDiagnosticsDialog dialog(nullptr, &engine);
+        QMetaObject::invokeMethod(&dialog, "refresh");
+        QLabel* value = backendValue(dialog);
+        QVERIFY(value != nullptr);
+        QCOMPARE(value->text(), expected);
     }
 
     void buildsWithNullModel() {
