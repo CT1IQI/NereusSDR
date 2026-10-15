@@ -65,6 +65,12 @@
 #               retain its registry, via libjuice-0003. J.J. Boyd (KG4VCF),
 #               with AI-assisted implementation via OpenAI Codex.
 #
+#   2026-10-15: vendor patches are applied with Git's line-ending
+#               conversion off, so Git for Windows' core.autocrlf=true no
+#               longer writes CRLF into the patched LF sources. J.J. Boyd
+#               (KG4VCF), with AI-assisted implementation via Anthropic
+#               Claude Code.
+#
 # =================================================================
 
 include(FetchContent)
@@ -82,9 +88,13 @@ function(_nereus_apply_vendor_patch source_dir patch_name)
     # paths outside its current subdirectory. Stop discovery at the source
     # tree's parent so patch paths are relative to this vendor copy.
     get_filename_component(_ceiling "${source_dir}" DIRECTORY)
+    # Git for Windows sets core.autocrlf=true system-wide, and outside a
+    # repository git apply then writes the patched lines with CRLF into
+    # these LF sources. Patched files keep the vendor's LF on every system.
+    set(_lf -c core.autocrlf=false -c core.eol=lf)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env
             "GIT_CEILING_DIRECTORIES=${_ceiling}" "LC_ALL=C" "${GIT_EXECUTABLE}"
-            apply --check --verbose "${_patch}"
+            ${_lf} apply --check --verbose "${_patch}"
         WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE _check
         OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     string(FIND "${_out}${_err}" "Checking patch" _checked)
@@ -93,7 +103,7 @@ function(_nereus_apply_vendor_patch source_dir patch_name)
     endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env
             "GIT_CEILING_DIRECTORIES=${_ceiling}" "LC_ALL=C" "${GIT_EXECUTABLE}"
-            apply --verbose "${_patch}"
+            ${_lf} apply --verbose "${_patch}"
         WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE _result
         OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     string(FIND "${_out}${_err}" "Applied patch" _applied)
