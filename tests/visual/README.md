@@ -210,7 +210,9 @@ own width, until Digital modes has nothing left to scroll (the VAX 1 to 4
 cards and the TCI audio settings in one image); and
 `dialog-remote-setup-tci-server` does the same for TCI Server in a
 never-dialed remote window, the only window that shows the Core's TCI
-server group (it says to connect and shows no Core values). The sidecar's
+server group. Its Core link is posed with `tests/fakes/FakeStationLink.h`
+and the Core's server values (on, port 50001, the rest at their defaults),
+so that group shows them, enabled; nothing is dialed. The sidecar's
 `grown_to_fit` or notes give the sizes.
 
 `baseline-connected` is the manual's overview window: one pan on slice A

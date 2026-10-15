@@ -205,6 +205,11 @@
 //                 the page needs no scrolling; the Core's TCI group shows
 //                 only in a remote window). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - dialog-remote-setup-tci-server poses the Core's station
+//                 link (tests/fakes/FakeStationLink.h) and its TCI server
+//                 values, so the Core's group shows them, enabled.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 
 #include "PreviewScenes.h"
 
@@ -380,6 +385,9 @@
 #include "core/TxInterlockPolicy.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/IStationLink.h"
+#include "core/StationTciController.h"
+#include "models/StationTciModel.h"
+#include "fakes/FakeStationLink.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/widgets/AntennaSwitchToast.h"
 #include "gui/widgets/RxDashboard.h"
@@ -5234,12 +5242,37 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
     // The manual's TCI Server figure: this window's server and the Core's
     // TCI server, which the page shows only in a remote window
     // (CatTciServerPage::refreshCoreGroup), in one image: the dialog grown
-    // until the page needs no scrolling. Never dialed, so the Core's
-    // group says to connect and shows no Core values.
+    // until the page needs no scrolling. The window is never dialed; the
+    // Core's station link is posed instead (Test::FakeStationLink, ready,
+    // with stationTciVersion 2 and stationTciSettingsVersion 1), with the
+    // Core's server on, listening on the Core's default port and every
+    // other value at the readers' defaults (StationTciModel::State). The
+    // window's own StationClient is attached again afterwards.
     scenes.append({QStringLiteral("dialog-remote-setup-tci-server"), QStringLiteral("2v"), true,
                    [](SceneContext& ctx) {
+        Test::FakeStationLink coreLink;
+        QPointer<RadioModel> posedModel;
+        QPointer<StationClient> ownLink;
         runRemoteDialogScene(ctx, QStringLiteral("dialog-remote-setup-tci-server"),
-                             [](SceneContext& c, MainWindow* remote) -> QWidget* {
+                             [&coreLink, &posedModel, &ownLink](SceneContext& c,
+                                                                MainWindow* remote) -> QWidget* {
+            RadioModel* model = remote->radioModel();
+            if (model == nullptr || model->stationTciModel() == nullptr) {
+                c.failure = QStringLiteral("the remote window has no RadioModel station TCI model");
+                return nullptr;
+            }
+            posedModel = model;
+            ownLink = dynamic_cast<StationClient*>(model->stationLink());
+            model->attachStation(&coreLink);
+            StationTciModel::State core;
+            core.enabled = true;
+            core.port = StationTciController::kDefaultPort;
+            core.listening = true;
+            model->stationTciModel()->setState(core);
+            c.notes.append(QStringLiteral("Core link posed: Test::FakeStationLink (ready, station TCI "
+                                          "server and settings available), StationTciModel on, "
+                                          "port %1, listening, other values at their defaults")
+                               .arg(core.port));
             const QString page = QStringLiteral("TCI Server");
             if (!QMetaObject::invokeMethod(remote, "openSetupAtPage", Qt::DirectConnection,
                                            Q_ARG(QString, page))) {
@@ -5255,6 +5288,13 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
             growSetupToFit(c, setup, QStringLiteral("Setup > CAT & Network > TCI Server (remote window)"));
             return c.failure.isEmpty() ? setup : nullptr;
         });
+        if (posedModel != nullptr && posedModel->stationLink() == &coreLink) {
+            if (ownLink != nullptr) {
+                posedModel->attachStation(ownLink.data());
+            } else {
+                posedModel->detachStation();
+            }
+        }
     }});
 }
 
