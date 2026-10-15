@@ -48,6 +48,7 @@
 #include <QTableView>
 #include <QUrl>
 
+#include <algorithm>
 #include <memory>
 
 #include "core/AppSettings.h"
@@ -111,6 +112,7 @@ private slots:
     void stationTableKeepsPlaceAcrossJoinUpdateLeave();
     void stationUpdatesResetOncePerInterval();
     void reportStreamResetsOncePerInterval();
+    void coloringRecheckAnnouncesOnlyTintChanges();
     void bandAndExactFrequencyChangesAfterDrainSameEvent();
     void stationBurstResetsBeforeEachChange();
     void accessibilityOffLeavesStationTableAlone();
@@ -1425,6 +1427,8 @@ void TestFreeDVReporterDialog::stationUpdatesResetOncePerInterval() {
     setItemViewDataResetIntervalForTest(kIntervalMs);
     auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
     setItemViewDataResetIntervalForTest(0);
+    // No coloring recheck: only the updates below change data.
+    dlg->setColoringRecheckMsForTest(0);
     auto* table = dlg->findChild<QTableView*>();
     QVERIFY(table);
     for (int n = 10; n < 30; ++n) {
@@ -1471,8 +1475,9 @@ void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
     // one station after another) for 15 intervals resets about once per
     // interval, never once per report. The interval is scaled down here
     // (50 ms); NEREUS_TEST_DATA_RESET_MS=1000 runs it at the app's own
-    // interval in real time. The cells a client walked before the last
-    // reports answer again after the last reset.
+    // interval in real time. The bounds come from the time that passed,
+    // so a loaded runner does not fail them. After one last report, the
+    // cells a client walked answer again once its reset runs.
     const int envMs = qEnvironmentVariableIntValue("NEREUS_TEST_DATA_RESET_MS");
     const int intervalMs = envMs > 0 ? envMs : 50;
     constexpr int kIntervals = 15;
@@ -1483,6 +1488,8 @@ void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
     setItemViewDataResetIntervalForTest(intervalMs);
     auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
     setItemViewDataResetIntervalForTest(0);
+    // No coloring recheck: only the updates below change data.
+    dlg->setColoringRecheckMsForTest(0);
     auto* table = dlg->findChild<QTableView*>();
     QVERIFY(table);
     for (int n = 10; n < 50; ++n) {
@@ -1494,15 +1501,21 @@ void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
     QSignalSpy resets(table->model(), &QAbstractItemModel::modelReset);
     QSignalSpy changes(table->model(), &QAbstractItemModel::dataChanged);
 
+    // Each reset is stamped with the stream's clock, and so is each pass
+    // of the loop, so the bounds below come from the time that actually
+    // passed and the longest stretch the event loop did not run.
     QElapsedTimer clock;
+    QList<qint64> resetAt;
+    const QMetaObject::Connection stamp = connect(
+        table->model(), &QAbstractItemModel::modelReset, this,
+        [&clock, &resetAt] { resetAt.append(clock.elapsed()); });
     clock.start();
     QList<QAccessible::Id> walked;
     int reports = 0;
-    const qint64 lastWalkAt = qint64(kIntervals - 1) * intervalMs;
-    while (clock.elapsed() < qint64(kIntervals) * intervalMs) {
-        if (walked.isEmpty() && clock.elapsed() >= lastWalkAt) {
-            walked = Cells::walk(table);
-        }
+    qint64 longestGap = 0;
+    qint64 previous = 0;
+    const qint64 streamMs = qint64(kIntervals) * intervalMs;
+    while (clock.elapsed() < streamMs) {
         const int n = 10 + (reports % 40);
         FreeDVStation updated = makeStationWithSnr(n, reports % 20);
         updated.sid = QStringLiteral("sid-%1").arg(n);
@@ -1510,19 +1523,48 @@ void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
         stations.onStationUpdated(updated.sid, updated);
         ++reports;
         QTest::qWait(intervalMs / kReportsPerInterval);
+        const qint64 now = clock.elapsed();
+        longestGap = std::max(longestGap, now - previous);
+        previous = now;
     }
-    const double seconds = double(clock.elapsed()) / 1000.0;
-    const int streamResets = int(resets.count());
-    Cells::drop(walked);
-    QTRY_COMPARE_WITH_TIMEOUT(resets.count(), streamResets + 1, 20 * intervalMs);
-    qInfo("interval %d ms: %d reports and %d resets in %.2f s (%.2f reports/s, %.2f resets/s)",
-          intervalMs, reports, streamResets, seconds, reports / seconds, streamResets / seconds);
+    const qint64 elapsedMs = clock.elapsed();
+    const double seconds = double(elapsedMs) / 1000.0;
+    const int streamResets = int(resetAt.size());
+    qInfo("interval %d ms: %d reports and %d resets in %.2f s (%.2f reports/s, %.2f resets/s), "
+          "longest gap between reports %lld ms",
+          intervalMs, reports, streamResets, seconds, reports / seconds, streamResets / seconds,
+          static_cast<long long>(longestGap));
 
     QVERIFY(changes.count() >= reports);
-    QVERIFY2(streamResets >= kIntervals * 2 / 3,
-             qPrintable(QStringLiteral("only %1 resets").arg(streamResets)));
-    QVERIFY2(streamResets <= kIntervals + 1,
-             qPrintable(QStringLiteral("%1 resets").arg(streamResets)));
+    // Never closer than one interval, less the 5 % a coarse QTimer may
+    // fire early: a reset per report fails here.
+    const qint64 closest = intervalMs - intervalMs / 20 - 1;
+    for (int i = 1; i < streamResets; ++i) {
+        QVERIFY2(resetAt.at(i) - resetAt.at(i - 1) >= closest,
+                 qPrintable(QStringLiteral("resets %1 ms apart").arg(resetAt.at(i) - resetAt.at(i - 1))));
+    }
+    QVERIFY2(streamResets <= elapsedMs / closest + 1,
+             qPrintable(QStringLiteral("%1 resets in %2 ms").arg(streamResets).arg(elapsedMs)));
+    // Never further apart than an interval plus two of the longest gaps
+    // (the report that starts the timer comes at most one gap after a
+    // reset, and the timer runs at most one gap late). A timer restarted
+    // by every report would not fire while reports come faster than the
+    // interval, and fails here.
+    const qint64 slowest = intervalMs + 2 * longestGap;
+    QVERIFY2(streamResets >= elapsedMs / slowest - 1,
+             qPrintable(QStringLiteral("only %1 resets in %2 ms (longest gap %3 ms)")
+                            .arg(streamResets).arg(elapsedMs).arg(longestGap)));
+    QVERIFY(!resetAt.isEmpty());
+    // One last report after a client walked the cells, then the drain:
+    // the reset that follows brings every cell back.
+    walked = Cells::walk(table);
+    FreeDVStation last = makeStationWithSnr(10, 19);
+    last.lastRxCallsign = QStringLiteral("W0AW");
+    stations.onStationUpdated(last.sid, last);
+    Cells::drop(walked);
+    const int beforeLast = int(resetAt.size());
+    QTRY_COMPARE_WITH_TIMEOUT(int(resetAt.size()), beforeLast + 1, 20 * intervalMs);
+    disconnect(stamp);
     QCOMPARE(selectedSid(table), selected);
     QVERIFY(!walked.isEmpty());
     for (int row = 0; row < table->model()->rowCount(); ++row) {
@@ -1530,6 +1572,83 @@ void TestFreeDVReporterDialog::reportStreamResetsOncePerInterval() {
     }
 
     AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+}
+
+void TestFreeDVReporterDialog::coloringRecheckAnnouncesOnlyTintChanges() {
+    // The coloring recheck runs for every station (20 ms here, 1 s in the
+    // app). Rows whose tint stays the same are not announced, so an idle
+    // table changes no data and, with accessibility on, does not reset.
+    // A tint that the recheck clears (a mode-only receive report aging
+    // past the 5 s short timeout) is still announced once, so the row
+    // repaints (the PR #238 fix), with accessibility on or off.
+    struct Seen {
+        int idleChanges{-1};
+        int idleResets{-1};
+        bool tinted{false};
+        bool cleared{false};
+        int flipChanges{-1};
+        int flipResets{-1};
+    };
+    const auto run = [](bool accessible) {
+        AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+        Cells::setActive(accessible);
+        Seen seen;
+        FreeDVStationModel stations;
+        setItemViewDataResetIntervalForTest(50);
+        auto dlg = std::make_unique<FreeDVReporterDialog>(&stations, nullptr, nullptr);
+        setItemViewDataResetIntervalForTest(0);
+        auto* table = dlg->findChild<QTableView*>();
+        if (table == nullptr) {
+            return seen;
+        }
+        // Only the recheck may clear a tint here.
+        dlg->setHighlightClearMsForTest(60'000);
+        dlg->setColoringRecheckMsForTest(20);
+        for (int n = 10; n < 30; ++n) {
+            stations.onStationAdded(QStringLiteral("sid-%1").arg(n), makeStationWithSnr(n, 4));
+        }
+        placeOn(dlg.get(), table, sidAt(table, 2), sidAt(table, 5));
+        QTest::qWait(150);
+        QSignalSpy resets(table->model(), &QAbstractItemModel::modelReset);
+        QSignalSpy changes(table->model(), &QAbstractItemModel::dataChanged);
+
+        // About fifteen rechecks of an idle table.
+        QTest::qWait(300);
+        seen.idleChanges = int(changes.count());
+        seen.idleResets = int(resets.count());
+
+        // A mode-only receive report 300 ms short of the 5 s timeout.
+        FreeDVStation aging = makeStationWithSnr(99, 4);
+        aging.lastRxDate = QDateTime::currentDateTime().addMSecs(-(5'000 - 300));
+        stations.onStationAdded(aging.sid, aging);
+        seen.tinted = dlg->rowHighlightColorForTest(aging.sid).isValid();
+        QTest::qWait(150);
+        resets.clear();
+        changes.clear();
+        seen.cleared = QTest::qWaitFor(
+            [&] { return !dlg->rowHighlightColorForTest(aging.sid).isValid(); }, 2'000);
+        QTest::qWait(250);
+        seen.flipChanges = int(changes.count());
+        seen.flipResets = int(resets.count());
+        AppSettings::instance().remove(QStringLiteral("FreeDvReporter/ColumnFilters"));
+        return seen;
+    };
+
+    const Seen sighted = run(false);
+    const Seen accessible = run(true);
+    Cells::setActive(false);
+    QCOMPARE(sighted.idleChanges, 0);
+    QCOMPARE(sighted.idleResets, 0);
+    QVERIFY(sighted.tinted);
+    QVERIFY(sighted.cleared);
+    QCOMPARE(sighted.flipChanges, 1);
+    QCOMPARE(sighted.flipResets, 0);
+    QCOMPARE(accessible.idleChanges, 0);
+    QCOMPARE(accessible.idleResets, 0);
+    QVERIFY(accessible.tinted);
+    QVERIFY(accessible.cleared);
+    QCOMPARE(accessible.flipChanges, 1);
+    QCOMPARE(accessible.flipResets, 1);
 }
 
 void TestFreeDVReporterDialog::bandAndExactFrequencyChangesAfterDrainSameEvent() {

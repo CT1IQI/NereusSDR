@@ -96,6 +96,13 @@
 //               once a second (so VoiceOver gets fresh cells back), and the
 //               proxy's flush is gated on accessibility being active.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): setHighlight announces a row only when
+//               its highlight changes (and the clear timer announces its
+//               clear), so the once-a-second coloring recheck no longer
+//               changes data for rows that keep their color; with
+//               accessibility on an idle table no longer resets every
+//               second. setColoringRecheckMsForTest. AI-assisted via
+//               Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -1410,6 +1417,10 @@ void FreeDVReporterDialog::applyHighlightForStation(const QString& sid,
 }
 
 void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
+    // NereusSDR: the coloring recheck calls this for every station once a
+    // second; only a highlight that changes is announced to the view
+    // below (the PR #238 repaint is needed only when the tint changes).
+    const QColor before = m_rowDelegate->highlightFor(sid);
     if (bg.isValid()) {
         m_rowDelegate->setRowHighlight(sid, bg);
         // Schedule the clear timer. Replaces any prior clear timer for
@@ -1421,11 +1432,18 @@ void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
         auto* timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, sid] {
+            const bool wasHighlighted = m_rowDelegate->highlightFor(sid).isValid();
             m_rowDelegate->setRowHighlight(sid, QColor());
             if (auto* t = m_clearTimers.take(sid)) {
                 t->deleteLater();
             }
             if (m_table) {
+                // NereusSDR: the clear changes the tint, so the row is
+                // announced as setHighlight does (PR #238 repaint); the
+                // recheck no longer announces rows whose tint it keeps.
+                if (wasHighlighted && m_tableModel) {
+                    m_tableModel->notifyRowChangedForSid(sid);
+                }
                 m_table->viewport()->update();
             }
         });
@@ -1445,7 +1463,7 @@ void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
         // Qt view framework on macOS — the user had to click a row
         // to force a selection-change repaint before the new tint
         // became visible.
-        if (m_tableModel) {
+        if (m_tableModel && m_rowDelegate->highlightFor(sid) != before) {
             m_tableModel->notifyRowChangedForSid(sid);
         }
         m_table->viewport()->update();
@@ -2181,6 +2199,16 @@ void FreeDVReporterDialog::setIdleTimeoutMinutesForTest(int minutes) {
         for (QAction* a : m_idleGroup->actions()) {
             a->setChecked(a->data().toInt() == minutes);
         }
+    }
+}
+
+void FreeDVReporterDialog::setColoringRecheckMsForTest(int ms) {
+    if (!m_coloringTimer) {
+        return;
+    }
+    m_coloringTimer->stop();
+    if (ms > 0) {
+        m_coloringTimer->start(ms);
     }
 }
 
