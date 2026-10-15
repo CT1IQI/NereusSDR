@@ -21,6 +21,9 @@
 //                m_tgxlRfSettleMs (kTgxlRfSettleMs unless a test sets it)
 //                and calls a test observer when it fires. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Clear the retired connection's discovery exemption before
+//                publishing intentional disconnect. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -3042,8 +3045,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
     // ── H.5: P1/P2 status-frame mic_ptt → MoxController PTT-source dispatch ──
     //
-    // RadioConnection::micPttFromRadio(bool) is emitted unconditionally on every
-    // status frame (P1 EP6, P2 High-Priority) with the instantaneous PTT state.
+    // RadioConnection::micPttFromRadio(bool) is emitted for each P1 packet
+    // carrying ordinary status and every P2 High-Priority packet, with the
+    // instantaneous PTT state. The P1 all-I2C path publishes no PTT update.
     // MoxController::onMicPttFromRadio is idempotent on repeated same-state calls.
     //
     // The actual connect() is deferred to wireConnectionSignals() where
@@ -13233,14 +13237,35 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         // binds, so there is nothing to widen yet and nothing to warn about.
         return;
     }
-    if (m_streamAllocator.streamSampleRateHz(stream) == restored) {
+    const int effective = m_streamAllocator.streamSampleRateHz(stream);
+    if (effective == restored) {
         // Already there. Skipping keeps a band change that did not actually
         // change the rate from running the whole rebind transaction, and
         // from emitting a rejection toast for a rate the radio is on.
         return;
     }
 
-    requestSliceSampleRate(slice->sliceIndex(), restored);
+    const int sliceId = slice->sliceIndex();
+    if (m_role == Role::Local && effective > 0) {
+        // Until the request commits, the property describes the effective
+        // stream rate. A rejected or pending request must not display the
+        // restored preference as though it has already been applied.
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const double frequencyHz = slice->frequency();
+        slice->setSampleRateHz(effective);
+        // The reset emits: an observer can retire, rebind, retune or re-rate the
+        // slice. A newer change owns it rather than this saved preference.
+        if (!self || !target || self->sliceById(sliceId) != target.data()
+            || target->streamIndex() != stream
+            || target->frequency() != frequencyHz
+            || target->sampleRateHz() != effective
+            || self->m_streamAllocator.streamSampleRateHz(stream) != effective) {
+            return;
+        }
+    }
+
+    requestSliceSampleRate(sliceId, restored);
 }
 
 // R-R3-49. NereusSDR-original: per-slice per-band rates are a Phase 3F
@@ -26974,6 +26999,12 @@ void RadioModel::teardownConnection()
     // but isConnected() still read stale-Connected. See design addendum
     // docs/architecture/2026-08-03-remote-daemon-r2-r3-design-addendum.md
     // section 5.
+    // The disconnected callback is severed above, so its discovery cleanup
+    // must also happen here. Clear before observers see Disconnected; an
+    // unsaved radio that has stopped replying may now age out normally.
+    if (m_discovery) {
+        m_discovery->clearConnectedMac();
+    }
     setConnectionState(ConnectionState::Disconnected);
 
     // TX safety fix round 2 (2026-09-30): the forced Disconnected above never

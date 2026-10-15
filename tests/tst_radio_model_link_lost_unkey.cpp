@@ -305,6 +305,44 @@ private slots:
         QVERIFY(!rig.conn.log.contains(QStringLiteral("PS off")));
     }
 
+    void intentionalDisconnectReleasesDiscoveryConnectedMacExemption()
+    {
+        Rig rig;
+        RadioDiscovery* discovery = rig.model.discovery();
+        const QString connectedMac = QStringLiteral("AA:BB:CC:DD:EE:01");
+        const QString savedMac = QStringLiteral("AA:BB:CC:DD:EE:02");
+        RadioInfo connectedRadio;
+        connectedRadio.macAddress = connectedMac;
+        RadioInfo savedRadio;
+        savedRadio.macAddress = savedMac;
+        discovery->injectLastSeenForTest(connectedMac, connectedRadio, 0);
+        discovery->injectLastSeenForTest(savedMac, savedRadio, 0);
+        discovery->setSavedMacs({savedMac});
+        discovery->setConnectedMac(connectedMac);
+        QSignalSpy lost(discovery, &RadioDiscovery::radioLost);
+        discovery->forceStaleCheckForTest();
+        QCOMPARE(lost.count(), 0);
+
+        int lostAtDisconnected = -1;
+        connect(&rig.model, &RadioModel::connectionStateChanged, &rig.model,
+                [&](ConnectionState state) {
+                    if (state == ConnectionState::Disconnected) {
+                        discovery->forceStaleCheckForTest();
+                        lostAtDisconnected = lost.count();
+                    }
+                }, Qt::DirectConnection);
+
+        rig.model.disconnectFromRadio();
+
+        QCOMPARE(rig.model.connectionState(), ConnectionState::Disconnected);
+        QCOMPARE(lostAtDisconnected, 1);
+        QCOMPARE(lost.count(), 1);
+        QCOMPARE(lost.at(0).at(0).toString(), connectedMac);
+        const QList<RadioInfo> remaining = discovery->discoveredRadios();
+        QCOMPARE(remaining.size(), 1);
+        QCOMPARE(remaining.first().macAddress, savedMac);
+    }
+
     void disconnectAfterLinkLossClearsTheLock()
     {
         Rig rig;
