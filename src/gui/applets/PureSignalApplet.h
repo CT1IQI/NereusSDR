@@ -70,6 +70,7 @@ mw0lge@grange-lane.co.uk
 
 #pragma once
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 #include <QPointer>
 #include <QVariantMap>
 
@@ -112,7 +113,7 @@ enum class Ps3Action;
 // at console.cs:46149-46152 [v2.10.3.13]).
 class PureSignal;
 
-class PureSignalApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT PureSignalApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit PureSignalApplet(RadioModel* model, QWidget* parent = nullptr);

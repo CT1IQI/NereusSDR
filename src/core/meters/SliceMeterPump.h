@@ -123,13 +123,14 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 
 #include <functional>
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
 class RadioModel;
 class SliceModel;
 
-class SliceMeterPump : public QObject {
+class NEREUS_CORE_EXPORT SliceMeterPump : public QObject {
     Q_OBJECT
 
 public:

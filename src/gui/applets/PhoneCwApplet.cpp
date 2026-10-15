@@ -78,6 +78,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -366,8 +369,6 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
     // ── Control 3: Mic profile combo ─────────────────────────────────────────
     m_micProfileCombo = new QComboBox(page);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the profile list changes.
-    installQtCocoaAccessibleTableCacheRepair(m_micProfileCombo->view());
     m_micProfileCombo->setFixedHeight(22);
     m_micProfileCombo->addItems({QStringLiteral("Default"), QStringLiteral("DX"),
                                  QStringLiteral("Contest"), QStringLiteral("Custom")});
@@ -1506,6 +1507,7 @@ void PhoneCwApplet::rebuildMicProfileCombo()
     MicProfileManager* mgr = m_model ? m_model->micProfileManager() : nullptr;
     if (!m_micProfileCombo || !mgr) { return; }
     QSignalBlocker b(m_micProfileCombo);
+    resetItemsBeforeRowChange(m_micProfileCombo);
     m_micProfileCombo->clear();
     m_micProfileCombo->addItems(mgr->profileNames());
     const int idx = m_micProfileCombo->findText(mgr->activeProfileName());

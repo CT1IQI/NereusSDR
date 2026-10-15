@@ -880,8 +880,10 @@ private slots:
         // Preferences became Mixed when its callsign and grid were
         // connected to the station identity (R3 controls that work), and
         // Filter Presets became a Core page when the presets moved to the
-        // Core (iPhone app Task 19, D40).
-        QVERIFY2(pages.size() >= 20,
+        // Core (iPhone app Task 19, D40). Serial Ports, TCP/IP CAT, CAT
+        // Options and CAT PTT became Core pages when a remote window
+        // started setting up the Core's CAT (PR 488), leaving 19.
+        QVERIFY2(pages.size() >= 19,
                  qPrintable(QStringLiteral("only %1 ThisComputer registrations found")
                                 .arg(pages.size())));
 

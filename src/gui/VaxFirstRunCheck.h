@@ -40,6 +40,7 @@
 #include "core/audio/VirtualCableDetector.h"
 #include "gui/VaxFirstRunDialog.h"
 #include "gui/setup/SoundSystemLine.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QObject>
 #include <QPointer>
@@ -51,7 +52,7 @@ namespace NereusSDR {
 
 class IAudioDeviceCatalog;
 
-class VaxFirstRunCheck : public QObject {
+class NEREUS_GUI_EXPORT VaxFirstRunCheck : public QObject {
     Q_OBJECT
 
 public:

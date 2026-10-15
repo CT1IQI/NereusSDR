@@ -9,6 +9,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-15 - Test-only seams for the TGXL autotune RF settle: its
+//                length (setTgxlRfSettleMsForTest) and an observer called
+//                when it fires (setTgxlSettleFiredObserverForTest). Release
+//                behavior unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4986,6 +4996,17 @@ public:
     // schedule on the next event loop iteration, so QCoreApplication::processEvents
     // can drive the deferred completion synchronously.
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
+    // TGXL autotune: the RF settle between the carrier gate opening and the
+    // `autotune` command (kTgxlRfSettleMs in release). A test can lengthen
+    // it so its own setup cannot outrun the window, and observe each settle
+    // callback: `cycle` is the tune cycle that armed it, `stale` is true
+    // when that cycle (or its carrier) is no longer current, so the
+    // callback sends nothing.
+    void setTgxlRfSettleMsForTest(int ms) noexcept { m_tgxlRfSettleMs = ms; }
+    void setTgxlSettleFiredObserverForTest(std::function<void(quint64 cycle, bool stale)> observer)
+    {
+        m_tgxlSettleFiredObserverForTest = std::move(observer);
+    }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
@@ -8050,6 +8071,16 @@ private:
     void onBackgroundSettingsSaveFinished(quint64 ticket, bool saved, const QString& error);
     QString m_settingsSaveError;
     QSet<int> m_dirtySettingsSliceIds;
+    // Latest captured value for each fully qualified per-band key. No map
+    // change hooks run until the existing save/explicit recall boundary.
+    QHash<int, QMap<QString, QVariant>> m_pendingBandSettings;
+    void materializePendingBandSettings(int sliceId);
+    // A write of a held key by anyone but materializePendingBandSettings()
+    // is newer than the held copy, so that key leaves the hold and the
+    // other write survives. The rest of the hold is still saved.
+    void onSettingsKeyWritten(const QString& key);
+    int m_settingsWriteObserverId = 0;
+    bool m_materializingPendingBandSettings = false;
     // Phase 3P-I-a — dirty flag for AlexController persistence.
     // AlexController::antennaChanged can fire 14× during load(); the
     // flag + scheduleSettingsSave() timer coalesces them into a single
@@ -8780,6 +8811,10 @@ private:
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
     static constexpr int kTgxlCarrierReadyMs = 3000;
     static constexpr int kTgxlRfSettleMs = 150;
+    // The settle length in use: kTgxlRfSettleMs except under
+    // setTgxlRfSettleMsForTest.
+    int m_tgxlRfSettleMs{kTgxlRfSettleMs};
+    std::function<void(quint64, bool)> m_tgxlSettleFiredObserverForTest;
     // Completion ownership: actual channel, its latest run request and
     // the tune cycle that requested it. The completion is always queued.
     QPointer<TxChannel> m_tgxlCarrierChannel;

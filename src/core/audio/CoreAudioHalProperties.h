@@ -6,6 +6,8 @@
 // called from a device callback.  No upstream logic.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//               Add diagnostic-only markers around individual HAL reads.
 //   2026-10-09: native audio plan Task 8 (R-AUD-01, R-AUD-11). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -17,6 +19,7 @@
 #ifdef Q_OS_MAC
 
 #include "core/IAudioBus.h"
+#include "core/audio/NativeAudioQueryTrace.h"
 
 #include <QString>
 
@@ -47,7 +50,9 @@ std::optional<T> read(AudioObjectID object, AudioObjectPropertySelector selector
     const AudioObjectPropertyAddress where = address(selector, scope);
     T value{};
     UInt32 size = sizeof(T);
-    if (AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, &value) != noErr
+    if (tracedNativeAudioQuery("hal.get-property-data", -1, [&] {
+            return AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, &value);
+        }) != noErr
         || size != sizeof(T)) {
         return std::nullopt;
     }
@@ -61,11 +66,15 @@ std::vector<T> readArray(AudioObjectID object, AudioObjectPropertySelector selec
 {
     const AudioObjectPropertyAddress where = address(selector, scope);
     UInt32 size = 0;
-    if (AudioObjectGetPropertyDataSize(object, &where, 0, nullptr, &size) != noErr || size == 0) {
+    if (tracedNativeAudioQuery("hal.get-property-data-size", -1, [&] {
+            return AudioObjectGetPropertyDataSize(object, &where, 0, nullptr, &size);
+        }) != noErr || size == 0) {
         return {};
     }
     std::vector<T> values(size / sizeof(T));
-    if (AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, values.data()) != noErr) {
+    if (tracedNativeAudioQuery("hal.get-property-data", -1, [&] {
+            return AudioObjectGetPropertyData(object, &where, 0, nullptr, &size, values.data());
+        }) != noErr) {
         return {};
     }
     values.resize(size / sizeof(T));
@@ -77,13 +86,17 @@ inline int channelCount(AudioObjectID device, AudioObjectPropertyScope scope)
 {
     const AudioObjectPropertyAddress where = address(kAudioDevicePropertyStreamConfiguration, scope);
     UInt32 size = 0;
-    if (AudioObjectGetPropertyDataSize(device, &where, 0, nullptr, &size) != noErr
+    if (tracedNativeAudioQuery("hal.get-property-data-size", -1, [&] {
+            return AudioObjectGetPropertyDataSize(device, &where, 0, nullptr, &size);
+        }) != noErr
         || size < sizeof(AudioBufferList)) {
         return 0;
     }
     std::vector<std::byte> storage(size);
     auto* list = reinterpret_cast<AudioBufferList*>(storage.data());
-    if (AudioObjectGetPropertyData(device, &where, 0, nullptr, &size, list) != noErr) {
+    if (tracedNativeAudioQuery("hal.get-property-data", -1, [&] {
+            return AudioObjectGetPropertyData(device, &where, 0, nullptr, &size, list);
+        }) != noErr) {
         return 0;
     }
     int channels = 0;
