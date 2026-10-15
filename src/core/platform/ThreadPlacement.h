@@ -53,6 +53,11 @@
 //               worker and pump held two of the Rock's four fast cores
 //               for as long as VOX was on. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15: the connection thread shares the DSP thread's core only
+//               where slower cores run housekeeping; on equal cores it
+//               stays on the housekeeping cores. While transmitting,
+//               spectrum threads keep off the transmit roles' cores. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -180,15 +185,19 @@ struct PlacementPlan {
 /// with VOX on it runs through every receive period: its three roles come
 /// after every receive worker and take the cores those leave.
 ///
-/// The radio connection thread shares the DSP thread's core, raised like
-/// it. It has the one hard deadline in the Core: the radio's packets wait
+/// Where slower cores run everything else, the radio connection thread
+/// shares the DSP thread's core, raised like it. It has the one hard
+/// deadline in the Core: the radio's packets wait
 /// in a socket buffer that holds a few milliseconds of wide receivers, and
 /// whatever does not fit is lost. Neither thread runs longer than a
 /// millisecond at a stretch, so neither keeps the other waiting, where a
 /// receive worker runs for tens of milliseconds and must share with
 /// neither. With no DSP thread the connection thread takes that core
 /// alone; with no core for the DSP thread both run on the housekeeping
-/// cores at normal priority.
+/// cores at normal priority. Where every core is equally fast it stays on
+/// the housekeeping cores at normal priority: it was measured only on the
+/// Rock 5C, and the Pi 4 (the Hermes Lite 2 bench) has fewer cores to
+/// share.
 ///
 /// Where slower cores run everything else, a receive worker left without a
 /// core shares the cores of the later receive workers that have one, raised
@@ -200,7 +209,8 @@ struct PlacementPlan {
 /// same way: it does as much work listening as transmitting.
 ///
 /// Spectrum threads own no core. Where slower cores run everything else,
-/// they may use every signal processing core, at normal priority, so they
+/// they may use every signal processing core, at normal priority (while
+/// transmitting, every one the transmit roles leave), so they
 /// take the time signal processing leaves and the kernel moves them off a
 /// core a receive worker wants. They must not be held to one core: a
 /// receive worker's burst there (50 ms at 1,536,000) would keep a spectrum

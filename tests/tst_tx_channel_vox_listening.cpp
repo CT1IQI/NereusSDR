@@ -38,6 +38,11 @@
 //                 on VOX on, key, unkey and VOX off.  J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-15 - (f): each thread gets its own ID from the fake system
+//                 calls, so a second registration cannot replace the test's
+//                 DSP thread, and the test checks the DSP thread keeps its
+//                 core.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #define NEREUS_BUILD_TESTS 1
@@ -48,16 +53,23 @@
 #include "core/WdspEngine.h"
 #include "core/platform/ThreadPlacement.h"
 
+#include <functional>
 #include <memory>
+#include <thread>
 
 using namespace NereusSDR;
 
 namespace {
 
-// Accepts every move and priority change and makes none.
+// Accepts every move and priority change and makes none. Each thread has
+// its own ID, so a registration from another thread (a WDSP worker) never
+// replaces the test thread's.
 class AcceptingApi final : public ThreadSchedulingApi {
 public:
-    qint64 currentThreadId() override { return 1; }
+    qint64 currentThreadId() override
+    {
+        return static_cast<qint64>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    }
     bool setAffinity(qint64, const QList<int>&) override { return true; }
     bool setNice(qint64, int) override { return true; }
 };
@@ -208,6 +220,7 @@ private slots:
 
         const auto expectListening = [&]() {
             const PlacementPlan plan = placement.currentPlan();
+            QCOMPARE(plan.cpuFor(ThreadRole::DspThread), 5);
             QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 1), 6);
             QCOMPARE(plan.cpuFor(ThreadRole::RxWorker, 2), 7);
             QCOMPARE(plan.cpuFor(ThreadRole::TxWorker, tx), -1);

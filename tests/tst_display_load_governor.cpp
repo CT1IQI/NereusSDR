@@ -800,6 +800,58 @@ private slots:
         QVERIFY(!displayLoadReadingFrom(in, 0, fourPans()).systemCpuPercent.has_value());
     }
 
+    // R-R3-40/41: the governor's CPU set is the housekeeping cores and
+    // every core a spectrum thread may use. On the Rock spectrum runs on
+    // the fast cores, and read from the slow cores alone its load would
+    // not show. Plans come from planThreadPlacement, as nereusd makes them.
+    void governorCpusCoverTheCoresSpectrumMayUse()
+    {
+        QVERIFY(displayGovernorCpus(PlacementPlan{}).isEmpty()); // all cores
+
+        // Four equal cores: spectrum stays on the housekeeping cores.
+        CpuTopology equal;
+        equal.online = {0, 1, 2, 3};
+        for (int cpu : std::as_const(equal.online)) {
+            equal.capacity.insert(cpu, 1024);
+        }
+        equal.clockDomains = {{0, 1, 2, 3}};
+        PlacementDemand receiving;
+        receiving.rxChannels = {0, 1};
+        receiving.dspThread = true;
+        receiving.connectionThread = true;
+        receiving.spectrumThreads = {0, 1};
+        const PlacementPlan equalPlan = planThreadPlacement(equal, receiving);
+        QVERIFY(equalPlan.active);
+        QCOMPARE(displayGovernorCpus(equalPlan), (QList<int>{0, 1}));
+
+        // RK3588S (Rock 5C): 0-3 slow, 4-7 fast.
+        CpuTopology rock;
+        for (int cpu = 0; cpu < 8; ++cpu) {
+            rock.online.append(cpu);
+            rock.capacity.insert(cpu, cpu < 4 ? 405 : 1024);
+        }
+        rock.clockDomains = {{0, 1, 2, 3}, {4, 5}, {6, 7}};
+        const PlacementPlan rockPlan = planThreadPlacement(rock, receiving);
+        QCOMPARE(rockPlan.housekeeping, (QList<int>{0, 1, 2, 3}));
+        QCOMPARE(displayGovernorCpus(rockPlan), (QList<int>{0, 1, 2, 3, 4, 5, 6, 7}));
+
+        // No spectrum thread running: the housekeeping cores alone.
+        PlacementDemand noSpectrum = receiving;
+        noSpectrum.spectrumThreads.clear();
+        QCOMPARE(displayGovernorCpus(planThreadPlacement(rock, noSpectrum)),
+                 (QList<int>{0, 1, 2, 3}));
+
+        // Keyed: the transmit worker and pump hold 6 and 7, and spectrum
+        // keeps off them.
+        PlacementDemand keyed = receiving;
+        keyed.txWorker = true;
+        keyed.txWorkerThread = true;
+        const PlacementPlan keyedPlan = planThreadPlacement(rock, keyed);
+        QCOMPARE(keyedPlan.cpuFor(ThreadRole::TxWorker), 6);
+        QCOMPARE(keyedPlan.cpuFor(ThreadRole::TxWorkerThread), 7);
+        QCOMPARE(displayGovernorCpus(keyedPlan), (QList<int>{0, 1, 2, 3, 4, 5}));
+    }
+
     void aConfiguredCeilingBelowTheFloorIsNeverRaised()
     {
         const DisplayBudgetCharge small = panCharge(128, 5);

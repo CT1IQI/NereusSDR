@@ -61,6 +61,8 @@
 //   2026-10-11 : J.J. Boyd (KG4VCF): test-only friendship for the VOX
 //                 listening test's live transmit channel. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-15 : J.J. Boyd (KG4VCF): that friendship's comment says which
+//                 test and why. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -1108,7 +1110,8 @@ private:
     friend class ::TestTxKeyDspOptions;
     // Leveler lane: the remote microphone leveler measurement.
     friend class ::TestTxLevelerRemoteMic;
-    // Same friendship for the VOX listening test's live transmit channel.
+    // tst_tx_channel_vox_listening sets m_initialized to open a live
+    // transmit channel and check what it tells thread placement.
     friend class ::TstTxChannelVoxListening;
 #endif
 };

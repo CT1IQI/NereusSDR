@@ -387,7 +387,7 @@ warren@wpratt.com
 //                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
 //                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
-//   2026-10-11 — The channel tells nereusd's thread placement when it is
+//   2026-10-11 - The channel tells nereusd's thread placement when it is
 //                 up only so VOX can hear the microphone, on VOX on and
 //                 on each unkey with VOX on, so the receivers keep their
 //                 fast cores between transmissions. J.J. Boyd (KG4VCF),
@@ -395,6 +395,8 @@ warren@wpratt.com
 //   2026-10-14 - Publish VOX callback targets atomically, suppress retired
 //                 snapshots and defer lane publication until open. J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-15 - Punctuation of the 2026-10-11 entry. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)

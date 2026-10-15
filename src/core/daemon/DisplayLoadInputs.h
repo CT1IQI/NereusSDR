@@ -29,9 +29,12 @@ struct DisplayLoadInputs {
     QList<Receiver> receivers;
     /// All cores (the telemetry value).
     std::optional<double> systemCpuPercent;
-    /// The housekeeping cores only, where encoding, Opus and sending run
-    /// while thread placement is active (and spectrum, unless placement
-    /// lets it use the signal processing cores).
+    /// While thread placement is active, the cores displayGovernorCpus()
+    /// names: the housekeeping cores, where encoding, Opus and sending
+    /// run, and every core a spectrum thread may use. Where spectrum runs
+    /// on signal processing cores (the Rock 5C) this includes the raised
+    /// receive and transmit threads' time there, which lowering the
+    /// display cannot relieve.
     std::optional<double> housekeepingCpuPercent;
     /// How long ago the host sample behind both CPU values began, in
     /// milliseconds (SharedHostSampler::cpuSampleBeganMsAgo). Absent with
@@ -53,12 +56,18 @@ struct DisplayLoadInputs {
 /// display work, so its load is not the display's to relieve.
 bool receiverSharesDisplayCores(const PlacementPlan& placement, int sliceId);
 
+/// The cores whose CPU share the governor reads (SharedHostSampler::
+/// setGovernorCpus): the housekeeping cores and every core a spectrum
+/// thread may use, ascending, each once. Empty, meaning all cores, when
+/// threads are not placed.
+QList<int> displayGovernorCpus(const PlacementPlan& placement);
+
 /// The governor reading for these inputs. Receivers that did no work
 /// (idle) or that the display cannot relieve are left out, with their late
-/// blocks and input waits. CPU is the housekeeping cores' share while
+/// blocks and input waits. CPU is the share of displayGovernorCpus() while
 /// placement is active (saturated housekeeping cores starve Opus and
-/// sending however idle the signal processing cores are), otherwise all
-/// cores.
+/// sending however idle the other signal processing cores are), otherwise
+/// all cores.
 DisplayLoadReading displayLoadReadingFrom(const DisplayLoadInputs& inputs, qint64 nowMs,
                                           const DisplayBudgetCharge& acceptedCharge);
 

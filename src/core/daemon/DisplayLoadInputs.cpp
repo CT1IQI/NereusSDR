@@ -33,6 +33,22 @@ bool receiverSharesDisplayCores(const PlacementPlan& placement, int sliceId)
         || slowedByDisplay(ThreadRole::DspThread, -1);
 }
 
+QList<int> displayGovernorCpus(const PlacementPlan& placement)
+{
+    if (!placement.active) {
+        return {};
+    }
+    QList<int> cpus = placement.housekeeping;
+    for (const RoleAssignment& a : placement.assignments) {
+        if (a.role == ThreadRole::SpectrumThread) {
+            cpus.append(placement.coresFor(ThreadRole::SpectrumThread, a.channel));
+        }
+    }
+    std::sort(cpus.begin(), cpus.end());
+    cpus.erase(std::unique(cpus.begin(), cpus.end()), cpus.end());
+    return cpus;
+}
+
 DisplayLoadReading displayLoadReadingFrom(const DisplayLoadInputs& inputs, qint64 nowMs,
                                           const DisplayBudgetCharge& acceptedCharge)
 {

@@ -48,6 +48,12 @@
 //               root login has the CPU controller switched on. J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-15: fix round after the review: the connection thread moves
+//               to the DSP thread's core only where slower cores run
+//               housekeeping (on equal cores it was not measured and stays
+//               on the housekeeping cores), and while transmitting the
+//               spectrum threads keep off the transmit roles' cores. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/platform/ThreadPlacement.h"
@@ -498,8 +504,8 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // second or third receiver; those demand cores only for as long as
     // transmit does not.
     //
-    // The radio connection thread shares the DSP thread's core, both
-    // raised. Measured on the Rock 5C on 2026-10-10 with three receivers,
+    // Where slower cores run everything else, the radio connection thread
+    // shares the DSP thread's core, both raised. Measured on the Rock 5C on 2026-10-10 with three receivers,
     // two at 1,536,000 and one at 768,000 (17,000 packets a second, a
     // socket buffer worth 9 ms of them), each receive worker processing
     // 85 ms of signal at a stretch (DSP blocks of 4096) except where
@@ -531,13 +537,18 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // of it (56% with the fourth receiver). With no DSP thread running the
     // connection thread has the core to itself; with no core for the DSP
     // thread both run on the housekeeping cores at normal priority.
+    // Where every core is equally fast (a Raspberry Pi 4 or 5, x86 Linux)
+    // the connection thread stays on the housekeeping cores at normal
+    // priority, as it did before it had a role: none of this was measured
+    // there, and the Pi 4, the Hermes Lite 2 bench, has one core for the
+    // DSP thread to fill with several receivers.
     QList<RoleAssignment> order;
     if (!rx.isEmpty()) {
         order.append({ThreadRole::RxWorker, rx.first(), -1});
     }
     if (demand.dspThread) {
         order.append({ThreadRole::DspThread, -1, -1});
-    } else if (demand.connectionThread) {
+    } else if (demand.connectionThread && slowRunsHousekeeping) {
         order.append({ThreadRole::ConnectionThread, -1, -1});
     }
     // G-06 is for transmitting. With VOX on the transmit channel runs
@@ -620,17 +631,20 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
 
     if (demand.dspThread && demand.connectionThread) {
         int dspCpu = -1;
-        for (const RoleAssignment& a : std::as_const(order)) {
-            if (a.role == ThreadRole::DspThread) {
-                dspCpu = a.cpu;
+        if (slowRunsHousekeeping) {
+            for (const RoleAssignment& a : std::as_const(order)) {
+                if (a.role == ThreadRole::DspThread) {
+                    dspCpu = a.cpu;
+                }
             }
         }
         order.append({ThreadRole::ConnectionThread, -1, dspCpu, {}, dspCpu >= 0});
     }
 
     // Spectrum threads own no core. Where slower cores run everything else
-    // they may use every signal processing core, at normal priority; held
-    // to fewer they stall the connection thread. A spectrum thread takes
+    // they may use every signal processing core (while transmitting, every
+    // one the transmit roles leave), at normal priority; held to fewer they
+    // stall the connection thread. A spectrum thread takes
     // its event queue's lock for each block of samples, and so does the
     // connection thread to hand it one. Held to one later receiver's core,
     // a spectrum thread that lost the core to that receiver's burst (50 ms
@@ -654,7 +668,18 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     // At normal priority they cost the raised threads little: a spectrum
     // thread on its core kept the connection thread waiting 2 ms or more
     // 14 times in four minutes, 5.4 ms at most, and the DSP thread never
-    // 0.3 ms. Not measured while transmitting.
+    // 0.3 ms. Every figure here was measured receiving. Where the system
+    // refuses the raise (no LimitNICE), spectrum, the receive workers and
+    // the connection thread share the fast cores at nice 0; that case is
+    // not measured either.
+    //
+    // While transmitting (G-06, not listening for VOX) they keep off the
+    // cores the transmit roles hold, as the RADE decoders do (below): a
+    // raised thread can wait out a normal-priority thread's run (next
+    // paragraph), and the pump feeds the radio every 1.33 ms. With no fast
+    // core left they run on the housekeeping cores, as on equal cores.
+    // Keyed behavior is not measured. While listening for VOX nothing
+    // changes.
     //
     // What a raise buys against a thread at normal priority is less than
     // it looks: it does not take the core from one that has just woken.
@@ -694,6 +719,13 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     QList<int> spectrumCores;
     if (slowRunsHousekeeping) {
         spectrumCores = plan.signalPool;
+        if (!listening) {
+            for (const RoleAssignment& a : std::as_const(order)) {
+                if (isTransmitRole(a.role) && a.cpu >= 0) {
+                    spectrumCores.removeAll(a.cpu);
+                }
+            }
+        }
         std::sort(spectrumCores.begin(), spectrumCores.end());
     }
     for (int bucket : std::as_const(spectrum)) {
@@ -706,7 +738,9 @@ PlacementPlan planThreadPlacement(const CpuTopology& topology,
     //  1. decoders already on the core, so decoders spread across cores
     //     before any core takes a second;
     //  1a. the connection thread's core after every other core without a
-    //     decoder: it shares only with the DSP thread for a reason (above);
+    //     decoder: it shares only with the DSP thread for a reason (above).
+    //     Where the connection thread has no core of its own (equal
+    //     cores) this counts nothing;
     //  2. busy: every role the plan gives the core as its own. Transmit
     //     roles count in full: they are in the plan only while
     //     transmitting, and then they are working (G-06 keeps their cores
