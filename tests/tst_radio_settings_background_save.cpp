@@ -1,6 +1,12 @@
 // no-port-check: NereusSDR-original tests for RadioModel's timed settings
 // save, which must not write the file on the thread that sends the Core's
 // receive audio.
+//
+// Modification history (NereusSDR):
+// 2026-10-15 - A value written from outside (a remote window through the
+//              Core's settings proxy) to a held per-band key survives the
+//              next band click. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 #include <QtTest>
 #include <QDir>
 #include <QFile>
@@ -14,6 +20,7 @@
 
 #include "core/AppSettings.h"
 #include "core/SettingsFileWriter.h"
+#include "core/settings/SettingsProxyServer.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -133,6 +140,50 @@ private slots:
         QVERIFY(!onDisk.contains(firstPrefix + "Band20m/NnrAlpha"));
         QCOMPARE(onDisk.value(secondPrefix + "Band30m/AgcThreshold").toInt(), -43);
         QCOMPARE(onDisk.value(secondPrefix + "LastBand").toString(), QStringLiteral("30m"));
+    }
+
+    // The held copy of a band the slice left must not overwrite a newer
+    // value someone else wrote to one of its keys, here a remote window
+    // writing through the Core's settings proxy. The slice's own edits on
+    // that band, in the keys nobody else wrote, are still saved.
+    void outsideWriteToAHeldBandKeySurvivesTheNextBandClick()
+    {
+        SettingsProxyServer proxy(AppSettings::instance());
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice());
+        QVERIFY(slice);
+        QVERIFY(radio.setActiveSliceById(slice->sliceIndex()));
+        const QString prefix = QStringLiteral("Slice%1/").arg(slice->sliceIndex());
+        slice->setFrequency(14225000.0);
+        slice->setFilter(200, 2800);
+        slice->setAgcThreshold(-20);
+        radio.requestSettingsSave();
+        radio.flushPendingSettingsSave();
+
+        slice->setFilter(350, 2450);
+        slice->setAgcThreshold(-37);
+        radio.requestSettingsSave();
+        slice->setFrequency(7100000.0);
+        radio.requestSettingsSave();
+
+        const SettingsApplyResult result = proxy.applyInboundWrite(
+            prefix + QStringLiteral("Band20m/FilterLow"), 500, QStringLiteral("remote-window"));
+        QVERIFY2(result.accepted, qPrintable(result.reason));
+        radio.onBandButtonClicked(Band::Band15m);
+
+        auto& settings = AppSettings::instance();
+        QCOMPARE(settings.value(prefix + "Band20m/FilterLow").toInt(), 500);
+        QCOMPARE(settings.value(prefix + "Band20m/FilterHigh").toInt(), 2450);
+        QCOMPARE(settings.value(prefix + "Band20m/AgcThreshold").toInt(), -37);
+        radio.requestSettingsSave();
+        radio.flushPendingSettingsSave();
+
+        AppSettings onDisk(settings.filePath());
+        onDisk.load();
+        QCOMPARE(onDisk.value(prefix + "Band20m/FilterLow").toInt(), 500);
+        QCOMPARE(onDisk.value(prefix + "Band20m/FilterHigh").toInt(), 2450);
+        QCOMPARE(onDisk.value(prefix + "Band20m/AgcThreshold").toInt(), -37);
+        QCOMPARE(onDisk.value(prefix + "Band40m/Frequency").toDouble(), 7100000.0);
     }
 
     void explicitBandRecallConsumesPendingValuesBeforeSavingOutgoingState()

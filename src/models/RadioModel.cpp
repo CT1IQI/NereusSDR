@@ -22,6 +22,9 @@
 //                AI-assisted via OpenAI Codex.
 // 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -1773,6 +1776,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
             this, &RadioModel::onBackgroundSettingsSaveFinished);
+    m_settingsWriteObserverId = AppSettings::instance().addWriteObserver(
+        [this](const QString& key) { onSettingsKeyWritten(key); });
     // Keying marks the published Auto AGC noise floor stale at once, as the
     // headless Core's source does, not up to a tick later.
     connect(&m_transmitModel, &TransmitModel::moxChanged, this,
@@ -4755,6 +4760,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
     if (m_catService) { m_catService->beginRetirement(); }
@@ -26384,8 +26390,26 @@ void RadioModel::materializePendingBandSettings(int sliceId)
     }
     const QMap<QString, QVariant> pending = m_pendingBandSettings.take(sliceId);
     auto& settings = AppSettings::instance();
+    m_materializingPendingBandSettings = true;
+    const auto clearMaterializing = qScopeGuard([this] { m_materializingPendingBandSettings = false; });
     for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
         settings.setValue(it.key(), it.value());
+    }
+}
+
+void RadioModel::onSettingsKeyWritten(const QString& key)
+{
+    // The hold is this model's thread's alone. Slice keys are written on
+    // it (the proxy applies remote writes there); a write from any other
+    // thread is left alone rather than racing the hold.
+    if (QThread::currentThread() != thread()) {
+        return;
+    }
+    if (m_materializingPendingBandSettings || m_pendingBandSettings.isEmpty()) {
+        return;
+    }
+    for (auto it = m_pendingBandSettings.begin(); it != m_pendingBandSettings.end(); ++it) {
+        it.value().remove(key);
     }
 }
 
