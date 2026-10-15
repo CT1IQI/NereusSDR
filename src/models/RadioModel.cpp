@@ -1150,13 +1150,12 @@
 //   2026-10-10 - A receive channel takes its slice's DSP > Options buffer
 //                size, filter size and filter type before it runs a block
 //                (activateSliceChannel and the connect path), as Thetis's
-//                SyncDSP forces them in (console.cs:2681-2725 [v2.10.3.15]);
+//                SyncDSP forces them in (console.cs:2681-2726 [v2.10.3.15]);
 //                it ran WDSP's opening buffer of 4096 until its slice's
 //                next mode change. rebuildDspOptionsForMode applies the
 //                local page's edit to every slice in the mode group, not
-//                the first receiver alone. The radio connection thread
-//                registers with nereusd's thread placement. J.J. Boyd
-//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                the first receiver alone. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
