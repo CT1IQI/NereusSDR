@@ -13,11 +13,18 @@
 // Without a seed at channel open, the slice's default 20 dB never reached
 // WDSP and AGC Off ran at 60 dB, after every connect and every rebuild.
 //
+// The same holds for AGC Max Gain: WDSP opens at max_gain 10000.0 (80 dB,
+// RXA.c:383), RxChannel caches 90 dB (setup.Designer.cs:39443-39447
+// [v2.10.3.15]).
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-14 - New test file: AGC Fixed Gain seed at RX channel open.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-15 - AGC Max Gain seed at RX channel open. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -48,6 +55,13 @@ constexpr int kChannelId = 0;
 double appliedFixedGainDb(int channelId)
 {
     return 20.0 * std::log10(rxa[channelId].agc.p->fixed_gain);
+}
+
+// The max gain WDSP applies, in dB (SetRXAAGCTop stores pow(10, dB / 20),
+// third_party/wdsp/src/wcpAGC.c:527-531).
+double appliedMaxGainDb(int channelId)
+{
+    return 20.0 * std::log10(rxa[channelId].agc.p->max_gain);
 }
 #endif
 
@@ -106,6 +120,32 @@ private slots:
 
             engine.destroyRxChannel(kChannelId);
         }
+#endif
+    }
+
+    // A freshly opened channel runs the max gain RxChannel reports (90 dB,
+    // Thetis's default), so a later push of 90 is not lost to the
+    // setter's equality guard.
+    void openedChannelRunsTheCachedMaxGain()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP");
+#else
+        WdspEngine engine;
+        engine.m_initialized = true;
+        RxChannel* rx = engine.createRxChannel(kChannelId);
+        QVERIFY(rx != nullptr);
+
+        QCOMPARE(rx->agcMaxGain(), 90);
+        QCOMPARE(qRound(appliedMaxGainDb(kChannelId)), 90);
+
+        rx->setAgcMaxGain(90);
+        QCOMPARE(qRound(appliedMaxGainDb(kChannelId)), 90);
+
+        rx->setAgcMaxGain(70);
+        QCOMPARE(qRound(appliedMaxGainDb(kChannelId)), 70);
+
+        engine.destroyRxChannel(kChannelId);
 #endif
     }
 };
