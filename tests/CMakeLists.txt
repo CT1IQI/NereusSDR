@@ -10770,6 +10770,9 @@ if(TARGET wdsp_static AND TARGET rnnoise_static AND TARGET specbleach_static)
     endif()
 endif()
 
+# Pure setup-boundary checks and pin/staging verification; no PortAudio runtime.
+add_subdirectory(portaudio_bounds)
+
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
 add_custom_target(all_tests DEPENDS ${_all_tests})
 set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
