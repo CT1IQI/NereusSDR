@@ -269,6 +269,52 @@ private slots:
         QTRY_COMPARE(mox->state(), MoxState::Rx);
         QCOMPARE(keyedOn, 2);
     }
+
+    // Why the app tuned slice 2 while the Core's active slice for it was 0.
+    // At admission slice 2 is restored while it is the phone's only slice,
+    // so applyActiveSlices flags it active; adoptUnowned then gives the lone
+    // phone slice 0 and makes 0 its active slice, but nothing reruns
+    // applyActiveSlices, so the phone's wire carries active=true on both of
+    // its slices. Ruling 5.10 says each device sees exactly one. The app
+    // tunes the first own slice flagged active in the Core's object order
+    // (BandSlicesModel.ownActiveSliceId), which can be slice 2.
+    void aPhoneSeesExactlyOneActiveSliceAfterAdmission()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        core.model->sliceById(0)->setFrequency(14225000.0);
+        Device phone;
+        core.pair(phone);
+        const QByteArray phoneId = phone.key.fingerprint();
+        SavedSlice saved;
+        saved.id = 2;
+        saved.panKey = QStringLiteral("pan-0");
+        saved.frequencyHz = 7180200.0;
+        saved.dspMode = DSPMode::LSB;
+        QVERIFY(DeviceLayoutStore::append(AppSettings::instance(), core.model->currentRadioMac(),
+                                          phoneId, saved, 4));
+        LoopbackTransport* app = core.signIn(phone, kPhoneApp);
+        QVERIFY(admitted(app));
+        QVERIFY(core.model->sliceById(2) != nullptr);
+        const SliceOwnership* ownership = core.model->sliceOwnership();
+        QCOMPARE(ownership->activeFor(phoneId), 0);
+        QVERIFY(ownership->isActive(0));
+        QVERIFY(!ownership->isActive(2));
+        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
+
+        const bool wire0 =
+            latest(app->received(), QStringLiteral("slice:0"), QStringLiteral("active")).toBool();
+        const bool wire2 =
+            latest(app->received(), QStringLiteral("slice:2"), QStringLiteral("active")).toBool();
+        QVERIFY(wire0);
+        QEXPECT_FAIL("",
+                     "Core bug: adoptUnowned makes slice 0 the phone's active slice at admission "
+                     "without rerunning applyActiveSlices, so slice 2 keeps active=true",
+                     Continue);
+        QVERIFY(!wire2);
+        QEXPECT_FAIL("", "same Core bug: SliceModel 2 still flagged active", Continue);
+        QVERIFY(!core.model->sliceById(2)->isActive());
+    }
 };
 
 QTEST_MAIN(TstPhoneTakeTxSlice)
