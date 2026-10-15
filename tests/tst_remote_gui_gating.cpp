@@ -2397,10 +2397,10 @@ private slots:
             }
         }
         // R-R3-49: six This Computer leaves (UI Scale & Theme, Navigation,
-        // Skins, Collapsible Display, MIDI Control, Shortcuts) and five Core
-        // leaves (Serial Ports, TCP/IP CAT, TX Profiles, Signal Generator,
-        // Hardware Tests) are not registered while their features are not
-        // built, so each floor drops by that many.
+        // Skins, Collapsible Display, MIDI Control, Shortcuts) and seven Core
+        // leaves (Serial Ports, TCP/IP CAT, CAT Options, CAT PTT, TX Profiles,
+        // Signal Generator, Hardware Tests) are not registered while their
+        // features are not built, so each floor drops by that many.
         QVERIFY(thisComputer >= 12);
         QVERIFY(core >= 22);
         QVERIFY(mixed >= 8);

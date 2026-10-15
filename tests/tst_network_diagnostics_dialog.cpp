@@ -10,6 +10,8 @@
 //  of the License, or (at your option) any later version.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Each test starts from an empty settings profile of its own.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - The Audio Backend row names the sound system the Settings
 //                audio pages name, from the engine's device catalogue.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -28,6 +30,7 @@
 #include <future>
 
 #include "fakes/FakeAudioEngineBackend.h"
+#include "core/AppSettings.h"
 #include "gui/NetworkDiagnosticsDialog.h"
 #include "core/AudioEngine.h"
 #include "core/RadioConnection.h"
@@ -131,6 +134,16 @@ class TstNetworkDiagnosticsDialog : public QObject {
     Q_OBJECT
 
 private slots:
+    // The Backend row's choicesInUse() (SoundSystemLine.cpp) reads the saved
+    // Speakers, Headphones and TxInput choices, so every test starts from an
+    // empty settings profile of its own, not whatever the machine has saved.
+    void initTestCase()
+    {
+        AppSettings::setProfileOverride(
+            QStringLiteral("network-diagnostics-dialog-%1").arg(QCoreApplication::applicationPid()));
+    }
+    void init() { AppSettings::instance().clear(); }
+
     void asioSnapshotGuardsBeforeBusReads()
     {
         AudioEngine engine;
