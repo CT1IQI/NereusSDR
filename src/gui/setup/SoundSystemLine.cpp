@@ -17,6 +17,9 @@
 //               read through AudioEngine, so a Setup page does not read
 //               a key a core consumer reads. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-14: describeEngine() shares the line's words with Network
+//               Diagnostics' Audio Backend row. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SoundSystemLine.h"
@@ -158,6 +161,36 @@ QString SoundSystemLine::asioDriverInUse()
     return {};
 }
 
+SoundSystemLine::Description SoundSystemLine::describeFor(IAudioDeviceCatalog* catalogue,
+                                                         AudioEngine* engine)
+{
+    Description described;
+    if (catalogue != nullptr) {
+        described.text = soundSystemDescription(*catalogue, asioDriverInUse());
+        described.problem = soundSystemMissing(*catalogue);
+    }
+    if (described.text.isEmpty()) {
+        LinuxAudioBackend backend = LinuxAudioBackend::None;
+#if defined(Q_OS_LINUX)
+        if (engine != nullptr) {
+            backend = engine->linuxBackend();
+        }
+#else
+        Q_UNUSED(engine);
+#endif
+        described.text = describe(thisSystem(), backend);
+        described.problem = isProblem(thisSystem(), backend);
+    }
+    described.text = withOlderDriversInUse(described.text, olderDriversInUse());
+    return described;
+}
+
+QString SoundSystemLine::describeEngine(AudioEngine* engine)
+{
+    IAudioDeviceCatalog* catalogue = engine != nullptr ? engine->catalogue() : nullptr;
+    return describeFor(catalogue, engine).text;
+}
+
 void SoundSystemLine::refresh()
 {
     if (m_engine != nullptr && !m_catalogue) {
@@ -167,23 +200,8 @@ void SoundSystemLine::refresh()
                     [this]() { refresh(); });
         }
     }
-    QString described;
-    bool problem = false;
-    if (m_catalogue) {
-        described = soundSystemDescription(*m_catalogue, asioDriverInUse());
-        problem = soundSystemMissing(*m_catalogue);
-    }
-    if (described.isEmpty()) {
-        LinuxAudioBackend backend = LinuxAudioBackend::None;
-#if defined(Q_OS_LINUX)
-        if (m_engine != nullptr) {
-            backend = m_engine->linuxBackend();
-        }
-#endif
-        described = describe(thisSystem(), backend);
-        problem = isProblem(thisSystem(), backend);
-    }
-    show(withOlderDriversInUse(described, olderDriversInUse()), problem);
+    const Description described = describeFor(m_catalogue.data(), m_engine);
+    show(described.text, described.problem);
 }
 
 void SoundSystemLine::show(const QString& described, bool problem)

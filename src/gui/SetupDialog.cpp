@@ -202,6 +202,10 @@
 //   2026-10-08 - Rotor control plan Task 7: CAT & Network > Rotor, the
 //                antenna rotor's setup and presets (RotorSetupPage). J.J.
 //                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Serial Ports, TCP/IP CAT, CAT Options and CAT PTT are
+//                Core pages: a remote window sets up the Core's CAT, as
+//                it does the Core's RF-Kit and Rotor. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -1888,8 +1892,12 @@ void SetupDialog::buildTree()
 
     // ── CAT & Network ─────────────────────────────────────────────────────────
     QTreeWidgetItem* cat = addCategory("CAT & Network");
+    // The CAT pages (Serial Ports, TCP/IP CAT, CAT Options, CAT PTT) set up
+    // the CAT of the Core this window runs on: in a remote window they read
+    // the Core's stationCat object and send the stationCat commands
+    // (RemoteCatControl), so they are Core pages, as RF-Kit and Rotor are.
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
-        registerPage(cat, "Serial Ports", SetupScope::ThisComputer,
+        registerPage(cat, "Serial Ports", SetupScope::Core,
                      [this] { return new CatSerialPortsPage(m_model); });
     }
     // R-R3-42: this computer's TCI server and its own settings.
@@ -1959,13 +1967,13 @@ void SetupDialog::buildTree()
     // window it lists the Core's serial ports.
     registerPage(cat, "Rotor", SetupScope::Core, [this] { return new RotorSetupPage(m_model); });
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cat)) {
-        registerPage(cat, "TCP/IP CAT", SetupScope::ThisComputer, [this] { return new CatTcpIpPage(m_model); });
-        registerPage(cat, "CAT Options", SetupScope::ThisComputer, [this] {
+        registerPage(cat, "TCP/IP CAT", SetupScope::Core, [this] { return new CatTcpIpPage(m_model); });
+        registerPage(cat, "CAT Options", SetupScope::Core, [this] {
             auto* page = new CatOptionsSetupPage(m_model);
             connect(page,&CatOptionsSetupPage::showLogRequested,this,&SetupDialog::catLogRequested);
             return page;
         });
-        registerPage(cat, "CAT PTT", SetupScope::ThisComputer, [this] { return new CatPttSetupPage(m_model); });
+        registerPage(cat, "CAT PTT", SetupScope::Core, [this] { return new CatPttSetupPage(m_model); });
     }
     if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Midi)) {
         registerPage(cat, "MIDI Control", SetupScope::ThisComputer,
