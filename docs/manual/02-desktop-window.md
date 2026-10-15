@@ -76,7 +76,7 @@ every applet open to operate a slice.
 | RX applet | Show RX in the **Containers** menu's **Applets** section. | Selected-slice mode, filter, antenna selections, tuning step, balance, attenuation, AGC and offsets. |
 | TX applet | Show TX in the same section. | Transmit slice, drive, tune drive, keying, monitoring, processing, profile and transmit bandwidth. |
 | Phone / CW applet | Show the applet when it is available. | The implemented microphone source, input gain, level/compression displays and phone processing controls. |
-| Rotor applet | Show **Rotor** in the same section. It is always available. | The antenna rotor: **TURN TO** a bearing, **STOP**, **PRESETS**, and **Short path** or **Long path**. With no rotor set up it stays in the list, greyed with the reason. |
+| Rotor applet | Show **Rotor** in the same section. It is always available. | The antenna rotor: **TURN TO** a bearing, **STOP**, **PRESETS**, and **Short path** or **Long path**. With no rotor set up it stays in the panel, its controls grayed with the reason. |
 | Settings window | **File > Settings...** | Detailed parameters and device/Core setup, organized in a page tree. |
 
 Clicking an already-open flag tab closes its controls; clicking a different

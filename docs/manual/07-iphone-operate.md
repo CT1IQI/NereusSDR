@@ -154,14 +154,14 @@ To end normally, unkey first and verify the PTT state is receive. Open **Radio >
 The Rotor page turns the antenna rotor the Core controls. It needs a 2026.10.1 Core; an older Core greys it with "This Core does not control a rotor. Updating the Core may help." Open it from **Radio > Accessories > Rotor** or from **Tools > Rotor**. The **Accessories** list always shows a **Rotor** row.
 
 1. Read the heading and the status at the top. With no rotor set up on the Core, every control stays greyed and the page says "No rotor is set up on this Core." Set one up first (see below).
-2. Drag on the dial to pick a heading. The drag only selects; nothing moves yet. Tap **Turn to N°** (N is the selected heading) to send the turn.
-3. Tap **Short path** or **Long path** to choose which way around a bearing is reached.
+2. Drag on the dial to pick a heading. The drag only selects; nothing moves yet. Tap **Turn to N°** (the selected heading, three digits, such as **Turn to 030°**) to send the turn.
+3. Tap **Short path** or **Long path** to choose which way around the rotor turns; presets and the **Turn to N°** button follow it.
 4. Tap a preset to turn to it at once, and tap **STOP** to halt the rotor at once.
 5. Press and hold the counterclockwise or clockwise arrow to nudge the rotor. On an azimuth and elevation rotor, **Down** and **Up** nudge the elevation. The rotor turns only while you hold the button. The hold ends when you lift your finger, leave the page or leave the app.
 
 To set the rotor up from the phone, open **Setup > CAT & Network > Rotor**. Choose the **Controller**, then, for a serial controller, the **Serial port** and **Baud**. Set **Turns in**, **End stop**, **Travel** and **Heading offset** to match the rotor, and use **Save and connect** to apply them (or **Disconnect** to let go of the rotor). Under **Presets**, **Add** a name and heading and tap **Save presets**. The same setup is on the desktop; see [rotor control in chapter 19](19-amplifiers-tuners.md#control-a-rotor).
 
-A spot's details sheet (from the band or **Tools > Spot Hub**) shows a **Bearing** row and a **Turn beam** button that names the bearing, such as "Turn beam 330°". One tap sends the rotor there. The button is greyed, with the Core's reason, when there is no rotor or no bearing for that spot. **Tools > Rotor setting > Turn the beam when I tune to a spot** is a This phone switch, off by default: with it off, only **Turn beam** moves the rotor. See [chapter 20](20-phone-preferences.md#turn-the-beam-when-you-tune-to-a-spot).
+A spot's details sheet (from the band or **Tools > Spot Hub**) shows a **Bearing** row and a **Turn beam** button that names the bearing, such as "Turn beam 330°". One tap sends the rotor there. The button is grayed, with the Core's reason, when there is no rotor or no bearing for that spot. On the **Tools** page, under **Rotor setting** (**This phone**), **Turn the beam when I tune to a spot** is off by default: with it off, only **Turn beam** moves the rotor. See [chapter 20](20-phone-preferences.md#turn-the-beam-when-you-tune-to-a-spot).
 
 ## Open the tool for the task
 

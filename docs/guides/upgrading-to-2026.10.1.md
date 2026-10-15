@@ -26,8 +26,8 @@ normally so the new version can migrate them once.
   two-tone values. If your saved level was the old default of -6 dB, it
   becomes 0 dB. That is 6 dB more two-tone drive than before for anyone who
   never changed it, and it lets PureSignal calibrate. **If you use PureSignal,
-  check your two-tone level and drive before the first calibration.** A level
-  you chose yourself is left alone.
+  check your two-tone level and drive before the first calibration.** Any saved
+  level other than -6 dB is left alone.
 - **Audio choices move to the new Driver list.** Each device card now has one
   **Driver** list above **Device**, replacing the Driver API list and the
   Windows audio checkboxes. Your saved choices carry over once, and the old
@@ -47,20 +47,22 @@ normally so the new version can migrate them once.
 The Core runs as a service account with no groups of its own, so Linux sound
 cards and serial adapters each need a small systemd drop-in.
 
-- **Audio.** Every SBC install and both `.deb` packages now ship or write the
+- **Audio.** Every SBC install and every `.deb` package now ships or write the
   audio drop-in. An older install that lacks it cannot open a sound card, so
   the Core speaker will not work until you add
   `/etc/systemd/system/nereusd.service.d/audio.conf` with `[Service]` and
   `SupplementaryGroups=audio`.
 - **Serial.** A rotor on a GS-232 adapter, or serial CAT on the Core, needs
   `/etc/systemd/system/nereusd.service.d/serial.conf` with `[Service]` and
-  `SupplementaryGroups=dialout`. The Pi 4 and Rock installers write it; the
+  `SupplementaryGroups=dialout`. The Pi 4 and Rock installers and
+  the station image write it; the
   `.deb` packages do not. After adding either file, run
   `sudo systemctl daemon-reload` and `sudo systemctl restart nereusd`.
 
 The [SBC install guide](install-core-sbc.md) has the details, including the
-sound card's own mixer and kernels that refuse real-time priority. Building
-from source on Linux now needs `libpulse-dev`.
+sound card's own mixer and kernels that refuse real-time priority.
+Building the PulseAudio engine from source on Linux needs
+`libpulse-dev`.
 
 ## What to try
 
@@ -68,7 +70,7 @@ Each item is a short check you can do in a few minutes. Note the result,
 including anything that surprised you.
 
 1. **Rotor.** Open **File > Settings... > CAT & Network > Rotor**, choose your
-   controller (**Yaesu GS-232A/B, serial port** or **Hamlib rotctld**), set the
+   controller (**Yaesu GS-232A, serial port**, **Yaesu GS-232B, serial port**, **Hamlib rotctld, already running** or **Hamlib rotctld, started by the Core**), set the
    end stop and travel, and select **Save and connect**. Open the Rotor
    applet, turn to a heading, stop it, and try a preset. Right-click a spot
    and choose **Turn beam to** the call. On the iPhone or iPad, open the Rotor
@@ -89,7 +91,7 @@ including anything that surprised you.
 4. **Workspace look.** Hide and show a container header with the eye button.
    Hold Shift (or press Ctrl+Shift+A) to arrange, dock a container on each
    edge, pop one out, pin it and return it. Save a workspace profile and
-   switch to it with **Containers > Manage Workspace Profiles...**. Choose
+   switch to it with **Containers > Manage Workspace Profiles…**. Choose
    **Reset Default Layout** and confirm the S-Meter comes back.
 5. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
    a calibration at your new two-tone level and compare it with what you

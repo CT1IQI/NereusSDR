@@ -45,7 +45,7 @@ The detailed entry point is **Setup > DSP > NR/ANF**. These controls apply to th
 | --- | --- | --- |
 | **NR1** | The VFO popup has **Taps**, **Delay**, **Gain**, **Leak** and **Position** (**Pre-AGC** / **Post-AGC**). The numeric units for the first four are not defined by this interface. | Make one small change and compare the same signal. Do not infer a control meaning from its name. |
 | **NR2** | The popup has **Gain Method** (Linear, Log, Gamma, Trained), **NPE Method** (OSMS, MMSE, NSTAT), **AE Filter**, and **Noise post proc**. Setup provides **T1** (-5.0 to +5.0, default -0.5), **T2** (0.0 to 2.0, default 0.20), **Position**, and post-processing **Enable**, **Level**, **Factor**, **Rate** and **Taper**. The interface describes T1 as noise-estimator asymmetry; it calls T2 a training parameter without a further operator definition. | Compare AE Filter on/off on the same audio. Change one cascade value at a time and reverse it if speech artifacts worsen. |
-| **NR3** | RNNoise with **Position** and **Use fixed gain for input samples**. The Core-wide model selector and **Models...** dialog are described under [Choose the NR3 model](#choose-the-nr3-model). | Read **Status** after a model request. Keep the last available method if the Core refuses the change. |
+| **NR3** | RNNoise with **Position** and **Use fixed gain for input samples**. The Core-wide model selector and **Models…** dialog are described under [Choose the NR3 model](#choose-the-nr3-model). | Read **Status** after a model request. Keep the last available method if the Core refuses the change. |
 | **NR4** | **Reduction** (0-20 dB), **Smoothing** (0-100), **Whitening** (0-100), **Rescale** (0-12), **SNRthresh** (-10 to +10 dB), and **Algorithm** (Algo 1/2/3). | Compare one field at a time. The interface does not describe the audible distinction between the three algorithms. |
 | **DFNR** | **Attenuation Limit** (0-100 dB) and **Post-Filter Beta**. The quick popup reaches 1.00; Setup limits Beta to 0.30. The Core/build status explains whether it can run. | Read the actual value at the entry point you use. Do not assume an unavailable control is enabled by its parent NR selection. |
 | **MNR** | macOS MMSE-Wiener noise reduction. **Strength**, **Aggressiveness**, **Floor**, **Alpha**, **Bias**, **Gsmooth** and **Reset** are available in the popup and Setup. | Read the platform/readiness state, begin with **Reset** if you need a known comparison, and reverse any change that degrades speech. |
@@ -60,9 +60,9 @@ DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener met
 
 ### Choose the NR3 model
 
-1. Open **Setup > DSP > NR/ANF > NR3**. The **RNNoise Model (Global)** group holds the model selector. The model belongs to the Core and applies to every receiver, in local and remote windows alike.
+1. Open **File > Settings... > DSP > NR/ANF > NR3**. The **RNNoise Model (Global)** group holds the model selector. The model belongs to the Core and applies to every receiver, in local and remote windows alike.
 2. Choose a model from the selector. The Core offers its bundled large and small models and any you have added.
-3. To add, save or review the Core's NR3 models, choose **Models...** to open **NR3 Models**.
+3. To add, save or review the Core's NR3 models, choose **Models…** to open **NR3 Models**.
 4. Read the status line under the selector. If it says the model list could not be loaded right now, wait for the Core and reopen the page before changing anything.
 
 ### Select or repair an NNR model
@@ -74,7 +74,7 @@ DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener met
 2. If a selected model is missing or incompatible, choose a bundled model or
    a valid compatible Core asset from the appropriate selector. A saved name
    is not proof that the Core can run the file.
-3. To inspect or transfer an asset, choose **Models...** to open **NNR Model
+3. To inspect or transfer an asset, choose **Models…** to open **NNR Model
    Files**. The table shows Label, Format, Encoding, Size, Identity and
    Compatibility. Select the row and expand **Details** for validation errors.
    **Refresh files** reloads the Core list; **Import...** transfers a local

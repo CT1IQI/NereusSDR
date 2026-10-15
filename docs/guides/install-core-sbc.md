@@ -140,7 +140,7 @@ groups the Core does not belong to, so each needs a small systemd drop-in.
   change a card's mixer.
 - **Real-time priority.** Some vendor kernels refuse real-time scheduling to
   every service. The Core then logs "Raised thread priority was refused" and
-  its audio and signal processing threads run at normal priority. Nothing
+  its audio threads run without real-time priority. Nothing
   needs fixing; it is a note about that kernel. Check how heavily the board is
   loaded if audio breaks up.
 

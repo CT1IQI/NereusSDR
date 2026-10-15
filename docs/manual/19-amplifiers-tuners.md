@@ -185,11 +185,11 @@ The Core owns the rotor, so one rotor serves the desktop windows and phones sign
 
 ### Set up the rotor
 
-1. Open **File > Settings > CAT & Network > Rotor**. On a remote desktop the page acts on the Core's rotor.
+1. Open **File > Settings... > CAT & Network > Rotor**. On a remote desktop the page acts on the Core's rotor.
 2. Under **Connection**, choose the **Controller**: **Yaesu GS-232A, serial port**, **Yaesu GS-232B, serial port**, **Hamlib rotctld, already running**, or **Hamlib rotctld, started by the Core**. **No rotor** disconnects it. An Easy Rotor Control box speaks GS-232B at 9600 baud.
 3. For a serial controller, choose the **Serial port** (a port on the computer that runs the Core) and **Baud**. For a running rotctld, enter its **Host** and **Port**. For one the Core starts, choose the **Hamlib model**, or **Another model number**, and the port.
 4. Under **Rotor**, set **Turns in** (**Azimuth only** or **Azimuth and elevation**), **End stop** (**None, turns all the way round**, **North** or **South**), **Travel** (**360 degrees** or **450 degrees, with overlap**) and **Heading offset**, which is added to the heading the rotor reads when its pointer is off.
-5. Choose **Save and connect**. Read the status line above it; the live heading appears there once the rotor answers. With no rotor chosen, **Save and connect** disconnects the rotor and forgets its setup.
+5. Choose **Save and connect**. Read the status line at the top of the page; the live heading appears there once the rotor answers. With no rotor chosen, **Save and connect** disconnects the rotor and forgets its setup.
 6. Under **Presets**, use **Add** and **Remove** to edit the **Name** and **Heading** rows (0 to 360 degrees), then **Save presets**. They become one-tap buttons in the applet.
 
 On a Core installed from the .deb package, a serial rotor needs the serial drop-in described in the [SBC guide](https://nereussdr.com/guides/install-core-sbc.html).
@@ -200,11 +200,11 @@ The **Rotor** applet is shown by default. It shows a status dot and text, a dial
 
 - **STOP** halts the rotor.
 - **CCW** and **CW** turn only while you hold the button; on an azimuth and elevation rotor, **Down** and **Up** do the same for elevation.
-- **Short path** and **Long path** choose which way around a bearing is reached.
+- **Short path** and **Long path** choose which way around **TURN TO** reaches a callsign's bearing. Presets turn to their exact heading.
 - Under **PRESETS**, click a preset to turn to its heading. With no presets the applet says "No presets set up."
-- Under **TURN TO**, type a callsign and click **Turn** to turn to its short-path bearing.
+- Under **TURN TO**, type a callsign and click **Turn** to turn to its bearing by the path chosen above.
 
-A greyed control carries the reason, such as no rotor set up. To turn the beam from a spot, use **Turn beam to [callsign]** on a panadapter spot label or a Spot List row; see [Spots](16-spots-reporters.md). The phone has its own Rotor page: see [Turn the antenna with the Rotor page](07-iphone-operate.md#turn-the-antenna-with-the-rotor-page). **Rotor** on the phone needs a 2026.10.1 Core.
+A grayed control carries the reason, such as no rotor set up. To turn the beam from a spot, use **Turn beam to [callsign]** on a panadapter spot label or a Spot List row; see [Spots](16-spots-reporters.md). The phone has its own Rotor page: see [Turn the antenna with the Rotor page](07-iphone-operate.md#turn-the-antenna-with-the-rotor-page). **Rotor** on the phone needs a 2026.10.1 Core.
 
 ## Phone and remote-device availability
 

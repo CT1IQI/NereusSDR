@@ -67,11 +67,13 @@ Each system now plays and records through its own audio system.
   Core's own speaker now plays every receiver routed to the speakers.
 - A missing PC microphone turns the transmit badge amber. A Bluetooth
   microphone is never opened unless you pick it. On Windows, **VAX TX
-  (virtual device)** is greyed out with a reason.
+  (virtual device)** is grayed out with a reason.
 - Protocol 2 transmit monitoring is clean while keyed, and remote windows show
   the six transmit peak readings.
 - Remote listening no longer stutters or lags, and local audio recovers after
   its source pauses.
+- On macOS the VAX driver now registers under its own identity, so it no
+  longer clashes with another driver built from the same source.
 - PortAudio starts when it is first needed, not at launch. The Mac no longer
   shows a "Virtual cables detected" notice with a Windows badge.
 - A migrated microphone choice is kept on first setup, and a working
@@ -129,6 +131,7 @@ The workspace look is now the default.
 - Remote MOX, TUNE and 2-TONE lights start in the right state.
 - PureSignal status uses less CPU.
 - The Tuner Genius XL's OPERATE and STANDBY follow the tuner's own state.
+- A saved TX slice B is kept through a reconnect.
 
 ### Receivers and radios
 
@@ -156,11 +159,11 @@ Cores and apps still connect.
 
 ### Core installs on a Pi, Rock or Linux computer
 
-- Every SBC install and both `.deb` packages give the Core sound-card access
-  through an audio drop-in. The Rock installer also adds the serial drop-in
-  that rotor and serial CAT need on the Core; the `.deb` packages do not ship
-  it. See the Core install guide.
-- Building from source on Linux now needs `libpulse-dev`.
+- Every SBC install and every `.deb` package give the Core sound-card access
+  through an audio drop-in. The Pi 4 and Rock installers and the station image
+  also add the serial drop-in that rotor and serial CAT need on the Core; the
+  `.deb` packages do not ship it. See the Core install guide.
+- Building the PulseAudio engine from source on Linux needs `libpulse-dev`.
 
 ### Settings, support and spotting
 
