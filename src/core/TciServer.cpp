@@ -2092,6 +2092,10 @@ void TciServer::stop()
     }
     m_clients.clear();
     m_remoteAudioSockets.clear();
+    // Every app is gone: the sensor timers go back to the idle default, so
+    // a restarted server does not tick at a departed app's rate. They are
+    // stopped above; setInterval does not start them.
+    updateSensorTimerIntervals();
 
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
         if (m_remoteIqRequested[rx]) {

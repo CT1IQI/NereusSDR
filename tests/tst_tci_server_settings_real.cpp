@@ -261,6 +261,32 @@ private slots:
         QCOMPARE(server.txSensorTimerIntervalForTest(), 200);
         server.stop();
     }
+
+    // Stopping the server drops every app, so the shared sensor timers go
+    // back to the 200 ms idle default and a restarted server does not tick
+    // at the rate of an app from before the stop.
+    void stopResetsTheSensorTimers()
+    {
+        TciServer server(nullptr);
+        QVERIFY(server.start(0));
+        QWebSocket fast;
+        QSignalSpy connected(&fast, &QWebSocket::connected);
+        fast.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+        QVERIFY(connected.wait(2000));
+        QTRY_COMPARE(server.clients().size(), 1);
+        fast.sendTextMessage(QStringLiteral("rx_sensors_enable:true,50;"));
+        fast.sendTextMessage(QStringLiteral("tx_sensors_enable:true,60;"));
+        QTRY_COMPARE(server.rxSensorTimerIntervalForTest(), 50);
+        QTRY_COMPARE(server.txSensorTimerIntervalForTest(), 60);
+
+        server.stop();
+        QCOMPARE(server.rxSensorTimerIntervalForTest(), 200);
+        QCOMPARE(server.txSensorTimerIntervalForTest(), 200);
+        QVERIFY(server.start(0));
+        QCOMPARE(server.rxSensorTimerIntervalForTest(), 200);
+        QCOMPARE(server.txSensorTimerIntervalForTest(), 200);
+        server.stop();
+    }
     // Thetis keeps each app's audio stream channel count, 2 until the app
     // sends audio_stream_channels:1 or :2 (m_audioStreamChannels = 2,
     // TCIServer.cs:781; handleAudioStreamChannels, TCIServer.cs:6340-6354

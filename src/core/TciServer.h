@@ -571,7 +571,8 @@ private slots:
 
     // Sets the shared RX and TX sensor timers to the shortest interval among
     // the apps still connected with sensors on (200 ms when none). Called
-    // from onClientDisconnected after the app's session is removed.
+    // from onClientDisconnected after the app's session is removed, and from
+    // stop() after every session is.
     void updateSensorTimerIntervals();
 
     // Destroys all RESAMPLEF instances for the given session and clears the map.
