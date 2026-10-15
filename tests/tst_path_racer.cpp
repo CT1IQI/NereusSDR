@@ -219,6 +219,11 @@ struct RacePlans {
     QPointer<StationClient> client;
     QList<QList<QPair<QString, int>>> first;
     QList<QList<QPair<QString, int>>> upgrades;
+    // Milliseconds from each "Looking for a better path" to the racer's
+    // own "No path reached the Core".
+    QList<qint64> upgradeFailMs;
+    QElapsedTimer upgradeClock;
+    bool upgradeRunning = false;
 };
 RacePlans* s_plans = nullptr;
 QtMessageHandler s_previousHandler = nullptr;
@@ -228,6 +233,15 @@ void capturePlans(QtMsgType type, const QMessageLogContext& context, const QStri
     if (s_plans != nullptr && s_plans->client) {
         const bool first = message.contains(QStringLiteral("Racing every path to the Core"));
         const bool upgrade = message.contains(QStringLiteral("Looking for a better path to the Core"));
+        if (upgrade) {
+            s_plans->upgradeClock.start();
+            s_plans->upgradeRunning = true;
+        }
+        if (s_plans->upgradeRunning && message.contains(QStringLiteral("No path reached the Core"))
+            && QByteArray(context.category) == QByteArray("nereus.session.pathracer")) {
+            s_plans->upgradeFailMs.append(s_plans->upgradeClock.elapsed());
+            s_plans->upgradeRunning = false;
+        }
         if (first || upgrade) {
             const QList<PathRacer*> racers =
                 s_plans->client->findChildren<PathRacer*>(Qt::FindDirectChildrenOnly);
@@ -525,7 +539,8 @@ private slots:
     // addresses refuse at once and the IPv4 one is closed. The first race
     // after a start and each better-path search while the session runs on
     // the web relay plan the entry's own address, 250 ms after the IPv6
-    // ones, even after it failed in the race before.
+    // ones, even after it failed in the race before, and no such search
+    // reports "No path" before that address's turn.
     void aWebRelaySessionsSearchesPlanTheEntryAddress()
     {
         LocalService service;
@@ -588,6 +603,15 @@ private slots:
         window.client->setCachedAddresses({v6a, v6b, v4});
         QTRY_VERIFY_WITH_TIMEOUT(plans.upgrades.size() >= 2, 20000);
         QCOMPARE(window.client->pathRank(), int(PathRacer::Floor));
+        // A search that holds an IPv6 address and the IPv4 one cannot end
+        // before the IPv4 rung's turn: "No path" comes 250 ms or more after
+        // "Looking for a better path", never within a few milliseconds.
+        // A coarse QTimer may fire up to 5% early.
+        constexpr qint64 kEarliestFailMs = PathRacer::kIpv4DelayMs * 19 / 20;
+        QVERIFY(!plans.upgradeFailMs.isEmpty());
+        for (const qint64 ms : std::as_const(plans.upgradeFailMs)) {
+            QVERIFY2(ms >= kEarliestFailMs, qPrintable(QString::number(ms)));
+        }
         for (const auto& upgrade : std::as_const(plans.upgrades)) {
             QCOMPARE(delayFor(upgrade, v4Line), PathRacer::kIpv4DelayMs);
             QCOMPARE(delayFor(upgrade, QStringLiteral("[::1]:%1").arg(v6a.port())), 0);
