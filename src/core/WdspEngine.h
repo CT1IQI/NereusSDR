@@ -198,6 +198,9 @@ class TestStopTransmitNow;
 // Several-devices fix wave 2: the confirm-step test drives a Protocol 1
 // rate change, which needs an initialized engine with RX channels.
 class TstConfirmStep;
+// AGC Fixed Gain seed: the test opens real RX channels and reads the fixed
+// gain WDSP applies back from rxa[].agc.
+class TestRxChannelAgcFixedSeed;
 // Task 27: the transmit analyzer skirt test opens a real TX channel.
 class TestTxAnalyzerSkirt;
 // R-IOS-13: the transmit path's DSP latency test.
@@ -1103,6 +1106,8 @@ private:
     friend class ::TestTxKeyDspOptions;
     // Leveler lane: the remote microphone leveler measurement.
     friend class ::TestTxLevelerRemoteMic;
+    // AGC Fixed Gain seed: same friendship, real RX channels.
+    friend class ::TestRxChannelAgcFixedSeed;
 #endif
 };
 

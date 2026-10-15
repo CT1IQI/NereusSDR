@@ -448,6 +448,14 @@ public:
     int agcHangThreshold() const { return m_agcHangThreshold.load(); }
     void setAgcHangThreshold(int val);
 
+    // The Fixed Gain (AGC Off) a new channel starts with, in dB. WdspEngine
+    // seeds WDSP with it at every open, because WDSP's own create default
+    // (fixed_gain 1000.0, 60 dB, third_party/wdsp/src/RXA.c:385) differs
+    // and setAgcFixedGain skips a value equal to the cached one.
+    // From Thetis Project Files/Source/Console/setup.Designer.cs:39565-39569 [v2.10.3.15]
+    //   this.udDSPAGCFixedGaindB.Value = new decimal(new int[] { 20, 0, 0, 0});
+    static constexpr int kDefaultAgcFixedGainDb = 20;
+
     int agcFixedGain() const { return m_agcFixedGain.load(); }
     void setAgcFixedGain(int dB);
 
@@ -1375,7 +1383,7 @@ private:
     // hangThreshold: From Thetis v2.10.3.13 setup.designer.cs:39418
     std::atomic<int> m_agcHangThreshold{0};
     // fixedGain: From Thetis v2.10.3.13 setup.designer.cs:39320
-    std::atomic<int> m_agcFixedGain{20};
+    std::atomic<int> m_agcFixedGain{kDefaultAgcFixedGainDb};
     // maxGain: From Thetis v2.10.3.13 setup.designer.cs:39245
     std::atomic<int> m_agcMaxGain{90};
 
