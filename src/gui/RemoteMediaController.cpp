@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: fix wave 2: the line follows programAudioKeyChanged at
+//               once (a direct connection), so a program key that arrives
+//               or ends under the screen key joins or restarts the VAX
+//               collector before the call returns. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: fix wave: the VAX collector reads nothing while a program
 //               brings its own audio (the VAX TX device has one reader),
 //               and a VAX feed that starts or comes back first drops what
@@ -2064,6 +2069,14 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     if (RemoteTransmitClient* transmit = client->remoteTransmit()) {
         connect(transmit, &RemoteTransmitClient::micKeyDownChanged, this,
                 &RemoteMediaController::setMicKeyDown);
+        // 2026-10-15 (fix wave 2): a program key that brings its own
+        // audio takes the VAX TX device from the collector, and gives it
+        // back, at once, even under the screen key (the key down does not
+        // move then). Direct: the transmit client and this controller both
+        // live on the GUI thread, and the collector must be joined before
+        // keyForProgram returns, ahead of the program's first read.
+        connect(transmit, &RemoteTransmitClient::programAudioKeyChanged, this,
+                [this](bool) { reconcileMicUplink(); }, Qt::DirectConnection);
         connect(transmit, &RemoteTransmitClient::holdsTransmitChanged, this,
                 &RemoteMediaController::setHoldsTransmit);
         connect(transmit, &RemoteTransmitClient::micSourceChanged, this,
