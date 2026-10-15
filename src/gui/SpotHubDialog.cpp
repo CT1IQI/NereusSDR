@@ -171,6 +171,11 @@
 //                                    WorkspacePreview::roleColourName()
 //                                    (title-text) with the preview on.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the Spot List takes a real reset after
+//               each burst of row changes with accessibility on, keeping the
+//               selected spot, current spot and scroll by the spot's key
+//               (resetViewAfterRowChanges), in place of the cache-only
+//               repair. AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -213,6 +218,7 @@
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSet>
 #include <QSlider>
@@ -2521,8 +2527,27 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     m_spotTable->horizontalHeader()->setSortIndicatorShown(false);
 
     // Spots arrive from the Core at any moment: a new spot, the cap
-    // trimming the oldest, or a band or source pill filtering rows.
-    installQtCocoaAccessibleTableCacheRepair(m_spotTable);
+    // trimming the oldest, or a band or source pill filtering rows. With
+    // accessibility on, each burst is followed by one real reset of the
+    // proxy (rows kept in the order shown), the selected spot, current spot
+    // and scroll kept by the spot's own key, so accessibility never reads a
+    // cell the macOS bridge deleted. The model has no id: time, frequency, DX call, spotter and
+    // source together name a spot.
+    resetViewAfterRowChanges(
+        m_spotTable, [proxy = QPointer<BandFilterProxy>(m_spotProxyModel)] {
+            if (proxy) {
+                proxy->resetKeepingOrder();
+            }
+        },
+        [](const QModelIndex& row) {
+            QStringList parts;
+            for (int column : {SpotTableModel::ColTime, SpotTableModel::ColFreq,
+                               SpotTableModel::ColDxCall, SpotTableModel::ColSpotter,
+                               SpotTableModel::ColSource}) {
+                parts.append(row.siblingAtColumn(column).data().toString());
+            }
+            return parts.join(QChar(0x1f));
+        });
 
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {

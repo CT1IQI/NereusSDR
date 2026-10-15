@@ -16,10 +16,21 @@
 //                                    cell. Promoted from DeviceCard's
 //                                    popup repair; every platform and Qt.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  resetViewKeepingPlace and
+//                                    resetViewAfterRowChanges for the Spot
+//                                    List and FreeDV Reporter tables; the
+//                                    cache-only repair is removed.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #pragma once
 
 #include "gui/NereusGuiExport.h"
+
+#include <QString>
+
+#include <functional>
+
+class QModelIndex;
 
 class QAbstractItemView;
 class QComboBox;
@@ -64,21 +75,40 @@ NEREUS_GUI_EXPORT bool resetItemsBeforeRowChange(QTableWidget* table);
 NEREUS_GUI_EXPORT bool resetItemsBeforeRowChange(QListWidget* list);
 NEREUS_GUI_EXPORT bool resetItemsBeforeRowChange(QTreeWidget* tree);
 
-// The older repair, for views whose model is the app's own and must not be
-// reset (the Spot List and FreeDV Reporter tables keep their selection and
-// persistent indexes as rows come and go). Qt 6.11.0 Cocoa deletes the real
-// cell interfaces of expired native rows, but QAccessibleTable keeps their
-// IDs and dereferences them on the next RowsInserted or RowsRemoved. Call
-// once after the view has its model. Before every row or column insert or
-// removal that model announces, on Qt 6.11.0 Cocoa with accessibility
-// active, the view's accessible child cache is cleared through the public
-// table-interface ModelReset handler. The model, selection and persistent
-// indexes are untouched. Other Qt versions and platforms are unaffected.
-void installQtCocoaAccessibleTableCacheRepair(QAbstractItemView* view);
+// A view over the app's own model (a proxy over a live table: the Spot List
+// and FreeDV Reporter stations). Rows there change from the model's own
+// signals, not from code that can call a reset first, so the reset follows
+// the change instead. The macOS bridge deletes the cells it holds only
+// when control returns to the event loop after a table change (it releases
+// its old native rows then: qcocoaaccessibilityelement.mm:257-267,
+// updateTableModel), and Qt posts this reset in that same pass, so the
+// next row change finds an empty accessibility cache.
+//
+// The row's identity, from the view's model at column 0 of the row: a
+// stable id where the model has one. The place is kept by this key, never
+// by row number.
+using ItemViewRowKey = std::function<QString(const QModelIndex& row)>;
 
-// Test seam: true applies the repair on any platform, so an offscreen test
-// that deletes cell interfaces the way that Cocoa image does exercises it.
-// Process-wide; tests set it back to false.
-void setQtCocoaAccessibleTableCacheRepairForcedForTest(bool forced);
+// A real reset of the view's model through resetModel (which must reset
+// that model, keeping its rows and their order, for example
+// OrderKeepingProxyModel::resetKeepingOrder), then
+// the selection, the current item and the scroll position (the same top
+// row, at the same offset) put back by rowKey. The view and its selection
+// model are blocked meanwhile, so no selection or current signal comes
+// from it. Returns true when it reset: only while accessibility is active.
+NEREUS_GUI_EXPORT bool resetViewKeepingPlace(QAbstractItemView* view,
+                                             const std::function<void()>& resetModel,
+                                             const ItemViewRowKey& rowKey);
+
+// Call once after the view has its model. With accessibility active, every
+// row insert or removal, data change or layout change the model announces
+// queues one resetViewKeepingPlace; changes in the same event-loop pass
+// (a burst of spots) share it. The top row it puts back is the one shown
+// before the first change of the pass, so a spot landing above does not
+// push the user's place down. The model's own signals go out as before,
+// and with accessibility off nothing changes.
+NEREUS_GUI_EXPORT void resetViewAfterRowChanges(QAbstractItemView* view,
+                                                std::function<void()> resetModel,
+                                                ItemViewRowKey rowKey);
 
 } // namespace NereusSDR

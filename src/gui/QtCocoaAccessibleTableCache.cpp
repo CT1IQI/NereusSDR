@@ -8,6 +8,10 @@
 //   2026-10-15  J.J. Boyd (KG4VCF)  resetItemsBeforeRowChange for combos,
 //                                    tables, lists and trees.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  resetViewKeepingPlace and
+//                                    resetViewAfterRowChanges; the
+//                                    cache-only repair is removed.
+//                                    AI-assisted via Anthropic Claude Code.
 
 #include "QtCocoaAccessibleTableCache.h"
 
@@ -15,11 +19,12 @@
 #include <QAbstractItemView>
 #include <QAccessible>
 #include <QComboBox>
-#include <QGuiApplication>
+#include <QHash>
 #include <QItemSelection>
 #include <QItemSelectionModel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 #include <QTableWidget>
@@ -33,42 +38,6 @@
 namespace NereusSDR {
 
 namespace {
-
-bool g_repairForced = false;
-
-// Qt 6.11.0 Cocoa expires the real cell interfaces of old native rows
-// (qcocoaaccessibilityelement.mm:219-226,257-267,342-362: removeElementsFromCache:
-// calls QAccessibleCache::deleteInterface), but QAccessibleTable keeps their
-// IDs in its child cache and calls role() on the null interface during the
-// next RowsInserted or RowsRemoved (itemviews.cpp:645-741). Same gate as
-// ConnectionSelector, RxApplet and QtCocoaAccessibilityOwnershipGuard.
-bool repairNeeded()
-{
-    if (g_repairForced) {
-        return true;
-    }
-#if defined(Q_OS_MAC)
-    return QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0");
-#else
-    return false;
-#endif
-}
-
-// Clears only the view's accessible child cache, through the public
-// table-interface ModelReset handler.
-void clearAccessibleChildCache(QAbstractItemView* view)
-{
-    if (!QAccessible::isActive() || !repairNeeded()) {
-        return;
-    }
-    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-    if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-        QAccessibleTableModelChangeEvent reset(
-            view, QAccessibleTableModelChangeEvent::ModelReset);
-        accessible->tableInterface()->modelChange(&reset);
-    }
-}
 
 // The (row, column) of each selected index, to select again after a reset.
 QList<std::pair<int, int>> selectedCells(const QItemSelectionModel* selection)
@@ -334,23 +303,192 @@ bool resetItemsBeforeRowChange(QTreeWidget* tree)
     return true;
 }
 
-void installQtCocoaAccessibleTableCacheRepair(QAbstractItemView* view)
+namespace {
+
+// The row at the top of the view's viewport, by key, with how far its top
+// sits above the viewport's top edge, and the horizontal scroll.
+struct TopPlace {
+    QString key;
+    int column{0};
+    int offset{0};
+    int horizontal{0};
+};
+
+TopPlace topPlaceOf(const QAbstractItemView* view, const ItemViewRowKey& rowKey)
+{
+    TopPlace place;
+    place.horizontal = view->horizontalScrollBar()->value();
+    const QModelIndex top = view->indexAt(QPoint(0, 0));
+    if (top.isValid()) {
+        place.key = rowKey(top.siblingAtColumn(0));
+        place.column = top.column();
+        place.offset = view->visualRect(top).top();
+    }
+    return place;
+}
+
+bool resetKeepingPlace(QAbstractItemView* view, const std::function<void()>& resetModel,
+                       const ItemViewRowKey& rowKey, const TopPlace& topPlace)
+{
+    QAbstractItemModel* const model = view->model();
+    const QModelIndex root = view->rootIndex();
+    const auto keyOf = [&](int row) { return rowKey(model->index(row, 0, root)); };
+
+    // The selection and current item as they are now: the model's own row
+    // signals have already moved them with their rows.
+    QItemSelectionModel* const selection = view->selectionModel();
+    QList<std::pair<QString, int>> selected;
+    if (selection != nullptr) {
+        const QModelIndexList indexes = selection->selectedIndexes();
+        for (const QModelIndex& index : indexes) {
+            selected.append({keyOf(index.row()), index.column()});
+        }
+    }
+    const QModelIndex current = view->currentIndex();
+    const QString currentKey = current.isValid() ? keyOf(current.row()) : QString();
+    const int currentColumn = current.column();
+
+    QHash<QString, int> rowOf;
+    {
+        const QSignalBlocker viewBlock(view);
+        const QSignalBlocker selectionBlock(selection);
+        resetModel();
+
+        const int rows = model->rowCount(root);
+        rowOf.reserve(rows);
+        for (int row = rows - 1; row >= 0; --row) {
+            // The first row wins where two rows share a key.
+            rowOf.insert(keyOf(row), row);
+        }
+        if (selection != nullptr) {
+            QItemSelection restored;
+            for (const auto& [key, column] : std::as_const(selected)) {
+                const auto it = rowOf.constFind(key);
+                if (it != rowOf.constEnd()) {
+                    const QModelIndex index = model->index(it.value(), column, root);
+                    restored.select(index, index);
+                }
+            }
+            if (!restored.isEmpty()) {
+                selection->select(restored, QItemSelectionModel::Select);
+            }
+            const auto it = currentKey.isNull() ? rowOf.constEnd() : rowOf.constFind(currentKey);
+            if (it != rowOf.constEnd()) {
+                selection->setCurrentIndex(model->index(it.value(), currentColumn, root),
+                                           QItemSelectionModel::NoUpdate);
+            }
+        }
+    }
+
+    // The scroll range follows the new row count, then the same row goes
+    // back to the top at the same offset. When that row is gone, the
+    // scroll value stays as it is.
+    view->doItemsLayout();
+    const auto top = topPlace.key.isNull() ? rowOf.constEnd() : rowOf.constFind(topPlace.key);
+    if (top != rowOf.constEnd()) {
+        // The column that was at the left edge: shown, so scrollTo acts.
+        const QModelIndex index = model->index(top.value(), topPlace.column, root);
+        view->scrollTo(index, QAbstractItemView::PositionAtTop);
+        if (view->verticalScrollMode() == QAbstractItemView::ScrollPerPixel) {
+            QScrollBar* const vbar = view->verticalScrollBar();
+            vbar->setValue(vbar->value() + view->visualRect(index).top() - topPlace.offset);
+        }
+    }
+    view->horizontalScrollBar()->setValue(topPlace.horizontal);
+    view->viewport()->update();
+    return true;
+}
+
+} // namespace
+
+bool resetViewKeepingPlace(QAbstractItemView* view, const std::function<void()>& resetModel,
+                           const ItemViewRowKey& rowKey)
+{
+    if (view == nullptr || !resetModel || !rowKey || !QAccessible::isActive()
+        || view->model() == nullptr) {
+        return false;
+    }
+    return resetKeepingPlace(view, resetModel, rowKey, topPlaceOf(view, rowKey));
+}
+
+namespace {
+
+// Holds a view's queued reset: one per event-loop pass. The top row is
+// noted before the first change of the pass, so the reset can put back the
+// row the user was looking at.
+class RowChangeReset : public QObject {
+public:
+    RowChangeReset(QAbstractItemView* view, std::function<void()> resetModel, ItemViewRowKey rowKey)
+        : QObject(view), m_view(view), m_resetModel(std::move(resetModel)),
+          m_rowKey(std::move(rowKey))
+    {
+    }
+
+    // Before rows move: note the top row once per pass.
+    void noteTop()
+    {
+        if (m_topNoted || !QAccessible::isActive() || !m_resetModel || !m_rowKey) {
+            return;
+        }
+        m_top = topPlaceOf(m_view, m_rowKey);
+        m_topNoted = true;
+    }
+
+    // After a change: queue the one reset of this pass.
+    void schedule()
+    {
+        if (m_pending || !QAccessible::isActive() || !m_resetModel || !m_rowKey) {
+            return;
+        }
+        noteTop();
+        m_pending = true;
+        QMetaObject::invokeMethod(this, [this] { run(); }, Qt::QueuedConnection);
+    }
+
+private:
+    void run()
+    {
+        m_pending = false;
+        m_topNoted = false;
+        if (QAccessible::isActive() && m_view->model() != nullptr) {
+            resetKeepingPlace(m_view, m_resetModel, m_rowKey, m_top);
+        }
+    }
+
+    QAbstractItemView* m_view;
+    std::function<void()> m_resetModel;
+    ItemViewRowKey m_rowKey;
+    TopPlace m_top;
+    bool m_topNoted{false};
+    bool m_pending{false};
+};
+
+} // namespace
+
+void resetViewAfterRowChanges(QAbstractItemView* view, std::function<void()> resetModel,
+                              ItemViewRowKey rowKey)
 {
     if (view == nullptr || view->model() == nullptr) {
         return;
     }
-    QAbstractItemModel* model = view->model();
-    const auto clear = [view] { clearAccessibleChildCache(view); };
-    // The view is the context: the connections end with it.
-    QObject::connect(model, &QAbstractItemModel::rowsAboutToBeInserted, view, clear);
-    QObject::connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, view, clear);
-    QObject::connect(model, &QAbstractItemModel::columnsAboutToBeInserted, view, clear);
-    QObject::connect(model, &QAbstractItemModel::columnsAboutToBeRemoved, view, clear);
-}
-
-void setQtCocoaAccessibleTableCacheRepairForcedForTest(bool forced)
-{
-    g_repairForced = forced;
+    QAbstractItemModel* const model = view->model();
+    auto* reset = new RowChangeReset(view, std::move(resetModel), std::move(rowKey));
+    const auto noteTop = [reset] { reset->noteTop(); };
+    const auto schedule = [reset] { reset->schedule(); };
+    // The reset object is the context: the connections end with the view.
+    QObject::connect(model, &QAbstractItemModel::rowsAboutToBeInserted, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::rowsAboutToBeMoved, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::columnsAboutToBeInserted, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::columnsAboutToBeRemoved, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::layoutAboutToBeChanged, reset, noteTop);
+    QObject::connect(model, &QAbstractItemModel::rowsInserted, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::rowsRemoved, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::rowsMoved, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::columnsInserted, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::columnsRemoved, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::dataChanged, reset, schedule);
+    QObject::connect(model, &QAbstractItemModel::layoutChanged, reset, schedule);
 }
 
 } // namespace NereusSDR

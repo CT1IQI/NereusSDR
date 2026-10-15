@@ -2,32 +2,35 @@
 //
 // no-port-check: Test uses callsign-shaped fixture strings only.
 //
-// Spot List accessibility cache under live spot traffic.
+// Spot List under live spot traffic with accessibility on.
 //
-// On the Qt 6.11.0 Cocoa image, +[QMacAccessibilityElement
-// removeElementsFromCache:] (qcocoaaccessibilityelement.mm:219-226,
-// 257-267, 342-362) calls QAccessibleCache::deleteInterface for the real
-// cell interfaces of expired native rows. QAccessibleTable keeps those IDs
-// in its own child cache and, on the next RowsInserted or RowsRemoved,
-// calls role() on the null interface QAccessible::accessibleInterface()
-// returns for them (itemviews.cpp:645-741). A spot arriving from the Core
-// then crashes inside SpotTableModel::addSpot.
+// The macOS bridge deletes the cell interfaces it holds when its
+// autorelease pool drains after a table change
+// (qcocoaaccessibilityelement.mm:219-226,257-267,342-362), while the view's
+// QAccessibleTable keeps their IDs; the next RowsInserted or RowsRemoved
+// then reads them (itemviews.cpp:645-741). A spot arriving from the Core
+// crashed inside SpotTableModel::addSpot.
 //
-// Offscreen there is no Cocoa bridge, so each case performs the bridge's
-// deletion itself through the public QAccessible::deleteAccessibleInterface
-// (the same QAccessibleCache::deleteInterface call) and then drives the
-// Spot List the way the app does: SpotTableModel -> BandFilterProxy ->
-// spotListTable, built by SpotHubDialog. The dialog's repair is gated to
-// that Cocoa image, so the cases force it on through the test seam.
+// SpotHubDialog answers each burst of row changes with one queued real
+// reset of the proxy (resetViewAfterRowChanges), which runs before the
+// drain, so the next change finds an empty accessibility cache. Offscreen
+// there is no bridge, so each crash case walks the cells, changes rows,
+// lets the queued reset run, then deletes the walked cells itself through
+// QAccessible::deleteAccessibleInterface (what the drain does) and changes
+// rows again. Without the reset that last change crashes.
+//
+// The place cases check what the user sees: the selected spot, the current
+// spot and the top visible spot stay on the same spot across a new spot, a
+// burst of spots (one reset), a trimmed spot and an updated row. With
+// accessibility off nothing is reset, exactly as before.
 
 #include <QtTest>
 #include <QAccessible>
-#include <private/qguiapplication_p.h>
-#include <qpa/qplatformaccessibility.h>
-#include <qpa/qplatformintegration.h>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTableView>
 
+#include "ExpiredAccessibleCells.h"
 #include "core/DxClusterClient.h"
 #include "core/DxSpot.h"
 #include "core/DxccColorProvider.h"
@@ -36,7 +39,6 @@
 #include "core/PskReporterClient.h"
 #include "core/SpotCollectorClient.h"
 #include "core/WsjtxClient.h"
-#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/SpotHubDialog.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
@@ -44,17 +46,20 @@
 #include <memory>
 
 using namespace NereusSDR;
+namespace Cells = NereusSDR::ExpiredAccessibleCells;
 
 namespace {
 
-DxSpot makeSpot(const QString& call, double mhz, const QString& source = QStringLiteral("Cluster"))
+// Spot n is heard at minute n, so the list (newest first) is in a known
+// order and every spot's key is its own.
+DxSpot makeSpot(int n, const QString& source = QStringLiteral("Cluster"))
 {
     DxSpot s;
-    s.dxCall = call;
-    s.freqMhz = mhz;
+    s.dxCall = QStringLiteral("K%1ABC").arg(n);
+    s.freqMhz = 14.000 + 0.001 * n;
     s.spotterCall = QStringLiteral("TEST");
     s.comment = QStringLiteral("fixture");
-    s.utcTime = QTime(12, 0);
+    s.utcTime = QTime(0, 0).addSecs(60 * n);
     s.source = source;
     return s;
 }
@@ -80,44 +85,71 @@ struct SpotListFixture {
                                                  &freedv, &psk, &spots, &table, &dxcc);
         view = dialog->findChild<QTableView*>(QStringLiteral("spotListTable"));
     }
+
+    void addSpots(int from, int to)
+    {
+        for (int n = from; n <= to; ++n) {
+            table.addSpot(makeSpot(n));
+        }
+    }
+
+    QString callAt(int row) const
+    {
+        return view->model()->index(row, SpotTableModel::ColDxCall).data().toString();
+    }
+
+    int rowOf(const QString& call) const
+    {
+        for (int row = 0; row < view->model()->rowCount(); ++row) {
+            if (callAt(row) == call) {
+                return row;
+            }
+        }
+        return -1;
+    }
+
+    QString selectedCall() const
+    {
+        const QModelIndexList rows = view->selectionModel()->selectedRows();
+        return rows.size() == 1 ? callAt(rows.first().row()) : QString();
+    }
+
+    QString currentCall() const
+    {
+        const QModelIndex current = view->currentIndex();
+        return current.isValid() ? callAt(current.row()) : QString();
+    }
+
+    QString topCall() const
+    {
+        const QModelIndex top = view->indexAt(QPoint(0, 0));
+        return top.isValid() ? callAt(top.row()) : QString();
+    }
+
+    // Shows the list scrolled to `topSpot` with `selectedSpot` selected and
+    // current.
+    void placeOn(const QString& topSpot, const QString& selectedSpot)
+    {
+        dialog->resize(900, 600);
+        dialog->show();
+        QCoreApplication::processEvents();
+        const QModelIndex selected = view->model()->index(rowOf(selectedSpot), SpotTableModel::ColDxCall);
+        view->selectionModel()->setCurrentIndex(
+            selected, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        view->scrollTo(view->model()->index(rowOf(topSpot), 0), QAbstractItemView::PositionAtTop);
+        QCoreApplication::processEvents();
+    }
 };
 
-// Builds the table's accessible child cache the way an assistive client
-// does when it walks the rows, then deletes every child interface the way
-// the Qt 6.11.0 Cocoa bridge does when those native rows expire. Returns
-// how many interfaces were deleted.
-int walkThenExpireChildren(QTableView* view)
+// Text of the accessible cell at (row, column) of the view.
+QString accessibleCellText(QTableView* view, int row, int column)
 {
     QAccessibleInterface* table = QAccessible::queryAccessibleInterface(view);
     if (table == nullptr || table->tableInterface() == nullptr) {
-        return -1;
+        return {};
     }
-    QList<QAccessible::Id> ids;
-    const int children = table->childCount();
-    for (int i = 0; i < children; ++i) {
-        if (QAccessibleInterface* child = table->child(i)) {
-            ids.append(QAccessible::uniqueId(child));
-        }
-    }
-    for (QAccessible::Id id : std::as_const(ids)) {
-        QAccessible::deleteAccessibleInterface(id);
-    }
-    return int(ids.size());
-}
-
-// Turns the platform's accessibility on or off. Qt 6.11's
-// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
-// activation observers and leaves QAccessible::isActive() false, so there
-// the platform's own switch is set, as Qt's tests do.
-void setAccessibilityActive(bool active)
-{
-    QAccessible::setActive(active);
-    if (QAccessible::isActive() == active) {
-        return;
-    }
-    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
-        platform->setActive(active);
-    }
+    QAccessibleInterface* cell = table->tableInterface()->cellAt(row, column);
+    return cell != nullptr ? cell->text(QAccessible::Name) : QString();
 }
 
 } // namespace
@@ -126,117 +158,279 @@ class TestSpotListAccessibility : public QObject {
     Q_OBJECT
 
 private slots:
-    void initTestCase()
-    {
-        setAccessibilityActive(true);
-        QVERIFY2(QAccessible::isActive(),
-                 "accessibility must be active so item views send table model changes");
-        setQtCocoaAccessibleTableCacheRepairForcedForTest(true);
-    }
+    void cleanup() { Cells::setActive(false); }
 
-    void cleanupTestCase()
+    // The crash in the field: a spot arrives after the bridge released the
+    // cells it held at the previous spot.
+    void spotArrivesAfterBridgeDrain()
     {
-        setQtCocoaAccessibleTableCacheRepairForcedForTest(false);
-        setAccessibilityActive(false);
-    }
-
-    // The crash in the field: a spot arrives after the bridge expired rows.
-    void spotArrivesAfterExpiredRows()
-    {
+        Cells::ActiveScope active;
+        QVERIFY2(QAccessible::isActive(), "accessibility must be active for this case");
         SpotListFixture f;
         QVERIFY(f.view);
         f.dialog->resize(900, 600);
         f.dialog->show();
-        f.table.addSpot(makeSpot(QStringLiteral("K1ABC"), 14.025));
-        f.table.addSpot(makeSpot(QStringLiteral("K2ABC"), 7.030));
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
-        QAbstractItemModel* proxy = f.view->model();
-        const auto proxyRowOf = [proxy](const QString& call) {
-            for (int row = 0; row < proxy->rowCount(); ++row) {
-                if (proxy->index(row, SpotTableModel::ColDxCall).data().toString() == call) {
-                    return row;
-                }
-            }
-            return -1;
-        };
-        const QPersistentModelIndex kept =
-            proxy->index(proxyRowOf(QStringLiteral("K2ABC")), SpotTableModel::ColDxCall);
-        QVERIFY(kept.isValid());
-        QSignalSpy resetSpy(proxy, &QAbstractItemModel::modelReset);
+        f.addSpots(1, 2);
+        QCoreApplication::processEvents();
 
-        f.table.addSpot(makeSpot(QStringLiteral("K3ABC"), 21.030));
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(3));
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(4));
+        QCoreApplication::processEvents();
 
-        QCOMPARE(proxy->rowCount(), 3);
-        // Only the accessibility cache is cleared: the proxy is not reset
-        // and persistent indexes keep their spots.
-        QCOMPARE(resetSpy.count(), 0);
-        QVERIFY(kept.isValid());
-        QCOMPARE(kept.data().toString(), QStringLiteral("K2ABC"));
-        const int newRow = proxyRowOf(QStringLiteral("K3ABC"));
-        QVERIFY(newRow >= 0);
-        QAccessibleInterface* table = QAccessible::queryAccessibleInterface(f.view);
-        QVERIFY(table);
-        QAccessibleInterface* cell =
-            table->tableInterface()->cellAt(newRow, SpotTableModel::ColDxCall);
-        QVERIFY(cell);
-        QCOMPARE(cell->text(QAccessible::Name), QStringLiteral("K3ABC"));
+        QCOMPARE(f.view->model()->rowCount(), 4);
+        QCOMPARE(accessibleCellText(f.view, f.rowOf(QStringLiteral("K4ABC")),
+                                    SpotTableModel::ColDxCall),
+                 QStringLiteral("K4ABC"));
     }
 
     // The 500-spot cap trims the oldest row: RowsRemoved walks the cache too.
-    void trimmedSpotAfterExpiredRows()
+    void trimmedSpotAfterBridgeDrain()
     {
+        Cells::ActiveScope active;
         SpotListFixture f;
         QVERIFY(f.view);
         f.table.setMaxSpots(2);
-        f.table.addSpot(makeSpot(QStringLiteral("K1ABC"), 14.025));
-        f.table.addSpot(makeSpot(QStringLiteral("K2ABC"), 7.030));
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
+        f.addSpots(1, 2);
+        QCoreApplication::processEvents();
 
-        f.table.addSpot(makeSpot(QStringLiteral("K3ABC"), 21.030));
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(3));
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(4));
+        QCoreApplication::processEvents();
 
         QCOMPARE(f.view->model()->rowCount(), 2);
+        QVERIFY(f.rowOf(QStringLiteral("K4ABC")) >= 0);
+        QVERIFY(f.rowOf(QStringLiteral("K3ABC")) >= 0);
     }
 
     // A band pill hides and shows rows through the proxy.
-    void bandFilterAfterExpiredRows()
+    void bandFilterAfterBridgeDrain()
     {
+        Cells::ActiveScope active;
         SpotListFixture f;
         QVERIFY(f.view);
-        f.table.addSpot(makeSpot(QStringLiteral("K1ABC"), 14.025));
-        f.table.addSpot(makeSpot(QStringLiteral("K2ABC"), 7.030));
+        f.table.addSpot(makeSpot(1));
+        DxSpot forty = makeSpot(2);
+        forty.freqMhz = 7.030;
+        f.table.addSpot(forty);
         auto* pill = f.dialog->findChild<QPushButton*>(QStringLiteral("spotListBandPill_20m"));
         QVERIFY(pill);
         const bool wasChecked = pill->isChecked();
         if (!wasChecked) {
             pill->setChecked(true);
         }
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
+        QCoreApplication::processEvents();
 
+        QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
         pill->setChecked(false);
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
         QCOMPARE(f.view->model()->rowCount(), 1);
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
+
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
         pill->setChecked(true);
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
         QCOMPARE(f.view->model()->rowCount(), 2);
+        f.table.addSpot(makeSpot(3));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 3);
 
         pill->setChecked(wasChecked);
     }
 
     // Clear resets the model; a hidden dialog still keeps its interface.
-    void clearAndHiddenAfterExpiredRows()
+    void clearAndHiddenAfterBridgeDrain()
     {
+        Cells::ActiveScope active;
         SpotListFixture f;
         QVERIFY(f.view);
         f.dialog->show();
-        f.table.addSpot(makeSpot(QStringLiteral("K1ABC"), 14.025));
+        f.table.addSpot(makeSpot(1));
+        QCoreApplication::processEvents();
         f.dialog->hide();
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
 
+        QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
         f.table.clear();
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
         QCOMPARE(f.view->model()->rowCount(), 0);
-        f.table.addSpot(makeSpot(QStringLiteral("K2ABC"), 7.030));
-        QVERIFY(walkThenExpireChildren(f.view) > 0);
-        f.table.addSpot(makeSpot(QStringLiteral("K3ABC"), 21.030));
-        QCOMPARE(f.view->model()->rowCount(), 2);
+
+        f.table.addSpot(makeSpot(2));
+        QCoreApplication::processEvents();
+        walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+        f.table.addSpot(makeSpot(3));
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+        f.table.addSpot(makeSpot(4));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 3);
+    }
+
+    // A new spot arrives: the selected spot, the current spot and the top
+    // visible spot are the ones the user had, and the list keeps its order.
+    void newSpotKeepsPlace()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 60);
+        QCoreApplication::processEvents();
+        f.placeOn(QStringLiteral("K20ABC"), QStringLiteral("K25ABC"));
+        QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K25ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K25ABC"));
+        QStringList order;
+        for (int row = 0; row < f.view->model()->rowCount(); ++row) {
+            order.append(f.callAt(row));
+        }
+        QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
+        QSignalSpy selectionChanges(f.view->selectionModel(),
+                                    &QItemSelectionModel::selectionChanged);
+
+        f.table.addSpot(makeSpot(61));
+        QCoreApplication::processEvents();
+
+        QCOMPARE(resets.count(), 1);
+        QStringList after;
+        for (int row = 0; row < f.view->model()->rowCount(); ++row) {
+            if (f.callAt(row) != QStringLiteral("K61ABC")) {
+                after.append(f.callAt(row));
+            }
+        }
+        QCOMPARE(after, order);
+        QVERIFY(f.rowOf(QStringLiteral("K61ABC")) >= 0);
+        QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K25ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K25ABC"));
+        QCOMPARE(selectionChanges.count(), 0);
+    }
+
+    // Several spots in one event-loop pass: each insert still goes out,
+    // one reset follows them, and the place is kept.
+    void burstOfSpotsIsOneReset()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 60);
+        QCoreApplication::processEvents();
+        f.placeOn(QStringLiteral("K30ABC"), QStringLiteral("K28ABC"));
+        QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
+        QSignalSpy inserts(f.view->model(), &QAbstractItemModel::rowsInserted);
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        QVERIFY(!walked.isEmpty());
+
+        f.addSpots(61, 65);
+        QCOMPARE(inserts.count(), 5);
+        QCOMPARE(resets.count(), 0);
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+
+        QCOMPARE(resets.count(), 1);
+        QCOMPARE(f.view->model()->rowCount(), 65);
+        QCOMPARE(f.topCall(), QStringLiteral("K30ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K28ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K28ABC"));
+        f.table.addSpot(makeSpot(66));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 66);
+    }
+
+    // The cap trims the oldest spot and a bearing update changes every
+    // row's data: the place is kept through both.
+    void trimmedAndUpdatedRowsKeepPlace()
+    {
+        Cells::ActiveScope active;
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.table.setMaxSpots(60);
+        f.addSpots(1, 60);
+        QCoreApplication::processEvents();
+        f.placeOn(QStringLiteral("K20ABC"), QStringLiteral("K15ABC"));
+        QSignalSpy resets(f.view->model(), &QAbstractItemModel::modelReset);
+
+        f.table.addSpot(makeSpot(61));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 60);
+        QCOMPARE(f.rowOf(QStringLiteral("K1ABC")), -1);
+        QCOMPARE(resets.count(), 1);
+        QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K15ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K15ABC"));
+
+        const QList<QAccessible::Id> walked = Cells::walk(f.view);
+        f.table.setBearingResolver([](const QString&) { return 42.0; });
+        QCoreApplication::processEvents();
+        Cells::drop(walked);
+        QCOMPARE(resets.count(), 2);
+        QCOMPARE(f.topCall(), QStringLiteral("K20ABC"));
+        QCOMPARE(f.selectedCall(), QStringLiteral("K15ABC"));
+        QCOMPARE(f.currentCall(), QStringLiteral("K15ABC"));
+        f.table.addSpot(makeSpot(62));
+        QCoreApplication::processEvents();
+        QCOMPARE(f.view->model()->rowCount(), 60);
+    }
+
+    // The selected spot is trimmed away: what is selected and current
+    // after, and the order of the list, are what Qt leaves without
+    // accessibility.
+    void trimmedSelectedSpotMatchesSightedUse()
+    {
+        const auto trimSelected = [](bool accessible) {
+            Cells::setActive(accessible);
+            SpotListFixture f;
+            f.table.setMaxSpots(30);
+            f.addSpots(1, 30);
+            QCoreApplication::processEvents();
+            f.placeOn(QStringLiteral("K10ABC"), QStringLiteral("K1ABC"));
+            f.table.addSpot(makeSpot(31));
+            QCoreApplication::processEvents();
+            QStringList seen{f.selectedCall(), f.currentCall(),
+                             QString::number(f.rowOf(QStringLiteral("K1ABC")))};
+            for (int row = 0; row < f.view->model()->rowCount(); ++row) {
+                seen.append(f.callAt(row));
+            }
+            return seen;
+        };
+        const QStringList sighted = trimSelected(false);
+        const QStringList accessible = trimSelected(true);
+        Cells::setActive(false);
+        QCOMPARE(sighted.at(2), QStringLiteral("-1"));
+        QCOMPARE(accessible, sighted);
+    }
+
+    // Accessibility off: no reset at all, persistent indexes keep their
+    // spots, as before this change.
+    void accessibilityOffLeavesModelAlone()
+    {
+        Cells::setActive(false);
+        QVERIFY(!QAccessible::isActive());
+        SpotListFixture f;
+        QVERIFY(f.view);
+        f.addSpots(1, 2);
+        QAbstractItemModel* proxy = f.view->model();
+        const QPersistentModelIndex kept =
+            proxy->index(f.rowOf(QStringLiteral("K1ABC")), SpotTableModel::ColDxCall);
+        QSignalSpy resets(proxy, &QAbstractItemModel::modelReset);
+
+        f.addSpots(3, 4);
+        QCoreApplication::processEvents();
+
+        QCOMPARE(resets.count(), 0);
+        QVERIFY(kept.isValid());
+        QCOMPARE(kept.data().toString(), QStringLiteral("K1ABC"));
     }
 };
 

@@ -82,6 +82,11 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the station table takes a real reset
+//               after each burst of row changes with accessibility on,
+//               keeping the selected station, current station and scroll by
+//               sid (resetViewAfterRowChanges), in place of the cache-only
+//               repair. AI-assisted via Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -92,6 +97,7 @@
 #include "core/FreeDVStation.h"
 #include "models/Band.h"
 #include "models/FreeDVStationModel.h"
+#include "models/OrderKeepingProxyModel.h"
 
 #include <QAbstractTableModel>
 #include <QAction>
@@ -114,6 +120,7 @@
 #include <QModelIndex>
 #include <QPainter>
 #include <QPoint>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSortFilterProxyModel>
@@ -721,10 +728,10 @@ private:
 //   (FreeDVReporterDataModel::isFiltered_ inner block that walks the
 //   columnFilterOperators_ / columnFilterValues_ vectors).
 // =====================================================================
-class FreeDVReporterColumnFilterProxy : public QSortFilterProxyModel {
+class FreeDVReporterColumnFilterProxy : public OrderKeepingProxyModel {
 public:
     explicit FreeDVReporterColumnFilterProxy(QObject* parent = nullptr)
-        : QSortFilterProxyModel(parent) {}
+        : OrderKeepingProxyModel(parent) {}
 
     void setFilters(const QHash<int, QPair<int, QVariant>>* filters) {
         m_filters = filters;
@@ -934,8 +941,19 @@ void FreeDVReporterDialog::buildUi() {
 
     m_table = new QTableView(this);
     m_table->setModel(m_columnFilterProxy);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Stations join and leave from the reporter feed; the idle sweep and filters drop and restore rows.
-    installQtCocoaAccessibleTableCacheRepair(m_table);
+    // Stations join, change and leave from the reporter feed; the idle
+    // sweep and filters drop and restore rows. With accessibility on, each
+    // burst is followed by one real reset of the top proxy (rows kept in
+    // the order shown), the selected station, current station and scroll
+    // kept by the station's sid, so
+    // accessibility never reads a cell the macOS bridge deleted.
+    resetViewAfterRowChanges(
+        m_table, [proxy = QPointer<FreeDVReporterColumnFilterProxy>(m_columnFilterProxy)] {
+            if (proxy) {
+                proxy->resetKeepingOrder();
+            }
+        },
+        [](const QModelIndex& row) { return row.siblingAtColumn(0).data(Qt::UserRole).toString(); });
     m_table->setItemDelegate(m_rowDelegate);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);

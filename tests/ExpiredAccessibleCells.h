@@ -33,24 +33,39 @@ inline void setActive(bool active)
     }
 }
 
-// Walks the view's cells, then deletes them as the bridge does. Returns
-// how many were deleted.
-inline int expire(QAbstractItemView* view)
+// Walks the view's cells the way an assistive client does. Returns their
+// ids.
+inline QList<QAccessible::Id> walk(QAbstractItemView* view)
 {
     QList<QAccessible::Id> ids;
     QAccessibleInterface* table = QAccessible::queryAccessibleInterface(view);
     if (table == nullptr) {
-        return 0;
+        return ids;
     }
     for (int i = 0; i < table->childCount(); ++i) {
         if (QAccessibleInterface* child = table->child(i)) {
             ids.append(QAccessible::uniqueId(child));
         }
     }
-    for (QAccessible::Id id : std::as_const(ids)) {
+    return ids;
+}
+
+// Deletes the cells as the bridge does when its autorelease pool drains
+// after a table change. Ids already gone are ignored, as in Qt. Returns how
+// many ids it was given.
+inline int drop(const QList<QAccessible::Id>& ids)
+{
+    for (QAccessible::Id id : ids) {
         QAccessible::deleteAccessibleInterface(id);
     }
     return int(ids.size());
+}
+
+// Walks the view's cells, then deletes them as the bridge does. Returns
+// how many were deleted.
+inline int expire(QAbstractItemView* view)
+{
+    return drop(walk(view));
 }
 
 // Accessibility on for one test function, off again after.

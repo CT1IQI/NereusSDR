@@ -49,8 +49,15 @@
 //                                    QPushButtons (DX / RBN / JT / COL
 //                                    / POT / FDR / PSK). AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  Derives from OrderKeepingProxyModel,
+//                                    so the Spot List's accessibility-safe
+//                                    refresh can reset it in the order it
+//                                    shows. AI-assisted via Anthropic
+//                                    Claude Code.
 
 #pragma once
+
+#include "models/OrderKeepingProxyModel.h"
 
 #include <QSortFilterProxyModel>
 #include <QSet>
@@ -60,10 +67,10 @@
 namespace NereusSDR {
 
 // From AetherSDR src/gui/DxClusterDialog.h:62-75 [@0cd4559]
-class BandFilterProxy : public QSortFilterProxyModel {
+class BandFilterProxy : public OrderKeepingProxyModel {
     Q_OBJECT
 public:
-    explicit BandFilterProxy(QObject* parent = nullptr) : QSortFilterProxyModel(parent) {}
+    explicit BandFilterProxy(QObject* parent = nullptr) : OrderKeepingProxyModel(parent) {}
 
     void setBandVisible(const QString& band, bool visible);
     bool isBandVisible(const QString& band) const { return !m_hiddenBands.contains(band); }
@@ -73,6 +80,7 @@ public:
     // (Cluster / RBN / WSJT-X / SpotCollector / POTA / FreeDV / PSK).
     void setSourceVisible(const QString& source, bool visible);
     bool isSourceVisible(const QString& source) const { return !m_hiddenSources.contains(source); }
+
 
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;

@@ -745,7 +745,7 @@ Total tracked files: **7100**
 - `third_party/fftw3/lib/libfftw3f-3.a`
 - `third_party/fftw3/lib/libfftw3f-3.def`
 
-## nereussdr-original (3971)
+## nereussdr-original (3972)
 
 - `.claude/commands/triage.md`
 - `.gitattributes`
@@ -4423,6 +4423,7 @@ Total tracked files: **7100**
 - `src/models/FreeDVStationModel.h`
 - `src/models/MeterModel.cpp`
 - `src/models/MeterModel.h`
+- `src/models/OrderKeepingProxyModel.h`
 - `src/models/PureSignalSettings.cpp`
 - `src/models/PureSignalSettings.h`
 - `src/models/ReceiverDspLoadSampler.cpp`
@@ -4906,7 +4907,7 @@ Total tracked files: **7100**
 - `resources/shaders/waterfall.frag`
 - `resources/shaders/waterfall.vert`
 
-## test (1667)
+## test (1666)
 
 - `tests/CMakeLists.txt`
 - `tests/CatFixtureHarness.h`
@@ -5991,7 +5992,6 @@ Total tracked files: **7100**
 - `tests/tst_puresignal_coordinator.cpp`
 - `tests/tst_qss_translator_forms.cpp`
 - `tests/tst_qt_cocoa_accessibility_ownership.cpp`
-- `tests/tst_qt_cocoa_accessible_table_cache.cpp`
 - `tests/tst_rade_applet.cpp`
 - `tests/tst_rade_channel.cpp`
 - `tests/tst_rade_channel_model_wiring.cpp`

@@ -6815,22 +6815,16 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
-# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
-# deletes the real cell interfaces of expired native rows while
-# QAccessibleTable keeps their IDs; the next spot insert or trim then
-# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
-# performs that deletion through QAccessible::deleteAccessibleInterface and
-# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
-# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+# Spot List under live spot traffic with accessibility on. The macOS
+# bridge deletes the cell interfaces it holds when its pool drains after a
+# table change, while QAccessibleTable keeps their IDs; the next spot insert
+# or trim then dereferenced them inside SpotTableModel::addSpot. Each case
+# walks the cells, changes rows, lets the queued reset run, deletes the
+# walked cells as the drain does and changes rows again: arrival, cap trim,
+# band filter, clear and a hidden dialog. The selected spot, current spot
+# and top visible spot stay on the same spot across a new spot, a burst (one
+# reset), a trim and an update; with accessibility off nothing is reset.
 nereus_add_test(tst_spot_list_accessibility)
-
-# The same Qt 6.11.0 Cocoa accessibility cache repair
-# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
-# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
-# rows after the cell interfaces were deleted the way the Cocoa bridge
-# deletes them, the real FreeDVReporterDialog's proxied station table, and
-# the gate leaving the cache alone on every other platform.
-nereus_add_test(tst_qt_cocoa_accessible_table_cache)
 
 # The real model reset item views take before their rows change with
 # accessibility on (resetItemsBeforeRowChange): items, roles, flags,
