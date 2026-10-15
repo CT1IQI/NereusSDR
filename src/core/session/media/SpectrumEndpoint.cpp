@@ -5,6 +5,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: The wide row is cropped and peak-reduced as powers and only
+//               the values sent are converted to dBm (wideRowDbm), in place
+//               of converting every FFT bin first. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): configure records the context
 //               generation at which the planes now running were started
 //               (pictureGeneration). J.J. Boyd (KG4VCF), AI-assisted via
@@ -157,14 +161,12 @@ QVector<float> wideRowDbm(const DaemonSpectrumFrame& frame, double offsetDb,
         return static_cast<float>(10.0 * std::log10(scale * linear + 1.0e-60));
     };
     // A frame with a bin that does not convert is refused whole, wherever
-    // the bin sits. Every bin converts if the largest does.
-    float largest = 0.0f;
-    for (float linear : frame.binsLinear) {
-        if (!std::isfinite(linear) || linear < 0.0f) {
-            return {};
-        }
-        largest = std::max(largest, linear);
-    }
+    // the bin sits. Every bin converts if the largest does. consume has
+    // already refused a frame with a bin that is not finite or is negative
+    // (finiteNonnegativeBins), so only the conversion is checked here.
+    const float largest = frame.binsLinear.isEmpty()
+        ? 0.0f
+        : *std::max_element(frame.binsLinear.cbegin(), frame.binsLinear.cend());
     if (!std::isfinite(dbm(largest))) {
         return {};
     }
