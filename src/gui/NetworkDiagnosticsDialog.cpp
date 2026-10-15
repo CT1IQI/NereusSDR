@@ -42,6 +42,11 @@
 //   2026-10-09 - The section headers read WorkspacePreview::roleColourName()
 //                (title-text) with the preview on. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - The Audio Backend row names the engine in use in the
+//                words of Settings > Audio's "Sound system" line
+//                (SoundSystemLine::describeEngine), not the build's
+//                platform. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "gui/NetworkDiagnosticsDialog.h"
@@ -51,6 +56,7 @@
 #include "models/RadioModel.h"
 #include "core/AudioEngine.h"
 #include "core/RadioConnection.h"
+#include "gui/setup/SoundSystemLine.h"
 
 #if defined(Q_OS_LINUX)
 #  include "core/audio/LinuxAudioBackend.h"
@@ -182,6 +188,9 @@ void NetworkDiagnosticsDialog::buildAudioSection(QGridLayout* grid, int& row)
     };
 
     addRow(tr("Backend"),    m_audioBackendLabel);
+    // The Sound system line's words can be a sentence (PipeWire, older
+    // drivers in use); wrap rather than widen the dialog.
+    m_audioBackendLabel->setWordWrap(true);
     addRow(tr("Buffer"),     m_audioBufferLabel);
     addRow(tr("Underruns"),  m_underrunLabel);
     addRow(tr("Packet gap"), m_packetGapLabel);
@@ -472,19 +481,11 @@ void NetworkDiagnosticsDialog::refresh()
 
     // ── Audio section ─────────────────────────────────────────────────────────
     if (m_audioBackendLabel) {
-        QString backend = QStringLiteral("—");
-        if (m_audio) {
-#if defined(Q_OS_LINUX)
-            backend = NereusSDR::toString(m_audio->linuxBackend());
-#elif defined(Q_OS_MACOS)
-            backend = QStringLiteral("CoreAudio");
-#elif defined(Q_OS_WIN)
-            backend = QStringLiteral("WASAPI");
-#else
-            backend = QStringLiteral("—");
-#endif
-        }
-        m_audioBackendLabel->setText(backend);
+        // The engine in use, named as Settings > Audio > Outputs' "Sound
+        // system" line names it (the device catalogue's system, ASIO and
+        // the older drivers the saved choices use).
+        m_audioBackendLabel->setText(m_audio ? SoundSystemLine::describeEngine(m_audio.data())
+                                             : QStringLiteral("—"));
     }
 
     if (m_audioBufferLabel) {

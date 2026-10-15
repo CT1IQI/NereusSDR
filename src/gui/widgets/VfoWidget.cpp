@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - The flag's squelch slider tooltip says it sets SSB
+//                squelch, 0 to 100, and that AM and FM thresholds are on
+//                their Settings > DSP pages in dB. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
 //                AI-assisted implementation via OpenAI Codex.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
@@ -1721,7 +1725,21 @@ void VfoWidget::buildAudioTab()
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
         // NereusSDR native — Thetis ptbSquelch has no ToolTip entry in console.resx
-        m_sqlSlider->setToolTip(QStringLiteral("Squelch threshold. SSB: 0–100 maps to 0.0–1.0 linear. AM: dB scale. FM: linear 0–1."));
+        // This slider and the SQL button drive SSB squelch (SSQL) only, in
+        // every mode: MainWindow wires them to SliceModel::setSsqlEnabled /
+        // setSsqlThresh (0 to 100, RadioModel divides by 100 for WDSP).
+        // AM and FM squelch thresholds live on Settings > DSP > AM/SAM and
+        // Settings > DSP > FM, in dB (-160 to 0, ControlRanges.h).
+        // FM squelch scale, for reference: Thetis maps its -160..0 slider to
+        // 0..100 and passes 10^(-2 * n / 100) (1.0 down to 0.01) to WDSP.
+        // From Thetis Project Files/Source/Console/console.cs:47295-47304 [v2.10.3.15]
+        // From Thetis Project Files/Source/Console/radio.cs:1276-1291 [v2.10.3.15]
+        //   (FMSquelchThreshold -> WDSP.SetRXAFMSQThreshold)
+        // WDSP third_party/wdsp/src/fmsq.c:247-251: the value is linear noise
+        //   level; tail_thresh = threshold, unmute_thresh = 0.9 * threshold.
+        m_sqlSlider->setToolTip(QStringLiteral(
+            "SSB squelch threshold, 0 to 100. AM and FM squelch thresholds "
+            "are set in dB in Settings > DSP > AM/SAM and Settings > DSP > FM."));
         row->addWidget(m_sqlSlider);
 
         connect(m_sqlBtn, &QPushButton::toggled, this, [this](bool on) {

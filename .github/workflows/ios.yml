@@ -114,14 +114,20 @@ jobs:
           key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Configure the station build
-        # Match the openssl@3 dependency installed above instead of the
-        # unrelated OpenSSL major version linked under Homebrew's prefix.
+        # Against the openssl@3 keg only; the reason is in
+        # scripts/ci/macos-openssl.sh.
         run: |
+          scripts/ci/macos-openssl.sh unlink
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DNEREUS_BUILD_TESTS=ON
+
+      - name: Check the configure found openssl@3
+        # Before the pin this configure printed "Found OpenSSL:
+        # /opt/homebrew/lib/libcrypto.dylib (found suitable version "4.0.3" ...)".
+        run: scripts/ci/macos-openssl.sh check-cache build/CMakeCache.txt "$(brew --prefix openssl@3)/lib"
 
       - name: Interop (MediaPeer, PairingClient against the Core's own code)
         # Builds only the helpers and nereusd in build/, then runs the

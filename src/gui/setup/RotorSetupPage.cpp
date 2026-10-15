@@ -28,6 +28,9 @@
 //                                    has the rotor's computer read its
 //                                    ports. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "RotorSetupPage.h"
@@ -36,6 +39,7 @@
 #include "core/RotorModels.h"
 #include "core/StationRotorController.h"
 #include "gui/OperatorReasonText.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "models/RadioModel.h"
 #include "models/RotorCommandSink.h"
 #include "models/RotorModel.h"
@@ -397,6 +401,7 @@ QGroupBox* RotorSetupPage::buildPresetsGroup()
 
     connect(m_addPreset, &QPushButton::clicked, this, [this] {
         const int r = m_presets->rowCount();
+        resetItemsBeforeRowChange(m_presets);
         m_presets->insertRow(r);
         m_presets->setItem(r, 0, new QTableWidgetItem());
         m_presets->setItem(r, 1, new QTableWidgetItem());
@@ -406,6 +411,7 @@ QGroupBox* RotorSetupPage::buildPresetsGroup()
     connect(m_removePreset, &QPushButton::clicked, this, [this] {
         const int r = m_presets->currentRow();
         if (r >= 0) {
+            resetItemsBeforeRowChange(m_presets);
             m_presets->removeRow(r);
             m_presetsTouched = true;
         }
@@ -440,6 +446,7 @@ void RotorSetupPage::refreshSerialPorts()
     }
     if (current != items) {
         const QSignalBlocker block(m_serialPort);
+        resetItemsBeforeRowChange(m_serialPort);
         m_serialPort->clear();
         m_serialPort->addItems(items);
     }
@@ -473,6 +480,7 @@ void RotorSetupPage::refreshFromRotor()
         selectData(m_driver, static_cast<int>(s.driver));
         selectData(m_baud, s.baud);
         if (m_baud->findData(s.baud) < 0 && s.baud > 0) {
+            resetItemsBeforeRowChange(m_baud);
             m_baud->addItem(QString::number(s.baud), s.baud);
             selectData(m_baud, s.baud);
         }
@@ -508,6 +516,7 @@ void RotorSetupPage::refreshPresetsFromRotor()
         return;
     }
     m_filling = true;
+    resetItemsBeforeRowChange(m_presets);
     m_presets->setRowCount(0);
     for (const QString& line : m_rotor->presets().split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
         const qsizetype tab = line.lastIndexOf(QLatin1Char('\t'));

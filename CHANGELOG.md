@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Display zoom and notices
+
+- Saved receive display spans down to 1 kHz now survive initial slice setup.
+- Notices follow the main window when it moves or resizes. Closing a notice
+  also closes the gap in the remaining stack.
+
 ### Wideband view
 
 - Local pans keep the DDC zoom limit when the radio's protocol or selected

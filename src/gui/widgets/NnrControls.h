@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QWidget>
 #include <QVector>
+#include "gui/NereusGuiExport.h"
 
 class QComboBox;
 class QDoubleSpinBox;
@@ -21,7 +22,7 @@ namespace NereusSDR {
 class RadioModel;
 class SliceModel;
 
-class NnrControls final : public QWidget {
+class NEREUS_GUI_EXPORT NnrControls final : public QWidget {
     Q_OBJECT
 
 public:

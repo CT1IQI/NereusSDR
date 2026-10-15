@@ -84,6 +84,9 @@
 //                 background or border and the check box one with no
 //                 border, so its indicator keeps its square. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SpectrumOverlayPanel.h"
@@ -637,8 +640,6 @@ void SpectrumOverlayPanel::buildAntFlyout()
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_rxAntCmb = new QComboBox;
-        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
-        installQtCocoaAccessibleTableCacheRepair(m_rxAntCmb->view());
         m_rxAntCmb->setObjectName(QStringLiteral("m_rxAntCmb"));
         // Seed with default labels; setBoardCapabilities replaces once
         // a radio is connected.
@@ -676,8 +677,6 @@ void SpectrumOverlayPanel::buildAntFlyout()
         lbl->setFixedWidth(kLabelW);
         row->addWidget(lbl);
         m_txAntCmb = new QComboBox;
-        // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when the board capabilities change.
-        installQtCocoaAccessibleTableCacheRepair(m_txAntCmb->view());
         m_txAntCmb->setObjectName(QStringLiteral("m_txAntCmb"));
         m_txAntCmb->addItems(QStringList{"ANT1", "ANT2", "ANT3"});
         m_txAntCmb->setFixedHeight(kBtnH);
@@ -1271,6 +1270,8 @@ void SpectrumOverlayPanel::setBoardCapabilities(const BoardCapabilities& caps)
     // emits again; without the guard each setVisible-false path would
     // stomp the resolved slice's antenna setting to empty.
     m_updatingFromModel = true;
+    resetItemsBeforeRowChange(m_rxAntCmb);
+    resetItemsBeforeRowChange(m_txAntCmb);
     m_rxAntCmb->clear();
     m_txAntCmb->clear();
     m_rxAntCmb->addItems(rxLabels);
