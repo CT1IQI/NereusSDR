@@ -949,10 +949,19 @@ private slots:
     // Control latency: EP6 arrives faster than this thread reads it (each
     // frame costs 200 us here, about 5,000 a second, while a feeder sends
     // about twice that). An unkey posted from another thread, as RadioModel
-    // posts it, must clear C0 MOX on the wire within 50 ms. The setter runs
-    // on the connection thread, so this is what the read-loop cap is for:
-    // without it onReadyRead never returned and the unkey waited for the
-    // feeder to stop.
+    // posts it, must run on the connection thread within two capped read
+    // batches, and then clear C0 MOX on the wire. The setter runs on the
+    // connection thread, so this is what the read-loop cap is for: without
+    // it onReadyRead never returned and the unkey waited for the feeder to
+    // stop.
+    //
+    // Judged in read batches, not milliseconds (2026-10-15): the wall-clock
+    // bound of 50 ms came within 4 ms of failing at load 33 to 40, because
+    // a loaded machine stretches every 200 us frame, while the bug it
+    // guards keeps the setter waiting for the whole feed, thousands of
+    // frames. Two batches: the one being read when the unkey is posted,
+    // and one more whose read notification may already be queued ahead of
+    // it. The milliseconds are still printed.
     void unkeyReachesTheWireWhileEp6OutrunsTheReader() {
         P1FakeRadio fake;
         fake.setAutoStreamEnabled(false);
@@ -965,11 +974,13 @@ private slots:
 
         // A CPU-short reader: every frame read costs 200 us on this thread.
         QObject slowReader;
+        std::atomic<int> framesRead{0};
         // Per frame: iqDataReceived for receiver 0 (frameReceived is once
         // per read since 2026-10-14).
         connect(&conn, &RadioConnection::iqDataReceived, &slowReader,
-                [](int rx, const QVector<float>&) {
+                [&framesRead](int rx, const QVector<float>&) {
             if (rx != 0) { return; }
+            framesRead.fetch_add(1);
             QElapsedTimer t;
             t.start();
             while (t.nsecsElapsed() < 200000) {
@@ -978,7 +989,11 @@ private slots:
 
         constexpr int kFeedMs = 500;
         std::atomic<qint64> unkeyPostedNs{0};
-        std::thread feeder([&fake, &conn, &unkeyPostedNs] {
+        std::atomic<int> framesReadAtPost{-1};
+        std::atomic<int> framesReadAtUnkey{-1};
+        std::atomic<qint64> unkeyRanNs{0};
+        std::thread feeder([&fake, &conn, &unkeyPostedNs, &framesRead, &framesReadAtPost,
+                            &framesReadAtUnkey, &unkeyRanNs] {
             QElapsedTimer t;
             t.start();
             // Let the reader fall behind before the unkey.
@@ -987,7 +1002,11 @@ private slots:
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
             unkeyPostedNs.store(steadyNowNs());
-            QMetaObject::invokeMethod(&conn, [&conn] {
+            framesReadAtPost.store(framesRead.load());
+            QMetaObject::invokeMethod(&conn, [&conn, &framesRead, &framesReadAtUnkey,
+                                              &unkeyRanNs] {
+                framesReadAtUnkey.store(framesRead.load());
+                unkeyRanNs.store(steadyNowNs());
                 conn.setMox(false);
                 conn.setTrxRelay(false);
             });
@@ -1016,12 +1035,21 @@ private slots:
             }
             QVERIFY2(clearedAt < 0 || !keyed, "a frame after the unkey carried MOX again");
         }
+        constexpr int kCap = P1RadioConnection::maxEp6DatagramsPerReadForTest();
+        const int framesBetween = framesReadAtUnkey.load() - framesReadAtPost.load();
+        const double toSetterMs = (unkeyRanNs.load() - unkeyPostedNs.load()) / 1e6;
+        const double toWireMs = clearedAt >= 0 ? (clearedAt - unkeyPostedNs.load()) / 1e6 : -1.0;
+        QVERIFY2(framesReadAtUnkey.load() >= 0, "the unkey never ran while the feeder ran");
+        qInfo().noquote() << QString("MEASURE unkey-latency: %1 ms to the wire; the setter ran"
+                                     " %2 ms after the post, %3 EP6 frames read in between"
+                                     " (bound %4)")
+                                 .arg(toWireMs, 0, 'f', 2).arg(toSetterMs, 0, 'f', 2)
+                                 .arg(framesBetween).arg(2 * kCap);
+        QVERIFY2(framesBetween <= 2 * kCap,
+                 qPrintable(QString("the unkey waited for %1 EP6 frames to be read (bound %2,"
+                                    " two capped batches)")
+                                .arg(framesBetween).arg(2 * kCap)));
         QVERIFY2(clearedAt >= 0, "C0 MOX never cleared on the wire");
-        const double latencyMs = (clearedAt - unkeyPostedNs.load()) / 1e6;
-        qInfo().noquote() << QString("MEASURE unkey-latency: %1 ms").arg(latencyMs, 0, 'f', 2);
-        QVERIFY2(latencyMs <= 50.0,
-                 qPrintable(QString("MOX cleared on the wire %1 ms after the unkey was posted")
-                                .arg(latencyMs, 0, 'f', 2)));
 
         // The backlog left when the feeder stops is read with no new arrivals.
         QTRY_VERIFY_WITH_TIMEOUT(!conn.socketHasPendingDatagramsForTest(), 5000);
