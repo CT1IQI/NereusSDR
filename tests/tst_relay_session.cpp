@@ -37,6 +37,10 @@
 //               own open; an answer kept past its introduction still goes
 //               at the Core's answer deadline. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: this window's rows check that no introduction ends before
+//               the session is up, so they guard the window's own fix; the
+//               deadline is measured from the Core's answer. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -368,9 +372,18 @@ private slots:
         SettingsProxy proxy;
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
         QString why;
         QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
         QCOMPARE(window.pathRank(), int(PathRacer::Floor));
+        if (!olderWindow) {
+            // This window's own fix, with or without the Core's: it stays
+            // with the service until the Core speaks, so no introduction
+            // ends before the session is up.
+            const QString code = ended.isEmpty() ? QString() : ended.first().at(1).toString();
+            QVERIFY2(ended.isEmpty(),
+                     qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
+        }
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
@@ -399,9 +412,18 @@ private slots:
         SettingsProxy proxy;
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
         QString why;
         QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
         QCOMPARE(window.pathRank(), int(PathRacer::ServiceDirect));
+        if (!olderWindow) {
+            // This window's own fix, with or without the Core's: it stays
+            // with the service until the Core speaks, so no introduction
+            // ends before the session is up.
+            const QString code = ended.isEmpty() ? QString() : ended.first().at(1).toString();
+            QVERIFY2(ended.isEmpty(),
+                     qPrintable(QStringLiteral("the introduction ended early: %1").arg(code)));
+        }
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
@@ -432,8 +454,15 @@ private slots:
         StationClient window(&remote, &proxy);
         window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
         QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
-        QElapsedTimer sinceDial;
-        sinceDial.start();
+        // From the Core's answer: the introduction reaches the Core's own
+        // handler (which starts the deadline) first, then this one.
+        QElapsedTimer sinceAnswer;
+        QObject::connect(station.rendezvous->client(), &RendezvousClient::introduced,
+                         station.rendezvous->client(), [&sinceAnswer] {
+                             if (!sinceAnswer.isValid()) {
+                                 sinceAnswer.start();
+                             }
+                         });
         window.connectThroughService({service.url()}, station.rendezvous->client()->stationId(),
                                      station.core.server->stationIdentity().fingerprint());
         EndWatch ends;
@@ -449,9 +478,11 @@ private slots:
                            QStringLiteral("the kept answer to go"), &why),
                  qPrintable(why));
         // The deadline is a coarse timer, which may fire up to 5% early
-        // (Qt::CoarseTimer); it started after the dial did.
-        QVERIFY2(sinceDial.elapsed() >= kDeadlineMs * 95 / 100,
-                 qPrintable(QStringLiteral("went after %1 ms").arg(sinceDial.elapsed())));
+        // (Qt::CoarseTimer).
+        QVERIFY(sinceAnswer.isValid());
+        QVERIFY2(sinceAnswer.elapsed() >= kDeadlineMs * 95 / 100,
+                 qPrintable(QStringLiteral("went %1 ms after the answer")
+                                .arg(sinceAnswer.elapsed())));
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 
