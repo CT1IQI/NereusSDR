@@ -1144,6 +1144,9 @@
 //                app reuses the app's plans. A process told nothing keeps
 //                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                AGC threshold, Fixed Gain and Max Gain, as Slice A does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -11543,6 +11546,16 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     ch->setAgcMode(slice->agcMode());
     if (!current()) { return; }
     ch->setAgcTop(slice->rfGain());
+    if (!current()) { return; }
+    // The slice's saved AGC threshold, Fixed Gain (AGC Off) and Max Gain, in
+    // the order Slice A's channel gets them in connectToRadio. Without them
+    // the channel runs the open-time seeds (20 dB fixed, 90 dB max) whatever
+    // the operator saved for this slice.
+    ch->setAgcThreshold(slice->agcThreshold());
+    if (!current()) { return; }
+    ch->setAgcFixedGain(slice->agcFixedGain());
+    if (!current()) { return; }
+    ch->setAgcMaxGain(slice->agcMaxGain());
     if (!current()) { return; }
     // Seed AF gain before the channel runs a single block: WDSP initialises
     // panel.gain1 to 4.0 (+12 dB) in rxa.c:538, and setActive re-pushes

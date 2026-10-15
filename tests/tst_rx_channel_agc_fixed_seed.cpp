@@ -22,6 +22,9 @@
 //   2026-10-14 - New test file: AGC Fixed Gain seed at RX channel open.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open with their saved AGC gains.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 //   2026-10-15 - AGC Max Gain seed at RX channel open. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -29,8 +32,13 @@
 
 #include <QtTest/QtTest>
 
+#include "core/AppSettings.h"
+#include "core/DspControlThread.h"
 #include "core/RxChannel.h"
+#include "core/SampleRateCatalog.h"
 #include "core/WdspEngine.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
 
 #include <cmath>
 
@@ -146,6 +154,42 @@ private slots:
         QCOMPARE(qRound(appliedMaxGainDb(kChannelId)), 70);
 
         engine.destroyRxChannel(kChannelId);
+#endif
+    }
+
+    // A second slice's channel opens with that slice's saved Fixed Gain and
+    // Max Gain, as Slice A's does, not with the open-time seeds.
+    void secondSliceOpensWithItsSavedGains()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("needs WDSP");
+#else
+        constexpr int kRateHz = 48000;
+        AppSettings::instance().clear();
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kRateHz);
+        model.addSlice();
+        const int b = model.addSlice();
+        SliceModel* sliceB = model.sliceById(b);
+        QVERIFY(sliceB != nullptr);
+        QVERIFY(sliceB->streamIndex() >= 0);
+        // Saved before any channel exists, as a restore at connect is.
+        sliceB->setAgcFixedGain(37);
+        sliceB->setAgcMaxGain(75);
+
+        model.openRxChannelPool(2, bufferSizeForRate(kRateHz), kRateHz);
+        // The channel jobs run on the receive lane; let them land.
+        QVERIFY(model.receiveLane() == nullptr
+                || model.receiveLane()->waitIdleForTest(600000));
+        RxChannel* ch = engine->rxChannel(b);
+        QVERIFY(ch != nullptr);
+        QVERIFY(ch->isActive());
+
+        QCOMPARE(qRound(appliedFixedGainDb(b)), 37);
+        QCOMPARE(qRound(appliedMaxGainDb(b)), 75);
 #endif
     }
 };
