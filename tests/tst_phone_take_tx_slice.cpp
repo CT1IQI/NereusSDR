@@ -16,13 +16,19 @@
 //   2026-10-14: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
+//   2026-10-14: the phone and a desktop window see exactly one active
+//               slice after admission (ruling 5.10). J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 
 #include "core/DeviceLayoutStore.h"
 #include "core/SliceOwnership.h"
+#include "core/security/ClientDeviceIdentity.h"
 #include "core/session/SliceAccessPolicy.h"
+#include "core/session/StationClient.h"
+#include "core/settings/SettingsProxy.h"
 
 #include <QSignalSpy>
 
@@ -273,11 +279,11 @@ private slots:
     // Why the app tuned slice 2 while the Core's active slice for it was 0.
     // At admission slice 2 is restored while it is the phone's only slice,
     // so applyActiveSlices flags it active; adoptUnowned then gives the lone
-    // phone slice 0 and makes 0 its active slice, but nothing reruns
-    // applyActiveSlices, so the phone's wire carries active=true on both of
-    // its slices. Ruling 5.10 says each device sees exactly one. The app
-    // tunes the first own slice flagged active in the Core's object order
-    // (BandSlicesModel.ownActiveSliceId), which can be slice 2.
+    // phone slice 0 and makes 0 its active slice. Before the fix nothing
+    // reran applyActiveSlices, so the phone's wire carried active=true on
+    // both of its slices, and the app tunes the first own slice flagged
+    // active in the Core's object order (BandSlicesModel.ownActiveSliceId),
+    // which can be slice 2. Ruling 5.10: each device sees exactly one.
     void aPhoneSeesExactlyOneActiveSliceAfterAdmission()
     {
         Core core;
@@ -307,13 +313,76 @@ private slots:
         const bool wire2 =
             latest(app->received(), QStringLiteral("slice:2"), QStringLiteral("active")).toBool();
         QVERIFY(wire0);
-        QEXPECT_FAIL("",
-                     "Core bug: adoptUnowned makes slice 0 the phone's active slice at admission "
-                     "without rerunning applyActiveSlices, so slice 2 keeps active=true",
-                     Continue);
         QVERIFY(!wire2);
-        QEXPECT_FAIL("", "same Core bug: SliceModel 2 still flagged active", Continue);
+        QVERIFY(core.model->sliceById(0)->isActive());
         QVERIFY(!core.model->sliceById(2)->isActive());
+    }
+
+    // The desktop path: a Remote-role window behind StationClient, signed in
+    // by its paired key and admitted the same way (saved slice 2 restored,
+    // slice 0 adopted). It moves its active slice on each `active` true
+    // edge (StationClient applyMirroredValue, applyStationActiveSlice), so
+    // with two flags it lands on whichever arrives last. After admission
+    // the Core sends it one flag, on slice 0, and the window stays there.
+    void aDesktopWindowLandsOnTheCoresActiveSlice()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        core.model->sliceById(0)->setFrequency(14225000.0);
+        QTemporaryDir keyDir;
+        QVERIFY(keyDir.isValid());
+        const auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        PairedDevice record;
+        record.id = key->fingerprint();
+        record.publicKeySpki = key->publicKeySpki();
+        record.name = QStringLiteral("Shack MacBook");
+        record.kind = QStringLiteral("computer");
+        QVERIFY(core.server->deviceStore()->add(record));
+        SavedSlice saved;
+        saved.id = 2;
+        saved.panKey = QStringLiteral("pan-0");
+        saved.frequencyHz = 7180200.0;
+        saved.dspMode = DSPMode::LSB;
+        QVERIFY(DeviceLayoutStore::append(AppSettings::instance(), core.model->currentRadioMac(),
+                                          record.id, saved, 4));
+
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, record.name);
+        auto* app = new LoopbackTransport(QStringLiteral("desktop"));
+        auto* station = new LoopbackTransport(QStringLiteral("core"));
+        station->setPeerAddress(QStringLiteral("192.0.2.30"));
+        app->setPeerCertificateSha256(core.certSha256());
+        station->linkTo(app);
+        // StationClient takes `app` as its child (startSession), so the
+        // harness's client list must not delete it too.
+        core.server->acceptTransport(station);
+        window.startSession(app, QString(), QString(),
+                            core.server->stationIdentity().fingerprint());
+        QTRY_VERIFY(window.isHandshakeComplete());
+        QVERIFY(core.model->sliceById(2) != nullptr);
+        const SliceOwnership* ownership = core.model->sliceOwnership();
+        QCOMPARE(ownership->activeFor(record.id), 0);
+        QCOMPARE(ownership->mark(2).owner, record.id);
+
+        QTRY_VERIFY(remote.sliceById(0) != nullptr && remote.sliceById(2) != nullptr);
+        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
+        // What the Core sent the window: one slice marked active. Which of
+        // two flags a window ends on depends on the order they arrive in, so
+        // the wire is checked as well as where the window landed.
+        QVERIFY(latest(app->received(), QStringLiteral("slice:0"), QStringLiteral("active"))
+                    .toBool());
+        QVERIFY(!latest(app->received(), QStringLiteral("slice:2"), QStringLiteral("active"))
+                     .toBool());
+        QVERIFY(remote.activeSlice() != nullptr);
+        QCOMPARE(remote.activeSlice()->sliceIndex(), 0);
+        QVERIFY(remote.sliceById(0)->isActive());
+        QVERIFY(!remote.sliceById(2)->isActive());
+        QTest::qWait(3 * StationServer::kDefaultDeltaFlushMs);
+        QCOMPARE(remote.activeSlice()->sliceIndex(), 0);
+        window.disconnectFromStation(QStringLiteral("test done"));
     }
 };
 

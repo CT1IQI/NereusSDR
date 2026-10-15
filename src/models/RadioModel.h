@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - remarkActiveSlicesForOwnership: one slice marked active
+//                per device after every ownership change (ruling 5.10).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
+//                Anthropic Claude Code.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -7392,6 +7396,13 @@ private:
     /// the active-slice signals when it moves). Local only.
     void applyActiveSlices();
 
+    /// Ruling 5.10: reruns applyActiveSlices when SliceOwnership changes a
+    /// device's active slice (adoptUnowned at admission among others), so
+    /// each device sees exactly one slice marked active. Skipped inside
+    /// addSliceImpl and removeSliceImpl, which end with their own call;
+    /// a change that arrives while it runs makes it run once more.
+    void remarkActiveSlicesForOwnership();
+
     /// The operator's reason for a refused add at the slice cap:
     /// "<radio> supports a maximum of <cap> slices" ("1 slice" for one), or,
     /// before a radio has sized the stream pool, "The Core supports a
@@ -7756,6 +7767,13 @@ private:
     // iPhone app Task 73 (ruling 5.11): the frequency the FreeDV Reporter
     // lists, the station-level active slice's; published when connected.
     quint64 m_freedvWantedHz{0};
+    // Ruling 5.10 (remarkActiveSlicesForOwnership): how many add or remove
+    // sequences are open, which re-mark the slices themselves at their end;
+    // whether a re-mark is running; and whether another change came in
+    // while it ran.
+    int m_activeSliceSequences{0};
+    bool m_remarkingActiveSlices{false};
+    bool m_remarkActiveSlicesAgain{false};
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c +
     // 3M-5d (m_txAnalyzer).
