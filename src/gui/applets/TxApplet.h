@@ -215,6 +215,7 @@
 // =================================================================
 
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 #include <QPointer>
 #include <QList>
 #include <functional>
@@ -284,7 +285,7 @@ class SliceModel;
 //   VOX engage surface next to MOX/TUNE on the right pane.  Full row moves
 //   as a unit including the live DexpPeakMeter strip + 100 ms poller.
 // Out-of-phase controls (2-Tone, PS-A) are hidden.
-class TxApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT TxApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit TxApplet(RadioModel* model, QWidget* parent = nullptr);
