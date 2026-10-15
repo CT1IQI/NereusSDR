@@ -76,6 +76,8 @@
 //   2026-10-15 - The AGC Fixed Gain spinner follows the slice when another
 //               window or the phone changes it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The AGC Max Gain spinner follows the slice the same way.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -437,6 +439,14 @@ void AgcAlcSetupPage::rebuildForActiveSlice()
 
     connect(m_agcMaxGain, QOverload<int>::of(&QSpinBox::valueChanged),
             slice, &SliceModel::setAgcMaxGain);
+    // Follow writes made elsewhere, without echoing them back (as Fixed Gain
+    // below).
+    QSpinBox* const maxGainSpin = m_agcMaxGain;
+    connect(slice, &SliceModel::agcMaxGainChanged,
+            maxGainSpin, [maxGainSpin](int dB) {
+        QSignalBlocker b(maxGainSpin);
+        maxGainSpin->setValue(dB);
+    });
 
     connect(m_agcFixedGain, QOverload<int>::of(&QSpinBox::valueChanged),
             slice, &SliceModel::setAgcFixedGain);
