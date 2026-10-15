@@ -33,6 +33,10 @@
 //   2026-10-15: a Core slow to see its own end open still gets the
 //               session, over the web relay and over a direct pair. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: and with an older window, which leaves the service at its
+//               own open; an answer kept past its introduction still goes
+//               at the Core's answer deadline. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -200,6 +204,15 @@ bool connectWindow(StationClient& window, LocalService& service, CoreThroughServ
 class TstRelaySession final : public QObject {
     Q_OBJECT
 
+    // This window, and an older one that leaves the service at its own
+    // open.
+    static void windowRows()
+    {
+        QTest::addColumn<bool>("olderWindow");
+        QTest::newRow("this window") << false;
+        QTest::newRow("older window") << true;
+    }
+
 private slots:
     void initTestCase() { QStandardPaths::setTestModeEnabled(true); }
     void cleanup()
@@ -207,6 +220,7 @@ private slots:
         IceConfiguration::setOnlyLoopbackShimCandidatesForTest(false);
         RelayLeg::setRelayUrlForTest(QUrl());
         DataChannelTransport::setAnswererOpenDelayForTest(0);
+        RendezvousDialer::setLeavesServiceAtOpenForTest(false);
     }
 
     // Only the web relay works: the session runs over it, both ends' legs
@@ -328,9 +342,13 @@ private slots:
     // on the new connection, so the Core's introduction does not end
     // (clientLeft) before its end opens, and the session comes up over the
     // web relay. Before, the window left the service at its own open and
-    // the Core closed the connection it was about to accept.
+    // the Core closed the connection it was about to accept. An older
+    // window still leaves then; the Core keeps a connection under way.
+    void aSlowCoreStillOpensOverTheWebRelay_data() { windowRows(); }
     void aSlowCoreStillOpensOverTheWebRelay()
     {
+        QFETCH(bool, olderWindow);
+        RendezvousDialer::setLeavesServiceAtOpenForTest(olderWindow);
         StandInRelay relay;
         QVERIFY(relay.server->isListening());
         LocalService service(/*stun=*/false, /*relay=*/false);
@@ -359,8 +377,11 @@ private slots:
     // 2026-10-15: the same over a direct pair, every path open: the window
     // leaving the service at its own open ended every introduction the
     // service brokered, not only the relayed ones.
+    void aSlowCoreStillOpensOverADirectPair_data() { windowRows(); }
     void aSlowCoreStillOpensOverADirectPair()
     {
+        QFETCH(bool, olderWindow);
+        RendezvousDialer::setLeavesServiceAtOpenForTest(olderWindow);
         StandInRelay relay;
         LocalService service(/*stun=*/false, /*relay=*/false);
         service.setRelayGrants(true);
@@ -381,6 +402,56 @@ private slots:
         QString why;
         QVERIFY2(connectWindow(window, service, station, &why), qPrintable(why));
         QCOMPARE(window.pathRank(), int(PathRacer::ServiceDirect));
+        window.disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // 2026-10-15: an answer the Core keeps past its introduction (an older
+    // window left the service at its own open) and that never opens still
+    // goes at the Core's answer deadline, not before and not never.
+    void anAnswerKeptPastItsIntroductionGoesAtTheDeadline()
+    {
+        StandInRelay relay;
+        LocalService service(/*stun=*/false, /*relay=*/false);
+        service.setRelayGrants(true);
+        RelayLeg::setRelayUrlForTest(QUrl(relay.url()));
+        QVERIFY2(service.start(), qPrintable(service.startFailure()));
+        CoreThroughService station;
+        QVERIFY2(station.start(service), qPrintable(station.failure));
+        constexpr int kDeadlineMs = 3000;
+        station.rendezvous->setAnswerDeadlineMs(kDeadlineMs);
+        RendezvousDialer::setLeavesServiceAtOpenForTest(true);
+        // Never within the test: the Core's end does not open.
+        DataChannelTransport::setAnswererOpenDelayForTest(600000);
+
+        QTemporaryDir keyDir;
+        auto key = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(station.core.pairComputer(*key));
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient window(&remote, &proxy);
+        window.setDeviceIdentity(key, QStringLiteral("Shack MacBook"));
+        QSignalSpy ended(station.rendezvous->client(), &RendezvousClient::introductionEnded);
+        QElapsedTimer sinceDial;
+        sinceDial.start();
+        window.connectThroughService({service.url()}, station.rendezvous->client()->stationId(),
+                                     station.core.server->stationIdentity().fingerprint());
+        EndWatch ends;
+        QString why;
+        QVERIFY2(waitUntil([&ended] { return !ended.isEmpty(); }, 15000, ends,
+                           QStringLiteral("the introduction to end (clientLeft)"), &why),
+                 qPrintable(why));
+        QCOMPARE(ended.first().at(1).toString(), QStringLiteral("clientLeft"));
+        // Kept: its connection was under way.
+        QCOMPARE(station.rendezvous->pendingAnswers(), 1);
+        QVERIFY2(waitUntil([&station] { return station.rendezvous->pendingAnswers() == 0; },
+                           kDeadlineMs + 10000, ends,
+                           QStringLiteral("the kept answer to go"), &why),
+                 qPrintable(why));
+        // The deadline is a coarse timer, which may fire up to 5% early
+        // (Qt::CoarseTimer); it started after the dial did.
+        QVERIFY2(sinceDial.elapsed() >= kDeadlineMs * 95 / 100,
+                 qPrintable(QStringLiteral("went after %1 ms").arg(sinceDial.elapsed())));
         window.disconnectFromStation(QStringLiteral("test done"));
     }
 

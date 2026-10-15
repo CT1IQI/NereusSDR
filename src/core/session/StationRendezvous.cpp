@@ -25,6 +25,10 @@
 //   2026-09-29: the direct media ladder: the hello's STUN servers handed to
 //               the server for every media connection (mediaStunUrls).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: an introduction that ends (clientLeft, expired) while its
+//               connection is under way (ICE has a selected pair) keeps the
+//               connection until it opens or kAnswerDeadlineMs. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationRendezvous.h"
@@ -201,16 +205,30 @@ bool StationRendezvous::start()
             });
     });
     // Task 28 fix wave (review Minor 1): the device left, or the
-    // introduction expired, before its connection opened: nothing more can
-    // come for it, so its peer connection and any relay allocation go now
-    // rather than at kAnswerDeadlineMs. A connection that opened is a
+    // introduction expired, before its connection opened. With no ICE pair
+    // yet nothing more can come for it, so its peer connection and any
+    // relay allocation go now rather than at kAnswerDeadlineMs; one already
+    // being connected is kept (below). A connection that opened is a
     // session and is not touched.
     connect(m_client, &RendezvousClient::introductionEnded, this,
             [this](const QByteArray& id, const QString& code) {
-        if (answerFor(id) == nullptr) {
+        Answer* answer = answerFor(id);
+        if (answer == nullptr) {
             return;
         }
         if (code == QLatin1String("clientLeft") || code == QLatin1String("expired")) {
+            // 2026-10-15: unless its connection is already under way (ICE
+            // has a selected pair): the device's end can open, and an older
+            // window leaves the service then, before this end has seen its
+            // own open (relayed or direct). It opens or goes
+            // at kAnswerDeadlineMs.
+            if (answer->transport->selectedPath().has_value()) {
+                qCInfo(lcStationRendezvous)
+                    << "An introduction ended while its connection was being made; "
+                       "keeping the connection:"
+                    << code;
+                return;
+            }
             qCInfo(lcStationRendezvous) << "An introduction ended before its connection opened:"
                                         << code;
             finishAnswer(id, false);

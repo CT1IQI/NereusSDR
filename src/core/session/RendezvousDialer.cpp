@@ -32,6 +32,9 @@
 //               so the Core's introduction does not end before the Core's
 //               own end opens. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: setLeavesServiceAtOpenForTest(), the older window's way,
+//               for the Core's own fix. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RendezvousDialer.h"
@@ -56,7 +59,18 @@ namespace {
 constexpr const char* kNotReached = "The Core could not be reached from here.";
 constexpr const char* kNoDeviceKey = "This computer has no key to connect with.";
 
+bool& leavesServiceAtOpen()
+{
+    static bool leaves = false;
+    return leaves;
+}
+
 } // namespace
+
+void RendezvousDialer::setLeavesServiceAtOpenForTest(bool leaves)
+{
+    leavesServiceAtOpen() = leaves;
+}
 
 RendezvousDialer::RendezvousDialer(QObject* parent)
     : QObject(parent)
@@ -282,6 +296,11 @@ void RendezvousDialer::startOffer()
         // seen its own end open closes the connection it was about to
         // accept. Relayed or direct, its open can come after this end's.
         // The client goes with the connection.
+        if (leavesServiceAtOpen()) {
+            m_client->stop();
+            emit ready(transport);
+            return;
+        }
         RendezvousClient* client = m_client;
         m_client = nullptr;
         client->disconnect(this);

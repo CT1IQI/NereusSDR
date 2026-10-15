@@ -51,6 +51,9 @@
 //               web relay's leg (RelayLeg) and its per-connection candidate
 //               sources; the computer's own proxy settings (SystemProxy).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setLeavesServiceAtOpenForTest(), a window that leaves
+//               the service at its own open, as older ones do. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/IceConfiguration.h"
@@ -120,6 +123,9 @@ public:
     void setDialDeadlineMs(int ms) { m_deadlineMs = ms; }
     /// Test seam: kAnswerDeadlineMs.
     void setAnswerDeadlineMs(int ms) { m_answerDeadlineMs = ms; }
+    /// Test seam: every dial leaves the service the moment its own end
+    /// opens, as windows before 2026-10-15 did (default false).
+    static void setLeavesServiceAtOpenForTest(bool leaves);
     /// iPhone app plan Task 29: false gathers no relay candidate and
     /// accepts none of the Core's (an upgrade, which looks for a path
     /// without the relay; a Core with the relay turned off). Default true.
