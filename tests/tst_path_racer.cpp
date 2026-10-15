@@ -53,6 +53,11 @@
 //               a session through the service with no pair known searches
 //               ICE (without the relay); one with a host pair does not.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: PR 524 review: a search's own ICE rung that opens with no
+//               pair known moves a session with no pair known, or one on
+//               the TURN relay, once; documentation addresses; the
+//               heartbeat guard for an unknown pair; "canceled", "dialed".
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -65,6 +70,7 @@
 #include <QTcpSocket>
 #include <QTimer>
 
+#include <atomic>
 #include <memory>
 
 #include "core/security/ClientDeviceIdentity.h"
@@ -226,6 +232,9 @@ quint16 closedPort()
 // The planned rungs (address, start delay) of each race a window starts,
 // read at the line it logs just before the race starts ("Racing every
 // path to the Core", "Looking for a better path to the Core").
+// The first connection's ICE pair in a service session.
+enum class FirstPair { Unknown, Host, Relayed };
+
 struct RacePlans {
     QPointer<StationClient> client;
     QList<QList<QPair<QString, int>>> first;
@@ -566,7 +575,7 @@ private slots:
     // learned addresses two IPv6 ones, its last good addresses all three.
     // Whatever rank the session has on the service (direct, TURN, or the
     // web relay), a better-path search admits the IPv4 address, once,
-    // 250 ms after the IPv6 ones. Nothing is started, so nothing is dialled.
+    // 250 ms after the IPv6 ones. Nothing is started, so nothing is dialed.
     void anUpgradeOnTheRelayAdmitsTheEntryAddress_data()
     {
         QTest::addColumn<int>("rank");
@@ -650,7 +659,7 @@ private slots:
         }
         {
             // An attempt that ends at once (not a secure address): its end,
-            // with the outcome. Nothing is dialled.
+            // with the outcome. Nothing is dialed.
             RacerLines log;
             PathRacer first;
             first.addDirectUrls({QUrl(QStringLiteral("ws://127.0.0.1:1"))},
@@ -670,9 +679,9 @@ private slots:
         }
     }
 
-    // A race cancelled with attempts still open (the session ended, or a
+    // A race canceled with attempts still open (the session ended, or a
     // new race stopped it) logs its end, naming them and why.
-    void aCancelledRaceLogsItsOpenAttempts()
+    void aCanceledRaceLogsItsOpenAttempts()
     {
         RacerLines log;
         PathRacer racer;
@@ -682,13 +691,13 @@ private slots:
         racer.cancel(QStringLiteral("the session ended"));
         const QString joined = log.lines.join(QLatin1Char('\n'));
         QVERIFY2(log.has(QStringLiteral(
-                     "Race cancelled (the session ended) with 2 attempt(s) still open: "
+                     "Race canceled (the session ended) with 2 attempt(s) still open: "
                      "127.0.0.1:1, 127.0.0.1:2")), qPrintable(joined));
 
-        // Cancelled again, or once everything has ended: no second line.
+        // Canceled again, or once everything has ended: no second line.
         log.lines.clear();
         racer.cancel(QStringLiteral("stopped"));
-        QVERIFY2(!log.has(QStringLiteral("Race cancelled")), qPrintable(log.lines.join(QLatin1Char('\n'))));
+        QVERIFY2(!log.has(QStringLiteral("Race canceled")), qPrintable(log.lines.join(QLatin1Char('\n'))));
     }
 
     // JJ's entry against every path a session can be on. A search admits
@@ -825,7 +834,7 @@ private slots:
     // still tries ICE through the service (without the relay). A known
     // host pair is direct ICE already, and its searches leave the service
     // out.
-    void anUnknownIcePairRanksBelowServiceDirect()
+    void anUnknownIcePairRanksWorseThanServiceDirect()
     {
         QVERIFY(PathRacer::rankForPath(std::nullopt) > int(PathRacer::ServiceDirect));
         MediaIcePath host;
@@ -836,16 +845,21 @@ private slots:
         QCOMPARE(PathRacer::rankForPath(host), int(PathRacer::ServiceDirect));
     }
 
+    // The session's own path: a host pair, no pair known, or the TURN
+    // relay. Every better-path search's ICE rung opens before its own pair
+    // is known; it takes no relay, so it is direct ICE through the
+    // service, and a session not known to be on it moves there once.
     void aServiceSessionSearchesIceWhileItsPairIsUnknown_data()
     {
-        QTest::addColumn<bool>("pairKnown");
-        QTest::newRow("no selected pair") << false;
-        QTest::newRow("host pair") << true;
+        QTest::addColumn<int>("first");
+        QTest::newRow("no selected pair") << int(FirstPair::Unknown);
+        QTest::newRow("host pair") << int(FirstPair::Host);
+        QTest::newRow("TURN relay") << int(FirstPair::Relayed);
     }
 
     void aServiceSessionSearchesIceWhileItsPairIsUnknown()
     {
-        QFETCH(bool, pairKnown);
+        QFETCH(int, first);
         LocalService service;
         QVERIFY2(service.start(), qPrintable(service.startFailure()));
         Core core;
@@ -854,14 +868,29 @@ private slots:
         QVERIFY(rendezvous.start());
         QTRY_COMPARE_WITH_TIMEOUT(registered.size(), 1, 10000);
         Window window(core);
+        RacePlans plans;
+        plans.client = window.client.get();
         MediaIcePath host;
         host.localType = QStringLiteral("host");
         host.remoteType = QStringLiteral("host");
         host.localAddress = QStringLiteral("127.0.0.1");
         host.remoteAddress = QStringLiteral("127.0.0.1");
+        MediaIcePath turn = host;
+        turn.localType = QStringLiteral("relay");
+        // The first connection's own pair; no pair known for any later one
+        // (the search's own connection included).
+        std::atomic<const DataChannelTransport*> firstTransport{nullptr};
         DataChannelTransport::setSelectedPathOverrideForTest(
-            [host, pairKnown](const DataChannelTransport*) {
-                return pairKnown ? std::optional<MediaIcePath>(host) : std::nullopt;
+            [host, turn, first, &firstTransport](const DataChannelTransport* transport) -> std::optional<MediaIcePath> {
+                if (first == int(FirstPair::Host)) {
+                    return host;
+                }
+                const DataChannelTransport* expected = nullptr;
+                firstTransport.compare_exchange_strong(expected, transport);
+                if (first == int(FirstPair::Relayed) && firstTransport.load() == transport) {
+                    return turn;
+                }
+                return std::nullopt;
             });
         const auto clearOverride = qScopeGuard([] { DataChannelTransport::setSelectedPathOverrideForTest({}); });
 
@@ -877,8 +906,6 @@ private slots:
         });
         window.client->setUpgradeScheduleForTest({300});
 
-        RacePlans plans;
-        plans.client = window.client.get();
         s_plans = &plans;
         s_previousHandler = qInstallMessageHandler(capturePlans);
         const auto restore = qScopeGuard([] {
@@ -893,20 +920,42 @@ private slots:
         QVERIFY(window.client->connectedUrl().isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(plans.upgradeFailMs.size() >= 2, 20000);
         QCOMPARE(plans.upgradeServiceAllowsRelay.size(), plans.upgrades.size());
-        for (const auto& allowsRelay : std::as_const(plans.upgradeServiceAllowsRelay)) {
-            if (pairKnown) {
-                QVERIFY(!allowsRelay.has_value());
-            } else {
+        const bool moves = first != int(FirstPair::Host);
+        for (qsizetype index = 0; index < plans.upgradeServiceAllowsRelay.size(); ++index) {
+            const auto& allowsRelay = plans.upgradeServiceAllowsRelay.at(index);
+            if (moves && index == 0) {
+                // The search from the first path: ICE through the service,
+                // without the relay.
                 QVERIFY(allowsRelay.has_value());
                 QVERIFY(!*allowsRelay);
+            } else {
+                // From direct ICE through the service: the service is no
+                // better.
+                QVERIFY2(!allowsRelay.has_value(), qPrintable(QString::number(index)));
             }
         }
-        // ICE through the service with no pair known again is no better.
-        QCOMPARE(window.client->pathSwitches(), 0);
-        QCOMPARE(window.client->pathRank(),
-                 int(pairKnown ? PathRacer::ServiceDirect : PathRacer::ServiceRelayed));
-        QCOMPARE(window.client->pathPairUnknown(), !pairKnown);
+        QCOMPARE(window.client->pathSwitches(), moves ? 1 : 0);
+        QCOMPARE(window.client->pathRank(), int(PathRacer::ServiceDirect));
+        QVERIFY(!window.client->pathPairUnknown());
         window.client->disconnectFromStation(QStringLiteral("test done"));
+    }
+
+    // The guards that keep a pair not known yet from reading as the relay:
+    // the heartbeat keeps the direct interval, and a known relay takes the
+    // relayed one.
+    void anUnknownPairKeepsTheDirectHeartbeat()
+    {
+        Core core;
+        Window window(core);
+        constexpr int kIntervalMs = 10000;
+        window.client->setHeartbeatIntervalMs(kIntervalMs);
+        window.client->setPathRankForTest(PathRacer::ServiceRelayed, /*pairUnknown=*/true);
+        QCOMPARE(window.client->effectiveHeartbeatIntervalMs(), kIntervalMs);
+        window.client->setPathRankForTest(PathRacer::ServiceRelayed, /*pairUnknown=*/false);
+        QCOMPARE(window.client->effectiveHeartbeatIntervalMs(),
+                 StationClient::kRelayedHeartbeatIntervalMs);
+        window.client->setPathRankForTest(PathRacer::ServiceDirect, /*pairUnknown=*/false);
+        QCOMPARE(window.client->effectiveHeartbeatIntervalMs(), kIntervalMs);
     }
 
     // The live sequence of 2026-10-15 10:11-10:12: the first race and its

@@ -30,6 +30,12 @@
 //               better-path search retries ICE; the rung still names it a
 //               service path. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: PR 524 review: a rung that gathered no relay ranks a pair
+//               not known yet as direct ICE through the service, so a
+//               search's own ICE rung is not dropped; the rung logs it, not
+//               rankForPath(); the race's start line counts the names still
+//               to look up; "canceled". J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/NetworkTrouble.h"
@@ -152,9 +158,7 @@ int PathRacer::rankForPath(const std::optional<MediaIcePath>& path)
     if (!path) {
         // Not taken as direct ICE: a better-path search would then leave
         // the service out, and a pair that is really the relay would
-        // never get ICE again.
-        qCInfo(lcPathRacer).noquote()
-            << "ICE pair not known yet; ranked as relayed so a better-path search retries ICE";
+        // never get ICE again. The callers log it.
         return ServiceRelayed;
     }
     if (path->viaLoopbackShim()) {
@@ -369,9 +373,15 @@ void PathRacer::start()
         return;
     }
     m_started = true;
+    // The names are looked up after this line; their addresses join the
+    // race as they resolve.
     qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
-        QStringLiteral("Race started with %1 attempt(s), %2")
-            .arg(m_entries.size()).arg(barText(m_betterThan)));
+        QStringLiteral("Race started with %1 attempt(s)%2, %3")
+            .arg(m_entries.size())
+            .arg(m_pendingLookups.isEmpty()
+                     ? QString()
+                     : QStringLiteral(" and %1 name(s) to look up").arg(m_pendingLookups.size()))
+            .arg(barText(m_betterThan)));
     bool ipv6Present = false;
     for (const auto& entry : m_entries) {
         if (auto* direct = qobject_cast<DirectPathRung*>(entry->rung.data());
@@ -723,7 +733,7 @@ void PathRacer::cancel(const QString& why)
     }
     if (!open.isEmpty()) {
         qCInfo(lcPathRacer).noquote() << tagged(m_betterThan,
-            QStringLiteral("Race cancelled%1 with %2 attempt(s) still open: %3")
+            QStringLiteral("Race canceled%1 with %2 attempt(s) still open: %3")
                 .arg(why.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(why))
                 .arg(open.size())
                 .arg(open.join(QStringLiteral(", "))));
@@ -918,8 +928,24 @@ void RendezvousPathRung::start()
         }
         m_done = true;
         const std::optional<MediaIcePath> path = transport->selectedPath();
-        m_rank = PathRacer::rankForPath(path);
-        m_pairUnknown = !path;
+        if (!path && !m_allowRelay) {
+            // It gathered no relay and took none of the Core's (a
+            // better-path search's own ICE rung), so it cannot be relayed:
+            // direct ICE through the service.
+            qCInfo(lcPathRacer).noquote()
+                << "ICE pair not known yet; this attempt took no relay, so it ranks as "
+                   "direct ICE through the service";
+            m_rank = PathRacer::ServiceDirect;
+            m_pairUnknown = false;
+        } else {
+            m_rank = PathRacer::rankForPath(path);
+            m_pairUnknown = !path;
+            if (m_pairUnknown) {
+                qCInfo(lcPathRacer).noquote()
+                    << "ICE pair not known yet; ranked as relayed so a better-path search "
+                       "retries ICE";
+            }
+        }
         m_dialer = nullptr;
         dialer->deleteLater();
         noteRelay(dialer);

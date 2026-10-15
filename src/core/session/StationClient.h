@@ -481,6 +481,9 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: pathPairUnknown(), a rank of ServiceRelayed that only
+//               means the ICE pair is not known yet; setPathRankForTest().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -862,6 +865,13 @@ public:
     /// True while pathRank() is ServiceRelayed only because libjuice had
     /// not reported the selected ICE pair: not known to be the relay.
     bool pathPairUnknown() const { return m_pathPairUnknown; }
+    /// Test seam: the path rank and whether its pair is known, as a race
+    /// or the service dial sets them.
+    void setPathRankForTest(int rank, bool pairUnknown)
+    {
+        m_pathRank = rank;
+        m_pathPairUnknown = pairUnknown;
+    }
     /// Moves of this session to a better path (link section 21.2).
     int pathSwitches() const { return m_pathSwitches; }
     /// Test seams: the upgrade schedule (PathRacer::kUpgradeRetryMs; the

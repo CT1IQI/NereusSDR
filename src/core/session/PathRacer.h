@@ -53,6 +53,9 @@
 //               rendezvous rung still names it a service path, and says
 //               whether it may take the relay. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: PR 524 review: rankForPath()'s doc gives the rule for a
+//               pair not known yet, and that it does not log. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -217,7 +220,7 @@ public:
 
     void start();
     /// Stops everything, closes what was not taken; nothing more is
-    /// signalled. `why`, when given, goes in the log line that names the
+    /// signaled. `why`, when given, goes in the log line that names the
     /// attempts still open.
     void cancel(const QString& why = QString());
     /// The winner reached snapshot.complete: every rung still running
@@ -236,8 +239,10 @@ public:
     static int rankFor(const QUrl& url);
     /// Step 2b: the rank of a connection through the service from the pair
     /// it settled on: Floor through the web relay's loopback shim,
-    /// ServiceRelayed through TURN, ServiceDirect otherwise (and while no
-    /// pair is known).
+    /// ServiceRelayed through TURN, ServiceDirect otherwise. While no pair
+    /// is known: ServiceRelayed, so a better-path search retries ICE (a
+    /// rendezvous rung that took no relay ranks it ServiceDirect itself).
+    /// It does not log; its callers do.
     static int rankForPath(const std::optional<MediaIcePath>& path);
 
     /// Test seam: each rung's address and how long after start() it

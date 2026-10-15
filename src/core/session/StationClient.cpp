@@ -9,13 +9,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  PR 524 review: the service dial's log
+//                                    line says when the ICE pair is not
+//                                    known yet, and logs the rank it gives
+//                                    it once; setPathRankForTest().
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  A session through the service whose ICE
 //                                    pair is not known yet ranks as relayed,
 //                                    so its better-path searches retry ICE;
 //                                    the heartbeat keeps the direct interval
 //                                    until the pair is known. AI-assisted
 //                                    via Anthropic Claude Code.
-//   2026-10-15  J.J. Boyd / KG4VCF  A cancelled path race says why in its
+//   2026-10-15  J.J. Boyd / KG4VCF  A canceled path race says why in its
 //                                    log line. AI-assisted via Anthropic
 //                                    Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
@@ -1514,11 +1519,19 @@ void StationClient::dialThroughService()
             emit connectionAttemptChanged();
         }
         qCInfo(lcStationClient) << "Connected to the Core through the remote access service"
-                                << (path && path->viaLoopbackShim() ? "(web relay)"
-                                    : path && path->relayed()       ? "(relayed)"
-                                                                    : "(direct)");
+                                << (!path                     ? "(ICE pair not known yet)"
+                                    : path->viaLoopbackShim() ? "(web relay)"
+                                    : path->relayed()         ? "(relayed)"
+                                                              : "(direct)");
         m_pathRank = PathRacer::rankForPath(path);
         m_pathPairUnknown = !path;
+        if (m_pathPairUnknown) {
+            // Outside race mode no better-path search runs (scheduleUpgrade).
+            qCInfo(lcStationClient).noquote()
+                << (m_raceMode ? "ICE pair not known yet; ranked as relayed so a better-path "
+                                 "search retries ICE"
+                               : "ICE pair not known yet; ranked as relayed until it is known");
+        }
         // Trusted by the identity key alone: the hello's binding is checked
         // against the certificate the Core presented in DTLS before
         // anything is sent (handleHello()).
