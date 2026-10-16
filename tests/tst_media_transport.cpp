@@ -78,6 +78,10 @@
 // 20 s budget, with none after the last attempt; a miss says when that
 // budget ran out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
+// 2026-10-16: both display sink cases that start a pair stop there when it
+// does not start, so the miss is the only failure they report. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
 // =================================================================
 
 #include "HighResolutionWait.h"
@@ -862,6 +866,9 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     QVERIFY(sink != nullptr);
     QVERIFY(offerer.displaySink() == sink);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
     QVERIFY(sink->ready());
 
     // The display channel never retransmits: on a slowed run (a sanitizer,
@@ -1128,6 +1135,9 @@ void TestMediaTransport::displaySinkReportsAClosedChannelOnce()
     const std::shared_ptr<MediaDisplaySink> sink = offerer.displaySink();
     QVERIFY(sink != nullptr);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
     QVERIFY(sink->ready());
     QVERIFY(offerer.telemetry().has_value());
     const quint64 submittedBefore = offerer.telemetry()->submittedDisplayPayloadBytes;
