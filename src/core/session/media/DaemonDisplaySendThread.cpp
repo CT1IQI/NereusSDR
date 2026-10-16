@@ -223,8 +223,19 @@ void DaemonDisplaySendThread::waitForTurn(std::unique_lock<std::mutex>& lock,
             }
             const HANDLE handles[] = {m_wakeEvent, m_turnTimer};
             lock.unlock();
-            WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+            const DWORD woke = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+            const DWORD error = woke == WAIT_FAILED ? GetLastError() : 0;
             lock.lock();
+            if (woke == WAIT_FAILED) {
+                // Not expected while the handles are open. The condition
+                // variable takes the timed turns from here, so a failing
+                // wait never spins.
+                qCWarning(lcDaemonMedia) << "the display send thread's timer wait failed, error"
+                                         << error << "; its timed turns now wait a whole scheduler tick";
+                CloseHandle(m_turnTimer);
+                m_turnTimer = nullptr;
+                break;
+            }
         }
         if (wakePending()) {
             return;

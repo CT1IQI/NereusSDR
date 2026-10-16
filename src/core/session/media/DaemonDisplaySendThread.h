@@ -122,7 +122,8 @@ private:
 // On Windows the timed wait is on a high-resolution waitable timer, as the
 // Core's transmit I/Q sender's is (P2RadioConnection): a plain timed wait
 // there lasts a whole 15.6 ms scheduler tick, three intervals, where the
-// station thread's Qt sender timer this replaces keeps 5 ms.
+// station thread's sender timer this replaces kept its longest gap under
+// 10 ms (nereusd on the STRIX).
 class DaemonDisplaySendThread final {
 public:
     // (timedTurn, askedTurn); frames are always taken in.

@@ -219,6 +219,12 @@ public:
         m_timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                          TIMER_ALL_ACCESS);
 #endif
+#ifdef Q_OS_WIN
+        if (m_timer == nullptr) {
+            qWarning("no high-resolution timer: the feeder's 2 ms waits last a whole scheduler"
+                     " tick, so its I/Q comes in clumps");
+        }
+#endif
     }
     ~FeederWait()
     {
@@ -449,7 +455,8 @@ private slots:
     // The display thread alone, used and with nothing to wake it: its timed
     // turns come kDisplaySenderIntervalMs apart, as the main thread's 5 ms
     // sender timer's did. On Windows a plain timed wait lasts a whole 15.6
-    // ms scheduler tick; Qt's timer keeps 5 ms there (a multimedia timer).
+    // ms scheduler tick, where nereusd's main-thread sender timer kept its
+    // longest gap under 10 ms on the same machine.
     void timedTurnsKeepTheirInterval()
     {
         std::mutex mutex;
