@@ -39,6 +39,16 @@
 #include <limits>
 
 using namespace NereusSDR;
+
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr double kArrivedDeg = NereusSDR::RotorConnection::kArrivedDeg;
+constexpr quint16 kRotctldDefaultPort = NereusSDR::RotorConnection::kRotctldDefaultPort;
+} // namespace
+
 using RotorRoute::EndStop;
 
 namespace {
@@ -315,8 +325,8 @@ void TestRotorConnection::constantsAreTheDesignOnes()
     QCOMPARE(RotorConnection::kStaleMs, 1500);
     QCOMPARE(RotorConnection::kPollStillMs, 1000);
     QCOMPARE(RotorConnection::kPollTurningMs, 250);
-    QCOMPARE(RotorConnection::kArrivedDeg, 1.5);
-    QCOMPARE(RotorConnection::kRotctldDefaultPort, quint16(4533));
+    QCOMPARE(kArrivedDeg, 1.5);
+    QCOMPARE(kRotctldDefaultPort, quint16(4533));
     const RotorConfig c;
     QCOMPARE(c.driver, RotorDriver::None);
     QCOMPARE(c.baud, 9600);

@@ -1,7 +1,8 @@
 """Regression tests for the upstream-clone lookup in scripts/git-hooks/pre-commit.
 
 The hook runs under ``set -euo pipefail`` and finds the Thetis,
-Thetis-v2.10.3.15, mi0bot-Thetis, deskhpsdr and freedv-gui clones by
+Thetis-v2.10.3.15, Thetis-v2.10.3.13, mi0bot-Thetis, deskhpsdr and
+freedv-gui clones by
 walking every ancestor of the working tree and then of the main checkout.
 From b8fd5a6c (2026-07-28) until these tests landed, find_upstream()
 returned 1 when a clone was missing, so the
@@ -42,6 +43,7 @@ HOOK = REPO / "scripts" / "git-hooks" / "pre-commit"
 UPSTREAMS = {
     "Thetis": "NEREUS_THETIS_DIR",
     "Thetis-v2.10.3.15": "NEREUS_THETIS_V21015_DIR",
+    "Thetis-v2.10.3.13": "NEREUS_THETIS_V21013_DIR",
     "mi0bot-Thetis": "NEREUS_MI0BOT_DIR",
     "deskhpsdr": "NEREUS_DESKHPSDR_DIR",
     "freedv-gui": "NEREUS_FREEDV_DIR",

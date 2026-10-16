@@ -8,6 +8,7 @@
 // =================================================================
 
 #include "core/spectrum/FftEnginePool.h"
+#include "core/NereusCoreExport.h"
 
 #include <QMap>
 #include <QObject>
@@ -88,7 +89,7 @@ struct DaemonSpectrumFrame {
     bool binsDbmValid{false};
 };
 
-class DaemonSpectrumSource final : public QObject {
+class NEREUS_CORE_EXPORT DaemonSpectrumSource final : public QObject {
     Q_OBJECT
 public:
     explicit DaemonSpectrumSource(QObject* parent = nullptr);

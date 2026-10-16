@@ -70,6 +70,10 @@
 //   2026-10-12 - The binary sets the workspace preview switch both ways,
 //                 now that the app's default is on. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - look-connected, the look pair of baseline-connected.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - look-connected-tx, the look pair of baseline-connected-tx.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QApplication>
@@ -287,7 +291,8 @@ QString lookSceneFor(const Scene& s)
     if (isMenuSceneName(s.name)) {
         return s.workspacePreview ? QString() : QLatin1String(kLookPrefix) + s.name;
     }
-    for (const char* base : {"baseline-two-band", "baseline-four-rx", "baseline-tx"}) {
+    for (const char* base : {"baseline-two-band", "baseline-four-rx", "baseline-tx", "baseline-connected",
+                             "baseline-connected-tx"}) {
         if (s.name == QLatin1String(base)) {
             return QLatin1String(kLookPrefix) + s.name.mid(int(qstrlen("baseline-")));
         }

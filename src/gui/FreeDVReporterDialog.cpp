@@ -79,6 +79,30 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the station table takes a real reset
+//               after each burst of row changes with accessibility on,
+//               keeping the selected station, current station and scroll by
+//               sid (resetViewAfterRowChanges), in place of the cache-only
+//               repair. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): macOS only; the pending reset is
+//               flushed before each row change and before a filter
+//               changes; data updates reset nothing; the place is kept by
+//               the station's row in the table model, and a double-click
+//               survives a reset. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): data updates reset the station table at most
+//               once a second (so VoiceOver gets fresh cells back), and the
+//               proxy's flush is gated on accessibility being active.
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): setHighlight announces a row only when
+//               its highlight changes (and the clear timer announces its
+//               clear), so the once-a-second coloring recheck no longer
+//               changes data for rows that keep their color; with
+//               accessibility on an idle table no longer resets every
+//               second. setColoringRecheckMsForTest. AI-assisted via
+//               Anthropic Claude Code.
 
 #include "FreeDVReporterDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -89,6 +113,7 @@
 #include "core/FreeDVStation.h"
 #include "models/Band.h"
 #include "models/FreeDVStationModel.h"
+#include "models/OrderKeepingProxyModel.h"
 
 #include <QAbstractTableModel>
 #include <QAction>
@@ -111,6 +136,7 @@
 #include <QModelIndex>
 #include <QPainter>
 #include <QPoint>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSortFilterProxyModel>
@@ -718,12 +744,13 @@ private:
 //   (FreeDVReporterDataModel::isFiltered_ inner block that walks the
 //   columnFilterOperators_ / columnFilterValues_ vectors).
 // =====================================================================
-class FreeDVReporterColumnFilterProxy : public QSortFilterProxyModel {
+class FreeDVReporterColumnFilterProxy : public OrderKeepingProxyModel {
 public:
     explicit FreeDVReporterColumnFilterProxy(QObject* parent = nullptr)
-        : QSortFilterProxyModel(parent) {}
+        : OrderKeepingProxyModel(parent) {}
 
     void setFilters(const QHash<int, QPair<int, QVariant>>* filters) {
+        prepareForRowChange();
         m_filters = filters;
         invalidateFilterCompat();
     }
@@ -735,7 +762,10 @@ protected:
     // exist in Qt 6.10+. NereusSDR has no explicit Qt minimum in
     // CMakeLists.txt, so we keep a fallback to invalidateFilter on
     // older Qt builds. NereusSDR-only compat shim; not an upstream port.
+    // The view's accessibility flush runs first (a no-op once the dialog
+    // flushed before changing the filters).
     void invalidateFilterCompat() {
+        prepareForRowChange();
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         beginFilterChange();
         endFilterChange(QSortFilterProxyModel::Direction::Rows);
@@ -931,8 +961,22 @@ void FreeDVReporterDialog::buildUi() {
 
     m_table = new QTableView(this);
     m_table->setModel(m_columnFilterProxy);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Stations join and leave from the reporter feed; the idle sweep and filters drop and restore rows.
-    installQtCocoaAccessibleTableCacheRepair(m_table);
+    // Stations join, change and leave from the reporter feed; the idle
+    // sweep and filters drop and restore rows. On macOS with accessibility
+    // on, the top proxy takes a real reset (rows kept in the order shown)
+    // right before a row change whenever a change since the last reset left
+    // the accessibility cache stale, and once after each burst of row
+    // changes; the selected station, current station and scroll are kept by
+    // the station's row in the table model, so accessibility never reads a
+    // cell the macOS bridge deleted. Data updates reset it at most once a
+    // second (kItemViewDataResetIntervalMs), so the cells come back.
+    m_columnFilterProxy->setBeforeRowChange(resetViewAfterRowChanges(
+        m_table, [proxy = QPointer<FreeDVReporterColumnFilterProxy>(m_columnFilterProxy)] {
+            if (proxy) {
+                proxy->resetKeepingOrder();
+            }
+        }),
+        &itemViewResetsActive);
     m_table->setItemDelegate(m_rowDelegate);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -1238,8 +1282,6 @@ void FreeDVReporterDialog::buildBottomBar() {
     row2->addWidget(new QLabel(QStringLiteral("Msg"), m_bottomBarHost));
 
     m_msgDropdown = new QComboBox(m_bottomBarHost);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled after each sent message.
-    installQtCocoaAccessibleTableCacheRepair(m_msgDropdown->view());
     m_msgDropdown->setObjectName(QStringLiteral("msgDropdown"));
     m_msgDropdown->setMaximumWidth(28);
     // Down-arrow only - the user picks a stored MRU entry which copies
@@ -1375,6 +1417,10 @@ void FreeDVReporterDialog::applyHighlightForStation(const QString& sid,
 }
 
 void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
+    // NereusSDR: the coloring recheck calls this for every station once a
+    // second; only a highlight that changes is announced to the view
+    // below (the PR #238 repaint is needed only when the tint changes).
+    const QColor before = m_rowDelegate->highlightFor(sid);
     if (bg.isValid()) {
         m_rowDelegate->setRowHighlight(sid, bg);
         // Schedule the clear timer. Replaces any prior clear timer for
@@ -1386,11 +1432,18 @@ void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
         auto* timer = new QTimer(this);
         timer->setSingleShot(true);
         connect(timer, &QTimer::timeout, this, [this, sid] {
+            const bool wasHighlighted = m_rowDelegate->highlightFor(sid).isValid();
             m_rowDelegate->setRowHighlight(sid, QColor());
             if (auto* t = m_clearTimers.take(sid)) {
                 t->deleteLater();
             }
             if (m_table) {
+                // NereusSDR: the clear changes the tint, so the row is
+                // announced as setHighlight does (PR #238 repaint); the
+                // recheck no longer announces rows whose tint it keeps.
+                if (wasHighlighted && m_tableModel) {
+                    m_tableModel->notifyRowChangedForSid(sid);
+                }
                 m_table->viewport()->update();
             }
         });
@@ -1410,7 +1463,7 @@ void FreeDVReporterDialog::setHighlight(const QString& sid, const QColor& bg) {
         // Qt view framework on macOS — the user had to click a row
         // to force a selection-change repaint before the new tint
         // became visible.
-        if (m_tableModel) {
+        if (m_tableModel && m_rowDelegate->highlightFor(sid) != before) {
             m_tableModel->notifyRowChangedForSid(sid);
         }
         m_table->viewport()->update();
@@ -1666,6 +1719,7 @@ void FreeDVReporterDialog::refreshMessageDropdown(const QStringList& msgs) {
     if (!m_msgDropdown) {
         return;
     }
+    resetItemsBeforeRowChange(m_msgDropdown);
     m_msgDropdown->clear();
     for (const QString& m : msgs) {
         m_msgDropdown->addItem(m);
@@ -1896,6 +1950,11 @@ void FreeDVReporterDialog::setColumnFilter(int column, int op,
         clearColumnFilter(column);
         return;
     }
+    // Before the filters change, so an accessibility reset keeps the rows
+    // shown now.
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
+    }
     m_columnFilters.insert(column, qMakePair(op, value));
     if (m_columnFilterProxy) {
         m_columnFilterProxy->refresh();
@@ -1905,6 +1964,9 @@ void FreeDVReporterDialog::setColumnFilter(int column, int op,
 }
 
 void FreeDVReporterDialog::clearColumnFilter(int column) {
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
+    }
     m_columnFilters.remove(column);
     if (m_columnFilterProxy) {
         m_columnFilterProxy->refresh();
@@ -1974,6 +2036,9 @@ void FreeDVReporterDialog::loadColumnFiltersFromSettings() {
                QString()).toString();
     if (raw.isEmpty()) {
         return;
+    }
+    if (m_columnFilterProxy) {
+        m_columnFilterProxy->prepareForRowChange();
     }
     const QStringList rows = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString& row : rows) {
@@ -2134,6 +2199,16 @@ void FreeDVReporterDialog::setIdleTimeoutMinutesForTest(int minutes) {
         for (QAction* a : m_idleGroup->actions()) {
             a->setChecked(a->data().toInt() == minutes);
         }
+    }
+}
+
+void FreeDVReporterDialog::setColoringRecheckMsForTest(int ms) {
+    if (!m_coloringTimer) {
+        return;
+    }
+    m_coloringTimer->stop();
+    if (ms > 0) {
+        m_coloringTimer->start(ms);
     }
 }
 

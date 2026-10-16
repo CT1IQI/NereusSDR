@@ -68,6 +68,7 @@
 #include "gui/setup/AudioVaxPage.h"
 #include "gui/styles/AppTheme.h"
 #include "models/RadioModel.h"
+#include "ExpiredAccessibleCells.h"
 #include "OperatorWording.h"
 #include "gui/RemoteAudioStatus.h"
 
@@ -1013,6 +1014,37 @@ private slots:
         // Another channel sees who has it.
         QVERIFY(itemTexts(picker(page.channelCard(2)))
                     .contains(kCableA + QStringLiteral("  (used by VAX 1)")));
+    }
+
+    // With accessibility on, a cable added to or removed from the catalogue
+    // refills the picker after the macOS bridge may have deleted its cells;
+    // the list is reset first.
+    void catalogueRefillSurvivesExpiredAccessibleCells()
+    {
+        ExpiredAccessibleCells::ActiveScope accessibility;
+        QVERIFY(QAccessible::isActive());
+        AudioVaxPage::setSystemForTest(SoundSystemLine::System::Windows);
+        RadioModel model;
+        PageRig rig({cable(QStringLiteral("cable-a-uid"), kCableA)});
+        rig.start(model);
+        auto stop = qScopeGuard([&model]() { model.localAudioDevices()->stop(); });
+        AudioVaxPage page(&model);
+        QComboBox* combo = picker(page.channelCard(1));
+        QVERIFY(combo != nullptr);
+        QCOMPARE(combo->count(), 3);
+
+        QVERIFY(ExpiredAccessibleCells::expire(combo->view()) > 0);
+        rig.native->addDevice(cable(QStringLiteral("cable-b-uid"), kCableB));
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->findText(kCableB) > 0, 1000);
+
+        QVERIFY(ExpiredAccessibleCells::expire(combo->view()) > 0);
+        rig.native->removeDevice(QStringLiteral("cable-b-uid"), AudioDeviceDirection::Output);
+        rig.native->postNotice(AudioNotice::DevicesChanged);
+        QTRY_VERIFY_WITH_TIMEOUT(combo->findText(kCableB) < 0, 1000);
+        QCOMPARE(itemTexts(combo),
+                 (QStringList{QStringLiteral("(pick a cable)"), QStringLiteral("Virtual cables"),
+                              kCableA}));
     }
 
     // R-AUD-10: a chosen cable that goes stays chosen as "(not connected)"

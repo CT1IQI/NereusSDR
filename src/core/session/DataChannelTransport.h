@@ -84,6 +84,7 @@
 #include "core/session/IceConfiguration.h"
 #include "core/session/SessionTransport.h"
 #include "core/session/media/IMediaTransport.h"
+#include "core/NereusCoreExport.h"
 
 #include <QByteArray>
 #include <QElapsedTimer>
@@ -158,7 +159,7 @@ public:
     };
 };
 
-class DataChannelTransport : public SessionTransport {
+class NEREUS_CORE_EXPORT DataChannelTransport : public SessionTransport {
     Q_OBJECT
 
 public:

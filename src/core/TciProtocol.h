@@ -7,6 +7,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: announcesTxSlice and
+//                txFrequencyFor hold the one rule for which slice's dial
+//                tx_frequency may carry.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -462,6 +466,15 @@ public:
     void setReceiverSliceMap(std::function<int(int)> map) { m_receiverSliceMap = std::move(map); }
     int receiverSlice(int receiver) const;
     int sliceReceiver(int sliceId) const;
+    // Whether this server may announce slice sliceId's dial as
+    // tx_frequency. With no receiver map, any slice; with one (desktop
+    // hosting), only a slice mapped to one of this client's receivers.
+    // The init burst and every live tx_frequency path share this rule.
+    bool announcesTxSlice(int sliceId) const;
+    // The tx_frequency reported while TX is bound to slice boundSliceId
+    // with dial boundHz: that dial when announcesTxSlice, otherwise
+    // receiver 0's dial.
+    qint64 txFrequencyFor(int boundSliceId, qint64 boundHz) const;
     // M1 (R-R3-48 / R-R3-25): `command` (one TCI command, with or without
     // its ';') changes transmit configuration an app may not change on the
     // receive-only station server: tx_profile_ex, xit_enable and xit_offset

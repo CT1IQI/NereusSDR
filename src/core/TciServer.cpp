@@ -6,6 +6,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: a TX handoff to, or a tune
+//                of, a bound slice this desktop client has no receiver for
+//                sends receiver 0's dial, as the init burst reports.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -812,13 +816,19 @@ void TciServer::hookSliceBroadcasts()
     // the wire, so re-publishing the full VFO triplet here would announce a
     // receiver the client was never told about. tx_frequency carries no
     // receiver index and is correct for any slice.
+    //
+    // Desktop hosting: a slice this client has no receiver for never has
+    // its dial announced. The client hears receiver 0's dial instead, which
+    // is what its init burst reports for the same binding
+    // (TciProtocol::txFrequencyFor), so connecting and staying connected
+    // agree.
     if (TxSliceArbiter* arb = m_model->txSliceArbiter()) {
         connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
                 [this](int /*oldId*/, int newId) {
             SliceModel* slice = m_model ? m_model->sliceById(newId) : nullptr;
             if (!slice || !m_protocol) { return; }
-            m_protocol->enqueueLocalBroadcastTxFrequency(
-                static_cast<qint64>(slice->frequency()));
+            m_protocol->enqueueLocalBroadcastTxFrequency(m_protocol->txFrequencyFor(
+                newId, static_cast<qint64>(slice->frequency())));
         });
     }
 
@@ -862,7 +872,15 @@ bool TciServer::sliceDrivesTx(int sliceId) const
         // dropping tx_frequency for every client on a one-slice radio.
         return sliceId == 0;
     }
-    return arb->txBoundSliceId() == sliceId;
+    const int boundId = arb->txBoundSliceId();
+    // Desktop hosting: while TX is on a slice this client has no receiver
+    // for, its tx_frequency follows receiver 0's slice, as the init burst
+    // reports (TciProtocol::txFrequencyFor). The bound slice's own tunes
+    // then send nothing.
+    if (boundId >= 0 && m_protocol && !m_protocol->announcesTxSlice(boundId)) {
+        return m_protocol->receiverSlice(0) == sliceId;
+    }
+    return boundId == sliceId;
 }
 
 void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)

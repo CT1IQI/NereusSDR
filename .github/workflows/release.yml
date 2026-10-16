@@ -799,6 +799,10 @@ jobs:
       - name: Configure
         run: |
           ccache --max-size=2G
+          # Each row builds against the one OpenSSL its OPENSSL_ROOT_DIR
+          # names; the reason is in scripts/ci/macos-openssl.sh. The unlink
+          # runs here, after the job's last brew install.
+          scripts/ci/macos-openssl.sh unlink
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             # Cross-compile path: FFTW comes from our source build at
             # ${{ github.workspace }}/fftw-x86_64. PKG_CONFIG_PATH lets
@@ -825,12 +829,11 @@ jobs:
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
-            # needed because brew's lib dir is in the default search path,
-            # and openssl@3 is not keg-only (fix round 3 correction; see
-            # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
-            # no OPENSSL_ROOT_DIR hint either.
+            # needed because brew's lib dir is in the default search path.
+            # OpenSSL comes from the openssl@3 keg by explicit
+            # OPENSSL_ROOT_DIR (see scripts/ci/macos-openssl.sh).
             CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$(brew --prefix)"
-            EXTRA_CMAKE_ARGS=""
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)"
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -845,6 +848,18 @@ jobs:
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      # Before macdeployqt rewrites the paths: every libcrypto or libssl
+      # reference must be libcrypto.3 or libssl.3 from the OpenSSL this row's
+      # Configure named. ci.yml's macOS leg runs the arm64 check on every PR.
+      - name: Check OpenSSL link
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            EXPECT="${{ github.workspace }}/openssl-x86_64/lib"
+          else
+            EXPECT="$(brew --prefix openssl@3)/lib"
+          fi
+          scripts/ci/macos-openssl.sh check-link build "$EXPECT"
 
       - name: Test
         working-directory: build
@@ -914,6 +929,11 @@ jobs:
               exit 1
             fi
           done
+
+          # The same for OpenSSL: libcrypto.3 and libssl.3 must be in
+          # Contents/Frameworks, and no bundled binary may still point at the
+          # build machine's copy.
+          scripts/ci/macos-openssl.sh check-bundle build/NereusSDR.app
 
       - name: Copy license notices into app bundle
         run: |
