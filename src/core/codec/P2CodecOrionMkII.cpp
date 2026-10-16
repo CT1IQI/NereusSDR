@@ -1232,8 +1232,8 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // every band. The same picture came back on 2026-10-12 from a third
     // receiver, the stream the family table above puts on DDC4; that
     // capture records no rate. Four receivers at 1,536 kHz is past what the
-    // gateware's notes say runs clean, two receivers at that rate
-    // (Orion.v:632 [@8e86a61]).
+    // gateware's notes say runs without Seq errors, two receivers at that
+    // rate (Orion.v:632 [@8e86a61]).
     //
     // The choice is free on the wire. The gateware builds receivers 1 to
     // NR-1 as identical instances of one module (n1gp Anvelina_PROIII
