@@ -35,6 +35,10 @@
 // Modification history (NereusSDR):
 //   2026-04-28 — Phase 3M-1b Task H.5 — J.J. Boyd (KG4VCF),
 //                with AI-assisted authoring via Anthropic Claude Code.
+//   2026-10-14 - P1 status at P2's rate: §C.3 and §E.1 feed their second
+//                frame one status tick later on the test status clock, so
+//                the repeat reaches the controller. J.J. Boyd (KG4VCF),
+//                with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original test file — no upstream Thetis port.
@@ -419,10 +423,17 @@ private slots:
     // EP6 frame while PTT is held.  MoxController must be idempotent:
     // second onMicPttFromRadio(true) → no new pttModeChanged, no new
     // moxStateChanged (state machine gate blocks re-entry).
+    //
+    // 2026-10-14: P1 now emits a change at once and repeats the level at
+    // each status tick (1 ms while PTT is held), not on every frame. The
+    // second frame is fed 1 ms later on the status clock, so the repeat
+    // reaches the controller and its idempotency is still what is tested.
     void p1_endToEnd_repeatedPress_idempotent()
     {
         P1RadioConnection conn;
         conn.init();
+        QSignalSpy connPtt(&conn, &P1RadioConnection::micPttFromRadio);
+        constexpr qint64 kT0 = 1'000'000'000;
 
         MoxController ctrl;
         makeSync(ctrl);
@@ -436,6 +447,7 @@ private slots:
 
         QByteArray pkt = makeEp6Frame(0x01, 0x01);
 
+        conn.setStatusClockForTest(kT0);
         conn.parseEp6FrameForTest(pkt);
         drainEvents();
 
@@ -443,8 +455,10 @@ private slots:
         QCOMPARE(moxSpy.count(), 1);
 
         // Second frame with same PTT state — no new signals.
+        conn.setStatusClockForTest(kT0 + 1'000'000);
         conn.parseEp6FrameForTest(pkt);
         drainEvents();
+        QCOMPARE(connPtt.count(), 2);  // the repeat reached the controller
 
         QCOMPARE(pttSpy.count(), 1);  // no new pttModeChanged
         QCOMPARE(moxSpy.count(), 1);  // no new moxStateChanged
@@ -559,6 +573,10 @@ private slots:
     // ════════════════════════════════════════════════════════════════════════
 
     // §E.1 — P1: consecutive false frames both emit micPttFromRadio
+    //
+    // 2026-10-14: P1 repeats an unchanged level at each status tick (200 ms
+    // idle), not on every frame, so the second frame is fed one idle tick
+    // later on the status clock.
     void p1_consecutiveFalseFrames_emitsTwice()
     {
         P1RadioConnection conn;
@@ -566,8 +584,11 @@ private slots:
         QSignalSpy spy(&conn, &P1RadioConnection::micPttFromRadio);
 
         QByteArray pkt = makeEp6Frame(0x00, 0x00);
+        constexpr qint64 kT0 = 1'000'000'000;
 
+        conn.setStatusClockForTest(kT0);
         conn.parseEp6FrameForTest(pkt);
+        conn.setStatusClockForTest(kT0 + 200'000'000);
         conn.parseEp6FrameForTest(pkt);
 
         // Unconditional emission: both frames fire the signal.

@@ -114,6 +114,7 @@ void RadioConnection::pruneSamples(QList<ByteSample>& samples, qint64 nowMs, int
 void RadioConnection::recordBytesSent(qint64 n)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     pruneSamples(m_txSamples, nowMs, 5000);
     m_txSamples.append({nowMs, n});
 }
@@ -121,17 +122,20 @@ void RadioConnection::recordBytesSent(qint64 n)
 void RadioConnection::recordBytesReceived(qint64 n)
 {
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     pruneSamples(m_rxSamples, nowMs, 5000);
     m_rxSamples.append({nowMs, n});
 }
 
 double RadioConnection::txByteRate(int windowMs) const
 {
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     return rateFromSamples(m_txSamples, windowMs);
 }
 
 double RadioConnection::rxByteRate(int windowMs) const
 {
+    const std::lock_guard<std::mutex> lock(m_byteSamplesMutex);
     return rateFromSamples(m_rxSamples, windowMs);
 }
 
@@ -209,15 +213,15 @@ double RadioConnection::rateFromSamples(const QList<ByteSample>& samples, int wi
 
 void RadioConnection::notePingSent()
 {
-    m_pingSentMs = QDateTime::currentMSecsSinceEpoch();
+    m_pingSentMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
 }
 
 void RadioConnection::notePingReceived()
 {
-    if (m_pingSentMs == 0) { return; }
+    const qint64 sentMs = m_pingSentMs.exchange(0, std::memory_order_relaxed);
+    if (sentMs == 0) { return; }
     const qint64 nowMs   = QDateTime::currentMSecsSinceEpoch();
-    const qint64 elapsed = nowMs - m_pingSentMs;
-    m_pingSentMs = 0;
+    const qint64 elapsed = nowMs - sentMs;
     if (elapsed >= 0 && elapsed <= 5000) {
         m_lastPingRttMs = static_cast<int>(elapsed);
         m_lastPingRttAge.start();
