@@ -22,6 +22,19 @@ with the card open, and for refused real-time priority on the Radxa vendor
 kernel, see "Sound from the Core's own sound card" in the top-level
 `README.md`.
 
+The installer also changes a system setting, when the stage carries it (this is one of two changes it makes; the other is described below):
+it installs `/usr/lib/sysctl.d/10-nereusd.conf`, which raises the network
+receive buffer limit (`net.core.rmem_max`) to the 4 MB (4194304 bytes) the
+Core asks for on the socket its radio sends to, and before the Core starts
+it runs the stage's `raise-receive-buffer-limit`, which applies the limit at
+once, only ever upward, and prints what it did. The Rock's limit was 212992
+bytes as found, which three or four wide receivers fill in 6 to 9 ms
+(measured 2026-10-10). An older stage carries neither file, and the box is
+then left as found. A failed installation puts back the file that was there
+before, or removes one it added; a limit it raised stays raised until the
+next system start. What the setting is and how to undo it: "The system
+setting the Core's installer changes" in the top-level `README.md`.
+
 On a kernel built with `CONFIG_RT_GROUP_SCHED=y` (the Radxa vendor kernel
 `6.1.115-vendor-rk35xx` is one) the installer also writes
 `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`. While
@@ -84,6 +97,7 @@ Run its temporary-filesystem tests without a radio or device:
 python3 scripts/radxa/test_prune_core_artifacts.py
 python3 scripts/radxa/test_deploy_retention.py
 python3 scripts/radxa/test_install_group_dropins.py
+python3 -m pytest tests/release/test_core_receive_buffer_limit.py -q
 python3 scripts/radxa/test_install_realtime_dropin.py
 ```
 

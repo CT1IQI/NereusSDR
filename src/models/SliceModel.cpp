@@ -10,6 +10,8 @@
 // Modification history (NereusSDR):
 // 2026-10-14 - Capture per-band persistence values before deferred saves.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 // 2026-10-11 - Settings restore: AGC-T AUTO and its offset are saved per
 //              slice (per receiver), with the older per-band keys read as
 //              a fallback. NereusSDR-original. J.J. Boyd (KG4VCF),
@@ -116,6 +118,12 @@
 //                AGC, step, NB, sample rate and diversity still restore.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-15 - Squelch is saved: saveToSettings and restoreFromSettings
+//                carry the SSQL, AM and FM squelch enables and thresholds
+//                per slice, from Thetis console.cs:2830-2852 and 4164-4193
+//                [v2.10.3.15]. A restored threshold is clamped to its
+//                ControlRanges range; one that is not a number is skipped.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -224,6 +232,7 @@
 #include "core/DiversityPattern.h"
 #include "core/LogCategories.h"
 #include "core/RadeChannel.h"
+#include "core/RadeV2Feature.h"
 #include "core/WdspEngine.h"
 #include "core/accessories/AlexController.h"
 #include "core/session/MirrorEnumDomain.h"
@@ -296,7 +305,7 @@ void SliceModel::setupRadeIdleClearTimer()
 void SliceModel::restartRadeIdleClearTimer()
 {
     if (!m_radeIdleClearTimer) { return; }
-    if (m_dspMode != DSPMode::RADE_U && m_dspMode != DSPMode::RADE_L) {
+    if (!isRadeDspMode(m_dspMode)) {
         return;
     }
     m_radeIdleClearTimer->start();  // restarts even if already running
@@ -417,7 +426,7 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     // unchanged (slices are parented to RadioModel; see RadioModel.cpp:
     // 1374 [Phase 3R J3] new SliceModel(this)).
     const auto isRade = [](DSPMode m) {
-        return m == DSPMode::RADE_U || m == DSPMode::RADE_L;
+        return isRadeDspMode(m);
     };
 
     // 2026-05-12 bench: clear last RADE-decoded speaker callsign
@@ -479,7 +488,8 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
             // Reconcile the owned decoder, rather than an intermediate logical
             // old mode left by a superseded early notification continuation.
             const bool oldIsRade = engine->radeChannel(channelId) != nullptr;
-            const bool newIsRade = isRade(newMode);
+            const bool newIsRade = isRade(newMode)
+                && (!isRade2DspMode(newMode) || radio->radeV2Enabled());
 
             // RADE reason (2026-09-30): each start below is bracketed
             // (RadioModel::beginRadeStart, before any destroy, and
@@ -492,7 +502,9 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
                                         RadioModel::RadeStartFault::CreateFailed);
                     return;
                 }
-                radeCh->setSideband(newMode == DSPMode::RADE_U);
+                radeCh->setVersion(isRade2DspMode(newMode)
+                    ? RadeChannel::Version::V2 : RadeChannel::Version::V1);
+                radeCh->setSideband(isRadeUpperDspMode(newMode));
                 radio->wireRadeChannel(channelId, radeCh, this);
                 if (!currentMode()) { return; }
                 const QString modelPath = radeModelPath();
@@ -545,10 +557,22 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
             }
         }
     }
+    if (!currentMode()) { return; }
+    if (radio && isRade2DspMode(newMode) && !radio->radeV2Enabled()) {
+        radio->beginRadeStart(m_sliceIndex);
+        radio->endRadeStart(m_sliceIndex, RadioModel::RadeStartFault::None);
+    }
 }
 
 void SliceModel::setDspMode(DSPMode mode)
 {
+    if (isRade2DspMode(mode) && !(m_stationApplyProbe && m_stationApplyProbe())) {
+        const auto* radio = qobject_cast<RadioModel*>(parent());
+        if (!(radio ? radio->radeV2Enabled() : RadeV2Feature::enabled())) {
+            qCWarning(lcDsp) << "Experimental RADE V2 mode is unavailable on the Core";
+            return;
+        }
+    }
     if (holdsListenerWrite(dspMode(), mode)) { return; }
     const bool modeChanged = (m_dspMode != mode);
     const DSPMode oldMode = m_dspMode;
@@ -2461,6 +2485,7 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
     case DSPMode::DRM:
         // DRM: wide filter similar to AM
         return {-5000, 5000};
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
         // Phase 3R Task J1.  RADE Upper sideband: the modem occupies
         // ~650..2350 Hz (1700 Hz wide, centered at +1500 Hz).  This is
@@ -2470,6 +2495,7 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
         // was a placeholder; the filter IS visible on the panadapter
         // AND defines the IF/baseband passband for the modem energy.
         return {650, 2350};
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
         return {-2350, -650};
@@ -2564,11 +2590,13 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     case DSPMode::DRM:
         // DRM: wide digital AM-like filters
         return { {-10000,10000}, {-5000,5000} };
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
         // Phase 3R Task J1.  RADE Upper sideband: single fixed-bandwidth
         // preset matching the 1700 Hz modem passband.  No F1-F10
         // variants; RADE has a fixed bandwidth per sideband.
         return { {650, 2350} };
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         // Phase 3R Task J1.  RADE Lower sideband: mirror of RADE-U.
         return { {-2350, -650} };
@@ -2655,7 +2683,9 @@ QString SliceModel::modeName(DSPMode mode)
     // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.  Split
     // into upper/lower sidebands like USB/LSB.
     case DSPMode::RADE_U: return QStringLiteral("RADE-U");
+    case DSPMode::RADE2_U: return QStringLiteral("RADE2-U");
     case DSPMode::RADE_L: return QStringLiteral("RADE-L");
+    case DSPMode::RADE2_L: return QStringLiteral("RADE2-L");
     }
     return QStringLiteral("USB");
 }
@@ -2675,6 +2705,8 @@ DSPMode SliceModel::modeFromName(const QString& name)
     if (name == QLatin1String("SAM"))  return DSPMode::SAM;
     if (name == QLatin1String("DRM"))  return DSPMode::DRM;
     // Phase 3R Task J1.  NereusSDR-native; not WDSP modes.
+    if (name == QLatin1String("RADE2-U")) { return DSPMode::RADE2_U; }
+    if (name == QLatin1String("RADE2-L")) { return DSPMode::RADE2_L; }
     if (name == QLatin1String("RADE-U")) return DSPMode::RADE_U;
     if (name == QLatin1String("RADE-L")) return DSPMode::RADE_L;
     // Legacy migration: pre-fix builds persisted the singular "RADE"
@@ -2797,6 +2829,10 @@ bool SliceModel::restoreReceiveState(double frequencyHz, DSPMode mode)
     m_frequency = frequencyHz;
     m_currentBand = manifestBand;
     m_dspMode = mode;
+    if (isRade2DspMode(mode) && !radio->radeV2Enabled()) {
+        radio->beginRadeStart(m_sliceIndex);
+        radio->endRadeStart(m_sliceIndex, RadioModel::RadeStartFault::None);
+    }
 
     // restoreFromSettings already made the full legacy (mode-specific, then
     // band-level) filter selection when its valid stored mode matches this
@@ -2952,6 +2988,28 @@ void SliceModel::saveToSettings(Band band)
 
     s.setValue(sp + QStringLiteral("SnbEnabled"), boolStr(m_snbEnabled));
     s.setValue(sp + QStringLiteral("AnfEnabled"), boolStr(m_anfEnabled));
+    // Squelch, saved per receiver as Thetis does.
+    // From Thetis console.cs:2830-2852 [v2.10.3.15]:
+    //   a.Add("chkSquelch_checkstate/" + chkSquelch.CheckState.ToString());
+    //   a.Add("rx1_squelch_state/" + _rx1_squelch_state.ToString());
+    //   a.Add("rx1_fm_squelch_state/" + _rx1_fm_squelch_state.ToString());
+    //   a.Add("rx1_squelch_threshold_scroll/" + rx1_squelch_threshold_scroll);
+    //   a.Add("rx1_fm_squelch_threshold_scroll/" + rx1_fm_squelch_threshold_scroll);
+    //   a.Add("rx1_voice_squelch_threshold_scroll/" + rx1_voice_squelch_threshold_scroll);
+    //   (and the rx2 equivalents)
+    // Thetis keeps one squelch state per receiver (OFF/SQL/VSQL) plus a
+    // separate FM state, and three thresholds. NereusSDR keeps one enable
+    // and one threshold per squelch kind on each slice, so the mapping is:
+    // the VSQL state and voice threshold are SsqlEnabled / SsqlThresh, the
+    // SQL state and squelch threshold are AmsqEnabled / AmsqThresh, and the
+    // FM state and FM threshold are FmsqEnabled / FmsqThresh. Like Thetis
+    // they are per receiver (slice), not per band.
+    s.setValue(sp + QStringLiteral("SsqlEnabled"), boolStr(m_ssqlEnabled));
+    s.setValue(sp + QStringLiteral("SsqlThresh"),  m_ssqlThresh);
+    s.setValue(sp + QStringLiteral("AmsqEnabled"), boolStr(m_amsqEnabled));
+    s.setValue(sp + QStringLiteral("AmsqThresh"),  m_amsqThresh);
+    s.setValue(sp + QStringLiteral("FmsqEnabled"), boolStr(m_fmsqEnabled));
+    s.setValue(sp + QStringLiteral("FmsqThresh"),  m_fmsqThresh);
     // NB1 / NB2 / SNB detailed tuning. Per slice per band like everything
     // else here, even though NB1 and NB2 behave as stream-shared while two
     // slices are co-hosted: the mirror lives in RadioModel and only applies
@@ -3296,6 +3354,55 @@ void SliceModel::restoreFromSettings(Band band)
     }
     if (s.contains(sp + QStringLiteral("AnfEnabled"))) {
         setAnfEnabled(s.value(sp + QStringLiteral("AnfEnabled")).toString() == QLatin1String("True"));
+    }
+
+    // Squelch, per receiver. From Thetis console.cs:4164-4193 [v2.10.3.15]
+    // (case "rx1_squelch_state" through case
+    // "rx2_voice_squelch_threshold_scroll"); see saveToSettings for how
+    // Thetis's per-receiver states and thresholds map onto these keys.
+    // Through the public setters, so a restored value reaches WDSP the same
+    // way an edit does. Each threshold is set before its enable, so the
+    // model's changed signals (and the per-slice pushes wired to them) come
+    // threshold first. Thetis applies its squelch the other way round, run
+    // before threshold (console.cs:47361 then 47437, 47303-47315
+    // [v2.10.3.15]). A restore with signals blocked reaches WDSP another
+    // way. For slices B to D it is RadioModel::activateSliceChannel's seed,
+    // which also pushes thresholds first. For slice A it is the initial
+    // push in RadioModel::connectToRadio, which sets each enable before its
+    // threshold; that order is inaudible, because both land before the
+    // channel is switched on.
+    // A threshold that is not a number keeps the current value; one out of
+    // range is clamped to its ControlRanges.h range, so a hand-edited file
+    // cannot push a value the sliders cannot make.
+    const auto restoreThresh = [&](const QString& key, double lo, double hi,
+                                   auto&& setter) {
+        if (!s.contains(key)) {
+            return;
+        }
+        bool ok = false;
+        const double v = s.value(key).toString().toDouble(&ok);
+        if (!ok || !std::isfinite(v)) {
+            return;
+        }
+        setter(std::clamp(v, lo, hi));
+    };
+    restoreThresh(sp + QStringLiteral("SsqlThresh"),
+                  ControlRanges::kSsqlThreshMin, ControlRanges::kSsqlThreshMax,
+                  [this](double v) { setSsqlThresh(v); });
+    if (s.contains(sp + QStringLiteral("SsqlEnabled"))) {
+        setSsqlEnabled(s.value(sp + QStringLiteral("SsqlEnabled")).toString() == QLatin1String("True"));
+    }
+    restoreThresh(sp + QStringLiteral("AmsqThresh"),
+                  ControlRanges::kAmsqThreshMinDb, ControlRanges::kAmsqThreshMaxDb,
+                  [this](double v) { setAmsqThresh(v); });
+    if (s.contains(sp + QStringLiteral("AmsqEnabled"))) {
+        setAmsqEnabled(s.value(sp + QStringLiteral("AmsqEnabled")).toString() == QLatin1String("True"));
+    }
+    restoreThresh(sp + QStringLiteral("FmsqThresh"),
+                  ControlRanges::kFmsqThreshMinDb, ControlRanges::kFmsqThreshMaxDb,
+                  [this](double v) { setFmsqThresh(v); });
+    if (s.contains(sp + QStringLiteral("FmsqEnabled"))) {
+        setFmsqEnabled(s.value(sp + QStringLiteral("FmsqEnabled")).toString() == QLatin1String("True"));
     }
 
     // NB1 / NB2 / SNB detailed tuning, with a one-way migration off the old

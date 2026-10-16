@@ -25,7 +25,7 @@ Tap the link chip for connection and performance details under **Tools**. It is 
 | Sound speaker | Local audio route/mute controls | This phone; speaker icon indicates mute and its panel stays over the band |
 | Slice button | Chooses the next active slice | Changes which slice the RX panel and Modes controls edit |
 | Pan 1 | Band picker, add slice/notch, extended view | Core-described band and slice operations; unavailable items explain why |
-| Display | Spectrum, waterfall, display extras and CTUN | Many presentation controls are this phone's Pan 1 state; FFT and Hz/bin controls change Core display settings for all devices |
+| Display | Spectrum, waterfall, display extras and CTUN | Many presentation controls are this phone's Pan 1 state; Sizing, FFT size and Hz/bin change Core display settings for all devices, and Sizing (Auto, Hz/bin, or Fixed) says which of the other two can be changed |
 | TX panel | Quick transmit controls and status | Transmit belongs to the Core/radio; the panel reports refusals and active transmitter |
 | PTT | Toggles this phone's software transmit request | Core/radio state; red **TX** plus timer while keyed, and refusal text when rejected |
 

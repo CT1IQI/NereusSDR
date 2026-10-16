@@ -49,9 +49,9 @@ import Testing
 
     // MARK: What the phone asks for
 
-    @Test func thePhoneAsksForTwentyFiveAndReadsEachCategoryAtTheCoresVersion() {
-        #expect(SetupDescription.highestVersion == 25)
-        #expect(LinkFeatures.app["setupDescription"] == 25)
+    @Test func thePhoneAsksForTwentyNineAndReadsEachCategoryAtTheCoresVersion() {
+        #expect(SetupDescription.highestVersion == 29)
+        #expect(LinkFeatures.app["setupDescription"] == 29)
         #expect(LinkFeatures.app["radioSpeaker"] == 1)
         #expect(LinkFeatures.app["radioMic"] == 1)
         #expect(LinkFeatures.app["cfcProfile"] == 1)
@@ -61,16 +61,16 @@ import Testing
         // The Core's SetupDescription::fitCategoryForVersion, for the caps
         // older and current Cores send.
         let expected: [String: [Int64: Int]] = [
-            "hardware": [15: 13, 16: 16, 17: 17, 18: 18, 19: 18, 21: 18, 22: 18, 23: 23, 24: 23, 25: 23],
-            "pa": [15: 14, 16: 14, 17: 14, 18: 14, 19: 14, 20: 20, 21: 20, 22: 20, 24: 20, 25: 20],
-            "transmit": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15],
-            "dsp": [15: 15, 16: 15, 17: 15, 18: 15, 19: 19, 21: 19, 22: 22, 24: 22, 25: 22],
-            "catNetwork": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 20: 15, 21: 21, 22: 21, 24: 21, 25: 21],
-            "audio": [14: 3, 15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 23: 15, 24: 24, 25: 25],
-            "diagnostics": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15],
-            "appearance": [15: 12, 22: 12, 24: 12, 25: 12],
-            "display": [15: 12, 22: 12, 24: 12, 25: 12],
-            "general": [15: 3, 22: 3, 24: 3, 25: 3],
+            "hardware": [15: 13, 16: 16, 17: 17, 18: 18, 19: 18, 21: 18, 22: 18, 23: 23, 24: 23, 25: 23, 26: 23, 27: 23, 28: 23],
+            "pa": [15: 14, 16: 14, 17: 14, 18: 14, 19: 14, 20: 20, 21: 20, 22: 20, 24: 20, 25: 20, 26: 20, 27: 20, 28: 20],
+            "transmit": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15, 26: 15, 27: 15, 28: 15],
+            "dsp": [15: 15, 16: 15, 17: 15, 18: 15, 19: 19, 21: 19, 22: 22, 24: 22, 25: 22, 26: 22, 27: 22, 28: 22],
+            "catNetwork": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 20: 15, 21: 21, 22: 21, 24: 21, 25: 21, 26: 21, 27: 21, 28: 21],
+            "audio": [14: 3, 15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 23: 15, 24: 24, 25: 25, 26: 25, 27: 25, 28: 25],
+            "diagnostics": [15: 15, 16: 15, 17: 15, 18: 15, 19: 15, 21: 15, 22: 15, 24: 15, 25: 15, 26: 15, 27: 15, 28: 15],
+            "appearance": [15: 12, 22: 12, 24: 12, 25: 12, 26: 12, 27: 27, 28: 27],
+            "display": [15: 12, 22: 12, 24: 12, 25: 12, 26: 26, 27: 26, 28: 28],
+            "general": [15: 3, 22: 3, 24: 3, 25: 3, 26: 3, 27: 3, 28: 3],
         ]
         for (category, caps) in expected {
             for (cap, version) in caps {
@@ -78,8 +78,8 @@ import Testing
                         "\(category) at \(cap)")
             }
         }
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 26, category: "pa") == nil)
-        #expect(SetupDescriptionFeed.projectedVersion(maximum: 26, category: "audio") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 30, category: "pa") == nil)
+        #expect(SetupDescriptionFeed.projectedVersion(maximum: 30, category: "audio") == nil)
     }
 
     // MARK: Reading the rows

@@ -251,7 +251,7 @@ MediaPeer::~MediaPeer()
 bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
                       int audioTargetBitrate, bool offerLosslessAudio,
                       bool receiverAudioStreams, bool headphonesMixStream, bool micLine,
-                      bool iqChannel)
+                      bool iqChannel, bool waveformChannel)
 {
     d->startRefusal = StartRefusal::None;
     if (d->started || !isCanonicalConnectionId(connectionId)) {
@@ -379,6 +379,25 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
                 }
                 emit self->displayReceived(message);
             });
+    connect(transport, &IMediaTransport::waveformReceived, this,
+            [self, isCurrentGeneration](const QByteArray& message) {
+                if (isCurrentGeneration() && !message.isEmpty()
+                    && message.size() <= IMediaTransport::kMaxWaveformMessageBytes) {
+                    emit self->waveformReceived(message);
+                }
+            });
+    connect(transport, &IMediaTransport::waveformErrorOccurred, this,
+            [self, isCurrentGeneration](const QString& reason) {
+                if (isCurrentGeneration()) { emit self->waveformErrorOccurred(reason); }
+            });
+    connect(transport, &IMediaTransport::waveformDropped, this,
+            [self, isCurrentGeneration](quint64 packets) {
+                if (isCurrentGeneration()) { emit self->waveformDropped(packets); }
+            });
+    connect(transport, &IMediaTransport::waveformWritable, this,
+            [self, isCurrentGeneration] {
+                if (isCurrentGeneration()) { emit self->waveformWritable(); }
+            });
     connect(transport, &IMediaTransport::iqReceived, this,
             [self, isCurrentGeneration](const QByteArray& message) {
                 if (isCurrentGeneration() && !message.isEmpty()
@@ -485,6 +504,7 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     options.micAudioSsrc = d->micAudioSsrc;
     options.txChannel = d->micAudioSsrc != 0;
     options.iqChannel = iqChannel;
+    options.waveformChannel = waveformChannel;
     options.ice = d->ice;
     const bool backendStarted = transport->start(options);
     if (!self) {
@@ -742,6 +762,21 @@ bool MediaPeer::iqBusy() const
 {
     return d->started && d->transport && d->transport->iqBusy();
 }
+
+IMediaTransport::DisplaySendResult MediaPeer::submitWaveform(const QByteArray& message)
+{
+    if (!d->started || !d->transport || message.isEmpty()
+        || message.size() > IMediaTransport::kMaxWaveformMessageBytes) {
+        return IMediaTransport::DisplaySendResult::Refused;
+    }
+    return d->transport->submitWaveform(message);
+}
+
+bool MediaPeer::waveformBusy() const
+{
+    return d->started && d->transport && d->transport->waveformBusy();
+}
+
 
 bool MediaPeer::displayBusy() const
 {

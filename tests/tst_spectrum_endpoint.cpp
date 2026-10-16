@@ -135,6 +135,42 @@ class TstSpectrumEndpoint : public QObject
     Q_OBJECT
 
 private slots:
+    void acceptedPlaneWindowDepthReachesTheReducersAcrossCadenceChanges()
+    {
+        SpectrumEndpoint endpoint;
+        SpectrumEndpointRequest req = request();
+        req.framesPerLine = 1;
+        req.trace.averageMode = 2;
+        req.trace.averageFrames = 4;
+        req.waterfall.averageMode = 2;
+        req.waterfall.averageFrames = 6;
+        SpectrumEndpointSourceContext source = sourceContext();
+        QVERIFY(endpoint.configure(req, source));
+        qint64 at = 1'000'000'000;
+        std::optional<DisplayCodecFrame> output;
+        for (float power : {1.0f, 3.0f, 5.0f}) {
+            DaemonSpectrumFrame input = frame(source, at);
+            input.binsLinear.fill(power);
+            output = endpoint.consume(input);
+            QVERIFY(output.has_value());
+            at += 40'000'000;
+        }
+        QVERIFY(std::abs(output->traceDbm[32] - 4.7712125f) < 0.0001f);
+        QVERIFY(std::abs(output->waterfallDbm[32] - 4.7712125f) < 0.0001f);
+        req.targetFps = 15;
+        req.trace.averageFrames = 2;
+        ++source.contextGeneration;
+        QVERIFY(endpoint.configure(req, source));
+        QCOMPARE(endpoint.context().targetFps, 15);
+        DaemonSpectrumFrame input = frame(source, at);
+        input.binsLinear.fill(7.0f);
+        output = endpoint.consume(input);
+        QVERIFY(output.has_value());
+        QVERIFY(std::abs(output->traceDbm[32] - 8.4509802f) < 0.0001f);
+        // Unchanged waterfall depth keeps its existing window on renewal.
+        QVERIFY(std::abs(output->waterfallDbm[32] - 6.0206000f) < 0.0001f);
+    }
+
     void logAveragingDoesNotRestartAtZeroDbAfterRetune()
     {
         SpectrumEndpoint endpoint;

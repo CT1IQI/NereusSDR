@@ -16,6 +16,9 @@
 //                                    capture declares firmwareBeta, so the
 //                                    firmwareBeta entry is captured.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  Capture optional native waveform media
+//                                    capability and exact control shapes.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the
 //                                    capture declares spectrumPicture, so
 //                                    spectrumPictureVersion, the start's
@@ -713,6 +716,8 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // RADE status: each slice's radeSynced
                                   // and radeFreqOffsetHz.
                                   {"radeStatus", 1},
+                                  // Native waveform observation media.
+                                  {"waveform", 1},
                                   // The Alex-1 low-pass in use: radio's
                                   // alexLpfBits.
                                   {"alexLpf", 1},
@@ -795,6 +800,7 @@ QJsonArray captureCapabilities()
     caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("0.5.2"), QStringLiteral("link-surface@fixture")};
     caps.settingsBackupVersion = 1;
     caps.remoteIqVersion = 1;
+    caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
     caps.radioAntennaRowsVersion = 1;
@@ -1354,6 +1360,7 @@ QJsonObject guiToCoreOps()
         {QStringLiteral("audioProfileVersion"), {QStringLiteral("audioProfileVersion")}},
         {QStringLiteral("receiverAudioVersion"), {QStringLiteral("receiverAudioVersion")}},
         {QStringLiteral("remoteIqVersion"), {QStringLiteral("remoteIqVersion")}},
+        {QStringLiteral("waveformVersion"), {QStringLiteral("waveformVersion")}},
         {QStringLiteral("headphonesMixVersion"), {QStringLiteral("headphonesMixVersion")}},
         // DaemonMediaController.cpp:1867-1886; RemoteMediaController.cpp:3977-3986.
         {QStringLiteral("txDisplayVersion"), {QStringLiteral("txDisplayVersion")}},
@@ -1457,6 +1464,11 @@ QJsonObject guiToCoreOps()
                declaredOp(QStringLiteral("remoteIqVersion"),
                           peer + QStringList{QStringLiteral("sliceId"), QStringLiteral("revision"),
                                              QStringLiteral("enabled")}));
+    // DaemonMediaController.cpp handleWaveformStream: a native endpoint kind.
+    ops.insert(QStringLiteral("waveform-stream"),
+               declaredOp(QStringLiteral("waveformVersion"),
+                          peer + QStringList{QStringLiteral("sliceId"), QStringLiteral("kind"),
+                                             QStringLiteral("revision"), QStringLiteral("enabled")}));
     ops.insert(QStringLiteral("receiver-audio"),
                declaredOp(QStringLiteral("receiverAudioVersion"),
                           peer + QStringList{QStringLiteral("sliceId"), QStringLiteral("revision"),
@@ -1673,6 +1685,15 @@ QJsonObject coreToGuiOps()
                           peer + QStringList{QStringLiteral("sliceId"), QStringLiteral("revision"),
                                              QStringLiteral("enabled"), QStringLiteral("generation"),
                                              QStringLiteral("sampleRateHz"), QStringLiteral("reason")}));
+    // DaemonMediaController.cpp sendWaveformContext: independent source and
+    // delivery generations are canonical decimal strings on the wire.
+    ops.insert(QStringLiteral("waveform-stream-context"),
+               declaredOp(QStringLiteral("waveformVersion"),
+                          peer + QStringList{QStringLiteral("sliceId"), QStringLiteral("kind"),
+                                             QStringLiteral("revision"), QStringLiteral("enabled"),
+                                             QStringLiteral("availability"), QStringLiteral("reason"),
+                                             QStringLiteral("sourceGeneration"), QStringLiteral("deliveryGeneration"),
+                                             QStringLiteral("sampleRateHz")}));
     ops.insert(QStringLiteral("audio-context"), audioContextShapes());
     ops.insert(QStringLiteral("receiver-audio-context"), receiverAudioContextShapes());
     ops.insert(QStringLiteral("headphones-audio-context"), headphonesAudioContextShapes());

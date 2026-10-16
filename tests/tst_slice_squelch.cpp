@@ -14,6 +14,13 @@
 //   2026-10-14 - FM squelch threshold default is Thetis's 0, from Thetis
 //                 console.cs:171 [v2.10.3.15], by J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - Squelch persistence tests (Thetis console.cs:2830-2852
+//                 save, 4164-4193 load [v2.10.3.15]). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 - The persistence tests expect the FM threshold default of 0
+//                 (Thetis console.cs:171 [v2.10.3.15]) where nothing usable
+//                 is saved. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -115,6 +122,8 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <QtTest/QtTest>
+#include "core/AppSettings.h"
+#include "models/Band.h"
 #include "models/SliceModel.h"
 #include "core/RxChannel.h"
 
@@ -123,7 +132,144 @@ using namespace NereusSDR;
 class TestSliceSquelch : public QObject {
     Q_OBJECT
 
+private:
+    // The six saved squelch keys, as SliceModel::saveToSettings writes them.
+    static QStringList squelchKeys() {
+        return {QStringLiteral("SsqlEnabled"), QStringLiteral("SsqlThresh"),
+                QStringLiteral("AmsqEnabled"), QStringLiteral("AmsqThresh"),
+                QStringLiteral("FmsqEnabled"), QStringLiteral("FmsqThresh")};
+    }
+
+    static void resetSquelchKeys() {
+        auto& s = AppSettings::instance();
+        for (int slice = 0; slice < 4; ++slice) {
+            for (const QString& field : squelchKeys()) {
+                s.remove(QStringLiteral("Slice%1/").arg(slice) + field);
+            }
+        }
+    }
+
 private slots:
+    void init()    { resetSquelchKeys(); }
+    void cleanup() { resetSquelchKeys(); }
+
+    // ── Persistence (Thetis console.cs:2830-2852 save, 4164-4193 load) ───────
+
+    void squelchRoundTripsThroughSettings() {
+        {
+            SliceModel a(0);
+            a.setSsqlEnabled(true);
+            a.setSsqlThresh(42.0);
+            a.setAmsqEnabled(true);
+            a.setAmsqThresh(-77.0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-33.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("Slice0/SsqlEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(s.value(QStringLiteral("Slice0/AmsqEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(s.value(QStringLiteral("Slice0/FmsqEnabled")).toString(),
+                 QStringLiteral("True"));
+
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        QCOMPARE(b.ssqlEnabled(), true);
+        QCOMPARE(b.ssqlThresh(), 42.0);
+        QCOMPARE(b.amsqEnabled(), true);
+        QCOMPARE(b.amsqThresh(), -77.0);
+        QCOMPARE(b.fmsqEnabled(), true);
+        QCOMPARE(b.fmsqThresh(), -33.0);
+    }
+
+    void squelchIsPerSliceNotPerBand() {
+        // Thetis saves squelch per receiver, not per band: a value saved on
+        // one band comes back on another.
+        {
+            SliceModel a(0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-20.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band20m);
+        QCOMPARE(b.fmsqEnabled(), true);
+        QCOMPARE(b.fmsqThresh(), -20.0);
+    }
+
+    void squelchLoadSetsThresholdBeforeEnable() {
+        // A saved enable must not reach WDSP ahead of its saved threshold.
+        {
+            SliceModel a(0);
+            a.setSsqlEnabled(true);
+            a.setSsqlThresh(50.0);
+            a.setAmsqEnabled(true);
+            a.setAmsqThresh(-90.0);
+            a.setFmsqEnabled(true);
+            a.setFmsqThresh(-60.0);
+            a.saveToSettings(Band::Band40m);
+        }
+        SliceModel b(0);
+        QStringList order;
+        connect(&b, &SliceModel::ssqlThreshChanged, this, [&] { order << QStringLiteral("ssqlThresh"); });
+        connect(&b, &SliceModel::ssqlEnabledChanged, this, [&] { order << QStringLiteral("ssqlEnabled"); });
+        connect(&b, &SliceModel::amsqThreshChanged, this, [&] { order << QStringLiteral("amsqThresh"); });
+        connect(&b, &SliceModel::amsqEnabledChanged, this, [&] { order << QStringLiteral("amsqEnabled"); });
+        connect(&b, &SliceModel::fmsqThreshChanged, this, [&] { order << QStringLiteral("fmsqThresh"); });
+        connect(&b, &SliceModel::fmsqEnabledChanged, this, [&] { order << QStringLiteral("fmsqEnabled"); });
+        b.restoreFromSettings(Band::Band40m);
+        for (const char* name : {"ssql", "amsq", "fmsq"}) {
+            const int thresh = order.indexOf(QLatin1String(name) + QStringLiteral("Thresh"));
+            const int enabled = order.indexOf(QLatin1String(name) + QStringLiteral("Enabled"));
+            QVERIFY2(thresh >= 0 && enabled >= 0, qPrintable(order.join(QLatin1Char(','))));
+            QVERIFY2(thresh < enabled, qPrintable(order.join(QLatin1Char(','))));
+        }
+    }
+
+    void squelchLoadClampsThresholdsToTheirRanges_data() {
+        QTest::addColumn<QString>("field");
+        QTest::addColumn<QString>("stored");
+        QTest::addColumn<double>("expected");
+        // ControlRanges.h: SSQL 0..100 slider units, AM and FM -160..0.
+        QTest::newRow("ssql above") << "SsqlThresh" << "250" << 100.0;
+        QTest::newRow("ssql below") << "SsqlThresh" << "-5" << 0.0;
+        QTest::newRow("am below") << "AmsqThresh" << "-999" << -160.0;
+        QTest::newRow("am above") << "AmsqThresh" << "12" << 0.0;
+        QTest::newRow("fm above") << "FmsqThresh" << "500" << 0.0;
+        QTest::newRow("fm below") << "FmsqThresh" << "-400" << -160.0;
+        // Not a number: the value is skipped and the default stays. For FM
+        // that is Thetis's 0 (console.cs:171 [v2.10.3.15]), the tightest
+        // threshold.
+        QTest::newRow("fm garbage") << "FmsqThresh" << "garbage" << 0.0;
+        QTest::newRow("fm nan") << "FmsqThresh" << "nan" << 0.0;
+        QTest::newRow("ssql garbage") << "SsqlThresh" << "x" << 16.0;
+    }
+
+    void squelchLoadClampsThresholdsToTheirRanges() {
+        QFETCH(QString, field);
+        QFETCH(QString, stored);
+        QFETCH(double, expected);
+        AppSettings::instance().setValue(QStringLiteral("Slice0/") + field, stored);
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        const double actual = field == QLatin1String("SsqlThresh") ? b.ssqlThresh()
+            : field == QLatin1String("AmsqThresh") ? b.amsqThresh() : b.fmsqThresh();
+        QCOMPARE(actual, expected);
+    }
+
+    void squelchLoadWithNoSavedKeysKeepsDefaults() {
+        SliceModel b(0);
+        b.restoreFromSettings(Band::Band40m);
+        QCOMPARE(b.ssqlEnabled(), false);
+        QCOMPARE(b.ssqlThresh(), 16.0);
+        QCOMPARE(b.amsqEnabled(), false);
+        QCOMPARE(b.amsqThresh(), -150.0);
+        QCOMPARE(b.fmsqEnabled(), false);
+        QCOMPARE(b.fmsqThresh(), 0.0);
+    }
+
     // ── ssqlEnabled ──────────────────────────────────────────────────────────
 
     void ssqlEnabledDefaultIsFalse() {

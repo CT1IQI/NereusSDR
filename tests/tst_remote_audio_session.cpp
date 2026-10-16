@@ -175,6 +175,8 @@ double toneAmplitude(const QVector<float>& samples, int channel, double hz,
 // control shape separately.
 // R-DISP-RETUNE: the start also declares spectrumPictureVersion, which this
 // Core offers every peer whose hello declares spectrumPicture.
+// RADE V2: a peer that negotiates the waveform advertises waveformVersion in
+// the same modern start envelope, independently of audioProfileVersion.
 QJsonObject modernStartWithoutConnection(bool audioProfile)
 {
     QJsonObject start{{QStringLiteral("op"), QStringLiteral("start")},
@@ -182,7 +184,8 @@ QJsonObject modernStartWithoutConnection(bool audioProfile)
                       {QStringLiteral("mediaTunnelVersion"), 1},
                       {QStringLiteral("miniDisplayVersion"), 1},
                       {QStringLiteral("remoteIqVersion"), 1},
-                      {QStringLiteral("spectrumPictureVersion"), 1}};
+                      {QStringLiteral("spectrumPictureVersion"), 1},
+                      {QStringLiteral("waveformVersion"), 1}};
     if (audioProfile) { start.insert(QStringLiteral("audioProfileVersion"), 1); }
     return start;
 }

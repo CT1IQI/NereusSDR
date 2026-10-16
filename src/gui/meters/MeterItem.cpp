@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-04 — Selected RX source identity and RX-only presentation reset by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Composite reading/replay/cadence contracts by J.J. Boyd
@@ -137,6 +140,7 @@ mw0lge@grange-lane.co.uk
 //                 meter canvas in both looks, preserving ticks and fonts.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
+#include "core/ControlRanges.h"
 #include "MeterItem.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "MeterPoller.h"  // MeterBinding namespace
@@ -300,13 +304,18 @@ void MeterItem::resetRxSource()
 
 void MeterItem::setPowerScale(int watts)
 {
-    if (watts <= 0) { return; }
-    const double red = watts;
-    const double top = red * 1.2;
+    setPowerScale(watts, watts * ControlRanges::kRfPowerGaugeHeadroom);
+}
+
+void MeterItem::setPowerScale(int limitWatts, double topWatts)
+{
+    if (limitWatts <= 0 || topWatts <= 0.0) { return; }
+    const double red = limitWatts;
+    const double top = topWatts;
     if (objectName() == QStringLiteral("PowerBar")) {
         if (BarItem* bar = qobject_cast<BarItem*>(this)) { bar->setRange(0.0, top); bar->setRedThreshold(red); }
     } else if (objectName() == QStringLiteral("PowerScale")) {
-        if (ScaleItem* scale = qobject_cast<ScaleItem*>(this)) { scale->setRange(0.0, top); scale->setMajorTicks(watts <= 10 ? 5 : 7); }
+        if (ScaleItem* scale = qobject_cast<ScaleItem*>(this)) { scale->setRange(0.0, top); scale->setMajorTicks(limitWatts <= 10 || (limitWatts == 1500 && top == 2000.0) ? 5 : 7); }
     }
 }
 
