@@ -132,6 +132,18 @@ Advanced, and each control appears on one page only.
   and presets, the transmit display settings, the radio list, and the
   accessory fault and limit records. Each of these saved the settings file on
   the thread that sends the audio and now hands it to the same writer thread.
+- A Core on Linux is now given the network receive buffer it asks for. It
+  asks for 4 MB on the socket its radio sends to, and Linux granted only what
+  its limit (`net.core.rmem_max`) allowed: 212992 bytes on a Rock 5C, which
+  three or four wide receivers fill in 6 to 9 ms. The `nereusd` packages, the
+  station images and the Pi 4 and Rock install scripts now install
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
+  apply it at install without lowering a limit that is already higher. This
+  is the only system setting the packages and the Pi 4 scripts change (the
+  Rock script also writes a login-manager drop-in); removing the package or
+  the file undoes it from the next system start. The Core's log
+  now says how much of the buffer it was given. See "The system setting the
+  Core's installer changes" in the README.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.
