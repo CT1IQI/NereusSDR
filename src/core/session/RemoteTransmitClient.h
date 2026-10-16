@@ -80,6 +80,10 @@
 //   2026-10-14: Retire a station session even when remote transmit was
 //               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-15: programAudioKeyChanged, published with the key, so the
+//               microphone line follows a program key that arrives or ends
+//               under the screen key (the key down does not move then).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -254,6 +258,11 @@ signals:
     /// The Core refused the operator's press (or a release), in its words.
     void refused(const QString& reason, const QString& code, const QString& fix);
     void micKeyDownChanged(bool down);
+    /// 2026-10-15: programAudioKey() changed. Emitted from publish(), on
+    /// this object's thread, before the call that changed it returns
+    /// (keyForProgram, unkeyForProgram, an answer, a stop, a reset), also
+    /// when the key down stays the same (the screen key holds it).
+    void programAudioKeyChanged(bool programAudio);
     void holdsTransmitChanged(bool holds);
     void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
 
@@ -332,6 +341,7 @@ private:
     quint32 m_coreStopSerial{0};   // fix wave M7
     bool m_coreTransmitting{false};
     bool m_publishedKeyDown{false};
+    bool m_publishedProgramAudio{false};
     bool m_publishedHolds{false};
 };
 
