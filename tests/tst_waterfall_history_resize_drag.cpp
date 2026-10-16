@@ -283,6 +283,73 @@ private slots:
         QVERIFY(pictureMatchesHistory());
     }
 
+    // While an edge moves, the live waterfall is refilled from the history
+    // on every step. It used to be emptied to its background on each step
+    // and stay dark until the debounce, 250 ms after the drag came to rest.
+    void drag_keepsTheLiveWaterfallLit_data()
+    {
+        QTest::addColumn<int>("widthStep");
+        QTest::addColumn<int>("heightStep");
+        QTest::newRow("width") << -3 << 0;
+        QTest::newRow("height") << 0 << -3;
+        QTest::newRow("both, growing") << 4 << 2;
+    }
+
+    void drag_keepsTheLiveWaterfallLit()
+    {
+        QFETCH(int, widthStep);
+        QFETCH(int, heightStep);
+        constexpr int kRowsBefore = 600;
+        constexpr int kSteps = 30;
+        SpectrumWidget w;
+        prepare(w, 1000, 500, kRowsBefore);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+        const QImage& history = w.waterfallHistoryForTest();
+        const QRgb hot = quarterMiddles(history, historyRowForAge(w, 0))
+            [(kRowsBefore - 1) % 4];
+        const QRgb cold = quarterMiddles(history, historyRowForAge(w, 0))
+            [kRowsBefore % 4];
+        QVERIFY(hot != cold);
+        const quint64 rescalesBefore = w.waterfallHistoryRescalesForTest();
+
+        // Every row of the live picture shows the history row of its age.
+        auto litFromHistory = [&]() {
+            const QImage& live = w.liveWaterfallForTest();
+            const int top = w.liveWaterfallWriteRowForTest();
+            for (int age = 0; age < live.height(); ++age) {
+                const int y = (top + age) % live.height();
+                const int shown = hotQuarterOf(quarterMiddles(live, y), hot, cold);
+                const int kept = hotQuarterOf(
+                    quarterMiddles(w.waterfallHistoryForTest(),
+                                   historyRowForAge(w, age)),
+                    hot, cold);
+                if (shown < 0 || shown != kept) {
+                    qWarning() << "live row of age" << age << "shows quarter"
+                               << shown << "history holds" << kept;
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        for (int step = 1; step <= kSteps; ++step) {
+            w.resize(1000 + widthStep * step, 500 + heightStep * step);
+            QVERIFY(w.liveWaterfallForTest().height() < kRowsBefore);
+            QVERIFY2(litFromHistory(), "right after the resize step");
+            w.pushWaterfallRowForTest(quarterRow(step % 4));
+            QVERIFY2(litFromHistory(), "after the next row");
+        }
+        QCOMPARE(w.waterfallHistoryRescalesForTest() - rescalesBefore, quint64(0));
+
+        QTRY_VERIFY(!w.waterfallHistoryResizePendingForTest());
+        QCOMPARE(w.waterfallHistoryRescalesForTest() - rescalesBefore,
+                 quint64(widthStep != 0 ? 1 : 0));
+        QVERIFY(litFromHistory());
+        QCOMPARE(w.waterfallHistoryRowsForTest(), kRowsBefore + kSteps);
+    }
+
     // A height-only change (a top or bottom dock edge) leaves the history's
     // size alone: no rescale then or later.
     void heightDrag_neverRescalesTheHistory()

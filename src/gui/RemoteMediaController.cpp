@@ -6,6 +6,10 @@
 //               never calls the source once stop() returns, rather than
 //               that it is always joined. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-12: A display the Core ended because its slice was removed is
+//               not asked for again while the removal is on its way (at most
+//               kPanWaitingGraceMs); the removal retires the binding. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -19,6 +23,11 @@
 //   2026-10-12: the microphone pump reports, once per stall, a collector
 //               that takes no audio while capture is ready. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: a pan whose slice the Core moved to another receiver asks
+//               for its view on that receiver, never for the view it had on
+//               the old one, which the Core read as an extended view and
+//               switched the filters to bypass for (holdsForReceiverMove).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (fourth wave): a pan forgets the picture it
 //               shows when its receiver changes stream or stream epoch, so a
 //               late context of that picture is not drawn. J.J. Boyd
@@ -1009,6 +1018,14 @@ struct RemoteMediaController::Private {
         QJsonObject acceptedRequest;
         int observedStream = -1;
         quint64 observedStreamEpoch = 0;
+        /// The Core ended this display because its slice left the Core
+        /// (kRetireReasonSliceRemoved). The removal itself reaches this
+        /// window's slice list after that word, so until it does the slice
+        /// still looks alive here, and asking again would ask for a receiver
+        /// that is gone. The removal retires the binding. Should it not
+        /// arrive within kPanWaitingGraceMs the display is asked for after
+        /// all, so the pan gets the Core's own answer and never sits blank.
+        bool sliceLeftCore = false;
         quint32 revision = 0;
         quint32 acceptedRevision = 0;
         quint32 contextRevision = 0;
@@ -1104,6 +1121,13 @@ struct RemoteMediaController::Private {
         /// R-R3-37: when this pan began waiting for an accepted display
         /// (allocationClock), or -1 while it has one. See kPanWaitingGraceMs.
         qint64 waitingSinceMs = -1;
+        /// The Core retired this pan's display because its slice left the
+        /// receiver (kRetireReasonStreamBindingChanged) and the pan has not
+        /// asked again since. See Private::holdsForReceiverMove.
+        bool sliceLeftReceiver = false;
+        /// When this pan's ask began waiting to be for its slice's new
+        /// receiver (allocationClock), or -1 while it is not waiting.
+        qint64 receiverMoveHeldSinceMs = -1;
         QString refusedIdentity;
         QString refusalReason;
         QList<qint64> receivedFrameTimesMs;
@@ -1299,6 +1323,50 @@ struct RemoteMediaController::Private {
             break;
         }
         return built;
+    }
+
+    /// A pan's ask after its slice moved to another receiver is for the
+    /// pan's view on that receiver, never for the view it had on the old
+    /// one. The Core already has the slice on the new receiver, so the old
+    /// view is one that lies outside it: where this window permits an
+    /// extended view and the radio has a wideband ADC path, the Core takes
+    /// it for one and switches that input's filters to bypass to show it. A
+    /// local window never asks that way.
+    ///
+    /// The window learns of the move in two steps. The Core retires the
+    /// display at once (kRetireReasonStreamBindingChanged); the slice's new
+    /// frequency and receiver come with its next mirrored update, and the
+    /// pan follows its slice when they land. So the ask waits (true):
+    ///  - while the Core has retired the display for the move and the
+    ///    mirrored slice still shows the receiver the pan was on;
+    ///  - while the mirrored slice shows another receiver and the pan's view
+    ///    cannot lie on it. A slice is within half a receiver's width of its
+    ///    receiver's center, so a view a whole width or more from the slice
+    ///    is not on that receiver. A pan that was showing an extended view
+    ///    keeps its view: that one is the operator's.
+    /// Never for longer than kReceiverMoveSettleMs.
+    bool holdsForReceiverMove(Binding& binding, const SliceModel* slice,
+                              const QJsonObject& request, qint64 nowMs) const
+    {
+        if (binding.isMini() || !slice) { return false; }
+        const bool mirroredMove = binding.observedStream >= 0
+            && (binding.observedStream != slice->streamIndex()
+                || binding.observedStreamEpoch != slice->streamEpoch());
+        bool waits = binding.sliceLeftReceiver && !mirroredMove;
+        if (!waits && mirroredMove && !binding.context.wideband.active) {
+            const double rateHz = slice->sampleRateHz();
+            const double viewCenterHz = request.value(QStringLiteral("centreHz")).toDouble();
+            const double halfSpanHz = request.value(QStringLiteral("spanHz")).toDouble() / 2.0;
+            waits = rateHz > 0.0
+                && (viewCenterHz + halfSpanHz <= slice->frequency() - rateHz
+                    || viewCenterHz - halfSpanHz >= slice->frequency() + rateHz);
+        }
+        if (!waits) {
+            binding.receiverMoveHeldSinceMs = -1;
+            return false;
+        }
+        if (binding.receiverMoveHeldSinceMs < 0) { binding.receiverMoveHeldSinceMs = nowMs; }
+        return nowMs - binding.receiverMoveHeldSinceMs < kReceiverMoveSettleMs;
     }
 
     /// JJ's ruling of 2026-09-28: the Core computes a pan's waterfall AGC
@@ -5132,9 +5200,15 @@ void RemoteMediaController::refreshSubscriptions()
         // observed is the last attempted geometry, not proof of acceptance.
         // A rejected request remains blank until its inputs change; reconnect
         // retires the binding, and source-window changes are batched above.
-        if (request == binding.observed
+        // A display the Core retired because the slice left its receiver is
+        // asked for again even with nothing changed here: the slice may be
+        // back on that receiver before this window was told it had left.
+        if (request == binding.observed && !binding.sliceLeftReceiver
             && binding.observedStream == slice->streamIndex()
             && binding.observedStreamEpoch == slice->streamEpoch()) { continue; }
+        // The ask after a slice's move to another receiver is for the pan's
+        // view on that receiver.
+        if (d->holdsForReceiverMove(binding, slice, request, d->allocationClock())) { continue; }
         // R-DISP-RETUNE (7b): a context taken for drawing only is one of
         // this stream; its frames keep drawing through an ask on it. The
         // picture shown is one of this stream and epoch too: once the
@@ -5149,6 +5223,7 @@ void RemoteMediaController::refreshSubscriptions()
         binding.observed = request;
         binding.observedStream = slice->streamIndex();
         binding.observedStreamEpoch = slice->streamEpoch();
+        binding.sliceLeftReceiver = false;
         ++binding.revision;
         if (binding.revision == 0) { ++binding.revision; }
         binding.accepted = false;
@@ -5660,6 +5735,8 @@ void RemoteMediaController::refreshBudgetSubscriptions()
     };
     QList<Candidate> reductions;
     QList<Candidate> increases;
+    // A pan whose ask waits for its slice's new receiver is not answered yet.
+    bool heldForReceiverMove = false;
     QList<quint32> eraseUnaccepted;
 
     // R-R3-08/37: a reduction the Core made because it is busy says so;
@@ -5832,6 +5909,14 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         setPanStatus(item.panId, status);
         if (!self) { return; }
         if (binding.pending || binding.refusedIdentity == identity) { continue; }
+        if (binding.sliceLeftCore) {
+            // The Core said this display's slice is gone; the slice is
+            // still on this window's list for the moment. Nothing is asked
+            // for it while the removal is on its way: the same grace in
+            // which a waiting pan says nothing (statusFor, above).
+            if (now - binding.waitingSinceMs < kPanWaitingGraceMs) { continue; }
+            binding.sliceLeftCore = false;
+        }
         if (binding.askAgain && binding.acceptedRequest != target) {
             binding.askAgain = false; // A new request supersedes it.
         }
@@ -5839,6 +5924,12 @@ void RemoteMediaController::refreshBudgetSubscriptions()
             && !binding.askAgain
             && binding.observedStream == item.slice->streamIndex()
             && binding.observedStreamEpoch == item.slice->streamEpoch()) {
+            continue;
+        }
+        // The ask after a slice's move to another receiver is for the pan's
+        // view on that receiver.
+        if (d->holdsForReceiverMove(binding, item.slice, target, now)) {
+            heldForReceiverMove = true;
             continue;
         }
         Candidate candidate{found->first, target, quality.charge, identity, false,
@@ -5857,7 +5948,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         if (sent != 0 && !sendRefusedRelease(endpointId, sent)) { return; }
     }
 
-    if (askWanted && reductions.isEmpty() && increases.isEmpty()
+    if (askWanted && reductions.isEmpty() && increases.isEmpty() && !heldForReceiverMove
         && std::none_of(d->bindings.cbegin(), d->bindings.cend(),
                         [](const auto& entry) { return entry.second.pending.has_value(); })) {
         // Every pan was answered at what the operator wants (or refused for
@@ -5916,6 +6007,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         ++binding.revision;
         if (binding.revision == 0) { ++binding.revision; }
         const quint32 revision = binding.revision;
+        binding.sliceLeftReceiver = false;
         binding.pending = Private::Binding::Pending{
             candidate.unsubscribe ? Private::Binding::PendingKind::Unsubscribe
                                   : Private::Binding::PendingKind::Subscribe,
@@ -6717,6 +6809,20 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.shownPicture.reset();
             binding.decoder.reset();
             binding.presenter.reset();
+            if (reason == QLatin1String(kRetireReasonStreamBindingChanged)) {
+                // The Core says so at once; the slice's new frequency and
+                // receiver are still on their way. The next ask is for the
+                // pan's view on that receiver (Private::holdsForReceiverMove).
+                binding.sliceLeftReceiver = true;
+                binding.receiverMoveHeldSinceMs = -1;
+            }
+            // The Core ends a removed slice's display before the removal
+            // reaches this window's list, so the plan below still finds the
+            // slice. As the "rejected" path of a Core with no display budget
+            // does (below), that is the operator's own change and is not
+            // asked for again: the removal retires the binding. The wording
+            // is SpectrumEndpoint.h's, the constant the Core sends.
+            binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
             if (widget) { widget->invalidateRemoteSpectrumFrame(); }
             if (!self) { return; }
@@ -6784,6 +6890,10 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 binding.decoder.reset();
                 binding.presenter.reset();
                 binding.pending.reset();
+                if (reason == QLatin1String(kRetireReasonStreamBindingChanged)) {
+                    binding.sliceLeftReceiver = true;
+                    binding.receiverMoveHeldSinceMs = -1;
+                }
                 if (erase) { d->bindings.erase(found); }
                 if (widget) {
                     widget->invalidateRemoteSpectrumFrame();
@@ -7055,6 +7165,12 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             binding.accepted = false;
             if (binding.clarityRegistry) { binding.clarityRegistry->setRemoteAvailable(binding.panId, binding.clarityToken, false); }
             binding.rejected = true;
+            if (reason == QLatin1String(kRetireReasonStreamBindingChanged)) {
+                // The next ask is for the pan's view on the slice's new
+                // receiver (Private::holdsForReceiverMove).
+                binding.sliceLeftReceiver = true;
+                binding.receiverMoveHeldSinceMs = -1;
+            }
             binding.refusalReason = operatorChange ? QString()
                 : (reason.isEmpty() ? QStringLiteral("Core refused the display allocation.")
                                     : reason.left(512));
