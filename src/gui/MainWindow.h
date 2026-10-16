@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: restoreMainWindowGeometry()'s note says the constructor
+//               calls it last (issue #525). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-14: Follow window moves with the existing toast anchor and add
 //               access-only display regression friendship. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -1410,8 +1413,9 @@ private:
     // under MainWindowGeometry / MainWindowState (base64 of Qt's native
     // QByteArray blobs). restoreMainWindowGeometry() returns true if a
     // valid saved geometry was applied, false otherwise (first launch
-    // or corrupted blob); buildUI() uses the return to decide whether
-    // to keep the 1280×800 default. Multi-screen safety clamp: if the
+    // or corrupted blob), in which case the 1280×800 default set in
+    // buildUI() stays. The constructor calls it last, after the pans exist
+    // (issue #525). Multi-screen safety clamp: if the
     // restored geometry sits entirely outside every connected screen
     // (monitor disconnected since last save), fall back to centering
     // on the primary screen at the default size.

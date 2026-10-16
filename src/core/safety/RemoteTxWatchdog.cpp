@@ -27,6 +27,9 @@
 //               Anthropic Claude Code.
 //   2026-10-15: tripQuiet. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-16: a stop from the cut guard reports the silence the guard
+//               judged when this clock reads less. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -164,12 +167,12 @@ void RemoteTxWatchdog::linkClosed(const QByteArray& deviceId)
     trip(deviceId, true);
 }
 
-bool RemoteTxWatchdog::tripQuiet(const QByteArray& deviceId)
+bool RemoteTxWatchdog::tripQuiet(const QByteArray& deviceId, qint64 judgedSilentMs)
 {
     if (!m_devices.contains(deviceId)) {
         return false;
     }
-    trip(deviceId, false);
+    trip(deviceId, false, judgedSilentMs);
     return true;
 }
 
@@ -213,10 +216,12 @@ void RemoteTxWatchdog::onTimer()
     }
 }
 
-void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed)
+void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed, qint64 judgedSilentMs)
 {
     const Watch watch = m_devices.take(deviceId);
-    const qint64 silentMs = now() - watch.lastMs;
+    // The cut guard's measurement, when it made this stop, is never
+    // reported lower by this clock's rounding.
+    const qint64 silentMs = std::max(now() - watch.lastMs, judgedSilentMs);
     const QString name = m_hooks.deviceName ? m_hooks.deviceName(deviceId) : QString();
     const QString message = stopMessage(name.isEmpty() ? QStringLiteral("a device") : name);
     qCWarning(lcDsp).noquote() << "Transmit watchdog:"
