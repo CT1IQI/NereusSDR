@@ -8,6 +8,10 @@
 //               Claude Code.
 //   2026-10-15: Windows timed turns on a high-resolution waitable timer.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: a timer that cannot be set is given up with one warning,
+//               as a failed wait is; a timer that cannot be made is
+//               reported once per process, naming the call that failed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/DaemonDisplaySendThread.h"
@@ -17,6 +21,7 @@
 #include <QLoggingCategory>
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
@@ -100,21 +105,32 @@ void DaemonDisplayLock::setHookExemptThread(std::thread::id hookExempt)
 DaemonDisplaySendThread::DaemonDisplaySendThread()
 {
 #ifdef Q_OS_WIN
+    const char* missing = "this build's Windows SDK has none";
+    DWORD error = 0;
 #ifdef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
     m_turnTimer = CreateWaitableTimerExW(nullptr, nullptr,
                                          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                          TIMER_ALL_ACCESS);
-    if (m_turnTimer != nullptr) {
+    if (m_turnTimer == nullptr) {
+        missing = "CreateWaitableTimerExW failed";
+        error = GetLastError();
+    } else {
         m_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (m_wakeEvent == nullptr) {
+            missing = "CreateEventW failed";
+            error = GetLastError();
             CloseHandle(m_turnTimer);
             m_turnTimer = nullptr;
         }
     }
 #endif
-    if (m_turnTimer == nullptr) {
-        qCWarning(lcDaemonMedia) << "no high-resolution timer; the display send thread's"
-                                    " timed turns wait a whole scheduler tick";
+    // Once per process: every controller makes a thread, and the reason is
+    // the same for each of them.
+    static std::atomic<bool> s_warned{false};
+    if (m_turnTimer == nullptr && !s_warned.exchange(true)) {
+        qCWarning(lcDaemonMedia) << "no high-resolution timer:" << missing << "( error" << error
+                                 << "); the display send thread's timed turns wait"
+                                    " a whole scheduler tick";
     }
 #endif
 }
@@ -188,6 +204,16 @@ void DaemonDisplaySendThread::wakeTurn()
     notifyWake();
 }
 
+#ifdef Q_OS_WIN
+void DaemonDisplaySendThread::dropTurnTimer(const char* call, unsigned long error)
+{
+    qCWarning(lcDaemonMedia) << "the display send thread's" << call << "failed, error" << error
+                             << "; its timed turns now wait a whole scheduler tick";
+    CloseHandle(m_turnTimer);
+    m_turnTimer = nullptr;
+}
+#endif
+
 bool DaemonDisplaySendThread::wakePending() const
 {
     return m_stopRequested.load(std::memory_order_acquire) || m_framesPending || m_turnPending;
@@ -219,6 +245,9 @@ void DaemonDisplaySendThread::waitForTurn(std::unique_lock<std::mutex>& lock,
             LARGE_INTEGER due;
             due.QuadPart = -std::max<LONGLONG>(1, remaining / 100);  // relative, in 100 ns units
             if (!SetWaitableTimer(m_turnTimer, &due, 0, nullptr, nullptr, FALSE)) {
+                // Given up as a failed wait is, so a timer that cannot be
+                // set is not tried again and failed quietly every turn.
+                dropTurnTimer("timer set", GetLastError());
                 break;
             }
             const HANDLE handles[] = {m_wakeEvent, m_turnTimer};
@@ -230,10 +259,7 @@ void DaemonDisplaySendThread::waitForTurn(std::unique_lock<std::mutex>& lock,
                 // Not expected while the handles are open. The condition
                 // variable takes the timed turns from here, so a failing
                 // wait never spins.
-                qCWarning(lcDaemonMedia) << "the display send thread's timer wait failed, error"
-                                         << error << "; its timed turns now wait a whole scheduler tick";
-                CloseHandle(m_turnTimer);
-                m_turnTimer = nullptr;
+                dropTurnTimer("timer wait", error);
                 break;
             }
         }

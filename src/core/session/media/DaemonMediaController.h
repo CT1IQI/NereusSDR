@@ -717,7 +717,10 @@ private:
     // leaves to it as one queued call, reading the station thread's values
     // from a copy (DisplaySnapshot). The receive "tx" keepalives and the
     // microphone line take no lock: they touch nothing the display thread
-    // does, and nothing on the transmit path ever waits on a display.
+    // does. The transmit display's keyed edge does take it:
+    // MoxController::moxStateChanged reaches recordTransmitPan directly,
+    // so a key or unkey on the station thread can wait out one display
+    // pass, as it waited out a send turn on that thread before.
     /// Holds the display lock for a scope.
     DaemonDisplayLockGuard displayGuard() const { return DaemonDisplayLockGuard(m_displayLock); }
     bool onDisplayThread() const { return m_shared->onDisplayThread(); }

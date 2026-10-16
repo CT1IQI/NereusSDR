@@ -19,6 +19,10 @@
 //               Claude Code.
 //   2026-10-15: Windows timed turns on a high-resolution waitable timer.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: a timer that cannot be set is given up with one warning,
+//               as a failed wait is; a timer that cannot be made is
+//               reported once per process, naming the call that failed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -160,6 +164,12 @@ private:
     void waitForTurn(std::unique_lock<std::mutex>& lock, Clock::time_point nextTurn);
     // Any thread, after a flag changed under m_mutex.
     void notifyWake();
+#ifdef Q_OS_WIN
+    // The display thread, after `call` failed with `error`: one warning,
+    // and the condition variable takes the timed turns from then on, so a
+    // failing timer never spins and never fails quietly every turn.
+    void dropTurnTimer(const char* call, unsigned long error);
+#endif
 
     std::mutex m_mutex;
     std::condition_variable m_wake;
