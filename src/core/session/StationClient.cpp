@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  A refused property write that carries no
+//                                    value puts the Core's last value back
+//                                    on screen. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
@@ -4540,6 +4544,18 @@ void StationClient::handlePropertyResult(const SessionMessage& message)
         pending->remove(result.property);
         if (result.hasValue) {
             acceptedValues.append(result.value);
+        } else if (!result.accepted) {
+            // Step persistence lane (2026-10-15): a refusal that carries no
+            // value (another device's slice, ruling 5.9) left the refused
+            // edit on screen while the Core kept its own. The Core changed
+            // nothing, so its last value here is what it holds: show that.
+            const auto core = m_coreValues.constFind(message.objectKey);
+            if (core != m_coreValues.cend()) {
+                const auto value = core->constFind(result.property);
+                if (value != core->cend()) {
+                    acceptedValues.append(*value);
+                }
+            }
         }
         currentResults.append(result);
     }
