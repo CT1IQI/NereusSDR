@@ -749,6 +749,9 @@
 //                last or hidden. The S-Meter has a check box in the
 //                Containers menu's applet list. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 
 /*  MeterManager.cs
@@ -3968,7 +3971,7 @@ void MainWindow::setDisplayDuplexSetting(bool on)
 // The setting to what the pan does (MoxDisplayController: none in a remote
 // window whose Core is below txDisplayVersion 3), to this window's own
 // noise blanking rule (RadioModel, a window running its own DSP), and to
-// the two controls: checked from the setting, disabled with the reason
+// all DUP controls: checked from the setting, disabled with the reason
 // when DUP cannot apply.
 void MainWindow::applyDisplayDuplex()
 {
@@ -3979,14 +3982,17 @@ void MainWindow::applyDisplayDuplex()
         m_radioModel->setLocalDisplayDuplex(m_displayDuplexSetting);
     }
     const QString reason = MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+    const QString tip = reason.isEmpty()
+        ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
+                         "transmitting, under the transmit grid and colors.")
+        : reason;
+    if (m_txApplet) {
+        m_txApplet->setDisplayDuplexState(m_displayDuplexSetting, reason.isEmpty(), tip);
+    }
     if (m_displayDuplexAction) {
         const QSignalBlocker block(m_displayDuplexAction);
         m_displayDuplexAction->setChecked(m_displayDuplexSetting);
         m_displayDuplexAction->setEnabled(reason.isEmpty());
-        const QString tip = reason.isEmpty()
-            ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
-                             "transmitting, under the transmit grid and colors.")
-            : reason;
         m_displayDuplexAction->setToolTip(tip);
         m_displayDuplexAction->setStatusTip(tip);
     }
@@ -10234,6 +10240,9 @@ void MainWindow::populateDefaultMeter()
     // through to TxApplet::requestOpenCfcDialog.
     auto* txApplet = new TxApplet(m_radioModel, nullptr);
     m_txApplet = txApplet;
+    connect(txApplet, &TxApplet::displayDuplexRequested,
+            this, &MainWindow::setDisplayDuplexSetting);
+    applyDisplayDuplex();
     panel->addApplet(txApplet);
 
     // ── 3M-1c Phase L: hand TxApplet the controllers it needs ──────────────

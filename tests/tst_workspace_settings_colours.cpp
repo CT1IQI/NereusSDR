@@ -29,6 +29,10 @@
 //   2026-10-10 - The connection light's four states (stale is the warn
 //                 colour). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-15 - PS-A's lit fill is sampled beside its label, not at the
+//                 center, now that DUP narrows it; the unlit button fails
+//                 the same check. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -109,6 +113,16 @@ QColor centre(QWidget* w)
 {
     const QImage img = w->grab().toImage();
     return img.pixelColor(img.width() / 2, img.height() / 2);
+}
+
+// A pixel of a button's fill at mid-height, halfway between its left edge
+// and where its centered label starts, so a narrow button's label never
+// covers the sample.
+QColor fillBesideLabel(QPushButton* b)
+{
+    const QImage img = b->grab().toImage();
+    const int labelLeft = (b->width() - b->fontMetrics().horizontalAdvance(b->text())) / 2;
+    return img.pixelColor(qMax(2, labelLeft / 2), img.height() / 2);
 }
 
 QPushButton* buttonWithText(QWidget& root, const QString& text)
@@ -350,13 +364,19 @@ private slots:
         auto* psa = tx.findChild<QPushButton*>(QStringLiteral("TxAppletPsaBtn"));
         QVERIFY(psa != nullptr);
         psa->setVisible(true);
+        QApplication::processEvents();
+        // The same sample on the unlit button is not green, so the checks
+        // below can fail.
+        const QColor unlit = fillBesideLabel(psa);
+        QVERIFY2(!(unlit.green() > unlit.red() && unlit.green() > unlit.blue()),
+                 qPrintable(unlit.name()));
         {
             const QSignalBlocker block(psa);
             psa->setChecked(true);
         }
         QApplication::processEvents();
         QVERIFY2(!psa->styleSheet().contains(QLatin1String("#006030")), qPrintable(psa->styleSheet()));
-        const QColor px = centre(psa);
+        const QColor px = fillBesideLabel(psa);
         QVERIFY2(distance(px, QColor(0x00, 0x60, 0x30)) > 20, qPrintable(px.name()));
         QVERIFY2(px.green() > px.red() && px.green() > px.blue(), qPrintable(px.name()));
     }

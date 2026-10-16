@@ -171,6 +171,20 @@
 //                                    WorkspacePreview::roleColourName()
 //                                    (title-text) with the preview on.
 //                                    AI tooling: Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the Spot List takes a real reset after
+//               each burst of row changes with accessibility on, keeping the
+//               selected spot, current spot and scroll by the spot's key
+//               (resetViewAfterRowChanges), in place of the cache-only
+//               repair. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): macOS only; the pending reset is
+//               flushed before each row change; data updates reset
+//               nothing; the place is kept by the spot's row in
+//               SpotTableModel, and a double-click to tune survives a
+//               reset. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): data updates reset the Spot List at most
+//               once a second (so VoiceOver gets fresh cells back), and the
+//               proxy's flush is gated on accessibility being active.
+//               AI-assisted via Anthropic Claude Code.
 
 #include "SpotHubDialog.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -213,6 +227,7 @@
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSet>
 #include <QSlider>
@@ -2521,8 +2536,22 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
     m_spotTable->horizontalHeader()->setSortIndicatorShown(false);
 
     // Spots arrive from the Core at any moment: a new spot, the cap
-    // trimming the oldest, or a band or source pill filtering rows.
-    installQtCocoaAccessibleTableCacheRepair(m_spotTable);
+    // trimming the oldest, or a band or source pill filtering rows. On
+    // macOS with accessibility on, the proxy takes a real reset (rows kept
+    // in the order shown) right before a row change whenever a change since
+    // the last reset left the accessibility cache stale, and once after
+    // each burst of row changes; the selected spot, current spot and scroll
+    // are kept by the spot's row in SpotTableModel, so accessibility never
+    // reads a cell the macOS bridge deleted and two spots that read the
+    // same stay apart. Data updates reset it at most once a second
+    // (kItemViewDataResetIntervalMs), so the cells come back.
+    m_spotProxyModel->setBeforeRowChange(resetViewAfterRowChanges(
+        m_spotTable, [proxy = QPointer<BandFilterProxy>(m_spotProxyModel)] {
+            if (proxy) {
+                proxy->resetKeepingOrder();
+            }
+        }),
+        &itemViewResetsActive);
 
     // Double-click to tune. From upstream DxClusterDialog.cpp:1688-1693.
     connect(m_spotTable, &QTableView::doubleClicked, this, [this](const QModelIndex& idx) {

@@ -171,6 +171,10 @@
 //                                    FreeDV Reporter they are disabled
 //                                    with the reason. AI tooling:
 //                                    Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF)  setColoringRecheckMsForTest: test
+//                                    seam for the once-a-second coloring
+//                                    recheck (0 stops it). AI-assisted
+//                                    via Anthropic Claude Code.
 
 #pragma once
 
@@ -264,6 +268,9 @@ public:
     // Test seam: drop the highlight-clear interval below the production
     // 6 s default so the unit test does not block on wall-clock time.
     void setHighlightClearMsForTest(int ms);
+    // Test seam: the coloring recheck interval (production 1 s); 0 or
+    // less stops the recheck.
+    void setColoringRecheckMsForTest(int ms);
 
     // Phase 3R K-bench (bench feedback): push the operator's active VFO
     // frequency into the filter pipeline. Behavior depends on the
