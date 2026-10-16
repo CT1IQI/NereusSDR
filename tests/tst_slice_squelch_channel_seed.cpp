@@ -18,6 +18,9 @@
 //   2026-10-15 - New test file: squelch seed for slices B to D and the
 //                 per-slice settings save. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-16 - The FM threshold check expects the slider mapping
+//                 RxChannel::fmsqThresholdForWdsp sends, not pow(10, dB / 20).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - Added the non-squelch case (SNB, AGC hang, RIT) for the
 //                 per-slice settings save. J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
@@ -143,9 +146,11 @@ private slots:
         // SetRXAAMSQThreshold stores pow(10, dB / 20) (amsq.c:221-224).
         QCOMPARE(rxa[b].amsq.p->run, 1);
         QVERIFY(std::abs(rxa[b].amsq.p->unmute_thresh - std::pow(10.0, -60.0 / 20.0)) < 1e-12);
-        // RxChannel::setFmsqThresh passes pow(10, dB / 20); fmsq.c:250.
+        // RxChannel::setFmsqThresh passes fmsqThresholdForWdsp(slider), the
+        // Thetis slider mapping (console.cs:47295-47304 [v2.10.3.15]);
+        // fmsq.c:250 stores it as tail_thresh.
         QCOMPARE(rxa[b].fmsq.p->run, 1);
-        QVERIFY(std::abs(rxa[b].fmsq.p->tail_thresh - std::pow(10.0, -40.0 / 20.0)) < 1e-12);
+        QVERIFY(std::abs(rxa[b].fmsq.p->tail_thresh - RxChannel::fmsqThresholdForWdsp(-40.0)) < 1e-12);
 #endif
     }
 
