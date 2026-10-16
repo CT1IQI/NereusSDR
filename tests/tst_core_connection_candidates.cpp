@@ -7,6 +7,12 @@
 #include "gui/RemoteConnectionController.h"
 #include "core/session/RendezvousWire.h"
 using namespace NereusSDR;
+
+namespace {
+// A refused loopback dial reports in milliseconds on Linux and macOS but
+// takes about 3.4 s on Windows, which retries the SYN after the reset.
+constexpr int kRefusedDialMs = 8000;
+}
 class TstCoreConnectionCandidates : public QObject {
     Q_OBJECT
 private slots:
@@ -103,7 +109,7 @@ private slots:
         QObject::connect(&client, &StationClient::reconnectScheduled, &client, [&](int, int) { alive = false; });
         QSignalSpy ended(&client, &StationClient::sessionEnded);
         client.connectToStation({}, {}, {}, false, QByteArray(32, 'i'));
-        QTRY_VERIFY_WITH_TIMEOUT(reads >= 2, 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(reads >= 2, kRefusedDialMs);
         QTRY_VERIFY_WITH_TIMEOUT(!client.isConnectionActive(), 1000);
         QVERIFY(client.connectedUrl().isEmpty()); QVERIFY(!client.isReconnectPending());
         QVERIFY(ended.last().at(0).toString().contains(QStringLiteral("saved Core changed")));
@@ -140,7 +146,7 @@ private slots:
             if (attempt == 1) { retained = {core.url()}; }
         });
         client.connectToStation({}, {}, {}, false, core.server->stationIdentity().fingerprint());
-        QTRY_VERIFY_WITH_TIMEOUT(!retries.isEmpty(), 1500);
+        QTRY_VERIFY_WITH_TIMEOUT(!retries.isEmpty(), kRefusedDialMs);
         QTRY_VERIFY_WITH_TIMEOUT(client.isHandshakeComplete(), 3000);
         QCOMPARE(client.connectedUrl(), core.url());
         client.disconnectFromStation(QStringLiteral("test complete"));

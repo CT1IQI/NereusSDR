@@ -19,6 +19,8 @@
 //   2026-10-14 - Refuse blocked TX popup choices using the existing local
 //                 or mirrored Alex flags (PR #96 review). J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -2322,7 +2324,7 @@ void RxApplet::connectSlice(SliceModel* s)
                 && (attCtrl->rx2SliceMask() & (1u << sliceId)) != 0) {
                 attCtrl->setRx2Attenuation(val);
             } else {
-                attCtrl->setAttenuation(val);
+                attCtrl->setDisplayedAttenuation(val);
             }
         });
 

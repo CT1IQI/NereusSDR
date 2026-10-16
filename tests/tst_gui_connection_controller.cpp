@@ -11,6 +11,9 @@
 #include <QAction>
 #include <QApplication>
 #include <QFile>
+#include <QFileInfo>
+#include <QTcpServer>
+#include <QScopeGuard>
 #include <QHostAddress>
 #include <QKeySequence>
 #include <QLabel>
@@ -21,13 +24,16 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QWebSocketServer>
+#include <QWebSocket>
 
 #include <chrono>
 
 #include "OperatorWording.h"
 #include "core/AppSettings.h"
+#include "core/station/StationHandover.h"
 #include "core/security/PairingWindow.h"
 #include "core/RadioDiscovery.h"
+#include "core/WdspEngine.h"
 #include "core/session/StationClient.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/StationServer.h"
@@ -44,6 +50,7 @@
 #include "fakes/UpgradedCoreToken.h"
 #include "RendezvousTestHarness.h"
 #include "fakes/LoopbackTransport.h"
+#include "fakes/P1FakeRadio.h"
 #include "core/session/PathRacer.h"
 #include "core/session/StationDevicesFacade.h"
 
@@ -156,6 +163,13 @@ private slots:
     void managedConnectActionOpensSelectorForEmptyLocalProfile();
     void selectingAndCancellingEditLeaveLiveAAndDoNotDialB();
     void explicitConnectToSavedBReplacesWholeLiveA();
+    void localRadioSuccessDismissesOnlyItsRequestedConnection();
+    void automaticLocalStartupDoesNotOpenSelector_data();
+    void automaticLocalStartupDoesNotOpenSelector();
+    void staleAttemptCannotDismissSelector_data();
+    void staleAttemptCannotDismissSelector();
+    void pendingAndTransportFailureKeepSelectorOpen();
+    void closingAndReopeningDuringPendingConnectionKeepsSelectorOpen();
     void disconnectCancelsRetryWithoutUsingHighlightedB();
     void connectionsDisconnectReopensConnectionsOnceWithoutDialling();
     void aManualReconnectReadsTheStoresLastAddresses();
@@ -311,6 +325,233 @@ void TestGuiConnectionController::explicitConnectToSavedBReplacesWholeLiveA()
         QVERIFY2(Test::Rendezvous::waitForHandshake(*secondClient, 5000, &handshakeWhy),
                  qPrintable(handshakeWhy));
     }
+    QTRY_VERIFY(!controller.selector()->isVisible());
+    // The Core can be authenticated while its radio is offline.
+    QVERIFY(!controller.sessions()->window()->radioModel()->isConnected());
+    controller.showConnections();
+    secondClient->pathChanged();
+    QCoreApplication::processEvents();
+    QVERIFY(controller.selector()->isVisible());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::localRadioSuccessDismissesOnlyItsRequestedConnection()
+{
+    Test::P1FakeRadio fake;
+    fake.start();
+    RadioInfo radio;
+    radio.address = fake.localAddress();
+    radio.port = fake.localPort();
+    radio.boardType = HPSDRHW::HermesLite;
+    radio.protocol = ProtocolVersion::Protocol1;
+    radio.macAddress = QStringLiteral("AA:BB:CC:11:22:33");
+    radio.firmwareVersion = 72;
+    AppSettings::instance().saveRadio(radio, false, false);
+    QVERIFY(AppSettings::instance().save());
+    GuiConnectionController controller;
+    controller.start({});
+    QTRY_VERIFY(controller.selector()->isVisible());
+    connect(controller.sessions(), &GuiSessionCoordinator::windowChanged, &controller,
+        [](MainWindow* window) {
+            if (window) { window->radioModel()->wdspEngine()->setSynchronousInitForTest(true); }
+        });
+    controller.selector()->connectRequested(QStringLiteral("radio:") + radio.macAddress);
+    QTRY_VERIFY(controller.sessions()->window()->radioModel()->connectionState() == ConnectionState::Connected);
+    QTRY_VERIFY(!controller.selector()->isVisible());
+    controller.showConnections();
+    controller.sessions()->window()->radioModel()->infoChanged();
+    QCoreApplication::processEvents();
+    QVERIFY(controller.selector()->isVisible());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::automaticLocalStartupDoesNotOpenSelector_data()
+{
+    QTest::addColumn<bool>("hosted");
+    QTest::newRow("saved direct target") << false;
+    QTest::newRow("hosted desktop startup") << true;
+}
+
+void TestGuiConnectionController::automaticLocalStartupDoesNotOpenSelector()
+{
+    QFETCH(bool, hosted);
+    Test::P1FakeRadio fake;
+    fake.start();
+    RadioInfo radio;
+    radio.address = fake.localAddress();
+    radio.port = fake.localPort();
+    radio.boardType = HPSDRHW::HermesLite;
+    radio.protocol = ProtocolVersion::Protocol1;
+    radio.macAddress = QStringLiteral("AA:BB:CC:44:55:66");
+    radio.firmwareVersion = 72;
+    AppSettings& settings = AppSettings::instance();
+    settings.saveRadio(radio, false, true);
+    settings.setLastConnected(radio.macAddress);
+    settings.setValue(QStringLiteral("DesktopCore/Run"), hosted);
+    QVERIFY(settings.save());
+    const QString configPath = QFileInfo(settings.filePath()).absolutePath() + QStringLiteral("/station.conf");
+    const auto removeConfig = qScopeGuard([&configPath] { QFile::remove(configPath); });
+    std::unique_ptr<StationHandover> ownership;
+    GuiConnectionController controller;
+    if (hosted) {
+        ownership = std::make_unique<StationHandover>(AppSettings::profileOverride());
+        QString error;
+        QVERIFY2(ownership->acquire(0, &error), qPrintable(error));
+        QTcpServer port;
+        QVERIFY(port.listen(QHostAddress::LocalHost, 0));
+        const quint16 selectedPort = port.serverPort();
+        port.close();
+        QFile config(configPath);
+        QVERIFY(config.open(QIODevice::WriteOnly));
+        const QByteArray bytes = QStringLiteral("remote_bind = 127.0.0.1\nremote_port = %1\n"
+            "status_page = off\nrendezvous_servers =\nradio_mac = %2\n")
+            .arg(selectedPort).arg(radio.macAddress).toUtf8();
+        QCOMPARE(config.write(bytes), bytes.size());
+        config.close();
+        QVERIFY(controller.sessions()->configureDesktopStation(AppSettings::profileOverride(), true));
+    }
+    connect(controller.sessions(), &GuiSessionCoordinator::windowChanged, &controller,
+        [&radio, hosted](MainWindow* window) {
+            if (!window) { return; }
+            window->radioModel()->wdspEngine()->setSynchronousInitForTest(true);
+            if (hosted) {
+                window->radioModel()->discovery()->injectLastSeenForTest(radio.macAddress, radio, 0);
+            }
+        });
+    QSignalSpy requests(controller.sessions(), &GuiSessionCoordinator::connectionsRequested);
+    controller.start({}); // No selector gesture: this must exercise normal automatic startup.
+    RadioModel* model = controller.sessions()->window()->radioModel();
+    if (hosted) { model->discovery()->discoveryFinished(); }
+    QTRY_COMPARE(model->connectionState(), ConnectionState::Connected);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents();
+    QCOMPARE(requests.count(), 0);
+    QVERIFY(!controller.selector()->isVisible());
+
+    controller.showConnections();
+    model->connectionStateChanged(ConnectionState::Connected);
+    QCoreApplication::processEvents();
+    QVERIFY(controller.selector()->isVisible());
+    controller.selector()->close();
+
+    // Existing explicit failure presentation must remain available.
+    model->autoConnectFailed(radio.macAddress, ConnectFailure::Timeout);
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.selector()->close();
+    // Exercise the actual MainWindow signal handler without waiting for a
+    // hardware watchdog; no DSP/transport action is inferred from these seams.
+    model->setConnectionStateForTest(ConnectionState::LinkLost);
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.selector()->close();
+    model->setConnectionStateForTest(ConnectionState::Disconnected);
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::staleAttemptCannotDismissSelector_data()
+{
+    QTest::addColumn<int>("cause");
+    QTest::newRow("superseded request") << 0;
+    QTest::newRow("failed attempt then independent retry") << 1;
+    QTest::newRow("replacement session") << 2;
+}
+
+void TestGuiConnectionController::staleAttemptCannotDismissSelector()
+{
+    QFETCH(int, cause);
+    LoopbackCores cores;
+    QVERIFY(cores.start());
+    QObject::disconnect(&cores.firstListener, nullptr, &cores.firstServer, nullptr);
+    QVERIFY(installTargets({cores.firstTarget(), cores.secondTarget()}, QStringLiteral("local")));
+    GuiConnectionController controller;
+    controller.start({});
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.selector()->connectRequested(QStringLiteral("saved:a"));
+    QTRY_VERIFY(cores.firstListener.hasPendingConnections());
+    auto socket = std::unique_ptr<QWebSocket>(cores.firstListener.nextPendingConnection());
+    QPointer<StationClient> firstClient = controller.sessions()->window()->findChild<StationClient*>();
+    QVERIFY(firstClient);
+    if (cause == 0) {
+        // A refused newer selection still revokes the old attempt's UI ownership.
+        controller.selector()->connectRequested(QStringLiteral("saved:missing"));
+        auto* notice = controller.selector()->findChild<QLabel*>(QStringLiteral("connectionSelectorNotice"));
+        QVERIFY(notice);
+        QTRY_VERIFY(notice->text().contains(QStringLiteral("no longer available")));
+    } else if (cause == 1) {
+        firstClient->disconnectFromStation(QStringLiteral("test failure"), false);
+        QTRY_VERIFY(!firstClient->isConnectionActive());
+        QVERIFY(controller.selector()->isVisible());
+        auto* controls = controller.sessions()->window()->findChild<RemoteConnectionController*>();
+        QVERIFY(controls);
+        controls->connectToStation(); // An independent retry does not own the selector.
+        QTRY_VERIFY(cores.firstListener.hasPendingConnections());
+        socket.reset(cores.firstListener.nextPendingConnection());
+    } else {
+        const SavedCoreTarget target = cores.secondTarget();
+        const quint64 oldGeneration = controller.sessions()->generation();
+        QVERIFY(controller.sessions()->replace({target.connection, target.id, {}}, true));
+        QVERIFY(controller.sessions()->generation() != oldGeneration);
+        QVERIFY(firstClient.isNull());
+        auto* replacement = controller.sessions()->window()->findChild<StationClient*>();
+        QVERIFY(replacement);
+        QTRY_VERIFY(replacement->isHandshakeComplete());
+        QVERIFY(controller.selector()->isVisible());
+        controller.shutdown();
+        return;
+    }
+    auto transport = std::make_unique<WebSocketTransport>(socket.release(), StationServer::kMaxIncomingMessageBytes);
+    cores.firstServer.acceptTransport(transport.release());
+    QTRY_VERIFY(firstClient->isHandshakeComplete());
+    QVERIFY(controller.selector()->isVisible());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::pendingAndTransportFailureKeepSelectorOpen()
+{
+    QWebSocketServer listener(QStringLiteral("delayed Core"), QWebSocketServer::NonSecureMode);
+    QVERIFY(listener.listen(QHostAddress::LocalHost, 0));
+    QVERIFY(installTargets({savedTarget(QStringLiteral("pending"), QStringLiteral("Pending"),
+        listener.serverPort(), QStringLiteral("invalid-token"))}, QStringLiteral("local")));
+    GuiConnectionController controller;
+    controller.start({});
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.selector()->connectRequested(QStringLiteral("saved:pending"));
+    QTRY_VERIFY(listener.hasPendingConnections());
+    std::unique_ptr<QWebSocket> socket(listener.nextPendingConnection());
+    QVERIFY(controller.selector()->isVisible());
+    auto* model = controller.sessions()->window()->radioModel();
+    // A mirrored radio state is not proof of an authenticated Core session.
+    model->setConnectionStateForTest(ConnectionState::Connected);
+    QVERIFY(controller.selector()->isVisible());
+    socket->close();
+    auto* client = controller.sessions()->window()->findChild<StationClient*>();
+    QVERIFY(client);
+    QTRY_VERIFY(!client->isConnectionActive() || client->isReconnectPending());
+    QVERIFY(controller.selector()->isVisible());
+    controller.shutdown();
+}
+
+void TestGuiConnectionController::closingAndReopeningDuringPendingConnectionKeepsSelectorOpen()
+{
+    LoopbackCores cores;
+    QVERIFY(cores.start());
+    // Delay authentication by disconnecting the listener's server admission callback.
+    QObject::disconnect(&cores.firstListener, nullptr, &cores.firstServer, nullptr);
+    QVERIFY(installTargets({cores.firstTarget()}, QStringLiteral("local")));
+    GuiConnectionController controller;
+    controller.start({});
+    QTRY_VERIFY(controller.selector()->isVisible());
+    controller.selector()->connectRequested(QStringLiteral("saved:a"));
+    QTRY_VERIFY(cores.firstListener.hasPendingConnections());
+    controller.selector()->close();
+    controller.showConnections();
+    auto transport = std::make_unique<WebSocketTransport>(cores.firstListener.nextPendingConnection(),
+        StationServer::kMaxIncomingMessageBytes);
+    cores.firstServer.acceptTransport(transport.release());
+    auto* client = controller.sessions()->window()->findChild<StationClient*>();
+    QVERIFY(client);
+    QTRY_VERIFY(client->isHandshakeComplete());
+    QVERIFY(controller.selector()->isVisible());
     controller.shutdown();
 }
 

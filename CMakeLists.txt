@@ -1728,6 +1728,8 @@ set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
+    src/gui/SessionEndSave.cpp
+    src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
     src/gui/HostingSliceActions.cpp
@@ -2371,31 +2373,33 @@ set_target_properties(NereusSDR PROPERTIES
     MACOSX_BUNDLE_COPYRIGHT "© 2026 J.J. Boyd (KG4VCF); GPL port of Thetis (ramdor/Thetis) and mi0bot/OpenHPSDR-Thetis; descends from FlexRadio PowerSDR lineage. GPLv3."
 )
 
-# macOS strict mode requires NSMicrophoneUsageDescription in Info.plist
-# for any app that opens an audio capture stream — without it the stream
-# opens but macOS silently delivers zero-filled buffers (no permission
-# dialog, no error). CMake's MACOSX_BUNDLE template doesn't include the
-# key; inject it post-build. The bundle is signed once, after every file
-# the build puts in it, by the last POST_BUILD at the end of this file
-# (R-R3-50).
+# macOS: packaging/macos/Info.plist.in is the bundle's Info.plist template.
+# CMake fills its MACOSX_BUNDLE_* placeholders from the properties above;
+# every other key the app needs, including the privacy usage strings, lives
+# in that file. NSMicrophoneUsageDescription must be present for any app
+# that opens an audio capture stream: without it macOS refuses the
+# microphone with no permission dialog and no error. R-R3-17 / R-R3-38:
+# without NSLocalNetworkUsageDescription macOS Local Network privacy can
+# block connections to radios and Cores on the LAN with no prompt,
+# surfacing only as "Host unreachable". Both keys used to be injected after
+# the build, but CMake rewrites the bundle's Info.plist from its template
+# whenever it re-runs, so a re-configure with no relink dropped them and
+# left the signature not matching the plist.
 #
-# Uses Set-then-Add pattern via /bin/sh so the operation is idempotent:
-# Set succeeds when the key already exists from a prior build; falls
-# through to Add on the first build (when the key is absent).
+# The POST_BUILD below stages the private libraries, the capture helper and
+# the bundled NereusStation.app. The bundle is signed once, after every
+# file the build puts in it, by the last POST_BUILD at the end of this file
+# (R-R3-50).
 if(APPLE)
-    set(_nereus_mic_desc "NereusSDR uses the microphone for SSB voice transmission and live mic level monitoring.")
-    # R-R3-17 / R-R3-38: without NSLocalNetworkUsageDescription macOS Local
-    # Network privacy can block connections to radios and Cores on the LAN
-    # with no prompt, surfacing only as "Host unreachable".
-    set(_nereus_lan_desc "NereusSDR connects to your radios and NereusSDR Core stations on your local network.")
+    set_target_properties(NereusSDR PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in"
+    )
     configure_file(packaging/macos/NereusStation-Info.plist.in
                    "${CMAKE_CURRENT_BINARY_DIR}/generated/NereusStation-Info.plist" @ONLY)
     add_custom_command(TARGET NereusSDR POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Frameworks"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:NereusCore>" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Frameworks/"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:NereusSDRLib>" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Frameworks/"
-        COMMAND /bin/sh -c "/usr/libexec/PlistBuddy -c \"Set :NSMicrophoneUsageDescription '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :NSMicrophoneUsageDescription string '${_nereus_mic_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\""
-        COMMAND /bin/sh -c "/usr/libexec/PlistBuddy -c \"Set :NSLocalNetworkUsageDescription '${_nereus_lan_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :NSLocalNetworkUsageDescription string '${_nereus_lan_desc}'\" \"$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Info.plist\""
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:nereus-audio-capture>" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers/"
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers/NereusStation.app/Contents/MacOS"
@@ -2404,7 +2408,7 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers/NereusStation.app/Contents/Resources/models/rnnoise"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/third_party/rnnoise/models/Default_large.bin" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers/NereusStation.app/Contents/Resources/models/rnnoise/"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/third_party/rnnoise/models/Default_small.bin" "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Helpers/NereusStation.app/Contents/Resources/models/rnnoise/"
-        COMMENT "Stage private libraries and the capture helper, inject NSMicrophoneUsageDescription and NSLocalNetworkUsageDescription"
+        COMMENT "Stage private libraries, the capture helper and NereusStation.app"
         VERBATIM
     )
 endif()
@@ -3591,8 +3595,8 @@ endif()
 #
 # POST_BUILD commands on a target run in the order they are added, so this
 # block stays the LAST add_custom_command(TARGET NereusSDR POST_BUILD) in
-# the configure: the private libraries, the capture helper and the
-# Info.plist strings (staged above, after set_target_properties) and the
+# the configure: the private libraries, the capture helper and
+# NereusStation.app (staged above, after set_target_properties) and the
 # DeepFilterNet3 model (the ENABLE_DFNR block) are all in the bundle by
 # the time it runs. Signing earlier left the model outside the seal, and
 # `codesign --verify --deep --strict` failed with "a sealed resource is

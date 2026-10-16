@@ -552,6 +552,11 @@
 //   2026-10-09: Core speaker: peerGetsCoreSpeaker (native audio plan Task
 //               21). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-12: sliceHolderWords() takes the place its words go in a
+//               sentence (WordsPlace), and every sentence that names a
+//               device takes its words there: a Core no desktop hosts
+//               names its own position. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-15: remote transmit cut off the main thread:
 //               the cut guard, its receipt hook, onTransmitCutOffMain
 //               and mediaEpochOfDevice. J.J. Boyd (KG4VCF), AI-assisted
@@ -2286,7 +2291,17 @@ private:
     /// it: the device's name, "a phone" / "a tablet" / "a computer" for a
     /// device with no name, "another device" for one the Core does not
     /// know, and "the Core" for nobody or the station device.
-    QString sliceHolderWords(const QByteArray& device) const;
+    ///
+    /// Every sentence that names a device takes its words here, a notice
+    /// of what a device did as much as a refusal, so the Core's own
+    /// position is named on a Core no desktop hosts (where it has no entry
+    /// among the connected devices, and no name). At the start of a
+    /// sentence the Core's own words take a capital ("The Core", "A
+    /// phone", "Another device"); a device's name is the operator's own
+    /// word and is never changed.
+    enum class WordsPlace { MidSentence, SentenceStart };
+    QString sliceHolderWords(const QByteArray& device,
+                             WordsPlace place = WordsPlace::MidSentence) const;
     QString ownedElsewhereReason(int sliceId) const;
     /// Slice control plan Task 2: a listener's refusal ("Slice A is
     /// controlled by <name>. Take control to change it."), for a window
