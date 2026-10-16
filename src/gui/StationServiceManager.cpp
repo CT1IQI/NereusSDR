@@ -32,6 +32,14 @@ namespace {
 
 constexpr auto kLabel = "com.boydsoftprez.NereusSDR.station";
 constexpr auto kWindowsTask = "NereusSDR Station";
+// The priority Task Scheduler starts the task's program at. 4 is
+// NORMAL_PRIORITY_CLASS with normal I/O and normal memory priority, what a
+// program started from a shortcut gets. A definition that names none gets 7,
+// BELOW_NORMAL_PRIORITY_CLASS with low I/O and low memory priority, where a
+// Core doing the receive DSP can fall behind on a busy computer (Microsoft
+// Learn, "Priority (settingsType) Element", Task Scheduler schema). A task
+// registered by an earlier build keeps 7 until the app registers it again.
+constexpr int kWindowsTaskPriority = 4;
 // The script contains no user-controlled text. Task Scheduler's numeric
 // TASK_STATE values are independent of the Windows display language.
 constexpr auto kWindowsStateScript =
@@ -413,12 +421,14 @@ bool StationServiceManager::writeEntry(bool startAtLogin)
                       "<AllowHardTerminate>true</AllowHardTerminate>"
                       "<StartWhenAvailable>true</StartWhenAvailable>"
                       "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"
+                      "<Priority>%5</Priority>"
                       "<Enabled>true</Enabled><AllowStartOnDemand>true</AllowStartOnDemand>"
                       "</Settings><Actions Context=\"Author\"><Exec><Command>%2</Command>"
                       "<Arguments>%3</Arguments></Exec></Actions></Task>\n")
                       .arg(startAtLogin ? QStringLiteral("true") : QStringLiteral("false"),
                            xml(windowsPath(m_options.binaryPath)),
-                           xml(quotedArguments.join(QLatin1Char(' '))), user);
+                           xml(quotedArguments.join(QLatin1Char(' '))), user,
+                           QString::number(kWindowsTaskPriority));
     }
     QSaveFile file(entryPath());
     QByteArray bytes;

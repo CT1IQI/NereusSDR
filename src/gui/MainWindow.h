@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14: Follow window moves with the existing toast anchor and add
+//               access-only display regression friendship. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
 //                 is built by one function the visual preview can call.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -589,6 +592,7 @@ public slots:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -1081,6 +1085,7 @@ private:
     friend class ImdPanelTestAccess;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
+    friend class DisplaySettingsCorrectnessAccess;
 #endif
     // Parity Task 21 (R-IOS-18, B6.2, B6.3): the Core's radio from a remote
     // window: Setup > This Core opened on what the menu asked for.

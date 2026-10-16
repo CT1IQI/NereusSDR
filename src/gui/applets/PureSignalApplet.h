@@ -73,6 +73,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 #include "gui/NereusGuiExport.h"
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 #include <QPointer>
 #include <QVariantMap>
 

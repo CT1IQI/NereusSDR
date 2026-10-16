@@ -39,6 +39,7 @@
 // =================================================================
 
 #include "ContainerDocument.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QDateTime>
 #include <QJsonObject>
@@ -75,7 +76,7 @@ struct WorkspaceProfilesState {
     bool operator==(const WorkspaceProfilesState&) const = default;
 };
 
-class WorkspaceProfiles : public QObject {
+class NEREUS_GUI_EXPORT WorkspaceProfiles : public QObject {
     Q_OBJECT
 
 public:

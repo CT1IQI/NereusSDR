@@ -46,6 +46,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -173,8 +176,6 @@ RadioInfoTab::RadioInfoTab(RadioModel* model, QWidget* parent)
     // RX1 sample rate combo — entries populated in populate() from
     // allowedSampleRates(proto, caps, model). Matches Thetis setup.cs:847-852.
     m_sampleRateRx1Combo = new QComboBox(paramGroup);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled when a radio connects.
-    installQtCocoaAccessibleTableCacheRepair(m_sampleRateRx1Combo->view());
     applyComboStyle(m_sampleRateRx1Combo);
     m_sampleRateRx1Combo->setMinimumWidth(120);
     m_sampleRateRx1Combo->setMaximumWidth(160);
@@ -297,6 +298,7 @@ void RadioInfoTab::populate(const RadioInfo& info, const BoardCapabilities& caps
     const int fallbackRate = defaultSampleRate(info.protocol, caps, model);
     {
         QSignalBlocker blocker(m_sampleRateRx1Combo);
+        resetItemsBeforeRowChange(m_sampleRateRx1Combo);
         m_sampleRateRx1Combo->clear();
         for (int rate : allowed) {
             m_sampleRateRx1Combo->addItem(QStringLiteral("%1").arg(rate), rate);

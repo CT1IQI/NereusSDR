@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 : Owner-thread ASIO output snapshots without role locks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. catalogue() lists the devices before start();
@@ -745,6 +747,22 @@ public:
     // lock.  Owner (main) thread.
     AudioDelayParts delayPartsNow(AudioRole role) const;
     std::optional<AudioFormat> roleFormatNow(AudioRole role) const;
+    // Synchronous owner-thread diagnostic only: the ASIO bus stays alive
+    // throughout this call. No pointer escapes and no role lock is taken.
+    // Individual matcher atomics are not a coherent callback snapshot.
+    struct AsioOutputSnapshot {
+        QString capturedUtc;
+        std::int64_t capturedNs = 0;
+        QString backend;
+        QString openDeviceId; // actual open identity; empty means unknown
+        std::uint64_t instanceId = 0;
+        quint64 roleGeneration = 0;
+        bool moxObserved = false; // observation, not the first resumed RX sample
+        AudioFormat busInputFormat; // ASIO API format, not driver output rate
+        DeviceRateMatcherStats matcher;
+    };
+    // None for wrong thread/role, missing/closed/non-ASIO bus or no matcher.
+    std::optional<AsioOutputSnapshot> asioOutputSnapshotNow(AudioRole role) const;
     // delayPartsNow(Speakers).totalMs(): -1 with none.
     double speakersDelayNowMs() const;
     // A published value older than this is not used.

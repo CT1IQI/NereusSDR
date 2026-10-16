@@ -43,6 +43,9 @@ warren@wpratt.com
 //   2026-10-04: Measure acquire entry and successful return to split the
 //                 longest wake interval. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex.
+//   2026-10-14: Exclude producer writes during a consumer snapshot using
+//                 the existing input lock. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: waitForBlock times each wake that
 //                 brings a block (TxMicWakeWatch). Measurement only.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -286,7 +289,11 @@ void TxMicSource::drainBlock(double* dst)
         return;
     }
 
-    QMutexLocker lock(&m_csOut);
+    // NereusSDR: Thetis uses separate csIN/csOUT locks. Share producer
+    // ownership while copying so an overwrite cannot change this snapshot.
+    // Match start()'s input-before-output lock order; neither lock spans DSP.
+    QMutexLocker lockIn(&m_csIn);
+    QMutexLocker lockOut(&m_csOut);
 
     const int cap = ringFrameCapacity();
     if (cap <= 0) {

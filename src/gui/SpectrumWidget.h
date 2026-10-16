@@ -2058,6 +2058,9 @@ public slots:
     /// extendedMode is the derived actual state that drives the signal.
     void setExtendedViewAllowed(bool allowed);
     bool extendedViewAllowed() const { return m_extendedViewAllowed; }
+    // Local radio/ADC eligibility, independent of the saved operator toggle.
+    // The pan bridge supplies this once the radio descriptor is known.
+    void setLocalWidebandAvailable(bool available);
     bool extendedMode() const { return m_extendedMode; }
 
     // ── Detach-safe RHI lifecycle (float / dock a pan) ────────────────────
@@ -2602,6 +2605,9 @@ private:
     QVector<float> m_widebandBinsAdc0;
     QVector<float> m_widebandBinsAdc1;
     bool           m_extendedViewAllowed{true};
+    // Preserve preconnection/standalone restore geometry until the pan bridge
+    // binds a known board/protocol/ADC capability. This is not a saved setting.
+    bool           m_localWidebandAvailable{true};
     bool           m_extendedMode{false};
     int            m_widebandAdcIndex{0};
     double         m_widebandAdcRateHz{122880000.0};  // Thetis wbDisplay.cs:4511

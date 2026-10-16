@@ -216,6 +216,20 @@ const QRegularExpression& developerWording()
     return pattern;
 }
 
+// An internal class name in user text: a CamelCase identifier of two or more
+// words whose last word is a class role (TciSensorManager, RadioModel,
+// WdspEngine). Product names such as NereusSDR or ExpertSDR3 end in no role
+// word, so they pass.
+const QRegularExpression& internalClassName()
+{
+    static const QRegularExpression pattern(QStringLiteral(
+        "\\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]*?)?"
+        "(?:Manager|Model|Engine|Controller|Server|Service|Handler|Worker|Router|Registry"
+        "|Factory|Parser|Bridge|Sink|Store|Poller|Dialog|Widget|Applet|Page|Toast"
+        "|Connection|Session|Tracker|Monitor|Policy)\\b"));
+    return pattern;
+}
+
 // The first piece of developer wording in `text`, an em dash included, or an
 // empty string.
 QString developerWordingIn(const QString& text)
@@ -1848,6 +1862,44 @@ private slots:
         }
         QVERIFY2(files > 100, qPrintable(QString::number(files)));
         QVERIFY2(tooltips > 800, qPrintable(QString::number(tooltips)));
+        QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1Char('\n'))));
+    }
+
+    // No translated string names an internal class. The TCI Server page's
+    // Sensors note once ended "(TciSensorManager aggregation)."; every tr()
+    // literal under src/ is read for a CamelCase name that ends in a class
+    // role word (Manager, Model, Engine and the like).
+    void trStringsNameNoInternalClass()
+    {
+        // The rule is not vacuous: the old note and other class names fail it.
+        for (const char* internal :
+             {"Effective rate is the minimum across all subscribed clients "
+              "(TciSensorManager aggregation).",
+              "Handled by RadioModel.", "Read from the WdspEngine.",
+              "Sent through StationTciServer.", "See SliceRouter for details."}) {
+            QVERIFY2(internalClassName().match(QLatin1String(internal)).hasMatch(), internal);
+        }
+        for (const char* plain : {"NereusSDR", "PowerSDR", "WSJT-X", "ExpertSDR3 protocol",
+                                  "MacBook Pro", "Hermes Lite 2", "Model:", "Server"}) {
+            QVERIFY2(!internalClassName().match(QLatin1String(plain)).hasMatch(), plain);
+        }
+
+        QStringList failures;
+        int strings = 0;
+        QDirIterator it(sourcePath("src"), {QStringLiteral("*.cpp")}, QDir::Files,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            const QString file = QDir(QStringLiteral(NEREUS_SOURCE_DIR)).relativeFilePath(path);
+            for (const QString& text : trLiterals(codeWithoutComments(path))) {
+                ++strings;
+                const QRegularExpressionMatch match = internalClassName().match(text);
+                if (match.hasMatch()) {
+                    failures << QStringLiteral("%1 [%2]: %3").arg(file, match.captured(0), text);
+                }
+            }
+        }
+        QVERIFY2(strings > 1500, qPrintable(QString::number(strings)));
         QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1Char('\n'))));
     }
 };

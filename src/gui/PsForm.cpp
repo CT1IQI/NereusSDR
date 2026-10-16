@@ -28,6 +28,10 @@
 //   2026-10-11 - A status update restyles the correction light only when
 //                 its color changes. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-15 - The SetPk warning sign asks for text presentation
+//                 (U+FE0E), so Windows draws it in the label's color instead
+//                 of as a color emoji. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 /*  PSForm.cs
@@ -437,7 +441,9 @@ void PsForm::buildUi()
     // by default, shown when current SetPk drifts from psDefaultPeak.
     // NereusSDR uses a QLabel with a "!" glyph stand-in until artwork
     // import lands.
-    m_lblWarningSetPk = new QLabel(QStringLiteral("⚠"), this);
+    // U+FE0E asks for the text form of the sign: without it Windows draws
+    // U+26A0 from Segoe UI Emoji as a color picture.
+    m_lblWarningSetPk = new QLabel(QStringLiteral("\u26A0\uFE0E"), this);
     m_lblWarningSetPk->setObjectName(QStringLiteral("pbWarningSetPk"));
     m_lblWarningSetPk->setToolTip(
         tr("SetPk has drifted from the per-board default."));

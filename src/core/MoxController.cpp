@@ -25,6 +25,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-14: comments say how often P1 reports its PTT level: on each
+//                change and each status tick. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
 //                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
 //                via OpenAI Codex.
@@ -211,6 +214,9 @@
 //               (ruling 8.9) ends with tunerTakeFinished; admitKey records
 //               a take (lastAdmitTook). J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14: onMicPttFromRadio asks the other-device hook only on a
+//               press edge. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 // no-port-check: NereusSDR-original file; Thetis state-machine
@@ -1588,8 +1594,9 @@ void MoxController::tryPollKey(PttMode mode, quint8 refusedBit)
     // ── Task 34: the keying gate, at the press edge (ruling 8.8) ─────────────
     // Asked before the mode is set, so a refused press leaves the PTT mode
     // as it was. A refused or taken press is held off until its source is
-    // released (m_notQueuedHeld): the radio repeats its PTT level on every
-    // status frame, and the gate acts once per edge. A refused app level
+    // released (m_notQueuedHeld): the radio repeats its PTT level (for P1,
+    // on every status tick, 1 ms keyed and 200 ms idle, plus every change),
+    // and the gate acts once per edge. A refused app level
     // (CAT, TCI) is dropped, so the app is answered that nothing keyed.
     // Fix wave M1: a press TX inhibit, the PA trip, receive only, the band
     // plan or the interlock would refuse is not asked (setMox refuses it
@@ -2814,7 +2821,10 @@ void MoxController::primeWdspState()
 //   _current_ptt_mode = PTTMode.MIC;  console.cs:25492 [v2.10.3.13]
 //   chkMOX.Checked = true;            console.cs:25494 [v2.10.3.13]
 //
-// RadioConnection::micPttFromRadio calls this on every P1/P2 status frame.
+// RadioConnection::micPttFromRadio calls this for every P2 status frame
+// and, for P1, on each PTT change and each status tick (1 ms keyed,
+// 200 ms idle); the P1 HL2 I2C-response path does not publish its
+// retained C0 bit 0 as a PTT update.
 // ---------------------------------------------------------------------------
 void MoxController::onMicPttFromRadio(bool pressed)
 {
@@ -2854,9 +2864,12 @@ void MoxController::onMicPttFromRadio(bool pressed)
     // (ruling 8.9: the press stops the device first; PollPTT retries the
     // station's key after the take); an unkeyed holder is taken from only
     // when nothing before the gate refuses, as in tryPollKey.
-    const bool otherDeviceHolds = m_otherDeviceHolds
-                                      ? m_otherDeviceHolds()
-                                      : (m_mox && !m_currentKeyer.isStation() && !m_manualKey);
+    // Asked only on a press edge: this runs on every PTT report (each P2
+    // status frame; for P1, each change and each status tick), and the
+    // Core's hook rebuilds device names each time it is asked.
+    const bool otherDeviceHolds = pressEdge
+        && (m_otherDeviceHolds ? m_otherDeviceHolds()
+                               : (m_mox && !m_currentKeyer.isStation() && !m_manualKey));
     const bool onAir = m_mox || m_manualKey || m_state != MoxState::Rx;
     if (pressEdge && otherDeviceHolds && m_keyingGate
         && (onAir || refusalBeforeTheGate().isEmpty())) {

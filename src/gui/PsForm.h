@@ -80,6 +80,7 @@ mw0lge@grange-lane.co.uk
 #include <QVector>
 
 #include <array>
+#include "gui/NereusGuiExport.h"
 
 class QCheckBox;
 class QCloseEvent;

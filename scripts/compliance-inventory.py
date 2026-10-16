@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from header_block import header_text, uses_exact_tcp_notice, CAT_TCP_PROJECT_LICENSE  # noqa: E402
+from aethersdr_lineage import aethersdr_derivative_paths  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -58,38 +59,10 @@ def _paths_from_table(md_path: Path) -> set[str]:
 
 
 def _aethersdr_bucket_a_paths(md_path: Path) -> set[str]:
-    """Bucket-A-only extractor for aethersdr-reconciliation.md.
-
-    The reconciliation doc's tables cover four buckets (A: genuine
-    derivations, B: false boilerplate, C: mixed, D: incidental mentions).
-    Only Bucket A files carry a real AetherSDR derivation claim that
-    needs the project-level attribution header. The inventory must not
-    flag Buckets B/C/D as "aethersdr-port" — those rows are either
-    deletions or incidental mentions.
-    """
+    """Legacy API name: extract genuine Bucket A/C derivative paths."""
     if not md_path.exists():
         return set()
-    paths: set[str] = set()
-    in_bucket_a = False
-    for line in md_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("## Bucket A"):
-            in_bucket_a = True
-            continue
-        if stripped.startswith("## Bucket "):
-            in_bucket_a = False
-            continue
-        if not in_bucket_a:
-            continue
-        if not stripped.startswith("|") or stripped.startswith("|---"):
-            continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
-        if not cells:
-            continue
-        first = cells[0].strip("`")
-        if first.startswith(("src/", "tests/")):
-            paths.add(first)
-    return paths
+    return set(aethersdr_derivative_paths(md_path.read_text(encoding="utf-8")))
 
 
 def _source_cells_from_table(md_path: Path) -> dict[str, str]:
@@ -113,6 +86,8 @@ def classify(path: str) -> str:
         return "wdsp-vendored"
     if path.startswith("third_party/fftw3/"):
         return "fftw3-vendored"
+    if path in THETIS_PORTS and path in AETHER_PORTS:
+        return "thetis-aethersdr-port"
     if path in THETIS_PORTS:
         # Future refinement: split mi0bot-port vs thetis-port by inspecting
         # the PROVENANCE variant cell. For now, "thetis-port" covers both.
@@ -139,6 +114,10 @@ REQUIRED_MARKERS: dict[str, list[str]] = {
         "General Public License", "Modification history (NereusSDR)",
     ],
     "aethersdr-port": ["AetherSDR", "Modification history (NereusSDR)"],
+    "thetis-aethersdr-port": [
+        "Ported from", "Thetis", "Copyright (C)",
+        "General Public License", "Modification history (NereusSDR)", "AetherSDR",
+    ],
     "wdsp-vendored": ["Copyright (C)", "General Public License"],
     # The following classes carry no merge-gated marker requirement; the
     # inventory records them without flagging missing markers.
@@ -189,7 +168,7 @@ def _verify_markers(path: str, classification: str) -> list[str]:
         )
     except (IsADirectoryError, FileNotFoundError):
         return []
-    if classification == "thetis-port" and uses_exact_tcp_notice(path, head, THETIS_SOURCE_CELLS.get(path, "")):
+    if classification in {"thetis-port", "thetis-aethersdr-port"} and uses_exact_tcp_notice(path, head, THETIS_SOURCE_CELLS.get(path, "")):
         markers = [m for m in markers if m != "Copyright (C)"] + [CAT_TCP_PROJECT_LICENSE]
     return [m for m in markers if m not in head]
 

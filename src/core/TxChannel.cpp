@@ -387,6 +387,16 @@ warren@wpratt.com
 //                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
 //                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-11 - The channel tells nereusd's thread placement when it is
+//                 up only so VOX can hear the microphone, on VOX on and
+//                 on each unkey with VOX on, so the receivers keep their
+//                 fast cores between transmissions. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Publish VOX callback targets atomically, suppress retired
+//                 snapshots and defer lane publication until open. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-15 - Punctuation of the 2026-10-11 entry. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)
@@ -609,9 +619,8 @@ void TxChannel::markRetired()
     m_channelOpen.store(false, std::memory_order_release);
     // A retired wrapper takes no more VOX callbacks; a rebuild's new
     // wrapper registers itself next.
-    if (s_voxKeyInstance == this) {
-        s_voxKeyInstance = nullptr;
-    }
+    TxChannel* expected = this;
+    s_voxKeyInstance.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 bool TxChannel::enterWorkerBlock() const noexcept
@@ -642,7 +651,7 @@ void TxChannel::quiesceWorkerOnLane()
 
 void TxChannel::onWdspOpenedOnLane()
 {
-    registerVoxCallbackOnLane();
+    registerVoxCallback();
     refreshStageCacheOnLane();
     refreshDspSizeOnLane();
     refreshPsCacheOnLane();
@@ -797,16 +806,25 @@ double TxChannel::txMeter(int meterType) const
 // Without this guard a stray callback fired during teardown would
 // dereference a stale pointer.
 // ---------------------------------------------------------------------------
-TxChannel* TxChannel::s_voxKeyInstance = nullptr;
+std::atomic<TxChannel*> TxChannel::s_voxKeyInstance{nullptr};
 
 void NEREUS_STDCALL TxChannel::s_pushVoxCallback(int id, int active)
 {
-    TxChannel* inst = s_voxKeyInstance;
+    TxChannel* inst = s_voxKeyInstance.load(std::memory_order_acquire);
+    dispatchPushVoxCallback(inst, id, active);
+}
+
+void TxChannel::dispatchPushVoxCallback(TxChannel* inst, int id, int active)
+{
     // WDSP reports the DEXP id it was created with (dexp.c:330,339), which
     // is the transmitter id kDexpId, not the WDSP channel id.
-    if (inst == nullptr || id != kDexpId) {
+    if (inst == nullptr || id != kDexpId || inst->isRetired()) {
         return;
     }
+    // A real callback is synchronous inside pumpDexp's admitted worker
+    // block. The lane retains its wrapper until that block has quiesced;
+    // without a lane, the owner joins the worker before destruction. The
+    // atomic slot publishes the target but does not retain its lifetime.
     emit inst->voxActiveChanged(active != 0);
 }
 
@@ -933,16 +951,18 @@ TxChannel::TxChannel(int channelId,
     // run_vox=1 in WDSP but mic envelope crossings have nowhere to go
     // (a->pushvox is NULL).  See registerVoxCallback() comment block for
     // the full root-cause + fix narrative.
-    registerVoxCallback();
+    // A replacement must not take old DEXP callbacks before the lane has
+    // quiesced the old worker. onWdspOpenedOnLane publishes it before admit.
+    if (m_lane == nullptr) {
+        registerVoxCallback();
+    }
 }
 
 TxChannel::~TxChannel()
 {
-    // Phase 3M-3a-iii Task 17: clear s_voxKeyInstance and re-register
-    // nullptr with WDSP so a late callback fired after destruction is a
-    // no-op.  Order matters: must run BEFORE the QObject base-class
-    // destructor invalidates the QObject so the WDSP unregister call
-    // doesn't risk emitting from a dead object.
+    // The owner has joined the worker, or the lane has quiesced its block
+    // and retained this wrapper through close. Clearing the slot alone
+    // cannot protect a callback that already captured this pointer.
     // R-R3-39: any job of this wrapper still queued on a lane does nothing.
     m_alive->store(false, std::memory_order_release);
     unregisterVoxCallback();
@@ -961,13 +981,11 @@ TxChannel::~TxChannel()
 // callback fires through to MoxController::onVoxActive via the Qt signal
 // bridge.
 //
-// The registration is safe to issue here because Thetis create_xmtr
-// (cmaster.c:130-157 [v2.10.3.13]) calls create_dexp BEFORE OpenChannel
-// returns, and NereusSDR's WdspEngine::createTxChannel mirrors that order
-// (OpenChannel(type=1) constructs the full TXA pipeline including DEXP
-// before this constructor runs).  pdexp[m_channelId] is therefore non-null
-// at this point — the same invariant the existing setVoxRun / setDexpRun
-// wrappers rely on.
+// NereusSDR registers after openTxChannelWdsp has opened TXA and created
+// DEXP: at construction without a lane, or from onWdspOpenedOnLane before
+// worker admission. This mirrors the lifetime of Thetis create_xmtr
+// (cmaster.c:130-157 [v2.10.3.13]). The existing setVoxRun / setDexpRun
+// wrappers use the same rsmpin.p / pdexp guards for unopened fixtures.
 //
 // One-instance assumption: 3M-3a-iii ships exactly one TxChannel (channel
 // id 1).  Construction of a second TxChannel would silently overwrite
@@ -984,21 +1002,18 @@ TxChannel::~TxChannel()
 // ---------------------------------------------------------------------------
 void TxChannel::registerVoxCallback()
 {
-    if (s_voxKeyInstance != nullptr && s_voxKeyInstance != this) {
+    TxChannel* previous = s_voxKeyInstance.exchange(this, std::memory_order_acq_rel);
+    if (previous != nullptr && previous != this) {
         // Diagnostic: another TxChannel already owns the slot.  Phase 3F
         // multi-pan TX should replace this static pointer with a per-id
         // table; for 3M-3a-iii one-TxChannel-only is the contract.
         qCWarning(lcDsp) << "TxChannel" << m_channelId
                          << "registerVoxCallback: s_voxKeyInstance already set"
-                         << "to channel" << s_voxKeyInstance->m_channelId
                          << "— overwriting (phase 3F follow-up: per-id table).";
     }
-    s_voxKeyInstance = this;
-    // R-R3-39: with a lane the WDSP half runs there once the channel and
-    // its DEXP are open (WdspEngine calls onWdspOpenedOnLane).
-    if (m_lane == nullptr) {
-        registerVoxCallbackOnLane();
-    }
+    // Called at once without a lane, or from onWdspOpenedOnLane before
+    // worker admission, after the old wrapper's block has quiesced.
+    registerVoxCallbackOnLane();
 }
 
 // The WDSP half of registerVoxCallback (lane, or at once with no lane).
@@ -1032,10 +1047,11 @@ void TxChannel::registerVoxCallbackOnLane()
 // ---------------------------------------------------------------------------
 // unregisterVoxCallback() — Phase 3M-3a-iii Task 17 (bench fix)
 //
-// Symmetric tear-down for registerVoxCallback().  Re-registers nullptr with
-// WDSP so any in-flight callback (e.g. one already dispatched on the audio
-// worker thread but not yet executed) becomes a no-op when it runs, and
-// clears s_voxKeyInstance.
+// Symmetric tear-down for registerVoxCallback(). The lane unregisters
+// after worker quiescence; without a lane the owner must already have
+// joined the worker. Clearing the slot suppresses future lookups, while a
+// captured target checks its alive flag before emitting. Existing owner
+// retention, rather than this slot, keeps that captured target valid.
 //
 // The HAVE_WDSP guard mirrors registerVoxCallback().  Skipping the WDSP
 // call in test builds is safe: those builds either don't link WDSP at all
@@ -1050,9 +1066,8 @@ void TxChannel::unregisterVoxCallback()
     if (m_lane == nullptr) {
         unregisterVoxCallbackOnLane();
     }
-    if (s_voxKeyInstance == this) {
-        s_voxKeyInstance = nullptr;
-    }
+    TxChannel* expected = this;
+    s_voxKeyInstance.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 // The WDSP half of unregisterVoxCallback (lane, before CloseChannel, or at
@@ -1077,14 +1092,13 @@ void TxChannel::unregisterVoxCallbackOnLane()
     } else if (pdexp[kDexpId] == nullptr) {
         // Skip WDSP call; still clear the lookup pointer below.
     } else {
-        // Pass nullptr so any callback already in flight on the WDSP worker
-        // thread becomes a no-op when it executes.
+        // The worker is already quiesced or joined. This setter only
+        // changes WDSP's callback pointer; it does not wait for callbacks.
         SendCBPushDexpVox(kDexpId, nullptr);
     }
 #endif
-    if (s_voxKeyInstance == this) {
-        s_voxKeyInstance = nullptr;
-    }
+    TxChannel* expected = this;
+    s_voxKeyInstance.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 // ---------------------------------------------------------------------------
@@ -1618,6 +1632,12 @@ void TxChannel::applyRunningOnLane(bool on, int cfirRun, quint64 sequence)
                 // Drop CFIR after channel drain so no residual samples process
                 // through it on the next RX→TX engagement (P2 will re-arm above).
                 SetTXACFIRRun(m_channelId, 0);
+            } else {
+                // The channel stays up so VOX can hear the microphone, with
+                // nothing on the air: nereusd gives the receivers their fast
+                // cores back until the next key.
+                ThreadPlacement::instance().setTransmitUse(m_channelId,
+                                                           TransmitUse::Listening);
             }
         }
     }
@@ -1703,9 +1723,11 @@ void TxChannel::applyVoxListeningOnLane(bool on, int cfirRun)
         if (!actualRunning) {
             SetTXACFIRRun(m_channelId, cfirRun);
             SetChannelState(m_channelId, 1, 0);
-            // R-R3-41: VOX listening keeps the transmit worker busy too.
-            ThreadPlacement::instance().setChannelActive(ThreadRole::TxWorker,
-                                                         m_channelId, true);
+            // R-R3-41: VOX listening keeps the transmit worker busy too,
+            // but it is not transmitting: nereusd seats it after the
+            // receivers.
+            ThreadPlacement::instance().setTransmitUse(m_channelId,
+                                                       TransmitUse::Listening);
         }
     } else {
         // Leaving vox-listening AND MOX is also off: drop the WDSP

@@ -7,6 +7,9 @@
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Mirror current local/remote IMD presentation gates to
 //                 existing/new pans and disconnect replaced coordinators.
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Restore current XIT when releasing a transmit view, so
+//                 Tune's temporary NCO offset cannot survive into SSB.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
@@ -546,6 +549,13 @@ void MoxDisplayController::fall()
     SpectrumWidget* sw = m_pan.data();
     const bool hadPan = !m_panId.isEmpty();
     const bool hadTransmitView = m_transmitView;
+    // A Tune context reports the compensated NCO and temporarily shifts
+    // the TX filter offset. Restore the slice's current XIT before releasing
+    // its reference; an ordinary rekey can report the rise's seeded carrier
+    // and return from carrierChanged without refreshing this widget state.
+    if (sw != nullptr && !m_slice.isNull()) {
+        sw->setTxVfoOffsetHz(m_slice->xitEnabled() ? m_slice->xitHz() : 0);
+    }
     m_panId.clear();
     m_pan.clear();
     m_slice.clear();

@@ -19,6 +19,12 @@
 //                 a replaced or cancelled address is never redialled, in
 //                 any phase; a retry gets a fresh socket; a late callback
 //                 from a replaced attempt cannot act. Loopback only.
+//   2026-10-14  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code: closedLoopbackPort() takes the ports the test is
+//                 listening on and never returns one of them. The
+//                 replacement test opens its listener before picking the
+//                 closed port; the OS could otherwise hand the just-released
+//                 port to the replacement, so the "closed" address answered.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -26,6 +32,8 @@
 #include <QRegularExpression>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <algorithm>
+#include <initializer_list>
 #include "core/PgxlConnection.h"
 #include "core/AppSettings.h"
 
@@ -35,14 +43,25 @@ namespace {
 
 constexpr int kBackoffUnitMs = 200;
 constexpr int kRetryObservationMs = 500;
+// A refused loopback dial reports in milliseconds on Linux and macOS but
+// takes about 3.4 s on Windows, which retries the SYN after the reset.
+constexpr int kRefusedDialMs = 8000;
 
-quint16 closedLoopbackPort()
+// A loopback port nothing listens on. Call it after the test has opened its
+// own listeners and pass their ports: the OS may hand a port just released
+// here to the next listen(0), so the "closed" port must be picked last and
+// never be one of the test's own. Returns 0 when no such port is found.
+quint16 closedLoopbackPort(std::initializer_list<quint16> inUse = {})
 {
-    QTcpServer reservation;
-    if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
-    const quint16 port = reservation.serverPort();
-    reservation.close();
-    return port;
+    constexpr int kMaxPicks = 16;
+    for (int pick = 0; pick < kMaxPicks; ++pick) {
+        QTcpServer reservation;
+        if (!reservation.listen(QHostAddress::LocalHost, 0)) { return 0; }
+        const quint16 port = reservation.serverPort();
+        reservation.close();
+        if (std::find(inUse.begin(), inUse.end(), port) == inUse.end()) { return port; }
+    }
+    return 0;
 }
 
 void answerVersion(QTcpServer& server, int& accepted, QList<QPointer<QTcpSocket>>& peers)
@@ -136,10 +155,11 @@ void PgxlConnectionReconnectTest::backoffSequence() {
 // Replacing a retrying address with a new one: only the new one is dialled.
 void PgxlConnectionReconnectTest::endpointReplacementCancelsCapturedRetry()
 {
-    const quint16 oldPort = closedLoopbackPort();
-    QVERIFY(oldPort != 0);
     QTcpServer replacement;
     QVERIFY(replacement.listen(QHostAddress::LocalHost, 0));
+    const quint16 oldPort = closedLoopbackPort({replacement.serverPort()});
+    QVERIFY(oldPort != 0);
+    QVERIFY(oldPort != replacement.serverPort());
     int replacementConnections = 0;
     QList<QPointer<QTcpSocket>> peers;
     connect(&replacement, &QTcpServer::newConnection, this, [&] {
@@ -150,7 +170,7 @@ void PgxlConnectionReconnectTest::endpointReplacementCancelsCapturedRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), oldPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTcpServer oldEndpoint;
     QVERIFY(oldEndpoint.listen(QHostAddress::LocalHost, oldPort));
     QSignalSpy staleConnections(&oldEndpoint, &QTcpServer::newConnection);
@@ -172,7 +192,7 @@ void PgxlConnectionReconnectTest::explicitDisconnectCancelsCapturedRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), oldPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QVERIFY(conn.testReconnectPending());
     conn.disconnect();
     QVERIFY(!conn.testReconnectPending());
@@ -314,10 +334,10 @@ void PgxlConnectionReconnectTest::retryRetiresTheFailedQtSocket()
     const quint64 failedAttempt = conn.testActiveSocketAttemptGeneration();
     QPointer<QTcpSocket> failedSocket = conn.testSocketForTesting();
     QVERIFY(!failedSocket.isNull());
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTRY_VERIFY_WITH_TIMEOUT(conn.testActiveSocketAttemptGeneration() != failedAttempt, 2000);
     QTRY_VERIFY_WITH_TIMEOUT(failedSocket.isNull(), 2000);
-    QTRY_VERIFY_WITH_TIMEOUT(failures.size() >= 2, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(failures.size() >= 2, kRefusedDialMs);
     for (const QList<QVariant>& failure : failures) {
         QVERIFY2(!failure.at(0).toString().contains(QStringLiteral("Invalid socket descriptor")),
                  qPrintable(failure.at(0).toString()));
@@ -355,7 +375,7 @@ void PgxlConnectionReconnectTest::reconnectAttemptConsumerMayDisconnect()
     connect(&conn, &PgxlConnection::reconnectAttempt, &conn,
             [&conn](int, int) { conn.disconnect(); }, Qt::DirectConnection);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), deadPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTcpServer oldEndpoint;
     QVERIFY(oldEndpoint.listen(QHostAddress::LocalHost, deadPort));
     QSignalSpy staleConnections(&oldEndpoint, &QTcpServer::newConnection);
@@ -373,7 +393,7 @@ void PgxlConnectionReconnectTest::autoReconnectTurnedOffDropsPendingRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), deadPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     AppSettings::instance().setValue(QStringLiteral("PGXL_AutoReconnect"), QStringLiteral("False"));
     conn.applyConnectionSettings();
     QVERIFY(!conn.testReconnectPending());
