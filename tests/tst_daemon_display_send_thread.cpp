@@ -22,6 +22,9 @@
 // before the main thread gets to it: no context goes out for the center the
 // receiver has left.
 //
+// The display thread's timed turns keep their 5 ms interval with nothing
+// else to wake it, as the main thread's sender timer did, on Windows too.
+//
 // Modification history (NereusSDR):
 //   2026-10-15  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
@@ -46,14 +49,20 @@
 #include <utility>
 #include <vector>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include "RealtimeTestLoad.h"
 #include "core/AppSettings.h"
 #include "core/FFTEngine.h"
 #include "core/HpsdrModel.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
+#include "core/session/media/DaemonDisplaySendThread.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/DaemonSpectrumSource.h"
+#include "core/session/media/DisplayBudget.h"
 #include "core/session/media/IMediaTransport.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
@@ -72,6 +81,9 @@ constexpr int kDisplayFps = 60;
 constexpr int kHoldMs = 500;
 constexpr qint64 kMaxGapNs = 50'000'000;
 constexpr int kSendsBeforeHold = 60;
+// Twice the display thread's interval. A Windows scheduler tick, 15.6 ms,
+// is three.
+constexpr qint64 kMaxTimedTurnMedianNs = 2LL * kDisplaySenderIntervalMs * 1'000'000LL;
 
 qint64 nowNs()
 {
@@ -193,6 +205,51 @@ QJsonObject subscription(quint32 endpointId, int sliceId, double centerHz)
             {QStringLiteral("wideSpanFactor"), 0.0}};
 }
 
+// The feeder's 2 ms between hand-overs. On Windows a plain sleep lasts a
+// whole 15.6 ms scheduler tick: the I/Q would come in clumps the radio
+// connection's thread never makes (it takes a packet every millisecond or
+// so), and the pans' frames with it, which their own pacing then halves. A
+// high-resolution timer keeps the 2 ms there, as the Core's transmit I/Q
+// sender's does (P2RadioConnection).
+class FeederWait {
+public:
+    FeederWait()
+    {
+#if defined(Q_OS_WIN) && defined(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)
+        m_timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                         TIMER_ALL_ACCESS);
+#endif
+    }
+    ~FeederWait()
+    {
+#ifdef Q_OS_WIN
+        if (m_timer != nullptr) { CloseHandle(m_timer); }
+#endif
+    }
+    FeederWait(const FeederWait&) = delete;
+    FeederWait& operator=(const FeederWait&) = delete;
+
+    void twoMilliseconds()
+    {
+#ifdef Q_OS_WIN
+        if (m_timer != nullptr) {
+            LARGE_INTEGER due;
+            due.QuadPart = -20000;  // 2 ms, relative, in 100 ns units
+            if (SetWaitableTimer(m_timer, &due, 0, nullptr, nullptr, FALSE)) {
+                WaitForSingleObject(m_timer, INFINITE);
+                return;
+            }
+        }
+#endif
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+private:
+#ifdef Q_OS_WIN
+    HANDLE m_timer{nullptr};
+#endif
+};
+
 // Hands each stream's I/Q to RadioModel from a thread of its own, at the
 // stream's sample rate on the wall clock, as the radio connection's thread
 // does in the Core.
@@ -221,6 +278,7 @@ private:
         std::minstd_rand noise{20261015U};
         std::uniform_real_distribution<float> sample(-1.0e-3f, 1.0e-3f);
         QVector<float> iq(kChunk * 2);
+        FeederWait wait;
         const qint64 startNs = nowNs();
         qint64 fed = 0;
         while (!m_stop.load(std::memory_order_acquire)) {
@@ -234,7 +292,7 @@ private:
                 }
                 fed += kChunk;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            wait.twoMilliseconds();
         }
     }
 
@@ -386,6 +444,45 @@ private slots:
         QVERIFY2(onMain == 0, qPrintable(detail));
         QVERIFY2(maxGapNs < kMaxGapNs, qPrintable(detail));
         h.finish();
+    }
+
+    // The display thread alone, used and with nothing to wake it: its timed
+    // turns come kDisplaySenderIntervalMs apart, as the main thread's 5 ms
+    // sender timer's did. On Windows a plain timed wait lasts a whole 15.6
+    // ms scheduler tick; Qt's timer keeps 5 ms there (a multimedia timer).
+    void timedTurnsKeepTheirInterval()
+    {
+        std::mutex mutex;
+        std::vector<qint64> timedAtNs;
+        DaemonDisplaySendThread thread;
+        thread.start([&mutex, &timedAtNs](bool timedTurn, bool) {
+            if (timedTurn) {
+                const std::lock_guard<std::mutex> lock(mutex);
+                timedAtNs.push_back(nowNs());
+            }
+        });
+        thread.setActive(true);
+        QThread::msleep(kHoldMs);
+        thread.stop();
+
+        std::vector<qint64> gaps;
+        for (std::size_t i = 1; i < timedAtNs.size(); ++i) {
+            gaps.push_back(timedAtNs[i] - timedAtNs[i - 1]);
+        }
+        QVERIFY2(gaps.size() >= 2, qPrintable(QStringLiteral("%1 timed turns in %2 ms")
+                                                  .arg(timedAtNs.size())
+                                                  .arg(kHoldMs)));
+        std::vector<qint64> sorted = gaps;
+        std::sort(sorted.begin(), sorted.end());
+        const qint64 medianNs = sorted.at(sorted.size() / 2);
+        const QString detail =
+            QStringLiteral("%1 timed turns in %2 ms, the median interval %3 ms, the longest %4 ms")
+                .arg(timedAtNs.size())
+                .arg(kHoldMs)
+                .arg(static_cast<double>(medianNs) / 1.0e6, 0, 'f', 1)
+                .arg(static_cast<double>(sorted.back()) / 1.0e6, 0, 'f', 1);
+        qInfo().noquote() << detail;
+        QVERIFY2(medianNs < kMaxTimedTurnMedianNs, qPrintable(detail));
     }
 
     // A frame the display thread leaves to the main thread (here for a
