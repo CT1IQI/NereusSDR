@@ -652,6 +652,13 @@
 //                Connect and Disconnect go through the controllers
 //                (connect*FromWindow, disconnect*FromWindow). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - connectionFirmwareText: the radio's second firmware number
+//                where it reported one. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-12 - firmwareBetaVersion and firmwareText: the second number
+//                beside version(), which a Core sends and a remote window
+//                reads (firmwareBeta 1). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -4337,6 +4344,17 @@ public:
     QString model() const { return m_model; }
     QString version() const { return m_version; }
 
+    /// The second firmware number of the radio version() names, or 0 when
+    /// it reported none. The stored radio record is written when a connect
+    /// starts and version() when one succeeds, so a failed connect to
+    /// another radio leaves them apart: the record's number counts only
+    /// while its first number is version(). A Core sends this over the
+    /// station link (firmwareBeta 1); a remote window reads the Core's.
+    int firmwareBetaVersion() const;
+    /// version() with that second number where the radio has one
+    /// (RadioInfo::firmwareText): "22.14", or "22", or empty with no radio.
+    QString firmwareText() const;
+
     // Remote Daemon R2 Task 8: StateMirror::applyInbound()'s hook for the
     // three RadioModel properties above with no Q_PROPERTY WRITE (name,
     // model, version -- see MirrorPolicy.cpp). `connected` is deliberately
@@ -4568,7 +4586,7 @@ public:
     void applyCoreConnectionAge(std::optional<qint64> ageMs);
     QString connectedRadioName() const;       // RadioInfo.name / "—"
     QString connectionProtocolText() const;   // "1" or "2" / "—"
-    QString connectionFirmwareText() const;   // "v27" / "—"
+    QString connectionFirmwareText() const;   // "v27", "v22.14" / "—"
     QString connectionIpText() const;         // "192.168.x.y : port" / "—"
     QString connectionMacText() const;        // "AA:BB:CC:DD:EE:FF" / "—"
     int     connectionSampleRateHz() const;   // 0 if disconnected
@@ -5092,6 +5110,11 @@ public:
     void setLastRadioInfoForTest(const NereusSDR::RadioInfo& info) {
         m_lastRadioInfo = info;
     }
+
+    // The version string a successful connect sets, which the seam above
+    // leaves alone: tests of what a Core reports for its radio's firmware
+    // pin both.
+    void setVersionForTest(const QString& version) { m_version = version; }
 
     // Codex review round 7, PR #293 — drive the I/Q tap fork directly.
     // Production reaches it from the iqDataForReceiver lambda installed in

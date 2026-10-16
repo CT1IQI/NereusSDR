@@ -9526,6 +9526,12 @@ nereus_add_test(tst_session_wait EXTRA_LABELS session)
 nereus_add_test(tst_core_build_identity
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# The radio's second firmware number over the station link (firmwareBeta 1):
+# its entry's place and form, sent only to an app that declares it, and worded
+# by a remote window as a window running that radio words it.
+nereus_add_test(tst_firmware_beta_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 # R-R3-49 (parity Task 1): a receive-only Core takes a transmit setting off
 # the air, refuses it on the air and still refuses the keying set; a
 # window's on-the-air state follows the Core. Loopback only, no RF.

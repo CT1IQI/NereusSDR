@@ -72,7 +72,7 @@ import Testing
                                   "levelCalibration": 1, "adcAttenuators": 1, "rx2Attenuator": 1, "radioMic": 1,
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
-                                  "spectrumPicture": 1])
+                                  "spectrumPicture": 1, "firmwareBeta": 1])
         guard case .pairStart(let start)? = await core.transport.nextSent() else {
             Issue.record("the app's second message is not pair.start")
             throw PairingError.ended(reason: nil)
