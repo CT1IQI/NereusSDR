@@ -465,12 +465,24 @@ void verifyPlain(const StationControlReply& reply, const QString& code = QString
     QVERIFY2(OperatorWording::coreCalledStationIn(text).isEmpty(), qPrintable(text));
 }
 
+// A short temporary directory template. Unix keeps it under /tmp for a short
+// socket path; Windows has no /tmp and uses named pipes, so any temp folder
+// does there.
+QString shortTempTemplate(const QString& prefix)
+{
+#ifdef Q_OS_WIN
+    return QDir::tempPath() + QLatin1Char('/') + prefix + QStringLiteral("-XXXXXX");
+#else
+    return QStringLiteral("/tmp/") + prefix + QStringLiteral("-XXXXXX");
+#endif
+}
+
 } // namespace
 
 class TstStationControlSocket : public QObject {
     Q_OBJECT
 
-    QTemporaryDir m_home{QStringLiteral("/tmp/tcs-XXXXXX")};
+    QTemporaryDir m_home{shortTempTemplate(QStringLiteral("tcs"))};
 
 private slots:
     void initTestCase()
@@ -508,6 +520,8 @@ private slots:
     {
         Core core;
         QVERIFY(core.start());
+        // Windows uses a named pipe, which has no file on disk to check.
+#ifdef Q_OS_UNIX
         const QFileInfo info(core.socketPath);
         QVERIFY2(info.exists(), qPrintable(core.socketPath));
         const QFileDevice::Permissions others =
@@ -515,7 +529,6 @@ private slots:
             | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
         QVERIFY2((info.permissions() & others) == 0,
                  "another account on this computer could open the console socket");
-#ifdef Q_OS_UNIX
         struct stat st {};
         QVERIFY(::stat(QFile::encodeName(core.socketPath).constData(), &st) == 0);
         QVERIFY(S_ISSOCK(st.st_mode));
@@ -1198,7 +1211,12 @@ private slots:
 
     void aPackagedCoreIsFoundWithNoOptions()
     {
-        QTemporaryDir packagedHome(QStringLiteral("/tmp/tcp-XXXXXX"));
+#ifndef Q_OS_UNIX
+        // The command picks the candidate whose socket file exists; a
+        // Windows named pipe has no file, so only the first is tried there.
+        QSKIP("finding a Core by its socket file needs Unix sockets");
+#endif
+        QTemporaryDir packagedHome(shortTempTemplate(QStringLiteral("tcp")));
         QVERIFY(packagedHome.isValid());
         Core core;
         core.config.stateDirectory.clear();
@@ -1232,7 +1250,7 @@ private slots:
 
     void aCoreStartedByHandIsStillFoundFirst()
     {
-        QTemporaryDir packagedHome(QStringLiteral("/tmp/tcp-XXXXXX"));
+        QTemporaryDir packagedHome(shortTempTemplate(QStringLiteral("tcp")));
         QVERIFY(packagedHome.isValid());
         Core core;
         core.config.stateDirectory.clear();
@@ -1252,7 +1270,7 @@ private slots:
 
     void noCoreAnsweringNamesWhereItLookedAndWhatWorks()
     {
-        QTemporaryDir packagedHome(QStringLiteral("/tmp/tcp-XXXXXX"));
+        QTemporaryDir packagedHome(shortTempTemplate(QStringLiteral("tcp")));
         QVERIFY(packagedHome.isValid());
         const QStringList candidates = StationControlSocket::candidatePathsFor(
             DaemonConfig::defaults(), QStringLiteral("elsewhere"), {packagedHome.path()});
@@ -1271,7 +1289,9 @@ private slots:
                  qPrintable(reply.text));
         verifyPlain(reply);
 
+#ifdef Q_OS_UNIX
         // A socket file left with no Core behind it is the one named.
+        // Windows uses named pipes, which leave no file behind.
         QVERIFY(QDir().mkpath(QFileInfo(candidates.at(1)).absolutePath()));
         {
             QFile leftBehind(candidates.at(1));
@@ -1283,6 +1303,7 @@ private slots:
         QVERIFY2(stale.text.contains(candidates.at(1)), qPrintable(stale.text));
         QVERIFY2(!stale.text.contains(candidates.at(0)), qPrintable(stale.text));
         verifyPlain(stale);
+#endif
     }
 
     // The usage text says what works on each kind of Core.

@@ -43,6 +43,9 @@ namespace {
 
 constexpr int kBackoffUnitMs = 200;
 constexpr int kRetryObservationMs = 500;
+// A refused loopback dial reports in milliseconds on Linux and macOS but
+// takes about 3.4 s on Windows, which retries the SYN after the reset.
+constexpr int kRefusedDialMs = 8000;
 
 // A loopback port nothing listens on. Call it after the test has opened its
 // own listeners and pass their ports: the OS may hand a port just released
@@ -167,7 +170,7 @@ void PgxlConnectionReconnectTest::endpointReplacementCancelsCapturedRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), oldPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTcpServer oldEndpoint;
     QVERIFY(oldEndpoint.listen(QHostAddress::LocalHost, oldPort));
     QSignalSpy staleConnections(&oldEndpoint, &QTcpServer::newConnection);
@@ -189,7 +192,7 @@ void PgxlConnectionReconnectTest::explicitDisconnectCancelsCapturedRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), oldPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QVERIFY(conn.testReconnectPending());
     conn.disconnect();
     QVERIFY(!conn.testReconnectPending());
@@ -331,10 +334,10 @@ void PgxlConnectionReconnectTest::retryRetiresTheFailedQtSocket()
     const quint64 failedAttempt = conn.testActiveSocketAttemptGeneration();
     QPointer<QTcpSocket> failedSocket = conn.testSocketForTesting();
     QVERIFY(!failedSocket.isNull());
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTRY_VERIFY_WITH_TIMEOUT(conn.testActiveSocketAttemptGeneration() != failedAttempt, 2000);
     QTRY_VERIFY_WITH_TIMEOUT(failedSocket.isNull(), 2000);
-    QTRY_VERIFY_WITH_TIMEOUT(failures.size() >= 2, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(failures.size() >= 2, kRefusedDialMs);
     for (const QList<QVariant>& failure : failures) {
         QVERIFY2(!failure.at(0).toString().contains(QStringLiteral("Invalid socket descriptor")),
                  qPrintable(failure.at(0).toString()));
@@ -372,7 +375,7 @@ void PgxlConnectionReconnectTest::reconnectAttemptConsumerMayDisconnect()
     connect(&conn, &PgxlConnection::reconnectAttempt, &conn,
             [&conn](int, int) { conn.disconnect(); }, Qt::DirectConnection);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), deadPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     QTcpServer oldEndpoint;
     QVERIFY(oldEndpoint.listen(QHostAddress::LocalHost, deadPort));
     QSignalSpy staleConnections(&oldEndpoint, &QTcpServer::newConnection);
@@ -390,7 +393,7 @@ void PgxlConnectionReconnectTest::autoReconnectTurnedOffDropsPendingRetry()
     conn.testSetReconnectBackoffUnitMs(kBackoffUnitMs);
     QSignalSpy attempts(&conn, &PgxlConnection::reconnectAttempt);
     conn.connectToPgxl(QStringLiteral("127.0.0.1"), deadPort);
-    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(attempts.size(), 1, kRefusedDialMs);
     AppSettings::instance().setValue(QStringLiteral("PGXL_AutoReconnect"), QStringLiteral("False"));
     conn.applyConnectionSettings();
     QVERIFY(!conn.testReconnectPending());

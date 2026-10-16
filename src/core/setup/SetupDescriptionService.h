@@ -2,6 +2,7 @@
 // no-port-check: NereusSDR-original Setup description transport.
 #include "core/BoardCapabilities.h"
 #include "core/HpsdrModel.h"
+#include "core/NereusCoreExport.h"
 #include "core/RadioDiscovery.h"
 
 #include <QJsonObject>
@@ -12,7 +13,7 @@ namespace NereusSDR {
 
 // The string properties are fixed so MirrorSchema can announce the same
 // ordinals to every client. Empty strings name categories not published yet.
-class SetupDescription final : public QObject {
+class NEREUS_CORE_EXPORT SetupDescription final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString general READ general NOTIFY descriptionsChanged)
     Q_PROPERTY(QString hardware READ hardware NOTIFY descriptionsChanged)
