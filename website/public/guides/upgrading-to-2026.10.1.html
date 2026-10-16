@@ -47,24 +47,27 @@ so one whose saved settings differ from the defaults may sound different
 from before.</li>
 <li><strong>FM squelch reads 0 to 100.</strong> <strong>Squelch Threshold</strong> on
 <strong>File &gt; Settings... &gt; DSP &gt; FM</strong> now shows 0 to 100, where 100 is the
-tightest, instead of dB. Your saved threshold is kept: the old starting
-value now reads 6, and with FM squelch on it now opens. A new receiver
-starts at 100.</li>
+tightest, instead of dB. 2026.10.0 did not save this threshold, so every
+receiver now starts at 100, the tightest. With FM squelch on it now opens;
+lower the threshold if it stays closed.</li>
 <li><strong>Display settings are now defaults plus per-pan values.</strong> Setup's Display
 pages (now Spectrum, Levels, Waterfall, View, Peaks &amp; Markers, FFT &amp; Engine,
 Transmit Display and Multimeter) set the default for every pan, and each pan's
 Display pill can keep its own value, marked with an amber dot. Old page names
 such as Spectrum Defaults and Grid &amp; Scales no longer exist. <strong>Reset this pan</strong>
 returns one pan to the defaults.</li>
-<li><strong>Waterfall Black Level and Color Gain are converted once.</strong> Black Level now
-runs 0 to 100 with 50 at the noise floor, and Color Gain sets how many dB the
-colors cover. Your saved values, and each pan's, are converted so the
-waterfall looks the same as before. If it looks different, check Levels.</li>
-<li><strong>Cal Offset and stored noise floors are cleared once.</strong> The display Cal
-Offset (Setup default and each pan's value) held the station's offset and is
-removed; the stored per-band noise floors that Clarity measured before
-calibration are removed, so Clarity measures each band again the first time
-you tune to it. Your radio's own calibration is not touched.</li>
+<li><strong>Waterfall Black Level and Color Gain are converted once.</strong> With Clarity,
+Black Level now runs 0 to 100 with 50 at the noise floor, and Color Gain
+sets how many dB the colors cover; in the other choices they trim Low and
+High. Your saved values, and each pan's, are converted so the waterfall
+looks the same as before. If it looks different, check Levels.</li>
+<li><strong>Cal Offset is reset and stored noise floors are cleared once.</strong> The saved
+display Cal Offset values (the Setup default and each pan's) held the
+station's offset, so they are removed and Cal Offset starts at 0 dB; the
+control stays on Setup's Spectrum page. The stored per-band noise floors
+that Clarity measured before calibration are removed, so Clarity measures
+each band again the first time you tune to it. Your radio's own calibration
+is not touched.</li>
 <li><strong>FFT size has a Sizing choice.</strong> Sizing is <strong>Auto</strong>, <strong>Hz/bin</strong> or <strong>Fixed</strong>.
 If you had a Hz/bin target above zero, you start in <strong>Hz/bin</strong>. Otherwise you
 start in <strong>Auto</strong>, and the FFT Size you saved applies only if you choose
@@ -76,11 +79,12 @@ Core.</li>
 changed it. In 2026.10.0 it ran 60 dB until you changed the value, so AGC
 Off is about 40 dB quieter. Raise <strong>Fixed Gain</strong> if you want the old level.</li>
 <li><strong>Every receiver starts with your DSP Options sizes.</strong> Receivers B, C and D
-used to ignore the block size, filter size and filter type on <strong>File &gt;
-Settings... &gt; DSP &gt; Options</strong> and ran a 4096-sample block with a Linear
-Phase filter. They now use the saved values for their mode, 64, 4096 and Low
-Latency unless you changed them, so they may sound and respond differently.
-The FM row on that page now starts at 64 for receive and transmit.</li>
+did not take the block size, filter size and filter type on <strong>File &gt;
+Settings... &gt; DSP &gt; Options</strong> until their next mode change, and ran a
+4096-sample block with a Linear Phase filter until then. They now use the
+saved values for their mode, 64, 4096 and Low Latency unless you changed
+them, so they may sound and respond differently. The FM row on that page now
+starts at 64 for receive and transmit.</li>
 <li><strong>PureSignal looks different.</strong> The applet and the Bench show <strong>CORRECTION</strong>
 and <strong>CALIBRATION FEEDBACK</strong> with a class (Too low to High), <strong>Advanced</strong> now
 hides the bottom strip too, and AmpView names its curves differently. Two-tone
@@ -105,6 +109,11 @@ the station image write it; the
 <li><strong>Rock real-time priority.</strong> On a Rock, run the 2026.10.1 installer once and
 then restart the board. It adds a drop-in meant to keep an ssh login from
 costing the Core its real-time priority. See What to try.</li>
+<li><strong>Network receive buffer.</strong> The 2026.10.1 packages and the Pi 4 and Rock
+scripts raise Linux's <code>net.core.rmem_max</code> to 4 MB through
+<code>/usr/lib/sysctl.d/10-nereusd.conf</code>, and never lower a limit that is already
+higher. Removing the package removes it. The README section &quot;The system
+setting the Core's installer changes&quot; says how to check or undo it.</li>
 </ul>
 <p>The <a href="/guides/install-core-sbc.html">SBC install guide</a> has the details, including the
 sound card's own mixer and kernels that refuse real-time priority.
@@ -156,11 +165,11 @@ Then check <strong>Show 2Tone measurements</strong> (Bench &gt; IMD measurements
 DUP, run a brief two-tone test and read <strong>WORST IMD3</strong> and <strong>WORST IMD5</strong> on
 the rail's <strong>Inspect</strong> readout.</li>
 <li><strong>RADE waveforms.</strong> In <strong>Containers &gt; Edit Container</strong>, add <strong>Microphone
-waveform</strong> and <strong>Decoded speech waveform</strong> to a container whose <strong>Slice</strong> is
-in RADE-U or RADE-L. Speak while transmitting in RADE and confirm the
-microphone trace moves; receive a RADE signal and confirm the decoded speech
-trace moves. On a remote desktop, confirm an older Core shows a reason
-instead of a trace.</li>
+waveform</strong> and <strong>Decoded speech waveform</strong> to a container whose <strong>Slice</strong>
+is the transmit slice and is in RADE-U or RADE-L. Speak while transmitting
+in RADE and confirm the microphone trace moves; receive a RADE signal and
+confirm the decoded speech trace moves. On a remote desktop, confirm an
+older Core shows a reason instead of a trace.</li>
 </ol>
 <h2 id="reporting">Reporting</h2>
 <p>Report expected behavior, actual behavior, a minimal reproduction, desktop and

@@ -8,8 +8,8 @@
     },
     {
       "output": "manual/02-desktop-window.md",
-      "output_sha256": "9786fb3080eae82ea40f8b6e89530b8c37ce4949ce074856104d5384e89170c2",
-      "sha256": "9786fb3080eae82ea40f8b6e89530b8c37ce4949ce074856104d5384e89170c2",
+      "output_sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
+      "sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
@@ -26,8 +26,8 @@
     },
     {
       "output": "manual/05-transmit.md",
-      "output_sha256": "ab9f01fb440d0d5af353479dd14150431e80d38b8ea4260aae77f45dccae2f83",
-      "sha256": "ab9f01fb440d0d5af353479dd14150431e80d38b8ea4260aae77f45dccae2f83",
+      "output_sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
+      "sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -38,8 +38,8 @@
     },
     {
       "output": "manual/07-iphone-operate.md",
-      "output_sha256": "581d8b5a8f12e10f71ad4bdd7d6808c414934006368502a6e72bd0202f542852",
-      "sha256": "581d8b5a8f12e10f71ad4bdd7d6808c414934006368502a6e72bd0202f542852",
+      "output_sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
+      "sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
@@ -50,14 +50,14 @@
     },
     {
       "output": "manual/09-tools.md",
-      "output_sha256": "4e8a166a4a6085b561b733a8bee41631f0eee43bc137d7c45da386f1c4e3dd66",
-      "sha256": "4e8a166a4a6085b561b733a8bee41631f0eee43bc137d7c45da386f1c4e3dd66",
+      "output_sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
+      "sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "b8512332ec3f994ef7e4cedba75c779357957f34e7672da0691204c4406c094d",
-      "sha256": "b8512332ec3f994ef7e4cedba75c779357957f34e7672da0691204c4406c094d",
+      "output_sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
+      "sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -68,14 +68,14 @@
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "dec9010ec3c458a438d286f3f560073dc2d809aba1e8a57c92f44fa18faddec3",
-      "sha256": "dec9010ec3c458a438d286f3f560073dc2d809aba1e8a57c92f44fa18faddec3",
+      "output_sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
+      "sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
       "source": "docs/manual/12-reference.md"
     },
     {
       "output": "manual/13-receiver-dsp.md",
-      "output_sha256": "583c1c5b8a146ddbfd5d51ac4670a1ead22579258727e09ffe48472a62e611b4",
-      "sha256": "583c1c5b8a146ddbfd5d51ac4670a1ead22579258727e09ffe48472a62e611b4",
+      "output_sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
+      "sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
@@ -86,8 +86,8 @@
     },
     {
       "output": "manual/15-rade-freedv.md",
-      "output_sha256": "1417f3cfccd4ff30c72341da1a14a5ca0fe3a9e8a2da30e8655f2c12243bf7ff",
-      "sha256": "1417f3cfccd4ff30c72341da1a14a5ca0fe3a9e8a2da30e8655f2c12243bf7ff",
+      "output_sha256": "38f2f4c8fa72136f4ca67c49ad2fe5e9ad63a5d1e3b2315f1ef1a79b4274173f",
+      "sha256": "38f2f4c8fa72136f4ca67c49ad2fe5e9ad63a5d1e3b2315f1ef1a79b4274173f",
       "source": "docs/manual/15-rade-freedv.md"
     },
     {
@@ -104,8 +104,8 @@
     },
     {
       "output": "manual/18-puresignal-diversity.md",
-      "output_sha256": "950ce61056d0f2598251ec03e33c959390b2f5c65dd0eb15e3bc58585301736d",
-      "sha256": "950ce61056d0f2598251ec03e33c959390b2f5c65dd0eb15e3bc58585301736d",
+      "output_sha256": "d6c02f8f3ea0e4820fc71017c3be10ee87d4361350ad29268f7b536634c8dc17",
+      "sha256": "d6c02f8f3ea0e4820fc71017c3be10ee87d4361350ad29268f7b536634c8dc17",
       "source": "docs/manual/18-puresignal-diversity.md"
     },
     {
@@ -116,8 +116,8 @@
     },
     {
       "output": "manual/20-phone-preferences.md",
-      "output_sha256": "b1adac66d8596601fcec868ddd7e9ceacffd33a1b7f82ee614247a7c830082bf",
-      "sha256": "b1adac66d8596601fcec868ddd7e9ceacffd33a1b7f82ee614247a7c830082bf",
+      "output_sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
+      "sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
@@ -438,8 +438,8 @@
     },
     {
       "output": "manual/02-desktop-window.html",
-      "output_sha256": "e1cd4232194d005de48276e5d4387f57bd17787b6668e87b89c06cd269d4553c",
-      "sha256": "9786fb3080eae82ea40f8b6e89530b8c37ce4949ce074856104d5384e89170c2",
+      "output_sha256": "fbeb0c863e87ab55dbad377fbd2cd38e6859d45ed93099ef37d9b03a6f56864f",
+      "sha256": "b4e09f1a4107e4bd129e02e2bc8f5886a25dd8fc5d2be5ed59a8f1347b760e01",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
@@ -456,8 +456,8 @@
     },
     {
       "output": "manual/05-transmit.html",
-      "output_sha256": "867654dbe69c710af9b7c4211dae1b60c3cb1d184ebcbb835abafd81266f70ce",
-      "sha256": "ab9f01fb440d0d5af353479dd14150431e80d38b8ea4260aae77f45dccae2f83",
+      "output_sha256": "da86466e6c595d9bcf0307ad4885c6db1b7cb99a067193b431a75a7ca17c5ceb",
+      "sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -468,8 +468,8 @@
     },
     {
       "output": "manual/07-iphone-operate.html",
-      "output_sha256": "0628b941cbe3691ef808a0e513fbf1db7abf52bbd15df8f5dc44d0d9b6db36d2",
-      "sha256": "581d8b5a8f12e10f71ad4bdd7d6808c414934006368502a6e72bd0202f542852",
+      "output_sha256": "75846769cd61d7e555572e1b5934cffa04484920f0d27328a92bc090a7ad3f01",
+      "sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
@@ -480,14 +480,14 @@
     },
     {
       "output": "manual/09-tools.html",
-      "output_sha256": "2ed46ec7c4e29abf2f5d482c43ea3dedd9634165415a09f66883dcf38f00bfb0",
-      "sha256": "4e8a166a4a6085b561b733a8bee41631f0eee43bc137d7c45da386f1c4e3dd66",
+      "output_sha256": "b220d372246285ece22a0086d02a763cebb215f075c8a0c3b5618b9a2375f84a",
+      "sha256": "8f836363eb190698917b51beb01b23a3a1bbbbc24b7adfb9b600b420a1044c1d",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "af3a13b7a4118fc5f20f273283c2f6cbd27309c6c3e65d65cbe8d1d39b9b3325",
-      "sha256": "b8512332ec3f994ef7e4cedba75c779357957f34e7672da0691204c4406c094d",
+      "output_sha256": "fe0ca2bb0e40fbe0d29c9846bf3141070c9d9d90d803427e5309af455599ae55",
+      "sha256": "f3be5bebb45ec3f29fb57d07b455b9be40fc9c21e2af34d964d82b9f5808a630",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -498,14 +498,14 @@
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "8d561c78326f544e55125e2894c8c2f8c0aa3d6b014a65175478d9ec41e5d6db",
-      "sha256": "dec9010ec3c458a438d286f3f560073dc2d809aba1e8a57c92f44fa18faddec3",
+      "output_sha256": "0d32048aba7a63b9c80a5cc390d04359a7a7768d9edb285ef49d730cbfeb1cb2",
+      "sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
       "source": "docs/manual/12-reference.md"
     },
     {
       "output": "manual/13-receiver-dsp.html",
-      "output_sha256": "4d39aa4f37a9cd86192d5b961a9af99d4d47a6c10fab70d1ef3c7e3871e92da8",
-      "sha256": "583c1c5b8a146ddbfd5d51ac4670a1ead22579258727e09ffe48472a62e611b4",
+      "output_sha256": "da53a941bcc0efe25d86355f44427a61b65cf519d997209b6303f44e12ebfad8",
+      "sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
@@ -516,8 +516,8 @@
     },
     {
       "output": "manual/15-rade-freedv.html",
-      "output_sha256": "120f569706491e47583f9d981a90421cb3150272e11fd04a89078f8afd73b33f",
-      "sha256": "1417f3cfccd4ff30c72341da1a14a5ca0fe3a9e8a2da30e8655f2c12243bf7ff",
+      "output_sha256": "c9bc4b486a57d3c2ce446c3ce36b14849c2ca6b42267fd00a240ae71de41170d",
+      "sha256": "38f2f4c8fa72136f4ca67c49ad2fe5e9ad63a5d1e3b2315f1ef1a79b4274173f",
       "source": "docs/manual/15-rade-freedv.md"
     },
     {
@@ -534,8 +534,8 @@
     },
     {
       "output": "manual/18-puresignal-diversity.html",
-      "output_sha256": "e1bffc2e1b8329fa2c8949ec1af10e9381f3e1d9fcc003a388e23e9f25a87c15",
-      "sha256": "950ce61056d0f2598251ec03e33c959390b2f5c65dd0eb15e3bc58585301736d",
+      "output_sha256": "3fe43aa416d2eba531a92b840f89efe7f4ebc4355a8d53c69bee60c46f02f630",
+      "sha256": "d6c02f8f3ea0e4820fc71017c3be10ee87d4361350ad29268f7b536634c8dc17",
       "source": "docs/manual/18-puresignal-diversity.md"
     },
     {
@@ -546,8 +546,8 @@
     },
     {
       "output": "manual/20-phone-preferences.html",
-      "output_sha256": "94d0a0f807e80c41278bb1f1e1aff35c672cb705ec846f9d9345806c7218dff7",
-      "sha256": "b1adac66d8596601fcec868ddd7e9ceacffd33a1b7f82ee614247a7c830082bf",
+      "output_sha256": "c1c96adef4661a30bd3d37ea9a13bcb4d0d43514dce8e113427e3d274144890a",
+      "sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
@@ -570,8 +570,8 @@
     },
     {
       "output": "guides/upgrading-to-2026.10.1.html",
-      "output_sha256": "fa4c5f7c4005cd32f892a52453192cfc539b0c13e8d17badc62e0868c71e2ae6",
-      "sha256": "6b02283722991916accda7073d216a5d7ceb884338cdc9e60a2ef0ed4b5fcec4",
+      "output_sha256": "363f2077ec404ffa1c82e5dd736e0b2ca0bdeb5007c5fd6403c780644902ec3c",
+      "sha256": "7fc2deb1d17c8955276795f51e1997db4d04361478f76da69193222d59122ffb",
       "source": "docs/guides/upgrading-to-2026.10.1.md"
     },
     {
