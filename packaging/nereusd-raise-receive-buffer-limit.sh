@@ -37,17 +37,28 @@ if [ -z "$wanted" ]; then
 fi
 
 # The file that sets the limit at the next system start, read as
-# systemd-sysctl and sysctl --system read them (sysctl.d(5)): each name from
-# the first directory that has it, every name in byte order, the last setting
-# of a key winning; /etc/sysctl.conf after all of them for sysctl --system.
+# systemd-sysctl reads them there (sysctl.d(5)): each name from the first
+# directory that has it, every name in byte order, the last setting of a key
+# winning. systemd-sysctl does not read /etc/sysctl.conf itself; it counts
+# only through a sysctl.d file that links to it, as Debian's
+# /etc/sysctl.d/99-sysctl.conf did up to bookworm (trixie has none).
 # Prints "replaces <file>" when a file of the Core's name replaces it, or
 # "sets <file>" for the file whose setting wins, or nothing for none.
+# Names are taken one per line and never as patterns, so a name with a space
+# or a wildcard is read as it is. It runs in a subshell, $(...), so the IFS
+# and set -f it changes end with it.
 sets_limit() {
     grep -Eq '^[[:space:]]*-?net[./]core[./]rmem_max[[:space:]]*=' "$1" 2>/dev/null
 }
 winning_setting() {
     root=$1
-    dirs="/etc/sysctl.d /run/sysctl.d /usr/local/lib/sysctl.d /usr/lib/sysctl.d /lib/sysctl.d"
+    IFS='
+'
+    dirs='/etc/sysctl.d
+/run/sysctl.d
+/usr/local/lib/sysctl.d
+/usr/lib/sysctl.d
+/lib/sysctl.d'
     names=$(for dir in $dirs; do
                 for file in "$root$dir"/*.conf; do
                     if [ -e "$file" ] || [ -L "$file" ]; then
@@ -56,6 +67,7 @@ winning_setting() {
                 done
             done | LC_ALL=C sort -u)
     winner=
+    set -f
     for name in $names; do
         found=
         for dir in $dirs; do
@@ -72,9 +84,6 @@ winning_setting() {
             winner=$found
         fi
     done
-    if sets_limit "$root/etc/sysctl.conf"; then
-        winner=$root/etc/sysctl.conf
-    fi
     if [ -n "$winner" ]; then
         echo "sets $winner"
     fi

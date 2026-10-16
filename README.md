@@ -141,12 +141,15 @@ network socket.
   changed. The setting is a ceiling, not a size any socket is given: a
   program that does not ask keeps the system's default size.
 - **A limit is never lowered.** The install step leaves a limit already at
-  or above 4194304 as it is, and so does a reinstall or upgrade when the
-  Core's file is masked or replaced in `/etc/sysctl.d` or `/run/sysctl.d`,
-  or a file read after it sets this limit. At system start, a sysctl file
-  whose name sorts after the Core's and sets this limit wins over it,
-  whether its value is higher or lower; an administrator's own files
-  (numbered 60 to 90 by systemd's convention) do.
+  or above 4194304 as it is. An install, reinstall or upgrade also leaves
+  the limit as it is, whatever its value, when the Core's file is masked or
+  replaced in `/etc/sysctl.d` or `/run/sysctl.d`, or when a file read after
+  it sets this limit. At system start, a sysctl file whose name sorts after
+  the Core's and sets this limit wins over it, whether its value is higher
+  or lower; an administrator's own files (numbered 60 to 90 by systemd's
+  convention) do. `/etc/sysctl.conf` is read at system start only where a
+  file in `/etc/sysctl.d` links to it, as Debian's `99-sysctl.conf` did up
+  to bookworm.
 - **To undo it.** Remove the `nereusd` package, or delete the file; the
   system then starts with its own limit again. To keep the system's own
   limit with the package installed, link `/etc/sysctl.d/10-nereusd.conf` to

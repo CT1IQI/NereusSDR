@@ -52,9 +52,9 @@ def shells():
     return [name for name in ("sh", "dash", "bash") if shutil.which(name)]
 
 
-def run_helper(shell, conf, limit):
+def run_helper(shell, conf, limit, cwd=None):
     return subprocess.run([shell, str(HELPER), str(conf), str(limit)],
-                          capture_output=True, text=True, timeout=10)
+                          capture_output=True, text=True, timeout=10, cwd=cwd)
 
 
 # --- the settings file -------------------------------------------------------
@@ -193,7 +193,7 @@ def test_a_same_named_file_that_replaces_it_leaves_the_limit_alone(shell, where,
 @pytest.mark.parametrize("shell", shells())
 @pytest.mark.parametrize("value", [STOCK, 16777216])
 @pytest.mark.parametrize("path", ["/etc/sysctl.d/60-local.conf", "/usr/lib/sysctl.d/50-vendor.conf",
-                                  "/usr/local/lib/sysctl.d/90-site.conf", "/etc/sysctl.conf"])
+                                  "/usr/local/lib/sysctl.d/90-site.conf", "/etc/sysctl.d/99 local.conf"])
 def test_a_file_read_later_that_sets_the_limit_leaves_it_alone(shell, value, path, tmp_path):
     root, conf, limit = installed_root(tmp_path)
     later = put(root, path, f"# local\nnet.core.rmem_max = {value}\n")
@@ -202,6 +202,47 @@ def test_a_file_read_later_that_sets_the_limit_leaves_it_alone(shell, value, pat
     assert int(limit.read_text()) == STOCK
     assert f"{later} sets this limit" in result.stdout
     assert "Left unchanged" in result.stdout
+
+
+# System start (systemd-sysctl) reads /etc/sysctl.conf only through a
+# sysctl.d file that links to it, as Debian's /etc/sysctl.d/99-sysctl.conf
+# did up to bookworm; trixie ships no such link.
+
+@pytest.mark.parametrize("shell", shells())
+def test_sysctl_conf_alone_does_not_stop_the_raise(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    put(root, "/etc/sysctl.conf", "net.core.rmem_max = 212992\n")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == asked_by_the_core()
+    assert "Raised the network receive buffer limit" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+def test_sysctl_conf_linked_into_sysctl_d_leaves_the_limit_alone(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    put(root, "/etc/sysctl.conf", "net.core.rmem_max = 212992\n")
+    link = root / "etc/sysctl.d/99-sysctl.conf"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to("../sysctl.conf")
+    result = run_helper(shell, conf, limit)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == STOCK
+    assert f"{link} sets this limit" in result.stdout
+
+
+@pytest.mark.parametrize("shell", shells())
+def test_a_name_with_a_wildcard_is_read_as_it_is(shell, tmp_path):
+    root, conf, limit = installed_root(tmp_path)
+    # Read as a pattern from the directory it is in, "[6]0-other.conf"
+    # matches only 60-other.conf, which sets something else, so the file
+    # that sets the limit is missed.
+    put(root, "/etc/sysctl.d/60-other.conf", "net.core.wmem_max = 1000000\n")
+    later = put(root, "/etc/sysctl.d/[6]0-other.conf", "net.core.rmem_max = 212992\n")
+    result = run_helper(shell, conf, limit, cwd=later.parent)
+    assert result.returncode == 0, result.stderr
+    assert int(limit.read_text()) == STOCK
+    assert f"{later} sets this limit" in result.stdout
 
 
 @pytest.mark.parametrize("shell", shells())
