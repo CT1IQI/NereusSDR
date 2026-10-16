@@ -4,6 +4,10 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: A display that ends because its slice was removed says so
+//               (kRetireReasonSliceRemoved) where the removal's stream
+//               unbinding ends it, not "binding changed". J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): a peer whose start declared
 //               spectrumPictureVersion is told, in each spectrum context,
 //               which picture its frames continue. J.J. Boyd (KG4VCF),
@@ -6387,10 +6391,21 @@ void DaemonMediaController::onStreamBindingsChanged(int streamIndex, const QVect
             && (!slice || slice->streamIndex() != streamIndex)) {
             const quint32 revision = displayBudgetWireAvailable()
                 ? entry.allocation.revision : entry.revision;
+            // A slice that is off the Core's list was removed, not moved:
+            // RadioModel::removeSlice unbinds its stream before it announces
+            // sliceRemoved, so a removed slice's displays end here. Say so. A
+            // window told only that the binding changed asks for the display
+            // again, for a slice that is gone, and is refused.
+            const bool sliceGone = slice == nullptr;
             removeEndpoint(endpointId);
             const QPointer<DaemonMediaController> self(this);
-            sendRejected(m_peer ? m_peer->connectionId() : QString(), endpointId, revision,
-                         QString::fromLatin1(kRetireReasonStreamBindingChanged));
+            if (sliceGone) {
+                sendRejected(m_peer ? m_peer->connectionId() : QString(), endpointId, revision,
+                             QString::fromLatin1(kRetireReasonSliceRemoved));
+            } else {
+                sendRejected(m_peer ? m_peer->connectionId() : QString(), endpointId, revision,
+                             QString::fromLatin1(kRetireReasonStreamBindingChanged));
+            }
             if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
         }
     }

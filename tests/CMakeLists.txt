@@ -1404,6 +1404,17 @@ nereus_add_test(tst_dig_rtty_wire)
 # ── Phase 3G-10 Stage 2: per-slice-per-band DSP persistence (S2.P) ───────────
 nereus_add_test(tst_slice_persistence_per_band)
 
+# ── Settings restore (2026-10-11): what a slice is closed with comes back ───
+# The audio panel, squelch, APF, BIN, FM, DIG and RTTY values were never
+# saved; AGC-T AUTO is kept per receiver; a change is saved under the slice
+# it was made on; a restored slice pushes its state to its WDSP channel; and
+# without a Core, receivers B to D come back at connect like A.
+# Source: NereusSDR-original tests.
+nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
+nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
+nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
+nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
+
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
 
