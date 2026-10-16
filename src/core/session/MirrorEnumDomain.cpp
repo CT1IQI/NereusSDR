@@ -103,7 +103,7 @@ const DomainTable& table()
         declare<DSPMode>(&t, { DSPMode::LSB, DSPMode::USB, DSPMode::DSB, DSPMode::CWL,
                                DSPMode::CWU, DSPMode::FM, DSPMode::AM, DSPMode::DIGU,
                                DSPMode::SPEC, DSPMode::DIGL, DSPMode::SAM, DSPMode::DRM,
-                               DSPMode::RADE_U, DSPMode::RADE_L });
+                               DSPMode::RADE_U, DSPMode::RADE_L, DSPMode::RADE2_U, DSPMode::RADE2_L });
 
         declare<AGCMode>(&t, { AGCMode::Off, AGCMode::Long, AGCMode::Slow, AGCMode::Med,
                                AGCMode::Fast, AGCMode::Custom });

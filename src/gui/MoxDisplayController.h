@@ -10,7 +10,8 @@
 // What it follows, Thetis v2.10.3.15:
 //   - display.cs:1575-1597 (Display.MOX): the MOX edge swaps the cached
 //     waterfall minimum and purges the buffers (here: setMoxOverlay's grid
-//     and span swap, the waterfall AGC re-prime and the averaging cleared);
+//     and span swap, every pan's waterfall AGC level saved for its band on
+//     the key and restored on the un-key, and the averaging cleared);
 //   - display.cs:1782-1790 (SpectrumGridMaxMoxModified): the transmit grid
 //     while keyed (setMoxOverlay loads it);
 //   - display.cs:6420-6427: the waterfall's own transmit levels
@@ -33,6 +34,8 @@
 //   2026-10-13  J.J. Boyd / KG4VCF  Export the controller's Qt signal
 //                 addresses from the Windows GUI DLL. AI-assisted via
 //                 OpenAI Codex.
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Central IMD gate mirrors; unchanged TX source ownership.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-09-26 : Created for remote-window parity Task 29 (A11, R-R3-49,
@@ -47,11 +50,19 @@
 //                 In a remote window DUP needs the Core's txDisplayVersion
 //                 3. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-10-10 : Display pill plan Task 13: both edges reach every pan of
+//                 the window (SpectrumWidget::setDisplayKeyed) before the
+//                 rise and the fall; the rise no longer takes Clarity off
+//                 the pan or re-primes the waterfall AGC, and the fall no
+//                 longer re-primes it. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "gui/NereusGuiExport.h"
+
+#include <functional>
 
 #include <QMetaObject>
 #include <QObject>
@@ -63,6 +74,7 @@ namespace NereusSDR {
 
 class ITxDisplaySource;
 class PanadapterStack;
+class PureSignal;
 class RadioModel;
 class SliceModel;
 class SpectrumWidget;
@@ -84,11 +96,31 @@ public:
     /// `txSliceId` (never the active pan, never a fallback): the MOX
     /// overlay (red border, transmit grid, palette and waterfall levels),
     /// the receive rate and DDC centre saved, the view moved to the
-    /// carrier, Clarity paused, the external transmit waterfall on, the
-    /// waterfall AGC re-primed and the averaging cleared, then the source's
-    /// transmit view. The fall undoes each on the pan recorded at the rise.
+    /// carrier, the external transmit waterfall on and the averaging
+    /// cleared, then the source's transmit view. The fall undoes each on
+    /// the pan recorded at the rise.
+    ///
+    /// Before either, on an edge: keyedChanged, then every pan of the
+    /// window is told (SpectrumWidget::setDisplayKeyed, with the pan's own
+    /// hold length and its band from setPanBandProvider). Every pan keeps
+    /// its Clarity level and its waterfall AGC level through the key.
     void setKeyed(bool keyed, int txSliceId);
     bool isKeyed() const { return m_keyed; }
+
+    /// Window-local presentation preference, seeded from the existing saved
+    /// Show Two-tone Measurements key and current/late coordinator state.
+    /// Two-tone truth comes from the local/remote PureSignal session facade.
+    /// Mirror both gates onto all current/new pans; only the keyed host has
+    /// the MOX/DUP gates that make the measurement visible.
+    void setShowIMDMeasurements(bool on);
+    bool showIMDMeasurements() const { return m_showIMDMeasurements; }
+    bool testingIMD() const { return m_testingIMD; }
+
+    /// The band a pan is on, as the int SpectrumWidget::setDisplayKeyed
+    /// keeps its waterfall AGC levels under. With none set, or for a pan
+    /// the provider does not know, every band is kNoBandKey.
+    static constexpr int kNoBandKey = -1;
+    void setPanBandProvider(std::function<int(const QString& panId)> provider);
 
     /// The pan showing the transmit display; empty unless keyed with DUP
     /// off (keyed with DUP on the pan keeps its receive frames).
@@ -133,13 +165,17 @@ public:
     void followStation(StationClient* client);
 
     /// Test seam: record each widget call of the rise and the fall, in
-    /// order (the source's too), into callLog().
+    /// order (the source's too), into callLog(). An edge records
+    /// "keyedChanged(true|false)" and one "setDisplayKeyed(true|false)
+    /// <panId>" for each pan ahead of them.
     void setCallRecording(bool on);
     QStringList callLog() const { return m_callLog; }
     void clearCallLog() { m_callLog.clear(); }
 
 signals:
     void keyedChanged(bool keyed);
+    // GUI ownership is committed after rise/fall, including a late slice snapshot.
+    void keyedOwnerCommitted(const QString& panId);
     /// displayDuplex() changed (the setting, or its availability).
     void displayDuplexChanged(bool on);
 
@@ -147,6 +183,8 @@ private:
     // Every pan's peaks reset (SpectrumWidget::resetPeaks): Thetis's
     // PurgeBuffers on a MOX edge and on the radio coming on.
     void resetPeaksOnEveryPan();
+    // An edge on every pan (SpectrumWidget::setDisplayKeyed).
+    void keyEveryPan(bool keyed);
     void rise(int txSliceId);
     void fall();
     // The transmit view's half of the rise and the fall, on the pan the
@@ -158,10 +196,14 @@ private:
     void onViewWindowChanged(double centreHz, double bandwidthHz);
     void applyHighSwr();
     void note(const QString& call);
+    void bindMeasurementCoordinator(PureSignal* coordinator);
+    void applyMeasurementGates();
+    void refreshTestingIMD();
 
     QPointer<PanadapterStack> m_pans;
     QPointer<RadioModel> m_model;
     ITxDisplaySource* m_source{nullptr};
+    std::function<int(const QString&)> m_panBand;
 
     bool m_keyed{false};
     // Parity Task 31: the window's DUP setting; what the pan did last
@@ -179,6 +221,10 @@ private:
     double m_savedSampleRate{0.0};
     double m_savedDdcHz{0.0};
     QMetaObject::Connection m_viewConnection;
+    QPointer<PureSignal> m_measurementCoordinator;
+    QMetaObject::Connection m_measurementsConnection;
+    bool m_testingIMD{false};
+    bool m_showIMDMeasurements{false};
 
     bool m_highSwr{false};
     bool m_windBackLatched{false};

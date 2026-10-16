@@ -9,6 +9,8 @@
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 section 5 requirements.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Add explicit display marker/top scale by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-19  Ported in C++20/Qt6 for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude Code.
 //                 Layout from AetherSDR src/gui/SMeterWidget.{h,cpp} [@0cd4559].
@@ -1388,6 +1390,14 @@ void SMeterWidget::setPowerScale(int maxWatts, bool hasAmplifier)
 }
 
 // --- Peak hold configuration -------------------------------------------------
+void SMeterWidget::setPowerDisplayScale(double legalMarkerW, double scaleTopW)
+{
+    m_powerRedStart = static_cast<float>(legalMarkerW);
+    m_powerScaleMax = static_cast<float>(scaleTopW);
+    updateNeedleTarget();
+    update();
+}
+
 // From AetherSDR src/gui/SMeterWidget.cpp:660-698 [@0cd4559]
 
 void SMeterWidget::setPeakHoldEnabled(bool enabled)

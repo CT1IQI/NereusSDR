@@ -1,4 +1,5 @@
 #pragma once
+#include "models/RadeWaveformModel.h"
 #include <QVector>
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
@@ -7,6 +8,9 @@
 //               the restart backoff); a held restart step no longer
 //               replaces another; setSpeakerDeviceListWaitForTest. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: mediaIceConfiguration says whether its settings are the
+//               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: startMicCollector's vax source (VAX as a remote window's
@@ -326,6 +330,7 @@ public:
     /// Core to stop the stream. GUI thread only.
     void releaseReceiverAudio(int sliceId, IReceiverPcmSink* sink);
     bool remoteIqNegotiated() const;
+    bool waveformNegotiated() const;
     void requestRawIq(int sliceId);
     void releaseRawIq(int sliceId);
     /// R-R3-43: each wanted receiver stream's measured health, by slice id.
@@ -683,6 +688,11 @@ private:
     // Parity Task 32: the monitor-audio request and its answer.
     void requestMonitorAudio();
     void sendIqRequest(int sliceId, bool enabled);
+    void reconcileWaveformDemand(const QList<WaveformRequest>& requests);
+    void sendWaveformRequest(int sliceId, WaveformKind kind, bool enabled);
+    void receiveWaveformContext(const QJsonObject& payload);
+    void receiveWaveformFrame(const QByteArray& bytes);
+    void updateWaveformClock();
     void receiveIqContext(const QJsonObject& payload);
     void receiveIqFrame(const QByteArray& message);
     void failIqStream(int sliceId, const QString& reason);
@@ -789,7 +799,9 @@ private:
     void updateDirectUpgrade(bool viaTunnel);
     void markReplacePending();
     void tryPendingReplace();
-    std::optional<IceConfiguration> mediaIceConfiguration();
+    // fromTunnel, when given, says whether the settings are the media
+    // tunnel's.
+    std::optional<IceConfiguration> mediaIceConfiguration(bool* fromTunnel = nullptr);
     void retireOldPeer();
 };
 } // namespace NereusSDR

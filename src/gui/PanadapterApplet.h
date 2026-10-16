@@ -85,12 +85,14 @@ class QContextMenuEvent;
 class QLabel;
 class QPushButton;
 class QMenu;
+class QBoxLayout;
 
 namespace NereusSDR {
 
 class SpectrumWidget;
 class SliceModel;
 class SpectrumStatusOverlay;
+class ImdMeasurementPanel;
 
 /// Container for a single panadapter view: spectrum + waterfall (via SpectrumWidget)
 /// + associated slice overlays. AetherSDR overlay model: a pan picks one DDC for
@@ -108,6 +110,8 @@ public:
 
     QString panId() const { return m_panId; }
     SpectrumWidget* spectrumWidget() const { return m_spectrum; }
+    ImdMeasurementPanel* imdRail() const { return m_imdRail; }
+    ImdMeasurementPanel* imdInspector() const { return m_imdInspector; }
 
     /// Show/hide this pan's own title strip, which exists only while the pan
     /// is popped out of the console.
@@ -306,6 +310,10 @@ private:
     /// for it beyond one hidden 18 px widget.
     void buildFloatTitleBar();
 
+    void refreshImdPresentation();
+    QBoxLayout* m_imdBodyLayout{nullptr};
+    ImdMeasurementPanel* m_imdRail{nullptr};
+    ImdMeasurementPanel* m_imdInspector{nullptr};
     QString                 m_panId;
     SpectrumWidget*         m_spectrum {nullptr};
     SpectrumStatusOverlay*  m_statusOverlay {nullptr};

@@ -170,10 +170,24 @@
 //                inputs, sent at once while running, and byte 1400 bit 1 from
 //                speakerAmplifierOff in buildCodecContext. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - applyDdcAssignment's log line names the rate of DDC4 to
+//                DDC6 too, the receivers that host a third to fifth stream.
+//                Log text only. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-10 - applySocketBufferSizes logs the receive buffer the
+//                system gave. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-10-11 - That line gives the buffer in the terms it was asked (Linux
+//                reports it doubled) and says when the system cut the request
+//                short and what limit did it. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-14 - TxIqNativeDest and fillTxIqNativeDest moved unchanged to
 //                TxIqNativeDest.h, shared with the Protocol 1 EP2 sender.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - A request cut short names the limit to raise, not the
+//                Core's packages, since the desktop app logs it too. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - On the Mac the transmit I/Q send thread is raised to
 //                USER_INTERACTIVE QoS without the output device's audio
 //                workgroup, whose Core Audio lookup could hold up the first
@@ -681,7 +695,31 @@ void P2RadioConnection::applySocketBufferSizes()
     m_socket->setSocketOption(QAbstractSocket::SendBufferSizeSocketOption,
                               QVariant(0xfa000));
     m_socket->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption,
-                              QVariant(0x400000));  // 4 MB requested; kernel may cap
+                              QVariant(kRadioSocketReceiveBufferBytes));  // 4 MB requested; kernel may cap
+    // What the system gave, in the terms it was asked. Linux caps the
+    // request at net.core.rmem_max and reports the size doubled: at the
+    // stock 212,992 a socket reports 425,984 bytes, 9 ms of three wide
+    // receivers on the Rock 5C (2026-10-10), where one 14 ms stall of the
+    // connection thread then lost packets. A request cut short is said in
+    // so many words, so it can be read in the log without knowing that.
+    const int granted = grantedReceiveBufferBytes(
+        m_socket->socketOption(QAbstractSocket::ReceiveBufferSizeSocketOption).toInt());
+    if (granted >= kRadioSocketReceiveBufferBytes) {
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted
+                             << "bytes, all that was asked for";
+    } else {
+#ifdef Q_OS_LINUX
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for. The system's limit, net.core.rmem_max, holds it there;"
+                                " raising it to" << kRadioSocketReceiveBufferBytes
+                             << "lets the socket have it all.";
+#else
+        qCInfo(lcConnection) << "P2: radio socket receive buffer" << granted << "bytes of the"
+                             << kRadioSocketReceiveBufferBytes
+                             << "asked for; the system's own limit holds it there.";
+#endif
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3456,6 +3494,12 @@ void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
                              << "rate[1]=" << a.rate[1]
                              << "rate[2]=" << a.rate[2]
                              << "rate[3]=" << a.rate[3]
+                             // DDC4 to DDC6 host the third to fifth
+                             // streams; their rates go on the wire above
+                             // and belong in this line as well.
+                             << "rate[4]=" << a.rate[4]
+                             << "rate[5]=" << a.rate[5]
+                             << "rate[6]=" << a.rate[6]
                              << "nDdc=" << a.nDdc
                              << "psFwdDdc=" << m_psFbDdc
                              << "psRevDdc=" << m_psTxMonDdc;

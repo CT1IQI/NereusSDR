@@ -10,6 +10,8 @@
 //   5. NoiseFloorEstimator::prime() stores the seeded value.
 //   6. prime() clears to a new value on second call.
 //
+// 2026-10-12: cover the accepted stored-step floor seam after extraction.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // No pixel-diff — visual verification deferred to manual bench.
 
 #include <QtTest/QtTest>
@@ -228,6 +230,35 @@ private slots:
         QCOMPARE(w.gridMin(), -20);
         QCOMPARE(w.gridMax(), 80);
         QCOMPARE(w.dynamicRange(), 100.0f);
+    }
+
+    // The accepted stored dB Step replaces main's former fixed 10 dB
+    // drawing step while preserving its floor bound, including Keep Range.
+    void stored_step_bounds_floor_and_repairs_short_keep_range()
+    {
+        SpectrumWidget w;
+        w.setAdjustGridMinToNoiseFloor(true);
+        w.setNFOffsetGridFollow(0);
+        w.setMaintainNFAdjustDelta(false);
+        for (const int step : {5, 15, 40}) {
+            w.setDbGridStep(step);
+            w.setDbmRange(-140.0f, -40.0f);
+            w.testApplyNoiseFloor(-20.0f);
+            QCOMPARE(w.gridMin(), -40 - step);
+            QCOMPARE(w.gridMax(), -40);
+            QCOMPARE(w.dynamicRange(), static_cast<float>(step));
+        }
+        w.setDbGridStep(15);
+        w.setDbmRange(-41.0f, -40.0f);
+        w.testApplyNoiseFloor(-41.5f);
+        QCOMPARE(w.gridMin(), -55);
+        QCOMPARE(w.gridMax(), -40);
+        w.setMaintainNFAdjustDelta(true);
+        w.setDbmRange(-41.0f, -40.0f);
+        w.testApplyNoiseFloor(-41.5f);
+        QCOMPARE(w.gridMin(), -42); // public integer grid accessor rounds
+        QCOMPARE(w.refLevel(), -26.5f);
+        QCOMPARE(w.dynamicRange(), 15.0f);
     }
 
     // -----------------------------------------------------------------------

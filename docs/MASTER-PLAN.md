@@ -571,7 +571,7 @@ Plan §13 open questions resolved:
 Authorised Thetis divergence (plan §10, one-off): new per-band grid slots initialise to Thetis uniform -40 / -140 rather than NereusSDR's existing -20 / -160. Source-first protocol stays as written — this phase is an exception, not a precedent.
 
 Known deferrals (tracked in PR description):
-- S7 Line Width on GPU (QRhi lacks portable setLineWidth; needs triangle strip rendering — deferred)
+- S7 Line Width on GPU (QRhi lacks portable setLineWidth; needs triangle strip rendering — deferred). Done 2026-10-11 with the Display pill rework: the GPU trace is a triangle strip of the line width (`src/gui/SpectrumTraceRibbon.h`).
 - S16 FFT Decimation (UI scaffolded, no FFTEngine setter)
 - W12/W14 TX filter/zero-line overlays (gated on TX state model — post-3M-1)
 - Data Line / Data Fill Color splitting (shares `m_fillColor` until UX feedback justifies splitting)

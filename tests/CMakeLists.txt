@@ -771,6 +771,10 @@ nereus_add_test(tst_noise_floor_estimator)
 nereus_add_test(tst_noise_floor_tracker)
 nereus_add_test(tst_clarity_controller)
 nereus_add_test(tst_pan_clarity_registry)
+# NEREUS_SOURCE_DIR: the test reads src/main.cpp to prove only the window
+# runs the one-time clean-up of uncalibrated floors.
+target_compile_definitions(tst_pan_clarity_registry PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ── Task 2.10: per-band NF-estimate priming (NereusSDR-original) ─────────
 nereus_add_test(tst_per_band_nf_priming)
@@ -855,6 +859,7 @@ target_compile_definitions(tst_puresignal_coordinator PRIVATE NEREUS_BUILD_TESTS
 # routes to the PureSignal coordinator (Task 7).  Save button gating mirrors
 # Thetis PSForm.cs:574-590 [v2.10.3.13] CorrectionsBeingApplied predicate.
 nereus_add_test(tst_psform)
+nereus_add_test(tst_puresignal_refresh_state NATIVE_WINDOW)
 
 # ── Phase 3M-4 Task 9: AmpViewWindow modeless dialog ─────────────────────────
 # Source-first port of Thetis AmpView.cs (528 LOC) [v2.10.3.13].  Tests verify
@@ -863,11 +868,14 @@ nereus_add_test(tst_psform)
 # (chkAVShowGain @ 7,378 / chkAVPhaseZoom @ 242,378 / chkAVLowRes @ 404,378
 # / chkStayOnTop @ 490,378), 5 named chart series (Ref / MagAmp / PhsAmp /
 # MagCorr / PhsCorr), default chkAVLowRes Checked per AmpView.Designer.cs:
-# 182-183 [v2.10.3.13], toggle persistence to AppSettings, stay-on-top window
+# 182-183 [v2.10.3.13], mode persistence to AppSettings, stay-on-top window
 # flag application, chart axis ranges (Mag 1.0/2.0 + Phase 180/45) matching
 # AmpView.cs:435-482 [v2.10.3.13], and lowResStride() == 4 per AmpView.cs:
 # 457-463 [v2.10.3.13].
 nereus_add_test(tst_ampview_window)
+# Linked cursor interpolation uses the independent PS3 X domains and keeps
+# visibility/cursor choices local to this window session.
+nereus_add_test(tst_ampview_linked_cursor)
 
 # ── Phase 3M-4 Task 10: PsaIndicatorWidget bottom-banner FB+PS pair ──────────
 # Source-first port of Thetis ucInfoBar.cs:820-1098 [v2.10.3.13] (lblFB +
@@ -1367,6 +1375,10 @@ nereus_add_test(tst_slice_agc_advanced)
 # passes against current SliceModel APIs, registered here.
 nereus_add_test(tst_slice_auto_agc)
 nereus_add_test(tst_daemon_agc_source)
+# Auto AGC-T reads a noise floor referred to a 4096-point FFT: real FFTEngine
+# frames at several sizes and decimations, the tick's threshold in each
+# sizing mode and through a zoom, and a local window against the Core.
+nereus_add_test(tst_auto_agc_floor_reference)
 nereus_add_test(tst_desktop_core_auto_agc_floor)
 nereus_add_test(tst_remote_receive_indicators)
 
@@ -1385,6 +1397,16 @@ nereus_add_test(tst_slice_apf)
 # ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
 nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
+# Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
+# a DSP edit on a slice that is not the active one is saved to that slice.
+nereus_add_test(tst_slice_squelch_channel_seed)
+if(TARGET tst_slice_squelch_channel_seed)
+    target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE NEREUS_BUILD_TESTS)
+    if(FFTW3_FOUND AND WDSP_FOUND)
+        target_include_directories(tst_slice_squelch_channel_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE WDSP_STATIC_BUILD)
+    endif()
+endif()
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
 nereus_add_test(tst_rxchannel_audio_panel)
@@ -3578,6 +3600,14 @@ nereus_add_test(tst_spectrum_widget_highswr_overlay)
 # Derives from Thetis display.cs:1569-1593 [v2.10.3.13] Display.MOX setter.
 nereus_add_test(tst_spectrum_widget_mox_overlay)
 
+# Display pill plan Task 13: one pan on a key edge (setDisplayKeyed): the
+# waterfall AGC level kept through the key and restored for the band, the
+# hold after it, the noise-floor fast attack, and MainWindow's purge wiring
+# (a source check, so it reads the tree).
+nereus_add_test(tst_spectrum_widget_keyed_levels)
+target_compile_definitions(tst_spectrum_widget_keyed_levels PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
 # ── Phase 3M-1a H.2: MeterPoller TX bindings on MOX engage ───────────────────
 # Verifies setInTx(bool) switches poll set, idempotency, null guards in
 # pollTxMeters() and poll().  No live WDSP reads — headless state tests only.
@@ -4295,6 +4325,19 @@ nereus_add_test(tst_wdsp_engine_tx_channel)
 #   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
 nereus_add_test(tst_wdsp_engine_dexp_init)
 
+# AGC Fixed Gain seed: a new or rebuilt WDSP RX channel must run the Fixed
+# Gain RxChannel caches (20 dB), not WDSP's create_wcpagc default of 1000.0
+# linear (60 dB, third_party/wdsp/src/RXA.c:385). Reads rxa[].agc.p back.
+nereus_add_test(tst_rx_channel_agc_fixed_seed)
+if(FFTW3_FOUND AND WDSP_FOUND)
+    target_include_directories(tst_rx_channel_agc_fixed_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_rx_channel_agc_fixed_seed PRIVATE WDSP_STATIC_BUILD)
+endif()
+
+# Settings > DSP > AGC/ALC: the Fixed Gain spinner follows a model change
+# without echoing it back.
+nereus_add_test(tst_agc_alc_fixed_gain_sync)
+
 # ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
 # Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
 # the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always
@@ -4337,6 +4380,45 @@ nereus_add_test(tst_wdsp_engine_rade_lifecycle)
 # m_initialized = true so the createRxChannel seed at the head of the
 # test does not bail out on its !m_initialized guard.
 nereus_add_test(tst_slice_model_rade_swap)
+if(TEST tst_slice_model_rade_swap)
+    set_property(TEST tst_slice_model_rade_swap APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
+
+nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+if(TEST tst_rade_v2_link_gate)
+    get_test_property(tst_rade_v2_link_gate ENVIRONMENT _rade_link_env)
+    set_property(TEST tst_rade_v2_link_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    string(REPLACE "test-home/tst_rade_v2_link_gate" "test-home/tst_rade_v2_link_gate_1" _rade_link_on_env "${_rade_link_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_link_gate_1")
+    add_test(NAME tst_rade_v2_link_gate_1 COMMAND tst_rade_v2_link_gate)
+    set_tests_properties(tst_rade_v2_link_gate_1 PROPERTIES
+        ENVIRONMENT "${_rade_link_on_env};NEREUS_ENABLE_RADE_V2=1"
+        ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui;session")
+endif()
+
+# The immutable process switch is exercised in separate processes.
+nereus_add_test(tst_rade_v2_gate)
+if(TEST tst_rade_v2_gate)
+    get_test_property(tst_rade_v2_gate ENVIRONMENT _rade_gate_env)
+    set_property(TEST tst_rade_v2_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    add_test(NAME tst_rade_v2_gate_unset COMMAND tst_rade_v2_gate)
+    string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_unset" _rade_unset_env "${_rade_gate_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_unset")
+    set_tests_properties(tst_rade_v2_gate_unset PROPERTIES
+        ENVIRONMENT "${_rade_unset_env}" ENVIRONMENT_MODIFICATION "NEREUS_ENABLE_RADE_V2=unset:;QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui")
+    foreach(_gate_value IN ITEMS 1 malformed)
+        add_test(NAME tst_rade_v2_gate_${_gate_value} COMMAND tst_rade_v2_gate)
+        string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_${_gate_value}" _rade_process_env "${_rade_gate_env}")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_${_gate_value}")
+        set_tests_properties(tst_rade_v2_gate_${_gate_value} PROPERTIES
+            ENVIRONMENT "${_rade_process_env};NEREUS_ENABLE_RADE_V2=${_gate_value}"
+            ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+            TIMEOUT 120 LABELS "core;models;gui")
+    endforeach()
+endif()
+
 
 # ── Phase 3R Task J4: RADE audio routing into AudioEngine ───────────────────
 # Pins the contract that RadioModel::wireRadeChannel adds an audio
@@ -5909,6 +5991,16 @@ nereus_add_test(tst_dsp_change_timer)
 #   radiomodel_rebuild_noop_when_disconnected — no emission when disconnected
 nereus_add_test(tst_dsp_options_per_mode_apply)
 
+# Every receive channel takes its slice's per-mode DSP > Options buffer size
+# before it runs a block (Thetis console.cs:2681-2692 SyncDSP), and on every
+# later mode change, the first receiver and the others alike. Real channels
+# through openRxChannelPool. With nothing saved, the DSP > Options page shows
+# what a receiver and the transmitter start with in every mode group. Slice
+# A's receiver on a real connect (ConnectableRadioModel) is read off WDSP.
+nereus_add_test(tst_dsp_options_first_apply
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
 # ── Task 4.3: Filter Impulse Cache toggle persistence ─────────────────────────
 # AppSettings round-trip for DspOptionsCacheImpulse and
 # DspOptionsCacheImpulseSaveRestore. Both default to "False". The WdspEngine
@@ -6045,13 +6137,43 @@ nereus_add_test(tst_fft_size_slider)
 
 # Phase 2-polish-3 -- auto-zoom FFT math.  NereusSDR-original (Thetis does
 # not auto-replan on zoom).  Verifies setFftSizeBaseline round-trip +
-# rejection rules, and exercises the bandwidthChangeRequested lambda's
-# formula via an inline copy: targetSize = baseline * sampleRate / bwHz,
+# rejection rules, and exercises MainWindow::replanFftForStream's rule
+# through the shared ControlRanges::planAutoZoomFft and
+# largestPlannedFftSize (the largest need among a stream's pans; only the
+# hysteresis is an inline copy): targetSize = baseline * sampleRate / bwHz,
 # floored at baseline, capped at about 0.7 s per transform
 # (ControlRanges::autoZoomMaxFftSize(rate): 65536 at 96 kHz, at most 262144;
 # shared with the remote planner) unless the baseline is above it, with
 # [0.66, 1.5] hysteresis bracket.
 nereus_add_test(tst_auto_zoom_fft)
+
+# The FFT sizing mode (design D38 to D41): ControlRanges::planDisplayFft and
+# the on-read rule against tests/data/display_fft_sizing_vectors.json (the
+# table the phone's twin reads too), the upgrade rule on a store with no
+# mode key, writing a mode, and the Core's rule for a client that writes
+# only the Hz/bin target.
+nereus_add_test(tst_display_fft_sizing)
+target_compile_definitions(tst_display_fft_sizing PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# Display pill plan Task 7: MainWindow's per-pan wiring of that replan. A
+# zoom on the second pan sizes the engine of the stream it shows, and
+# applyFftBaseline() makes the Size control's choice every engine's floor.
+nereus_add_test(tst_display_fft_replan)
+
+# Display pill plan Task 9: PanModels, a per-band PanadapterModel for every
+# window pan. The pan's band follows its centre, the band's stored dB Max
+# and Min set its range, the store is shared, the per-band 3D Floor is
+# recalled, the old per-pan range keys are ignored, and RadioModel's pan
+# list stays empty.
+nereus_add_test(tst_pan_models)
+
+# Display pill plan Task 18: wireDisplayPill, a real strip and pan with fake
+# hooks. Each FFT request reaches its hook once and the FFT tab is read
+# again from the station; reset clears the pan and leaves the station keys;
+# Setup, Clarity and the band's dB Max and Min reach their hooks; opening
+# the pill reads the station again.
+nereus_add_test(tst_display_pill_wiring)
 
 # ── Task 2.5: ActivePeakHoldTrace ────────────────────────────────────────────
 # Unit tests for the per-bin peak-hold trace:
@@ -6295,6 +6417,11 @@ nereus_add_test(tst_transmit_model_hl2_audio_volume)
 # Source: Thetis display.cs:5008/5210-5316/5453-5475/5512-5685/5725-5760
 #         [v2.10.3.13].
 nereus_add_test(tst_imd_overlay)
+nereus_add_test(tst_imd_measurement_presenter)
+nereus_add_test(tst_imd_spectrum_integration)
+nereus_add_test(tst_imd_measurement_panel NATIVE_WINDOW)
+nereus_add_test(tst_imd_waterfall_annotations NATIVE_WINDOW)
+nereus_add_test(tst_imd_rail_controls)
 
 # ── v0.4.1 hotfix: RadioModel pushes hardware HPSDRModel to ReceiverManager ──
 # 5 tests pinning the contract that RadioModel propagates m_hardwareProfile.
@@ -7029,6 +7156,9 @@ nereus_add_test(tst_rade_applet)
 #                                          the RADE purple accent when
 #                                          RADE-L active.
 nereus_add_test(tst_mode_menu_rade)
+if(TEST tst_mode_menu_rade)
+    set_property(TEST tst_mode_menu_rade APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # ── Phase 3J-2 Task E1: SpectrumWidget spot overlay render ─────────────────
 # Pins the contract that drawSpotMarkers places spot labels with
@@ -7228,6 +7358,9 @@ nereus_add_test(tst_spot_auto_start)
 # follows freedv-gui src/pipeline/RADE{Receive,Transmit}Step.{h,cpp}
 # [@77e793a]. I1 ships skeleton bodies only; no DSP yet.
 nereus_add_test(tst_rade_channel)
+if(TEST tst_rade_channel)
+    set_property(TEST tst_rade_channel APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # Phase 3R Task I2a pins the Resampler wrapper around r8brain-free-src
 # (vendored MIT, third_party/r8brain/ at SHA 5c44bebe). The Resampler
@@ -7420,6 +7553,9 @@ nereus_add_test(tst_tgxl_connection_ping)
 # One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
 # for the answer, a refusal or a lost answer frees it, a new connection asks.
 nereus_add_test(tst_tgxl_connection_status_pacing)
+# The status poll's rate on both Genius links (GeniusPollPacer): fast while
+# keyed and for a hold after, and a poll already fast is not restarted.
+nereus_add_test(tst_genius_poll_pacer)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
@@ -7669,6 +7805,22 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
+# The tuner and amplifier panels' readouts: the four scales and limits, the
+# text rules (whole watts, the three SWR forms, whole degrees), reflected
+# power from forward power and SWR, and BarInstrument fed a reading of the
+# caller's own (value, dashes, the small second reading, the peak reset).
+nereus_add_test(tst_main_power_meter)
+nereus_add_test(tst_composite_main_power_scale)
+nereus_add_test(tst_main_power_descriptors)
+nereus_add_test(tst_main_power_meter_poller)
+nereus_add_test(tst_tx_applet_power_row)
+
+nereus_add_test(tst_accessory_readouts)
+# The Tuner Genius, Power Genius and RF2K-S panels in layout 3: the rows
+# each has, values while passing power, dashes on forward, reflected and
+# SWR when not, every row dashed for an absent device, the tuner's three
+# forward scales and the RF2K-S text line.
+nereus_add_test(tst_accessory_panels_layout3)
 # The bar gauge's scale numbers at the 96 dpi text size (7 points = 9 px):
 # drawn whole with a clear row under them, the gauge 30 px tall where the
 # scale font is 7 px (the Mac) and taller only where it is larger.
@@ -7820,11 +7972,45 @@ nereus_add_test(tst_connect_routes_first_iq)
 # Bench report 2026-07-30, second half: pans past the first did not honour the
 # display settings. A pan opening for the first time has no per-pan keys, so
 # every read fell through to the ship defaults instead of looking like the pan
-# beside it. It now inherits pan 0 until given a value of its own.
-# Touches real display keys (AppSettings has no test-path override); every key
-# is snapshotted and restored so running the suite cannot change how the
-# operator's panadapters look.
+# beside it. It now inherits the Setup default (the bare key) until given a
+# value of its own in "<base>_<N>", pan 0 included, and "Reset this pan" drops
+# those values again (display pill plan Task 1).
+# Runs in the test sandbox and clears the in-process store around every case.
 nereus_add_test(tst_pan_display_settings_inherit)
+nereus_add_test(tst_workspace_display_pill)
+
+# The helper behind that: which key is the Setup default, which is a pan's own
+# value, and when a save writes one. A save writes a pan's key only when the
+# value differs from what the pan would inherit, or when the pan already has it.
+nereus_add_test(tst_pan_display_keys)
+
+# Display pill plan Task 2: every display setter on SpectrumWidget that had
+# no change signal announces displaySettingChanged(<key base>) once per
+# change, and never from a load or a pan reset. Offscreen, test sandbox.
+nereus_add_test(tst_spectrum_widget_display_signals)
+
+# Display pill plan Task 4: NB Blank on the waterfall, a fixed grid spacing
+# and the frequency scale's text size (AetherSDR ports), and that Auto
+# spacing and 10 px text draw what they drew before. Test sandbox.
+nereus_add_test(tst_spectrum_widget_additions)
+
+# Display pill plan Task 3: the waterfall level model under Clarity (Black
+# Level and Color Gain against the noise floor, up = blacker), what the
+# renderer colours with in each mode, and the one-time conversion of stored
+# Black Level and Color Gain values. NEREUS_SOURCE_DIR lets one case read
+# main.cpp and server_main.cpp: only the window runs the conversion.
+nereus_add_test(tst_clarity_levels)
+target_compile_definitions(tst_clarity_levels PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# Display pill plan Task 8: Cal Offset as its own term. The station's receive
+# offset and the operator's Cal Offset are added, the per-frame station push
+# no longer erases the operator's value, DisplayCalOffset saves the
+# operator's value only, and the one-time reset removes the stored values
+# that held the station's. NEREUS_SOURCE_DIR as above: only the window resets.
+nereus_add_test(tst_spectrum_widget_cal_offset)
+target_compile_definitions(tst_spectrum_widget_cal_offset PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Codex review round 7, PR #293: a restored per-band sample rate has to reach
 # the DDC. SliceModel::restoreFromSettings called setSampleRateHz, a plain
@@ -8155,6 +8341,29 @@ nereus_add_test(tst_dsp_menu_active_slice)
 # and moved every flag to it, so co-hosted flags stacked on top of each other
 # and tracked whichever slice moved last. Bench-reported 2026-07-28.
 nereus_add_test(tst_pan_flag_positions)
+
+# An open overlay flyout (the Display pill, BAND, ANT, VAX, ATT) stays above
+# the pan's flags. Every placement pass raises the flags, which put a flag
+# over the open pill and gave it the pill's clicks. Bench-reported 2026-10-11.
+nereus_add_test(tst_overlay_flyout_above_flags)
+# The GPU trace's geometry, rasterized by the rule Direct3D and Metal use: a
+# noisy trace draws as one joined line at every line width, at 1x and 2x.
+# Bench-reported 2026-10-11 (Windows): the trace drew with gaps.
+nereus_add_test(tst_spectrum_trace_ribbon_coverage)
+
+# An open flyout owns the mouse over its whole rectangle: a press, drag,
+# wheel or right click on its background, a label or a disabled control does
+# not go on to the spectrum under it, and the outside click that closes it
+# on the same pan does nothing else. Bench-reported 2026-10-11.
+nereus_add_test(tst_flyout_owns_the_mouse)
+# The same rule in the native view tree: on macOS every main-window widget is
+# its own NSView, so AppKit's subview order decides which one a click
+# reaches. Objective-C++ (it asks AppKit for the order and the hit view).
+if(APPLE)
+    set_source_files_properties(tst_overlay_flyout_above_flags_native.cpp
+        PROPERTIES LANGUAGE OBJCXX SKIP_PRECOMPILE_HEADERS ON)
+    nereus_add_test(tst_overlay_flyout_above_flags_native NATIVE_WINDOW)
+endif()
 
 # Phase 3F: Qt does not constrain a plain Qt::Popup to the screen the way it
 # constrains QMenu, so the right-click waterfall panel opened below the bottom
@@ -10401,6 +10610,19 @@ if(NEREUS_GPU_SPECTRUM)
     nereus_add_test(tst_spectrum_gpu_dynamic_overlay_clear NATIVE_WINDOW EXTRA_LABELS gpu)
 endif()
 
+# ── GPU trace is drawn at its line width ─────────────────────────────────
+# The GPU path drew the live trace as a line strip, one device pixel wide
+# whatever the Line Width said. It now draws a ribbon of the line width
+# (SpectrumTraceRibbon.h); below one device pixel the ribbon stays a pixel
+# wide and its alpha carries the width. Grabs real GPU frames at 0.3, 1.0
+# and 4.0 px and compares the trace colour each holds, so it needs a native
+# window and carries the `gpu` label; skips where no QRhi comes up. The
+# geometry is checked without a GPU in tst_spectrum_widget_additions.
+# NereusSDR-original.
+if(NEREUS_GPU_SPECTRUM)
+    nereus_add_test(tst_spectrum_gpu_trace_line_width NATIVE_WINDOW EXTRA_LABELS gpu)
+endif()
+
 # ── GPU waterfall draws nothing across its ring seam ─────────────────────
 # The waterfall texture is a ring that repeats down its height, sampled
 # through a linear filter at a position that glides between rows. The glide
@@ -10449,19 +10671,16 @@ nereus_add_test(tst_dss_dbm_scale)
 # [@1872028c].
 nereus_add_test(tst_dss_slice_shadow)
 
-# ── 3D stacked-trace spectrum plan, Task 13: the 3D VIEW control section ─
-# Pins SpectrumOverlayMenu's "3D VIEW" section: the Spectrum render-mode
-# combo plus 3D Floor / 3D Gain / 3D Span / 3D Angle / 3D Slice Shadow, with
-# upstream's exact labels, ranges, defaults and tooltip wording for the five
-# ported controls and the NereusSDR-original 3D Angle slider. setDssValues
-# seeds all six widgets without echoing back out through the change
-# signals, and setDssRowSpanSupported greys out only the 3D Span row on the
-# CPU-fallback render path. The final test right-clicks a real SpectrumWidget
-# (same idiom as tst_notch_hit_test.cpp) to prove the six connect() calls in
-# SpectrumWidget.cpp reach the real Task 6 setters, not a parallel test-only
-# wiring.
-# Source: AetherSDR src/gui/SpectrumOverlayMenu.cpp:1874-1943, :2250-2273
-# [@1872028c].
+# ── Display pill plan Task 19: the trimmed right-click pan menu ──────────
+# (Was the 3D stacked-trace plan's Task 13 test of the menu's 3D VIEW
+# section; those rows are in the Display pill now.) SpectrumOverlayMenu
+# holds exactly Ref Level, Dyn Range, CTUN, "Add notch here" and
+# "Display settings..."; no scheme, gain, black, fill or 3D control or
+# signal is left; setValues seeds without emitting; the new line emits
+# displaySettingsRequested once and closes the popup. The last cases
+# right-click a real SpectrumWidget: the line emits displayPillRequested
+# and the two sliders ask for a range (bandRangeRequested) the widget does
+# not take itself.
 nereus_add_test(tst_dss_overlay_menu)
 
 # ── 3D stacked-trace spectrum plan, Task 14: persistence ─────────────────
@@ -10734,22 +10953,17 @@ nereus_add_test(tst_station_service_manager)
 # Desktop Remote Access runtime; temporary profile and logical local model only.
 nereus_add_test(tst_gui_desktop_station_runtime EXTRA_LABELS gui)
 
-# ── 3D stacked-trace spectrum plan, Task 20: right-click popup binding ───
-# Pins the popup-controls migration onto DisplaySettingsModel: all thirteen
-# SpectrumOverlayMenu change signals that have a model field connect
-# straight to the matching model setter (never to a SpectrumWidget setter
-# or a lambda touching a widget member); setValues()/setDssValues() seed
-# the popup from the model's own getters, proven by a model-driven change
-# made before the right-click; a new live-refresh path re-seeds the popup
-# from the model while it stays open, without emitting any of the popup's
-# own change signals (QSignalSpy count 0), so a popup-driven change cannot
-# bounce back out through its own controls; a popup-driven change is
-# proven to reach both the model and, through Task 18's existing binding,
-# the widget; and setDssRowSpanSupported()'s push on open (unrelated to
-# the model -- it is derived from the widget's DDC width) is unchanged.
-# NereusSDR-original: neither Thetis nor AetherSDR routes its right-click
-# display menu through a consolidating settings model, so there is no
-# upstream source to cite.
+# ── Display pill plan Task 19: the right-click menu and the band store ───
+# (Was the 3D stacked-trace plan's Task 20 test of the popup's thirteen
+# DisplaySettingsModel connections; the rows they served are in the
+# Display pill now.) On a real SpectrumWidget the popup is seeded with Ref
+# Level, Dyn Range and CTUN from the display model on open, and again
+# while open when the range changes elsewhere, without emitting. In a real
+# local MainWindow with two pans: the menu's Ref Level and Dyn Range, and
+# the dB strip's wheel and end-of-gesture signal, all reach the band store
+# for the pan's band, the pan and its pill follow, a range while keyed or
+# upside down is not taken, and "Display settings..." opens that pan's
+# pill and no other.
 nereus_add_test(tst_display_popup_binding)
 
 # ── 3D stacked-trace spectrum plan, Task 21: Setup -> Display binding ────
@@ -10772,6 +10986,8 @@ nereus_add_test(tst_display_popup_binding)
 # dialog through a consolidating display-settings model, so there is no
 # upstream source to cite.
 nereus_add_test(tst_display_setup_binding)
+nereus_add_test(tst_display_setup_assembly)
+nereus_add_test(tst_display_band_edges)
 
 # ── 3D stacked-trace spectrum plan, Task 22: DisplayApplet ───────────────
 # Pins the left-panel display-controls applet: RadioModel::
@@ -10855,6 +11071,15 @@ target_compile_definitions(tst_remote_rigctld PRIVATE NEREUS_BUILD_TESTS)
 # The GLOBAL property NEREUS_ALL_TESTS is appended to by every
 # nereus_add_test() call above.  add_custom_target then bundles them
 # into a single buildable target.
+nereus_add_test(tst_rade_waveform_model CORE_ONLY)
+nereus_add_test(tst_waveform_dispatch)
+nereus_add_test(tst_waveform_containers)
+nereus_add_test(tst_waveform_native NATIVE_WINDOW)
+nereus_add_test(tst_waveform_meter)
+nereus_add_test(tst_waveform_remote_model CORE_ONLY)
+nereus_add_test(tst_waveform_codec CORE_ONLY)
+nereus_add_test(tst_waveform_publisher CORE_ONLY)
+nereus_add_test(tst_waveform_history CORE_ONLY)
 nereus_add_test(tst_container_content_host)
 nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
 

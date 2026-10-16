@@ -75,6 +75,7 @@ struct SpectrumPlaneRequest {
     SpectrumDetectorMode detector {SpectrumDetectorMode::Peak};
     int averageMode {0};
     double averageAlpha {0.12};
+    int averageFrames {SpectrumAvenger::kMinWindowFrames};
 };
 
 struct SpectrumEndpointRequest {

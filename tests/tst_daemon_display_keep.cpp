@@ -16,6 +16,11 @@
 // Modification history (NereusSDR):
 //   2026-10-10  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-11  J.J. Boyd / KG4VCF  A new picture on the same receiver
+//                                    keeps its waterfall levels and noise
+//                                    floor; another receiver carries
+//                                    nothing. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -159,6 +164,10 @@ struct Harness {
     DaemonMediaController controller;
     int sliceId{-1};
     int streamIndex{-1};
+    // A second receiver, 40 dB quieter than the first, fed once it is added
+    // (addSecondReceiver).
+    int secondSliceId{-1};
+    int secondStreamIndex{-1};
     std::minstd_rand noise{20261010U};
     // The decoder of the context now being sent, and everything decoded.
     DisplayCodecDecoder decoder;
@@ -218,6 +227,25 @@ struct Harness {
             client.sessionEpoch());
     }
 
+    bool addSecondReceiver()
+    {
+        // A slice on another pan and another band has a stream of its own.
+        secondSliceId = radio.addSlice(QStringLiteral("pan-1"));
+        SliceModel* const slice = radio.sliceById(secondSliceId);
+        if (slice) { slice->setFrequency(7150000.0); }
+        secondStreamIndex = slice ? slice->streamIndex() : -1;
+        return secondStreamIndex >= 0 && secondStreamIndex != streamIndex;
+    }
+
+    // The same endpoint, asked for on the second receiver.
+    bool askOnSecondReceiver(int revision, double minDbm, double maxDbm, double spanHz)
+    {
+        return client.sendMediaControl(
+            subscription(secondSliceId, radio.streamCentreHz(secondStreamIndex), revision,
+                         minDbm, maxDbm, spanHz),
+            client.sessionEpoch());
+    }
+
     // The receiver's samples: steady noise, so the picture has a floor.
     void feed()
     {
@@ -226,6 +254,12 @@ struct Harness {
         for (float& value : iq) { value = sample(noise); }
         QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
                                   Q_ARG(int, streamIndex), Q_ARG(QVector<float>, iq));
+        if (secondStreamIndex >= 0) {
+            for (float& value : iq) { value *= 0.01f; }
+            QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
+                                      Q_ARG(int, secondStreamIndex),
+                                      Q_ARG(QVector<float>, iq));
+        }
     }
 
     // Decodes what the Core has sent since the last call.
@@ -351,6 +385,118 @@ private slots:
                                            "one").arg(fell)));
         QVERIFY2(!restarted.firstExtras->peakHoldDbm.has_value(),
                  "a new picture kept the old picture's peak hold");
+        h.finish();
+    }
+
+    // The merge of main joined two rules in DaemonMediaController: main's
+    // (the same picture keeps its processor) and this branch's (a display
+    // asked again on the same receiver keeps its levels). Together: a new
+    // picture on the same receiver gets a new processor that adopts the old
+    // one's waterfall levels and noise floor, and starts the blobs and the
+    // peak hold again; the same picture keeps everything; another receiver
+    // carries nothing.
+    void aNewPictureOnTheSameReceiverKeepsItsLevelsAndAnotherReceiverCarriesNothing()
+    {
+#ifndef HAVE_FFTW3
+        QSKIP("FFTEngine has no FFTW3 backend in this build");
+#endif
+        Harness h;
+        QVERIFY(h.addSecondReceiver());
+        QVERIFY(h.start());
+        const double span = 48000.0;
+        QVERIFY(h.ask(1, -180.0, 0.0, span));
+        QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+        const auto settledOn = [&h](int contexts) {
+            if (h.generations.size() != contexts) { return false; }
+            const Seen& last = h.seen[h.generations.last()];
+            return last.frames >= 150 && last.lastExtras && last.lastExtras->peakHoldDbm
+                && last.lastExtras->waterfallLevelsDbm && last.lastExtras->noiseFloorDbm
+                && last.lastExtras->peakBlobs;
+        };
+        const auto firstExtrasOf = [&h](int contexts) {
+            return h.generations.size() == contexts && h.seen[h.generations.last()].firstExtras;
+        };
+        QVERIFY(h.run([&] { return settledOn(1); }));
+        const Seen settled = h.seen[h.generations.last()];
+        const std::pair<float, float> levels = *settled.lastExtras->waterfallLevelsDbm;
+        const float floor = *settled.lastExtras->noiseFloorDbm;
+        const DisplayExtrasProcessor* const first = h.controller.displayExtrasForTest(kEndpoint);
+        QVERIFY(first);
+        QVERIFY(first->agcRunLevel().has_value());
+
+        // A zoom: half the span on the same receiver. A new picture.
+        QVERIFY(h.ask(2, -180.0, 0.0, span / 2.0));
+        QVERIFY(h.run([&] { return firstExtrasOf(2); }));
+        const Seen zoomed = h.seen[h.generations.last()];
+        // The picture did start again: the first trace is far under the
+        // settled one, so levels made from it alone would be far lower too.
+        QVERIFY(mean(settled.lastTrace) - mean(zoomed.firstTrace) > 10.0);
+        // The levels and the noise floor carry on. The AGC takes a
+        // twentieth of the way to each new row, and the first row of the
+        // new picture is some 60 dB down, so the carried low level is about
+        // 3 dB lower on the first frame; one started again would be some
+        // 60 dB lower.
+        QVERIFY(zoomed.firstExtras->waterfallLevelsDbm.has_value());
+        QVERIFY2(std::abs(zoomed.firstExtras->waterfallLevelsDbm->first - levels.first) <= 10.0f,
+                 qPrintable(QStringLiteral("the low level went from %1 to %2 on a zoom")
+                                .arg(levels.first)
+                                .arg(zoomed.firstExtras->waterfallLevelsDbm->first)));
+        QCOMPARE(zoomed.firstExtras->waterfallLevelsDbm->second, levels.second);
+        QVERIFY2(zoomed.firstExtras->noiseFloorDbm.has_value(),
+                 "the noise floor started again on a zoom");
+        QVERIFY2(std::abs(*zoomed.firstExtras->noiseFloorDbm - floor) <= 3.0f,
+                 qPrintable(QStringLiteral("the noise floor went from %1 to %2 on a zoom")
+                                .arg(floor).arg(*zoomed.firstExtras->noiseFloorDbm)));
+        // The blobs and the peak hold start again, in a new processor.
+        QVERIFY2(!zoomed.firstExtras->peakHoldDbm.has_value(),
+                 "a new picture kept the old picture's peak hold");
+        // Steady noise has no peaks to find, so the blobs are proved by
+        // their processor: it is a new one, and its detector with it.
+        const DisplayExtrasProcessor* const second = h.controller.displayExtrasForTest(kEndpoint);
+        QVERIFY(second);
+        QVERIFY(second != first);
+
+        // The zoomed picture settles; then the same picture is asked again
+        // for another dBm range: main's rule, everything stays.
+        QVERIFY(h.run([&] { return settledOn(2); }));
+        const Seen zoomSettled = h.seen[h.generations.last()];
+        const std::pair<float, float> zoomLevels = *zoomSettled.lastExtras->waterfallLevelsDbm;
+        QVERIFY(h.ask(3, -170.0, 10.0, span / 2.0));
+        QVERIFY(h.run([&] { return firstExtrasOf(3); }));
+        const Seen kept = h.seen[h.generations.last()];
+        QCOMPARE(h.controller.displayExtrasForTest(kEndpoint), second);
+        QVERIFY2(kept.firstExtras->peakHoldDbm.has_value(),
+                 "the peak hold was emptied by a new dBm range");
+        QVERIFY(kept.firstExtras->peakBlobs.has_value());
+        QVERIFY(kept.firstExtras->waterfallLevelsDbm.has_value());
+        QVERIFY(std::abs(kept.firstExtras->waterfallLevelsDbm->first - zoomLevels.first) <= 1.0f);
+        QVERIFY(meanDifference(kept.firstTrace, zoomSettled.lastTrace) <= 1.0);
+
+        // The endpoint asked for on the second receiver, 40 dB quieter:
+        // nothing of the first receiver's comes with it.
+        QVERIFY(h.run([&] { return settledOn(3); }));
+        const std::pair<float, float> before =
+            *h.seen[h.generations.last()].lastExtras->waterfallLevelsDbm;
+        const float floorBefore = *h.seen[h.generations.last()].lastExtras->noiseFloorDbm;
+        QVERIFY(h.askOnSecondReceiver(4, -170.0, 10.0, span / 2.0));
+        QVERIFY(h.run([&] { return firstExtrasOf(4); }));
+        const Seen other = h.seen[h.generations.last()];
+        const DisplayExtrasProcessor* const third = h.controller.displayExtrasForTest(kEndpoint);
+        QVERIFY(third);
+        QVERIFY(third != second);
+        QVERIFY(!other.firstExtras->peakHoldDbm.has_value());
+        QVERIFY(other.firstExtras->waterfallLevelsDbm.has_value());
+        QVERIFY2(other.firstExtras->waterfallLevelsDbm->first < before.first - 20.0f,
+                 qPrintable(QStringLiteral("the first receiver's low level %1 came to the "
+                                           "second receiver (%2)")
+                                .arg(before.first)
+                                .arg(other.firstExtras->waterfallLevelsDbm->first)));
+        if (other.firstExtras->noiseFloorDbm) {
+            QVERIFY2(*other.firstExtras->noiseFloorDbm < floorBefore - 20.0f,
+                     qPrintable(QStringLiteral("the first receiver's noise floor %1 came to "
+                                               "the second receiver (%2)")
+                                    .arg(floorBefore).arg(*other.firstExtras->noiseFloorDbm)));
+        }
         h.finish();
     }
 };

@@ -200,7 +200,7 @@ struct DisplayMoreTests {
         rig.main.changeDisplay { $0.clarityEnabled = true }
         now += 1
         let payload: [String: LinkJSON] = ["op": .string("noise-floor"), "connectionId": .string("c"),
-                                           "endpointId": .number(1), "revision": .number(1),
+                                           "endpointId": .number(1), "revision": .number(2),
                                            "contextGeneration": .number(1), "floorDbm": .number(-110)]
         band.receive(.noiseFloor(try #require(MediaControlDecoder.noiseFloor(payload))))
         #expect(band.drawnSettings.scaleRange.lowerBound == -115)
@@ -308,13 +308,13 @@ struct DisplayMoreTests {
         page.copyLevelsToScale()
         #expect(band.settings.scaleTopDbm == -60 && band.settings.scaleBottomDbm == -110)
         page.addCustomStop()
-        #expect(band.settings.customPalette.count == PaletteStop.customDefault.count + 1)
+        #expect(band.settings.customPalette.count == BandDisplaySettings.desktopDefaults.customPalette.count + 1)
         rig.main.display.selectPalette(BandPalette.customPaletteId)
         #expect(rig.main.display.paletteName == BandPalette.customPaletteName)
         page.change { $0.showFps = true }
         page.resetDisplay()
         #expect(!band.settings.showFps)
-        #expect(band.settings.customPalette == PaletteStop.customDefault)
+        #expect(band.settings.customPalette == BandDisplaySettings.desktopDefaults.customPalette)
         #expect(band.settings.scaleTopDbm == -60)
         #expect(DisplayOnThisPhonePage.resetTitle == "Reset to defaults")
         // The new words are plain and promise nothing to come.

@@ -9,6 +9,8 @@
 //   NereusSDR is also GPLv3. Attribution follows GPLv3 section 5 requirements.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Add explicit display marker/top scale by J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-19  Ported in C++20/Qt6 for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted transformation via Anthropic Claude Code.
 //                 Layout from AetherSDR src/gui/SMeterWidget.{h,cpp} [@0cd4559].
@@ -315,6 +317,8 @@ public slots:
     // Set TX power gauge scale: barefoot (120W), Aurora (600W), amplifier (2000W).
     // From AetherSDR src/gui/SMeterWidget.h:54 [@0cd4559]
     void setPowerScale(int maxWatts, bool hasAmplifier);
+    // Display geometry only; no transmit or hardware limit is changed.
+    void setPowerDisplayScale(double legalMarkerW, double scaleTopW);
 
     // Peak hold configuration.
     // From AetherSDR src/gui/SMeterWidget.h:57-61 [@0cd4559]

@@ -15,6 +15,20 @@
 //   2026-10-14: Follow window moves with the existing toast anchor and add
 //               access-only display regression friendship. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
+//   2026-10-11 - J.J. Boyd (KG4VCF). Follow-up wave F6:
+//                dispatchFftFrameToPans takes the frame's input generation.
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 18:
+//                applyDisplayFps, applyDisplayFftWindow,
+//                applyDisplayHzPerBinTarget, applyDisplayDecimation and the
+//                refreshDisplayPill* set. AI-assisted via Anthropic Claude
+//                Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 13:
+//                wireDisplayKeyEdges, refreshLocalFftShapes. AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-10 - J.J. Boyd (KG4VCF). Display pill plan Task 7:
+//                replanFftForStream, replanFftForPan, applyFftBaseline.
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
 //                 is built by one function the visual preview can call.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -241,6 +255,7 @@
 // QObject parent to own it through, unlike the pointer members this header
 // otherwise forward-declares), so the complete type is needed here rather
 // than just in MainWindow.cpp.
+#include "core/ControlRanges.h"
 #include "core/spectrum/FftTopology.h"
 // Remote-daemon R2 Task 20: by value in the constructor overload and in
 // m_station below, so it cannot be forward-declared.
@@ -286,6 +301,8 @@ class PanadapterModel;
 class PanadapterStack;
 class ClarityController;
 class PanClarityRegistry;
+class PanModels;
+struct DisplayPillFftState;
 class ContainerManager;
 class EdgeDockArea;
 class ProfileRail;
@@ -394,6 +411,62 @@ public:
     void setDesktopStationController(DesktopStationController* controller);
     void refreshDesktopStationState();
     FftEnginePool* fftEnginePoolForTest() const { return m_fftEnginePool; }
+    // Display pill plan Task 9: the window's per-band pan models.
+    PanModels* panModels() const { return m_panModels; }
+
+    /// Display pill plan Task 7 (R-DSP-30): sizes stream `streamIndex`'s
+    /// FFT engine for the pans that show it. Each pan plans
+    /// ControlRanges::planAutoZoomFft from the engine's baseline and Hz/bin
+    /// target and its own widget's sample rate and span; the engine gets
+    /// the largest of those plans, unless that is within [0.66, 1.5] of the
+    /// size it runs. Every pan's zoom calls it (ensureOverlayPanels). Does
+    /// nothing for a stream with no engine or no pan.
+    void replanFftForStream(int streamIndex);
+
+    /// The FFT Size control's choice: saves DisplayFftSize. In the Fixed
+    /// sizing mode every stream then runs exactly `size` (now and for
+    /// engines made later); in Auto and Hz/bin the stored size plays no part
+    /// and nothing that runs changes (design D38). A size that is not one of
+    /// the control's seven (4096 to 262144) changes nothing.
+    void applyFftBaseline(int size);
+
+    /// The Sizing control's choice, for every stream and every pan (design
+    /// D38, D39): saves DisplayFftSizingMode (and DisplayHzPerBinTarget as
+    /// an older client reads it: the target in HzPerBin, 0 otherwise), gives
+    /// the mode to the engine pool, replans every stream, sets the FFT size
+    /// offset for the mode and restarts each noise-floor tracker's fast
+    /// attack once (R-DSP-67), then brings every pill and an open Setup up
+    /// to date. Entering HzPerBin restores the remembered target; with none
+    /// remembered it starts from `hzPerBinIfNoneRemembered`, or, when that
+    /// is not above 0, from the bin width the active pan runs now
+    /// (ControlRanges::hzPerBinTargetForBinWidth). A station that cannot be
+    /// reached changes nothing. In a remote window the keys go to the Core
+    /// and the pan requests follow on their own.
+    void applyDisplayFftSizingMode(ControlRanges::DisplayFftSizingMode mode,
+                                   double hzPerBinIfNoneRemembered = 0.0);
+
+    /// Display pill plan Task 18 (D25, D26): the station's other FFT
+    /// settings, each for every stream and every pan. Like
+    /// applyFftBaseline, each gives the value to the engine pool (engines
+    /// running now and made later), saves the station key once, and brings
+    /// every pan's Display pill up to date. A value out of range, or a
+    /// station that cannot be reached, changes nothing. In a remote window
+    /// the key goes to the Core and the pan requests follow on their own.
+    /// Frames per second, also every pan's own drawing rate.
+    void applyDisplayFps(int fps);
+    /// A ControlRanges::kDisplayFftWindows value.
+    void applyDisplayFftWindow(int windowType);
+    /// The Hz/bin control's value, through the sizing mode: above 0 sets
+    /// the mode HzPerBin with that target; 0 sets Auto (a Fixed mode is left
+    /// alone, as the Core's rule for an older client leaves it). Replans
+    /// every stream.
+    void applyDisplayHzPerBinTarget(double hz);
+    /// 1 to 16. It has no saved key (it is the engines' own), and a remote
+    /// window's Core must offer it.
+    void applyDisplayDecimation(int decimation);
+    /// Every pan's pill shows the station's FFT settings as they stand.
+    /// Call it after changing one from anywhere else.
+    void refreshDisplayPillFftStates();
     int miniProducerCountForTest() const { return int(m_miniProducers.size()); }
     // Slice control plan Task 15 fix round 1: drops the hosting slice
     // requests so a test reaches selectSliceForWindow's fallback path.
@@ -413,6 +486,13 @@ signals:
     void connectionsRequested();
     void hostedInitialConnectionRequested();
     void setupDialogCreated(NereusSDR::SetupDialog* dialog);
+    /// One of the station's FFT settings took a new value through this
+    /// window (applyFftBaseline, applyDisplayFps, applyDisplayFftWindow,
+    /// applyDisplayHzPerBinTarget, applyDisplayDecimation) or, in a remote
+    /// window, arrived from the Core. An open Setup dialog shows its FFT
+    /// rows again from it. Emitted on the GUI thread, after the value is in
+    /// place.
+    void stationFftSettingsChanged();
 
 public:
     // Workspace preview only: the profile rail, collapsed to the active
@@ -646,7 +726,8 @@ private slots:
 
     /// Parity Task 18: the Display flyout and the Clarity Re-tune of one
     /// pan's strip act on that pan's own display (they were wired on
-    /// pan-0's strip only).
+    /// pan-0's strip only). Display pill plan Task 18: it builds the pan's
+    /// DisplayPillHooks and hands them to wireDisplayPill.
     void wirePanDisplayFlyout(class SpectrumOverlayPanel* panel,
                               class SpectrumWidget* sw, const QString& panId);
     void reconcileClarityBindings();
@@ -743,6 +824,10 @@ private slots:
     /// wireSpectrumSliceControls below, because pan-0 needs those and does not
     /// come through here.
     void wireSpectrumForPan(class SpectrumWidget* sw, const QString& panId);
+
+    /// replanFftForStream() for every stream `panId` shows; what a zoom on
+    /// that pan runs.
+    void replanFftForPan(const QString& panId);
 
     /// Wire the four spectrum controls that act on a slice: click-to-tune,
     /// filter-edge drag, pan drag, CTUN toggle.
@@ -1085,15 +1170,19 @@ private slots:
     /// Phase 3F Sub-Epic I Task 8: fan one stream's FFT frame out to every
     /// pan subscribed to it. Connected to every pooled FFTEngine's
     /// fftReadyLinear; the streamIndex argument is the engine's receiver id.
+    /// inputGeneration is the generation of the last FFT input purge
+    /// before the frame's samples (FftEnginePool::inputGeneration).
     void dispatchFftFrameToPans(int streamIndex,
                                 const QVector<float>& binsLinear,
                                 double windowEnb,
-                                double dbmOffset);
+                                double dbmOffset,
+                                quint64 inputGeneration);
     /// R-R3-46 / R-R3-11: every pan's receive offset from the ADC of the
     /// stream it shows (slice A's for a pan fed nothing yet).
     void pushSpectrumCalToPans();
 
 private:
+    friend class ImdPanelTestAccess;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
     friend class DisplaySettingsCorrectnessAccess;
@@ -1188,6 +1277,15 @@ private:
     /// FftEnginePool is only forward-declared here (m_fftEnginePool is a
     /// pointer member), and calling a method on it needs the complete type.
     FFTEngine* primaryFftEngine() const;
+
+    /// Gives the engine pool the station's FFT sizing as stored
+    /// (readDisplayFftSizing): the mode, the size its control chose and the
+    /// target in force. With `replan`, every stream is then replanned (a
+    /// local window); without, the pool alone follows (a remote window,
+    /// whose engines are idle). The one place a mode, size or target change
+    /// reaches the engines, so the FFT size offset and the fast attack
+    /// follow each of them.
+    void applyFftSizingFromSettings(bool replan);
 
     /// Fix round 1 finding 1 (coordinator spec review): re-reads the four
     /// display AppSettings keys (DisplaySpectrumFps / DisplayFftSize /
@@ -1675,6 +1773,36 @@ private:
     QPointer<QAction> m_displayDuplexAction;
     void setDisplayDuplexSetting(bool on);
     void applyDisplayDuplex();
+    void wireImdMeasurementForwarding();
+    void refreshImdMeasurementForwarding();
+    void onImdPureSignalStatusChanged();
+    void setImdMeasurementsShown(bool shown);
+    void hideImdMeasurements();
+    void enableImdDisplayDuplex();
+    void refreshImdRailControls();
+    QPointer<class PureSignalSessionFacade> m_imdObservedFacade;
+    bool m_imdStatusBaselineKnown{false};
+    bool m_imdLastCorrectionsApplied{false};
+    // Display pill plan Task 13: what a key edge does beyond m_moxDisplay's
+    // own pans. wireDisplayKeyEdges gives m_moxDisplay each pan's band and
+    // purges every FFT engine's input on keyedChanged; called wherever
+    // m_moxDisplay is made. refreshLocalFftShapes gives each pan of a
+    // window running its own FFT the size, decimation and rate of the
+    // engine it shows (SpectrumWidget::setLocalFftShape), the longest hold
+    // when it shows several; it does nothing in a window with no engines.
+    void wireDisplayKeyEdges();
+    void refreshLocalFftShapes();
+    // Display pill plan Task 18: what each pan's Display pill is told.
+    // displayPillFftState is the station's FFT settings with that pan's
+    // running size and rate. refreshDisplayPillStationGates tells every
+    // pill whether the station's rows can be changed and whether this is a
+    // remote window whose Core offers Decimation. refreshDisplayPillBandGrid
+    // gives one pill the band its pan is on and that band's stored dB Max
+    // and Min. Clarity's state is not here: PanClarityRegistry tells each
+    // pill that.
+    DisplayPillFftState displayPillFftState(const QString& panId) const;
+    void refreshDisplayPillStationGates();
+    void refreshDisplayPillBandGrid(const QString& panId);
     std::unique_ptr<class LocalTxDisplaySource> m_localTxDisplaySource;
     std::unique_ptr<class RemoteTxDisplaySource> m_remoteTxDisplaySource;
 
@@ -1702,6 +1830,9 @@ private:
     /// routing pass moves a pan only when its own slice's stream changed.
     QHash<QString, int> m_panShownStream;
     PanClarityRegistry* m_clarityRegistry{nullptr};
+    // Display pill plan Task 9: one per-band PanadapterModel for each of
+    // this window's pans (not RadioModel::panadapters()).
+    PanModels* m_panModels{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the
     /// bottom status bar. Shown only on 2-ADC SKUs. Registered with
@@ -1835,10 +1966,10 @@ private:
     /// the status-bar light and this item never disagree.
     QAction*      m_tnfAction = nullptr;
 
-    // Mode menu actions (14 modes: 12 Thetis + NereusSDR-native
-    // RADE-U / RADE-L from Phase 3R L3; mutual exclusion via
-    // QActionGroup).
-    QAction*      m_modeActions[14]  = {};
+    // Mode menu actions (16 modes: 12 Thetis + NereusSDR-native
+    // RADE-U / RADE-L from Phase 3R L3 + experimental RADE2-U / RADE2-L;
+    // mutual exclusion via QActionGroup).
+    QAction*      m_modeActions[16]  = {};
     QActionGroup* m_modeActionGroup  = nullptr;
 
     // AGC menu action group (Task 12)

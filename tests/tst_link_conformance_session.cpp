@@ -292,6 +292,11 @@
 //               Core's rotor sees no serial ports and no rotctld, so the
 //               rotor object reads the same on every machine.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: The connectable station sets the receive block size,
+//               filter size and filter type its readings were recorded
+//               with, now that a receiver takes its DSP > Options values
+//               when it is bound to its slice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -516,6 +521,29 @@ QString buildStation(const QJsonObject& setup, Station* station, quint16 major)
     if (radio == QStringLiteral("connectable")) {
         // Load findings 4: the fake radio does not stream on its own; the
         // runner feeds the receiver's first block below (buildStation).
+        // That holds the readings still only while a block is far longer
+        // than the frames that keep the link alive, and the fixture's
+        // readings are one block's, so they are the filter's as well. A
+        // receiver takes its DSP > Options values when it is bound to its
+        // slice (RadioModel, as Thetis SyncDSP does): a 64-sample block
+        // and a Low Latency filter unless set. With those the first block
+        // is about four of the fake's frames, read before the tone is
+        // through the filter (-237.6 dBm where the fixture holds -82.7),
+        // and a block would complete every few keep-alive frames and move
+        // the readings under the script. So this station states the
+        // conditions its readings were recorded with, the ones WDSP opens
+        // a channel in: a 4096-sample block, a 4096 filter, linear phase.
+        // The page offers blocks of 64 to 1024; the channel takes any size
+        // up to its filter size (RxChannel::setDspBufferSizeSamples).
+        // Every mode group, so a mode change in a script keeps them.
+        for (const char* const group : {"Phone", "Fm", "Cw", "Dig"}) {
+            const QString mode = QLatin1String(group) + QStringLiteral("Rx");
+            AppSettings& settings = AppSettings::instance();
+            settings.setValue(QStringLiteral("DspOptionsBufferSize") + mode, QStringLiteral("4096"));
+            settings.setValue(QStringLiteral("DspOptionsFilterSize") + mode, QStringLiteral("4096"));
+            settings.setValue(QStringLiteral("DspOptionsFilterType") + mode,
+                              QStringLiteral("Linear Phase"));
+        }
         station->harness = ConnectableRadioModel::create(
             10000, RadioModel::Role::Local, {}, HPSDRHW::HermesLite, /*stream=*/false);
         if (!station->harness) {
