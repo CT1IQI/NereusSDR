@@ -170,6 +170,10 @@
 //                inputs, sent at once while running, and byte 1400 bit 1 from
 //                speakerAmplifierOff in buildCodecContext. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - applyDdcAssignment's log line names the rate of DDC4 to
+//                DDC6 too, the receivers that host a third to fifth stream.
+//                Log text only. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-14 - TxIqNativeDest and fillTxIqNativeDest moved unchanged to
 //                TxIqNativeDest.h, shared with the Protocol 1 EP2 sender.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
@@ -3456,6 +3460,12 @@ void P2RadioConnection::applyDdcAssignment(const DdcAssignment& a)
                              << "rate[1]=" << a.rate[1]
                              << "rate[2]=" << a.rate[2]
                              << "rate[3]=" << a.rate[3]
+                             // DDC4 to DDC6 host the third to fifth
+                             // streams; their rates go on the wire above
+                             // and belong in this line as well.
+                             << "rate[4]=" << a.rate[4]
+                             << "rate[5]=" << a.rate[5]
+                             << "rate[6]=" << a.rate[6]
                              << "nDdc=" << a.nDdc
                              << "psFwdDdc=" << m_psFbDdc
                              << "psRevDdc=" << m_psTxMonDdc;
