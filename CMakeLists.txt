@@ -1847,6 +1847,12 @@ set(GUI_SOURCES
     src/gui/PanLayoutDialog.cpp
     src/gui/ImdOverlay.h
     src/gui/ImdOverlay.cpp
+    src/gui/ImdMeasurementFrame.h
+    src/gui/ImdMeasurementPresenter.h
+    src/gui/ImdMeasurementPanel.cpp
+    src/gui/ImdMeasurementPresenter.cpp
+    src/gui/ImdWaterfallAnnotations.h
+    src/gui/ImdWaterfallAnnotations.cpp
     src/gui/dbm_strip_math.cpp
     src/gui/popup_placement.cpp
     src/gui/SpectrumOverlayMenu.cpp

@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: GUI cached IMD frame API.
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Test-only friend for visible-plane IMD integration evidence.
 //   2026-10-12 - Track the approved workspace text minimum in paint caches.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
@@ -316,6 +319,8 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+#include "gui/ImdMeasurementPresenter.h"
+#include "gui/ImdWaterfallAnnotations.h"
 #include "gui/RemoteSpectrumCapture.h"
 #include "gui/NereusGuiExport.h"
 
@@ -387,6 +392,7 @@ class RemoteMediaController;
 class SpectrumOverlayMenu;
 class VfoWidget;
 class ImdOverlay;  // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core
+class ImdSpectrumTestAccess;
 class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 struct SpectrumEndpointContext;
 class DisplaySettingsModel;  // src/models/DisplaySettingsModel.h (3D Stacked-Trace Spectrum Plan Task 18)
@@ -591,7 +597,8 @@ public:
     RemoteContextPicture remoteContextPicture() const { return m_remoteContextPicture; }
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame);
     bool updateRemoteSpectrum(const DisplayCodecFrame& frame,
-                              const NereusSDR::RemoteSpectrumCapture& capture);
+                              const NereusSDR::RemoteSpectrumCapture& capture,
+                              bool measurementCurrent = true);
     /// R-R3-21 / R-R3-08: one remote waterfall row, captured at centreHz and
     /// spanHz, queued for the ticker without touching the trace: a gap row
     /// (blended or repeated) or a row presented after its pan was tuned. It
@@ -1109,6 +1116,16 @@ public:
     void pushWaterfallRowForTest(const QVector<float>& wfPixelsDbm) {
         pushWaterfallRow(wfPixelsDbm);
     }
+    void pushImdReceiverRowForTest(const QVector<float>& wfPixelsDbm) {
+        pushWaterfallRow(wfPixelsDbm, true, ++m_imdAcceptedFrameOrdinal);
+    }
+    const ImdWaterfallAnnotations& imdWaterfallAnnotationsForTest() const {
+        return m_imdWaterfallAnnotations;
+    }
+    quint64 waterfallRowSequenceForTest() const { return m_wfNextRowSequence; }
+    std::optional<qreal> imdEventYForTest(quint64 sequence, qreal glideRows = 0.0) const {
+        return imdEventY(sequence, glideRows);
+    }
     void setTxActiveForTest(bool on) { m_txActiveForTest = on; }
     int  dssRowsPushedForTest() const { return m_dssRowsPushed; }
     // The receiver whose frame this pan took last (-1 before the first).
@@ -1611,6 +1628,17 @@ public slots:
     void setTestingIMD(bool on);
     void setShowIMDMeasurements(bool on);
     void setDisplayDuplex(bool on);
+    const ImdMeasurementFrame& imdMeasurementFrame() const;
+    void setImdInspectorVisible(bool visible);
+    void setImdGuidesVisible(bool visible);
+    bool imdInspectorVisible() const { return m_imdInspectorVisible; }
+    bool imdGuidesVisible() const { return m_imdGuidesVisible; }
+    ImdProduct imdSelectedProduct() const { return m_imdSelectedProduct; }
+    void setImdSelectedProduct(ImdProduct product);
+    void queueImdCorrectionEdge(bool correctionsApplied);
+    // A remote keyframe wait means the previously accepted receiver frame
+    // is no longer a current measurement, even while its picture is held.
+    void noteImdReceiverInputLost();
 
     // ---- TX filter overlay (Plan 4 D9, Cluster E) ----
 
@@ -2375,6 +2403,8 @@ public:
     int displaySettingsApplyCountForTest() const { return m_displaySettingsApplyCount; }
 
 signals:
+    void imdMeasurementChanged(const ImdMeasurementFrame& frame);
+    void imdPresentationChanged();
     /// receiverFlagRegion() changed: a flag moved, folded, opened, showed or
     /// hid.
     void receiverFlagRegionChanged();
@@ -2718,10 +2748,12 @@ private:
     void  rebuildWaterfallViewport();
     void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
     void  setWaterfallLive(bool live);
-    void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs);
+    void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
+                           bool imdEligible = false, quint64 acceptedOrdinal = 0);
     int   waterfallHistoryCapacityRows() const;
     int   maxWaterfallHistoryOffsetRows() const;
     int   historyRowIndexForAge(int ageRows) const;
+    std::optional<qreal> imdEventY(quint64 sequence, qreal glideRows) const;
     QString pausedTimeLabelForAge(int ageRows) const;
     void  reprojectWaterfall(double oldCenterHz, double oldBandwidthHz,
                              double newCenterHz, double newBandwidthHz);
@@ -2838,10 +2870,15 @@ private:
     // From Thetis display.cs:5008 [v2.10.3.13]:
     //   show_imd_measurements = local_mox && _testing_imd
     //                           && _show_imd_measurements && displayduplex;
-    // Renders peak markers + readout box driven by ImdOverlay state.
+    // Renders cached product markers/guides; ImdMeasurementPanel owns the numerical chrome.
     // Called from paintEvent (CPU path) and from the GPU overlay rebuild
-    // (live, uncached because spectrum changes every frame).
+    // (painting consumes the accepted measurement frame).
     void drawImdOverlay(QPainter& p, const QRect& specRect);
+    ImdInputContext imdInputContext(quint64 sequence, bool sourceEligible) const;
+    void acceptImdVisibleSpectrum(quint64 sequence, bool sourceEligible);
+    void invalidateImdMeasurement();
+    qint64 imdFreshnessTimeoutMs() const;
+    void checkImdFreshness(qint64 nowMs);
 
     // Shared audio→IQ-space conversion used by both draw methods.
     // Returns {iqLowHz, iqHighHz} signed offsets from the VFO center.
@@ -2889,7 +2926,8 @@ private:
     // detector + avenger have run.  Inner AGC + NF-AGC + threshold compute
     // operate on display pixels per Thetis Display.cs:6713-6738
     // [v2.10.3.13] (waterfall_data[i] indexed by pixel).
-    void   pushWaterfallRow(const QVector<float>& wfPixelsDbm);
+    void   pushWaterfallRow(const QVector<float>& wfPixelsDbm, bool imdEligible = false,
+                            quint64 acceptedOrdinal = 0);
     QRgb   dbmToRgb(float dbm) const;
     void traceWaterfallState(const QVector<float>& calibratedPixelsDbm,
                              const QRgb* scanline, int width, qint64 rowTimeMs);
@@ -2989,6 +3027,8 @@ private:
     // From AetherSDR SpectrumWidget.h:493-502 [@0cd4559]
     QImage          m_waterfallHistory;            // RGB32 ring buffer
     QVector<qint64> m_wfHistoryTimestamps;         // parallel; per-row wall-clock ms
+    QVector<quint64> m_wfHistorySequences;         // parallel accepted-row identities
+    quint64 m_wfNextRowSequence{0};
     struct WaterfallRowWindow {
         double centerHz{0.0};
         double bandwidthHz{0.0};
@@ -3202,6 +3242,7 @@ private:
         double spanHz{0.0};
         NereusSDR::RemoteSpectrumCapture capture;
         WaterfallRowDiagnostics diagnostics;
+        quint64 imdAcceptedOrdinal{0};
     };
     QList<RemoteWaterfallRow> m_remoteRowQueue;
     quint64 m_remoteRowsDropped{0};
@@ -3353,6 +3394,7 @@ private:
     // bench session.
     QVector<float>     m_pendingWfPixelsDbm;
     bool               m_pendingWfPixelsDbmDirty{false};
+    quint64            m_pendingWfImdAcceptedOrdinal{0};
     QThread*           m_waterfallTickerThread{nullptr};
     WaterfallTicker*   m_waterfallTicker{nullptr};
 
@@ -3919,8 +3961,7 @@ private:
     // ---- Two-tone IMD overlay state (Phase 3M-4 Task 12) ----
     // From Thetis display.cs:5008 [v2.10.3.13] show condition. Owns an
     // ImdOverlay analytical core (peak detection + EMA + readout) that
-    // is invoked from drawImdOverlay() each paint cycle when all four
-    // flags below are true.
+    // analyzes accepted display planes once; painting reads its cached frame.
     bool m_testingIMD{false};            // Display.TestingIMD mirror
     bool m_showIMDMeasurements{false};   // Display.ShowIMDMeasurments mirror
     // Parity Task 31 (A11): display duplex, false by default as Thetis's
@@ -3935,11 +3976,30 @@ private:
     float m_txDisplayCalOffsetDb{0.0f};
     // Thetis rx1_preamp_offset (RadioModel::rxPreampOffsetDb).
     float m_rxPreampOffsetDb{0.0f};
-    // Allocated in the constructor (init list) so the include stays in
-    // the .cpp.  std::unique_ptr would require pulling ImdOverlay.h into
-    // the header.  Raw pointer with QObject parenting is the established
-    // pattern for SpectrumWidget owned helpers.
-    ImdOverlay* m_imdOverlay{nullptr};
+    // The presenter owns the legacy helper; this alias retains existing
+    // reset/format semantics without allocating another EMA state.
+    ImdMeasurementPresenter m_imdPresenter;
+    ImdOverlay* m_imdOverlay{nullptr}; // Non-owning alias of the presenter's legacy helper.
+    quint64 m_imdContextRevision{0};
+    ImdWaterfallAnnotations m_imdWaterfallAnnotations;
+    struct PendingImdCorrectionEdge {
+        bool correctionsApplied{false};
+        quint64 contextRevision{0};
+        quint64 acceptedOrdinalAtObservation{0};
+    };
+    std::optional<PendingImdCorrectionEdge> m_imdPendingCorrectionEdge;
+    qreal m_imdWaterfallGlideRows{0.0};
+    quint64 m_imdAcceptedFrameOrdinal{0}; // GUI-local, independent of encoder wrap
+    quint64 m_imdLocalFrameSequence{0};
+    int m_imdLocalSource{-1};
+    quint64 m_imdRemoteFrameSequence{0};
+    bool m_hasImdRemoteFrame{false};
+    int m_imdPixelCount{0};
+    bool m_imdInspectorVisible{false};
+    bool m_imdGuidesVisible{true};
+    ImdProduct m_imdSelectedProduct{ImdProduct::ThirdLower};
+    friend class ImdSpectrumTestAccess;
+    friend class ImdWaterfallTestAccess;
 
     // ---- TX filter overlay range + mode (Plan 4 D9, Cluster E) ----
     // Audio-Hz edges of the TX passband; updated by setTxFilterRange().

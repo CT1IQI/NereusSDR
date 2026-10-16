@@ -7731,10 +7731,16 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         }
         // A lost message: the rows wait for a keyframe, repeating the last
         // good row while none comes, and blend in when it does.
-        if (!binding.presenter.waitingForKeyframe()) {
+        const bool enteringKeyframeWait = !binding.presenter.waitingForKeyframe();
+        if (enteringKeyframeWait) {
             ++d->displayCounters.keyframeWaits;
         }
         binding.presenter.noteLoss();
+        if (enteringKeyframeWait && binding.widget) {
+            // The held picture and repeated waterfall rows remain visible,
+            // but they are no longer current receiver measurement input.
+            binding.widget->noteImdReceiverInputLost();
+        }
         requestKeyframe(id);
         scheduleDisplayPresentation(d->displayDelay.mapNs());
     } else if (decoded.disposition == DisplayCodecDisposition::Accepted) {
@@ -7986,7 +7992,8 @@ void RemoteMediaController::presentDueDisplay()
                 }
                 continue;
             }
-            const bool rendered = widget->updateRemoteSpectrum(item.frame, item.capture);
+            const bool rendered = widget->updateRemoteSpectrum(
+                item.frame, item.capture, item.measurementCurrent);
             // Rendering emits application signals; a receiver may end this session.
             if (!self || d->connectionId != connectionId) { return; }
             if (!rendered) {

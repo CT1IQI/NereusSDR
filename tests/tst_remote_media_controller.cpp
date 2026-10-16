@@ -7295,6 +7295,10 @@ private slots:
         widget->setDisplayWindowPreservingHistory(14225000, 24000);
         widget->setWfUpdatePeriodMs(20);
         widget->setWaterfallTickerPausedForTest(true);
+        widget->setDisplayDuplex(true);
+        widget->setMoxOverlay(true);
+        widget->setTestingIMD(true);
+        widget->setShowIMDMeasurements(true);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -7306,6 +7310,7 @@ private slots:
             });
         QSignalSpy controls(&server, &StationServer::mediaControlReceived);
         QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy imdChanges(widget, &SpectrumWidget::imdMeasurementChanged);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
         stationLink->linkTo(clientLink);
@@ -7354,6 +7359,14 @@ private slots:
             frame.producerTimestamp = quint64(producerNs);
             frame.waterfallAdvance = true;
             frame.traceDbm = QVector<float>(128, level);
+            if (index == 44) {
+                frame.traceDbm[16] = -88.0f;
+                frame.traceDbm[35] = -65.0f;
+                frame.traceDbm[54] = -22.0f;
+                frame.traceDbm[73] = -24.0f;
+                frame.traceDbm[92] = -66.0f;
+                frame.traceDbm[111] = -89.0f;
+            }
             frame.waterfallDbm = QVector<float>(128, level);
             return frame;
         };
@@ -7382,6 +7395,7 @@ private slots:
         // 2. One lost delta: frame 45 never arrives; 46..51 need a keyframe,
         //    which the Core sends as frame 52.
         QTest::qWait(250); // past the window's 200 ms keyframe-request spacing
+        int imdChangesAtLoss = -1;
         for (int i = 40; i < 60; ++i) {
             const bool keyframe = i == 52;
             const QByteArray packet =
@@ -7390,6 +7404,27 @@ private slots:
                 continue;
             }
             media->deliver(packet);
+            if (i == 44) {
+                QCOMPARE(widget->imdMeasurementFrame().status, ImdStatus::Valid);
+                QVERIFY(widget->imdMeasurementFrame().summary.has_value());
+                imdChangesAtLoss = imdChanges.count();
+            }
+            if (i == 46) {
+                QCOMPARE(widget->imdMeasurementFrame().status,
+                         ImdStatus::WaitingForSpectrum);
+                QVERIFY(!widget->imdMeasurementFrame().context.sourceEligible);
+                QCOMPARE(imdChanges.count(), imdChangesAtLoss + 1);
+                imdChangesAtLoss = imdChanges.count();
+            }
+            if (i >= 47 && i <= 51) {
+                QCOMPARE(widget->imdMeasurementFrame().status,
+                         ImdStatus::WaitingForSpectrum);
+                QCOMPARE(imdChanges.count(), imdChangesAtLoss);
+            }
+            if (i == 52) {
+                QVERIFY(widget->imdMeasurementFrame().context.sourceEligible);
+                QVERIFY(imdChanges.count() > imdChangesAtLoss);
+            }
             widget->tickWaterfallForTest();
         }
         drainRows();

@@ -1082,6 +1082,7 @@ private slots:
     void pushSpectrumCalToPans();
 
 private:
+    friend class ImdPanelTestAccess;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
     friend class DisplaySettingsCorrectnessAccess;
@@ -1658,6 +1659,16 @@ private:
     QPointer<QAction> m_displayDuplexAction;
     void setDisplayDuplexSetting(bool on);
     void applyDisplayDuplex();
+    void wireImdMeasurementForwarding();
+    void refreshImdMeasurementForwarding();
+    void onImdPureSignalStatusChanged();
+    void setImdMeasurementsShown(bool shown);
+    void hideImdMeasurements();
+    void enableImdDisplayDuplex();
+    void refreshImdRailControls();
+    QPointer<class PureSignalSessionFacade> m_imdObservedFacade;
+    bool m_imdStatusBaselineKnown{false};
+    bool m_imdLastCorrectionsApplied{false};
     std::unique_ptr<class LocalTxDisplaySource> m_localTxDisplaySource;
     std::unique_ptr<class RemoteTxDisplaySource> m_remoteTxDisplaySource;
 
