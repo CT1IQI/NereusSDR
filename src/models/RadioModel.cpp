@@ -1200,6 +1200,9 @@
 //   2026-10-14 - The HL2 I/O board's I2C signals now come from the P1 EP2
 //                sender thread; still queued, so nothing here changes.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                AGC threshold, Fixed Gain and Max Gain, as Slice A does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================

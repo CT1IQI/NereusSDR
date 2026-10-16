@@ -67,6 +67,10 @@
 //                 AF level, a departure from Thetis radio.cs, which sets AF
 //                 as SetRXAPanelGain1. By J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15 - AGC Fixed Gain and Max Gain defaults are named constants
+//                 (kDefaultAgcFixedGainDb 20, kDefaultAgcMaxGainDb 90) that
+//                 WdspEngine seeds at channel open. J.J. Boyd (KG4VCF), with
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -448,8 +452,24 @@ public:
     int agcHangThreshold() const { return m_agcHangThreshold.load(); }
     void setAgcHangThreshold(int val);
 
+    // The Fixed Gain (AGC Off) a new channel starts with, in dB. WdspEngine
+    // seeds WDSP with it at every open, because WDSP's own create default
+    // (fixed_gain 1000.0, 60 dB, third_party/wdsp/src/RXA.c:385) differs
+    // and setAgcFixedGain skips a value equal to the cached one.
+    // From Thetis Project Files/Source/Console/setup.Designer.cs:39565-39569 [v2.10.3.15]
+    //   this.udDSPAGCFixedGaindB.Value = new decimal(new int[] { 20, 0, 0, 0});
+    static constexpr int kDefaultAgcFixedGainDb = 20;
+
     int agcFixedGain() const { return m_agcFixedGain.load(); }
     void setAgcFixedGain(int dB);
+
+    // The AGC Max Gain a new channel starts with, in dB. WdspEngine seeds
+    // WDSP with it at every open (WDSP's create default is max_gain 10000.0,
+    // 80 dB, third_party/wdsp/src/RXA.c:383), as Thetis's SyncDSP forces
+    // RXAGCMaxGain = 90 into WDSP at start (radio.cs:419, 1020-1033).
+    // From Thetis Project Files/Source/Console/setup.Designer.cs:39443-39447 [v2.10.3.15]
+    //   this.udDSPAGCMaxGaindB.Value = new decimal(new int[] { 90, 0, 0, 0});
+    static constexpr int kDefaultAgcMaxGainDb = 90;
 
     int agcMaxGain() const { return m_agcMaxGain.load(); }
     void setAgcMaxGain(int dB);
@@ -1384,10 +1404,10 @@ private:
     std::atomic<int> m_agcDecay{250};
     // hangThreshold: From Thetis v2.10.3.13 setup.designer.cs:39418
     std::atomic<int> m_agcHangThreshold{0};
-    // fixedGain: From Thetis v2.10.3.13 setup.designer.cs:39320
-    std::atomic<int> m_agcFixedGain{20};
-    // maxGain: From Thetis v2.10.3.13 setup.designer.cs:39245
-    std::atomic<int> m_agcMaxGain{90};
+    // fixedGain: From Thetis setup.Designer.cs:39565-39569 [v2.10.3.15] (kDefaultAgcFixedGainDb)
+    std::atomic<int> m_agcFixedGain{kDefaultAgcFixedGainDb};
+    // maxGain: From Thetis setup.Designer.cs:39443-39447 [v2.10.3.15] (kDefaultAgcMaxGainDb)
+    std::atomic<int> m_agcMaxGain{kDefaultAgcMaxGainDb};
 
     // ----- NR state (Sub-epic C-1) -----
     // From Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13]
