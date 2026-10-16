@@ -4,6 +4,12 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: Merge of the display pill's key state into the display
+//               send thread: a MOX edge (moxStateChanged, or moxChanged
+//               with no MoxController) is taken under the display lock, so
+//               the display thread's copy of the key state is refreshed at
+//               once, and keyEdge takes the lock itself. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: readDisplayExtrasForTest reads an endpoint's display
 //               extras under the display lock. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -750,6 +756,7 @@ void DaemonSharedSpectrum::syncDisplayThread()
 
 void DaemonSharedSpectrum::keyEdge(bool keyed)
 {
+    const DaemonDisplayLockGuard hold(m_displayLock);
     // Every controller on these engines hears the same edge; the engines
     // are cleared for it once.
     if (m_lastKeyEdge.has_value() && *m_lastKeyEdge == keyed) {
@@ -1146,13 +1153,19 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
         m_displayKeyed = walk == MoxState::Tx || walk == MoxState::TxToRxInFlight
             || walk == MoxState::TxToRxBreakIn || walk == MoxState::TxToRxFlush;
         connect(moxController, &MoxController::moxStateChanged, this, [this](bool on) {
-            // The display extras read this, not TransmitModel::isMox().
-            m_displayKeyed = on;
-            // Either edge clears every engine's FFT input, each engine on
-            // its own worker thread (DaemonSpectrumSource::
-            // resetInputHistoryAll), so no transform mixes receive and
-            // transmit samples.
-            m_shared->keyEdge(on);
+            {
+                // Display send thread: under the display lock, whose
+                // release copies the key state for the display thread at
+                // once, even while this thread runs no event.
+                const auto displayHold = displayGuard();
+                // The display extras read this, not TransmitModel::isMox().
+                m_displayKeyed = on;
+                // Either edge clears every engine's FFT input, each engine
+                // on its own worker thread (DaemonSpectrumSource::
+                // resetInputHistoryAll), so no transform mixes receive and
+                // transmit samples.
+                m_shared->keyEdge(on);
+            }
             if (!on) {
                 logUnkeyStats();
             }
@@ -1163,7 +1176,12 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
         // that clears the FFT input.
         connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged, this,
                 [this](bool mox) {
-                    m_shared->keyEdge(mox);
+                    {
+                        // Display send thread: the lock's release copies
+                        // the key state (displayKeyed) for it.
+                        const auto displayHold = displayGuard();
+                        m_shared->keyEdge(mox);
+                    }
                     if (!mox) {
                         snapshotUnkeyStats();
                         logUnkeyStats();

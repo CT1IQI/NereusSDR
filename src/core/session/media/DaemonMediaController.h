@@ -8,6 +8,9 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: DaemonSharedSpectrum::keyEdge takes the display lock;
+//               m_displayKeyed is written under it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-16: readDisplayExtrasForTest. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
 //   2026-10-15: display send thread (JJ approved 2026-10-15): with a media
@@ -196,7 +199,7 @@ public:
     /// A MOX edge, told by every controller that hears it: the engines'
     /// FFT input is cleared once for the edge
     /// (DaemonSpectrumSource::resetInputHistoryAll), however many
-    /// controllers share them.
+    /// controllers share them. Takes the display lock.
     void keyEdge(bool keyed);
 
     /// The lock over every member's display state (DaemonDisplayLock).
@@ -1058,7 +1061,9 @@ private:
     bool m_transformsFollowFrameRate = false;
     // The Core is keyed, as its displays see it: set in the
     // MoxController::moxStateChanged slot, so it turns on when the walk
-    // into transmit ends and off when the walk out ends.
+    // into transmit ends and off when the walk out ends. Written under the
+    // display lock and read on the main thread only; the display thread
+    // reads its copy (EndpointEntry::snapshotSlice).
     bool m_displayKeyed = false;
     NoiseFloorEstimator m_noiseFloorEstimator;
     MediaPeer::TransportFactory m_peerFactory;
