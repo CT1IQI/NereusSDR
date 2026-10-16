@@ -91,6 +91,9 @@
 //               (setTxReceiptHook), for the remote transmit cut guard.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-15: handshakeStateForTest(), for a test's handshake wait that
+//               ran out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/session/media/LibDataChannelMediaTransport.h"
@@ -1957,6 +1960,38 @@ void LibDataChannelMediaTransport::setReceiveSeveredForTest(bool severed)
     }
     std::lock_guard lock(bridge->mutex);
     bridge->receiveSeveredForTest = severed;
+}
+
+QString LibDataChannelMediaTransport::handshakeStateForTest() const
+{
+    if (!d->started || !d->peer) {
+        return d->started ? QStringLiteral("started, no peer") : QStringLiteral("not started");
+    }
+    const auto yesNo = [](bool value) {
+        return value ? QStringLiteral("yes") : QStringLiteral("no");
+    };
+    const auto openState = [](const auto& channel) {
+        if (!channel) {
+            return QStringLiteral("none");
+        }
+        return channel->isOpen() ? QStringLiteral("open") : QStringLiteral("not open");
+    };
+    std::size_t waiting = 0;
+    if (d->bridge) {
+        std::lock_guard lock(d->bridge->mutex);
+        waiting = d->bridge->events.size();
+    }
+    return QStringLiteral("signaling %1, gathering %2, ICE %3, peer %4; far end's description "
+                          "accepted %5, its candidates accepted %6; display %7, audio %8; "
+                          "ready %9; library events waiting for the drain %10")
+        .arg(IceDiagnostics::stateName(d->peer->signalingState()),
+             IceDiagnostics::stateName(d->peer->gatheringState()),
+             IceDiagnostics::stateName(d->peer->iceState()),
+             IceDiagnostics::stateName(d->peer->state()),
+             yesNo(d->remoteDescriptionAccepted))
+        .arg(d->acceptedCandidates)
+        .arg(openState(d->display), openState(d->audio), yesNo(d->ready))
+        .arg(qulonglong(waiting));
 }
 
 bool LibDataChannelMediaTransport::micLosslessNegotiated() const
