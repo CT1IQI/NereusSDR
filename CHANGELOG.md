@@ -235,6 +235,8 @@ Cores and apps still connect.
   the Core you chose signs you in. A pending or failed attempt keeps it open.
 - Settings are saved when the computer logs off or shuts down, not only on a
   normal close.
+- Each desktop profile keeps its own filter impulse cache, so closing one
+  profile no longer deletes the cache another profile saved.
 - Network Diagnostics names the sound system the way the Audio pages do
   (Core Audio, Windows audio, ASIO, PipeWire, PulseAudio, ALSA direct or older
   drivers) instead of always reading WASAPI or CoreAudio.
