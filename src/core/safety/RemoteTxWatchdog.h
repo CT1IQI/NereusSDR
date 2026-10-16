@@ -87,6 +87,9 @@
 //   2026-10-15: tripQuiet, the cut guard's judgement
 //               tripping a watched device once. J.J. Boyd (KG4VCF), AI-
 //               assisted via Anthropic Claude Code.
+//   2026-10-16: tripQuiet carries the silence the cut guard judged, so a
+//               stop it made never reports less than the guard measured.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -204,7 +207,12 @@ public:
     /// one), with the same stop and `tripped`, and is no longer watched, so
     /// a check for the same silence that comes later finds nothing to
     /// stop. False when it was not watched (its stop has already run).
-    bool tripQuiet(const QByteArray& deviceId);
+    /// `judgedSilentMs` (2026-10-16): the silence the guard measured on its
+    /// own clock. `tripped` reports the longer of it and this watchdog's
+    /// own reading: the two clocks round to whole milliseconds at
+    /// different instants, so this one can read 400 for a silence the
+    /// guard judged at more than 400. -1: none given.
+    bool tripQuiet(const QByteArray& deviceId, qint64 judgedSilentMs = -1);
 
     // ---- The "tx" data channel's message ----
 
@@ -244,7 +252,7 @@ private:
 
     void update(const QByteArray& deviceId, bool keyed, bool keyedChanged, quint32 epoch,
                 bool voxArmed, bool voxChanged);
-    void trip(const QByteArray& deviceId, bool linkClosed);
+    void trip(const QByteArray& deviceId, bool linkClosed, qint64 judgedSilentMs = -1);
     void reschedule();
     qint64 now() const;
 

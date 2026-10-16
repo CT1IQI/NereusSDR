@@ -60,6 +60,14 @@
 //   2026-10-12: The in-flight bookkeeping moved to GeniusStatusGate,
 //               shared with the tuner link. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: The status poll runs every 100 ms while the Core or the
+//               amplifier's own state says keyed, and for 2 s after
+//               (GeniusPollPacer); 200 ms otherwise, as before.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-10-12: The link trace comment gives its reach at both poll
+//               rates. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 #include "PgxlConnection.h"
 #include "AppSettings.h"
@@ -74,7 +82,8 @@ Q_LOGGING_CATEGORY(lcPgxl, "nereus.pgxl")
 
 namespace {
 
-// Link trace size: at the 5 Hz status poll about three seconds each way.
+// Link trace size: at the status poll's receive rate (5 Hz) about three
+// seconds each way, at its keyed rate (10 Hz) about 1.6 seconds.
 constexpr int kRecentWireMax = 32;
 // A status reply runs to a few hundred characters; the start names it.
 constexpr int kRecentWireLineMax = 200;
@@ -98,7 +107,7 @@ PgxlConnection::PgxlConnection(QObject* parent)
     : QObject(parent)
     , m_socket(new QTcpSocket(this))
 {
-    m_pollTimer.setInterval(200);  // 5 Hz per AetherSDR
+    // m_pollPacer set the poll interval (kPollReceiveMs) and keeps it.
     connect(&m_pollTimer, &QTimer::timeout, this, &PgxlConnection::pollStatus);
 
     // Keepalive timer: issues a status poke at the configured interval.
@@ -653,6 +662,8 @@ void PgxlConnection::onConnected(quint64 attemptGeneration) {
     // A `status` the last connection never answered holds nothing back on
     // this one.
     m_statusGate.reset();
+    // Nor does what the last connection's amplifier said keep the poll fast.
+    m_pollPacer.reset();
     clearIdentityAttempt();
     if (m_identityAdmissionRequired) {
         // Bound TCP, V, info and the Core's approval together: a peer that
@@ -806,6 +817,18 @@ void PgxlConnection::pollStatus() {
     if (m_connected) {
         sendCommand("status");
     }
+}
+
+// The amplifier's own word on whether it is keyed, from any status that
+// carries `state`. The states are AetherSDR's applyPollRateFor,
+// src/core/PgxlConnection.cpp:531-537 [@a9a83e66].
+void PgxlConnection::noteDeviceState(const QMap<QString, QString>& kvs) {
+    const auto state = kvs.constFind(QStringLiteral("state"));
+    if (state == kvs.constEnd()) {
+        return;
+    }
+    m_pollPacer.setDeviceBusy(*state == QLatin1String("TRANSMIT_A")
+                              || *state == QLatin1String("TRANSMIT_B"));
 }
 
 // -------------------------------------------------------------------------
@@ -1287,6 +1310,7 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
                     int eq = p.indexOf('=');
                     if (eq > 0) { kvs.insert(p.left(eq), p.mid(eq + 1)); }
                 }
+                noteDeviceState(kvs);
                 if (!kvs.isEmpty()) { emit statusUpdated(kvs); }
             }
         }
@@ -1328,6 +1352,7 @@ void PgxlConnection::processLine(const QString& line, quint64 attemptGeneration)
                 qCDebug(lcPgxl) << "RX S-frame state=" << state;
             }
         }
+        noteDeviceState(kvs);
         if (!kvs.isEmpty())
             emit statusUpdated(kvs);
         return;

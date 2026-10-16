@@ -639,6 +639,14 @@ public:
     //   Slice<N>/RxAntenna  — string (e.g. "ANT1")
     //   Slice<N>/TxAntenna  — string (e.g. "ANT1")
     //   Slice<N>/SnbEnabled — "True"/"False"           — default "False" (session-level)
+    //   Slice<N>/SsqlEnabled: "True"/"False", voice squelch (Thetis VSQL)
+    //   Slice<N>/SsqlThresh:  double, slider value, 0..100
+    //   Slice<N>/AmsqEnabled: "True"/"False", AM squelch (Thetis SQL)
+    //   Slice<N>/AmsqThresh:  double, dB, -160..0
+    //   Slice<N>/FmsqEnabled: "True"/"False", FM squelch
+    //   Slice<N>/FmsqThresh:  double, slider value, -160..0
+    //     Ranges from ControlRanges.h; a load clamps to them. Squelch is per
+    //     receiver as in Thetis console.cs:2830-2852 [v2.10.3.15].
     //
     // <N> = slice index (0-based). <key> = bandKeyName(band) from Band.h
     // (e.g. "20m", "40m", "GEN"). Written by SliceModel::saveToSettings();

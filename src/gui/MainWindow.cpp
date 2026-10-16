@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: The saved window geometry is restored last in the
+//               constructor, after the pans exist, so a window saved
+//               maximized composites its spectrum through QRhi on Linux
+//               (issue #525). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-16: A slice keyed to a pan this window does not show gets no
 //               hidden pan; one this window controls is rehomed onto its
 //               pan, as a layout change rehomes it (ruling U7). J.J. Boyd
@@ -18,6 +23,12 @@
 //   2026-10-15: A refused slice change from a remote window shows the Core's
 //               reason in a toast (NNR edits keep their own page message).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//                 Route IMD presentation gates through the existing MOX
+//                 display owner rather than the startup/focused pan.
 //   2026-10-15: ~MainWindow clears each member it deletes before deleting it,
 //               so callbacks fired during that teardown see no object; the
 //               station client's TransmitState had reached a freed client
@@ -30,6 +41,8 @@
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-12 - Route Display Clarity requests to the captured pan.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-11 - J.J. Boyd (KG4VCF). FFT sizing mode (design D38): the
@@ -750,6 +763,10 @@
 //                teardown no longer reaches this window's meter source
 //                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Also detach the common power meter before RadioModel
+//                teardown, so its destroyed hook cannot republish binding
+//                support through the dying window. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-09 - Workspace preview only: the zoom bar carries
 //                kVisibleTrackProperty, so its track reads against the bar
 //                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -814,6 +831,12 @@
 //   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-15 - A remote window runs its own rigctld (RemoteRigctlServer),
+//                which acts as the window: it tunes the slice the window
+//                transmits on and keys as the window's program, so WSJT-X
+//                works FT8 through a remote window with VAX. Set up in CAT &
+//                Network > rigctld. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1062,6 +1085,7 @@ warren@wpratt.com
 #include "core/FFTRouter.h"
 #include "StyleConstants.h"
 #include "models/RadioModel.h"
+#include "models/MainPowerMeter.h"
 #include "models/StationTciModel.h"
 #include "core/session/IStationLink.h"
 #include "core/session/RemoteTransmitClient.h"
@@ -1241,8 +1265,10 @@ warren@wpratt.com
 #include "RemoteConnectionController.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/MoxDisplayController.h"
+#include "gui/ImdMeasurementPanel.h"
 #include "gui/TxDisplaySource.h"
 #include "gui/RemoteVaxRouter.h"
+#include "gui/RemoteRigctlServer.h"
 #include "gui/ReceiverStopNotices.h"
 #include "core/session/media/IReceiverPcmSink.h"
 #include "core/settings/SettingsProxy.h"
@@ -2057,6 +2083,25 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         AppSettings::instance().save();
     }, this);
 
+    // Issue #206 — restore last session's window position, size, and
+    // maximized/fullscreen state. The 1280×800 set in buildUI() stays as the
+    // first-launch fallback; restoreMainWindowGeometry() returns false
+    // when no saved blob exists or the blob is corrupted, in which
+    // case Qt centers the default size on the primary screen as before.
+    //
+    // Issue #525: this runs after the whole widget tree is built, never
+    // before the pans. Restoring a maximized or full-screen state calls
+    // setWindowState(), which gives a hidden window its native window at
+    // once, and Qt decides then whether the window composites its children
+    // through QRhi, by looking for a QRhiWidget in the tree. Run at the top
+    // of buildUI() it found none, so on Linux (where SpectrumWidget is not
+    // a native window of its own) every pan logged "QRhiWidget: No QRhi"
+    // and stayed blank. Qt looks again only when a widget arrives from
+    // another native window, and the pans are built inside this one. A
+    // window saved at normal size is created at show(), after the pans, and
+    // the maximized start now follows the same order.
+    restoreMainWindowGeometry();
+
     // ── Remote-daemon R2 Task 20: the remote gate, then the dial ─────────
     //
     // Last in the constructor on purpose. applyRemoteRoleGating() reaches
@@ -2079,11 +2124,12 @@ MainWindow::~MainWindow()
     // parked native applet safely back into this window.
     if (m_meterPoller) {
         m_meterPoller->stop();
-        // The poller lets go of the model's PA readings and status now. QObject
-        // destroys the RadioModel child before the poller, and the poller's
-        // destroyed hooks republished binding support from inside that
-        // teardown, into this window's source lambdas, which read the model's
-        // already deleted slices.
+        // The poller lets go of the model's common power meter, PA readings,
+        // and status now. QObject destroys the RadioModel child before the
+        // poller, and the poller's destroyed hooks republished binding support
+        // from inside that teardown, into this window's source lambdas, which
+        // read the model's already deleted slices.
+        m_meterPoller->setMainPowerMeter(nullptr);
         m_meterPoller->setPaReadingsModel(nullptr);
         m_meterPoller->setRadioStatus(nullptr);
     }
@@ -2125,6 +2171,10 @@ MainWindow::~MainWindow()
     }
     m_remoteTxDisplaySource.reset();
     m_localTxDisplaySource.reset();
+    // 2026-10-15: the rigctld goes before the media controller its key
+    // forwarder feeds; the Core already freed this window's key on leave.
+    delete m_remoteRigctl;
+    m_remoteRigctl = nullptr;
     // Join remote playback before QObject destroys the earlier-created
     // RadioModel child and its speaker AudioEngine.
     delete std::exchange(m_remoteMedia, nullptr);
@@ -2763,8 +2813,8 @@ void MainWindow::refreshActiveSlicePresentation()
                              DSPMode::CWL, DSPMode::CWU, DSPMode::AM,
                              DSPMode::SAM, DSPMode::FM, DSPMode::DIGL,
                              DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
-                             DSPMode::RADE_U, DSPMode::RADE_L};
-    for (int i = 0; i < 14; ++i) {
+                             DSPMode::RADE_U, DSPMode::RADE_L, DSPMode::RADE2_U, DSPMode::RADE2_L};
+    for (int i = 0; i < 16; ++i) {
         if (!m_modeActions[i]) { continue; }
         const QSignalBlocker block(m_modeActions[i]);
         m_modeActions[i]->setChecked(slice && slice->dspMode() == modes[i]);
@@ -4133,6 +4183,7 @@ void MainWindow::applyDisplayDuplex()
     if (m_containerButtons) {
         refreshContainerControls();
     }
+    refreshImdRailControls();
 }
 
 void MainWindow::ensureRemoteSession()
@@ -4351,6 +4402,7 @@ void MainWindow::ensureRemoteSession()
             m_remoteMedia, m_stationClient, m_panStack);
         if (m_moxDisplay == nullptr) {
             m_moxDisplay = new MoxDisplayController(m_panStack, m_radioModel, this);
+            wireImdMeasurementForwarding();
         }
         m_moxDisplay->setSource(m_remoteTxDisplaySource.get());
         m_moxDisplay->followStation(m_stationClient);
@@ -4477,6 +4529,13 @@ void MainWindow::ensureRemoteSession()
             }
             m_remoteVax = new RemoteVaxRouter(m_radioModel, vaxEngine,
                                               RemoteVaxRouter::coreKeyFor(m_station), this);
+            // 2026-10-15: this computer's rigctld, acting as the window; its
+            // key sends what programs play into the VAX TX device opened
+            // above.
+            m_remoteRigctl = new RemoteRigctlServer(m_radioModel, this);
+            m_remoteRigctl->setSliceAccess(m_stationClient->sliceAccess());
+            refreshRigctlRemoteTransmit();
+            applyRemoteRigctldSettings();
             const QPointer<RemoteMediaController> media(m_remoteMedia);
             RemoteVaxRouter::ReceiverAudio vaxSource;
             vaxSource.request = [media](int sliceId, IReceiverPcmSink* sink) {
@@ -8268,12 +8327,9 @@ void MainWindow::buildUI()
     setMinimumSize(800, 600);
     resize(1280, 800);
 
-    // Issue #206 — restore last session's window position, size, and
-    // maximized/fullscreen state. The 1280×800 above stays as the
-    // first-launch fallback; restoreMainWindowGeometry() returns false
-    // when no saved blob exists or the blob is corrupted, in which
-    // case Qt centers the default size on the primary screen as before.
-    restoreMainWindowGeometry();
+    // Issue #206's restore of the saved position, size and state is not
+    // here any more: it runs last in the constructor (issue #525, see
+    // there).
 
     // --- Main QSplitter: spectrum (left) + container panel (right) ---
     // AetherSDR pattern: right panel is a proper layout element, not an overlay.
@@ -8372,6 +8428,7 @@ void MainWindow::buildUI()
         refreshPanNotchMarkers();
         refreshPanVisualNotch();
         refreshPanNotchMinWidth();
+        wireImdMeasurementForwarding();
     });
 
     // R1 Task 7 fix round 1 (coordinator spec review, finding 2):
@@ -8389,6 +8446,9 @@ void MainWindow::buildUI()
         if (m_clarityRegistry) { m_clarityRegistry->retirePan(panId); }
         if (m_panModels) { m_panModels->retire(panId); }
         m_topology.unsubscribe(panId);
+        if (m_psForm && m_moxDisplay && m_moxDisplay->keyedPanId() == panId) {
+            refreshImdMeasurementForwarding();
+        }
     });
 
     // A stream's physical ADC can move without its stream index or its folded
@@ -8771,7 +8831,9 @@ void MainWindow::buildUI()
         if (m_meterPoller) { m_meterPoller->rescalePowerMeters(maxW); }
         for (ContainerWidget* c : m_containerManager->allContainers()) {
             for (MeterWidget* mw : c->findChildren<MeterWidget*>()) {
-                mw->rescalePowerMeters(maxW);
+                const MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+                if (meter->onAmplifier()) { mw->rescalePowerMeters(meter->visualLimitW(), meter->scaleTopW()); }
+                else { mw->rescalePowerMeters(maxW); }
             }
         }
     };
@@ -9037,6 +9099,36 @@ void MainWindow::buildUI()
         return maxBinSpectrumFor(slice);
     });
     m_meterPoller->setSessionIdSource([this] { return containerSessionId(); });
+    m_meterPoller->setWaveformSource([this](const QJsonObject& context, WaveformKind kind) {
+        return ContainerSourceAdapter::waveform(
+            m_radioModel, context, windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context)), kind,
+            containerSessionId());
+    });
+    const quintptr waveformOwner = reinterpret_cast<quintptr>(m_meterPoller);
+    const QPointer<RadeWaveformModel> waveforms = m_radioModel->radeWaveformModel();
+    m_meterPoller->setWaveformDemandSource([this, waveforms,
+                                            waveformOwner](const QList<WaveformContextRequest>& contexts) {
+        if (!waveforms) {
+            return;
+        }
+        if (contexts.isEmpty()) {
+            waveforms->clearDemand(waveformOwner);
+            return;
+        }
+        m_radioModel->synchronizeWaveformEndpoints();
+        QList<WaveformRequest> requests;
+        for (const auto& context : contexts) {
+            const auto request = ContainerSourceAdapter::waveformRequest(
+                m_radioModel, context.context,
+                windowRxSlice(!ContainerSourceAdapter::followsSelectedRx(context.context)), context.kind,
+                containerSessionId());
+            if (request) {
+                requests.append(*request);
+            }
+        }
+        waveforms->setDemand(waveformOwner, requests);
+    });
+
     m_meterPoller->setRxSourceIdentitySource([this](const QJsonObject& context) {
         const bool remote = m_radioModel->role() == RadioModel::Role::Remote;
         const bool ready = m_radioModel->isConnected() && (!remote || (m_stationClient && m_stationClient->isHandshakeComplete()));
@@ -9819,6 +9911,7 @@ void MainWindow::buildUI()
             m_localTxDisplaySource = std::make_unique<LocalTxDisplaySource>(
                 m_radioModel->txDisplayFeed());
             m_moxDisplay = new MoxDisplayController(m_panStack, m_radioModel, this);
+            wireImdMeasurementForwarding();
             m_moxDisplay->setSource(m_localTxDisplaySource.get());
             m_moxDisplay->followLocalRadio();
             wireDisplayKeyEdges();
@@ -9841,36 +9934,10 @@ void MainWindow::buildUI()
         // displayduplex is the window's DUP (parity Task 31), set on the
         // transmitting pan by MoxDisplayController; off by default as Thetis,
         // so the overlay shows during two-tone only with DUP on.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setShowIMDMeasurements(
-                AppSettings::instance().value(
-                    QStringLiteral("puresignal/showTwoToneMeasurements"), false).toBool());
-            if (auto* tt = m_radioModel->twoToneController()) {
-                connect(tt, &TwoToneController::twoToneActiveChanged,
-                        activeSpectrumWidget(), &SpectrumWidget::setTestingIMD);
-            }
-            // Phase 3M-4 bench-fix: PureSignal coordinator is late-bound
-            // during WDSP-init — at MainWindow build time it's typically
-            // nullptr, so the connection below never gets made and the
-            // IMD overlay show condition stays at m_showIMDMeasurements=
-            // false even after the user checks chkShow2ToneMeasurements.
-            // Subscribe to RadioModel::pureSignalCoordinatorReady so we
-            // re-attempt the connect when the coordinator becomes available.
-            // Mirrors the pattern in PureSignalApplet.cpp:118-123 +
-            // PsaIndicatorWidget bench-fix.
-            auto wireSpectrumToPs = [this](PureSignal* ps) {
-                if (!ps || !activeSpectrumWidget()) { return; }
-                connect(ps, &PureSignal::show2ToneMeasurementsChanged,
-                        activeSpectrumWidget(),
-                        &SpectrumWidget::setShowIMDMeasurements,
-                        Qt::UniqueConnection);
-            };
-            wireSpectrumToPs(m_radioModel->pureSignal());
-            connect(m_radioModel, &RadioModel::pureSignalCoordinatorReady,
-                    this, [wireSpectrumToPs](PureSignal* ps) {
-                        wireSpectrumToPs(ps);
-                    });
-        }
+        // MoxDisplayController mirrors testing/show onto current and future
+        // pans, including late/replaced coordinators and remote facade
+        // state. Its existing rise/fall supplies MOX/DUP only to the TX
+        // host, so measurement ownership never follows startup focus.
 
         // ── 3M-1c Phase L.3: VFO TX badge routing ─────────────────────────────
         //
@@ -10734,68 +10801,21 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
-    // Task 43 (Phase 3P-II): PGXL-aware power scale + TX meter feed.
-    //
-    // Four permanent connects (RadioModel persists across radio connects):
-    //
-    // 1. ampMetersChanged: when PGXL is OPERATE, forward the amp's
-    //    forward-power/SWR readings to the SMeterWidget TX display.
-    //    RadioModel::ampMetersChanged is fired by PgxlConnection on each
-    //    statusUpdated containing "peakfwd" and "swr" keys.
-    //
-    // 2. RadioStatus::powerChanged: when PGXL is absent or STANDBY, use the
-    //    radio's own PA telemetry (barefoot or Aurora) for the TX display.
-    //    fwd is forward power in watts; the third argument (swr) is used.
-    //
-    // 3. amplifierChanged: snap the power scale to 2 kW on PGXL connect.
-    //
-    // 4. ampStateChanged: re-evaluate scale whenever OPERATE/STANDBY toggles.
-    //    When returning to STANDBY (amp present but not OPERATE), the scale
-    //    reverts to barefoot by passing hasAmplifier()=false to setPowerScale.
+    // One mirrored source selects main power in local and remote windows.
+    // Bench history: connect alone formerly selected 2 kW; radio readings
+    // could overwrite the slower RF-Kit sample; STANDBY from either vendor
+    // could also mask the other. MainPowerMeter resolves all three cases.
     if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
-        // Connect 1: PGXL amp meters (OPERATE path).
-        connect(m_radioModel, &RadioModel::ampMetersChanged, this,
-                [this, sm](float fwd, float swr) {
-            if (m_radioModel->hasAmplifier() && m_radioModel->ampOperate()) {
-                sm->setTxMeters(fwd, swr);
-            }
-        });
-
-        // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
-        // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
-        // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
-        //
-        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate
-        // (cross-vendor) instead of just PGXL state.  RadioStatus::powerChanged
-        // fires much faster than RF-Kit's 1 Hz REST poll, so when RF-Kit
-        // (without PGXL) is in OPERATE, the radio's barefoot reading was
-        // overwriting the RF-Kit amp reading at ~20 Hz.  Now barefoot only
-        // feeds when no external amp is amplifying.
-        connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
-                this, [this, sm](double fwd, double /*rev*/, double swr) {
-            if (!m_radioModel->isAnyExternalAmpInOperate()) {
-                sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
-            }
-        });
-
-        // Connect 3: PGXL connect event snaps scale to 2 kW.
-        connect(m_radioModel, &RadioModel::amplifierChanged, this,
-                [sm](bool present) {
-            sm->setPowerScale(/*maxWatts=*/0, present);
-        });
-
-        // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
-        // When STANDBY: hasAmplifier()=true but we want barefoot scale,
-        // so pass false (treat as absent) until OPERATE resumes.
-        //
-        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
-        // PGXL going STANDBY does not flip the SMeterWidget back to
-        // barefoot scale if RF-Kit is still amplifying (and vice versa).
-        connect(m_radioModel, &RadioModel::ampStateChanged, this,
-                [this, sm]() {
-            sm->setPowerScale(/*maxWatts=*/0,
-                              m_radioModel->isAnyExternalAmpInOperate());
-        });
+        MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+        const auto setScale = [sm, meter] { sm->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
+        const auto setReading = [sm, meter] {
+            sm->setTxMeters(static_cast<float>(meter->forwardW()),
+                            static_cast<float>(meter->swr()));
+        };
+        connect(meter, &MainPowerMeter::scaleChanged, sm, setScale);
+        connect(meter, &MainPowerMeter::readingChanged, sm, setReading);
+        setScale();
+        setReading();
 
         // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
         // was implemented but never wired. m_transmitting stayed false so
@@ -10810,55 +10830,6 @@ void MainWindow::populateDefaultMeter()
             connect(mox, &MoxController::moxStateChanged,
                     sm, &SMeterWidget::setTransmitting);
         }
-    }
-
-    // Phase 3P-III review fix C1: wire the production SMeterWidget to the
-    // cross-vendor RF-Kit aggregate signals.
-    //
-    // The displayed SMeterWidget is constructed via the QWidget-only ctor in
-    // AppletPanelWidget, so the SMeterWidget(RadioModel*, QWidget*) overload +
-    // connectToRadioModel() added in Task 13 are dead code in production.
-    // externalAmpOperateChanged and externalAmpFwdSwrUpdated fire correctly
-    // from RadioModel but the displayed widget never subscribed, leaving the
-    // 2 kW scale switch silent on RF-Kit OPERATE and the TX needle frozen.
-    //
-    // Wire here, immediately after the analogous PGXL SMeterWidget block,
-    // so all SMeterWidget signal connections live in one place. PGXL paths
-    // (Connect 1..5 above) remain unchanged; these two add RF-Kit on top.
-    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
-        // RF-Kit Connect A: snap 2 kW scale on RF-Kit OPERATE.
-        // externalAmpOperateChanged is now transition-gated (fix I2) so this
-        // fires only when the amp enters or leaves OPERATE, not every poll.
-        //
-        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
-        // RF-Kit going STANDBY does not flip back to barefoot scale if
-        // PGXL is still amplifying.
-        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, this,
-                [this, sm](bool /*inOp*/) {
-            sm->setPowerScale(/*maxWatts=*/0,
-                              m_radioModel->isAnyExternalAmpInOperate());
-        });
-
-        // RF-Kit Connect B: feed RF-Kit forward power + SWR to the TX needle.
-        // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
-        // setTxMeters takes (float fwdPower, float swr).
-        //
-        // 2026-05-25 KG4VCF bench fix: gate so a STANDBY amp doesn't push
-        // 0 W into the needle while the radio's barefoot reading is also
-        // wanting the meter.  Only fire when the amp is actually amplifying.
-        //
-        // The gate is RF-Kit's own OPERATE state, not the cross-vendor
-        // isAnyExternalAmpInOperate(): this signal carries RF-Kit telemetry
-        // exclusively, so the cross-vendor form let a PGXL in OPERATE pass
-        // RF-Kit /power polls through from an RF2K-S sitting in STANDBY,
-        // clobbering the live PGXL reading with RF-Kit's 0 W once per poll.
-        // Codex review, PR #291.
-        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, this,
-                [this, sm](int fwd, float swr) {
-            if (m_radioModel->isRfKitInOperate()) {
-                sm->setTxMeters(static_cast<float>(fwd), swr);
-            }
-        });
     }
 
     // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
@@ -11170,38 +11141,15 @@ void MainWindow::populateDefaultMeter()
     m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
     panel->addApplet(m_rotorApplet);
 
-    // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
-    // PGXL comes into the chain. TunerApplet defaults to 0-200 W
-    // (barefoot) which pegs out the moment PGXL pushes its amplified
-    // ~450-2000 W through the tuner. Mirror the same amplifierChanged
-    // + ampStateChanged wires we use for the SMeterWidget above.
+    // The tuner's scale follows actual OPERATE state from either amplifier,
+    // including the Core's mirrored devices in a remote window.
     if (m_tunerApplet) {
-        // Initial scale: match current PGXL state at construction time.
-        const bool amplifyingNow =
-            m_radioModel->hasAmplifier() && m_radioModel->ampOperate();
-        m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifyingNow);
-
-        // PGXL connect/disconnect snaps the scale to 2 kW or back to
-        // barefoot. maxWatts=0 means "use the standard barefoot/PGXL
-        // range from TunerApplet::setPowerScale defaults".
-        connect(m_radioModel, &RadioModel::amplifierChanged, this,
-                [this](bool present) {
-            if (m_tunerApplet) {
-                m_tunerApplet->setPowerScale(/*maxWatts=*/0, present);
-            }
-        });
-
-        // OPERATE/STANDBY edges re-evaluate scale. STANDBY -> barefoot
-        // until OPERATE resumes (pass amplifying=false to drop the
-        // 2 kW scale back to 200 W).
-        connect(m_radioModel, &RadioModel::ampStateChanged, this,
-                [this]() {
-            if (m_tunerApplet) {
-                const bool amplifying = m_radioModel->hasAmplifier()
-                                        && m_radioModel->ampOperate();
-                m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifying);
-            }
-        });
+        MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+        const auto setScale = [this, meter] {
+            if (m_tunerApplet) { m_tunerApplet->setPowerScale(0, meter->onAmplifier()); }
+        };
+        connect(meter, &MainPowerMeter::sourceChanged, m_tunerApplet, setScale);
+        setScale();
     }
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
@@ -11595,6 +11543,7 @@ void MainWindow::populateDefaultMeter()
         registry->setAvailable(type, m_appletVis->isAvailable(id));
         registry->attachSingleton(type, m_appletsById.value(id));
     }
+    m_meterPoller->setMainPowerMeter(m_radioModel->mainPowerMeter());
     if (WorkspacePreview::enabled()) {
         // Workspace preview only: the ported Longpath instruments as
         // per-instance container content.
@@ -12530,6 +12479,7 @@ void MainWindow::buildMenuBar()
     // MODE
     // =========================================================================
     QMenu* modeMenu = menuBar()->addMenu(QStringLiteral("&Mode"));
+    modeMenu->setToolTipsVisible(true);
 
     // 12 Thetis-faithful modes + the NereusSDR-native RADE-U / RADE-L
     // entries (Phase 3R L3).  Display order: LSB, USB, DSB, CWL, CWU,
@@ -12555,12 +12505,14 @@ void MainWindow::buildMenuBar()
         { "SPEC",   DSPMode::SPEC   },
         { "RADE-U", DSPMode::RADE_U },  // Phase 3R L3, NereusSDR-native upper
         { "RADE-L", DSPMode::RADE_L },  // Phase 3R L3, NereusSDR-native lower
+        { "RADE2-U", DSPMode::RADE2_U },
+        { "RADE2-L", DSPMode::RADE2_L },
     };
 
     m_modeActionGroup = new QActionGroup(this);
     m_modeActionGroup->setExclusive(true);
 
-    for (int i = 0; i < 14; ++i) {
+    for (int i = 0; i < 16; ++i) {
         DSPMode mode = modes[i].mode;
         QAction* act = modeMenu->addAction(QString::fromUtf8(modes[i].label),
                                            this, [this, mode]() {
@@ -12568,9 +12520,19 @@ void MainWindow::buildMenuBar()
             if (slice) { slice->setDspMode(mode); }
         });
         act->setCheckable(true);
+        if (isRade2DspMode(mode)) {
+            act->setVisible(m_radioModel->radeV2Enabled());
+            act->setToolTip(QStringLiteral("Experimental RADE v2 speech mode"));
+        }
         m_modeActionGroup->addAction(act);
         m_modeActions[i] = act;
     }
+
+    connect(m_radioModel, &RadioModel::radeV2AvailabilityChanged, this, [this] {
+        for (int index : {14, 15}) {
+            if (m_modeActions[index]) { m_modeActions[index]->setVisible(m_radioModel->radeV2Enabled()); }
+        }
+    });
 
     // Sync checked mode action when SliceModel reports a mode change.
     // Connection is deferred until slice 0 is available (sliceAdded signal).
@@ -12585,8 +12547,9 @@ void MainWindow::buildMenuBar()
                 DSPMode::DIGL, DSPMode::DIGU, DSPMode::DRM, DSPMode::SPEC,
                 DSPMode::RADE_U,  // Phase 3R L3, index 12
                 DSPMode::RADE_L,  // Phase 3R L3, index 13
+                DSPMode::RADE2_U, DSPMode::RADE2_L,
             };
-            for (int i = 0; i < 14; ++i) {
+            for (int i = 0; i < 16; ++i) {
                 if (m_modeActions[i]) {
                     m_modeActions[i]->setChecked(displayOrder[i] == mode);
                 }
@@ -15502,6 +15465,13 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
         dialog->setTciServer(m_tciServer);
     }
 #endif // HAVE_WEBSOCKETS
+
+    // 2026-10-15: this remote window's rigctld (CAT & Network > rigctld).
+    if (m_remoteRigctl) {
+        dialog->setRemoteRigctlServer(m_remoteRigctl);
+        connect(dialog, &SetupDialog::remoteRigctldSettingsChanged,
+                this, &MainWindow::applyRemoteRigctldSettings);
+    }
 }
 
 #ifdef HAVE_WEBSOCKETS
@@ -15664,8 +15634,7 @@ void MainWindow::wireSliceToSpectrum()
         // slider, which RADE TX still needs. Routed through the visibility
         // controller so the wrapper and the menu entry agree, and the user's
         // persisted preference survives the mode change.
-        const bool isRade = (mode == DSPMode::RADE_U
-                             || mode == DSPMode::RADE_L);
+        const bool isRade = (isRadeDspMode(mode));
         if (m_appletVis) {
             m_appletVis->setAvailable(QStringLiteral("Rade"), isRade);
         }
@@ -17536,6 +17505,52 @@ void MainWindow::refreshTciRemoteTransmit()
 #endif
 }
 
+void MainWindow::refreshRigctlRemoteTransmit()
+{
+    // 2026-10-15: the rigctld keys exactly as the TCI server's programs do.
+    if (!m_remoteRigctl || !m_stationClient) {
+        return;
+    }
+    const bool wanted = m_stationClient->remoteTransmitAvailable() && !m_shuttingDown;
+    if (wanted == m_rigctlRemoteTransmitInstalled) {
+        return;
+    }
+    m_rigctlRemoteTransmitInstalled = wanted;
+    // The pump reads VAX TX only while the program-audio key is on: when it
+    // goes off, the media controller's VAX feed reads the device again.
+    const QPointer<RemoteTransmitClient> client(m_stationClient->remoteTransmit());
+    m_remoteRigctl->setProgramAudioKey(
+        [client] { return client && client->programAudioKey(); });
+    m_remoteRigctl->setRemoteTransmit(
+        wanted ? remoteTransmitForwarder(m_stationClient->remoteTransmit(), m_remoteMedia)
+               : TciServer::RemoteTransmit{});
+}
+
+void MainWindow::applyRemoteRigctldSettings()
+{
+    if (!m_remoteRigctl) {
+        return;
+    }
+    const AppSettings& settings = AppSettings::instance();
+    const bool enabled = settings.value(QStringLiteral("RemoteRigctld/Enabled"),
+                                        QStringLiteral("False")).toString()
+        == QStringLiteral("True");
+    const QHostAddress address(settings.value(QStringLiteral("RemoteRigctld/BindAddress"),
+                                              QStringLiteral("127.0.0.1")).toString());
+    bool portOk = false;
+    const int port = settings.value(QStringLiteral("RemoteRigctld/Port"), 4532).toInt(&portOk);
+    const bool valid = !address.isNull() && portOk && port > 0 && port <= 65535;
+    // A changed address or port listens again there.
+    if (m_remoteRigctl->isListening()
+        && (!enabled || !valid || m_remoteRigctl->port() != port
+            || m_remoteRigctl->address() != address)) {
+        m_remoteRigctl->stop();
+    }
+    if (enabled && valid && !m_remoteRigctl->isListening()) {
+        m_remoteRigctl->start(address, static_cast<quint16>(port));
+    }
+}
+
 // GUI-I3 (fix wave): on a remote window the PureSignal applet follows the
 // Core's radio. It hides only when that radio has no PureSignal hardware
 // (as a local HL2 or Atlas hides it); a radio that has it while the Core
@@ -17571,6 +17586,8 @@ void MainWindow::applyRemoteRoleGating()
     const QString transmitReason = remoteTransmitReason();
     // Desktop remote transmit (R-R3-42): TCI programs key through the Core.
     refreshTciRemoteTransmit();
+    // 2026-10-15: and so does this computer's rigctld.
+    refreshRigctlRemoteTransmit();
     // R-R3-49 (parity Task 1): the transmit settings that key nothing, live
     // while the Core takes them and its radio is off the air.
     bool settingsPermitted = transmitSettingsPermitted();
@@ -18052,15 +18069,133 @@ void MainWindow::openPureSignalDialog()
             (m_radioModel ? m_radioModel->pureSignal() : nullptr);
         m_psForm = new PsForm(m_radioModel, coordinator, this);
         connect(m_psForm, &PsForm::showTwoToneMeasurementsChanged,
-                this, [this](bool shown) {
-            if (auto* spectrum = activeSpectrumWidget()) {
-                spectrum->setShowIMDMeasurements(shown);
-            }
-        });
+                this, &MainWindow::setImdMeasurementsShown);
     }
+    wireImdMeasurementForwarding();
+    refreshImdMeasurementForwarding();
     m_psForm->show();
     m_psForm->raise();
     m_psForm->activateWindow();
+}
+
+// Forward only the controller's committed owner, independently of focus and DUP.
+void MainWindow::wireImdMeasurementForwarding()
+{
+    if (!m_panStack || !m_moxDisplay) { return; }
+    PureSignalSessionFacade* facade = m_radioModel ? m_radioModel->pureSignalFacade() : nullptr;
+    if (m_imdObservedFacade != facade) {
+        m_imdObservedFacade = facade;
+        m_imdStatusBaselineKnown = facade != nullptr;
+        m_imdLastCorrectionsApplied = facade
+            ? facade->statusSnapshot().correctionsApplied : false;
+        if (facade) {
+            connect(facade, &PureSignalSessionFacade::statusChanged,
+                    this, &MainWindow::onImdPureSignalStatusChanged,
+                    Qt::UniqueConnection);
+        }
+    }
+    connect(m_moxDisplay, &MoxDisplayController::keyedOwnerCommitted,
+            this, &MainWindow::refreshImdMeasurementForwarding, Qt::UniqueConnection);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        ImdMeasurementPanel* rail = applet != nullptr ? applet->imdRail() : nullptr;
+        if (rail != nullptr) {
+            connect(rail, &ImdMeasurementPanel::hideMeasurementsRequested,
+                    this, &MainWindow::hideImdMeasurements, Qt::UniqueConnection);
+            connect(rail, &ImdMeasurementPanel::enableDisplayDuplexRequested,
+                    this, &MainWindow::enableImdDisplayDuplex, Qt::UniqueConnection);
+        }
+        SpectrumWidget* spectrum = applet->spectrumWidget();
+        connect(spectrum, &SpectrumWidget::imdMeasurementChanged,
+                this, &MainWindow::refreshImdMeasurementForwarding, Qt::UniqueConnection);
+        if (!spectrum->property("ImdOwnerDestructionBound").toBool()) {
+            spectrum->setProperty("ImdOwnerDestructionBound", true);
+            const QString panId = applet->panId();
+            connect(spectrum, &QObject::destroyed, this, [this, panId]() {
+                if (m_psForm && m_moxDisplay && m_moxDisplay->keyedPanId() == panId) {
+                    ImdMeasurementFrame invalid;
+                    invalid.context.measurementsEnabled = m_moxDisplay->showIMDMeasurements();
+                    invalid.status = invalid.context.measurementsEnabled ? ImdStatus::WaitingForSpectrum : ImdStatus::Disabled;
+                    m_psForm->setImdMeasurementFrame(invalid);
+                }
+            });
+        }
+    }
+    refreshImdRailControls();
+    refreshImdMeasurementForwarding();
+}
+
+void MainWindow::setImdMeasurementsShown(bool shown)
+{
+    AppSettings::instance().setValue(
+        QStringLiteral("puresignal/showTwoToneMeasurements"),
+        shown ? QStringLiteral("True") : QStringLiteral("False"));
+    if (m_psForm != nullptr) {
+        m_psForm->setShowTwoToneMeasurements(shown);
+    }
+    if (m_moxDisplay != nullptr) {
+        m_moxDisplay->setShowIMDMeasurements(shown);
+    }
+    refreshImdMeasurementForwarding();
+}
+
+void MainWindow::hideImdMeasurements()
+{
+    setImdMeasurementsShown(false);
+}
+
+void MainWindow::enableImdDisplayDuplex()
+{
+    if (m_displayDuplexAction == nullptr || !m_displayDuplexAction->isEnabled()
+        || m_displayDuplexAction->isChecked()) {
+        return;
+    }
+    m_displayDuplexAction->setChecked(true);
+}
+
+void MainWindow::refreshImdRailControls()
+{
+    if (m_panStack == nullptr) { return; }
+    const QString reason =
+        MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet != nullptr && applet->imdRail() != nullptr) {
+            applet->imdRail()->setDisplayDuplexCapability(reason.isEmpty(), reason);
+        }
+    }
+}
+
+void MainWindow::onImdPureSignalStatusChanged()
+{
+    PureSignalSessionFacade* facade = m_radioModel ? m_radioModel->pureSignalFacade() : nullptr;
+    if (!facade || facade != m_imdObservedFacade) { return; }
+    const bool applied = facade->statusSnapshot().correctionsApplied;
+    const bool changed = m_imdStatusBaselineKnown
+        && applied != m_imdLastCorrectionsApplied;
+    m_imdStatusBaselineKnown = true;
+    m_imdLastCorrectionsApplied = applied;
+    if (!changed || !m_moxDisplay || !m_moxDisplay->isKeyed() || !m_panStack) { return; }
+    SpectrumWidget* owner = m_panStack->spectrum(m_moxDisplay->keyedPanId());
+    if (owner) { owner->queueImdCorrectionEdge(applied); }
+}
+
+void MainWindow::refreshImdMeasurementForwarding()
+{
+    if (!m_psForm) { return; }
+    ImdMeasurementFrame frame;
+    if (m_moxDisplay) {
+        frame.context.measurementsEnabled = m_moxDisplay->showIMDMeasurements();
+        frame.context.mox = m_moxDisplay->isKeyed();
+        frame.context.testing = m_moxDisplay->testingIMD();
+        frame.context.duplex = m_moxDisplay->displayDuplex();
+    }
+    frame.status = !frame.context.measurementsEnabled ? ImdStatus::Disabled
+        : !frame.context.mox || !frame.context.testing ? ImdStatus::WaitingForTx
+        : !frame.context.duplex ? ImdStatus::DuplexRequired : ImdStatus::WaitingForSpectrum;
+    if (m_moxDisplay && m_moxDisplay->isKeyed()) {
+        SpectrumWidget* owner = m_panStack ? m_panStack->spectrum(m_moxDisplay->keyedPanId()) : nullptr;
+        if (owner) { frame = owner->imdMeasurementFrame(); }
+    }
+    m_psForm->setImdMeasurementFrame(frame);
 }
 
 // Phase 3J-2 H1: open the modeless SpotHubDialog.

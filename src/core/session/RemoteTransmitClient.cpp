@@ -57,6 +57,10 @@
 //               microphone line follows a program key that arrives or ends
 //               under the screen key (the key down does not move then).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: keyForProgram refuses while another program's key is on,
+//               not only while one waits: the TCI server and the remote
+//               window's rigctld share this one program key. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -529,6 +533,15 @@ void RemoteTransmitClient::keyForProgram(bool programAudio,
         // One program key at a time (the TCI server asks one at a time).
         Answer refusedAnswer;
         refusedAnswer.reason = QStringLiteral("Another program is already asking to transmit.");
+        if (answer) { answer(refusedAnswer); }
+        return;
+    }
+    if (m_program.phase == Phase::On) {
+        // 2026-10-15: the TCI server and the rigctld each ask once per key,
+        // so a key asked while one is on is the other's: refused, so that
+        // neither one's release ends the other's transmission.
+        Answer refusedAnswer;
+        refusedAnswer.reason = QStringLiteral("Another program is transmitting.");
         if (answer) { answer(refusedAnswer); }
         return;
     }

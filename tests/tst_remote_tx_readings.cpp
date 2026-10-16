@@ -55,6 +55,7 @@
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "gui/HGauge.h"
+#include "gui/instruments/BarInstrument.h"
 #include "gui/SMeterWidget.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/applets/TxApplet.h"
@@ -703,6 +704,11 @@ void TstRemoteTxReadings::remoteBarsAndMetersMatchALocalWindow()
     RadioModel core;
     core.setBoardForTest(HPSDRHW::Saturn);
     core.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    // Both fixtures must be keyed: the approved rows show dashes on RX.
+    // This model has no radio connection, as the Core fixture above does.
+    local.moxController()->setMoxCheck({});
+    local.moxController()->setMox(true);
+    QTRY_VERIFY(local.isTransmitting());
     QVERIFY(state.applyStationValue("keyed", true));
     QVERIFY(window.applyMirroredValue("transmitting", QVariant(true)).isEmpty());
     for (int i = 0; i < 60; ++i) {
@@ -748,13 +754,15 @@ void TstRemoteTxReadings::remoteBarsAndMetersMatchALocalWindow()
     QVERIFY(state.applyStationValue("forwardPowerWatts", 0.0));
     QVERIFY(state.applyStationValue("reflectedPowerWatts", 0.0));
     QVERIFY(state.applyStationValue("swr", 1.0));
+    local.moxController()->setMox(false);
+    QTRY_VERIFY(!local.isTransmitting());
     QVERIFY(state.applyStationValue("keyed", false));
     QVERIFY(window.applyMirroredValue("transmitting", QVariant(false)).isEmpty());
     tick(remote.poller);
     QCOMPARE(remotePower->value(), 0.0);
     QCOMPARE(remoteSwr->value(), 1.0);
-    QCOMPARE(remoteApplet.fwdPowerGauge()->value(), 0.0);
-    QCOMPARE(remoteApplet.swrGauge()->value(), 1.0);
+    QVERIFY(!remoteApplet.fwdPowerGauge()->hasValue());
+    QVERIFY(!remoteApplet.swrGauge()->hasValue());
     QCOMPARE(remote.smeter.testTxValue(), 0.0f);
 }
 

@@ -36,7 +36,9 @@ StarvationAction StarvationPolicy::actionFor(DSPMode mode)
     case DSPMode::SAM:
     case DSPMode::FM:
     case DSPMode::DRM:
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         return StarvationAction::Unkey;
     }

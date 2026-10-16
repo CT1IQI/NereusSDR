@@ -66,6 +66,15 @@
 //                 Anthropic Claude Code.
 //   2026-10-15 : J.J. Boyd (KG4VCF): that friendship's comment says which
 //                 test and why. AI-assisted via Anthropic Claude Code.
+//   2026-10-15 : AGC seed fix by J.J. Boyd (KG4VCF): test-only friendship
+//                 for the AGC Fixed Gain and Max Gain seed test. AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-15 : Squelch persistence by J.J. Boyd (KG4VCF): test-only
+//                 friendship for the squelch channel seed test. AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-10 : J.J. Boyd (KG4VCF): test-only friendship for the test of
+//                 a receive channel's first DSP > Options apply. AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -190,6 +199,9 @@ class TestRxChannelNotchWrappers;
 class TestNotchChannelSync;
 // What a live transmit channel tells thread placement while VOX listens.
 class TstTxChannelVoxListening;
+// The first apply of DSP > Options to each receive channel, on real channels
+// through openRxChannelPool.
+class TestDspOptionsFirstApply;
 // TNF Task 9: the MNF Settings page test primes the engine so it can open one
 // real RX channel and check the minimum-notch-width readout against it.
 class TestMnfSetupPage;
@@ -208,6 +220,9 @@ class TestStopTransmitNow;
 // Several-devices fix wave 2: the confirm-step test drives a Protocol 1
 // rate change, which needs an initialized engine with RX channels.
 class TstConfirmStep;
+// AGC Fixed Gain seed: the test opens real RX channels and reads the fixed
+// gain WDSP applies back from rxa[].agc.
+class TestRxChannelAgcFixedSeed;
 // Task 27: the transmit analyzer skirt test opens a real TX channel.
 class TestTxAnalyzerSkirt;
 // R-IOS-13: the transmit path's DSP latency test.
@@ -216,6 +231,8 @@ class TestTxLatencyDsp;
 class TestTxLevelerRemoteMic;
 class TestTxKeyDspOptions;
 class TstRemoteTxDisplay;
+// Squelch persistence: slices B to D open with their saved squelch.
+class TestSliceSquelchChannelSeed;
 #endif
 
 namespace NereusSDR {
@@ -1119,6 +1136,12 @@ private:
     // tst_tx_channel_vox_listening sets m_initialized to open a live
     // transmit channel and check what it tells thread placement.
     friend class ::TstTxChannelVoxListening;
+    // AGC Fixed Gain seed: same friendship, real RX channels.
+    friend class ::TestRxChannelAgcFixedSeed;
+    // Squelch persistence: the squelch seed test opens real RX channels.
+    friend class ::TestSliceSquelchChannelSeed;
+    // Same friendship for the first DSP > Options apply test.
+    friend class ::TestDspOptionsFirstApply;
 #endif
 };
 

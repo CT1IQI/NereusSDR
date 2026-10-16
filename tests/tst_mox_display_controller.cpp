@@ -59,6 +59,7 @@
 
 #define private public
 #include "gui/SpectrumWidget.h"
+#include "core/TwoToneController.h"
 // The test seam for a rebinding while keyed (TxSliceArbiter::flipTo moves
 // the transmit flag without requestHandoff's unkey).
 #include "core/TxSliceArbiter.h"
@@ -69,6 +70,8 @@
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/MoxController.h"
+#include "core/PureSignal.h"
+#include "core/session/PureSignalSessionFacade.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
 #include "core/TxChannel.h"
@@ -96,6 +99,39 @@
 using namespace NereusSDR;
 
 namespace {
+
+class MeasurementPreferenceGuard {
+public:
+    MeasurementPreferenceGuard()
+        : m_hadKey(AppSettings::instance().contains(m_key))
+        , m_previous(AppSettings::instance().value(m_key)) {}
+    ~MeasurementPreferenceGuard()
+    {
+        if (m_hadKey) { AppSettings::instance().setValue(m_key, m_previous); }
+        else { AppSettings::instance().remove(m_key); }
+    }
+private:
+    const QString m_key{QStringLiteral("puresignal/showTwoToneMeasurements")};
+    const bool m_hadKey;
+    const QVariant m_previous;
+};
+
+class MeasurementCoordinator : public PureSignal {
+public:
+    MeasurementCoordinator() : PureSignal(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) {}
+    int displayConnectionCount() const
+    {
+        return receivers(SIGNAL(show2ToneMeasurementsChanged(bool)));
+    }
+};
+
+// Set authoritative state without invoking activation, MOX or hardware.
+void publishTwoToneState(RadioModel& radio, bool active)
+{
+    TwoToneController* controller = radio.twoToneController();
+    controller->m_active = active;
+    emit controller->twoToneActiveChanged(active);
+}
 
 // The real WDSP channel writes only to this in-process discard connection.
 class WaveformConnection final : public RadioConnection {
@@ -506,6 +542,133 @@ class TstMoxDisplayController : public QObject {
     Q_OBJECT
 
 private slots:
+    void savedMeasurementPreferenceWinsLateCoordinator_data()
+    {
+        QTest::addColumn<bool>("saved");
+        QTest::newRow("saved-true-default-false") << true;
+        QTest::newRow("saved-false-current-true") << false;
+    }
+
+    void savedMeasurementPreferenceWinsLateCoordinator()
+    {
+        QFETCH(bool, saved);
+        const MeasurementPreferenceGuard restorePreference;
+        LocalWindow window;
+        const QString key = QStringLiteral("puresignal/showTwoToneMeasurements");
+        AppSettings::instance().setValue(key, saved);
+        MeasurementCoordinator coordinator;
+        coordinator.setShow2ToneMeasurements(!saved);
+        emit window.radio.pureSignalCoordinatorReady(&coordinator);
+        QCOMPARE(window.pan(QStringLiteral("two"))->m_showIMDMeasurements, saved);
+        MeasurementCoordinator replacement;
+        replacement.setShow2ToneMeasurements(!saved);
+        emit window.radio.pureSignalCoordinatorReady(&replacement);
+        QCOMPARE(window.pan(QStringLiteral("two"))->m_showIMDMeasurements, saved);
+        QCOMPARE(AppSettings::instance().value(key).toBool(), saved);
+        replacement.setShow2ToneMeasurements(saved);
+        replacement.setShow2ToneMeasurements(!saved);
+        QCOMPARE(window.pan(QStringLiteral("two"))->m_showIMDMeasurements, !saved);
+        QCOMPARE(AppSettings::instance().value(key).toBool(), saved);
+    }
+
+    void imdGatesFollowTxHostAndCoordinatorReplacement()
+    {
+        LocalWindow window;
+        window.stack.setActivePan(QStringLiteral("one"));
+        MeasurementCoordinator first;
+        first.setShow2ToneMeasurements(true);
+        emit window.radio.pureSignalCoordinatorReady(&first);
+        publishTwoToneState(window.radio, true);
+        window.controller->setDisplayDuplex(true);
+        window.controller->setKeyed(true, window.txSliceId);
+        SpectrumWidget* host = window.pan(QStringLiteral("two"));
+        QCOMPARE(window.controller->keyedPanId(), QStringLiteral("two"));
+        QVERIFY(host->m_moxOverlay);
+        QVERIFY(host->m_displayDuplex);
+        QVERIFY2(host->m_showIMDMeasurements, "Late coordinator's current Show Measurements must seed the TX host");
+        QVERIFY2(host->m_testingIMD, "Two-tone updates must reach the TX host rather than startup focus");
+        window.stack.setActivePan(QStringLiteral("one"));
+        first.setShow2ToneMeasurements(false);
+        QVERIFY(!host->m_showIMDMeasurements);
+        first.setShow2ToneMeasurements(true);
+        QVERIFY(host->m_showIMDMeasurements);
+        MeasurementCoordinator replacement;
+        replacement.setShow2ToneMeasurements(true);
+        emit window.radio.pureSignalCoordinatorReady(&replacement);
+        emit window.radio.pureSignalCoordinatorReady(&replacement);
+        QCOMPARE(first.displayConnectionCount(), 0);
+        QCOMPARE(replacement.displayConnectionCount(), 1);
+        first.setShow2ToneMeasurements(false);
+        QVERIFY2(host->m_showIMDMeasurements, "A replaced coordinator must no longer write display state");
+        replacement.setShow2ToneMeasurements(false);
+        QVERIFY(!host->m_showIMDMeasurements);
+        publishTwoToneState(window.radio, false);
+        QVERIFY(!host->m_testingIMD);
+        window.controller->setDisplayDuplex(false);
+        QVERIFY(!host->m_displayDuplex);
+        window.controller->setKeyed(false, window.txSliceId);
+        QVERIFY(!host->m_moxOverlay);
+    }
+
+    void imdStateSeedsCreatedFloatedAndRestoredPan()
+    {
+        LocalWindow window;
+        PureSignal coordinator(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        coordinator.setShow2ToneMeasurements(true);
+        emit window.radio.pureSignalCoordinatorReady(&coordinator);
+        publishTwoToneState(window.radio, true);
+        PanadapterApplet* created = window.stack.addPanadapter(QStringLiteral("created"));
+        SpectrumWidget* spectrum = created->spectrumWidget();
+        QVERIFY2(spectrum->m_showIMDMeasurements, "A newly created pan must inherit current measurement gates");
+        QVERIFY(spectrum->m_testingIMD);
+        created->setActiveSliceIndex(window.txSliceId);
+        window.txSlice()->setPanKey(QStringLiteral("created"));
+        window.controller->setDisplayDuplex(true);
+        window.controller->setKeyed(true, window.txSliceId);
+        QCOMPARE(window.controller->keyedPanId(), QStringLiteral("created"));
+        QVERIFY(spectrum->m_moxOverlay);
+        QVERIFY(spectrum->m_displayDuplex);
+        window.stack.floatPanadapter(QStringLiteral("created"));
+        QVERIFY(spectrum->m_showIMDMeasurements);
+        QVERIFY(spectrum->m_moxOverlay);
+        window.stack.dockPanadapter(QStringLiteral("created"));
+        QCOMPARE(window.stack.spectrum(QStringLiteral("created")), spectrum);
+        QVERIFY(spectrum->m_testingIMD);
+        QVERIFY(spectrum->m_moxOverlay);
+        window.controller->setKeyed(false, window.txSliceId);
+        window.stack.removePanadapter(QStringLiteral("created"));
+        created = window.stack.addPanadapter(QStringLiteral("created"));
+        created->setActiveSliceIndex(window.txSliceId);
+        QVERIFY(created->spectrumWidget()->m_showIMDMeasurements);
+        QVERIFY(created->spectrumWidget()->m_testingIMD);
+        window.controller->setKeyed(true, window.txSliceId);
+        QVERIFY(created->spectrumWidget()->m_moxOverlay);
+        QVERIFY(created->spectrumWidget()->m_displayDuplex);
+        coordinator.setShow2ToneMeasurements(false);
+        QVERIFY(!created->spectrumWidget()->m_showIMDMeasurements);
+        window.controller->setKeyed(false, window.txSliceId);
+    }
+
+    void remoteFacadeSeedsAndUpdatesTestingGate()
+    {
+        const MeasurementPreferenceGuard restorePreference;
+        const QString key = QStringLiteral("puresignal/showTwoToneMeasurements");
+        AppSettings::instance().setValue(key, true);
+        RadioModel radio(RadioModel::Role::Remote);
+        PanadapterStack stack;
+        SpectrumWidget* before = stack.addPanadapter(QStringLiteral("before"))->spectrumWidget();
+        QVERIFY(radio.pureSignalFacade()->applyRemoteProperty("twoToneOn", true));
+        MoxDisplayController controller(&stack, &radio, nullptr);
+        QVERIFY2(before->m_testingIMD, "Already-active remote two-tone state must seed existing pans");
+        QVERIFY2(before->m_showIMDMeasurements, "A remote window with no local coordinator keeps its saved Show preference");
+        SpectrumWidget* after = stack.addPanadapter(QStringLiteral("after"))->spectrumWidget();
+        QVERIFY(after->m_testingIMD);
+        QVERIFY(after->m_showIMDMeasurements);
+        QVERIFY(radio.pureSignalFacade()->applyRemoteProperty("twoToneOn", false));
+        QVERIFY(!before->m_testingIMD);
+        QVERIFY(!after->m_testingIMD);
+    }
+
     void keyedNotificationIsAnEdgeAndInitialTruth()
     {
         RadioModel model(RadioModel::Role::Remote);

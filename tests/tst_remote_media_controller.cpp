@@ -1,5 +1,17 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF  The pixel-grant rows place their pans
+//                                    with applyLayout so each fills the
+//                                    600 px stack; the crop row's 4 kHz
+//                                    overlap is restored. AI-assisted via
+//                                    Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  A remote window's rigctld key sends
+//                                    what programs play into VAX TX, never
+//                                    the PC microphone, whichever source
+//                                    the window has chosen, with the VAX
+//                                    device read by one reader (aRigctld-
+//                                    KeySendsVaxTxNeverTheMicrophone).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Wait for the asynchronous microphone
 //                                    pump to start the default-PC preview
 //                                    collector after media readiness.
@@ -251,6 +263,10 @@
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/DeviceStore.h"
 #include "gui/RemoteMediaController.h"
+#include "models/RadeWaveformModel.h"
+#include "core/session/media/WaveformCodec.h"
+#include "gui/RemoteRigctlServer.h"
+#include "gui/RemoteTransmitForwarder.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
@@ -277,7 +293,7 @@ using namespace NereusSDR;
 class DisplayTransport final : public IMediaTransport {
 public:
     explicit DisplayTransport(QObject* parent) : IMediaTransport(parent) {}
-    bool start(const StartOptions&) override { return true; }
+    bool start(const StartOptions& options) override { startOptions=options; return true; }
     void stop() override { active = false; }
     bool acceptDescription(const QString&, const QString&) override
     {
@@ -300,6 +316,12 @@ public:
     void failConnection(const QString& reason) { emit connectionFailed(reason); }
     void closeUnexpectedly() { active = false; emit closed(); }
     void reportGenericError(const QString& reason) { emit errorOccurred(reason); }
+    DisplaySendResult submitWaveform(const QByteArray& bytes) override {
+        if (!active || !other) { return DisplaySendResult::Refused; }
+        waveformPackets.append(bytes); emit other->waveformReceived(bytes); return DisplaySendResult::Sent;
+    }
+    StartOptions startOptions;
+    QList<QByteArray> waveformPackets;
     bool active = false;
     // Started when Core's media description first reaches this side.
     QElapsedTimer descriptionClock;
@@ -1102,6 +1124,80 @@ private slots:
         QVERIFY(text.isValid());
         QCOMPARE(text.methodIndex(), SessionTransport::staticMetaObject.indexOfSignal(
                                          "textReceived(QByteArray)"));
+    }
+
+    void waveformRemoteDemandClockAndIdentity()
+    {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings"));
+        RadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5,5,192000); station.setConnectionStateForTest(ConnectionState::Connected);
+        const int slice=station.addSlice(); QVERIFY(slice>=0);
+        StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true); QVERIFY(server.setDisplayBudgetLimits({10000000,10000000,1}));
+        QPointer<DisplayTransport> coreMedia,guiMedia;
+        constexpr qint64 offset=1000000000;
+        DaemonMediaController core(&server,&station,nullptr,[&](QObject* parent)->IMediaTransport* {
+            coreMedia=new DisplayTransport(parent); return coreMedia;
+        },[] { return waveformNowNs()+offset; });
+        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy; StationClient client(&remote,&proxy);
+        client.withholdFeatureForTest("remoteTx"); // This observer fixture opens no microphone line/capture.
+        RemoteMediaController gui(&client,&remote,nullptr,nullptr,[&](QObject* parent)->IMediaTransport* {
+            guiMedia=new DisplayTransport(parent); return guiMedia;
+        });
+        auto* stationLink=new Test::LoopbackTransport("station", &server);
+        auto* clientLink=new Test::LoopbackTransport("client", &client);
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(coreMedia && guiMedia && remote.sliceById(slice));
+        coreMedia->other=guiMedia; guiMedia->other=coreMedia; coreMedia->activate(); guiMedia->activate();
+        QVERIFY(gui.waveformNegotiated()); QVERIFY(guiMedia->startOptions.waveformChannel);
+        WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+        station.radeWaveformModel()->setEndpoint(slice,WaveformKind::DecodedSpeech,&publisher,UINT64_MAX,true);
+        auto* model=remote.radeWaveformModel(); model->setDemand(100,{{slice,WaveformKind::DecodedSpeech}});
+        model->setDemand(101,{{slice,WaveformKind::DecodedSpeech}});
+        QTRY_VERIFY(publisher.bindingToken()!=0);
+        auto* probe=gui.findChild<QTimer*>("remoteAudioClockProbeTimer"); QVERIFY(probe); QVERIFY(probe->isActive());
+        QVERIFY(QMetaObject::invokeMethod(probe,"timeout",Qt::DirectConnection));
+        QTRY_COMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->reason,
+                     QStringLiteral("Waiting for observed Core PCM"));
+        std::vector<float> pcm(240,0.375f);
+        QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),240,1,waveformNowNs()+offset,true));
+        QTRY_VERIFY(!coreMedia->waveformPackets.empty());
+        QTRY_VERIFY(!model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->samples.empty());
+        const auto snapshot=model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs());
+        QCOMPARE(snapshot->samples[0],0.375f);
+        QVERIFY(std::abs(snapshot->segments[0].startNs-waveformNowNs())<500000000);
+        const auto packet=WaveformCodec::decode(coreMedia->waveformPackets[0]); QVERIFY(packet);
+        const quint64 before=snapshot->revision;
+        emit guiMedia->waveformReceived(coreMedia->waveformPackets[0]); // Duplicate discarded.
+        QCOMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->revision,before);
+        WaveformPacket stale=*packet; stale.deliveryGeneration+=1; const auto bad=WaveformCodec::encode(stale); QVERIFY(bad);
+        emit guiMedia->waveformReceived(*bad);
+        QCOMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->revision,before);
+        WaveformPacket hole=*packet; hole.batch.serial+=2; hole.batch.segments[0].firstSequence+=1000;
+        hole.batch.segments[0].startNs+=100000000; const auto gap=WaveformCodec::encode(hole); QVERIFY(gap);
+        emit guiMedia->waveformReceived(*gap);
+        QVERIFY(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->droppedFrames>=760);
+        model->clearDemand(100); QVERIFY(publisher.bindingToken()!=0);
+        model->clearDemand(101); QTRY_COMPARE(publisher.bindingToken(),quint64(0)); QVERIFY(!probe->isActive());
+        client.disconnectFromStation("test complete");
+    }
+
+    void waveformOlderCoreIsUnsupported()
+    {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); RadioModel station;
+        StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path())); server.setMediaEnabled(true);
+        DaemonMediaController core(&server,&station,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
+        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy; StationClient client(&remote,&proxy); client.withholdFeatureForTest("waveform");
+        RemoteMediaController gui(&client,&remote,nullptr,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
+        auto* stationLink=new Test::LoopbackTransport("station", &server);
+        auto* clientLink=new Test::LoopbackTransport("client", &client);
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.isHandshakeComplete()); QVERIFY(!gui.waveformNegotiated());
+        const auto snapshot=remote.radeWaveformModel()->snapshot(0,WaveformKind::RawMicrophone,waveformNowNs());
+        QCOMPARE(snapshot->availability,WaveformAvailability::Unsupported); QVERIFY(!snapshot->reason.isEmpty());
+        client.disconnectFromStation("test complete");
     }
 
     void pureSignalChunksShareMediaWithoutChangingMessageLimit()
@@ -7535,6 +7631,10 @@ private slots:
         widget->setDisplayWindowPreservingHistory(14225000, 24000);
         widget->setWfUpdatePeriodMs(20);
         widget->setWaterfallTickerPausedForTest(true);
+        widget->setDisplayDuplex(true);
+        widget->setMoxOverlay(true);
+        widget->setTestingIMD(true);
+        widget->setShowIMDMeasurements(true);
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
@@ -7546,6 +7646,7 @@ private slots:
             });
         QSignalSpy controls(&server, &StationServer::mediaControlReceived);
         QSignalSpy frames(&controller, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy imdChanges(widget, &SpectrumWidget::imdMeasurementChanged);
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
         stationLink->linkTo(clientLink);
@@ -7594,6 +7695,14 @@ private slots:
             frame.producerTimestamp = quint64(producerNs);
             frame.waterfallAdvance = true;
             frame.traceDbm = QVector<float>(128, level);
+            if (index == 44) {
+                frame.traceDbm[16] = -88.0f;
+                frame.traceDbm[35] = -65.0f;
+                frame.traceDbm[54] = -22.0f;
+                frame.traceDbm[73] = -24.0f;
+                frame.traceDbm[92] = -66.0f;
+                frame.traceDbm[111] = -89.0f;
+            }
             frame.waterfallDbm = QVector<float>(128, level);
             return frame;
         };
@@ -7622,6 +7731,7 @@ private slots:
         // 2. One lost delta: frame 45 never arrives; 46..51 need a keyframe,
         //    which the Core sends as frame 52.
         QTest::qWait(250); // past the window's 200 ms keyframe-request spacing
+        int imdChangesAtLoss = -1;
         for (int i = 40; i < 60; ++i) {
             const bool keyframe = i == 52;
             const QByteArray packet =
@@ -7630,6 +7740,27 @@ private slots:
                 continue;
             }
             media->deliver(packet);
+            if (i == 44) {
+                QCOMPARE(widget->imdMeasurementFrame().status, ImdStatus::Valid);
+                QVERIFY(widget->imdMeasurementFrame().summary.has_value());
+                imdChangesAtLoss = imdChanges.count();
+            }
+            if (i == 46) {
+                QCOMPARE(widget->imdMeasurementFrame().status,
+                         ImdStatus::WaitingForSpectrum);
+                QVERIFY(!widget->imdMeasurementFrame().context.sourceEligible);
+                QCOMPARE(imdChanges.count(), imdChangesAtLoss + 1);
+                imdChangesAtLoss = imdChanges.count();
+            }
+            if (i >= 47 && i <= 51) {
+                QCOMPARE(widget->imdMeasurementFrame().status,
+                         ImdStatus::WaitingForSpectrum);
+                QCOMPARE(imdChanges.count(), imdChangesAtLoss);
+            }
+            if (i == 52) {
+                QVERIFY(widget->imdMeasurementFrame().context.sourceEligible);
+                QVERIFY(imdChanges.count() > imdChangesAtLoss);
+            }
             widget->tickWaterfallForTest();
         }
         drainRows();
@@ -10425,9 +10556,23 @@ private slots:
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
-        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        // 2026-10-16: the pans are placed by applyLayout, as MainWindow
+        // places them. addPanadapter alone leaves a pan after the stack's
+        // own pan-0 outside the splitter, at its own default width rather
+        // than the stack's: 400 px, which the 320 px narrow minimum
+        // (PanadapterApplet) made 320 and the crop row's 4 kHz overlap
+        // (about 342 bins) then outnumbered the 284 pixels it asked for.
+        stack.applyLayout(QStringLiteral("1"), {QStringLiteral("first")});
+        auto* first = stack.panadapter(QStringLiteral("first"));
+        QVERIFY(first);
         first->setActiveSliceIndex(sliceId);
         first->spectrumWidget()->setExtendedViewAllowed(false);
+        // 2026-10-16: placed in the stack, a pan's waterfall runs, and with
+        // waterfall AGC its dBm window follows the levels AGC sets from the
+        // first frames and asks again (as the C-Tune rows note), which the
+        // refused row would count as a second ask. This test is about
+        // pixel grants, so its pans use the stored levels.
+        first->spectrumWidget()->setWfAgcEnabled(false);
         // Shared: a "fine" pan that sizes the engine. Edge: a crop that
         // overlaps the source by 4 kHz, so fewer bins than pixels exist.
         // 2026-10-10: the shared pan's span was 12 kHz, which the per-pixel
@@ -10445,6 +10590,8 @@ private slots:
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        // The pan fills its stack, so it asks for the stack's width.
+        QTRY_COMPARE(first->spectrumWidget()->width(), stack.width());
         QPointer<DisplayTransport> sinkMedia;
         RemoteMediaController gui(&client, &remote, &stack, nullptr,
             [&sinkMedia](QObject* owner) -> IMediaTransport* {
@@ -10488,10 +10635,15 @@ private slots:
         if (shared) {
             // A deeper zoom on the same receiver asks for a longer "fine"
             // FFT than the first pan's engine; it is granted that engine.
-            limited = stack.addPanadapter(QStringLiteral("second"));
+            stack.applyLayout(QStringLiteral("2v"),
+                              {QStringLiteral("first"), QStringLiteral("second")});
+            limited = stack.panadapter(QStringLiteral("second"));
+            QVERIFY(limited);
             limited->setActiveSliceIndex(sliceId);
             limited->spectrumWidget()->setExtendedViewAllowed(false);
+            limited->spectrumWidget()->setWfAgcEnabled(false);
             limited->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 6000);
+            QTRY_COMPARE(limited->spectrumWidget()->width(), stack.width());
             QTRY_COMPARE(daemon.activeEndpointCount(), 2);
         }
         QTRY_VERIFY2_WITH_TIMEOUT(paints(limited), qPrintable(limited->remoteDisplayStatus()),
@@ -13158,6 +13310,111 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-10-15: a remote window's rigctld (WSJT-X's CAT) keys as the
+    // window's program and sends what programs play into VAX TX, never the
+    // PC microphone, whether the window's transmit source is the PC
+    // microphone or VAX. Two tones tell them apart at the Core (Goertzel),
+    // not a flag. While the key is on, only the rigctld's pump reads the
+    // VAX device; the collector runs on its own thread, as in the app.
+    void aRigctldKeySendsVaxTxNeverTheMicrophone_data()
+    {
+        QTest::addColumn<bool>("vaxSource");
+        QTest::newRow("pc microphone chosen") << false;
+        QTest::newRow("vax chosen") << true;
+    }
+
+    void aRigctldKeySendsVaxTxNeverTheMicrophone()
+    {
+        QFETCH(bool, vaxSource);
+        constexpr double kVaxHz = 700.0;
+        constexpr double kMicHz = 500.0;
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.3f, kMicHz);
+        auto device = std::make_unique<PacedVaxTxDevice>(0.4f, 0.2f, kVaxHz);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        PacedVaxTxDevice* vaxDevice = device.get();
+        h.remote.audioEngine()->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        const MicSource source = vaxSource ? MicSource::Vax : MicSource::Pc;
+        h.remote.transmitModel().setMicSource(source);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), source);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            h.client.remoteTransmit()->acceptedMicSource() == RemoteMicSource::ClientAudio, 5000);
+
+        // Wired as MainWindow::refreshRigctlRemoteTransmit wires it.
+        RemoteRigctlServer rig(&h.remote);
+        const QPointer<RemoteTransmitClient> client(h.client.remoteTransmit());
+        rig.setProgramAudioKey([client] { return client && client->programAudioKey(); });
+        rig.setRemoteTransmit(remoteTransmitForwarder(h.client.remoteTransmit(), &media));
+        QVERIFY(rig.requestKey(1));
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        // keyForProgram has returned: from here the rigctld's pump, on this
+        // thread, is the VAX device's one reader.
+        vaxDevice->setProgramReaderIsThisThread(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QVERIFY(rig.keyed());
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        // Everything the Core takes from key-up on, about in real time:
+        // 120 steps of four pump blocks (5.3 ms) each, one letter a step.
+        // The feed starts silent while it fills ('.'), and the block where
+        // the audio starts can be part silence ('?'); after that every step
+        // is the VAX tone ('V'), and no step is ever the microphone's ('M').
+        constexpr int kStepFrames = 4 * RemoteMicConfig::kPumpBlockFrames;
+        QString timeline;
+        std::vector<float> steady;
+        for (int step = 0; step < 120; ++step) {
+            QTest::qWait(5);
+            const std::vector<float> chunk = pullFeed(feed, 4);
+            double sum = 0.0;
+            for (float v : chunk) { sum += static_cast<double>(v) * v; }
+            const double rms = std::sqrt(sum / kStepFrames);
+            const double mic = tonePower(chunk, kMicHz);
+            const double vax = tonePower(chunk, kVaxHz);
+            const QChar mark = rms < 0.02 ? QChar('.')
+                : mic > 4.0 * vax         ? QChar('M')
+                : vax > 4.0 * mic         ? QChar('V')
+                                          : QChar('?');
+            timeline += mark;
+            // The steady part: from the fifth step after the VAX tone came.
+            if (timeline.count(QChar('V')) > 4) {
+                steady.insert(steady.end(), chunk.begin(), chunk.end());
+            }
+        }
+        QVERIFY2(!timeline.contains(QChar('M')), qPrintable(timeline));
+        QVERIFY2(timeline.count(QChar('V')) > 60, qPrintable(timeline));
+        const double vaxPower = tonePower(steady, kVaxHz);
+        const double micPower = tonePower(steady, kMicHz);
+        QVERIFY2(vaxPower > 100.0 * micPower,
+                 qPrintable(QStringLiteral("VAX %1, microphone %2").arg(vaxPower).arg(micPower)));
+        QCOMPARE(vaxDevice->readsBesideTheProgram(), 0);
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+
+        // T 0: the pump stops before the unkey, and the key ends at the Core.
+        rig.releaseKey(1);
+        vaxDevice->setProgramReaderIsThisThread(false);
+        QVERIFY(!rig.keyed());
+        QVERIFY(!h.client.remoteTransmit()->programAudioKey());
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // ---- 2026-10-08: TCI program keys that bring their own audio ----
 
     // Case A: a program key with its own audio (",tci") and a microphone
@@ -14206,6 +14463,7 @@ const QStringList kAudioFunctions{
     QStringLiteral("vaxSourceSendsTheVaxTransmitAudio"),
     QStringLiteral("aProgramAudioKeyLeavesTheVaxDeviceToTheProgram"),
     QStringLiteral("aProgramAudioKeyUnderTheScreenKeyTakesTheVaxDeviceAtOnce"),
+    QStringLiteral("aRigctldKeySendsVaxTxNeverTheMicrophone"),
     QStringLiteral("aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence"),
     QStringLiteral("aProgramAudioKeyNeverSendsTheMicrophone"),
     QStringLiteral("aProgramAudioLapseSendsSilenceNotTheMicrophone"),

@@ -208,6 +208,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  setSessionIceConfigurationForTest:
+//                                    a test stands in for the ICE settings
+//                                    of a session through the service.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable
 //                                    and coreSpeakerNeedsNewerCore
 //                                    (coreSpeakerVersion 1, native audio
@@ -481,6 +487,9 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: pathPairUnknown(), a rank of ServiceRelayed that only
+//               means the ICE pair is not known yet; setPathRankForTest().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -799,6 +808,14 @@ public:
     /// (DataChannelTransport::mediaIceConfiguration()); none for a
     /// WebSocket session.
     std::optional<IceConfiguration> sessionIceConfiguration() const;
+    /// Test seam: what sessionIceConfiguration() returns, as a session
+    /// through the service would (a test link is not a
+    /// DataChannelTransport). Empty: the session's own. No production
+    /// caller.
+    void setSessionIceConfigurationForTest(std::optional<IceConfiguration> ice)
+    {
+        m_sessionIceForTest = std::move(ice);
+    }
     /// Task 29 step 2b (link section 21, "The media tunnel"): the Core told
     /// mediaTunnelVersion 1, so the media start may declare the tunnel even
     /// before a later path move to a direct WebSocket.
@@ -859,6 +876,16 @@ public:
     /// The rank of the path the session runs on (PathRacer::Rank), or -1
     /// when it did not come from a race.
     int pathRank() const { return m_pathRank; }
+    /// True while pathRank() is ServiceRelayed only because libjuice had
+    /// not reported the selected ICE pair: not known to be the relay.
+    bool pathPairUnknown() const { return m_pathPairUnknown; }
+    /// Test seam: the path rank and whether its pair is known, as a race
+    /// or the service dial sets them.
+    void setPathRankForTest(int rank, bool pairUnknown)
+    {
+        m_pathRank = rank;
+        m_pathPairUnknown = pairUnknown;
+    }
     /// Moves of this session to a better path (link section 21.2).
     int pathSwitches() const { return m_pathSwitches; }
     /// Test seams: the upgrade schedule (PathRacer::kUpgradeRetryMs; the
@@ -1888,6 +1915,7 @@ private:
     void reconcileSlicesAgainstStation();
 
     void handleAudioCatalogue(const QList<MirrorUpdate>& updates);
+    void handleRadeCatalogue(const QList<MirrorUpdate>& updates);
     void handleObjectCreate(const SessionMessage& message);
     void handleObjectDestroy(const SessionMessage& message);
     void handleDelta(const SessionMessage& message);
@@ -2259,6 +2287,7 @@ private:
     int m_raceWinnerLine = -1;
     QList<PathRacer::Line> m_raceLines;
     int m_pathRank = -1;
+    bool m_pathPairUnknown = false;
     int m_pathSwitches = 0;
     QString m_stationRendezvousId;
     QTimer* m_upgradeTimer = nullptr;
@@ -2270,6 +2299,8 @@ private:
     /// The ICE settings of the connection through the service this session
     /// left, so its media keeps the service's STUN server (link 21.3).
     std::optional<IceConfiguration> m_serviceIce;
+    // setSessionIceConfigurationForTest.
+    std::optional<IceConfiguration> m_sessionIceForTest;
     /// The last STUN server a session through the service used (the
     /// direct media ladder's fallback); never saved.
     mutable std::optional<IceServerAddress> m_lastServiceStun;

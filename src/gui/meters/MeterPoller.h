@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-08 - Workspace preview only: a reading consumer's cached
 //                 readings are replayed to that consumer alone (a callback,
 //                 not readingUpdated), and cachedReading() seeds inert
@@ -119,6 +122,7 @@ mw0lge@grange-lane.co.uk
 #include "core/WdspTypes.h"
 #include "MeterItem.h"
 #include "gui/NereusGuiExport.h"
+#include "core/audio/WaveformSnapshot.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QHash>
@@ -138,6 +142,7 @@ class RxChannel;
 class TxChannel;
 class MeterWidget;
 class RadioStatus;
+class MainPowerMeter;
 class SMeterWidget;
 class WdspEngine;
 class RadioModel;
@@ -204,10 +209,21 @@ namespace MeterBinding {
     constexpr int RotatorEle     = 301;  // Elevation (0-90)
 }
 
+struct WaveformContextRequest {
+    QJsonObject context;
+    WaveformKind kind;
+};
 class NEREUS_GUI_EXPORT MeterPoller : public QObject {
     Q_OBJECT
 
 public:
+    void setWaveformSource(std::function<WaveformSnapshotPtr(const QJsonObject&, WaveformKind)> source) {
+        m_waveformSource = std::move(source);
+    }
+    void setWaveformDemandSource(std::function<void(const QList<WaveformContextRequest>&)> source) {
+        m_waveformDemandSource = std::move(source);
+    }
+    void copyCachedWaveforms(MeterWidget* widget, const QJsonObject& context) const;
     explicit MeterPoller(QObject* parent = nullptr);
     ~MeterPoller() override;
 
@@ -377,6 +393,7 @@ public:
     // should use these setters when changing global units or PA rating.
     void setUnitMode(MeterItem::MeterUnit unit);
     void rescalePowerMeters(int watts);
+    void setMainPowerMeter(MainPowerMeter* meter);
     static const QList<int>& remoteTxPeakBindingsNotSent();
 
     // ── Polling interval (Task 3.1, MultimeterPage wire-up) ──────────────────
@@ -431,6 +448,7 @@ public:
     void setRxOffsetSource(std::function<double()> source);
 
 signals:
+    void waveformFrameAdvanced(qint64 monotonicMs);
     void frameAdvanced(qint64 monotonicMs);
     void bindingAvailabilityChanged(int bindingId, const QString& reason);
     void bindingSupportChanged(int bindingId, MeterItem::BindingSupport support);
@@ -471,11 +489,18 @@ public slots:
     void setInTx(bool isTx);
 
 private slots:
+    void pollWaveforms();
     void poll();
 
 private slots:
 
 private:
+    QByteArray waveformKey(const QJsonObject& context, WaveformKind kind) const;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    QTimer m_waveformTimer;
+    QHash<QByteArray, WaveformSnapshotPtr> m_waveformCache;
+    std::function<WaveformSnapshotPtr(const QJsonObject&, WaveformKind)> m_waveformSource;
+    std::function<void(const QList<WaveformContextRequest>&)> m_waveformDemandSource;
     // ── TX poll helper ────────────────────────────────────────────────────────
     // Reads the 4 WDSP TX meters gated for 3M-1a and pushes them to all
     // registered MeterWidget targets.
@@ -573,6 +598,8 @@ private:
     std::function<qint64()> m_monotonicSource;
     MeterItem::MeterUnit m_unitMode{MeterItem::MeterUnit::dBm};
     int m_powerScale{0};
+    QPointer<MainPowerMeter> m_mainPowerMeter;
+    void applyMainPowerScale(MeterWidget* target = nullptr) const;
     QMetaObject::Connection m_rxDestroyed, m_txDestroyed, m_paDestroyed, m_statusDestroyed;
     QVector<QMetaObject::Connection> m_remoteConnections;
     QTimer m_timer;

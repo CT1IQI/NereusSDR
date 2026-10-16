@@ -859,6 +859,7 @@ target_compile_definitions(tst_puresignal_coordinator PRIVATE NEREUS_BUILD_TESTS
 # routes to the PureSignal coordinator (Task 7).  Save button gating mirrors
 # Thetis PSForm.cs:574-590 [v2.10.3.13] CorrectionsBeingApplied predicate.
 nereus_add_test(tst_psform)
+nereus_add_test(tst_puresignal_refresh_state NATIVE_WINDOW)
 
 # ── Phase 3M-4 Task 9: AmpViewWindow modeless dialog ─────────────────────────
 # Source-first port of Thetis AmpView.cs (528 LOC) [v2.10.3.13].  Tests verify
@@ -867,11 +868,14 @@ nereus_add_test(tst_psform)
 # (chkAVShowGain @ 7,378 / chkAVPhaseZoom @ 242,378 / chkAVLowRes @ 404,378
 # / chkStayOnTop @ 490,378), 5 named chart series (Ref / MagAmp / PhsAmp /
 # MagCorr / PhsCorr), default chkAVLowRes Checked per AmpView.Designer.cs:
-# 182-183 [v2.10.3.13], toggle persistence to AppSettings, stay-on-top window
+# 182-183 [v2.10.3.13], mode persistence to AppSettings, stay-on-top window
 # flag application, chart axis ranges (Mag 1.0/2.0 + Phase 180/45) matching
 # AmpView.cs:435-482 [v2.10.3.13], and lowResStride() == 4 per AmpView.cs:
 # 457-463 [v2.10.3.13].
 nereus_add_test(tst_ampview_window)
+# Linked cursor interpolation uses the independent PS3 X domains and keeps
+# visibility/cursor choices local to this window session.
+nereus_add_test(tst_ampview_linked_cursor)
 
 # ── Phase 3M-4 Task 10: PsaIndicatorWidget bottom-banner FB+PS pair ──────────
 # Source-first port of Thetis ucInfoBar.cs:820-1098 [v2.10.3.13] (lblFB +
@@ -1393,6 +1397,16 @@ nereus_add_test(tst_slice_apf)
 # ── Phase 3G-10 Stage 2: WDSP wiring — Squelch (SSB/AM/FM) ─────────────
 nereus_add_test(tst_rxchannel_squelch)
 nereus_add_test(tst_slice_squelch)
+# Saved squelch reaches slices B to D's WDSP channels (reads rxa[] back), and
+# a DSP edit on a slice that is not the active one is saved to that slice.
+nereus_add_test(tst_slice_squelch_channel_seed)
+if(TARGET tst_slice_squelch_channel_seed)
+    target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE NEREUS_BUILD_TESTS)
+    if(FFTW3_FOUND AND WDSP_FOUND)
+        target_include_directories(tst_slice_squelch_channel_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_compile_definitions(tst_slice_squelch_channel_seed PRIVATE WDSP_STATIC_BUILD)
+    endif()
+endif()
 
 # ── Phase 3G-10 Stage 2: WDSP wiring — Mute / Audio Pan / Binaural (S2.6) ──
 nereus_add_test(tst_rxchannel_audio_panel)
@@ -1963,6 +1977,10 @@ target_compile_definitions(tst_master_output_widget PRIVATE NEREUS_BUILD_TESTS)
 # backends only; no audio device, no radio.
 nereus_add_test(tst_main_window_header_speaker_pick)
 target_compile_definitions(tst_main_window_header_speaker_pick PRIVATE NEREUS_BUILD_TESTS)
+
+# Issue #525: a window saved maximized gets its native window only after its
+# SpectrumWidgets exist, so Linux composites it with QRhi. No radio.
+nereus_add_test(tst_main_window_maximized_restore)
 
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
@@ -4307,6 +4325,19 @@ nereus_add_test(tst_wdsp_engine_tx_channel)
 #   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
 nereus_add_test(tst_wdsp_engine_dexp_init)
 
+# AGC Fixed Gain seed: a new or rebuilt WDSP RX channel must run the Fixed
+# Gain RxChannel caches (20 dB), not WDSP's create_wcpagc default of 1000.0
+# linear (60 dB, third_party/wdsp/src/RXA.c:385). Reads rxa[].agc.p back.
+nereus_add_test(tst_rx_channel_agc_fixed_seed)
+if(FFTW3_FOUND AND WDSP_FOUND)
+    target_include_directories(tst_rx_channel_agc_fixed_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_rx_channel_agc_fixed_seed PRIVATE WDSP_STATIC_BUILD)
+endif()
+
+# Settings > DSP > AGC/ALC: the Fixed Gain spinner follows a model change
+# without echoing it back.
+nereus_add_test(tst_agc_alc_fixed_gain_sync)
+
 # ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
 # Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
 # the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always
@@ -4349,6 +4380,45 @@ nereus_add_test(tst_wdsp_engine_rade_lifecycle)
 # m_initialized = true so the createRxChannel seed at the head of the
 # test does not bail out on its !m_initialized guard.
 nereus_add_test(tst_slice_model_rade_swap)
+if(TEST tst_slice_model_rade_swap)
+    set_property(TEST tst_slice_model_rade_swap APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
+
+nereus_add_test(tst_rade_v2_link_gate fakes/LoopbackTransport.cpp EXTRA_LABELS session)
+if(TEST tst_rade_v2_link_gate)
+    get_test_property(tst_rade_v2_link_gate ENVIRONMENT _rade_link_env)
+    set_property(TEST tst_rade_v2_link_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    string(REPLACE "test-home/tst_rade_v2_link_gate" "test-home/tst_rade_v2_link_gate_1" _rade_link_on_env "${_rade_link_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_link_gate_1")
+    add_test(NAME tst_rade_v2_link_gate_1 COMMAND tst_rade_v2_link_gate)
+    set_tests_properties(tst_rade_v2_link_gate_1 PROPERTIES
+        ENVIRONMENT "${_rade_link_on_env};NEREUS_ENABLE_RADE_V2=1"
+        ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui;session")
+endif()
+
+# The immutable process switch is exercised in separate processes.
+nereus_add_test(tst_rade_v2_gate)
+if(TEST tst_rade_v2_gate)
+    get_test_property(tst_rade_v2_gate ENVIRONMENT _rade_gate_env)
+    set_property(TEST tst_rade_v2_gate APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=0")
+    add_test(NAME tst_rade_v2_gate_unset COMMAND tst_rade_v2_gate)
+    string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_unset" _rade_unset_env "${_rade_gate_env}")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_unset")
+    set_tests_properties(tst_rade_v2_gate_unset PROPERTIES
+        ENVIRONMENT "${_rade_unset_env}" ENVIRONMENT_MODIFICATION "NEREUS_ENABLE_RADE_V2=unset:;QT_QPA_PLATFORM=set:offscreen"
+        TIMEOUT 120 LABELS "core;models;gui")
+    foreach(_gate_value IN ITEMS 1 malformed)
+        add_test(NAME tst_rade_v2_gate_${_gate_value} COMMAND tst_rade_v2_gate)
+        string(REPLACE "test-home/tst_rade_v2_gate" "test-home/tst_rade_v2_gate_${_gate_value}" _rade_process_env "${_rade_gate_env}")
+        file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-home/tst_rade_v2_gate_${_gate_value}")
+        set_tests_properties(tst_rade_v2_gate_${_gate_value} PROPERTIES
+            ENVIRONMENT "${_rade_process_env};NEREUS_ENABLE_RADE_V2=${_gate_value}"
+            ENVIRONMENT_MODIFICATION "QT_QPA_PLATFORM=set:offscreen"
+            TIMEOUT 120 LABELS "core;models;gui")
+    endforeach()
+endif()
+
 
 # ── Phase 3R Task J4: RADE audio routing into AudioEngine ───────────────────
 # Pins the contract that RadioModel::wireRadeChannel adds an audio
@@ -5921,6 +5991,16 @@ nereus_add_test(tst_dsp_change_timer)
 #   radiomodel_rebuild_noop_when_disconnected — no emission when disconnected
 nereus_add_test(tst_dsp_options_per_mode_apply)
 
+# Every receive channel takes its slice's per-mode DSP > Options buffer size
+# before it runs a block (Thetis console.cs:2681-2692 SyncDSP), and on every
+# later mode change, the first receiver and the others alike. Real channels
+# through openRxChannelPool. With nothing saved, the DSP > Options page shows
+# what a receiver and the transmitter start with in every mode group. Slice
+# A's receiver on a real connect (ConnectableRadioModel) is read off WDSP.
+nereus_add_test(tst_dsp_options_first_apply
+    fakes/P1FakeRadio.cpp
+    fakes/ConnectableRadioModel.cpp)
+
 # ── Task 4.3: Filter Impulse Cache toggle persistence ─────────────────────────
 # AppSettings round-trip for DspOptionsCacheImpulse and
 # DspOptionsCacheImpulseSaveRestore. Both default to "False". The WdspEngine
@@ -6337,6 +6417,11 @@ nereus_add_test(tst_transmit_model_hl2_audio_volume)
 # Source: Thetis display.cs:5008/5210-5316/5453-5475/5512-5685/5725-5760
 #         [v2.10.3.13].
 nereus_add_test(tst_imd_overlay)
+nereus_add_test(tst_imd_measurement_presenter)
+nereus_add_test(tst_imd_spectrum_integration)
+nereus_add_test(tst_imd_measurement_panel NATIVE_WINDOW)
+nereus_add_test(tst_imd_waterfall_annotations NATIVE_WINDOW)
+nereus_add_test(tst_imd_rail_controls)
 
 # ── v0.4.1 hotfix: RadioModel pushes hardware HPSDRModel to ReceiverManager ──
 # 5 tests pinning the contract that RadioModel propagates m_hardwareProfile.
@@ -7071,6 +7156,9 @@ nereus_add_test(tst_rade_applet)
 #                                          the RADE purple accent when
 #                                          RADE-L active.
 nereus_add_test(tst_mode_menu_rade)
+if(TEST tst_mode_menu_rade)
+    set_property(TEST tst_mode_menu_rade APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # ── Phase 3J-2 Task E1: SpectrumWidget spot overlay render ─────────────────
 # Pins the contract that drawSpotMarkers places spot labels with
@@ -7270,6 +7358,9 @@ nereus_add_test(tst_spot_auto_start)
 # follows freedv-gui src/pipeline/RADE{Receive,Transmit}Step.{h,cpp}
 # [@77e793a]. I1 ships skeleton bodies only; no DSP yet.
 nereus_add_test(tst_rade_channel)
+if(TEST tst_rade_channel)
+    set_property(TEST tst_rade_channel APPEND PROPERTY ENVIRONMENT "NEREUS_ENABLE_RADE_V2=1")
+endif()
 
 # Phase 3R Task I2a pins the Resampler wrapper around r8brain-free-src
 # (vendored MIT, third_party/r8brain/ at SHA 5c44bebe). The Resampler
@@ -7462,6 +7553,9 @@ nereus_add_test(tst_tgxl_connection_ping)
 # One `status` in flight on the tuner link (GeniusStatusGate): the poll waits
 # for the answer, a refusal or a lost answer frees it, a new connection asks.
 nereus_add_test(tst_tgxl_connection_status_pacing)
+# The status poll's rate on both Genius links (GeniusPollPacer): fast while
+# keyed and for a hold after, and a poll already fast is not restarted.
+nereus_add_test(tst_genius_poll_pacer)
 nereus_add_test(tst_tgxl_connection_reconnect)
 nereus_add_test(tst_tgxl_connection_identity)
 nereus_add_test(tst_tgxl_station_identity)
@@ -7711,6 +7805,22 @@ target_link_libraries(tst_rf2ks_connection_control PRIVATE Qt6::Network)
 #   operateButtonReflectsModelState (STANDBY/OPERATE text via setOperateMode);
 #   operateButtonClickEmitsRequest (operateToggled emitted with correct bool).
 nereus_add_test(tst_rf2ks_applet_layout)
+# The tuner and amplifier panels' readouts: the four scales and limits, the
+# text rules (whole watts, the three SWR forms, whole degrees), reflected
+# power from forward power and SWR, and BarInstrument fed a reading of the
+# caller's own (value, dashes, the small second reading, the peak reset).
+nereus_add_test(tst_main_power_meter)
+nereus_add_test(tst_composite_main_power_scale)
+nereus_add_test(tst_main_power_descriptors)
+nereus_add_test(tst_main_power_meter_poller)
+nereus_add_test(tst_tx_applet_power_row)
+
+nereus_add_test(tst_accessory_readouts)
+# The Tuner Genius, Power Genius and RF2K-S panels in layout 3: the rows
+# each has, values while passing power, dashes on forward, reflected and
+# SWR when not, every row dashed for an absent device, the tuner's three
+# forward scales and the RF2K-S text line.
+nereus_add_test(tst_accessory_panels_layout3)
 # The bar gauge's scale numbers at the 96 dpi text size (7 points = 9 px):
 # drawn whole with a clear row under them, the gauge 30 px tall where the
 # scale font is 7 px (the Mac) and taller only where it is larger.
@@ -10941,6 +11051,11 @@ nereus_add_test(tst_cat_setup_page_teardown)
 nereus_add_test(tst_cat_integration CORE_ONLY)
 
 nereus_add_test(tst_cat_rigctld CORE_ONLY)
+# 2026-10-15: a remote window's own rigctld (RemoteRigctlServer): Hamlib on
+# the slice the window transmits on, its key as the window's program, and
+# the VAX TX device's audio on that key. NereusSDR-native; no upstream port.
+nereus_add_test(tst_remote_rigctld)
+target_compile_definitions(tst_remote_rigctld PRIVATE NEREUS_BUILD_TESTS)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
@@ -10956,6 +11071,15 @@ nereus_add_test(tst_cat_rigctld CORE_ONLY)
 # The GLOBAL property NEREUS_ALL_TESTS is appended to by every
 # nereus_add_test() call above.  add_custom_target then bundles them
 # into a single buildable target.
+nereus_add_test(tst_rade_waveform_model CORE_ONLY)
+nereus_add_test(tst_waveform_dispatch)
+nereus_add_test(tst_waveform_containers)
+nereus_add_test(tst_waveform_native NATIVE_WINDOW)
+nereus_add_test(tst_waveform_meter)
+nereus_add_test(tst_waveform_remote_model CORE_ONLY)
+nereus_add_test(tst_waveform_codec CORE_ONLY)
+nereus_add_test(tst_waveform_publisher CORE_ONLY)
+nereus_add_test(tst_waveform_history CORE_ONLY)
 nereus_add_test(tst_container_content_host)
 nereus_add_test(tst_container_content_host_native NATIVE_WINDOW)
 

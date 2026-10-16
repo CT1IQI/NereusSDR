@@ -43,6 +43,8 @@ struct BoardCapabilities;
 struct RadioInfo;
 class TciServer;
 class CatTciServerPage;
+class RemoteRigctlServer;
+class RemoteRigctldPage;
 class AudioVaxPage;
 class SettingsProxy;
 class RemoteStationPage;
@@ -183,6 +185,10 @@ public:
     // is safe across server lifecycle changes.
     void setTciServer(class NereusSDR::TciServer* server);
 
+    // 2026-10-15: a remote window's rigctld, for CAT & Network > rigctld's
+    // status line. Held and replayed into the page when it is realized.
+    void setRemoteRigctlServer(class NereusSDR::RemoteRigctlServer* server);
+
     // R-R3-43 / R-R3-44: whether this remote window's receiver streams (the
     // ones feeding VAX) are Opus rather than lossless, and why (the choice,
     // or Lossless chosen but not running). MainWindow pushes it live; the
@@ -227,6 +233,10 @@ signals:
     // and connects it to TciServer::messageLogged so the window outlives this
     // dialog closing.
     void tciShowLogRequested();
+
+    // 2026-10-15: forwarded from CAT & Network > rigctld (remote window
+    // only). MainWindow applies the new settings to its rigctld.
+    void remoteRigctldSettingsChanged();
 
     // Task 3.6: forwarded from GeneralOptionsPage — CPU meter rate spinbox.
     // MainWindow::setCpuTimerIntervalHz() is the handler.
@@ -465,6 +475,10 @@ private:
     // non-WebSocket builds. Safe: MainWindow parents its single TciServer to
     // itself and never destroys it independently, so it outlives this dialog.
     TciServer* m_pendingTciServer = nullptr;
+
+    // 2026-10-15: the remote window's rigctld and its page, once realized.
+    QPointer<RemoteRigctlServer> m_remoteRigctlServer;
+    QPointer<RemoteRigctldPage> m_remoteRigctldPage;
 
     // R-R3-43 / R-R3-44: the value setReceiverAudioNote() last got,
     // replayed into the VAX page when it is realized.
