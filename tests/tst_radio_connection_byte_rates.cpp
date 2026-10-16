@@ -4,6 +4,7 @@
 #include "core/RadioConnection.h"
 
 #include <QElapsedTimer>
+#include <QScopeGuard>
 
 #include <atomic>
 #include <thread>
@@ -79,22 +80,37 @@ private slots:
         // Every sample is still inside the window if the last rate read
         // happened less than this long after the first record.
         constexpr qint64 kMarginMs = 4000;
+        std::atomic<bool> go{false};
         std::atomic<bool> done{false};
         QElapsedTimer elapsed;
         elapsed.start();
+        // The writer starts only once the reader is about to read, so the
+        // two overlap even if this thread is preempted after the spawn.
         std::thread writer([&] {
+            while (!go.load()) {
+                std::this_thread::yield();
+            }
             for (int i = 0; i < kRecords; ++i) {
                 rc.recordBytesSent(10);
                 rc.recordBytesReceived(20);
             }
             done.store(true);
         });
+        // A failed QVERIFY returns early: release and join the writer on
+        // every exit, or the joinable std::thread calls std::terminate.
+        const auto joinWriter = qScopeGuard([&] {
+            go.store(true);
+            if (writer.joinable()) {
+                writer.join();
+            }
+        });
         int reads = 0;
-        while (!done.load()) {
+        go.store(true);
+        do {
             QVERIFY(rc.txByteRate(kWindowMs) >= 0.0);
             QVERIFY(rc.rxByteRate(kWindowMs) >= 0.0);
             ++reads;
-        }
+        } while (!done.load());
         writer.join();
         const double txMbps = rc.txByteRate(kWindowMs);
         const double rxMbps = rc.rxByteRate(kWindowMs);
