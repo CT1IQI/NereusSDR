@@ -95,6 +95,20 @@ If Namecheap's default parking records for `@` and `www` are still there,
 delete them first. Caddy obtains the HTTPS certificates by itself once both
 names resolve to the droplet, and keeps retrying until they do.
 
+## Release file sizes and date
+
+The home page names a release's files before the release is published, but
+their sizes and the release date only exist once GitHub has the release. After
+publication, and before deploying:
+
+```sh
+website/bake-release.py v2026.10.1
+```
+
+It writes the sizes and the date into `public/index.html` from
+`gh release view`, refuses a draft or prerelease, and changes nothing if the
+page links a file the release does not have. Commit the result.
+
 ## Deploy
 
 ```sh
