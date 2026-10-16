@@ -1442,6 +1442,11 @@ nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
 nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
 nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
 nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
+# A Core that has a radio saves a remote window's tune step for a slice that
+# is not its active one, under that slice's key, and brings it back after a
+# restart (found reviewing PR 517). A connection that sends nothing, a real
+# StationServer and a remote window over the loopback; no radio, no audio.
+nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
@@ -9265,6 +9270,14 @@ nereus_add_test(tst_remote_keying
 # a key on (real time).
 # The watchdog's wording check needs only this text table from the GUI.
 nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ONLY EXTRA_LABELS session)
+# The keyed remote device's transmit cut on a thread of its own when the
+# Core's main thread stalls (real time).
+nereus_add_test(tst_remote_tx_cut_guard CORE_ONLY REALTIME EXTRA_LABELS session)
+# The transmit cut line: the connection's cut latch runs its unkey on the
+# connection's thread while main sleeps, and RadioModel's catch-up after it
+# (real time).
+nereus_add_test(tst_transmit_cut_line REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_transmit_cut_line PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp

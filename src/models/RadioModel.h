@@ -12,6 +12,13 @@
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+// 2026-10-15 - catchUpTransmitCut does not stop a second time when all that
+//              is left is a release already under way. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-15 - The transmit cut line (transmitCutLine) a thread other than
+//              main cuts through, kept on the current connection and TX
+//              channel, and catchUpTransmitCut for the main thread after
+//              it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-15 - A held per-band value gives way to a newer write of its key
 //              from outside (a remote window through the settings proxy).
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -771,6 +778,7 @@
 #include "core/safety/TxInhibitMonitor.h"
 #include "core/safety/BandPlanGuard.h"
 #include "core/safety/TxTimeOutTimer.h"
+#include "core/safety/TransmitCutLine.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -4900,6 +4908,7 @@ public:
     void wireReceiverManagerHardwarePushesForTest() { wireReceiverManagerHardwarePushes(); }
     void injectConnectionForTest(RadioConnection* conn) {
         m_connection = conn;
+        syncTransmitCutTargets();
         setConnectionState(conn != nullptr ? ConnectionState::Connected
                                             : ConnectionState::Disconnected);
     }
@@ -5221,7 +5230,11 @@ public:
     // Production code never calls this — m_txChannel is wired by the
     // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
-    void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+    void injectTxChannelForTest(class TxChannel* ch)
+    {
+        m_txChannel = ch;
+        syncTransmitCutTargets();
+    }
     void bindTxEqProfileChannelForTest(TxChannel* ch) { bindTxEqProfileChannel(ch); }
     void bindCfcProfileChannelForTest(TxChannel* ch) { bindCfcProfileChannel(ch); }
     void replayCfcProfileForTest() { replayCfcProfile(); }
@@ -5472,6 +5485,19 @@ public slots:
     // nothing. A held PTT then does not key again until it is released
     // (MoxController::latchStopAllTx).
     void stopAllTx(const QString& message = QString());
+
+    // The transmit cut (2026-10-15). transmitCutLine() is the line a thread
+    // other than main (RemoteTxCutGuard) cuts through: it closes the TX
+    // channel's RF gate and sets the connection's cut latch
+    // (RadioConnection::cutTransmit), and its targets always follow this
+    // model's connection and TX channel. catchUpTransmitCut(stopText) runs
+    // on the main thread once it is free again: stopAllTx(stopText) (which
+    // does nothing when nothing is keyed, and is skipped when all that is
+    // left is a release already under way, an earlier stop's), then
+    // clearTransmitCut posted to the connection, queued behind the MOX off
+    // stopAllTx posted, so the next key keys normally.
+    std::shared_ptr<TransmitCutLine> transmitCutLine() const { return m_transmitCutLine; }
+    void catchUpTransmitCut(const QString& stopText);
 
 public:
     // ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ──
@@ -7552,6 +7578,13 @@ private:
     // Connection (owned, lives on m_connThread)
     RadioConnection* m_connection{nullptr};
     QThread*         m_connThread{nullptr};
+
+    // The transmit cut line (2026-10-15): shared with RemoteTxCutGuard,
+    // which may outlive this model. Its targets are set wherever
+    // m_connection or m_txChannel is set, injected or cleared, before either
+    // object can be destroyed (syncTransmitCutTargets).
+    std::shared_ptr<TransmitCutLine> m_transmitCutLine{std::make_shared<TransmitCutLine>()};
+    void syncTransmitCutTargets() { m_transmitCutLine->setTargets(m_connection, m_txChannel); }
 
     // I/Q DSP worker (owned, lives on m_dspThread). Fed by a queued
     // connection from ReceiverManager::iqDataForReceiverStamped (R-R3-40).

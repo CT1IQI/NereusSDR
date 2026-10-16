@@ -17,6 +17,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - catchUpTransmitCut does not stop a second time when all
+//                that is left is a release already under way. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The transmit cut line follows the connection and TX
+//                channel wherever they are set or cleared, and
+//                catchUpTransmitCut stops what is keyed and clears the
+//                connection's cut. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-15 - The HL2 temperature average spans mi0bot's 800 ms (100
 //                samples of the latest reading, 8 ms apart) at any
 //                telemetry rate, and starts fresh when the connection
@@ -4864,6 +4872,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    // The transmit cut line may outlive this model (RemoteTxCutGuard holds
+    // it); nothing it cuts after this may reach this model's objects.
+    m_transmitCutLine->setTargets(nullptr, nullptr);
     AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
@@ -8259,6 +8270,7 @@ void RadioModel::wireTransmitProcessingChain()
 void RadioModel::wireTransmitChainForTest(TxChannel* channel)
 {
     m_txChannel = channel;
+    syncTransmitCutTargets();
     wireMicAndMonitorToTransmit();
     wireTransmitProcessingChain();
 }
@@ -18930,6 +18942,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         return;
     }
     m_connection = conn.release();
+    syncTransmitCutTargets();
 #ifdef NEREUS_BUILD_TESTS
     if (m_testP2OutboundBase != 0) {
         if (auto* const p2 = qobject_cast<P2RadioConnection*>(m_connection)) {
@@ -19014,6 +19027,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 /*inputSampleRate=*/48000,
                 /*dspSampleRate=*/WdspEngine::kTxDspSampleRate,
                 /*outputSampleRate=*/txOutRate);
+            syncTransmitCutTargets();
             if (!m_txChannel) {
                 return;
             }
@@ -27301,6 +27315,7 @@ void RadioModel::teardownConnection()
     bindCfcProfileChannel(nullptr);
     bindTxEqProfileChannel(nullptr);
     m_txChannel = nullptr;
+    syncTransmitCutTargets();
     // Task 33: nothing reports a TX drain any more.
     if (m_moxController) {
         m_moxController->setAwaitsTxDrain(false);
@@ -27380,6 +27395,9 @@ void RadioModel::teardownConnection()
     // run on the worker — short version: the RadioConnection's QTimers
     // are thread-affined to the worker and destroying them on any other
     // thread emits cross-thread warnings and can crash on Windows.
+    // No transmit cut reaches the connection once it is handed to its
+    // teardown (the line's mutex waits out a cut already under way).
+    m_transmitCutLine->setTargets(nullptr, m_txChannel);
     teardownWorkerThreadedConnection(m_connection, m_connThread);
 
     // Parity Task 12 (group B fix wave re-review, Minor 2): the relays of a
@@ -28370,6 +28388,37 @@ void RadioModel::stopAllTx(const QString& message)
 
     // if (!string.IsNullOrEmpty(msg)) infoBar.Warning(msg, false, 10000);
     emit transmitStopped(message);
+}
+
+// ---------------------------------------------------------------------------
+// The transmit cut's catch-up (2026-10-15). NereusSDR-original.
+// A thread other than main cut the transmit through m_transmitCutLine (RF
+// gate closed, the connection's latch set and its MOX and relay off) while
+// this thread was stalled. Now that it runs again, the model's keying state
+// follows: stopAllTx stops whatever is still keyed with the watchdog's
+// stop text (and does nothing when nothing is), then the connection's cut
+// is cleared, queued behind the MOX off stopAllTx posted, so the next key
+// keys normally.
+// ---------------------------------------------------------------------------
+void RadioModel::catchUpTransmitCut(const QString& stopText)
+{
+    // A release already under way (the stop that came first, the
+    // watchdog's say, started it) finishes by itself, and the cut has
+    // already taken the radio off the air: stopping it again would only
+    // report the stop twice. Anything else still keyed is stopped.
+    const bool stillKeyed = mox() || (m_moxController && m_moxController->isManualMox())
+        || m_isTuning
+        || (m_twoToneController
+            && (m_twoToneController->isActive() || m_twoToneController->isActivationInFlight()))
+        || endOfOverTailActive();
+    if (stillKeyed || !transmitReleaseInProgress()) {
+        stopAllTx(stopText);
+    }
+    if (m_connection) {
+        QMetaObject::invokeMethod(m_connection, &RadioConnection::clearTransmitCut,
+                                  Qt::QueuedConnection);
+    }
+    qCInfo(lcConnection).noquote() << "Transmit cut caught up on the main thread:" << stopText;
 }
 
 // ---------------------------------------------------------------------------

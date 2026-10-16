@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The transmit cut: setMox(true) is refused while it is
+//                 set, and the high-priority PTT bit (codec and legacy) and
+//                 the TX I/Q frames read it as unkeyed. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Construct all four command headers with the specified
 //                 zero sequence, including legacy/no-codec paths. Preserve
 //                 dispatch and stream sequences. J.J. Boyd (KG4VCF),
@@ -1556,6 +1560,13 @@ void P2RadioConnection::setMox(bool enabled)
     if (enabled && m_linkLossLatched) {
         return;
     }
+    // The transmit cut (2026-10-15): a key is refused until the main
+    // thread's catch-up clears the cut (RadioConnection::clearTransmitCut).
+    // setMox(false) never clears it.
+    if (enabled && transmitCut()) {
+        qCWarning(lcConnection) << "P2: key refused while the transmit is cut";
+        return;
+    }
 
     // Guard idempotent transitions: the 100 ms high-priority periodic cadence
     // already re-emits the current m_mox state on every tick, so there is no
@@ -2305,6 +2316,8 @@ void P2RadioConnection::discardWidebandFrames()
 void P2RadioConnection::sendTxIq(const float* iq, int n)
 {
     if (n <= 0 || iq == nullptr) { return; }
+    // The transmit cut (2026-10-15): no TX I/Q is queued while it is set.
+    if (transmitCut()) { return; }
 
     // First call after MOX engage: push a zero-sample cushion into the
     // ring BEFORE the real first-block I/Q.  It gives the send thread a
@@ -2494,6 +2507,9 @@ int P2RadioConnection::composeTxIqFrame(char* buf)
     // Cite: deskhpsdr/src/new_protocol.c:1950-1956, 2811-2816 [@120188f]
     //   memcpy(&iqbuffer[4], &TXIQRINGBUF[txiq_outptr], 1440);
     int underrunSamples = 0;
+    // The transmit cut (2026-10-15): what is queued is still taken from the
+    // ring, so none of it leads a later key, but the frame carries zeros.
+    const bool cut = transmitCut();
     for (int s = 0; s < 240; ++s) {
         int i24 = 0;
         int q24 = 0;
@@ -2509,8 +2525,10 @@ int P2RadioConnection::composeTxIqFrame(char* buf)
             m_txIqRingRead.store(rp, std::memory_order_relaxed);
             // relaxed: the producer observes this via its acquire load.
             m_txIqRingCount.fetch_sub(2, std::memory_order_relaxed);
-            i24 = toInt24(fI);
-            q24 = toInt24(fQ);
+            if (!cut) {
+                i24 = toInt24(fI);
+                q24 = toInt24(fQ);
+            }
         } else {
             ++underrunSamples;
         }
@@ -2571,7 +2589,8 @@ void P2RadioConnection::noteTxIqPadding(qint64 nowNs, int underrunSamples)
 
 int P2RadioConnection::serviceTxIqSend(qint64 nowNs, TxIqFrameSink sink, void* ctx)
 {
-    const bool keyed = m_mox.load();
+    // The transmit cut (2026-10-15) reads as unkeyed.
+    const bool keyed = wireMox();
     qint64 gapNs = 0;
     const double dry = m_txIqPacer.advance(nowNs, &gapNs);
     // TX diagnostics lane: a new key (resetTxSendStats) starts the send
@@ -4170,7 +4189,8 @@ CodecContext P2RadioConnection::buildCodecContext() const
     // m_tx[0].pttOut is the rear-panel PTT-out relay (deferred to 3M-3) — NOT
     // the MOX source.  m_mox (3M-1a E.7) is the correct source for byte 4 bit 1.
     ctx.p2Running  = m_running;
-    ctx.p2PttOut   = m_mox ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    ctx.p2PttOut   = wireMox() ? 1 : 0;    // 3M-1a E.7: was m_tx[0].pttOut (latent bug)
     ctx.p2Cwx      = m_tx[0].cwx;
     ctx.p2Dot      = m_tx[0].dot;
     ctx.p2Dash     = m_tx[0].dash;
@@ -4188,7 +4208,7 @@ CodecContext P2RadioConnection::buildCodecContext() const
     //         deskhpsdr/src/alex.h:91-96 + new_protocol.c:996-1004 [@120188f].
     // Note: P1 already wires these (P1RadioConnection.cpp:1268-1275); P2
     // had a gap that this commit closes.
-    ctx.mox        = m_mox;
+    ctx.mox        = wireMox();
     ctx.trxRelay   = m_trxRelay;
 
     // ADC / DAC counts
@@ -4578,7 +4598,8 @@ void P2RadioConnection::composeCmdHighPriorityLegacy(char buf[kBufLen]) const
     // bit 1, which is wrong — pttOut is a TX-confirmation output, not the MOX
     // initiator.  m_mox is the correct source.  m_tx[0].pttOut is retained for
     // future 3M-3 rear-panel-PTT-out wiring but must NOT drive the MOX wire bit.
-    buf[4] = static_cast<char>((m_mox ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
+    // The transmit cut (2026-10-15) reads as unkeyed on the wire.
+    buf[4] = static_cast<char>((wireMox() ? 0x02 : 0x00) | (m_running ? 0x01 : 0x00));
 
     // From Thetis network.c:931-933
     buf[5] = (m_tx[0].dash << 2 | m_tx[0].dot << 1 | m_tx[0].cwx) & 0x7;
