@@ -13,6 +13,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -195,6 +198,7 @@ void NeedleItemEditor::refreshCalTable(NeedleItem* needle)
     if (!needle) { return; }
     const QMap<float, QPointF>& cal = needle->scaleCalibration();
 
+    resetItemsBeforeRowChange(m_calTable);
     m_calTable->setRowCount(0);
     m_calTable->setRowCount(cal.size());
     int row = 0;
@@ -507,8 +511,6 @@ void NeedleItemEditor::buildTypeSpecific()
     QGroupBox* calGroup = makeGroup(QStringLiteral("Calibration"), calForm);
 
     m_calTable = new QTableWidget(0, 3, calGroup);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Rows added, removed and reloaded per needle.
-    installQtCocoaAccessibleTableCacheRepair(m_calTable);
     m_calTable->setStyleSheet(kTableStyle);
     m_calTable->setHorizontalHeaderLabels({
         QStringLiteral("Value"),
@@ -540,6 +542,7 @@ void NeedleItemEditor::buildTypeSpecific()
         if (!needle) { return; }
         const int row = m_calTable->rowCount();
         beginProgrammaticUpdate();
+        resetItemsBeforeRowChange(m_calTable);
         m_calTable->insertRow(row);
         m_calTable->setItem(row, 0, new QTableWidgetItem(QStringLiteral("0.000")));
         m_calTable->setItem(row, 1, new QTableWidgetItem(QStringLiteral("0.5000")));
@@ -558,6 +561,7 @@ void NeedleItemEditor::buildTypeSpecific()
         const int row = m_calTable->currentRow();
         if (row < 0) { return; }
         beginProgrammaticUpdate();
+        resetItemsBeforeRowChange(m_calTable);
         m_calTable->removeRow(row);
         endProgrammaticUpdate();
         commitCalTable(needle);

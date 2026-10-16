@@ -69,6 +69,14 @@
 
 using namespace NereusSDR;
 
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr int kKeyUpDelayMs = NereusSDR::MoxController::kKeyUpDelayMs;
+} // namespace
+
 // ── Helper: build a minimal TX_AUDIO_STREAM binary frame ────────────────────
 //
 // Constructs a 64-byte TCI header with streamType=TX_AUDIO_STREAM(2) plus a
@@ -682,7 +690,7 @@ void TestTciTxMutex::desktop_host_reentrant_stop_cannot_take_audio()
 void TestTciTxMutex::desktop_host_holder_and_program_ownership_data()
 {
     QTest::addColumn<int>("keyUpDelayMs");
-    QTest::newRow("default-handoff") << MoxController::kKeyUpDelayMs;
+    QTest::newRow("default-handoff") << kKeyUpDelayMs;
     QTest::newRow("delayed-handoff") << 1000;
 }
 

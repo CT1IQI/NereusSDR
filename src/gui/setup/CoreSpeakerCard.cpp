@@ -16,6 +16,9 @@
 //               it keeps its filled side in the workspace preview as the
 //               PC and RADIO volume sliders on the page do. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "CoreSpeakerCard.h"
@@ -24,6 +27,7 @@
 #include "core/audio/CoreSpeakerJson.h"
 #include "core/session/RemoteDevicesState.h"
 #include "gui/setup/AudioDriverList.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/widgets/MasterOutputWidget.h"
 #include "models/RadioModel.h"
 
@@ -635,6 +639,7 @@ void CoreSpeakerCard::fillDevices()
     {
         const QSignalBlocker block(m_device);
         if (!same) {
+            resetItemsBeforeRowChange(m_device);
             m_device->clear();
             for (const Entry& e : entries) {
                 m_device->addItem(e.label, e.id);

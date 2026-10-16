@@ -24,6 +24,9 @@
 //               pillStyleSheet(), one place per state, so the workspace
 //               look's translation and its test read what a row shows.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  ucRadioList.cs
@@ -353,8 +356,6 @@ void ConnectionPanel::buildUI()
     auto* radioLayout = new QVBoxLayout(radioGroup);
 
     m_radioTable = new QTableWidget(0, ColCount, this);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Discovery adds radios; Edit and Forget remove rows.
-    installQtCocoaAccessibleTableCacheRepair(m_radioTable);
 
     // Column headers — mapping clsDiscoveredRadioPicker.cs columns (~:99) to 8-col layout.
     // Phase 3Q Task 5: ColMac replaced by ColLastSeen; MAC moves to detail panel.
@@ -467,8 +468,6 @@ void ConnectionPanel::buildUI()
     auto* modelLabel = new QLabel(QStringLiteral("Radio Model:"), m_detailGroup);
     modelLabel->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-weight: bold; }"));
     m_modelCombo = new QComboBox(m_detailGroup);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled for each selected radio.
-    installQtCocoaAccessibleTableCacheRepair(m_modelCombo->view());
     m_modelCombo->setMinimumWidth(200);
     m_modelCombo->setStyleSheet(QStringLiteral(
         "QComboBox { background: #1a2a3a; color: #c8d8e8; border: 1px solid #304050;"
@@ -791,6 +790,21 @@ QString ConnectionPanel::pillStyleSheet(StatePill pill)
         "}").arg(QString::fromLatin1(pillColor));
 }
 
+// Before a row is inserted or removed: the table's model is reset, so
+// accessibility cannot read a deleted cell, and the reset releases the
+// state pills, so each row gets its pill again.
+void ConnectionPanel::resetRadioTableBeforeRowChange()
+{
+    if (!resetItemsBeforeRowChange(m_radioTable)) {
+        return;
+    }
+    for (int row = 0; row < m_radioTable->rowCount(); ++row) {
+        if (const QTableWidgetItem* statusCell = m_radioTable->item(row, ColStatus)) {
+            setPillIconForRow(row, statusCell->data(kMacRole).toString());
+        }
+    }
+}
+
 // Paint a small coloured circle into the state-pill cell. Embedding a
 // QFrame widget via setCellWidget bypasses both the table's stylesheet
 // `color: ...` rule (which overrode setForeground) and any QIcon mode
@@ -962,6 +976,7 @@ void ConnectionPanel::upsertRowForInfo(const RadioInfo& info, bool online)
     int row = rowForMac(info.macAddress);
     if (row < 0) {
         row = m_radioTable->rowCount();
+        resetRadioTableBeforeRowChange();
         m_radioTable->insertRow(row);
     }
     populateRow(row, info);
@@ -1046,6 +1061,7 @@ void ConnectionPanel::onRadioDiscovered(const RadioInfo& info)
     m_lastSeenMs.insert(merged.macAddress, QDateTime::currentMSecsSinceEpoch());
 
     int row = m_radioTable->rowCount();
+    resetRadioTableBeforeRowChange();
     m_radioTable->insertRow(row);
     populateRow(row, merged);
 
@@ -1287,6 +1303,7 @@ void ConnectionPanel::onEditClicked()
         s.forgetRadio(current.macAddress);
         const int oldRow = rowForMac(current.macAddress);
         if (oldRow >= 0) {
+            resetRadioTableBeforeRowChange();
             m_radioTable->removeRow(oldRow);
         }
         m_discoveredRadios.remove(current.macAddress);
@@ -1335,6 +1352,7 @@ void ConnectionPanel::onForgetClicked()
 
     m_discoveredRadios.remove(mac);
     m_lastSeenMs.remove(mac);
+    resetRadioTableBeforeRowChange();
     m_radioTable->removeRow(row);
 
     int n = m_radioTable->rowCount();
@@ -1496,6 +1514,7 @@ void ConnectionPanel::updateDetailPanel()
 
     // Populate model combo
     m_modelCombo->blockSignals(true);
+    resetItemsBeforeRowChange(m_modelCombo);
     m_modelCombo->clear();
     QList<HPSDRModel> models = compatibleModels(info.boardType);
     HPSDRModel defaultModel = defaultModelForBoard(info.boardType);

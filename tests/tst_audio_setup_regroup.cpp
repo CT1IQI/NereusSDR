@@ -121,6 +121,7 @@
 #include <QToolTip>
 #include <QTreeWidget>
 
+#include "ExpiredAccessibleCells.h"
 #include "OperatorWording.h"
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
@@ -1570,6 +1571,26 @@ private slots:
                  QStringLiteral("No virtual cable found. Install one, then click Rescan."));
         QVERIFY(page.statusLineShowsProblem());
         QCOMPARE(page.detectedCablesText(), QStringLiteral("Detected virtual cables: None."));
+    }
+
+    // With accessibility on, a new scan refills the cable picker after the
+    // macOS bridge may have deleted its cells; the list is reset first.
+    void vaxPickerRefillSurvivesExpiredAccessibleCells()
+    {
+        ExpiredAccessibleCells::ActiveScope accessibility;
+        QVERIFY(QAccessible::isActive());
+        const auto restore = vaxSystem(SoundSystemLine::System::Windows);
+        AudioVaxPage page(nullptr);
+        page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input")),
+                                       outputCable(QStringLiteral("CABLE-A Input"))});
+        auto* picker = child<QComboBox>(page.channelCard(1), "vaxDevicePicker");
+        QVERIFY(picker != nullptr);
+        QCOMPARE(picker->count(), 3);
+        QVERIFY(ExpiredAccessibleCells::expire(picker->view()) > 0);
+        page.setDetectedCablesForTest({outputCable(QStringLiteral("CABLE Input"))});
+        QCOMPARE(picker->count(), 2);
+        QCOMPARE(picker->itemText(1), QStringLiteral("CABLE Input"));
+        QCOMPARE(picker->currentIndex(), 0);
     }
 
     // 23. No PipeWire on a Mac or Windows layout.  The channel cards have

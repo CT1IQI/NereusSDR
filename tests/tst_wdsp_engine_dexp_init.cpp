@@ -96,7 +96,14 @@
 extern "C" {
 struct _dexp;
 typedef struct _dexp *DEXP;
+#ifdef Q_OS_WIN
+// The test also links WDSP's static library, so a plain declaration on
+// Windows binds to a second, unused copy of the table in this executable.
+// Read the Core DLL's table, the one WdspEngine fills.
+extern __declspec(dllimport) DEXP pdexp[];
+#else
 extern DEXP pdexp[];
+#endif
 }
 #endif
 

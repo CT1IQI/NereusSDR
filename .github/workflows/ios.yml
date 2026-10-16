@@ -75,6 +75,8 @@ jobs:
   interop:
     runs-on: macos-26
     name: Media and pairing interop with the Core
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
 
@@ -82,12 +84,50 @@ jobs:
         # The station build's macOS dependencies, as ci.yml installs them.
         run: brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
 
-      - name: Configure the station build
+      # Reuse ci.yml's pin-verified downloads and Git mirrors so the
+      # station configure can use cached dependencies after upstream 5xx.
+      - name: Restore dependency downloads
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
         run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      - name: Save dependency downloads
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
+
+      - name: Configure the station build
+        # Against the openssl@3 keg only; the reason is in
+        # scripts/ci/macos-openssl.sh.
+        run: |
+          scripts/ci/macos-openssl.sh unlink
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DNEREUS_BUILD_TESTS=ON
+
+      - name: Check the configure found openssl@3
+        # Before the pin this configure printed "Found OpenSSL:
+        # /opt/homebrew/lib/libcrypto.dylib (found suitable version "4.0.3" ...)".
+        run: scripts/ci/macos-openssl.sh check-cache build/CMakeCache.txt "$(brew --prefix openssl@3)/lib"
 
       - name: Interop (MediaPeer, PairingClient against the Core's own code)
         # Builds only the helpers and nereusd in build/, then runs the

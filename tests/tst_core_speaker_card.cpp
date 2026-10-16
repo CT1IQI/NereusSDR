@@ -45,6 +45,7 @@
 #include <QTextDocumentFragment>
 #include <QToolButton>
 
+#include "ExpiredAccessibleCells.h"
 #include "core/AppSettings.h"
 #include "core/audio/CoreSpeakerJson.h"
 #include "core/session/IStationLink.h"
@@ -499,6 +500,32 @@ private slots:
                  {kUsbId, kUsb, AudioDeviceState::NotConnected}});
         QCOMPARE(items(device), (QStringList{QStringLiteral("(the Core's default)"), kJack,
                                              QStringLiteral("USB Audio Device (not connected)")}));
+        QCOMPARE(picks.count(), 0);
+    }
+
+    // With accessibility on, a hot-plugged card refills the list after the
+    // macOS bridge may have deleted its cells; the list is reset first.
+    void hotPlugSurvivesExpiredAccessibleCells()
+    {
+        ExpiredAccessibleCells::ActiveScope accessibility;
+        QVERIFY(QAccessible::isActive());
+        Window w;
+        w.playingUsb();
+        CoreSpeakerCard card(&w.model, nullptr);
+        auto* device = child<QComboBox>(&card, "coreSpeakerDevice");
+        QCOMPARE(device->count(), 3);
+        QSignalSpy picks(&w.model, &RadioModel::coreSpeakerDeviceChanged);
+        QVERIFY(ExpiredAccessibleCells::expire(device->view()) > 0);
+        w.cards({{kJackId, kJack, AudioDeviceState::Present},
+                 {kHdmiId, kHdmi, AudioDeviceState::Present},
+                 {kUsbId, kUsb, AudioDeviceState::Present}});
+        QCOMPARE(items(device), (QStringList{QStringLiteral("(the Core's default)"), kJack, kHdmi,
+                                             kUsb}));
+        QCOMPARE(device->currentText(), kUsb);
+        QCOMPARE(picks.count(), 0);
+        QVERIFY(ExpiredAccessibleCells::expire(device->view()) > 0);
+        w.cards({{kJackId, kJack, AudioDeviceState::Present}});
+        QCOMPARE(device->count(), 3);
         QCOMPARE(picks.count(), 0);
     }
 

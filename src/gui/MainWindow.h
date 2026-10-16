@@ -243,6 +243,7 @@
 #include "gui/ReceiverStopNotices.h"
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
+#include "gui/NereusGuiExport.h"
 
 class QProgressDialog;
 class QSplitter;
@@ -330,7 +331,7 @@ class ClientChainApplet;
 // Phase 3J-1 closeout Item 2 (2026-05-12): TciLogWindow viewer.
 class TciLogWindow;
 
-class MainWindow : public QMainWindow {
+class NEREUS_GUI_EXPORT MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
