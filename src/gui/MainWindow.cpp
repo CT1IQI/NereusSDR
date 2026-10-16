@@ -770,6 +770,12 @@
 //   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-15 - A remote window runs its own rigctld (RemoteRigctlServer),
+//                which acts as the window: it tunes the slice the window
+//                transmits on and keys as the window's program, so WSJT-X
+//                works FT8 through a remote window with VAX. Set up in CAT &
+//                Network > rigctld. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1192,6 +1198,7 @@ warren@wpratt.com
 #include "gui/MoxDisplayController.h"
 #include "gui/TxDisplaySource.h"
 #include "gui/RemoteVaxRouter.h"
+#include "gui/RemoteRigctlServer.h"
 #include "gui/ReceiverStopNotices.h"
 #include "core/session/media/IReceiverPcmSink.h"
 #include "core/settings/SettingsProxy.h"
@@ -2074,6 +2081,10 @@ MainWindow::~MainWindow()
     }
     m_remoteTxDisplaySource.reset();
     m_localTxDisplaySource.reset();
+    // 2026-10-15: the rigctld goes before the media controller its key
+    // forwarder feeds; the Core already freed this window's key on leave.
+    delete m_remoteRigctl;
+    m_remoteRigctl = nullptr;
     // Join remote playback before QObject destroys the earlier-created
     // RadioModel child and its speaker AudioEngine.
     delete std::exchange(m_remoteMedia, nullptr);
@@ -4386,6 +4397,13 @@ void MainWindow::ensureRemoteSession()
             }
             m_remoteVax = new RemoteVaxRouter(m_radioModel, vaxEngine,
                                               RemoteVaxRouter::coreKeyFor(m_station), this);
+            // 2026-10-15: this computer's rigctld, acting as the window; its
+            // key sends what programs play into the VAX TX device opened
+            // above.
+            m_remoteRigctl = new RemoteRigctlServer(m_radioModel, this);
+            m_remoteRigctl->setSliceAccess(m_stationClient->sliceAccess());
+            refreshRigctlRemoteTransmit();
+            applyRemoteRigctldSettings();
             const QPointer<RemoteMediaController> media(m_remoteMedia);
             RemoteVaxRouter::ReceiverAudio vaxSource;
             vaxSource.request = [media](int sliceId, IReceiverPcmSink* sink) {
@@ -14800,6 +14818,13 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
         dialog->setTciServer(m_tciServer);
     }
 #endif // HAVE_WEBSOCKETS
+
+    // 2026-10-15: this remote window's rigctld (CAT & Network > rigctld).
+    if (m_remoteRigctl) {
+        dialog->setRemoteRigctlServer(m_remoteRigctl);
+        connect(dialog, &SetupDialog::remoteRigctldSettingsChanged,
+                this, &MainWindow::applyRemoteRigctldSettings);
+    }
 }
 
 #ifdef HAVE_WEBSOCKETS
@@ -16754,6 +16779,52 @@ void MainWindow::refreshTciRemoteTransmit()
 #endif
 }
 
+void MainWindow::refreshRigctlRemoteTransmit()
+{
+    // 2026-10-15: the rigctld keys exactly as the TCI server's programs do.
+    if (!m_remoteRigctl || !m_stationClient) {
+        return;
+    }
+    const bool wanted = m_stationClient->remoteTransmitAvailable() && !m_shuttingDown;
+    if (wanted == m_rigctlRemoteTransmitInstalled) {
+        return;
+    }
+    m_rigctlRemoteTransmitInstalled = wanted;
+    // The pump reads VAX TX only while the program-audio key is on: when it
+    // goes off, the media controller's VAX feed reads the device again.
+    const QPointer<RemoteTransmitClient> client(m_stationClient->remoteTransmit());
+    m_remoteRigctl->setProgramAudioKey(
+        [client] { return client && client->programAudioKey(); });
+    m_remoteRigctl->setRemoteTransmit(
+        wanted ? remoteTransmitForwarder(m_stationClient->remoteTransmit(), m_remoteMedia)
+               : TciServer::RemoteTransmit{});
+}
+
+void MainWindow::applyRemoteRigctldSettings()
+{
+    if (!m_remoteRigctl) {
+        return;
+    }
+    const AppSettings& settings = AppSettings::instance();
+    const bool enabled = settings.value(QStringLiteral("RemoteRigctld/Enabled"),
+                                        QStringLiteral("False")).toString()
+        == QStringLiteral("True");
+    const QHostAddress address(settings.value(QStringLiteral("RemoteRigctld/BindAddress"),
+                                              QStringLiteral("127.0.0.1")).toString());
+    bool portOk = false;
+    const int port = settings.value(QStringLiteral("RemoteRigctld/Port"), 4532).toInt(&portOk);
+    const bool valid = !address.isNull() && portOk && port > 0 && port <= 65535;
+    // A changed address or port listens again there.
+    if (m_remoteRigctl->isListening()
+        && (!enabled || !valid || m_remoteRigctl->port() != port
+            || m_remoteRigctl->address() != address)) {
+        m_remoteRigctl->stop();
+    }
+    if (enabled && valid && !m_remoteRigctl->isListening()) {
+        m_remoteRigctl->start(address, static_cast<quint16>(port));
+    }
+}
+
 // GUI-I3 (fix wave): on a remote window the PureSignal applet follows the
 // Core's radio. It hides only when that radio has no PureSignal hardware
 // (as a local HL2 or Atlas hides it); a radio that has it while the Core
@@ -16789,6 +16860,8 @@ void MainWindow::applyRemoteRoleGating()
     const QString transmitReason = remoteTransmitReason();
     // Desktop remote transmit (R-R3-42): TCI programs key through the Core.
     refreshTciRemoteTransmit();
+    // 2026-10-15: and so does this computer's rigctld.
+    refreshRigctlRemoteTransmit();
     // R-R3-49 (parity Task 1): the transmit settings that key nothing, live
     // while the Core takes them and its radio is off the air.
     bool settingsPermitted = transmitSettingsPermitted();

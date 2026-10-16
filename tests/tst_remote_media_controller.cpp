@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  A remote window's rigctld key sends
+//                                    what programs play into VAX TX, never
+//                                    the PC microphone, whichever source
+//                                    the window has chosen, with the VAX
+//                                    device read by one reader (aRigctld-
+//                                    KeySendsVaxTxNeverTheMicrophone).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  Fix wave 2: a program key under the
 //                                    screen key takes the VAX TX device
 //                                    before keyForProgram returns, with no
@@ -241,6 +248,8 @@
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/DeviceStore.h"
 #include "gui/RemoteMediaController.h"
+#include "gui/RemoteRigctlServer.h"
+#include "gui/RemoteTransmitForwarder.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
@@ -12691,6 +12700,111 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-10-15: a remote window's rigctld (WSJT-X's CAT) keys as the
+    // window's program and sends what programs play into VAX TX, never the
+    // PC microphone, whether the window's transmit source is the PC
+    // microphone or VAX. Two tones tell them apart at the Core (Goertzel),
+    // not a flag. While the key is on, only the rigctld's pump reads the
+    // VAX device; the collector runs on its own thread, as in the app.
+    void aRigctldKeySendsVaxTxNeverTheMicrophone_data()
+    {
+        QTest::addColumn<bool>("vaxSource");
+        QTest::newRow("pc microphone chosen") << false;
+        QTest::newRow("vax chosen") << true;
+    }
+
+    void aRigctldKeySendsVaxTxNeverTheMicrophone()
+    {
+        QFETCH(bool, vaxSource);
+        constexpr double kVaxHz = 700.0;
+        constexpr double kMicHz = 500.0;
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.3f, kMicHz);
+        auto device = std::make_unique<PacedVaxTxDevice>(0.4f, 0.2f, kVaxHz);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        PacedVaxTxDevice* vaxDevice = device.get();
+        h.remote.audioEngine()->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        const MicSource source = vaxSource ? MicSource::Vax : MicSource::Pc;
+        h.remote.transmitModel().setMicSource(source);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), source);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            h.client.remoteTransmit()->acceptedMicSource() == RemoteMicSource::ClientAudio, 5000);
+
+        // Wired as MainWindow::refreshRigctlRemoteTransmit wires it.
+        RemoteRigctlServer rig(&h.remote);
+        const QPointer<RemoteTransmitClient> client(h.client.remoteTransmit());
+        rig.setProgramAudioKey([client] { return client && client->programAudioKey(); });
+        rig.setRemoteTransmit(remoteTransmitForwarder(h.client.remoteTransmit(), &media));
+        QVERIFY(rig.requestKey(1));
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        // keyForProgram has returned: from here the rigctld's pump, on this
+        // thread, is the VAX device's one reader.
+        vaxDevice->setProgramReaderIsThisThread(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QVERIFY(rig.keyed());
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        // Everything the Core takes from key-up on, about in real time:
+        // 120 steps of four pump blocks (5.3 ms) each, one letter a step.
+        // The feed starts silent while it fills ('.'), and the block where
+        // the audio starts can be part silence ('?'); after that every step
+        // is the VAX tone ('V'), and no step is ever the microphone's ('M').
+        constexpr int kStepFrames = 4 * RemoteMicConfig::kPumpBlockFrames;
+        QString timeline;
+        std::vector<float> steady;
+        for (int step = 0; step < 120; ++step) {
+            QTest::qWait(5);
+            const std::vector<float> chunk = pullFeed(feed, 4);
+            double sum = 0.0;
+            for (float v : chunk) { sum += static_cast<double>(v) * v; }
+            const double rms = std::sqrt(sum / kStepFrames);
+            const double mic = tonePower(chunk, kMicHz);
+            const double vax = tonePower(chunk, kVaxHz);
+            const QChar mark = rms < 0.02 ? QChar('.')
+                : mic > 4.0 * vax         ? QChar('M')
+                : vax > 4.0 * mic         ? QChar('V')
+                                          : QChar('?');
+            timeline += mark;
+            // The steady part: from the fifth step after the VAX tone came.
+            if (timeline.count(QChar('V')) > 4) {
+                steady.insert(steady.end(), chunk.begin(), chunk.end());
+            }
+        }
+        QVERIFY2(!timeline.contains(QChar('M')), qPrintable(timeline));
+        QVERIFY2(timeline.count(QChar('V')) > 60, qPrintable(timeline));
+        const double vaxPower = tonePower(steady, kVaxHz);
+        const double micPower = tonePower(steady, kMicHz);
+        QVERIFY2(vaxPower > 100.0 * micPower,
+                 qPrintable(QStringLiteral("VAX %1, microphone %2").arg(vaxPower).arg(micPower)));
+        QCOMPARE(vaxDevice->readsBesideTheProgram(), 0);
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+
+        // T 0: the pump stops before the unkey, and the key ends at the Core.
+        rig.releaseKey(1);
+        vaxDevice->setProgramReaderIsThisThread(false);
+        QVERIFY(!rig.keyed());
+        QVERIFY(!h.client.remoteTransmit()->programAudioKey());
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // ---- 2026-10-08: TCI program keys that bring their own audio ----
 
     // Case A: a program key with its own audio (",tci") and a microphone
@@ -13737,6 +13851,7 @@ const QStringList kAudioFunctions{
     QStringLiteral("vaxSourceSendsTheVaxTransmitAudio"),
     QStringLiteral("aProgramAudioKeyLeavesTheVaxDeviceToTheProgram"),
     QStringLiteral("aProgramAudioKeyUnderTheScreenKeyTakesTheVaxDeviceAtOnce"),
+    QStringLiteral("aRigctldKeySendsVaxTxNeverTheMicrophone"),
     QStringLiteral("aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence"),
     QStringLiteral("aProgramAudioKeyNeverSendsTheMicrophone"),
     QStringLiteral("aProgramAudioLapseSendsSilenceNotTheMicrophone"),

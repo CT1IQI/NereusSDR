@@ -15,13 +15,12 @@
 // 2026-10-06 - q and Q answer RPRT 0 and close the rigctld client, as Hamlib
 //              4.7.2 rigctld does. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+// 2026-10-15 - Reads and changes through a RigctlTarget, so a remote window's
+//              rigctld uses this parser too. J.J. Boyd (KG4VCF), AI-assisted
+//              via Anthropic Claude Code.
 #include "RigctlProtocol.h"
-#include "CatModelAdapter.h"
-#include "CatTxCoordinator.h"
-#include "CatService.h"
-#include "models/RadioModel.h"
+#include "RigctlTarget.h"
 #include "models/SliceModel.h"
-#include "core/TxSliceArbiter.h"
 #include <QMap>
 #include <QLocale>
 #include <cmath>
@@ -97,23 +96,19 @@ bool vfoName(const QString& name) {
 }
 }
 RigctlProtocol::RigctlProtocol(CatModelAdapter& adapter, CatTxCoordinator& coordinator, int channel, quint64 id)
-    : m_adapter(adapter), m_coordinator(coordinator), m_model(&adapter.radioModel()),
-      m_service(adapter.radioModel().catService()), m_binding(m_service->channelConfig(channel).binding), m_sessionId(id)
+    : m_target(std::make_shared<CoreRigctlTarget>(adapter, coordinator, channel, id))
 {}
+RigctlProtocol::RigctlProtocol(std::shared_ptr<RigctlTarget> target) : m_target(std::move(target)) {}
 bool RigctlProtocol::live() const
 {
-    // Retained protocol/session may outlive synchronous service/model destruction.
-    return m_model && m_service && m_service->isStarted() && m_service->session(m_sessionId)
-        && m_service->session(m_sessionId)->dialect() == CatWireDialect::Rigctld;
+    return m_target && m_target->live();
 }
 int RigctlProtocol::writeError(CatVfo vfo, const QByteArray& property) const
 {
-    if (!live() || !m_adapter.resolveSlice(m_binding,vfo)) { return kTargetUnavailable; }
-    if (m_adapter.mayChange(m_binding,vfo,property)) { return 0; }
+    if (!live() || !m_target->resolveSlice(vfo)) { return kTargetUnavailable; }
+    if (m_target->mayChange(vfo,property)) { return 0; }
     // Authority refusal is distinct from a station on-air transition refusal.
-    const SliceModel* slice = m_adapter.resolveSlice(m_binding,vfo);
-    if (m_model->moxController()->isMox() && m_model->txBoundSlice() == slice
-        && m_model->moxController()->currentKeyer().isStation()) { return kRejected; }
+    if (m_target->refusedOnAir(vfo)) { return kRejected; }
     return kAccessDenied;
 }
 QString RigctlProtocol::handleLine(const QString& line)
@@ -176,9 +171,9 @@ QString RigctlProtocol::handleLine(const QString& line)
         if (upper == "VFOB" || upper == "SUB") { vfo = CatVfo::Secondary; return true; }
         if (upper == "VFO" || upper == "CURRVFO") { vfo = m_vfo; return true; }
         if (upper == "TX") {
-            const int tx = m_model->txSliceArbiter()->txBoundSliceId();
-            if (tx == m_binding.primarySliceId) { vfo = CatVfo::Primary; return true; }
-            if (m_binding.secondarySliceId && tx == *m_binding.secondarySliceId) { vfo = CatVfo::Secondary; return true; }
+            const int tx = m_target->txSliceId();
+            if (tx >= 0 && tx == m_target->sliceIdOf(CatVfo::Primary)) { vfo = CatVfo::Primary; return true; }
+            if (tx >= 0 && tx == m_target->sliceIdOf(CatVfo::Secondary)) { vfo = CatVfo::Secondary; return true; }
         }
         return false;
     };
@@ -235,8 +230,8 @@ QString RigctlProtocol::handleLine(const QString& line)
     }
     if (name == "get_lock_mode") {
         if (!parts.isEmpty()) { return reply(kInvalid); }
-        const SliceModel* target = m_adapter.resolveSlice(m_binding,m_vfo);
-        if (!target || !m_adapter.mayRead(m_binding,m_vfo)) { return reply(kTargetUnavailable); }
+        const SliceModel* target = m_target->resolveSlice(m_vfo);
+        if (!target || !m_target->mayRead(m_vfo)) { return reply(kTargetUnavailable); }
         // Native adaptation: actual selected slice LOCK, never synthetic unlocked.
         // Hamlib 4.7.0 rigctl_parse.c:381-382,5815-5845 has no ARG_OUT flag,
         // so this getter uniquely emits a bare value followed by RPRT 0.
@@ -246,14 +241,14 @@ QString RigctlProtocol::handleLine(const QString& line)
     }
     if (name == "get_vfo") {
         if (!parts.isEmpty()) { return reply(kInvalid); }
-        if (!m_adapter.mayRead(m_binding,m_vfo)) { return reply(kTargetUnavailable); }
+        if (!m_target->mayRead(m_vfo)) { return reply(kTargetUnavailable); }
         value("VFO",m_vfo == CatVfo::Primary ? "VFOA" : "VFOB"); return reply(0);
     }
     if (name == "set_vfo") {
         CatVfo requested;
         if (parts.size() != 1) { return reply(kInvalid); }
         if (!resolveVfo(parts.first(),requested)) { return reply(kVfoInvalid); }
-        if (!m_adapter.mayRead(m_binding,requested)) { return reply(kTargetUnavailable); }
+        if (!m_target->mayRead(requested)) { return reply(kTargetUnavailable); }
         m_vfo = requested; return reply(0);
     }
     if ((name == "get_split_vfo" || name == "set_split_vfo" || name == "get_ptt" || name == "set_ptt")
@@ -263,15 +258,15 @@ QString RigctlProtocol::handleLine(const QString& line)
         // A valid OFF releases only this session's coordinator claim; an RX
         // prefix does not impose new-action readability on surviving TX ownership.
         const bool ownedOff=name == "set_ptt" && parts.size() == 1 && parts[0] == "0";
-        if (!ownedOff && !m_adapter.mayRead(m_binding,rx)) { return reply(kTargetUnavailable); }
+        if (!ownedOff && !m_target->mayRead(rx)) { return reply(kTargetUnavailable); }
     }
     if (name == "get_split_vfo" || name == "set_split_vfo") {
         if (name == "get_split_vfo") {
             if (!parts.isEmpty()) { return reply(kInvalid); }
-            const int id = m_model->txSliceArbiter()->txBoundSliceId();
+            const int id = m_target->txSliceId();
             CatVfo tx;
-            if (!resolveVfo("TX",tx) || !m_adapter.mayRead(m_binding,tx)) { return reply(kTargetUnavailable); }
-            value("Split",id == m_binding.primarySliceId ? "0" : "1");
+            if (!resolveVfo("TX",tx) || !m_target->mayRead(tx)) { return reply(kTargetUnavailable); }
+            value("Split",id == m_target->sliceIdOf(CatVfo::Primary) ? "0" : "1");
             value("TX VFO",tx == CatVfo::Primary ? "VFOA" : "VFOB"); return reply(0);
         }
         if (parts.size() != 2 || (parts[0] != "0" && parts[0] != "1")) { return reply(kInvalid); }
@@ -279,26 +274,26 @@ QString RigctlProtocol::handleLine(const QString& line)
         if (!resolveVfo(parts[1],tx)) { return reply(kVfoInvalid); }
         if (parts[0] == "0") { tx = CatVfo::Primary; }
         else if (tx != CatVfo::Secondary) { return reply(kInvalid); }
-        const SliceModel* target = m_adapter.resolveSlice(m_binding,tx);
+        const SliceModel* target = m_target->resolveSlice(tx);
         if (!target) { return reply(kTargetUnavailable); }
-        const bool accepted = m_coordinator.requestTxSelection(m_sessionId,target->sliceIndex());
+        const bool accepted = m_target->requestTxSelection(target->sliceIndex());
         return reply(accepted ? 0 : kRejected);
     }
     if (name == "get_ptt" || name == "set_ptt") {
         if (name == "get_ptt") {
             if (!parts.isEmpty()) { return reply(kInvalid); }
-            value("PTT",m_model->moxController()->isMox() ? "1" : "0"); return reply(0);
+            value("PTT",m_target->transmitting() ? "1" : "0"); return reply(0);
         }
         // Hamlib rigctld(1), set_ptt: "PTT is a value: '0' (RX), '1' (TX),
         // '2' (TX mic), or '3' (TX data)." Every TX value keys the same way here.
         static const QStringList pttValues{"0","1","2","3"};
         if (parts.size() != 1 || !pttValues.contains(parts[0])) { return reply(kInvalid); }
-        if (parts[0] == "0") { m_coordinator.releasePtt(m_sessionId); return reply(0); }
+        if (parts[0] == "0") { m_target->releasePtt(); return reply(0); }
         CatVfo tx;
         if (!resolveVfo("TX",tx)) { return reply(kRejected); }
-        SliceModel* target = m_adapter.resolveSlice(m_binding,tx);
+        SliceModel* target = m_target->resolveSlice(tx);
         if (!target) { return reply(kTargetUnavailable); }
-        const bool accepted = m_coordinator.requestPtt(m_sessionId,target->sliceIndex());
+        const bool accepted = m_target->requestPtt(target->sliceIndex());
         return reply(accepted ? 0 : kRejected);
     }
     const bool split = name.contains("split_freq") || name.contains("split_mode");
@@ -313,15 +308,15 @@ QString RigctlProtocol::handleLine(const QString& line)
         if (!resolveVfo(parts.takeFirst(),prefixed)) { return reply(kVfoInvalid); }
         if (!split) { vfo = prefixed; }
     }
-    const QPointer<SliceModel> slice(m_adapter.resolveSlice(m_binding,vfo));
-    if (!slice || !m_adapter.mayRead(m_binding,vfo)) { return reply(kTargetUnavailable); }
+    const QPointer<SliceModel> slice(m_target->resolveSlice(vfo));
+    if (!slice || !m_target->mayRead(vfo)) { return reply(kTargetUnavailable); }
     const bool setter = operation.startsWith("set_");
     const auto guardedWrite = [&](const QByteArray& property,const std::function<void()>& mutate,const std::function<bool()>& changed) {
         const int refusal = writeError(vfo,property); if (refusal) { return refusal; }
-        const CatWriteToken token = m_adapter.prepareWrite(m_binding,vfo,property);
+        const CatWriteToken token = m_target->prepareWrite(vfo,property);
         mutate();
         if (!live() || !slice) { return kTargetUnavailable; }
-        if (!m_adapter.revalidateWrite(token)) { return kAccessDenied; }
+        if (!m_target->revalidateWrite(token)) { return kAccessDenied; }
         return changed() ? 0 : kRejected;
     };
     struct ModePassband { DSPMode mode; int low; int high; bool preserve; };

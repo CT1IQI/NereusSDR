@@ -162,6 +162,10 @@
 //                slice: streamShownOnPan, panShowsStream, sliceIsOffPanStream,
 //                showOwnStreamOnPan, panIdOfSpectrum, m_panShownStream.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - J.J. Boyd (KG4VCF). A remote window's rigctld:
+//                m_remoteRigctl, refreshRigctlRemoteTransmit,
+//                applyRemoteRigctldSettings. AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -867,6 +871,11 @@ private slots:
     /// program's transmit to the Core while the Core takes this window's
     /// keys, and not otherwise.
     void refreshTciRemoteTransmit();
+    // 2026-10-15: the remote window's own rigctld (RemoteRigctlServer):
+    // its forwarder follows the TCI server's, and it listens while
+    // RemoteRigctld/Enabled says so.
+    void refreshRigctlRemoteTransmit();
+    void applyRemoteRigctldSettings();
     // Group B fix wave: whether BYPS (RX bypass on TX) may change the
     // radio's relay setting, and why not.
     bool rxBypassPermitted() const;
@@ -1482,6 +1491,10 @@ private:
     // R-R3-44: this computer's VAX channels, fed from the Core's receiver
     // streams. Remote windows only; deleted right after m_remoteMedia.
     class RemoteVaxRouter* m_remoteVax{nullptr};
+    // 2026-10-15: this computer's rigctld acting as the window (WSJT-X CAT
+    // and VAX). Remote windows only; deleted before m_remoteMedia.
+    class RemoteRigctlServer* m_remoteRigctl{nullptr};
+    bool m_rigctlRemoteTransmitInstalled{false};
     // R-R3-42, R-R3-44 fix wave: one toast per receiver-audio stop across
     // TCI and the VAX channels.
     ReceiverStopNotices m_receiverStopNotices;

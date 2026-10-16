@@ -1002,6 +1002,7 @@ set(CORE_SOURCES
     src/core/cat/CatSettings.cpp
     src/core/cat/CatSession.cpp
     src/core/cat/RigctlProtocol.cpp
+    src/core/cat/RigctlTarget.cpp
     src/core/cat/CatTxCoordinator.cpp
     src/core/cat/CatRxCommands.cpp
     src/core/cat/CatDspCommands.cpp
@@ -1747,6 +1748,8 @@ set(GUI_SOURCES
     # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the
     # remote window's TCI transmit forwarder.
     src/gui/RemoteTransmitForwarder.cpp
+    # A remote window's rigctld, acting as the window (WSJT-X CAT and VAX).
+    src/gui/RemoteRigctlServer.cpp
     # R-R3-44: a remote window's VAX channels, fed by receiver streams.
     src/gui/RemoteVaxRouter.cpp
     # iPhone app plan Task 78 (R-IOS-02, R-IOS-07, R-IOS-30): the remote
@@ -2136,6 +2139,7 @@ set(GUI_SOURCES
     src/gui/setup/CatLiveSetupPages.cpp
     src/gui/setup/CatLogWindow.cpp
     src/gui/setup/RemoteStationPage.cpp
+    src/gui/setup/RemoteRigctldPage.cpp
     src/gui/setup/PgxlAdvancedPage.cpp
     src/gui/setup/TgxlAdvancedPage.cpp
     src/gui/setup/PgxlInterlockPage.cpp

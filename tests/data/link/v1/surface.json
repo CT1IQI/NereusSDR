@@ -9216,6 +9216,7 @@
             "radios/",
             "ConnectionTargets/",
             "RemoteVax/",
+            "RemoteRigctld/",
             "SpotCollector",
             "Wsjtx"
         ],

@@ -5679,6 +5679,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 2. prefix | `radios/` | operatorLocal |
 | 2. prefix | `ConnectionTargets/` | operatorLocal |
 | 2. prefix | `RemoteVax/` | operatorLocal |
+| 2. prefix | `RemoteRigctld/` | operatorLocal |
 | 2. prefix | `SpotCollector` | operatorLocal |
 | 2. prefix | `Wsjtx` | operatorLocal |
 | 3. whole key | `DisplayFftSize` | station |
