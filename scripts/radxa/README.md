@@ -35,6 +35,23 @@ before, or removes one it added; a limit it raised stays raised until the
 next system start. What the setting is and how to undo it: "The system
 setting the Core's installer changes" in the top-level `README.md`.
 
+On a kernel built with `CONFIG_RT_GROUP_SCHED=y` (the Radxa vendor kernel
+`6.1.115-vendor-rk35xx` is one) the installer also writes
+`/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`. While
+the cgroup CPU controller is on, that kernel refuses real-time priority to the
+Core, and Debian's login managers (`user@.service`, `Delegate=pids memory
+cpu`) switch it on at any login and leave it on until about ten seconds after
+the last logout (until a reboot for a user who lingers). The drop-in takes
+`cpu` out of that list for every user on the box, so user services there can
+no longer be given CPU weights or quotas. It applies to login managers started
+after it is written. The installer prints which controllers are on as the Core
+starts and warns when `cpu` still is. The Core's audio threads ask for
+real-time priority when they start, as a radio or client connects, so those
+that start after the earlier logins have ended (or after a reboot, for a user
+who lingers) get it. An existing file is left as found, a kernel that does not
+report the setting gets no file, and a failed installation removes only a file
+it added. To undo it, remove the file and run `systemctl daemon-reload`.
+
 All three deployment operations use `/run/lock/nereus-core-deploy.lock`.
 The pruning helper expects its caller to hold this lock.
 
@@ -81,6 +98,7 @@ python3 scripts/radxa/test_prune_core_artifacts.py
 python3 scripts/radxa/test_deploy_retention.py
 python3 scripts/radxa/test_install_group_dropins.py
 python3 -m pytest tests/release/test_core_receive_buffer_limit.py -q
+python3 scripts/radxa/test_install_realtime_dropin.py
 ```
 
 The daemon stage now carries the shared maintenance helper, which the installer

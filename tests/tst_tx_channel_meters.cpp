@@ -35,7 +35,7 @@ warren@wpratt.com
 //   - TxChannel::getLvlrMeter()    — D.7 stub, deferred to 3M-3a
 //   - TxChannel::getCfcMeter()     — D.7 stub, deferred to 3M-3a
 //   - TxChannel::getCompMeter()    — D.7 stub, deferred to 3M-3a
-//   - kMeterUninitialisedSentinel — D.7 sentinel constant
+//   - TxChannel::kMeterUninitialisedSentinel — D.7 sentinel constant
 //
 // Porting context (cited in TxChannel.h / TxChannel.cpp):
 //   getTxMicMeter / getAlcMeter:
