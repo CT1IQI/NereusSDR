@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-16: a media move asks for audio again when an audio request
+//               made around the move is still unanswered (lost to the
+//               move), so a restart after a stall plays on. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: a control path whose ICE pair is not known yet keeps the
 //               direct-path media rules, as before it ranked as relayed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4435,6 +4439,21 @@ void RemoteMediaController::promoteReplacement()
                .arg(d->dualFromOld).arg(d->dualFromNew)
                .arg(d->dual->duplicatesDropped()).arg(d->dual->leadMs());
     noteMicLine();
+    // An audio request made around the move may have been lost. The Core
+    // takes one only on its current connection, so a request naming the old
+    // one after the Core moved is dropped, and one the old peer could not
+    // send was never made. The Core sends its answer before its replace on
+    // the same ordered channel, so a request still unanswered here is lost:
+    // ask again on the new connection. Without this a restart after a
+    // stall that met a move left the audio silent until mute and unmute.
+    const bool unanswered = d->audioRevision != 0
+        && (!d->acceptedAudioContext
+            || d->acceptedAudioContext->revision != d->audioRevision);
+    if (!d->audioRetryPending && !d->audioHeldForTransmit
+        && (d->audioRestarting || (unanswered && !d->audioFailure))) {
+        qCInfo(lcRemoteMedia) << "Asking for audio again on the new connection";
+        requestAudio();
+    }
 }
 
 void RemoteMediaController::retireOldPeer()
