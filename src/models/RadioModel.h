@@ -9,9 +9,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-15 - Test-only seams for the TGXL autotune RF settle: its
+//                length (setTgxlRfSettleMsForTest) and an observer called
+//                when it fires (setTgxlSettleFiredObserverForTest). Release
+//                behavior unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Settings restore: addSlice and addSliceOnPan take
+//                restoreSavedState. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - Settings restore: pushSliceStateToChannel, the slice A
+//                state push run for every slice. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -2303,6 +2319,19 @@ public:
     /// SetChannelState(ch, 1, 0) (console.cs:37359-37361 [v2.10.3.15]).
     void activateSliceChannel(SliceModel* slice);
 
+    /// Push a slice's whole state to its WDSP channel: AGC and its advanced
+    /// values, NB and its tuning, the NR tuning and selection, SNB, APF,
+    /// squelch, mute, pan, BIN and AF gain, after mode, filter, AGC mode
+    /// and RF gain. The block connectToRadio ran for slice A alone;
+    /// activateSliceChannel runs it for every slice. `loadNr3Model` also
+    /// loads the station's NR3 model (connectToRadio only).
+    /// `applyNrSelection` pushes the active NR slot inside the block
+    /// (connectToRadio); activateSliceChannel pushes it itself, last.
+    /// False when the slice, the channel or this model went away during
+    /// the push: the caller must not use them again.
+    [[nodiscard]] bool pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh,
+                                               bool loadNr3Model, bool applyNrSelection);
+
     /// Stop a slice's WDSP channel running. The channel object stays open for
     /// whichever slice takes the id next. Thetis's disable half:
     /// SetChannelState(ch, 0, 0) (console.cs:37398-37400 [v2.10.3.15]).
@@ -2591,7 +2620,7 @@ public:
     /// is a host and sharing it is the point. It was briefly a caller-
     /// supplied flag; every caller that forgot it silently reintroduced the
     /// coupled-pan defect, so the decision lives with the data it depends on.
-    int addSlice(const QString& initialPanId = QString());
+    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -2802,7 +2831,13 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    Q_INVOKABLE void addSliceOnPan(const QString& panId);
+    // `restoreSavedState` (2026-10-11): the slice comes back as it was last
+    // saved (Slice<N>/LastBand and that band's keys) instead of starting on
+    // the active slice's frequency and mode. The standalone app asks for it
+    // for the slices it makes for empty pans at connect, so receivers B to D
+    // return like A. A slice with nothing saved, and every slice asked for
+    // without it (+RX, a layout change, a session verb), starts fresh.
+    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one
     /// that is. Returns how many moved.
@@ -4992,6 +5027,17 @@ public:
     // schedule on the next event loop iteration, so QCoreApplication::processEvents
     // can drive the deferred completion synchronously.
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
+    // TGXL autotune: the RF settle between the carrier gate opening and the
+    // `autotune` command (kTgxlRfSettleMs in release). A test can lengthen
+    // it so its own setup cannot outrun the window, and observe each settle
+    // callback: `cycle` is the tune cycle that armed it, `stale` is true
+    // when that cycle (or its carrier) is no longer current, so the
+    // callback sends nothing.
+    void setTgxlRfSettleMsForTest(int ms) noexcept { m_tgxlRfSettleMs = ms; }
+    void setTgxlSettleFiredObserverForTest(std::function<void(quint64 cycle, bool stale)> observer)
+    {
+        m_tgxlSettleFiredObserverForTest = std::move(observer);
+    }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
@@ -5084,6 +5130,11 @@ public:
                           userAdc0Raw, userAdc1Raw, supplyRaw);
         m_forceTxForTest = false;
     }
+
+    // Drives the steady clock handlePaTelemetry reads (nanoseconds), so a
+    // test can time the HL2 temperature's 8 ms polls without sleeping. Once
+    // set, every later telemetry call on this model uses the value given.
+    void setPaTelemetryNowNsForTest(qint64 nowNs) { m_paTelemetryNowNsForTest = nowNs; }
 
     // P1 full-parity §3.5 test seam — pure-function counterpart of the
     // percent-to-wire-byte SWR-foldback formula inlined at every
@@ -7394,7 +7445,8 @@ private:
     void publishRadeModeSlices();
     int addSliceImpl(int requestedId, const QString& initialPanId,
                      const ReceiveSliceState* restoreSeed = nullptr,
-                     bool bindRestored = false);
+                     bool bindRestored = false,
+                     bool restoreSavedState = false);
 
     /// iPhone app Task 73: every slice's `active` from its owner's active
     /// slice, and activeSlice() moved to the station-level one (emitting
@@ -7616,6 +7668,13 @@ private:
     std::array<quint16, 100> m_hl2TempRing{};
     int m_hl2TempCount{0};   // 0..100 — slots filled
     int m_hl2TempHead{0};    // next slot to write
+    // The ring is filled on mi0bot's 8 ms poll, not one entry per
+    // telemetry call, so it spans 800 ms at any status rate (see
+    // handlePaTelemetry). Cleared when the connection leaves Connected.
+    qint64  m_hl2TempLastPollNs{0};  // time of the latest 8 ms poll
+    quint16 m_hl2TempHeld{0};        // latest reading, held between calls
+    // Test-only clock for handlePaTelemetry (setPaTelemetryNowNsForTest).
+    std::optional<qint64> m_paTelemetryNowNsForTest;
 
     // Settings hygiene — validated against caps at connect time.
     // Phase 3P-H Task 2.
@@ -8059,6 +8118,16 @@ private:
     void onBackgroundSettingsSaveFinished(quint64 ticket, bool saved, const QString& error);
     QString m_settingsSaveError;
     QSet<int> m_dirtySettingsSliceIds;
+    // Latest captured value for each fully qualified per-band key. No map
+    // change hooks run until the existing save/explicit recall boundary.
+    QHash<int, QMap<QString, QVariant>> m_pendingBandSettings;
+    void materializePendingBandSettings(int sliceId);
+    // A write of a held key by anyone but materializePendingBandSettings()
+    // is newer than the held copy, so that key leaves the hold and the
+    // other write survives. The rest of the hold is still saved.
+    void onSettingsKeyWritten(const QString& key);
+    int m_settingsWriteObserverId = 0;
+    bool m_materializingPendingBandSettings = false;
     // Phase 3P-I-a — dirty flag for AlexController persistence.
     // AlexController::antennaChanged can fire 14× during load(); the
     // flag + scheduleSettingsSave() timer coalesces them into a single
@@ -8789,6 +8858,10 @@ private:
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
     static constexpr int kTgxlCarrierReadyMs = 3000;
     static constexpr int kTgxlRfSettleMs = 150;
+    // The settle length in use: kTgxlRfSettleMs except under
+    // setTgxlRfSettleMsForTest.
+    int m_tgxlRfSettleMs{kTgxlRfSettleMs};
+    std::function<void(quint64, bool)> m_tgxlSettleFiredObserverForTest;
     // Completion ownership: actual channel, its latest run request and
     // the tune cycle that requested it. The completion is always queued.
     QPointer<TxChannel> m_tgxlCarrierChannel;

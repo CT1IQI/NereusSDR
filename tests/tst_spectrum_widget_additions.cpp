@@ -74,6 +74,12 @@ namespace {
 constexpr double kCenterHz   = 14'200'000.0;
 constexpr float  kQuietDbm   = -110.0f;
 
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (the range-for and size() do), and the GUI
+// DLL never exports one, so this test did not link on Windows. It reads this
+// copy of SpectrumWidget::kFreqGridSpacingsHz by value instead.
+constexpr std::array<int, 7> kFreqGridSpacingsHz = SpectrumWidget::kFreqGridSpacingsHz;
+
 // How many times `spy` (on displaySettingChanged) saw `keyBase`.
 int countOf(const QSignalSpy& spy, const QString& keyBase)
 {
@@ -425,11 +431,11 @@ private slots:
         w.setFreqScaleFontPx(40);
         QCOMPARE(w.freqScaleFontPx(), 14);
 
-        for (const int hz : SpectrumWidget::kFreqGridSpacingsHz) {
+        for (const int hz : kFreqGridSpacingsHz) {
             w.setFreqGridSpacingHz(hz);
             QCOMPARE(w.freqGridSpacingHz(), hz);
         }
-        QCOMPARE(SpectrumWidget::kFreqGridSpacingsHz.size(), size_t(7));
+        QCOMPARE(kFreqGridSpacingsHz.size(), size_t(7));
         // Not one of the choices: refused, the spacing stays.
         w.setFreqGridSpacingHz(3000);
         QCOMPARE(w.freqGridSpacingHz(), 100000);

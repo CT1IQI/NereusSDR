@@ -6,6 +6,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: a TX handoff to, or a tune
+//                of, a bound slice this desktop client has no receiver for
+//                sends receiver 0's dial, as the init burst reports.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -812,13 +816,19 @@ void TciServer::hookSliceBroadcasts()
     // the wire, so re-publishing the full VFO triplet here would announce a
     // receiver the client was never told about. tx_frequency carries no
     // receiver index and is correct for any slice.
+    //
+    // Desktop hosting: a slice this client has no receiver for never has
+    // its dial announced. The client hears receiver 0's dial instead, which
+    // is what its init burst reports for the same binding
+    // (TciProtocol::txFrequencyFor), so connecting and staying connected
+    // agree.
     if (TxSliceArbiter* arb = m_model->txSliceArbiter()) {
         connect(arb, &TxSliceArbiter::txBoundSliceChanged, this,
                 [this](int /*oldId*/, int newId) {
             SliceModel* slice = m_model ? m_model->sliceById(newId) : nullptr;
             if (!slice || !m_protocol) { return; }
-            m_protocol->enqueueLocalBroadcastTxFrequency(
-                static_cast<qint64>(slice->frequency()));
+            m_protocol->enqueueLocalBroadcastTxFrequency(m_protocol->txFrequencyFor(
+                newId, static_cast<qint64>(slice->frequency())));
         });
     }
 
@@ -862,7 +872,15 @@ bool TciServer::sliceDrivesTx(int sliceId) const
         // dropping tx_frequency for every client on a one-slice radio.
         return sliceId == 0;
     }
-    return arb->txBoundSliceId() == sliceId;
+    const int boundId = arb->txBoundSliceId();
+    // Desktop hosting: while TX is on a slice this client has no receiver
+    // for, its tx_frequency follows receiver 0's slice, as the init burst
+    // reports (TciProtocol::txFrequencyFor). The bound slice's own tunes
+    // then send nothing.
+    if (boundId >= 0 && m_protocol && !m_protocol->announcesTxSlice(boundId)) {
+        return m_protocol->receiverSlice(0) == sliceId;
+    }
+    return boundId == sliceId;
 }
 
 void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
@@ -2092,6 +2110,10 @@ void TciServer::stop()
     }
     m_clients.clear();
     m_remoteAudioSockets.clear();
+    // Every app is gone: the sensor timers go back to the idle default, so
+    // a restarted server does not tick at a departed app's rate. They are
+    // stopped above; setInterval does not start them.
+    updateSensorTimerIntervals();
 
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
         if (m_remoteIqRequested[rx]) {
@@ -2429,6 +2451,10 @@ void TciServer::onClientDisconnected()
 
     m_clients.erase(it);
     ws->deleteLater();
+
+    // A fast app that leaves without turning its sensors off no longer sets
+    // the rate the others get.
+    updateSensorTimerIntervals();
 
     // R-R3-42: the last app listening to a Core receiver releases it.
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
@@ -3059,6 +3085,38 @@ void TciServer::handleAudioUnsubscribe(std::shared_ptr<TciClientSession>& sessio
         session->audioResamplers.erase(rIt);
         qCInfo(lcTci) << "TciServer: audio resampler destroyed for rx" << rx
                       << "peer" << session->peer;
+    }
+}
+
+// ── updateSensorTimerIntervals() ──────────────────────────────────────────────
+//
+// The shared sensor timers follow the apps that are left. In Thetis each
+// listener runs its own sensor timers, stopped when it leaves
+// (StopSocketListener, TCIServer.cs:3045-3056 [v2.10.3.15]), and the
+// server-wide MinimumRequiredRxSensorInterval / MinimumRequiredTxSensorInterval
+// (TCIServer.cs:8092-8130) skip it once PurgingThreadStart removes it from
+// the listener list (TCIServer.cs:7199-7221). NereusSDR runs one RX and one
+// TX timer for all apps, so a leaving app's interval is dropped here, as
+// rx_sensors_enable / tx_sensors_enable already drop a disabled one.
+void TciServer::updateSensorTimerIntervals()
+{
+    QList<int> rxIntervals;
+    QList<int> txIntervals;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it.value()->rxSensorsEnabled) {
+            rxIntervals.append(it.value()->rxSensorIntervalMs);
+        }
+        if (it.value()->txSensorsEnabled) {
+            txIntervals.append(it.value()->txSensorIntervalMs);
+        }
+    }
+    const int rxInterval = TciSensorManager::minimumRequiredInterval(rxIntervals);
+    if (m_rxSensorTimer->interval() != rxInterval) {
+        m_rxSensorTimer->setInterval(rxInterval);
+    }
+    const int txInterval = TciSensorManager::minimumRequiredInterval(txIntervals);
+    if (m_txSensorTimer->interval() != txInterval) {
+        m_txSensorTimer->setInterval(txInterval);
     }
 }
 

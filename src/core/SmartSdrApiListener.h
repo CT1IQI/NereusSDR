@@ -32,6 +32,7 @@
 
 #pragma once
 #include "core/StationNetwork.h"
+#include "core/NereusCoreExport.h"
 
 #include <QObject>
 #include <QTcpServer>
@@ -69,7 +70,7 @@ namespace NereusSDR {
 //
 // We push slice / transmit S-frames at 1 Hz (and on every change) so that
 // PGXL's bandA / bandB tracking and TGXL's CAT-following both work.
-class SmartSdrApiListener : public QObject {
+class NEREUS_CORE_EXPORT SmartSdrApiListener : public QObject {
     Q_OBJECT
 public:
     explicit SmartSdrApiListener(QObject* parent = nullptr);

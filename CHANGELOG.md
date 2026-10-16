@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Display zoom and notices
+
+- Saved receive display spans down to 1 kHz now survive initial slice setup.
+- Notices follow the main window when it moves or resizes. Closing a notice
+  also closes the gap in the remaining stack.
+
 ### Display controls
 
 - The Display pill has Spectrum, Levels, Waterfall, View and FFT tabs. Levels
@@ -179,6 +185,8 @@ right-click menu keeps only what is left.
   could not reach it. It also uses the FFT plans the app has saved, instead
   of building them all again before it takes the radio, which took minutes
   the first time.
+- On Windows, the background Core runs at normal priority, as NereusSDR does
+  when started from its shortcut. Windows started it below normal.
 - A TCI program set to the second receiver (WSJT-X on receiver 2, for one)
   is no longer told that receiver 2 is off immediately after its key is
   accepted. That contradictory state could make the program abandon PTT and

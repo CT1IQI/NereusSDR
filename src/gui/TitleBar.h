@@ -89,6 +89,7 @@
 #include "core/ConnectionState.h"
 #include "core/session/NetworkPathSnapshot.h"
 #include "gui/RemoteAudioStatus.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QQueue>
 #include <QSize>
@@ -131,7 +132,7 @@ class RadioSpeakerWidget;
 // red=Stalled, dim=Dead.
 //
 // Phase 3Q Sub-PR-4 D.1.
-class ConnectionSegment : public QWidget {
+class NEREUS_GUI_EXPORT ConnectionSegment : public QWidget {
     Q_OBJECT
 
 public:
@@ -264,7 +265,7 @@ private:
 // choice per user-approved Sub-Phase 10 decision (option D); the
 // MasterOutputWidget master-volume controls MUST be visible at all times
 // alongside the menus, and the native global bar cannot host them.
-class TitleBar : public QWidget {
+class NEREUS_GUI_EXPORT TitleBar : public QWidget {
     Q_OBJECT
 
 public:

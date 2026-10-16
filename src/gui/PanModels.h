@@ -26,6 +26,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include "gui/NereusGuiExport.h"
 
 #include <map>
 #include <memory>
@@ -35,7 +36,7 @@ namespace NereusSDR {
 class PanadapterModel;
 class SpectrumWidget;
 
-class PanModels : public QObject {
+class NEREUS_GUI_EXPORT PanModels : public QObject {
     Q_OBJECT
 
 public:

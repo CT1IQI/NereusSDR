@@ -12,6 +12,7 @@
 #include <QThreadPool>
 
 #include <functional>
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -21,7 +22,7 @@ namespace NereusSDR {
 /// Core's main thread, which also sends the receive audio, must not wait
 /// with it. One thread, so saves reach the disk in the order they were asked
 /// for.
-class SettingsFileWriter : public QObject {
+class NEREUS_CORE_EXPORT SettingsFileWriter : public QObject {
     Q_OBJECT
 public:
     explicit SettingsFileWriter(QObject* parent = nullptr);
@@ -33,6 +34,13 @@ public:
 
     /// Returns once every job handed over has finished.
     void waitUntilIdle();
+
+    /// Waits for the jobs already handed over and ends the writer thread.
+    /// Later jobs run on the caller's thread. AppSettings calls this as the
+    /// QCoreApplication ends: on Windows, the process ends its other threads
+    /// before a DLL's static destructors run, so a writer still working at
+    /// that point would be waited for forever.
+    void finish();
 
     /// Reports from the writer thread; a receiver on another thread gets it
     /// queued.
@@ -46,6 +54,7 @@ signals:
 
 private:
     QThreadPool m_pool;
+    bool m_finished{false};
 };
 
 } // namespace NereusSDR

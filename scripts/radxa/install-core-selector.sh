@@ -140,6 +140,78 @@ remove_added_group_dropins() {
     return "$removed"
 }
 # END group drop-ins
+# BEGIN real-time priority drop-in
+# Real-time priority for the Core on the Radxa vendor kernel
+# (6.1.115-vendor-rk35xx, CONFIG_RT_GROUP_SCHED=y). While the cgroup CPU
+# controller is on, that kernel gives a service no real-time budget and
+# refuses its SCHED_FIFO requests, and a Core refused at start never asks
+# again (measured on the Rock 5C, 2026-10-11). On the Rock only the login
+# managers ask for the controller: Debian's user@.service does
+# (Delegate=pids memory cpu), so any login switches it on until about ten
+# seconds after the last logout. The drop-in takes cpu out of that list for
+# every user. The empty Delegate= comes first because a list adds to the one
+# before it: "Assigning the empty string will enable delegation, but reset
+# the list of controllers" (systemd.resource-control(5), systemd 257;
+# config_parse_delegate() in its src/core/load-fragment.c).
+# A kernel that does not report CONFIG_RT_GROUP_SCHED=y is left alone, and so
+# is an existing file. Rollback removes only one this install added.
+realtime_dropin=/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf
+kernel_config_gz=/proc/config.gz
+kernel_config_boot=/boot/config-$(uname -r)
+cgroup_controllers=/sys/fs/cgroup/cgroup.subtree_control
+realtime_dropin_added=0
+kernel_has_rt_group_sched() {
+    # No grep -q: it stops at the first match, and under pipefail the cut
+    # short gzip would then count as "not set".
+    if [[ -r "$kernel_config_gz" ]]; then
+        gzip -dc "$kernel_config_gz" | grep -x 'CONFIG_RT_GROUP_SCHED=y' > /dev/null
+    elif [[ -r "$kernel_config_boot" ]]; then
+        grep -x 'CONFIG_RT_GROUP_SCHED=y' "$kernel_config_boot" > /dev/null
+    else
+        return 1
+    fi
+}
+add_realtime_dropin() {
+    if [[ -e "$realtime_dropin" || -L "$realtime_dropin" ]]; then
+        echo "$realtime_dropin already exists; left unchanged"
+        return 0
+    fi
+    if ! kernel_has_rt_group_sched; then
+        echo "kernel does not report CONFIG_RT_GROUP_SCHED=y; $realtime_dropin not added"
+        return 0
+    fi
+    realtime_dropin_added=1
+    install -d -m 755 "${realtime_dropin%/*}"
+    cat > "$realtime_dropin" <<'REALTIME'
+# Written by the NereusSDR Core installer (scripts/radxa/install-core-selector.sh).
+# Login managers no longer ask for the cgroup CPU controller. On a kernel
+# built with CONFIG_RT_GROUP_SCHED=y that controller, once on, makes the
+# kernel refuse real-time priority to nereusd. The empty line resets the
+# list Debian ships (pids memory cpu); the next line puts back the rest.
+# Remove this file and run "systemctl daemon-reload" to undo it.
+[Service]
+Delegate=
+Delegate=pids memory
+REALTIME
+    chmod 644 "$realtime_dropin"
+    echo "added $realtime_dropin"
+}
+remove_added_realtime_dropin() {
+    if [[ "$realtime_dropin_added" == 1 ]]; then rm -f "$realtime_dropin" || return 1; fi
+}
+# Says what the Core is about to start under. It never fails an install.
+report_cpu_controller() {
+    local delegated controllers
+    delegated=$(systemctl show 'user@0.service' -p DelegateControllers --value 2> /dev/null) || delegated=unknown
+    controllers=$(cat "$cgroup_controllers" 2> /dev/null) || controllers=unknown
+    echo "login managers ask for cgroup controllers: ${delegated:-none}"
+    echo "cgroup controllers on as the Core starts: ${controllers:-none}"
+    if [[ " $controllers " == *" cpu "* ]] && kernel_has_rt_group_sched; then
+        echo "WARNING: the cgroup CPU controller is on as the Core starts. While it stays on, each audio thread of the Core is refused real-time priority when it starts, as a radio or client connects." >&2
+        echo "A login from before this change keeps it on until about ten seconds after it ends, or until a reboot for a user who lingers; audio threads that start after that get the priority." >&2
+    fi
+}
+# END real-time priority drop-in
 rollback() {
     local result=$?
     if test "$result" -ne 0; then
@@ -160,6 +232,7 @@ rollback() {
         if test -f "$backup/assets.tar"; then tar -C / -xpf "$backup/assets.tar" || restored=0; fi
         restore_daemon_state || restored=0
         remove_added_group_dropins || restored=0
+        remove_added_realtime_dropin || restored=0
         systemctl daemon-reload || restored=0
         if [[ "$restored" == 1 ]]; then
             systemctl start nereusd
@@ -201,7 +274,9 @@ for model in Default_large.bin Default_small.bin; do
     sync -f "/usr/local/share/NereusSDR/models/rnnoise/$model"
 done
 add_group_dropins
+add_realtime_dropin
 systemctl daemon-reload
+report_cpu_controller
 systemctl start nereusd
 sleep 8
 systemctl is-active --quiet nereusd
