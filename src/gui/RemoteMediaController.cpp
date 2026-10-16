@@ -10,6 +10,12 @@
 //               start that declared the tunnel. The stall tick's timer is
 //               named remoteMediaStallTimer. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: stopping the microphone collector no longer waits on its
+//               thread's priority request; the log says when it was let go
+//               still waiting. The collector comments now say its thread
+//               never calls the source once stop() returns, rather than
+//               that it is always joined. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-12: A display the Core ended because its slice was removed is
 //               not asked for again while the removal is on its way (at most
 //               kPanWaitingGraceMs); the removal retires the binding. J.J.
@@ -1739,8 +1745,10 @@ struct RemoteMediaController::Private {
     // 2026-10-10: the microphone's collector: its real-time thread pulls
     // the microphone (AudioEngine::pullTxMic, whose one caller it is)
     // while micLease is held, and the pump drains its queue. Made for
-    // micCollectorEngine on the first lease; stopped (joined) before the
-    // lease is released and before that engine goes.
+    // micCollectorEngine on the first lease; stopped before the lease is
+    // released and before that engine goes. Once stop() returns its thread
+    // never calls the source: it is joined, or let go while still waiting
+    // on its priority request.
     std::unique_ptr<MicUplinkCollector> micCollector;
     AudioEngine* micCollectorEngine = nullptr;
     // What the collector had dropped when the line last started or
@@ -2114,8 +2122,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     d->micEncoder = std::make_unique<RemoteMicEncoder>();
     resetMicrophoneQuality();
     // 2026-10-10: the collector's thread reads the model's audio engine;
-    // it is joined before the model deletes that engine (a child of the
-    // model, deleted after this signal).
+    // it is stopped before the model deletes that engine (a child of the
+    // model, deleted after this signal), and once stopped never calls it.
     if (model) {
         connect(model, &QObject::destroyed, this, [this] {
             stopMicCollector();
@@ -3261,10 +3269,14 @@ void RemoteMediaController::stopMicCollector()
     }
     const bool wasRunning = d->micCollector->isRunning();
     const bool realtime = d->micCollector->realtimePriorityHeld();
-    // Joins the thread and discards what it queued: nothing collected under
-    // this lease follows into the next.
-    d->micCollector->stop();
-    if (wasRunning) {
+    // Joins the thread, or lets go of one still waiting on its priority
+    // request, and discards what it queued: nothing collected under this
+    // lease follows into the next.
+    const MicUplinkCollector::StopOutcome stopped = d->micCollector->stop();
+    if (stopped == MicUplinkCollector::StopOutcome::LeftWaitingOnPriority) {
+        qCInfo(lcRemoteMedia) << "Microphone collector thread stopped while it still waited on"
+                              << "the system for real-time priority; it ends on its own";
+    } else if (wasRunning) {
         qCInfo(lcRemoteMedia) << "Microphone collector thread stopped"
                               << (realtime ? "(it ran at real-time audio priority)"
                                            : "(the system gave it no real-time priority)");
