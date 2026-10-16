@@ -9,7 +9,7 @@ controls; its **Your volume** and mute remain personal to this device.
 
 Figure 3. Mode (1), tuning step (2), filter display and presets (3),
 AGC/AUTO controls (4), and receive/transmit offsets (5). The illustrated
-values are the captured station's settings.
+values are the capture's illustrative settings, taken in the workspace look from the preview window with no radio connected.
 
 ## Start with the right slice and route
 
@@ -19,7 +19,7 @@ values are the captured station's settings.
    necessary before changing its receive settings.
 3. Open the flag's speaker tab. Select **SPEAKERS** or **PHONES** for the
    intended output, unmute it and set a comfortable **AF** level. Those
-   output names use the devices selected in **Setup > Audio > Outputs** (the **This computer** and **Headphones** cards).
+   output names use the devices selected in **File > Settings... > Audio > Outputs** (the **This computer** and **Headphones** cards).
 4. Check mode, filter and offsets before evaluating a signal. A leftover
    RIT offset or an inappropriate filter can make a correctly entered VFO
    frequency sound wrong.
@@ -77,8 +77,11 @@ permission. Keep it legible without obscuring the passband.
 
 ## Select the mode before the filter
 
-Choose the mode in the RX applet, or open the flag's mode tab and select it
-there. The current mode name is shown on the flag and changes the preset bank.
+Choose the mode in the RX applet, open the flag's mode tab and select it
+there, or use the **Mode** menu. The current mode name is shown on the flag and
+changes the preset bank. The RX applet and the flag's mode list offer every
+mode except **SPEC**; only the **Mode** menu offers all 14, so choose **SPEC**
+there.
 
 | Mode family | What to check in NereusSDR |
 | --- | --- |
@@ -117,7 +120,7 @@ an interfering signal inside the wanted passband disappear without also
 removing some wanted audio.
 
 The preset bank belongs to the Core. Editing a preset can affect other
-operators who later select it. **Setup > DSP > Filter Presets** provides the
+operators who later select it. **File > Settings... > DSP > Filter Presets** provides the
 larger editor with mode selection, names/edges, ordering and reset operations.
 Choose the required mode and slot before editing; the covered editor does not
 provide RADE rows in its ordinary WDSP preset list.
@@ -140,9 +143,9 @@ click for receive-only filter selection.
 | **BIN** | Binaural playback, with I and Q in separate ears; evaluate using a stereo headphone route. |
 | **SPEAKERS**, **PHONES** | Select which configured playback destination carries this receiver. |
 | AGC mode | Set how automatic gain responds and recovers. |
-| **AGC-T** | Set maximum receiver gain, similar in use to traditional RF gain. |
+| **AGC-T** | Set the AGC threshold, which in use is similar to traditional RF gain. |
 | **AUTO** | Derive AGC-T adjustment from the measured noise floor. |
-| **SQL** and threshold | Mute audio below the mode's squelch threshold. Check this when spectrum is active but audio is absent. |
+| **SQL** and threshold | Switch the SSB-style squelch and set its threshold on a 0 to 100 scale. Check this when spectrum is active but audio is absent. |
 
 AF and AGC-T solve different problems. If audio is simply too loud, adjust
 AF or output volume. If background noise is being raised between signals,
@@ -150,13 +153,19 @@ review AGC mode and AGC-T while holding AF steady. Changing AF alone cannot
 repair an overloaded radio input.
 
 The AGC choices in the flag/RX applet are **Off**, **Long**, **Slow**, **Med**
-and **Fast**. Off uses a fixed gain controlled with AGC-T. Longer recovery
+and **Fast**; the **DSP > AGC** menu adds **Custom**. In every mode AGC-T sets
+the AGC threshold. **Off** does not use AGC-T: it holds the gain set by **Fixed
+Gain** ("Gain when AGC is disabled") on **File > Settings... > DSP > AGC/ALC**.
+Longer recovery
 keeps gain from rising as quickly between parts of a signal; faster recovery
 follows more rapid changes. Select one, listen across several signal changes,
 then compare with the previous choice. The best choice depends on the signal
 and conditions; this manual does not treat a captured setting as a universal
 preset. Use **AUTO** when you want noise-floor-based adjustment, and check
-its indication before making a manual AGC-T change.
+its indication before making a manual AGC-T change. The line under AGC-T reads
+**NF <n> dB · offset +<n>** once a noise floor is measured and **NF awaiting
+measurement** until then. **AUTO** acts on the slice the applet is showing. A
+window signed in to a desktop Core shows a real noise-floor reading too.
 
 ## Set squelch without losing weak signals
 
@@ -167,9 +176,13 @@ the audio again. If a weak signal disappears, reduce the threshold or turn
 SQL off before trying stronger noise reduction. Squelch silences the output;
 it does not remove an interferer from the passband.
 
-The threshold uses the selected mode's scale: SSB uses a normalized
-threshold, AM a dB scale, and FM a linear threshold. Recheck it after a mode
-change rather than copying a number between unlike scales. In a no-audio
+The **SQL** button and threshold on the flag and in the RX applet are the
+SSB-style squelch, on a scale of 0 to 100, whatever the mode. No control in the
+flag or applet turns on AM or FM squelch. Their thresholds are on their own DSP
+pages, in dB from -160 to 0: **AM Squelch Threshold** in the **Squelch** group
+of **File > Settings... > DSP > AM/SAM**, and **Squelch Threshold** on
+**File > Settings... > DSP > FM**. Do not copy a number between these unlike
+scales. In a no-audio
 diagnosis, turn SQL off temporarily so that a closed gate cannot be confused
 with the wrong output device. Tone squelch and FM repeater controls are not
 implemented in this build.
@@ -180,7 +193,11 @@ The RX applet's input controls can affect the ADC feeding several slices,
 which makes them different from per-slice AF and AGC. The label may read
 **ATT**, **S-ATT** or **A-ATT**, depending on stepped and automatic attenuation
 state. The available range and preamp choices come from the connected radio.
-A slice using the other ADC can have that ADC's own settings.
+A slice using the other ADC can have that ADC's own settings. NereusSDR
+remembers the attenuator and preamp settings and sends them to the radio when
+it connects, so check them after connecting to a radio you last used at a
+different station. A desktop Core also keeps the changes that signed-in windows
+and phones make while it runs.
 
 If an ADC-overload indication appears, first identify the affected input and
 current antenna/preamp/attenuation state. Increase available attenuation or
@@ -217,7 +234,7 @@ Start with the other treatments off and the receiver correctly tuned. Turn on
 one treatment, compare speech or wanted tones with it on/off, and keep it only
 if intelligibility improves. Excessive treatment can remove wanted detail or
 introduce artifacts. Right-click a method for its frequently adjusted parameters;
-**More Settings…** leads to its detailed DSP page where offered.
+**More Settings...** leads to its detailed DSP page where offered.
 [Receiver DSP setup](13-receiver-dsp.md) explains those parameters and their
 dependencies.
 
@@ -243,8 +260,8 @@ status before changing unrelated network or device settings.
 
 A notch is a frequency/width filter entry, not a new receive slice. Making it
 wider can remove wanted audio too. The **TNF** master affects all notches,
-whereas bypassing one entry leaves the other entries available. **Setup >
-DSP > TNF** provides the notch-management page for inspecting the bank and
+whereas bypassing one entry leaves the other entries available. **File >
+Settings... > DSP > TNF** provides the notch-management page for inspecting the bank and
 its DSP settings. The notch menu does not provide a permanent/temporary
 persistence choice in this build.
 
@@ -264,8 +281,9 @@ slice can make the two operating frequencies clearer.
 **CTUN** concerns the receiver window and band view. Right-click empty spectrum
 and enable **CTUN (independent pan)** under **Tuning** to keep the receive window
 fixed while tuning within it. The VFO moves while the pan stays put. Turn it off
-to return to a view following the VFO. The checkbox can be unavailable when the
-Core does not provide remote C-Tune support. None of these three controls is a
+to return to a view following the VFO. The checkbox is grayed, with the Core's reason as its tooltip, on a slice you
+only listen to or a receiver another device holds, and when the Core does not
+provide remote C-Tune support. None of these three controls is a
 substitute for selecting the intended transmit slice.
 
 ## Worked example: improve a weak voice signal

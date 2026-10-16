@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fresh Raspberry Pi or Armbian Core install | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/install-core-sbc.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html" aria-current=page>Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="fresh-raspberry-pi-or-armbian-core-install">Fresh Raspberry Pi or Armbian Core install</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-prepare-the-card">1. Prepare the card</a></li><li><a href="#2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</a></li><li><a href="#3-download-and-install-the-core">3. Download and install the Core</a></li><li><a href="#4-configure-and-start-it">4. Configure and start it</a></li><li><a href="#5-pair-a-console">5. Pair a console</a></li><li><a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a></li><li><a href="#direct-radio-cable-on-armbian">Direct radio cable on Armbian</a></li><li><a href="#troubleshooting-and-existing-installs">Troubleshooting and existing installs</a></li></ol></details>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fresh Raspberry Pi or Armbian Core install | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/install-core-sbc.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.10.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html" aria-current=page>Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="fresh-raspberry-pi-or-armbian-core-install">Fresh Raspberry Pi or Armbian Core install</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-prepare-the-card">1. Prepare the card</a></li><li><a href="#2-check-the-os-and-install-download-tools">2. Check the OS and install download tools</a></li><li><a href="#3-download-and-install-the-core">3. Download and install the Core</a></li><li><a href="#4-configure-and-start-it">4. Configure and start it</a></li><li><a href="#core-speaker-and-serial-accessories">Core speaker and serial accessories</a></li><li><a href="#5-pair-a-console">5. Pair a console</a></li><li><a href="#radio-plugged-directly-into-the-pi">Radio plugged directly into the Pi</a></li><li><a href="#direct-radio-cable-on-armbian">Direct radio cable on Armbian</a></li><li><a href="#troubleshooting-and-existing-installs">Troubleshooting and existing installs</a></li></ol></details>
 <p>Install the headless <code>nereusd</code> Core on a fresh <strong>64-bit Debian 13 (Trixie)</strong>
 system. Use <strong>Raspberry Pi OS Lite (64-bit), Trixie</strong> on a Pi, or a compatible
 <strong>Armbian Minimal/CLI Debian Trixie</strong> image for your board. The release's
@@ -37,13 +37,13 @@ sudo apt install -y ca-certificates curl gnupg avahi-daemon nano
 <h2 id="3-download-and-install-the-core">3. Download and install the Core</h2>
 <p>Use the matching Trixie package from the selected
 <a href="https://github.com/boydsoftprez/NereusSDR/releases">release's Assets</a>.
-The example below installs 2026.10.0. Copy the whole command block into the
+The example below installs 2026.10.1. Copy the whole command block into the
 terminal. It downloads the public signing key over HTTPS, checks its full
 fingerprint, then verifies the signed checksum list and the package before
 installing. Verification uses a temporary keyring.</p>
 <pre><code class="language-sh">(
 set -eu
-release_version=2026.10.0
+release_version=2026.10.1
 core_package=&quot;nereusd_${release_version}_arm64_trixie.deb&quot;
 release_url=&quot;https://github.com/boydsoftprez/NereusSDR/releases/download/v${release_version}&quot;
 GNUPGHOME=$(mktemp -d)
@@ -89,6 +89,37 @@ sudo nereusd status
 </code></pre>
 <p>The service now starts automatically at boot. First start generates and caches
 FFTW plans; give it time to become ready.</p>
+<h2 id="core-speaker-and-serial-accessories">Core speaker and serial accessories</h2>
+<p>The Core can play received audio on the SBC's own sound card, and it can turn
+a rotor or run serial CAT on a USB serial adapter. Linux gives both devices to
+groups the Core does not belong to, so each needs a small systemd drop-in.</p>
+<ul>
+<li><strong>Sound card.</strong> The <code>.deb</code> package ships the audio drop-in
+(<code>/usr/lib/systemd/system/nereusd.service.d/audio.conf</code>), so there is
+nothing to add. An older install without it needs
+<code>/etc/systemd/system/nereusd.service.d/audio.conf</code> holding
+<code>[Service]</code> and <code>SupplementaryGroups=audio</code>.</li>
+<li><strong>Serial adapter.</strong> The <code>.deb</code> package does not ship the serial grant. Until
+you add it, the Core cannot open <code>/dev/ttyUSB*</code> or <code>/dev/ttyACM*</code>, so a
+GS-232 rotor and serial CAT will not connect. Create
+<code>/etc/systemd/system/nereusd.service.d/serial.conf</code> with the two lines
+<code>[Service]</code> and <code>SupplementaryGroups=dialout</code>, then run
+<code>sudo systemctl daemon-reload</code> and <code>sudo systemctl restart nereusd</code>. The
+<code>dialout</code> name is right for Raspberry Pi OS and Armbian; the Pi 4 and Rock
+installer scripts write both drop-ins for you.</li>
+<li><strong>Choose the Core speaker.</strong> In any window signed in to the Core, open
+<strong>Audio &gt; Outputs</strong> and use the <strong>Core speaker</strong> card, or use the Sound panel
+on the iPhone or iPad. The Core speaker needs a 2026.10.1 Core.</li>
+<li><strong>Check the card's mixer.</strong> A sound card can be open and playing while its
+own mixer has the output switched off. On a board with a DAC, check that its
+DAC switches are on (<code>alsamixer</code> or <code>amixer -c &lt;card&gt;</code>). NereusSDR does not
+change a card's mixer.</li>
+<li><strong>Real-time priority.</strong> Some vendor kernels refuse real-time scheduling to
+every service. The Core then logs &quot;Raised thread priority was refused&quot; and
+its audio threads run without real-time priority. Nothing
+needs fixing; it is a note about that kernel. Check how heavily the board is
+loaded if audio breaks up.</li>
+</ul>
 <h2 id="5-pair-a-console">5. Pair a console</h2>
 <p>Open NereusSDR on the desktop or the native iPhone/iPad app and choose the
 Core found on your home network. Follow the pairing prompt. To display a pairing code

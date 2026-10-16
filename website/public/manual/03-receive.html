@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tune and receive | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/03-receive.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual · working draft<br>4 October 2026</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html" aria-current=page>Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="tune-and-receive">Tune and receive</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#start-with-the-right-slice-and-route">Start with the right slice and route</a></li><li><a href="#tune-by-frequency-signal-position-or-step">Tune by frequency, signal position or step</a></li><li><a href="#change-bands-and-inspect-the-recalled-state">Change bands and inspect the recalled state</a></li><li><a href="#select-the-mode-before-the-filter">Select the mode before the filter</a></li><li><a href="#choose-and-adjust-the-receive-passband">Choose and adjust the receive passband</a></li><li><a href="#set-receive-volume-and-agc-deliberately">Set receive volume and AGC deliberately</a></li><li><a href="#set-squelch-without-losing-weak-signals">Set squelch without losing weak signals</a></li><li><a href="#use-input-attenuation-and-preamp-controls">Use input attenuation and preamp controls</a></li><li><a href="#select-noise-treatment-by-the-problem">Select noise treatment by the problem</a></li><li><a href="#remove-a-persistent-tone-with-a-manual-notch">Remove a persistent tone with a manual notch</a></li><li><a href="#use-rit-xit-and-ctun-for-different-jobs">Use RIT, XIT and CTUN for different jobs</a></li><li><a href="#worked-example-improve-a-weak-voice-signal">Worked example: improve a weak voice signal</a></li></ol></details>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tune and receive | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/03-receive.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.10.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html" aria-current=page>Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">16. Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">19. Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="tune-and-receive">Tune and receive</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#start-with-the-right-slice-and-route">Start with the right slice and route</a></li><li><a href="#tune-by-frequency-signal-position-or-step">Tune by frequency, signal position or step</a></li><li><a href="#change-bands-and-inspect-the-recalled-state">Change bands and inspect the recalled state</a></li><li><a href="#select-the-mode-before-the-filter">Select the mode before the filter</a></li><li><a href="#choose-and-adjust-the-receive-passband">Choose and adjust the receive passband</a></li><li><a href="#set-receive-volume-and-agc-deliberately">Set receive volume and AGC deliberately</a></li><li><a href="#set-squelch-without-losing-weak-signals">Set squelch without losing weak signals</a></li><li><a href="#use-input-attenuation-and-preamp-controls">Use input attenuation and preamp controls</a></li><li><a href="#select-noise-treatment-by-the-problem">Select noise treatment by the problem</a></li><li><a href="#remove-a-persistent-tone-with-a-manual-notch">Remove a persistent tone with a manual notch</a></li><li><a href="#use-rit-xit-and-ctun-for-different-jobs">Use RIT, XIT and CTUN for different jobs</a></li><li><a href="#worked-example-improve-a-weak-voice-signal">Worked example: improve a weak voice signal</a></li></ol></details>
 <p>This chapter follows a receive session from selecting a slice to tuning,
 filtering and managing interference. Frequency, mode, filter and receive DSP
 changes apply to the slice you control. A slice you only listen to has restricted
@@ -6,7 +6,7 @@ controls; its <strong>Your volume</strong> and mute remain personal to this devi
 <p><a href="/manual/images/desktop-rx.jpg"><img src="/manual/images/desktop-rx.jpg" alt="RX applet showing mode, tuning step, receive filter, AGC and RIT/XIT controls" /></a></p>
 <p>Figure 3. Mode (1), tuning step (2), filter display and presets (3),
 AGC/AUTO controls (4), and receive/transmit offsets (5). The illustrated
-values are the captured station's settings.</p>
+values are the capture's illustrative settings, taken in the workspace look from the preview window with no radio connected.</p>
 <h2 id="start-with-the-right-slice-and-route">Start with the right slice and route</h2>
 <ol>
 <li>Connect and wait for fresh spectrum data. Select the desired VFO flag,
@@ -15,7 +15,7 @@ or its letter tab in the RX applet when several slices are present.</li>
 necessary before changing its receive settings.</li>
 <li>Open the flag's speaker tab. Select <strong>SPEAKERS</strong> or <strong>PHONES</strong> for the
 intended output, unmute it and set a comfortable <strong>AF</strong> level. Those
-output names use the devices selected in <strong>Setup &gt; Audio &gt; Outputs</strong> (the <strong>This computer</strong> and <strong>Headphones</strong> cards).</li>
+output names use the devices selected in <strong>File &gt; Settings... &gt; Audio &gt; Outputs</strong> (the <strong>This computer</strong> and <strong>Headphones</strong> cards).</li>
 <li>Check mode, filter and offsets before evaluating a signal. A leftover
 RIT offset or an inappropriate filter can make a correctly entered VFO
 frequency sound wrong.</li>
@@ -62,8 +62,11 @@ through Huge. Check the highlighted segment and frequency scale. A band-plan
 label is operating context; it does not choose your receive mode or grant TX
 permission. Keep it legible without obscuring the passband.</p>
 <h2 id="select-the-mode-before-the-filter">Select the mode before the filter</h2>
-<p>Choose the mode in the RX applet, or open the flag's mode tab and select it
-there. The current mode name is shown on the flag and changes the preset bank.</p>
+<p>Choose the mode in the RX applet, open the flag's mode tab and select it
+there, or use the <strong>Mode</strong> menu. The current mode name is shown on the flag and
+changes the preset bank. The RX applet and the flag's mode list offer every
+mode except <strong>SPEC</strong>; only the <strong>Mode</strong> menu offers all 14, so choose <strong>SPEC</strong>
+there.</p>
 <table>
 <thead>
 <tr>
@@ -130,7 +133,7 @@ the width. A narrower filter excludes more of the spectrum; it cannot make
 an interfering signal inside the wanted passband disappear without also
 removing some wanted audio.</p>
 <p>The preset bank belongs to the Core. Editing a preset can affect other
-operators who later select it. <strong>Setup &gt; DSP &gt; Filter Presets</strong> provides the
+operators who later select it. <strong>File &gt; Settings... &gt; DSP &gt; Filter Presets</strong> provides the
 larger editor with mode selection, names/edges, ordering and reset operations.
 Choose the required mode and slot before editing; the covered editor does not
 provide RADE rows in its ordinary WDSP preset list.</p>
@@ -179,7 +182,7 @@ click for receive-only filter selection.</p>
 </tr>
 <tr>
 <td><strong>AGC-T</strong></td>
-<td>Set maximum receiver gain, similar in use to traditional RF gain.</td>
+<td>Set the AGC threshold, which in use is similar to traditional RF gain.</td>
 </tr>
 <tr>
 <td><strong>AUTO</strong></td>
@@ -187,7 +190,7 @@ click for receive-only filter selection.</p>
 </tr>
 <tr>
 <td><strong>SQL</strong> and threshold</td>
-<td>Mute audio below the mode's squelch threshold. Check this when spectrum is active but audio is absent.</td>
+<td>Switch the SSB-style squelch and set its threshold on a 0 to 100 scale. Check this when spectrum is active but audio is absent.</td>
 </tr>
 </tbody>
 </table>
@@ -196,13 +199,19 @@ AF or output volume. If background noise is being raised between signals,
 review AGC mode and AGC-T while holding AF steady. Changing AF alone cannot
 repair an overloaded radio input.</p>
 <p>The AGC choices in the flag/RX applet are <strong>Off</strong>, <strong>Long</strong>, <strong>Slow</strong>, <strong>Med</strong>
-and <strong>Fast</strong>. Off uses a fixed gain controlled with AGC-T. Longer recovery
+and <strong>Fast</strong>; the <strong>DSP &gt; AGC</strong> menu adds <strong>Custom</strong>. In every mode AGC-T sets
+the AGC threshold. <strong>Off</strong> does not use AGC-T: it holds the gain set by <strong>Fixed
+Gain</strong> (&quot;Gain when AGC is disabled&quot;) on <strong>File &gt; Settings... &gt; DSP &gt; AGC/ALC</strong>.
+Longer recovery
 keeps gain from rising as quickly between parts of a signal; faster recovery
 follows more rapid changes. Select one, listen across several signal changes,
 then compare with the previous choice. The best choice depends on the signal
 and conditions; this manual does not treat a captured setting as a universal
 preset. Use <strong>AUTO</strong> when you want noise-floor-based adjustment, and check
-its indication before making a manual AGC-T change.</p>
+its indication before making a manual AGC-T change. The line under AGC-T reads
+<strong>NF <n> dB · offset +<n></strong> once a noise floor is measured and <strong>NF awaiting
+measurement</strong> until then. <strong>AUTO</strong> acts on the slice the applet is showing. A
+window signed in to a desktop Core shows a real noise-floor reading too.</p>
 <h2 id="set-squelch-without-losing-weak-signals">Set squelch without losing weak signals</h2>
 <p>Open the flag's speaker tab or the RX applet, enable <strong>SQL</strong>, and adjust its
 threshold while listening to a clear gap between signals. Stop when the
@@ -210,9 +219,13 @@ unwanted background closes, then tune a wanted signal and confirm it opens
 the audio again. If a weak signal disappears, reduce the threshold or turn
 SQL off before trying stronger noise reduction. Squelch silences the output;
 it does not remove an interferer from the passband.</p>
-<p>The threshold uses the selected mode's scale: SSB uses a normalized
-threshold, AM a dB scale, and FM a linear threshold. Recheck it after a mode
-change rather than copying a number between unlike scales. In a no-audio
+<p>The <strong>SQL</strong> button and threshold on the flag and in the RX applet are the
+SSB-style squelch, on a scale of 0 to 100, whatever the mode. No control in the
+flag or applet turns on AM or FM squelch. Their thresholds are on their own DSP
+pages, in dB from -160 to 0: <strong>AM Squelch Threshold</strong> in the <strong>Squelch</strong> group
+of <strong>File &gt; Settings... &gt; DSP &gt; AM/SAM</strong>, and <strong>Squelch Threshold</strong> on
+<strong>File &gt; Settings... &gt; DSP &gt; FM</strong>. Do not copy a number between these unlike
+scales. In a no-audio
 diagnosis, turn SQL off temporarily so that a closed gate cannot be confused
 with the wrong output device. Tone squelch and FM repeater controls are not
 implemented in this build.</p>
@@ -221,7 +234,11 @@ implemented in this build.</p>
 which makes them different from per-slice AF and AGC. The label may read
 <strong>ATT</strong>, <strong>S-ATT</strong> or <strong>A-ATT</strong>, depending on stepped and automatic attenuation
 state. The available range and preamp choices come from the connected radio.
-A slice using the other ADC can have that ADC's own settings.</p>
+A slice using the other ADC can have that ADC's own settings. NereusSDR
+remembers the attenuator and preamp settings and sends them to the radio when
+it connects, so check them after connecting to a radio you last used at a
+different station. A desktop Core also keeps the changes that signed-in windows
+and phones make while it runs.</p>
 <p>If an ADC-overload indication appears, first identify the affected input and
 current antenna/preamp/attenuation state. Increase available attenuation or
 reduce unnecessary preamp gain while watching the overload indication and
@@ -293,7 +310,7 @@ NB/NB2, SNB and the automatic notch are separate controls.</p>
 one treatment, compare speech or wanted tones with it on/off, and keep it only
 if intelligibility improves. Excessive treatment can remove wanted detail or
 introduce artifacts. Right-click a method for its frequently adjusted parameters;
-<strong>More Settings…</strong> leads to its detailed DSP page where offered.
+<strong>More Settings...</strong> leads to its detailed DSP page where offered.
 <a href="/manual/13-receiver-dsp.html">Receiver DSP setup</a> explains those parameters and their
 dependencies.</p>
 <p>DFNR, MNR and NNR availability is reported by the controlling Core/build.
@@ -317,8 +334,8 @@ are disabled and explain their minimum.</li>
 </ol>
 <p>A notch is a frequency/width filter entry, not a new receive slice. Making it
 wider can remove wanted audio too. The <strong>TNF</strong> master affects all notches,
-whereas bypassing one entry leaves the other entries available. <strong>Setup &gt;
-DSP &gt; TNF</strong> provides the notch-management page for inspecting the bank and
+whereas bypassing one entry leaves the other entries available. <strong>File &gt;
+Settings... &gt; DSP &gt; TNF</strong> provides the notch-management page for inspecting the bank and
 its DSP settings. The notch menu does not provide a permanent/temporary
 persistence choice in this build.</p>
 <h2 id="use-rit-xit-and-ctun-for-different-jobs">Use RIT, XIT and CTUN for different jobs</h2>
@@ -334,8 +351,9 @@ slice can make the two operating frequencies clearer.</p>
 <p><strong>CTUN</strong> concerns the receiver window and band view. Right-click empty spectrum
 and enable <strong>CTUN (independent pan)</strong> under <strong>Tuning</strong> to keep the receive window
 fixed while tuning within it. The VFO moves while the pan stays put. Turn it off
-to return to a view following the VFO. The checkbox can be unavailable when the
-Core does not provide remote C-Tune support. None of these three controls is a
+to return to a view following the VFO. The checkbox is grayed, with the Core's reason as its tooltip, on a slice you
+only listen to or a receiver another device holds, and when the Core does not
+provide remote C-Tune support. None of these three controls is a
 substitute for selecting the intended transmit slice.</p>
 <h2 id="worked-example-improve-a-weak-voice-signal">Worked example: improve a weak voice signal</h2>
 <p>Start on a slice you control, with its output audible and no unexpected RIT/XIT.

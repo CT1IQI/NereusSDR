@@ -10,9 +10,9 @@ Open **DSP > PureSignal…**, **Tools > PureSignal…**, or the **PureSignal** a
 
 The form shows **Feedback Level**, **Correcting**, and action/native status. Read these separately: **Feedback Level** describes the sample input; **Correcting** indicates whether a correction is applied. The labels are not wattmeters, SWR protection, or a certificate that the antenna/load is safe. A request can be pending, accepted, completed or refused; wait for the reported result rather than treating a click as success. During automatic calibration, the status reports calibration progress. Check that the radio returns to receive before changing cabling or station configuration.
 
-[![Desktop PureSignal dialog showing calibration controls with MOX and PureSignal off](images/desktop-puresignal-original.png)](images/desktop-puresignal-original.png)
+[![Desktop PureSignal dialog showing calibration controls with MOX and PureSignal off](images/desktop-puresignal-workspace-original.png)](images/desktop-puresignal-workspace-original.png)
 
-*PureSignal before a test: MOX and PS are off, the pump is inactive, and no feedback calibration is demonstrated. Identify Single Cal, Two-tone and OFF separately before following the sequence. Captured from the desktop development build; the numeric zeros are idle readbacks.*
+*PureSignal before a test: MOX and PS are off, the pump is inactive, and no feedback calibration is demonstrated. Identify Single Cal, Two-tone and OFF separately before following the sequence. Captured in the workspace look from the offscreen preview window with no radio connected; the numeric zeros are idle readbacks and several controls are grayed because no radio is connected.*
 
 ## Calibrate and apply a correction
 

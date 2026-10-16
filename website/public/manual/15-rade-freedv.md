@@ -39,9 +39,9 @@ On iPhone/iPad, **Tools > FreeDV Reporter** is a Core-hosted station list. Its s
 
 The table can show Callsign, Locator, Distance, Heading, Version, Frequency, TX Mode, Status, User Message, Last TX Date, Last RX Callsign, Last RX Mode, SNR and Last Update. New rows, updates and removals come from the live reporter service. Use the column headers to sort; numeric columns such as frequency, distance and SNR sort numerically. Sorting and filters affect the view only.
 
-[![Desktop Spot Hub FreeDV source page with Auto-start off and service stopped](images/desktop-freedv-source-original.png)](images/desktop-freedv-source-original.png)
+[![Desktop Spot Hub FreeDV source page with Auto-start off and service stopped](images/desktop-freedv-source-workspace-original.png)](images/desktop-freedv-source-workspace-original.png)
 
-*FreeDV source before connecting: Auto-start is off and the service is Stopped. Start/Stop manages the reporter service, independently of RADE modem synchronization. The desktop development capture has no saved reporting identity and no live reporter data.*
+*FreeDV source before connecting: Auto-start is off and the service is Stopped. Start/Stop manages the reporter service, independently of RADE modem synchronization. The workspace-look capture, from the offscreen preview window, has no saved reporting identity and no live reporter data.*
 
 ## Filter the station list
 

@@ -7,20 +7,21 @@ captures and live operating checks. Passing one does not establish the others.
 
 ## Current availability
 
-Availability updated 6 October 2026: [NereusSDR 2026.10.0](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0) desktop and Core packages are published, and the native iPhone/iPad app is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). The user manual is served at [nereussdr.com/manual/](https://nereussdr.com/manual/). This availability update does not change the source/capture identities or claim additional live station acceptance below.
+Availability updated for 2026.10.1: the latest published desktop and Core packages are [NereusSDR 2026.10.0](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.0), and 2026.10.1 is the release this manual describes. The native iPhone/iPad app is available through the [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). The user manual is served at [nereussdr.com/manual/](https://nereussdr.com/manual/). This availability update does not change the source/capture identities or claim additional live station acceptance below.
 
 ## Documented build
 
 - Original independently reviewed source baseline: `d1608a3de75e5c307187966110f2e51e8ecb0d17`.
 - Bounded desktop reconciliation: `df6590ff12aeffb7a73f46acc37ca3824dfe3901`, tree `48a41523ce4562c2cad5c7e8be316009e275a913`, the 2026.10 candidate inspected on 4 October.
 - The consolidated candidate includes the accepted signed mobile checkpoint `8e1c06198bf2023cf846cddb5296ef952cc9812c`, tree `6db2011dfac47bf68f36b3fedd672d91acfb51df`, plus the six reviewed logging-privacy annotations from signed `1f6f2be0a4bd8a40d2c62a0b53f17b062dcf58c6` (mobile marketing version 2026.9.0; tested preview build 5801). Native app chapters retain their earlier development/source-verified scope; delivery and release acceptance are separate.
-- Desktop captures: `codex/all-prs-radxa-gui@c1991b2d42ea`, title version 0.5.2.
+- Desktop captures, two sets. The 2 October set came from `codex/all-prs-radxa-gui@c1991b2d42ea`, title version 0.5.2, in the classic look. On 14 October 2026 six of those figures were recaptured in the workspace look (now the default) with the offscreen `nereus_visual_preview` tool at git `6350e45ce109d36d41c5f43b8c739d8ad8cb93d9`, scenes `look-two-band` (RX applet), `look-dialog-tx-eq`, `look-dialog-tx-cfc`, `look-dialog-pure-signal` and `look-dialog-spot-hub` (Settings and FreeDV tabs), profile `mac-1512x869@2`, plus `look-dialog-setup-outputs` for the Outputs figure. These show a no-radio window with fixed illustrative data, not a connected station. On 15 October 2026 the overview, VFO flag, TX Profile and Digital modes figures were recaptured from the `look-connected`, `look-dialog-setup-tx-profile-active` and `look-dialog-setup-digital-modes-full` scenes at git `5ad9b0737ed74207edb5b2091487fccd40eff7c7` (sidecars clean). The TX applet and TCI Server figures were recaptured the same day from `look-connected-tx--right-panel` and `look-dialog-remote-setup-tci-server` at git `e874587d9f96b39737a84b4ff3f7f4df1d7354f8` (sidecars clean). The [capture inventory](images/README.md) lists each one.
 - Phone simulator capture source: `46591d6cd62a916a6eef83e65d12fc655259b44d`.
 - iPad simulator build identities and per-image provenance: [capture inventory](images/README.md).
 - Audience: SDR-literate HPSDR hobbyists operating the desktop and iPhone/iPad app.
 - Source: twenty task/reference chapters, operator index, shared image directory.
 
-The source and captured desktop are different development builds. The figures
+The source and captured desktop are different development builds, and the
+figures are from two capture sets (see Documented build). The figures
 illustrate the captioned controls and states; they do not establish release
 availability or the appearance of uncaptured settings. Native phone/iPad
 simulator images include test data, while their procedures are checked against
@@ -29,7 +30,7 @@ claim is made.
 
 ## Source and coverage evidence
 
-The implemented-task inventory includes 126 operating areas, plus explicit
+The implemented-task inventory includes 131 operating areas, plus explicit
 unbuilt exclusions. The [coverage record](coverage.md) maps areas to the actual
 chapters and records the integrated review. Registration, handler bindings,
 capability/readiness gates and the unbuilt-feature list establish scope.
@@ -95,7 +96,7 @@ acceptance or physical operating certification.
 | --- | --- | --- |
 | Core Settings and direct addresses | `SetupDialog.cpp:1444–1462`; `ConnectionSelector.cpp:129–175`; `CoresSetupPage.cpp:148–302,307–423,575–661` | Chapter 1 separates inspected Core from this window's connection, verifies identity before retaining addresses and separates manual/worked/Core-supplied address evidence. |
 | Shared Core rename and administration | `CoreSettingsHost.cpp:161–196`; `CoresSetupPage.cpp:190–277,663–745`; `MainWindow.cpp:10365–10396` | Accepted shared rename, temporary authenticated sign-in limits, disabled radio/device administration and actual Connections/Manage Radios contexts are explicit. |
-| Computer audio, Core media and remote mic | `AudioDevicesPage.cpp:43–94`; `RemoteAudioWidget.cpp:41–65,93–128`; `AudioTxInputPage.cpp:441–471,499–518`; `RemoteMicSource.h:20–25`; `BoardCapabilities.h:510–524`; `RadioModel.cpp:9921–9925` | Chapters 1, 5 and 14 distinguish local capture/playback, selected quality versus actual media, session Radio Mic, absent radio-mic VOX/program route and the HL2 audio-add-on prerequisite. |
+| Computer audio, Core media and remote mic | `DeviceCard.cpp:568–780`; `RemoteAudioWidget.cpp:41–65,93–128`; `AudioTxInputPage.cpp:441–471,499–518`; `RemoteMicSource.h:20–25`; `BoardCapabilities.h:510–524`; `RadioModel.cpp:9921–9925` | Chapters 1, 5 and 14 distinguish local capture/playback, selected quality versus actual media, session Radio Mic, absent radio-mic VOX/program route and the HL2 audio-add-on prerequisite. |
 | Canvas/contents/source and cancellation | `ContainerSettingsDialog.cpp:414–450,538–556,1081–1180,2047–2050,2125–2134,2460–2608`; `ContentPropertyEditor.cpp:153–183,234–263`; `ContainerEditSession.cpp:96–136`; `ContainerControlCatalog.h:16–28` | Chapter 10 covers Canvas gestures/geometry/layer/lock, fifteen native controls, singleton moves/return, preview versus live operations, portable append/file replacement and Cancel since last Apply. |
 | EQ/CFC mode, count and reset | `TxEqDialog.cpp:341–367,657–668,1313–1364`; `TxCfcDialog.cpp:303–344,429–518,1122–1124,1193–1209`; `ParametricEqWidget.h:143–149`; `ParametricEqWidget.cpp:207–220`; `tst_tx_cfc_dialog.cpp:436–460` | Chapter 14 uses Graphic · Legacy / Parametric, exact width fields, explicit count Apply/Cancel and Undo/Redo. CFC resets zero the corresponding overall level, preserving frequencies/selection/the other graph; Parametric Reset resets its preamp and frequencies. Historical captions identify the earlier UI. |
 | Transmit takeover, receive tail and radio-side PTT | `TransmitHolder.cpp:123–183`; `StationTransmitTake.cpp:472–499,719–793`; `TakeTransmitDialog.cpp`; `RemoteKeying.cpp:299–328` | Chapters 5 and 8 preserve receiver-versus-TX authority, name take confirmation/recheck, wait for receive and distinguish hosting-desktop radio PTT from headless behavior. Phone first-key/no-general-take limits remain development-app instructions. |
@@ -105,6 +106,8 @@ The candidate disables **Meter Data Sources (MMIO)** in the new draft editor
 but chapter 10 does not promise a new-endpoint setup path there. That UI gap is
 recorded as a limit rather than filled with a guessed entry point. No new
 Canvas/Core Settings/EQ/CFC release screenshot was captured in this carry.
+The 14 October workspace-look recapture later replaced the EQ and CFC figures
+with current-editor captures; Core Settings and Canvas captures remain pending.
 
 Unchanged source-sensitive DSP, RF, PA, accessories and native-phone procedures
 retain the original reviewed baseline; they need the selected build/equipment
@@ -144,6 +147,12 @@ original-capture hashes. Contributor records remain source downloads rather
 than extra reader chapters. The original PNGs, annotations/exports and capture
 provenance were unchanged. Chapter and section disclosure controls still carry
 `open`; no new browser inspection or release/runtime certification is claimed.
+
+The 2026.10.1 documentation pass reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 21 preserved screenshot originals matched their recorded hashes. No new browser inspection or release/runtime certification is claimed.
+
+The 14 October 2026 workspace-look recapture reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 27 preserved screenshot originals matched their recorded hashes (the 21 earlier ones plus six new workspace-look originals). The new images were each inspected by eye for the workspace look, no debug overlay and the same subject as the figure replaced. No new browser inspection or release/runtime certification is claimed.
+
+The 15 October 2026 connected-window recapture reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 736 local manuscript links and images, and all 32 preserved screenshot originals matched their recorded hashes (five more workspace-look originals, including the TX applet and TCI Server). The new images were inspected by eye. No new browser inspection or release/runtime certification is claimed.
 
 ## Evidence still required for publication
 

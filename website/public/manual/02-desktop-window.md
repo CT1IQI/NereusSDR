@@ -41,9 +41,9 @@ slice. Later chapters cover tuning, slices, and transmitting in detail.
 
 [![NereusSDR desktop showing connection, VFO flag, spectrum, waterfall, RX and TX applets, and status banner](images/desktop-overview.jpg)](images/desktop-overview.jpg)
 
-Figure 1. A desktop development build receiving LSB through a remote Core.
-The layout includes a 3D spectrum view. The Core-busy and overload messages
-were present at capture time; the settings shown are examples.
+Figure 1. The desktop window in the workspace look, receiving LSB on slice A.
+It was rendered offscreen with fixed illustrative data, so the values shown are
+examples and not a live station. The **OVERLOAD** indicator is present but not lit.
 
 | Callout | Area | What to check |
 | --- | --- | --- |
@@ -76,12 +76,17 @@ every applet open to operate a slice.
 | RX applet | Show RX in the **Containers** menu's **Applets** section. | Selected-slice mode, filter, antenna selections, tuning step, balance, attenuation, AGC and offsets. |
 | TX applet | Show TX in the same section. | Transmit slice, drive, tune drive, keying, monitoring, processing, profile and transmit bandwidth. |
 | Phone / CW applet | Show the applet when it is available. | The implemented microphone source, input gain, level/compression displays and phone processing controls. |
+| Rotor applet | Show **Rotor** in the same section. It is always available. | The antenna rotor: **TURN TO** a bearing, **STOP**, **PRESETS**, and **Short path** or **Long path**. With no rotor set up it stays in the panel, its controls grayed with the reason. |
 | Settings window | **File > Settings...** | Detailed parameters and device/Core setup, organized in a page tree. |
 
 Clicking an already-open flag tab closes its controls; clicking a different
 tab switches the panel. The flag can therefore remain compact while you
 listen, then expand for one adjustment. The mode name on the tab is a useful
 readback: changing the mode also changes the applicable filter choices.
+
+Click the flag's slice letter to fold the flag down to the letter with the
+frequency beside it. A click on the folded flag opens it again, and the wheel
+still tunes. Each receiver remembers whether its flag is folded.
 
 Before changing an RX applet control, check its slice letter. When there is
 more than one slice, the RX applet's letter tabs provide another way to choose
@@ -94,14 +99,16 @@ check selection and ownership before repeating the change.
 1. Open **Containers**. In its **Applets** section, check the applets you
    want visible. The panel's **☰** menu provides the same visibility choices.
 2. If an entry is unavailable, read its reason or check the corresponding
-   station feature. For example, accessory applets depend on their enabled
-   accessory connection. A checked preference does not make an unavailable
+   station feature. For example, the amplifier and tuner applets depend on their
+   enabled accessory connection. The **Rotor** applet is never grayed in the menu. A checked preference does not make an unavailable
    device appear.
-3. Where an applet title bar has **↗**, click it to pop that applet into its
-   own window. Place a frequently used TX or audio panel on a second monitor
-   while retaining the band view on the main display.
-4. Click **↙ Dock** in the floating window to put the applet back in the
-   panel. Closing the floating applet also docks it back.
+3. Applets live in containers. A container's header carries **↗**
+   (tooltip **Pop out**); click it to move the container, with its applets,
+   into its own window. **Pop Out** is also in the container's right-click
+   menu. Place a frequently used TX or audio panel on a second monitor while
+   retaining the band view on the main display.
+4. A popped-out window shows **↙** (tooltip **Return**) in the same place.
+   Click it to put the container back where it came from.
 
 Floating an applet and floating a panadapter are different actions. An applet
 window contains controls; **View > Float active pan…** detaches the selected
@@ -109,6 +116,77 @@ band display. A meter container is a third kind of window. Its items and
 layout are managed with **Containers > New Container...** and
 **Containers > Edit Container**. See the customization chapter for meter
 layout work. Hiding a control panel does not release a slice or stop the Core.
+
+### Arrange the workspace
+
+The main window opens in the workspace look. Every container has a header, and
+the header is where you move, pop out, hide and set up that container. Hidden
+headers take no room, so the content fills the container.
+
+- The grip on the header (**Drag to move**) moves the container.
+- The eye button switches the header between staying visible and hiding when
+  you are not arranging. An open eye (tooltip **Hide this header when not
+  arranging**) keeps it; a crossed-out eye (tooltip **Keep this header
+  showing**) lets it hide. **Keep Header Showing** in the container's
+  right-click menu is the same switch.
+- **↗** is **Pop out**, **⋯** is **Options**, and **✕** is **Hide. Bring it
+  back from the Containers menu.**
+- A popped-out window adds a pin: click it (**Keep this window on top**) to keep
+  the window above other windows, and click again (**Stop keeping this window
+  on top**) to release it.
+
+To show every header, including hidden ones, hold **Shift** by itself for about
+a third of a second; they stay until you let go. Shift with a click, a wheel
+turn or another key does not do this, so tuning with Shift held works as
+before. To keep arranging without holding a key, choose **Containers > Arrange
+Workspace** (Ctrl+Shift+A); it is checkable, and **Escape** leaves it.
+Arranging does not change which headers are shown or hidden.
+
+While arranging, drag a container by its header and let go where you want it:
+
+- Near any of the four edges of the main window, a box shows where it will
+  land, and it docks there.
+- Over the spectrum, it sits free where you dropped it.
+- Outside the main window, it becomes a window of its own.
+
+This works the same for a docked container, a free one and a popped-out window.
+**Escape** during a drag puts the container back where it started. When you are
+not arranging, dragging a window only moves it, so you can park a window over
+the main window without docking it. **Containers > Align to 8 px Grid** makes
+free and floating containers settle on an 8 pixel grid when moved; hold **Alt**
+to place one freely.
+
+**Return** puts a popped-out container back where it was popped out from: the
+same strip, beside the same neighbor, or the same free place. A window that was
+never docked joins the Main Panel's strip.
+
+There is no **Lock** in this look. A container whose header is hidden has
+nothing to grab, so it cannot be moved by accident, and a container saved as
+locked opens unlocked. Every container and window starts where you left it, at
+the size you left it, on the monitor you left it on; if that monitor is not
+connected the window opens on the main window's screen.
+
+**Containers > Hidden** lists everything that was taken off the screen (a
+header's **✕**, **Hide container (retain placement)**, a closed floating window
+or an applet you unticked) so you can bring it back where it was. It reads
+**Nothing hidden** when the list is empty. **Containers > Reset Default Layout**
+removes the containers you added and restores the standard layout, with the
+S-Meter showing first; it sits next to **Edit Container** in the menu.
+
+### Workspace profiles
+
+A workspace profile holds where your containers sit. Switching profiles never
+changes a slice, frequency, mode or filter.
+
+- **Containers > Manage Workspace Profiles…** opens **Workspace Profiles**. Its
+  buttons are **New** (**Empty** or **From Current Arrangement**), **Duplicate**,
+  **Rename**, **Save**, **Export**, **Import** and **Remove**; double-click a
+  profile to switch to it.
+- A profile rail sits in the title bar, just left of "NereusSDR". It rests as a
+  badge for the active profile and fans out on hover, click or Tab. Right-click
+  a badge for **Save Now**, **Export…**, **Import…**, **Rename…**,
+  **Duplicate…**, **Remove** and **Manage Profiles…**.
+- Ctrl+1 to Ctrl+9 (Command on macOS) switch to the first to ninth profile.
 
 ## Make the band display useful
 
@@ -126,6 +204,7 @@ mouse gestures. Put the pointer on the part you intend to change.
 | Ctrl+wheel, or Command+wheel on macOS, over the band. | Zoom the frequency span around the VFO. |
 | Shift+wheel over the band. | Adjust the display's reference level. |
 | Wheel over the dBm scale. | Adjust the displayed level range. |
+| Ctrl+left-drag (Command on macOS) on the dBm scale. | Change how much range the scale shows. |
 | Left-drag the dBm scale. | Move its level window up or down. |
 | Right-drag the dBm scale. | Stretch the range. |
 
@@ -191,7 +270,7 @@ the Core's radio and obey its permission/readiness gates. See
 Use **Radio > Protocol Info** to inspect the radio/protocol details, and
 **Tools > Network Diagnostics** for the link measurements. When a status
 message appears, capture its wording and the affected Core/radio/slice before
-changing settings. **View > Performance** exposes performance presentation;
+changing settings. **View > Performance Overlay** exposes performance presentation;
 read whether a CPU value represents this computer, the app or the Core.
 An overload indication is an input condition, whereas Core busy and link/audio
 notices point to different resources. [Troubleshooting](11-troubleshooting.md)
@@ -209,12 +288,12 @@ keying the transmitter or changing station hardware.
 
 The title bar has two volume controls, each a speaker button with a slider and a level readout from 0 to 100.
 
-- **PC** is this computer's speakers. Click the speaker to mute or unmute; drag the slider to set the volume. It is the same control as **Volume** under **This computer** in **File > Settings… > Audio > Outputs**. It does not change the headphones.
+- **PC** is this computer's speakers. Click the speaker to mute or unmute; drag the slider to set the volume. It is the same control as **Volume** under **This computer** in **File > Settings... > Audio > Outputs**. It does not change the headphones.
 - **RADIO** is the radio's own speaker output. It plays the receiving slices, and each slice's AF level and mute still apply. In a window connected to a remote Core it is the speaker at the Core, shared with every window and the phone, and its tooltip reads **Radio speaker at the Core (shared with every window and the phone)**. With no radio connected it is greyed and its tooltip reads **No radio connected**; on a Hermes Lite 2 without the audio add-on board the tooltip adds that it needs the board.
 
 PC mute can silence a correctly configured slice, so check it before changing receiver gain or the Core's DSP. PC also controls this computer's playback in a remote desktop window.
 
-Point at the PC speaker for its tooltip: **PC volume. Click to mute, right-click for speakers.** If the chosen device is missing or held by another program the tooltip adds that, and where the sound plays meanwhile. Right-click the PC speaker for the speakers menu. Its heading names the driver in use, for example **SPEAKERS · Core Audio**, followed by:
+Point at the PC speaker for its tooltip: **PC volume. Click to mute, right-click for speakers.** If the chosen device is missing or held by another program the tooltip adds that, and where the sound plays meanwhile. Right-click the PC speaker for the speakers menu. Its heading names the driver in use, for example **SPEAKERS · CORE AUDIO**, followed by:
 
 - **(platform default)**, then each device on that driver, with the current choice ticked. An interface with several pairs lists each pair under the interface's name.
 - A missing choice in amber at the top, ticked, as **<name> (not connected)** or **<name> (in use by another program)**, with **Playing on <device> until it comes back.** beneath it.
