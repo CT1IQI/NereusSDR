@@ -32,6 +32,10 @@
 //                engine the device catalogue describes and the older
 //                drivers in use. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-14 - describeEngine(): the line's words for an engine, so the
+//                Network Diagnostics Audio Backend row names the same
+//                sound system. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/LinuxAudioBackend.h"
@@ -78,6 +82,10 @@ public:
     static QStringList olderDriversInUse();
     // The ASIO driver a saved choice uses, empty when none does.
     static QString asioDriverInUse();
+    // The words this line shows after "Sound system:" for `engine` (its
+    // device catalogue, else this build's system), so another surface
+    // (Network Diagnostics' Audio Backend row) names the same engine.
+    static QString describeEngine(AudioEngine* engine);
 
     // The words now shown after "Sound system:".
     QString text() const;
@@ -89,6 +97,11 @@ public slots:
     void refresh();
 
 private:
+    struct Description {
+        QString text;
+        bool problem = false;
+    };
+    static Description describeFor(IAudioDeviceCatalog* catalogue, AudioEngine* engine);
     void show(const QString& described, bool problem);
 
     AudioEngine* m_engine{nullptr};

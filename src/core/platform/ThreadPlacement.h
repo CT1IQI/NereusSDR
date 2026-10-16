@@ -53,6 +53,9 @@
 //               worker and pump held two of the Rock's four fast cores
 //               for as long as VOX was on. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-14: TxIqSender's comment names the P1 EP2 sender as well,
+//               which takes the same role. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-15: the connection thread shares the DSP thread's core only
 //               where slower cores run housekeeping; on equal cores it
 //               stays on the housekeeping cores. While transmitting,
@@ -107,7 +110,7 @@ enum class ThreadRole {
     DspThread,       ///< RxDspWorker's thread (fexchange2 for every slice)
     TxWorker,        ///< the transmit channel's WDSP worker
     TxWorkerThread,  ///< TxWorkerThread, the transmit audio pump
-    TxIqSender,      ///< the Protocol 2 transmit I/Q send thread
+    TxIqSender,      ///< the protocol's transmit send thread (P2 TX I/Q sender or P1 EP2 sender)
     RadeDecoder,     ///< a RADE slice's decoder thread (RadeRx<id>), per channel
     ConnectionThread, ///< the radio connection thread (reads the radio's UDP)
     SpectrumThread,  ///< a spectrum FFT thread, told apart by a number FftEnginePool gives each

@@ -66,12 +66,16 @@
 // 2026-10-11 (R-AUD-03): Rescan opens the "new cables" notice only when it
 // has a cable end to offer to a VAX slot. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "AudioVaxPage.h"
 #include "gui/RemoteAudioStatus.h"
 #include "gui/StyleConstants.h"
 #include "gui/VaxFirstRunDialog.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioDeviceConfig.h"
@@ -1042,6 +1046,7 @@ void VaxChannelCard::fillPicker()
         return;
     }
     QSignalBlocker block(m_devicePicker);
+    resetItemsBeforeRowChange(m_devicePicker);
     m_devicePicker->clear();
     m_devicePicker->addItem(tr("(pick a cable)"), QString());
     const QString bound = currentDeviceName();
@@ -1090,6 +1095,7 @@ void VaxChannelCard::fillPickerFromCatalogue(IAudioDeviceCatalog& catalogue)
                    AudioEngine::savedHeadphonesEnabled(), false});
 
     QSignalBlocker block(m_devicePicker);
+    resetItemsBeforeRowChange(m_devicePicker);
     m_devicePicker->clear();
     auto addItem = [this](const QString& text, const QString& label, const QString& name,
                           const QString& id, int engine, int firstChannel, int channels,
