@@ -24,6 +24,12 @@
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - Settings restore: addSlice and addSliceOnPan take
+//                restoreSavedState. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - Settings restore: pushSliceStateToChannel, the slice A
+//                state push run for every slice. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -2320,6 +2326,19 @@ public:
     /// SetChannelState(ch, 1, 0) (console.cs:37359-37361 [v2.10.3.15]).
     void activateSliceChannel(SliceModel* slice);
 
+    /// Push a slice's whole state to its WDSP channel: AGC and its advanced
+    /// values, NB and its tuning, the NR tuning and selection, SNB, APF,
+    /// squelch, mute, pan, BIN and AF gain, after mode, filter, AGC mode
+    /// and RF gain. The block connectToRadio ran for slice A alone;
+    /// activateSliceChannel runs it for every slice. `loadNr3Model` also
+    /// loads the station's NR3 model (connectToRadio only).
+    /// `applyNrSelection` pushes the active NR slot inside the block
+    /// (connectToRadio); activateSliceChannel pushes it itself, last.
+    /// False when the slice, the channel or this model went away during
+    /// the push: the caller must not use them again.
+    [[nodiscard]] bool pushSliceStateToChannel(SliceModel* slice, RxChannel* rxCh,
+                                               bool loadNr3Model, bool applyNrSelection);
+
     /// Stop a slice's WDSP channel running. The channel object stays open for
     /// whichever slice takes the id next. Thetis's disable half:
     /// SetChannelState(ch, 0, 0) (console.cs:37398-37400 [v2.10.3.15]).
@@ -2608,7 +2627,7 @@ public:
     /// is a host and sharing it is the point. It was briefly a caller-
     /// supplied flag; every caller that forgot it silently reintroduced the
     /// coupled-pan defect, so the decision lives with the data it depends on.
-    int addSlice(const QString& initialPanId = QString());
+    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -2819,7 +2838,13 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    Q_INVOKABLE void addSliceOnPan(const QString& panId);
+    // `restoreSavedState` (2026-10-11): the slice comes back as it was last
+    // saved (Slice<N>/LastBand and that band's keys) instead of starting on
+    // the active slice's frequency and mode. The standalone app asks for it
+    // for the slices it makes for empty pans at connect, so receivers B to D
+    // return like A. A slice with nothing saved, and every slice asked for
+    // without it (+RX, a layout change, a session verb), starts fresh.
+    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one
     /// that is. Returns how many moved.
@@ -7424,7 +7449,8 @@ private:
     void publishRadeModeSlices();
     int addSliceImpl(int requestedId, const QString& initialPanId,
                      const ReceiveSliceState* restoreSeed = nullptr,
-                     bool bindRestored = false);
+                     bool bindRestored = false,
+                     bool restoreSavedState = false);
 
     /// iPhone app Task 73: every slice's `active` from its owner's active
     /// slice, and activeSlice() moved to the station-level one (emitting

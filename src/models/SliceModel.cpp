@@ -12,6 +12,15 @@
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
 //                AI-assisted implementation via OpenAI Codex.
+// 2026-10-11 - Settings restore: AGC-T AUTO and its offset are saved per
+//              slice (per receiver), with the older per-band keys read as
+//              a fallback. NereusSDR-original. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-11 - Settings restore: saveToSettings and restoreFromSettings
+//              carry the audio pan, BIN, squelch, APF, FM, DIG offset and
+//              RTTY values, per slice. They were never saved.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // 2026-10-04 - Guard mode/filter notification continuations against deletion
 //              and superseding commits, including a return to the same tuple.
 //              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -2876,8 +2885,6 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     values.append({bp + QStringLiteral("AgcSlope"),     m_agcSlope});
     values.append({bp + QStringLiteral("AgcAttack"),    m_agcAttack});
     values.append({bp + QStringLiteral("AgcDecay"),     m_agcDecay});
-    values.append({bp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False")});
-    values.append({bp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset});
     values.append({bp + QStringLiteral("AgcFixedGain"), m_agcFixedGain});
     values.append({bp + QStringLiteral("AgcHangThreshold"), m_agcHangThreshold});
     values.append({bp + QStringLiteral("AgcMaxGain"),   m_agcMaxGain});
@@ -2999,6 +3006,42 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("RxAntenna"),  m_rxAntenna);
     s.setValue(sp + QStringLiteral("TxAntenna"),  m_txAntenna);
 
+    // Audio panel, squelch, APF and the mode-specific offsets. Per slice
+    // (no band suffix), like Muted and AfGain beside them: each is a
+    // receiver's setting, not a band's. NereusSDR-original keys; they were
+    // not saved at all before 2026-10-11, so every one came back at its
+    // default whenever the slice was made again.
+    s.setValue(sp + QStringLiteral("AudioPan"),        m_audioPan);
+    s.setValue(sp + QStringLiteral("BinauralEnabled"), boolStr(m_binauralEnabled));
+    s.setValue(sp + QStringLiteral("SsqlEnabled"),     boolStr(m_ssqlEnabled));
+    s.setValue(sp + QStringLiteral("SsqlThresh"),      m_ssqlThresh);
+    s.setValue(sp + QStringLiteral("AmsqEnabled"),     boolStr(m_amsqEnabled));
+    s.setValue(sp + QStringLiteral("AmsqThresh"),      m_amsqThresh);
+    s.setValue(sp + QStringLiteral("FmsqEnabled"),     boolStr(m_fmsqEnabled));
+    s.setValue(sp + QStringLiteral("FmsqThresh"),      m_fmsqThresh);
+    s.setValue(sp + QStringLiteral("ApfEnabled"),      boolStr(m_apfEnabled));
+    s.setValue(sp + QStringLiteral("ApfTuneHz"),       m_apfTuneHz);
+    s.setValue(sp + QStringLiteral("FmCtcssMode"),     m_fmCtcssMode);
+    s.setValue(sp + QStringLiteral("FmCtcssValueHz"),  m_fmCtcssValueHz);
+    s.setValue(sp + QStringLiteral("FmOffsetHz"),      m_fmOffsetHz);
+    s.setValue(sp + QStringLiteral("FmTxMode"),        static_cast<int>(m_fmTxMode));
+    s.setValue(sp + QStringLiteral("FmReverse"),       boolStr(m_fmReverse));
+    s.setValue(sp + QStringLiteral("DiglOffsetHz"),    m_diglOffsetHz);
+    s.setValue(sp + QStringLiteral("DiguOffsetHz"),    m_diguOffsetHz);
+    s.setValue(sp + QStringLiteral("RttyMarkHz"),      m_rttyMarkHz);
+    s.setValue(sp + QStringLiteral("RttyShiftHz"),     m_rttyShiftHz);
+    // AGC-T AUTO and its offset are the receiver's, not the band's (the
+    // maintainer's ruling 2026-10-11): Slice<N>/AgcAutoEnabled and
+    // Slice<N>/AgcAutoOffset, no band part. Thetis keeps one switch and one
+    // offset per receiver as well.
+    // From Thetis console.cs:45992-46033 [v2.10.3.15] (AutoAGCRX1/RX2) and
+    // setup.cs:21995-22026 [v2.10.3.15] (chkAutoAGCRX1/RX2, udRX1/RX2AutoAGCOffset).
+    // The per-band keys an older build wrote are read once as a fallback
+    // (restoreFromSettings) and no longer written. Written here, not in
+    // captureBandSettings, since they carry no band part.
+    s.setValue(sp + QStringLiteral("AgcAutoEnabled"), m_autoAgcEnabled ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(sp + QStringLiteral("AgcAutoOffset"), m_autoAgcOffset);
+
     // Track the most recently saved band so RadioModel::loadSliceState() on
     // the next launch can land on the user's actual last-used frequency,
     // not the panadapter's 14.225 MHz default. Per-band Frequency keys
@@ -3037,11 +3080,34 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("AgcDecay"))) {
         setAgcDecay(s.value(bp + QStringLiteral("AgcDecay")).toInt());
     }
-    if (s.contains(bp + QStringLiteral("AgcAutoEnabled"))) {
+    // AGC-T AUTO and its offset: the slice's own keys (per receiver, the
+    // maintainer's ruling 2026-10-11). A file from an older build has them
+    // under the band instead; that value is read when the slice has none,
+    // and the next save writes the slice's key, so nobody's saved state is
+    // lost. Still after AgcThreshold above: RadioModel turns AUTO off on a
+    // manual threshold change, and the restored threshold is not one.
+    if (s.contains(sp + QStringLiteral("AgcAutoEnabled"))) {
+        setAutoAgcEnabled(s.value(sp + QStringLiteral("AgcAutoEnabled")).toString() == QLatin1String("True"));
+    } else if (s.contains(bp + QStringLiteral("AgcAutoEnabled"))) {
         setAutoAgcEnabled(s.value(bp + QStringLiteral("AgcAutoEnabled")).toString() == QLatin1String("True"));
     }
-    if (s.contains(bp + QStringLiteral("AgcAutoOffset"))) {
-        setAutoAgcOffset(s.value(bp + QStringLiteral("AgcAutoOffset")).toDouble());
+    // The offset goes into the threshold the AUTO tick pushes to WDSP, so a
+    // value that is not a finite number leaves the default, and the rest is
+    // held to what the control allows: -60 to +60 dB
+    // (src/gui/setup/DspSetupPages.cpp:445, m_autoAgcOffset->setRange).
+    const auto restoreAutoAgcOffset = [this, &s](const QString& key) {
+        constexpr double kAutoAgcOffsetMinDb = -60.0;
+        constexpr double kAutoAgcOffsetMaxDb = 60.0;
+        bool isNumber = false;
+        const double offset = s.value(key).toString().toDouble(&isNumber);
+        if (isNumber && std::isfinite(offset)) {
+            setAutoAgcOffset(std::clamp(offset, kAutoAgcOffsetMinDb, kAutoAgcOffsetMaxDb));
+        }
+    };
+    if (s.contains(sp + QStringLiteral("AgcAutoOffset"))) {
+        restoreAutoAgcOffset(sp + QStringLiteral("AgcAutoOffset"));
+    } else if (s.contains(bp + QStringLiteral("AgcAutoOffset"))) {
+        restoreAutoAgcOffset(bp + QStringLiteral("AgcAutoOffset"));
     }
     if (s.contains(bp + QStringLiteral("AgcFixedGain"))) {
         setAgcFixedGain(s.value(bp + QStringLiteral("AgcFixedGain")).toInt());
@@ -3343,6 +3409,107 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(sp + QStringLiteral("TxAntenna"))) {
         setTxAntenna(s.value(sp + QStringLiteral("TxAntenna")).toString());
     }
+
+    // Audio panel, squelch, APF and the mode-specific offsets (per slice).
+    // An absent key leaves the SliceModel default as it is.
+    const auto sliceBool = [&s, &sp](const char* key, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            apply(s.value(k).toString() == QLatin1String("True"));
+        }
+    };
+    // The setters do not bound these, and several go straight to WDSP when
+    // the slice's channel is made (pan to SetRXAPanelPan, the APF tune to
+    // SetRXASPCWFreq, the squelch levels), so the file is not trusted: a
+    // value that is not a finite number leaves the default, and a number
+    // outside what the control allows is held to the nearest end of it.
+    const auto sliceInt = [&s, &sp](const char* key, int low, int high, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            bool isNumber = false;
+            const int v = s.value(k).toString().toInt(&isNumber);
+            if (isNumber) {
+                apply(std::clamp(v, low, high));
+            }
+        }
+    };
+    const auto sliceDouble = [&s, &sp](const char* key, double low, double high, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            bool isNumber = false;
+            const double v = s.value(k).toString().toDouble(&isNumber);
+            if (isNumber && std::isfinite(v)) {
+                apply(std::clamp(v, low, high));
+            }
+        }
+    };
+    // Each range is the one its control allows.
+    // Pan: src/gui/widgets/VfoWidget.cpp:1468 (slider -100..100, over 100).
+    constexpr double kAudioPanMin = -1.0;
+    constexpr double kAudioPanMax = 1.0;
+    // APF tune: src/gui/widgets/VfoWidget.cpp:1884 (slider -500..500 Hz).
+    constexpr int kApfTuneMinHz = -500;
+    constexpr int kApfTuneMaxHz = 500;
+    // CTCSS mode: src/gui/widgets/VfoModeContainers.cpp:188-191 (Off,
+    // Encode, Decode, Enc+Dec = 0..3).
+    constexpr int kFmCtcssModeMin = 0;
+    constexpr int kFmCtcssModeMax = 3;
+    // CTCSS tone: src/gui/widgets/VfoModeContainers.cpp:145-155, the first
+    // and last entries of the tone table.
+    constexpr double kFmCtcssMinHz = 67.0;
+    constexpr double kFmCtcssMaxHz = 254.1;
+    // FM offset: src/gui/widgets/VfoModeContainers.cpp:222 (spin 0..10000
+    // kHz, stored in Hz).
+    constexpr int kFmOffsetMinHz = 0;
+    constexpr int kFmOffsetMaxHz = 10000 * 1000;
+    // DIGL / DIGU offset: src/gui/widgets/VfoModeContainers.cpp:414.
+    constexpr int kDigOffsetMinHz = -10000;
+    constexpr int kDigOffsetMaxHz = 10000;
+    // RTTY mark and shift: src/gui/widgets/VfoModeContainers.cpp:522, 544.
+    constexpr int kRttyMarkMinHz = 1000;
+    constexpr int kRttyMarkMaxHz = 3500;
+    constexpr int kRttyShiftMinHz = 50;
+    constexpr int kRttyShiftMaxHz = 1000;
+    // Squelch levels: src/core/ControlRanges.h:117-118, 126-127, 133-134.
+    sliceDouble("AudioPan", kAudioPanMin, kAudioPanMax, [this](double v) { setAudioPan(v); });
+    sliceBool("BinauralEnabled",  [this](bool v) { setBinauralEnabled(v); });
+    sliceBool("SsqlEnabled",      [this](bool v) { setSsqlEnabled(v); });
+    sliceDouble("SsqlThresh", ControlRanges::kSsqlThreshMin, ControlRanges::kSsqlThreshMax,
+                [this](double v) { setSsqlThresh(v); });
+    sliceBool("AmsqEnabled",      [this](bool v) { setAmsqEnabled(v); });
+    sliceDouble("AmsqThresh", ControlRanges::kAmsqThreshMinDb, ControlRanges::kAmsqThreshMaxDb,
+                [this](double v) { setAmsqThresh(v); });
+    sliceBool("FmsqEnabled",      [this](bool v) { setFmsqEnabled(v); });
+    sliceDouble("FmsqThresh", ControlRanges::kFmsqThreshMinDb, ControlRanges::kFmsqThreshMaxDb,
+                [this](double v) { setFmsqThresh(v); });
+    sliceBool("ApfEnabled",       [this](bool v) { setApfEnabled(v); });
+    sliceInt("ApfTuneHz", kApfTuneMinHz, kApfTuneMaxHz, [this](int v) { setApfTuneHz(v); });
+    sliceInt("FmCtcssMode", kFmCtcssModeMin, kFmCtcssModeMax, [this](int v) { setFmCtcssMode(v); });
+    sliceDouble("FmCtcssValueHz", kFmCtcssMinHz, kFmCtcssMaxHz,
+                [this](double v) { setFmCtcssValueHz(v); });
+    sliceInt("FmOffsetHz", kFmOffsetMinHz, kFmOffsetMaxHz, [this](int v) { setFmOffsetHz(v); });
+    const auto sliceEnumInt = [&s, &sp](const char* key, auto apply) {
+        const QString k = sp + QLatin1String(key);
+        if (s.contains(k)) {
+            bool isNumber = false;
+            const int v = s.value(k).toString().toInt(&isNumber);
+            if (isNumber) {
+                apply(v);
+            }
+        }
+    };
+    sliceEnumInt("FmTxMode", [this](int v) {
+        // Only the three values FmTxMode has; anything else in the file
+        // leaves the default.
+        if (v >= static_cast<int>(FmTxMode::High) && v <= static_cast<int>(FmTxMode::Low)) {
+            setFmTxMode(static_cast<FmTxMode>(v));
+        }
+    });
+    sliceBool("FmReverse",        [this](bool v) { setFmReverse(v); });
+    sliceInt("DiglOffsetHz", kDigOffsetMinHz, kDigOffsetMaxHz, [this](int v) { setDiglOffsetHz(v); });
+    sliceInt("DiguOffsetHz", kDigOffsetMinHz, kDigOffsetMaxHz, [this](int v) { setDiguOffsetHz(v); });
+    sliceInt("RttyMarkHz", kRttyMarkMinHz, kRttyMarkMaxHz, [this](int v) { setRttyMarkHz(v); });
+    sliceInt("RttyShiftHz", kRttyShiftMinHz, kRttyShiftMaxHz, [this](int v) { setRttyShiftHz(v); });
     restoreNnrSettings();
 }
 

@@ -4623,6 +4623,19 @@ requester's own slice, a C-Tune centre change or pin and a slice's band
 change follow the receiver rules of section 7.5, and a sample-rate change
 the shared-setting rules of section 7.6.
 
+**How a sentence names a device.** The reasons and notices of sections
+7.3, 7.5 and 7.6 that name a device take its words from one rule: the
+device's name as `connectedDevices` numbers it; for a device with no
+name, the plain word for its kind ("a phone", "a tablet", "a computer");
+"another device" for one the Core no longer knows; and "the Core" for a
+slice nobody owns and for the Core's own operating position on a Core no
+desktop hosts (a hosting desktop has a name and is named by it). Where the
+words start the sentence, the Core's own take a capital ("The Core took
+the receiver your slice A was on."); a name is the operator's own word and
+is never changed. Two sentences of section 7.6 name a device by its short
+name instead (the on-air refusal and the antenna that stays), and the
+transmit notices of section 18 name the holder by their own rules.
+
 **Waiting for you to confirm** (iPhone app plan Task 74; the
 several-devices design, section 7.3). A write that would disturb another
 device, from a device with `sessionHolderVersion` 1, is not applied. Its
