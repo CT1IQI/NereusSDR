@@ -17,14 +17,19 @@
 // Modification history (NereusSDR):
 //   2026-10-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-16 - Review fixes: the callbacks' state outlives an early
+//                 return, and a host without IPv6 finds a free range.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include <QScopeGuard>
 #include <QtTest/QtTest>
 
 #include <rtc/rtc.hpp>
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -109,9 +114,12 @@ private:
 // True when nothing holds `port` for IPv4 or IPv6 right now.
 bool portIsFree(quint16 port)
 {
+    Ipv4Holds probe;
     const int fd = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
-        return false;
+        // No IPv6 on this host: libjuice binds IPv4 only, and only IPv4
+        // can hold the port.
+        return errno == EAFNOSUPPORT && probe.hold(port) == port;
     }
     const int off = 0;
     ::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
@@ -121,7 +129,6 @@ bool portIsFree(quint16 port)
     sin6.sin6_port = htons(port);
     const bool v6Free = ::bind(fd, reinterpret_cast<sockaddr*>(&sin6), sizeof(sin6)) == 0;
     ::close(fd);
-    Ipv4Holds probe;
     return v6Free && probe.hold(port) == port;
 }
 
@@ -232,27 +239,39 @@ private slots:
         config.portRangeBegin = *begin;
         config.portRangeEnd = quint16(*begin + kRangeSize - 1);
 
+        // What the callbacks write lives as long as the last callback that
+        // holds it, so a check that returns early can't leave a late callback
+        // writing to a destroyed local.
+        struct Shared {
+            std::mutex mutex;
+            std::optional<rtc::Description> offer;
+            std::vector<rtc::Candidate> offerCandidates;
+            std::atomic<bool> offererGathered {false};
+            std::atomic<bool> open {false};
+        };
+        const auto shared = std::make_shared<Shared>();
+
         auto offerer = std::make_shared<rtc::PeerConnection>(config);
         auto answerer = std::make_shared<rtc::PeerConnection>(config);
         const std::weak_ptr<rtc::PeerConnection> weakOfferer = offerer;
+        const auto closeBoth = qScopeGuard([&offerer, &answerer]() {
+            offerer->close();
+            answerer->close();
+        });
 
         // The offer goes over only once the offerer has its port, so the
         // two agents never pick from the range at the same time.
-        std::mutex mutex;
-        std::optional<rtc::Description> offer;
-        std::vector<rtc::Candidate> offerCandidates;
-        std::atomic<bool> offererGathered {false};
-        offerer->onLocalDescription([&](rtc::Description d) {
-            std::lock_guard lock(mutex);
-            offer = d;
+        offerer->onLocalDescription([shared](rtc::Description d) {
+            std::lock_guard lock(shared->mutex);
+            shared->offer = d;
         });
-        offerer->onLocalCandidate([&](rtc::Candidate c) {
-            std::lock_guard lock(mutex);
-            offerCandidates.push_back(c);
+        offerer->onLocalCandidate([shared](rtc::Candidate c) {
+            std::lock_guard lock(shared->mutex);
+            shared->offerCandidates.push_back(c);
         });
-        offerer->onGatheringStateChange([&](rtc::PeerConnection::GatheringState s) {
+        offerer->onGatheringStateChange([shared](rtc::PeerConnection::GatheringState s) {
             if (s == rtc::PeerConnection::GatheringState::Complete) {
-                offererGathered = true;
+                shared->offererGathered = true;
             }
         });
         // IPv4 candidates only: the case is IPv4 to a dual-stack socket.
@@ -270,18 +289,17 @@ private slots:
                 p->addRemoteCandidate(c);
             }
         });
-        std::atomic<bool> open {false};
-        answerer->onDataChannel([&open](std::shared_ptr<rtc::DataChannel>) { open = true; });
+        answerer->onDataChannel([shared](std::shared_ptr<rtc::DataChannel>) { shared->open = true; });
 
         auto channel = offerer->createDataChannel("dual-stack");
-        QTRY_VERIFY_WITH_TIMEOUT(offererGathered.load(), kOpenTimeoutMs);
+        QTRY_VERIFY_WITH_TIMEOUT(shared->offererGathered.load(), kOpenTimeoutMs);
         {
-            std::lock_guard lock(mutex);
-            QVERIFY(offer.has_value());
-            offer->extractCandidates();
-            answerer->setRemoteDescription(*offer);
+            std::lock_guard lock(shared->mutex);
+            QVERIFY(shared->offer.has_value());
+            shared->offer->extractCandidates();
+            answerer->setRemoteDescription(*shared->offer);
             int ipv4 = 0;
-            for (const rtc::Candidate& c : offerCandidates) {
+            for (const rtc::Candidate& c : shared->offerCandidates) {
                 if (c.family() == rtc::Candidate::Family::Ipv4) {
                     answerer->addRemoteCandidate(c);
                     ++ipv4;
@@ -289,11 +307,9 @@ private slots:
             }
             QVERIFY2(ipv4 > 0, "the offerer gathered no IPv4 candidate");
         }
-        QTRY_VERIFY_WITH_TIMEOUT(open.load(), kOpenTimeoutMs);
+        QTRY_VERIFY_WITH_TIMEOUT(shared->open.load(), kOpenTimeoutMs);
 
         channel->close();
-        offerer->close();
-        answerer->close();
     }
 #endif
 };
