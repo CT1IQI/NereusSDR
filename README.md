@@ -48,9 +48,10 @@ for bug reports and feature requests that need tracking.
 - **Receivers come back as you left them.** After a relaunch every receiver
   returns with its own pan, squelch, APF, FM and AGC-T settings, and receivers
   B, C and D run on the values they show.
-- **Fixes.** Display and waterfall, two-tone and PureSignal, Hermes Lite 2 PTT
-  through a Pi Core, remote audio, and Core installs. See the
-  [release notes](CHANGELOG.md).
+- **Fixes.** Display and waterfall, two-tone and PureSignal, remote audio, and
+  Core installs. Protocol 1 radios get their transmit packets from a thread of
+  their own, aimed at Hermes Lite 2 PTT dropping through a Pi Core; that is
+  not yet confirmed on a keyed radio. See the [release notes](CHANGELOG.md).
 
 **Current version: 2026.10.1.** Packages are listed on the
 [releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the

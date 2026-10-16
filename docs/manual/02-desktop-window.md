@@ -289,7 +289,7 @@ keying the transmitter or changing station hardware.
 The title bar has two volume controls, each a speaker button with a slider and a level readout from 0 to 100.
 
 - **PC** is this computer's speakers. Click the speaker to mute or unmute; drag the slider to set the volume. It is the same control as **Volume** under **This computer** in **File > Settings... > Audio > Outputs**. It does not change the headphones.
-- **RADIO** is the radio's own speaker output. It plays the receiving slices, and each slice's AF level and mute still apply. In a window connected to a remote Core it is the speaker at the Core, shared with every window and the phone, and its tooltip reads **Radio speaker at the Core (shared with every window and the phone)**. With no radio connected it is greyed and its tooltip reads **No radio connected**; on a Hermes Lite 2 without the audio add-on board the tooltip adds that it needs the board.
+- **RADIO** is the radio's own speaker output. It plays the receiving slices, and each slice's AF level and mute still apply. In a window connected to a remote Core it is the speaker at the Core, shared with every window and the phone, and its tooltip reads **Radio speaker at the Core (shared with every window and the phone)**. With no radio connected it is grayed and its tooltip reads **No radio connected**; on a Hermes Lite 2 without the audio add-on board the tooltip adds that it needs the board.
 
 PC mute can silence a correctly configured slice, so check it before changing receiver gain or the Core's DSP. PC also controls this computer's playback in a remote desktop window.
 
@@ -298,7 +298,7 @@ Point at the PC speaker for its tooltip: **PC volume. Click to mute, right-click
 - **(platform default)**, then each device on that driver, with the current choice ticked. An interface with several pairs lists each pair under the interface's name.
 - A missing choice in amber at the top, ticked, as **<name> (not connected)** or **<name> (in use by another program)**, with **Playing on <device> until it comes back.** beneath it.
 - **No ASIO devices present** when ASIO is the driver and none is installed.
-- **The device lists are not ready.** with the entries greyed, shortly after start.
+- **The device lists are not ready.** with the entries grayed, shortly after start.
 - **Sound setup…**, which opens Audio > Outputs.
 
 Choose the intended device and listen at a comfortable volume. The menu changes this computer's speakers only. It does not change the station's microphone input or a different operator's phone output. A newly plugged in device appears in the menu within about a second. The selected slice's personal volume and mute remain a separate stage, so check both when one slice is silent. Use [Audio > Outputs](01-desktop-connect.md#choose-this-computers-receive-and-transmit-audio-routes) to inspect the opened format or repair a missing route.

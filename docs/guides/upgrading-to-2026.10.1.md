@@ -67,8 +67,8 @@ cards and serial adapters each need a small systemd drop-in.
   `.deb` packages do not. After adding either file, run
   `sudo systemctl daemon-reload` and `sudo systemctl restart nereusd`.
 - **Rock real-time priority.** On a Rock, run the 2026.10.1 installer once and
-  then restart the board. It adds a drop-in so that logging in over ssh no
-  longer costs the Core its real-time priority.
+  then restart the board. It adds a drop-in meant to keep an ssh login from
+  costing the Core its real-time priority. See What to try.
 
 The [SBC install guide](install-core-sbc.md) has the details, including the
 sound card's own mixer and kernels that refuse real-time priority.
@@ -111,7 +111,11 @@ including anything that surprised you.
 6. **Hermes Lite 2 through a Pi Core.** Key the radio from a window or the
    phone through a Core on a Raspberry Pi and hold it for half a minute.
    Confirm the radio stays keyed for the whole time.
-7. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
+7. **Rock real-time priority.** After installing on a Rock and restarting it,
+   log in over ssh and run `cat /sys/fs/cgroup/cgroup.subtree_control`.
+   Confirm that `cpu` is not in the list, and that the Core's log has no
+   "Raised thread priority was refused" line from after the restart.
+8. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
    a calibration at your new two-tone level and compare it with what you
    expect.
 

@@ -143,9 +143,10 @@ groups the Core does not belong to, so each needs a small systemd drop-in.
   controller is on, and on Debian any login switches it on. The Core then logs
   "Raised thread priority was refused" and its audio threads run at normal
   priority. The Rock installer writes a drop-in,
-  `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`, so
-  logins no longer switch the controller on. It takes effect for logins
-  after it is written, so restart the Rock once after installing. To see
+  `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`, meant
+  to keep logins from switching the controller on; this is not yet confirmed
+  on a Rock. It takes effect for logins after it is written, so restart the
+  Rock once after installing. To see
   whether the controller is on, look for `cpu` in
   `cat /sys/fs/cgroup/cgroup.subtree_control`. Check how heavily the board is
   loaded if audio breaks up.

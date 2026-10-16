@@ -287,9 +287,10 @@ slice can make the two operating frequencies clearer.
 **CTUN** concerns the receiver window and band view. Right-click empty spectrum
 and enable **CTUN (independent pan)** under **Tuning** to keep the receive window
 fixed while tuning within it. The VFO moves while the pan stays put. Turn it off
-to return to a view following the VFO. The checkbox is grayed, with the Core's reason as its tooltip, on a slice you
-only listen to or a receiver another device holds, and when the Core does not
-provide remote C-Tune support. None of these three controls is a
+to return to a view following the VFO. The checkbox is grayed on a slice you
+only listen to or a receiver another device holds, with the Core's reason as
+its tooltip. When the Core does not provide remote C-Tune, it is grayed with
+**C-Tune requires a connected Core with remote C-Tune support**. None of these three controls is a
 substitute for selecting the intended transmit slice.
 
 ## Worked example: improve a weak voice signal

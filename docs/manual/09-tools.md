@@ -2,7 +2,7 @@
 
 This chapter covers the audio paths and network controls used by digital-mode programs. VAX exposes virtual audio channels. TCI provides a WebSocket control and audio interface for compatible clients. These controls do not decode digital modes inside NereusSDR. A VAX meter or connected TCI client confirms only the part of the path it measures.
 
-Desktop VAX channels and TCI audio preferences belong to **This computer**, even when the desktop window is connected to a remote Core. The desktop TCI server control can coordinate the Core server, which retains its own on/off state. iPhone/iPad **Tools > VAX Audio** and **Tools > TCI Server** pages operate the Core computer directly. A missing or grey phone tool can mean the Core build or radio does not offer it.
+Desktop VAX channels and TCI audio preferences belong to **This computer**, even when the desktop window is connected to a remote Core. The desktop TCI server control can coordinate the Core server, which retains its own on/off state. iPhone/iPad **Tools > VAX Audio** and **Tools > TCI Server** pages operate the Core computer directly. A missing or gray phone tool can mean the Core build or radio does not offer it.
 
 ## Route receive audio through VAX
 

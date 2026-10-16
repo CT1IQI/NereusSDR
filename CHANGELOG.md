@@ -158,6 +158,8 @@ The workspace look is now the default.
   packets back for long stretches while keyed; a Hermes Lite 2 drops PTT
   when its packets stop, so a held key went on and off.
 - Physical PTT from a Protocol 1 radio is read in the order the radio sent it.
+- A remote microphone on a Protocol 1 radio sees the radio's transmit queue,
+  so its latency handling works as it does on Protocol 2.
 - On the Mac, the thread that feeds the microphone to the radio while
   transmitting now gets the high scheduling class it asks for. macOS refused
   it before, so the thread ran at the default class.
@@ -215,15 +217,17 @@ Cores and apps still connect.
   also add the serial drop-in that rotor and serial CAT need on the Core; the
   `.deb` packages do not ship it. See the Core install guide.
 - Building the PulseAudio engine from source on Linux needs `libpulse-dev`.
-- The Rock installer adds a drop-in so that logging in no longer costs the
-  Core its real-time priority on the Rock's kernel. Restart the Rock once
-  after installing.
+- The Rock installer adds a drop-in that keeps logins from switching on the
+  CPU controller, which costs the Core its real-time priority on the Rock's
+  kernel. Restart the Rock once after installing. This is not yet confirmed
+  on a Rock.
 - On Windows the Core can lock its signal-processing buffers in memory; before,
   Windows refused the lock and logged a warning for every FFT buffer.
 - On a board with slow and fast cores, such as the Rock 5C, the Core puts the
-  radio connection and the first receiver on fast cores of their own. With
-  four receivers at 1.536 MHz, receive packet drops on the Rock fell from
-  about 12,000 a second to almost none. With VOX on, the receivers keep their
+  radio connection on a fast core beside the DSP thread, gives the first
+  receiver a fast core to itself, and lets spectrum use the signal-processing
+  cores. With four receivers at 1.536 MHz, kernel packet drops on the Rock
+  fell from about 12,000 a second to about 1. With VOX on, the receivers keep their
   fast cores between transmissions. Pi 4, Pi 5 and x86 placement is unchanged.
 
 ### Settings, support and spotting
@@ -246,7 +250,7 @@ Cores and apps still connect.
   (Core Audio, Windows audio, ASIO, PipeWire, PulseAudio, ALSA direct or older
   drivers) instead of always reading WASAPI or CoreAudio.
 - The 2-Tone tooltip names its page, Settings > Test > Two-Tone IMD, and the
-  flag's SQL tooltip says it sets the 0 to 100 squelch, with the AM and FM
+  flag's squelch slider tooltip says it sets the 0 to 100 squelch, with the AM and FM
   thresholds on their DSP pages.
 
 ### Separate computer and radio speaker volumes
@@ -331,8 +335,6 @@ Advanced, and each control appears on one page only.
   could not reach it. It also uses the FFT plans the app has saved, instead
   of building them all again before it takes the radio, which took minutes
   the first time.
-- On Windows, the background Core runs at normal priority, as NereusSDR does
-  when started from its shortcut. Windows started it below normal.
 - A TCI program set to the second receiver (WSJT-X on receiver 2, for one)
   is no longer told that receiver 2 is off immediately after its key is
   accepted. That contradictory state could make the program abandon PTT and
@@ -358,8 +360,8 @@ Advanced, and each control appears on one page only.
   pages, device lists, rotor page, VAX cable picker, Spot List and FreeDV
   station table no longer crash the window when their rows change.
 - NereusSDR builds against OpenSSL 4.
-- A window reaches its Core through the remote access service again. The
-  window left the service as soon as its end of the connection opened, and
+- A window no longer fails to reach its Core through the remote access
+  service. The window left the service as soon as its end of the connection opened, and
   the Core then closed the connection before its own end opened, ending in
   "The Core could not be reached from here."
 - On Windows the background Core started at sign-in or at window close runs
