@@ -146,9 +146,9 @@ private slots:
   QCOMPARE(service.processFrame(id,"SQ0000;"),QByteArray()); QCOMPARE(slice->ssqlThresh(),0.0);
   slice->setSsqlThresh(25); QCOMPARE(service.processFrame(id,"ZZSQ;"),QByteArray("ZZSQ120;"));
   slice->setDspMode(DSPMode::FM); QCOMPARE(service.processFrame(id,"ZZSO1;"),QByteArray()); QVERIFY(slice->fmsqEnabled()); QVERIFY(!slice->ssqlEnabled());
-  QCOMPARE(service.processFrame(id,"ZZSQ100;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),-14.8); QCOMPARE(service.processFrame(id,"ZZSQ;"),QByteArray("ZZSQ101;"));
-  QCOMPARE(service.processFrame(id,"SQ0255;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),-40.0);
-  QCOMPARE(service.processFrame(id,"SQ0000;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),0.0);
+  QCOMPARE(service.processFrame(id,"ZZSQ100;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),-100.0); QCOMPARE(service.processFrame(id,"ZZSQ;"),QByteArray("ZZSQ100;"));
+  QCOMPARE(service.processFrame(id,"SQ0255;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),0.0);
+  QCOMPARE(service.processFrame(id,"SQ0000;"),QByteArray()); QCOMPARE(slice->fmsqThresh(),-160.0);
   const QJsonObject before=snapshot(model); QCOMPARE(service.processFrame(id,"ZZSO3;"),QByteArray("?;")); QCOMPARE(service.processFrame(id,"SQ0x00;"),QByteArray("?;")); QCOMPARE(snapshot(model),before);
   model.setStepAttController(nullptr);
  }

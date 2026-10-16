@@ -202,6 +202,12 @@
 /// (`pictureGeneration`), by which the app decides what a pan keeps when a
 /// context renews it. A Core that sends none is read by the rule before it.
 ///
+/// `firmwareBeta` 1: the app words the firmware release of the Core's radio
+/// in full ("22.14"), as the desktop does. The Core then sends
+/// `firmwareBeta`, the release's second number, beside `firmwareVersion`,
+/// which is the first alone; a Core that sends none is worded by the first
+/// number alone.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -218,5 +224,5 @@ public enum LinkFeatures {
                                             "radioMic": 1, "rxFilterLowPass": 1, "radeReason": 1,
                                             "audioQuality": 1, "stationCat": 1,
                                             "radioSpeaker": 1, "coreSpeaker": 1,
-                                            "spectrumPicture": 1]
+                                            "spectrumPicture": 1, "firmwareBeta": 1]
 }

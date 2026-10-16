@@ -461,7 +461,7 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | tests/tst_rxchannel_emnr.cpp | Project Files/Source/Console/radio.cs | 2216-2232 | port | thetis-samphire | |
 | tests/tst_rxchannel_nb2_polish.cpp | Project Files/Source/Console/HPSDR/specHPSDR.cs; Project Files/Source/ChannelMaster/cmaster.c | 922-937; 55-68 | port | thetis-no-samphire | both cited sources exclude Samphire (Wigley-only specHPSDR.cs + NR0V-only cmaster.c) |
 | tests/tst_rxchannel_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
-| tests/tst_rxchannel_squelch.cpp | Project Files/Source/Console/radio.cs | 1185; 1293; 1312 | port | thetis-samphire | |
+| tests/tst_rxchannel_squelch.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1185; 1293; 1312; 47295-47304 | port | thetis-samphire | |
 | tests/tst_slice_agc_advanced.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1037-1124; 45977 | port | thetis-samphire | |
 | tests/tst_slice_auto_agc.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/setup.designer.cs | 45913-45954; 38630,39245,39320,39418 | port | thetis-samphire | setup.designer.cs has no GPL header — project-level LICENSE applies |
 | tests/tst_slice_tune_step_list.cpp | Project Files/Source/Console/console.cs | 1953-1984; 6124-6134 | port | thetis-samphire | verbatim tune_step_list parity (26 StepHz/Name pairs), ChangeTuneStepUp/Down wrap, 100 Hz default guard [v2.10.3.15] |
@@ -470,7 +470,7 @@ same. J.J. Boyd (KG4VCF), October 14, 2026, AI-assisted via OpenAI Codex.
 | tests/tst_slice_emnr.cpp | Project Files/Source/Console/radio.cs | 2216-2232 | port | thetis-samphire | |
 | tests/tst_slice_rit_xit.cpp | Project Files/Source/Console/console.cs | full | port | thetis-samphire | RIT behaviour |
 | tests/tst_slice_snb.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/dsp.cs | 36347; 692-693 | port | multi-source | |
-| tests/tst_slice_squelch.cpp | Project Files/Source/Console/radio.cs | 1185-1329; 1164-1178; 1274-1291; 1293-1329 | port | thetis-samphire | |
+| tests/tst_slice_squelch.cpp | Project Files/Source/Console/radio.cs; Project Files/Source/Console/console.cs | 1185-1329; 1164-1178; 1274-1291; 1293-1329; console.cs 171; 47295-47304 | port | thetis-samphire | FM squelch threshold default |
 | tests/tst_preamp_mode.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/enums.cs | 1999-2009; 28401-28466; 236-251 | port | thetis-samphire | Level Cal: ten PreampMode values, SA offsets, comboPreamp_SelectedIndexChanged label map (//MW0LGE_21d, //MW0LGE_22b) [v2.10.3.15] |
 | tests/tst_step_attenuator_controller.cpp | Project Files/Source/Console/console.cs | 21359-21382; 21366; 21369; 21373-21375; 21378; 21548-21567 | port | thetis-samphire | |
 | tests/tst_radio_status.cpp | Project Files/Source/Console/console.cs; Project Files/Source/Console/HPSDR/NetworkIOImports.cs | 6642-6659; 261-267 | port | multi-source | SWR test vectors from console.cs:6642 SWR(adc_fwd,adc_rev) [@501e3f5]; getFwdPower/getRevPower DllImport declarations from NetworkIOImports.cs:264-267 [@501e3f5] |

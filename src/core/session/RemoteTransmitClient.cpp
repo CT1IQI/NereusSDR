@@ -53,6 +53,10 @@
 //   2026-10-14: Retire a station session even when remote transmit was
 //               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-15: programAudioKeyChanged, published with the key, so the
+//               microphone line follows a program key that arrives or ends
+//               under the screen key (the key down does not move then).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -841,6 +845,12 @@ void RemoteTransmitClient::publish()
     if (down != m_publishedKeyDown) {
         m_publishedKeyDown = down;
         emit micKeyDownChanged(down);
+        if (!self) { return; }
+    }
+    const bool programAudio = programAudioKey();
+    if (programAudio != m_publishedProgramAudio) {
+        m_publishedProgramAudio = programAudio;
+        emit programAudioKeyChanged(programAudio);
         if (!self) { return; }
     }
     const bool holds = holdsTransmit();

@@ -46,6 +46,8 @@
 //                 also sends the receive audio, no longer waits for the
 //                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-12 - Saved-radio key list: firmwareBetaVersion. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - addWriteObserver(): more than one observer of local
 //                 writes, beside the single change hook the Core's
 //                 settings proxy owns. J.J. Boyd (KG4VCF), AI-assisted via
@@ -539,6 +541,7 @@ public:
     //   radios/<macKey>/boardType       (int — HPSDRHW value)
     //   radios/<macKey>/protocol        (int — ProtocolVersion value)
     //   radios/<macKey>/firmwareVersion (int)
+    //   radios/<macKey>/firmwareBetaVersion (int; 0 = the radio reported none)
     //   radios/<macKey>/pinToMac        (bool as "True"/"False")
     //   radios/<macKey>/autoConnect     (bool as "True"/"False")
     //   radios/<macKey>/lastSeen        (ISO 8601 UTC string)

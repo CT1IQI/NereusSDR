@@ -59,6 +59,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: The radio's second firmware number: firmwareBeta, after
+//               spectrumPictureVersion and before coreBuildInfo. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09: Core speaker: coreSpeakerVersion, after radioSpeakerVersion
@@ -703,6 +706,15 @@ struct StationCapabilities {
     /// whose hello declared spectrumPicture 1, at minor 11 with media on;
     /// absent reads as 0: an older Core, whose contexts state no picture.
     int spectrumPictureVersion = 0;
+    /// The radio's second firmware number (RadioInfo::firmwareBetaVersion:
+    /// byte 23 of a Protocol 2 discovery reply, byte 21 of an HL2's), which
+    /// `firmwareVersion` leaves out. On the wire it is `firmwareBeta`, an
+    /// i64 of 0 to 255: 0 when the radio reported none. Sent after
+    /// spectrumPictureVersion and before coreBuildInfo, only to a peer at
+    /// minor 11 whose hello declared `firmwareBeta` 1 (firmwareBetaEntry);
+    /// absent reads as 0: an older Core, which sends the first number alone.
+    bool firmwareBetaEntry = false;
+    int firmwareBetaVersion = 0;
     /// R-IOS-26 / R-R3-49 (iPhone app plan Task 22, remote-window parity
     /// Task 20): 1 means the Core runs FreeDV Reporter itself, registered
     /// with its own callsign, grid square and message and listing its own
