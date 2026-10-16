@@ -61,6 +61,11 @@
 //   2026-10-01 : Leveler lane by J.J. Boyd (KG4VCF): test-only friendship
 //                 for the remote microphone leveler measurement. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-11 : J.J. Boyd (KG4VCF): test-only friendship for the VOX
+//                 listening test's live transmit channel. AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-15 : J.J. Boyd (KG4VCF): that friendship's comment says which
+//                 test and why. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -183,6 +188,8 @@ class TestRxChannelNotchWrappers;
 // unopened id (design section 11.1 -- rxa[] is sized MAX_CHANNELS and every
 // entry point dereferences before range-checking).
 class TestNotchChannelSync;
+// What a live transmit channel tells thread placement while VOX listens.
+class TstTxChannelVoxListening;
 // TNF Task 9: the MNF Settings page test primes the engine so it can open one
 // real RX channel and check the minimum-notch-width readout against it.
 class TestMnfSetupPage;
@@ -1109,6 +1116,9 @@ private:
     friend class ::TestTxKeyDspOptions;
     // Leveler lane: the remote microphone leveler measurement.
     friend class ::TestTxLevelerRemoteMic;
+    // tst_tx_channel_vox_listening sets m_initialized to open a live
+    // transmit channel and check what it tells thread placement.
+    friend class ::TstTxChannelVoxListening;
 #endif
 };
 
