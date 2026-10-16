@@ -18,10 +18,13 @@
 //   2. After the loss a key is refused until it is released: setMox(true)
 //      leaves the wire unkeyed; setMox(false) then setMox(true) keys.
 //   3. A stale key set before connectToRadio does not reach the radio.
-//   4. The transmit cut (2026-10-15): keyed, the cut composes C0 MOX = 0
-//      while m_mox is still set, every ep2 frame after it is unkeyed, a key
+//   4. The transmit cut (2026-10-15), Hermes and HL2: keyed, the frames
+//      the EP2 sender thread sends after the cut are unkeyed while m_mox is
+//      still set (the connection's thread is held, so the cut's queued
+//      unkey has not run), every ep2 frame after the unkey is unkeyed, a key
 //      is refused while it is set, and after clearTransmitCut a key goes
-//      out.
+//      out. The setters are posted, as RadioModel posts them, so they hold
+//      the frame lock.
 //   5. The transmit cut on every composer (no socket): the Hermes and HL2
 //      codecs, the HL2 I2C frame and the legacy compose path all compose
 //      C0 MOX = 0 while cut with m_mox still set, and both ep2 TX I/Q zones
@@ -36,9 +39,15 @@
 //   2026-10-15: re-review: corrected the networkproto1.c cite for the
 //               MOX bit line. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: merge with the EP2 sender thread: the wire test proves the
+//               sender thread's frames are unkeyed while the cut's unkey
+//               is still queued, on Hermes and HL2, and posts its setters
+//               so they hold the frame lock. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 
 #include <QtTest/QtTest>
 #include <QElapsedTimer>
+#include <QThread>
 
 #include <functional>
 #include <memory>
@@ -176,6 +185,44 @@ void dropAndReconnect(P1FakeRadio& fake, P1RadioConnection& conn,
     QVERIFY(fake.metisStopCount() >= 1);
     // Past the priming bursts and well into the round robin.
     QTRY_VERIFY_WITH_TIMEOUT(fake.ep2CcReceived().size() >= 40, 3000);
+}
+
+// The silence deadline while the transmit cut test holds the connection's
+// thread; far longer than the hold, so the hold is never a lost link.
+constexpr int kCutHoldWatchdogMs = 3000;
+// How long the cut test may hold the connection's thread waiting for frames.
+constexpr int kCutHoldBoundMs = 1500;
+
+// Runs `work` as a queued call on the connection, as RadioModel posts its
+// setters, so it holds the frame lock (P1RadioConnection::event) and never
+// changes a frame input while the EP2 sender builds a frame. Returns once
+// it has run.
+template <typename F>
+void postAndWait(P1RadioConnection& conn, F work)
+{
+    bool ran = false;
+    QMetaObject::invokeMethod(&conn, [&ran, work] {
+        work();
+        ran = true;
+    }, Qt::QueuedConnection);
+    QTRY_VERIFY_WITH_TIMEOUT(ran, 3000);
+}
+
+// Waits, without running this thread's event loop, until the fake has
+// logged at least `count` ep2 frames. The fake and the EP2 sender run on
+// threads of their own, so frames keep coming while queued calls on this
+// thread wait. False if kCutHoldBoundMs passes first.
+bool waitForFramesHoldingThisThread(const P1FakeRadio& fake, qsizetype count)
+{
+    QElapsedTimer held;
+    held.start();
+    while (fake.ep2CcReceived().size() < count) {
+        if (held.elapsed() > kCutHoldBoundMs) {
+            return false;
+        }
+        QThread::msleep(1);
+    }
+    return true;
 }
 
 // Keys the link, drops it, and brings it back (dropAndReconnect).
@@ -323,36 +370,59 @@ private slots:
         fake.stop();
     }
 
+    void transmitCutUnkeysTheWireAndRefusesAKey_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::newRow("Hermes") << int(HPSDRHW::Hermes);
+        QTest::newRow("HermesLite") << int(HPSDRHW::HermesLite);
+    }
+
     void transmitCutUnkeysTheWireAndRefusesAKey()
     {
+        QFETCH(int, board);
         P1FakeRadio fake;
         fake.start();
-        std::unique_ptr<P1RadioConnection> connPtr = bringLinkUp(fake, HPSDRHW::Hermes);
+        std::unique_ptr<P1RadioConnection> connPtr =
+            bringLinkUp(fake, static_cast<HPSDRHW>(board));
         QVERIFY2(connPtr != nullptr, "link never reached Connected");
         P1RadioConnection& conn = *connPtr;
         QTRY_VERIFY_WITH_TIMEOUT(fake.isRunning(), 3000);
+        // The test holds this thread below while the EP2 sender keeps
+        // sending; a short silence deadline would read that as a lost link.
+        conn.setReconnectTimingForTest(kCutHoldWatchdogMs, kTestReconnectIntervalMs);
 
-        conn.setMox(true);
+        postAndWait(conn, [&conn] { conn.setMox(true); });
         QTRY_VERIFY_WITH_TIMEOUT(anyKeyed(fake.ep2CcReceived()), 3000);
 
+        // The cut, from this thread, which is the connection's. Its unkey is
+        // queued here and cannot run until this thread returns to its event
+        // loop, so m_mox stays set while the EP2 sender thread builds and
+        // sends frames. Those frames must already be unkeyed: the sender
+        // reads the cut itself.
         conn.cutTransmit();
-        // The unkey is queued; m_mox is still set, yet the next frame's C0
-        // (bank 0, and a bank whose C0 carries the address) reads unkeyed.
-        QVERIFY(conn.moxForTest());
         QVERIFY(conn.transmitCut());
-        QCOMPARE(int(quint8(conn.captureBank0ForTest().at(0)) & 0x01), 0);
-        quint8 bank1[5] = {};
-        conn.composeCcForBankForTest(1, bank1);
-        QCOMPARE(int(bank1[0] & 0x01), 0);
+        // Frames built before the cut may still be on their way.
+        QVERIFY2(waitForFramesHoldingThisThread(fake, fake.ep2CcReceived().size() + 3),
+                 "the EP2 sender sent nothing after the cut");
+        const int fromFrame = int(fake.ep2CcReceived().size());
+        QVERIFY2(waitForFramesHoldingThisThread(fake, fromFrame + 20),
+                 "the EP2 sender sent nothing after the cut");
+        QVERIFY2(conn.moxForTest(), "the cut's unkey ran before the check");
+        const QList<QByteArray> held = fake.ep2CcReceived().mid(fromFrame);
+        const int keyedHeld = firstKeyed(held);
+        QVERIFY2(keyedHeld < 0,
+                 qPrintable(QStringLiteral("ep2 frame %1 of %2 sent after the cut carries "
+                                           "C0 MOX = 1").arg(keyedHeld).arg(held.size())));
 
-        // Every frame after the cut is unkeyed, and the unkey has run.
+        // The unkey runs once this thread is back in its event loop, and
+        // every frame after it is unkeyed.
+        QTRY_VERIFY_WITH_TIMEOUT(!conn.moxForTest(), 3000);
         fake.clearEp2CcLog();
         QTRY_VERIFY_WITH_TIMEOUT(fake.ep2CcReceived().size() >= 20, 3000);
         QCOMPARE(firstKeyed(fake.ep2CcReceived()), -1);
-        QVERIFY(!conn.moxForTest());
 
         // Refused while cut.
-        conn.setMox(true);
+        postAndWait(conn, [&conn] { conn.setMox(true); });
         QVERIFY(!conn.moxForTest());
         fake.clearEp2CcLog();
         QTRY_VERIFY_WITH_TIMEOUT(fake.ep2CcReceived().size() >= 20, 3000);
@@ -361,11 +431,11 @@ private slots:
         // Cleared: the next key goes out.
         conn.clearTransmitCut();
         QVERIFY(!conn.transmitCut());
-        conn.setMox(true);
+        postAndWait(conn, [&conn] { conn.setMox(true); });
         QVERIFY(conn.moxForTest());
         QTRY_VERIFY_WITH_TIMEOUT(anyKeyed(fake.ep2CcReceived()), 3000);
 
-        conn.setMox(false);
+        postAndWait(conn, [&conn] { conn.setMox(false); });
         conn.disconnect();
         fake.stop();
     }
