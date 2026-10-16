@@ -27,9 +27,15 @@
 //
 // Another instance of the branch's recurring shape, this one inverted:
 // here the SETTER was the thing that looked authoritative and was not.
+//
+// Modification history (NereusSDR):
+//   2026-10-15 - The band-restore case flushes the setup's held per-band
+//                save before seeding its 20m fixture. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QStandardPaths>
 
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
@@ -86,9 +92,18 @@ private slots:
     {
         // Exercise the real settings/restore/helper ordering with a full pool.
         // The 20m window hosts two slices 200 kHz apart, so 192 kHz cannot fit.
+#ifdef Q_OS_WIN
+        // Windows tests get no NEREUS_TEST_HOME (its known folders ignore a
+        // changed home), so check Qt's test-mode location instead.
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        QVERIFY(AppSettings::instance().filePath().startsWith(
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+            + QLatin1Char('/')));
+#else
         QVERIFY(!qEnvironmentVariableIsEmpty("NEREUS_TEST_HOME"));
         QVERIFY(AppSettings::instance().filePath().startsWith(
             qEnvironmentVariable("NEREUS_TEST_HOME") + QLatin1Char('/')));
+#endif
         auto& settings = AppSettings::instance();
         const QString prefix = QStringLiteral("Slice0/Band20m/");
         RadioModel model;
@@ -107,6 +122,11 @@ private slots:
         slice->setFrequency(7150000.0);
         QCOMPARE(slice->streamIndex(), 1);
         model.setActiveSlice(a);
+        // Setup tuned slice a through 20m at 768 kHz. RadioModel holds that
+        // band's values until its coalesced save and writes them at the next
+        // band click, so flush the setup save before seeding: otherwise the
+        // held 20m capture replaces the fixture below.
+        model.flushPendingSettingsSave();
         // DspMode is hasSettingsFor's visited-band sentinel. Seed after
         // setup so any rate-change persistence cannot replace this fixture.
         settings.setValue(prefix + QStringLiteral("DspMode"), static_cast<int>(DSPMode::USB));

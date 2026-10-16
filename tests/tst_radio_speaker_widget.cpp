@@ -574,10 +574,20 @@ private slots:
         auto* pcSlider = bar.findChild<QSlider*>(QStringLiteral("masterSlider"));
         const QSize sideBySideHandle = handleSize(pcSlider);
         showRemoteReadouts(bar);
-        bar.resize(1440, 32);
         bar.show();
-        QApplication::processEvents();
-        QVERIFY(bar.volumeStacked());
+        // 1440 px stacks with the Mac's fonts; narrower fonts elsewhere fit
+        // side by side there, so narrow the bar until the volume stacks.
+        constexpr int kWidestBar = 1440;
+        constexpr int kNarrowestBar = 900;
+        constexpr int kBarStep = 20;
+        for (int width = kWidestBar; width >= kNarrowestBar; width -= kBarStep) {
+            bar.resize(width, 32);
+            QApplication::processEvents();
+            if (bar.volumeStacked()) {
+                break;
+            }
+        }
+        QVERIFY2(bar.volumeStacked(), "the volume never stacked down to 900 px");
 
         const Parts p = partsOf(&bar);
         auto* pcBtn = bar.findChild<QPushButton*>(QStringLiteral("speakerBtn"));

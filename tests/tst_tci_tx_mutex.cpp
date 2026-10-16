@@ -37,6 +37,11 @@
 // Receiver and transmit gaps plan, Task 7 follow-up (R-R3-49), 2026-09-24,
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: a trx that is
 // refused gives the TX audio back at once (second_app_trx_follows_thetis_rule).
+//
+// 2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code: with a desktop app connected, binding TX to a
+// phone slice or tuning that bound slice sends no line with its dial; a
+// mapped bound slice is still announced.
 
 #ifdef HAVE_WEBSOCKETS
 
@@ -63,6 +68,14 @@
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr int kKeyUpDelayMs = NereusSDR::MoxController::kKeyUpDelayMs;
+} // namespace
 
 // ── Helper: build a minimal TX_AUDIO_STREAM binary frame ────────────────────
 //
@@ -115,6 +128,9 @@ private slots:
     void desktop_host_answers_rx2_off_queries_without_receiver_1();
     void desktop_host_notch_reads_the_receiver_not_the_slice();
     void desktop_host_first_lines_never_carry_receiver_0_as_receiver_1();
+    void desktop_host_tx_binding_to_phone_slice_hides_its_dial();
+    void desktop_host_tuning_bound_phone_slice_hides_its_dial();
+    void desktop_host_tx_binding_to_mapped_slice_is_announced();
     void desktop_host_reentrant_stop_cannot_take_audio();
     void desktop_host_reentrant_destruction_releases_original_key();
     void desktop_host_release_callback_may_destroy_server_data();
@@ -517,6 +533,125 @@ void TestTciTxMutex::desktop_host_first_lines_never_carry_receiver_0_as_receiver
     server.stop();
 }
 
+// A desktop app sees only the station's own slices. With it connected,
+// moving TX to a phone slice sends no line with that slice's dial; the app
+// hears receiver 0's dial, which is what its init burst would report.
+void TestTciTxMutex::desktop_host_tx_binding_to_phone_slice_hides_its_dial()
+{
+    RadioModel radio;
+    hostOnSlice2(radio);
+    radio.sliceById(2)->setFrequency(7074000.0);
+    radio.sliceById(0)->setFrequency(3573000.0);
+    radio.sliceById(1)->setFrequency(21074000.0);
+    QVERIFY(radio.txSliceArbiter()->requestHandoff(2));
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 2);
+    TciServer server(&radio);
+    server.setDesktopHostMode(true);
+    QVERIFY(server.start(0));
+    QWebSocket app;
+    QSignalSpy connected(&app, &QWebSocket::connected);
+    QSignalSpy text(&app, &QWebSocket::textMessageReceived);
+    app.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("ready;")), 3000);
+    QVERIFY(framesOf(text).contains(QStringLiteral("tx_frequency:7074000;")));
+    text.clear();
+
+    QVERIFY(radio.txSliceArbiter()->requestHandoff(0));
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        framesOf(text).contains(QStringLiteral("tx_frequency:7074000;")), 3000);
+    for (const QString& f : framesOf(text)) {
+        QVERIFY2(!f.contains(QStringLiteral("3573000"))
+                     && !f.contains(QStringLiteral("21074000")),
+                 qPrintable(f));
+    }
+    app.close();
+    server.stop();
+}
+
+// Tuning the phone slice that holds TX sends nothing with its dial. The
+// app's tx_frequency follows receiver 0 instead, as its init burst does.
+void TestTciTxMutex::desktop_host_tuning_bound_phone_slice_hides_its_dial()
+{
+    RadioModel radio;
+    hostOnSlice2(radio);
+    radio.sliceById(2)->setFrequency(7074000.0);
+    radio.sliceById(0)->setFrequency(3573000.0);
+    radio.sliceById(1)->setFrequency(21074000.0);
+    if (radio.txSliceArbiter()->txBoundSliceId() != 0) {
+        QVERIFY(radio.txSliceArbiter()->requestHandoff(0));
+    }
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 0);
+    TciServer server(&radio);
+    server.setDesktopHostMode(true);
+    QVERIFY(server.start(0));
+    QWebSocket app;
+    QSignalSpy connected(&app, &QWebSocket::connected);
+    QSignalSpy text(&app, &QWebSocket::textMessageReceived);
+    app.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("ready;")), 3000);
+    text.clear();
+
+    radio.sliceById(0)->setFrequency(3574000.0);
+    radio.sliceById(2)->setFrequency(7075000.0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        framesOf(text).contains(QStringLiteral("vfo:0,0,7075000;")), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        framesOf(text).contains(QStringLiteral("tx_frequency:7075000;")), 3000);
+    for (const QString& f : framesOf(text)) {
+        QVERIFY2(!f.contains(QStringLiteral("357400")), qPrintable(f));
+    }
+    app.close();
+    server.stop();
+}
+
+// A bound slice that maps to one of the app's receivers is announced; moving
+// TX on to a phone slice then falls back to receiver 0's dial.
+void TestTciTxMutex::desktop_host_tx_binding_to_mapped_slice_is_announced()
+{
+    RadioModel radio;
+    hostOnSlice2(radio);
+    // Receiver 0 is slice 1, receiver 1 is slice 2; slice 0 is the phone's.
+    radio.sliceOwnership()->setOwner(1, SliceOwnership::stationDevice());
+    radio.sliceById(0)->setFrequency(3573000.0);
+    radio.sliceById(1)->setFrequency(21074000.0);
+    radio.sliceById(2)->setFrequency(7074000.0);
+    if (radio.txSliceArbiter()->txBoundSliceId() != 0) {
+        QVERIFY(radio.txSliceArbiter()->requestHandoff(0));
+    }
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 0);
+    TciServer server(&radio);
+    server.setDesktopHostMode(true);
+    QVERIFY(server.start(0));
+    QWebSocket app;
+    QSignalSpy connected(&app, &QWebSocket::connected);
+    QSignalSpy text(&app, &QWebSocket::textMessageReceived);
+    app.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+    QVERIFY(connected.wait(2000));
+    QTRY_VERIFY_WITH_TIMEOUT(framesOf(text).contains(QStringLiteral("ready;")), 3000);
+    QVERIFY(framesOf(text).contains(QStringLiteral("vfo:0,0,21074000;")));
+    QVERIFY(framesOf(text).contains(QStringLiteral("tx_frequency:21074000;")));
+    text.clear();
+
+    QVERIFY(radio.txSliceArbiter()->requestHandoff(2));
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        framesOf(text).contains(QStringLiteral("tx_frequency:7074000;")), 3000);
+    text.clear();
+
+    QVERIFY(radio.txSliceArbiter()->requestHandoff(0));
+    QTRY_COMPARE(radio.txSliceArbiter()->txBoundSliceId(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        framesOf(text).contains(QStringLiteral("tx_frequency:21074000;")), 3000);
+    for (const QString& f : framesOf(text)) {
+        QVERIFY2(!f.contains(QStringLiteral("3573000")), qPrintable(f));
+    }
+    app.close();
+    server.stop();
+}
+
 void TestTciTxMutex::desktop_host_reentrant_stop_cannot_take_audio()
 {
     RadioModel radio;
@@ -555,7 +690,7 @@ void TestTciTxMutex::desktop_host_reentrant_stop_cannot_take_audio()
 void TestTciTxMutex::desktop_host_holder_and_program_ownership_data()
 {
     QTest::addColumn<int>("keyUpDelayMs");
-    QTest::newRow("default-handoff") << MoxController::kKeyUpDelayMs;
+    QTest::newRow("default-handoff") << kKeyUpDelayMs;
     QTest::newRow("delayed-handoff") << 1000;
 }
 

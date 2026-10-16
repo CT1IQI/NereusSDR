@@ -450,7 +450,11 @@ struct FakeStationTests {
 
     @Test("step 1 takes the code for one exchange, and a connection that ends after it burns the code")
     func stepOneTakesTheCode() async throws {
-        let station = try FakeStation(fixture: "session-device-sign-in", requiresPairing: true)
+        // This test ends the burned-code wait explicitly below. Keep its
+        // five-second deadline independent of Argon2 work and CI load.
+        let pairingClock = ManualLinkClock()
+        let station = try FakeStation(fixture: "session-device-sign-in", requiresPairing: true,
+                                      pairingClock: pairingClock)
         let code = station.pairingCode
         let holder = try await HandPairing(station)
         let other = try await HandPairing(station)

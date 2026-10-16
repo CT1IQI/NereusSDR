@@ -7,6 +7,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: the init burst's TX dial rule
+//                moves into announcesTxSlice / txFrequencyFor, which the
+//                live tune and TX handoff paths share.
 //   2026-10-14 - Desktop-host TX dial correction by J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code: the initial TX dial reads the
 //                bound slice only when it is one of this client's mapped
@@ -490,9 +494,12 @@ void TciProtocol::enqueueLocalBroadcast(const QString& frame)
 // buildInitialRadioStateLines).
 void TciProtocol::enqueueLocalBroadcastVfo(int rxIndex, qint64 hz, bool isTxBound)
 {
+    const int sliceId = rxIndex;
     rxIndex = sliceReceiver(rxIndex);
     if (rxIndex < 0 || rxIndex >= kExposedReceiverCount) {
-        if (isTxBound) { enqueueLocalBroadcastTxFrequency(hz); }
+        // A slice this client has no receiver for keeps its dial off the
+        // wire even while it holds TX (announcesTxSlice).
+        if (isTxBound && announcesTxSlice(sliceId)) { enqueueLocalBroadcastTxFrequency(hz); }
         return;
     }
     // Task 12 (R-R3-49): if then vfo for each channel, both on the VFO gate.
@@ -813,14 +820,14 @@ QStringList TciProtocol::buildInitialRadioStateLines() const
     // sent separately (TCIServer.cs:2587-2594 [v2.10.3.15]). Keep the legacy
     // RX1 fallback for synthetic models and an unresolved transmit binding.
     // With a receiver map (desktop-host mode) this client sees only its
-    // mapped slices; a bound slice outside that map belongs to another
-    // device, so its dial is never announced and RX1 is used instead.
+    // mapped slices; a bound slice this client has no receiver for never
+    // has its dial announced, and RX1 is used instead (txFrequencyFor,
+    // shared with the live paths).
     qint64 txFreqHz = rx1FreqHz;
     if (const auto* radio = qobject_cast<const RadioModel*>(m_radio)) {
         if (const SliceModel* txSlice = radio->txBoundSlice()) {
-            if (!m_receiverSliceMap || sliceReceiver(txSlice->sliceIndex()) >= 0) {
-                txFreqHz = static_cast<qint64>(txSlice->frequency());
-            }
+            txFreqHz = txFrequencyFor(txSlice->sliceIndex(),
+                                      static_cast<qint64>(txSlice->frequency()));
         }
     }
     // Derive the band label from the TX frequency. Thetis reads
@@ -2066,6 +2073,21 @@ int TciProtocol::sliceReceiver(int sliceId) const
         if (m_receiverSliceMap(receiver) == sliceId) { return receiver; }
     }
     return -1;
+}
+
+// Desktop hosting: a client with a receiver map sees only its mapped
+// slices, so a bound slice it has no receiver for (another device's, or the
+// station's own beyond the map) never has its dial announced. No map: any
+// bound slice is announced. One rule for the init burst and the live paths.
+bool TciProtocol::announcesTxSlice(int sliceId) const
+{
+    if (sliceId < 0) { return false; }
+    return !m_receiverSliceMap || sliceReceiver(sliceId) >= 0;
+}
+
+qint64 TciProtocol::txFrequencyFor(int boundSliceId, qint64 boundHz) const
+{
+    return announcesTxSlice(boundSliceId) ? boundHz : readVfoHzForRx(0, 0);
 }
 
 void TciProtocol::resetDispatchCounters()

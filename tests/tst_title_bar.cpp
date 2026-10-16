@@ -21,9 +21,10 @@
 //      group, 16 px, RADIO group, spacing, feature button (R-SPK-17), and
 //      the RADIO group reads as no radio until setRadioModel().
 //   8. volumeStacksWhenTheSegmentNeedsTheRoom: with the four remote
-//      readouts the header stacks PC above RADIO (layout C) at 1440 px so
-//      the segment keeps its width, goes side by side at 2200 px, and
-//      comes back each way without flipping in between (R-SPK-17, D1).
+//      readouts the header stacks PC above RADIO (layout C) in a window
+//      narrower than it needs side by side, so the segment keeps its
+//      width, goes side by side in a wider one, and comes back each way
+//      without flipping in between (R-SPK-17, D1).
 //
 // Live UI smoke (hosted-inside-QMainWindow + menu bar re-parenting
 // visuals) is the canonical verify; these tests only guard the
@@ -43,6 +44,8 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSlider>
+
+#include <algorithm>
 
 #include "core/AudioEngine.h"
 #include "gui/TitleBar.h"
@@ -258,12 +261,26 @@ private slots:
                                QStringLiteral("Audio 96.0 kbps (playing)"),
                                QStringLiteral("Radio \u219312.4 \u21910.8 Mbps"),
                                QStringLiteral("Core RTT 18 ms")});
-        bar.resize(1440, 32);
-        bar.show();
-        QApplication::processEvents();
-
         MasterOutputWidget* pc = bar.masterOutput();
         RadioSpeakerWidget* radio = bar.radioSpeaker();
+
+        // The window widths come from the widgets' own sizes, so the test
+        // holds with whatever font the platform has. Side by side, the
+        // header needs its whole size hint (1458 px here on macOS, and it
+        // stacks below exactly that). Stacking frees at least the narrower
+        // volume widget, so half that below the hint stacks with room to
+        // spare for the segment, and half that past the hint plus the
+        // 16 px return spare goes back side by side.
+        bar.resize(4000, 32);
+        bar.show();
+        QApplication::processEvents();
+        QVERIFY(!bar.volumeStacked());
+        const int sideBySideWidth = bar.sizeHint().width();
+        const int margin = std::min(pc->width(), radio->width()) / 2;
+        const int narrowWidth = sideBySideWidth - margin;
+        const int wideWidth = sideBySideWidth + 16 + margin;
+        bar.resize(narrowWidth, 32);
+        QApplication::processEvents();
         const QFontMetrics metrics(QFont(QStringLiteral("SF Mono"), 10, QFont::DemiBold));
         const int text = metrics.horizontalAdvance(seg->remotePresentationText());
         auto expectStacked = [&]() {
@@ -296,7 +313,7 @@ private slots:
             QVERIFY(bar.volumeStacked());
         }
 
-        bar.resize(2200, 32);
+        bar.resize(wideWidth, 32);
         QApplication::processEvents();
         QVERIFY(!bar.volumeStacked());
         QVERIFY(!pc->isStacked());
@@ -306,7 +323,7 @@ private slots:
         QVERIFY(seg->width() >= metrics.horizontalAdvance(seg->remotePresentationText()) + 34);
         QCOMPARE(bar.height(), 32);
 
-        bar.resize(1440, 32);
+        bar.resize(narrowWidth, 32);
         QApplication::processEvents();
         expectStacked();
     }
