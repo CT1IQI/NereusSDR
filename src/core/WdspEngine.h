@@ -69,6 +69,9 @@
 //   2026-10-15 : AGC seed fix by J.J. Boyd (KG4VCF): test-only friendship
 //                 for the AGC Fixed Gain and Max Gain seed test. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-15 : Squelch persistence by J.J. Boyd (KG4VCF): test-only
+//                 friendship for the squelch channel seed test. AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -222,6 +225,8 @@ class TestTxLatencyDsp;
 class TestTxLevelerRemoteMic;
 class TestTxKeyDspOptions;
 class TstRemoteTxDisplay;
+// Squelch persistence: slices B to D open with their saved squelch.
+class TestSliceSquelchChannelSeed;
 #endif
 
 namespace NereusSDR {
@@ -1127,6 +1132,8 @@ private:
     friend class ::TstTxChannelVoxListening;
     // AGC Fixed Gain seed: same friendship, real RX channels.
     friend class ::TestRxChannelAgcFixedSeed;
+    // Squelch persistence: the squelch seed test opens real RX channels.
+    friend class ::TestSliceSquelchChannelSeed;
 #endif
 };
 

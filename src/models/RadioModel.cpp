@@ -1203,6 +1203,15 @@
 //   2026-10-15 - Slices B to D open their channel with the slice's saved
 //                AGC threshold, Fixed Gain and Max Gain, as Slice A does.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                squelch (thresholds, then enables), and a squelch edit is
+//                saved to the slice it was made on, not the active slice.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Every other per-slice connect in wireSliceSignals now
+//                passes its slice to scheduleSettingsSave too, so DSP,
+//                audio, step, RIT/XIT and antenna edits on a slice that is
+//                not the active one save to that slice.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -11865,6 +11874,29 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 
     applyNnrStateToChannel(slice, ch);
     if (!current()) { return; }
+
+    // The slice's saved squelch, again. WDSP opens every squelch with run 0
+    // (third_party/wdsp/src/RXA.c:163,228,534), and a slice restored with
+    // its signals blocked never fires the per-slice pushes in
+    // wireSliceSignals. pushSliceStateToChannel above already sends the
+    // squelch, each enable before its threshold as Slice A's push in
+    // connectToRadio does; this block sends it once more, thresholds first
+    // and then the enables, so the last values the channel gets before
+    // setActive come in that order. The same conversions as Slice A's push
+    // (SSQL slider units / 100, clamped to WDSP's 0..1).
+    ch->setSsqlThresh(std::clamp(slice->ssqlThresh() / 100.0, 0.0, 1.0));
+    if (!current()) { return; }
+    ch->setAmsqThresh(slice->amsqThresh());
+    if (!current()) { return; }
+    ch->setFmsqThresh(slice->fmsqThresh());
+    if (!current()) { return; }
+    ch->setSsqlEnabled(slice->ssqlEnabled());
+    if (!current()) { return; }
+    ch->setAmsqEnabled(slice->amsqEnabled());
+    if (!current()) { return; }
+    ch->setFmsqEnabled(slice->fmsqEnabled());
+    if (!current()) { return; }
+
     ch->setActive(true);
     if (!current()) { return; }
 }
