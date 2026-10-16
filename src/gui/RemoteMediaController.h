@@ -5,8 +5,8 @@
 // Modification history (NereusSDR):
 //   2026-10-16: scheduleAudioRetry (a speaker failure is asked for again on
 //               the restart backoff); a held restart step no longer
-//               replaces another. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               replaces another; setSpeakerDeviceListWaitForTest. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: startMicCollector's vax source (VAX as a remote window's
@@ -554,10 +554,17 @@ public:
     bool audioRestartStepHeldForTest() const;
     /// Test only: how many backoff steps came due while held.
     int audioRestartStepsHeldForTest() const;
+    /// Test only: how long the speakers wait for this computer's first
+    /// device list before the wait shows as a problem (10 s otherwise).
+    void setSpeakerDeviceListWaitForTest(qint64 ms);
     /// Test only: the speakers' receiver asks for a restart with `fault`,
     /// as it does itself, so a test can raise a fault a real stream cannot
     /// produce on demand. No production caller.
     void raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault);
+    /// Test only: the speakers' receiver reports a failure with `fault`, as
+    /// it does itself when playback cannot start, so a test can raise a
+    /// fault a real stream cannot produce on demand. No production caller.
+    void raiseAudioFailureForTest(RemoteAudioReceiver::Fault fault);
     /// Test only (R-R3-44): the clock the receiver audio streams for apps
     /// on this computer (requestReceiverAudio) stamp arrivals and release
     /// by, for streams made after this call. Empty, the default, is the

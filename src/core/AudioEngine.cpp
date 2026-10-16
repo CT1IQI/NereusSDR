@@ -21,8 +21,10 @@
 // Modification history (NereusSDR):
 //   2026-10-16 : openRemoteSpeakers() opens a remote window's speakers at
 //                 window start; speakersAwaitDeviceList() says they wait
-//                 for this computer's first device list. J.J. Boyd
-//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//                 for this computer's first device list; begin says when
+//                 it refused the device's format, which asking again
+//                 cannot change. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -2482,10 +2484,12 @@ void AudioEngine::finishOlderDriversRescan(quint64 token)
     m_rescanMic = false;
 }
 
-bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput output)
+bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput output,
+                                      RemotePlaybackRefusal* refusal)
 {
+    if (refusal) { *refusal = RemotePlaybackRefusal::Unavailable; }
     if (output == RemotePlaybackOutput::Headphones) {
-        return beginRemoteHeadphonesPlayback(error);
+        return beginRemoteHeadphonesPlayback(error, refusal);
     }
     if (m_running) {
         if (error) { *error = QStringLiteral("Local DSP already owns speaker playback"); }
@@ -2512,6 +2516,7 @@ bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput outpu
                                     "%1 channels at %2 Hz")
                          .arg(format.channels).arg(format.sampleRate);
         }
+        if (refusal) { *refusal = RemotePlaybackRefusal::Format; }
         return false;
     }
     if (!m_speakersBus->outputPacing()) {
@@ -2524,10 +2529,11 @@ bool AudioEngine::beginRemotePlayback(QString* error, RemotePlaybackOutput outpu
     m_speakersBus->restartClockMatch();
     m_remotePlaybackFormat = format;
     m_remotePlayback = true;
+    if (refusal) { *refusal = RemotePlaybackRefusal::None; }
     return true;
 }
 
-bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
+bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error, RemotePlaybackRefusal* refusal)
 {
     // R-R3-45: the speakers' rules, on the headphones output.
     if (m_running) {
@@ -2556,6 +2562,7 @@ bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
                                     "%1 channels at %2 Hz")
                          .arg(format.channels).arg(format.sampleRate);
         }
+        if (refusal) { *refusal = RemotePlaybackRefusal::Format; }
         return false;
     }
     if (!m_headphonesBus->outputPacing()) {
@@ -2566,6 +2573,7 @@ bool AudioEngine::beginRemoteHeadphonesPlayback(QString* error)
     m_headphonesBus->restartClockMatch();   // R-AUD-15, as the speakers
     m_remoteHeadphonesFormat = format;
     m_remoteHeadphonesPlayback = true;
+    if (refusal) { *refusal = RemotePlaybackRefusal::None; }
     return true;
 }
 

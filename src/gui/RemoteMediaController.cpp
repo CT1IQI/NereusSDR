@@ -8,8 +8,12 @@
 //               device list is in wait for it with no problem shown. A
 //               speaker problem moves with the session to a new media
 //               connection, so playing there clears it (before, a move
-//               left it showing for the rest of the session).
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               left it showing for the rest of the session). The wait
+//               for the device list is bounded (kSpeakerDeviceListWaitMs):
+//               past it the problem shows, with Retry. A device format
+//               remote playback cannot play (SpeakerFormatUnsupported) is
+//               not asked for again. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: fix wave 2: the line follows programAudioKeyChanged at
 //               once (a direct connection), so a program key that arrives
 //               or ends under the screen key joins or restarts the VAX
@@ -381,6 +385,11 @@ int connectStageMs(int connectDeadlineMs, bool throughService)
 // The audio status refresh, which runs only while a receiver runs or a
 // playback problem awaits recovery.
 constexpr int kAudioStatusRefreshMs = 250;
+// 2026-10-16: how long speakers asked for before this computer's first
+// device list is in wait for it with no problem shown. Past it the wait
+// shows as the speaker problem, with Retry; the window's own retry keeps
+// asking, and the list's arrival still asks at once.
+constexpr qint64 kSpeakerDeviceListWaitMs = 10'000;
 // R-R3-23: how often the lossless link trial samples playback. Its windows
 // are RemoteAudioLinkTrial::kWindowMs long; a 1 s sample closes each within
 // a second of its end.
@@ -1673,8 +1682,11 @@ struct RemoteMediaController::Private {
     // told once. Any other request moves the revision past it.
     quint32 audioRetryRevision = 0;
     // 2026-10-16: the speakers wait for this computer's first device list
-    // (AudioEngine::speakersAwaitDeviceList); logged once per wait.
-    bool audioAwaitingDevices = false;
+    // (AudioEngine::speakersAwaitDeviceList): when the wait began (logged
+    // once), -1 when none is under way. A wait longer than
+    // speakerDeviceListWaitMs shows as the speaker problem.
+    qint64 audioAwaitingDevicesSinceMs = -1;
+    qint64 speakerDeviceListWaitMs = kSpeakerDeviceListWaitMs;
     // Test only: while held, a restart's backoff step that comes due is
     // kept here instead of running, and runs (through its own fence) once
     // released, so a test can order events against the step without
@@ -2002,20 +2014,24 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // 2026-10-16: speakers asked for before this computer's first device
         // list is in wait for it. That is no failure: no problem, no toast.
         // The list's arrival opens them and asks the Core again
-        // (speakersConfigChanged); the retry below asks meanwhile.
-        const bool awaitingDevices = fault == Fault::SpeakerOpenFailed && d->model
+        // (speakersConfigChanged); the retry below asks meanwhile. A list
+        // that has not come in after speakerDeviceListWaitMs is the
+        // speaker problem, with Retry, as any other failure to open.
+        const bool listPending = fault == Fault::SpeakerOpenFailed && d->model
             && d->model->audioEngine()->speakersAwaitDeviceList();
+        const qint64 now = d->clock.elapsed();
+        if (listPending && d->audioAwaitingDevicesSinceMs < 0) {
+            d->audioAwaitingDevicesSinceMs = now;
+            qCInfo(lcRemoteMedia) << "Remote audio waits for this computer's audio device list";
+        }
+        const bool awaitingDevices = listPending
+            && now - d->audioAwaitingDevicesSinceMs < d->speakerDeviceListWaitMs;
         // A failure the window's own retry met while the problem it retries
         // still shows: the operator has been told.
         const bool quiet = awaitingDevices
             || (d->audioFailure && d->audioRetryRevision != 0
                 && d->audioRetryRevision == d->audioRevision);
-        if (awaitingDevices) {
-            if (!std::exchange(d->audioAwaitingDevices, true)) {
-                qCInfo(lcRemoteMedia)
-                    << "Remote audio waits for this computer's audio device list";
-            }
-        } else {
+        if (!awaitingDevices) {
             // Record the failure against this session and context as they
             // stand now, before the disable below advances the audio revision.
             d->audioFailure = RemoteAudioFailure{fault, d->epoch, d->connectionId,
@@ -2029,6 +2045,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             } else {
                 qCWarning(lcRemoteMedia).noquote()
                     << QStringLiteral("Remote audio playback failed: %1").arg(reason);
+                if (listPending) {
+                    qCWarning(lcRemoteMedia)
+                        << "Remote audio: this computer's audio device list is still not in after"
+                        << d->speakerDeviceListWaitMs << "ms";
+                }
             }
         }
         d->audioEnabled = false;
@@ -2060,8 +2081,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // unmute would; the operator's Retry, a mute or a device change
         // still asks at once. A buffer too large for remote playback and a
         // decoder that cannot start wait for the operator's change: asking
-        // again changes neither.
-        if (fault != Fault::SpeakerCallbackTooLarge && fault != Fault::DecoderUnavailable) {
+        // again changes neither. Nor does it change a device format remote
+        // playback cannot play (channels, rate or sample type).
+        if (fault != Fault::SpeakerCallbackTooLarge && fault != Fault::DecoderUnavailable
+            && fault != Fault::SpeakerFormatUnsupported) {
             scheduleAudioRetry();
         }
         refreshAudioStatus();
@@ -2967,6 +2990,10 @@ QString RemoteMediaController::headphonesFaultText(RemoteAudioReceiver::Fault fa
     case Fault::DecoderUnavailable:
         return QStringLiteral("The audio decoder for the headphones could not start on "
                               "this computer. Choosing the audio quality again tries once more.");
+    case Fault::SpeakerFormatUnsupported:
+        return QStringLiteral("The headphones are set to a format remote playback cannot "
+                              "play. Choose another sample rate, channel setting or other "
+                              "headphones.");
     case Fault::NoPackets:
     case Fault::DecodeFailed:
     case Fault::ClockBuffer:
@@ -3916,7 +3943,7 @@ void RemoteMediaController::stop()
     d->audioRetryPending = false;
     ++d->audioRetryGeneration;
     d->audioRetryRevision = 0;
-    d->audioAwaitingDevices = false;
+    d->audioAwaitingDevicesSinceMs = -1;
     d->audioRestartBackoff.reset();
     d->headphonesRestartBackoff.reset();
     d->audioHeldForTransmit = false;       // R-R3-51
@@ -4572,6 +4599,11 @@ bool RemoteMediaController::audioRestartPendingForTest() const
     return d->audioRetryPending;
 }
 
+void RemoteMediaController::setSpeakerDeviceListWaitForTest(qint64 ms)
+{
+    d->speakerDeviceListWaitMs = ms;
+}
+
 void RemoteMediaController::holdAudioRestartForTest(bool held)
 {
     d->audioRestartHeldForTest = held;
@@ -4604,6 +4636,11 @@ void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault 
 {
     emit d->audio->restartRequested(QStringLiteral("Remote audio restart raised by a test"),
                                     fault);
+}
+
+void RemoteMediaController::raiseAudioFailureForTest(RemoteAudioReceiver::Fault fault)
+{
+    emit d->audio->errorOccurred(QStringLiteral("raised by a test"), fault);
 }
 
 void RemoteMediaController::updateDirectUpgrade(bool viaTunnel)
@@ -7212,7 +7249,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             d->audioEnabled = started;
             d->preparingAudio = false;
             if (d->audioEnabled) {
-                d->audioAwaitingDevices = false;
+                d->audioAwaitingDevicesSinceMs = -1;
                 qCInfo(lcRemoteMedia).noquote()
                     << QStringLiteral("Remote audio receiving: %1, context %2")
                            .arg(reportedAudioProfile(*context))

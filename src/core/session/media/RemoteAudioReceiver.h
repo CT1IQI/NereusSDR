@@ -6,6 +6,10 @@
 //               when the matcher has room for it (R-AUD-15, bench
 //               regression). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: Fault::SpeakerFormatUnsupported, for a device format remote
+//               playback cannot play: it lasts until the device or its
+//               format changes. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 #include "core/NereusCoreExport.h"
 #include "core/session/media/PcmAudioCodec.h"
 #include "core/session/media/IRemotePcmWorkerStage.h"
@@ -223,6 +227,9 @@ public:
     enum class Fault {
         SpeakerOpenFailed, SpeakerTimingUnavailable, SpeakerCallbackTooLarge,
         SpeakerStalled, SpeakerWriteFailed, DecoderUnavailable,
+        // 2026-10-16: begin refused the device's format (channels, rate or
+        // sample type); it lasts until the device or its format changes.
+        SpeakerFormatUnsupported,
         // R-R3-21: an arrival burst and a stream gap no longer end a
         // context (they re-anchor locally and count in linkInterruptions),
         // so they are no longer faults.

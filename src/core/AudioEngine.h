@@ -24,8 +24,9 @@
 //   2026-10-16 : openRemoteSpeakers() and speakersAwaitDeviceList(): a
 //                 remote window opens its speakers at window start, and
 //                 says when they wait for this computer's first device
-//                 list. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//                 Claude Code.
+//                 list. beginRemotePlayback() says why it refused
+//                 (RemotePlaybackRefusal). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-15 : isVaxTxBusOpen(); openVaxOutputs() opens the VAX TX
 //                 device in a remote window too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -402,6 +403,11 @@ struct AsioStatus {
 // carry neither (VAX design 6.3).
 enum class RemotePlaybackOutput : int { Speakers = 0, Headphones = 1 };
 
+// 2026-10-16: why beginRemotePlayback() refused. Format lasts until the
+// device or its format changes, so asking again cannot help; Unavailable
+// may clear by itself (the device comes back, the device list comes in).
+enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 };
+
 // R-R3-45: where the transmit monitor (MON) plays, chosen by the operator
 // beside the MON button. Independent of the receivers' own routes: MON is
 // how you sound on air, and it goes where you want to hear it.
@@ -677,8 +683,10 @@ public:
     // headphones output open (the Enabled box, or a remote window's start,
     // opens it) and fails in plain words when none is. A context on one
     // output never touches the other.
+    // `refusal`, when given, says why begin failed (None when it began).
     bool beginRemotePlayback(QString* error = nullptr,
-                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
+                             RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
+                             RemotePlaybackRefusal* refusal = nullptr);
     void endRemotePlayback(RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<AudioFormat> remotePlaybackFormat(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
@@ -1777,7 +1785,7 @@ private:
     // m_headphonesBusMutex, as m_remotePlayback is by the speakers'.
     bool m_remoteHeadphonesPlayback{false};
     AudioFormat m_remoteHeadphonesFormat;
-    bool beginRemoteHeadphonesPlayback(QString* error);
+    bool beginRemoteHeadphonesPlayback(QString* error, RemotePlaybackRefusal* refusal);
     // Test-injected TX input only (setTxInputBusForTest); production reads
     // the capture supervisor's reader. R-R3-36.
     std::unique_ptr<IAudioBus> m_txInputBus;

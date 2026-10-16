@@ -21,11 +21,12 @@
 //   schedule again from 250 ms.
 // - Outputs on "(platform default)" follow the system default output at
 //   once (R-AUD-12); a default change that names the device they play on
-//   (the first list of a run reports its default so) reopens nothing.  The mic on "(platform default)" follows the default
-//   input, never while transmitting (the change applies at unkey) and
-//   never to a Bluetooth mic (R-AUD-13); a Bluetooth default at start
-//   opens the built-in input, else another input that is not Bluetooth,
-//   else nothing.  The mic is always opened on an explicit device, never
+//   (the first list of a run reports its default so) reopens nothing.
+//   The mic on "(platform default)" follows the default input, never
+//   while transmitting (the change applies at unkey) and never to a
+//   Bluetooth mic (R-AUD-13); a Bluetooth default at start opens the
+//   built-in input, else another input that is not Bluetooth, else
+//   nothing.  The mic is always opened on an explicit device, never
 //   on "whatever the engine's default is", so the engine cannot pick a
 //   Bluetooth mic by itself (D6).
 // - VAX 1 to 4 on an empty device never open anything (never the system
