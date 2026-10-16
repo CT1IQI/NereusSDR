@@ -395,6 +395,10 @@ Advanced, and each control appears on one page only.
   on this computer write to its VAX TX device. Before, it sent the PC
   microphone instead. The TX row meter on its **VAX** applet now shows that
   audio.
+- In a remote window, a slice change the Core refuses goes back to the Core's
+  value, and the window shows the Core's reason. Before, the window could keep
+  a refused tune step until the next reconnect, and a refused change showed no
+  reason.
 
 ## [2026.10.0] - 2026-10-05
 
