@@ -198,6 +198,13 @@ The workspace look is now the default.
   that tab's filter edges back. Bypass and routing settings are kept.
 - On an Anvelina Pro 3, Ext2 is labeled **RX BYPASS on TX**.
 - The NNR quick controls stay on screen, and scroll when they don't fit.
+- The radio's firmware shows its second number where the radio reports one,
+  so an Anvelina Pro 3 on gateware 2.2.14 reads 22.14 instead of 22 and a
+  Hermes Lite 2 on 74.2 reads 74.2. It shows in the radio list, Add Custom
+  Radio, **Radio > Protocol Info**, the station block, **Diagnostics > Radio
+  Status** and support bundles, and a remote window or the phone shows the
+  number its Core sent. An ANAN-G2, and any radio that reports no second number, reads
+  as before.
 
 ### iPhone and iPad app
 
@@ -374,6 +381,14 @@ Advanced, and each control appears on one page only.
   drawn as text instead of color emoji.
 - On the Mac, a remote window can no longer hang when its microphone stops
   while Core Audio is slow to answer at startup.
+- On a Mac with a Protocol 2 radio, the transmit sender no longer waits on a
+  Core Audio lookup when the radio connects. Under load that lookup took a
+  quarter of a second to nearly two seconds, and no transmit samples went out
+  until it answered; a disconnect right after a connect waited for it too.
+- A remote window with **VAX TX** as its transmit source sends what programs
+  on this computer write to its VAX TX device. Before, it sent the PC
+  microphone instead. The TX row meter on its **VAX** applet now shows that
+  audio.
 
 ## [2026.10.0] - 2026-10-05
 
