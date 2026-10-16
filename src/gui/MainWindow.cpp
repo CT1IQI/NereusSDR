@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: The saved window geometry is restored last in the
+//               constructor, after the pans exist, so a window saved
+//               maximized composites its spectrum through QRhi on Linux
+//               (issue #525). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-15: A refused slice change from a remote window shows the Core's
 //               reason in a toast (NNR edits keep their own page message).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2012,6 +2017,25 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         saveMainWindowGeometry();
         AppSettings::instance().save();
     }, this);
+
+    // Issue #206 — restore last session's window position, size, and
+    // maximized/fullscreen state. The 1280×800 set in buildUI() stays as the
+    // first-launch fallback; restoreMainWindowGeometry() returns false
+    // when no saved blob exists or the blob is corrupted, in which
+    // case Qt centers the default size on the primary screen as before.
+    //
+    // Issue #525: this runs after the whole widget tree is built, never
+    // before the pans. Restoring a maximized or full-screen state calls
+    // setWindowState(), which gives a hidden window its native window at
+    // once, and Qt decides then whether the window composites its children
+    // through QRhi, by looking for a QRhiWidget in the tree. Run at the top
+    // of buildUI() it found none, so on Linux (where SpectrumWidget is not
+    // a native window of its own) every pan logged "QRhiWidget: No QRhi"
+    // and stayed blank. Qt looks again only when a widget arrives from
+    // another native window, and the pans are built inside this one. A
+    // window saved at normal size is created at show(), after the pans, and
+    // the maximized start now follows the same order.
+    restoreMainWindowGeometry();
 
     // ── Remote-daemon R2 Task 20: the remote gate, then the dial ─────────
     //
@@ -7535,12 +7559,9 @@ void MainWindow::buildUI()
     setMinimumSize(800, 600);
     resize(1280, 800);
 
-    // Issue #206 — restore last session's window position, size, and
-    // maximized/fullscreen state. The 1280×800 above stays as the
-    // first-launch fallback; restoreMainWindowGeometry() returns false
-    // when no saved blob exists or the blob is corrupted, in which
-    // case Qt centers the default size on the primary screen as before.
-    restoreMainWindowGeometry();
+    // Issue #206's restore of the saved position, size and state is not
+    // here any more: it runs last in the constructor (issue #525, see
+    // there).
 
     // --- Main QSplitter: spectrum (left) + container panel (right) ---
     // AetherSDR pattern: right panel is a proper layout element, not an overlay.
