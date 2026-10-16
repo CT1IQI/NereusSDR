@@ -9217,6 +9217,12 @@ nereus_add_test(tst_station_fifth_device
 nereus_add_test(tst_slice_access_verbs
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Where transmit lands when a phone takes it with tx.tune and no
+# tx.setTxSlice, its own slice restored at admission beside the Core's
+# slice (Pi 4 bench, 2026-10-14). No radio, no RF: the fake MOX is keyed.
+nereus_add_test(tst_phone_take_tx_slice
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 # Slice control and shared listening plan Task 7: zero slices is a valid
 # idle Core. The claims rule's close of the last unclaimed slice, the state
 # it leaves, a working new slice from zero, and every first-slice reader at
