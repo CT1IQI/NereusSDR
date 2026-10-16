@@ -61,6 +61,7 @@
 // =================================================================
 
 #include "core/session/MirrorSchema.h"
+#include "core/NereusCoreExport.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -76,7 +77,7 @@ namespace NereusSDR {
 class RadioModel;
 class StateMirror;
 
-class SliceAccess : public QObject {
+class NEREUS_CORE_EXPORT SliceAccess : public QObject {
     Q_OBJECT
     Q_PROPERTY(int sliceId READ sliceId CONSTANT)
     Q_PROPERTY(qint64 incarnation READ incarnation CONSTANT)
@@ -135,7 +136,7 @@ private:
     Fields m_fields;
 };
 
-class SliceAccessSet : public QObject {
+class NEREUS_CORE_EXPORT SliceAccessSet : public QObject {
     Q_OBJECT
 
 public:

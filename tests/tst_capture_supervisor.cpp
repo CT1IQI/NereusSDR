@@ -53,6 +53,8 @@
 //               early open deadline is measured from its arming, and the
 //               permission hold ends when the case says so.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: generation-tagged open-step diagnostic regression.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -970,6 +972,18 @@ private slots:
         options.openTimeoutMs = 500;                            // 10000 in production
         CaptureSupervisor supervisor(options);
         WarningWatch warned(QStringLiteral("the helper's last open step: devices listed at 12 ms"));
+        auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
+        QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
+        QCOMPARE(supervisor.status().reason, Reason::Timeout);
+        QCOMPARE(warned.count(), 1);
+    }
+
+    void openTimeoutIgnoresStaleAndMalformedTaggedSteps()
+    {
+        CaptureSupervisor::Options options = fakeOptions(QStringLiteral("hang-open-after-tagged-steps"));
+        options.openTimeoutMs = 500;
+        CaptureSupervisor supervisor(options);
+        WarningWatch warned(QStringLiteral("the helper's last open step: current query at 12 ms"));
         auto lease = supervisor.acquire(CaptureSupervisor::Demand::LocalSession);
         QVERIFY(waitForState(supervisor, State::Failed, kHelperStartMs));
         QCOMPARE(supervisor.status().reason, Reason::Timeout);

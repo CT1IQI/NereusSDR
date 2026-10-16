@@ -96,6 +96,7 @@
 #include <functional>
 
 #include "gui/SetupPage.h"
+#include "gui/NereusGuiExport.h"
 
 class QCheckBox;
 class QComboBox;
@@ -111,7 +112,7 @@ class StepAttenuatorController;
 class StepAttenuatorFacade;
 struct RadioInfo;
 
-class GeneralOptionsPage : public SetupPage {
+class NEREUS_GUI_EXPORT GeneralOptionsPage : public SetupPage {
     Q_OBJECT
 public:
     explicit GeneralOptionsPage(RadioModel* model, QWidget* parent = nullptr);

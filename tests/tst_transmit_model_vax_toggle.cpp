@@ -42,6 +42,14 @@
 
 using namespace NereusSDR;
 
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr bool kVaxSourceAvailableOnThisSystem = NereusSDR::TransmitModel::kVaxSourceAvailableOnThisSystem;
+} // namespace
+
 class TstTransmitModelVaxToggle : public QObject {
     Q_OBJECT
 
@@ -347,7 +355,7 @@ private slots:
 #else
         QVERIFY(m.vaxSourceAvailable());
 #endif
-        QCOMPARE(m.vaxSourceAvailable(), TransmitModel::kVaxSourceAvailableOnThisSystem);
+        QCOMPARE(m.vaxSourceAvailable(), kVaxSourceAvailableOnThisSystem);
     }
 
     // Without a VAX transmit device, a VAX pick and the VAX toggle fall

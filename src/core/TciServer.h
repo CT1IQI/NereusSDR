@@ -6,6 +6,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-10-14 - Live TX dial visibility by J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code: sliceDrivesTx names receiver
+//                0's slice while TX is on a slice the client cannot see.
 //   2026-10-12 - Dynamic receiver availability correction by J.J. Boyd
 //                (KG4VCF), AI-assisted via OpenAI Codex: exact mapped slice
 //                existence gates initial/query and live RX/TX availability.
@@ -463,6 +466,10 @@ public:
     // unguarded test-hook convention as injectAudioFrameForTest above.
     TciProtocol* protocolForTest() const { return m_protocol.get(); }
 
+    // Test-only: the shared RX and TX sensor timers' current intervals (ms).
+    int rxSensorTimerIntervalForTest() const { return m_rxSensorTimer->interval(); }
+    int txSensorTimerIntervalForTest() const { return m_txSensorTimer->interval(); }
+
 signals:
     // Emitted after the server begins listening.  port is the actual bound port
     // (useful when start() was called with port=0).
@@ -565,6 +572,12 @@ private slots:
                              const QVector<float>& interleavedIQ);
     int publishedIqRate() const;
 
+    // Sets the shared RX and TX sensor timers to the shortest interval among
+    // the apps still connected with sensors on (200 ms when none). Called
+    // from onClientDisconnected after the app's session is removed, and from
+    // stop() after every session is.
+    void updateSensorTimerIntervals();
+
     // Destroys all RESAMPLEF instances for the given session and clears the map.
     // Called from onClientDisconnected and stop().
     void cleanupResamplers(std::shared_ptr<TciClientSession>& session);
@@ -614,6 +627,10 @@ private slots:
     /// Codex review round 6, PR #293. tx_frequency must come from the slice
     /// TxSliceArbiter has bound TX to, not from slice 0. Before 3F they were
     /// always the same slice and the distinction did not exist.
+    ///
+    /// Desktop hosting: while TX is bound to a slice the client has no
+    /// receiver for (TciProtocol::announcesTxSlice), the slice whose dial
+    /// tx_frequency follows is receiver 0's, as the init burst reports.
     bool sliceDrivesTx(int sliceId) const;
 
     // hookGlobalBroadcasts wires the radio-global signals that aren't tied to

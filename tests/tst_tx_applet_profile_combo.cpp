@@ -17,7 +17,8 @@
 // J.2 — TxApplet 2-TONE button coverage:
 //   - Button is present, checkable, and visible.
 //   - Tooltip is set to the documented "Continuous or pulsed two-tone IMD test
-//     (configure in Setup → Test → Two-Tone)" string.
+//     (configure in Settings > Test > Two-Tone IMD)" string, naming the
+//     page as the Settings tree shows it.
 //   - Clicking with controller injected calls TwoToneController::setActive.
 //   - twoToneActiveChanged(false) signal un-checks the button (covers the
 //     BandPlanGuard rejection from Phase I.5 + the dependency-missing path).
@@ -259,11 +260,12 @@ private slots:
         RadioModel rm;
         TxApplet applet(&rm);
         const QString tip = applet.twoToneButton()->toolTip();
-        // Mention "two-tone" + "Setup" so we know the button explains what
-        // it does and where to configure it.
+        // Mention "two-tone" and the page's real path in the Settings tree
+        // (SetupDialog registers "Two-Tone IMD" under "Test") so we know the
+        // button explains what it does and where to configure it.
         QVERIFY2(tip.contains("two-tone", Qt::CaseInsensitive),
                  qPrintable("tooltip was: " + tip));
-        QVERIFY2(tip.contains("Setup", Qt::CaseInsensitive),
+        QVERIFY2(tip.contains(QStringLiteral("Settings > Test > Two-Tone IMD")),
                  qPrintable("tooltip was: " + tip));
     }
 

@@ -265,6 +265,8 @@ private slots:
         QSignalSpy pureSignalOpen(
             &pureSignal, &PureSignalApplet::openPureSignalDialogRequested);
         QSignalSpy txOpen(&tx, &TxApplet::openPureSignalDialogRequested);
+        QVERIFY(pureSignalOpen.isValid());
+        QVERIFY(txOpen.isValid());
         auto* calibrate = button(pureSignal, "PsAppletCalibrateBtn");
         auto* psa = button(tx, "TxAppletPsaBtn");
         emit calibrate->customContextMenuRequested(QPoint{});
