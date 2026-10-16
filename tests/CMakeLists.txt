@@ -1956,6 +1956,10 @@ target_compile_definitions(tst_master_output_widget PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_main_window_header_speaker_pick)
 target_compile_definitions(tst_main_window_header_speaker_pick PRIVATE NEREUS_BUILD_TESTS)
 
+# Issue #525: a window saved maximized gets its native window only after its
+# SpectrumWidgets exist, so Linux composites it with QRhi. No radio.
+nereus_add_test(tst_main_window_maximized_restore)
+
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:
 # construction, setMenuBar() re-parenting, masterOutput() accessor, and
