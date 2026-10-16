@@ -1428,6 +1428,11 @@ nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
 nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
 nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
 nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
+# A Core that has a radio saves a remote window's tune step for a slice that
+# is not its active one, under that slice's key, and brings it back after a
+# restart (found reviewing PR 517). A connection that sends nothing, a real
+# StationServer and a remote window over the loopback; no radio, no audio.
+nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
