@@ -1,5 +1,31 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  Fix wave 2: a program key under the
+//                                    screen key takes the VAX TX device
+//                                    before keyForProgram returns, with no
+//                                    second reader (aProgramAudioKeyUnder-
+//                                    TheScreenKeyTakesTheVaxDeviceAtOnce);
+//                                    the program test and the collector
+//                                    pause test wait on conditions, not a
+//                                    fixed time. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  Fix wave: a program key leaves the
+//                                    VAX TX device to the program and the
+//                                    VAX feed after it sends nothing old
+//                                    (aProgramAudioKeyLeavesTheVaxDevice-
+//                                    ToTheProgram); the VAX test's settle
+//                                    wait is a condition. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  VAX as the transmit source sends
+//                                    the VAX TX device's audio, at the
+//                                    local VAX path's level
+//                                    (vaxSourceSendsTheVaxTransmitAudio);
+//                                    the failed-capture and VOX-lease cases
+//                                    that used VAX as a no-preview source
+//                                    now prove VAX takes no capture and
+//                                    move the running line onto the
+//                                    microphone for the lease.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF  A receiver removed on the Core is not
 //                                    asked for a display again (a Core with
 //                                    a display budget).
@@ -158,6 +184,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QScopeGuard>
+#include <QThread>
 #include <QTimer>
 #include <QPushButton>
 #include "core/TxSliceArbiter.h"
@@ -632,6 +659,103 @@ private:
     qint64 m_lastPullMs{0};
     qint64 m_delivered{0};
 };
+
+// 2026-10-15: the remote window's VAX transmit device: what an app writes
+// to "NereusSDR TX", 48 kHz interleaved stereo float at its real rate
+// (AudioEngine::pullVaxTxMic's contract), a tone of `hz` with a different
+// level on each channel, so a downmix that is not the local one shows.
+class PacedVaxTxDevice final : public IAudioBus {
+public:
+    PacedVaxTxDevice(float left, float right, double hz) : m_left(left), m_right(right), m_hz(hz) {}
+    bool open(const AudioFormat& format) override
+    {
+        m_format = format;
+        m_open = true;
+        return true;
+    }
+    void close() override { m_open = false; }
+    bool isOpen() const override { return m_open; }
+    qint64 push(const char*, qint64) override { return 0; }
+    void flush() override {}
+    qint64 pull(char* data, qint64 maxBytes) override
+    {
+        // 2026-10-15 (fix wave 2): the device has one reader. Two reads at
+        // once, or a read from another thread once a program's pump (the
+        // marked thread) reads it, are counted.
+        if (m_inside.fetch_add(1) > 0) {
+            m_overlaps.fetch_add(1);
+        }
+        const auto leave = qScopeGuard([this] { m_inside.fetch_sub(1); });
+        const Qt::HANDLE program = m_programReader.load();
+        if (program != nullptr && QThread::currentThreadId() != program) {
+            m_otherReads.fetch_add(1);
+        }
+        if (!m_open || data == nullptr || maxBytes < 8) {
+            return 0;
+        }
+        if (!m_clock.isValid()) {
+            m_clock.start();
+        }
+        const qint64 due = m_clock.elapsed() * 48;
+        const qint64 frames = std::min(due - m_delivered, maxBytes / 8);
+        if (frames <= 0) {
+            return 0;
+        }
+        auto* out = reinterpret_cast<float*>(data);
+        for (qint64 i = 0; i < frames; ++i) {
+            const float s = static_cast<float>(std::sin(
+                2.0 * 3.14159265358979323846 * m_hz * static_cast<double>(m_delivered + i) / 48000.0));
+            out[2 * i] = m_left * s;
+            out[2 * i + 1] = m_right * s;
+        }
+        m_delivered += frames;
+        m_pulled.fetch_add(frames, std::memory_order_relaxed);
+        return frames * 8;
+    }
+    float rxLevel() const override { return 0.0f; }
+    float txLevel() const override { return 0.0f; }
+    QString backendName() const override { return QStringLiteral("PacedVaxTxDevice"); }
+    AudioFormat negotiatedFormat() const override { return m_format; }
+    qint64 pulledFrames() const { return m_pulled.load(std::memory_order_relaxed); }
+    /// From now on the calling thread is the program's pump, the device's
+    /// one reader; `false` ends that.
+    void setProgramReaderIsThisThread(bool on)
+    {
+        m_programReader.store(on ? QThread::currentThreadId() : nullptr);
+    }
+    int overlappingReads() const { return m_overlaps.load(); }
+    int readsBesideTheProgram() const { return m_otherReads.load(); }
+
+private:
+    float m_left;
+    float m_right;
+    double m_hz;
+    AudioFormat m_format;
+    bool m_open{false};
+    QElapsedTimer m_clock;
+    qint64 m_delivered{0};
+    std::atomic<qint64> m_pulled{0};
+    std::atomic<int> m_inside{0};
+    std::atomic<int> m_overlaps{0};
+    std::atomic<int> m_otherReads{0};
+    std::atomic<Qt::HANDLE> m_programReader{nullptr};
+};
+
+// The power of `hz` in 48 kHz samples (Goertzel), for telling two tones
+// apart.
+double tonePower(const std::vector<float>& samples, double hz)
+{
+    const double w = 2.0 * 3.14159265358979323846 * hz / 48000.0;
+    const double coeff = 2.0 * std::cos(w);
+    double s1 = 0.0;
+    double s2 = 0.0;
+    for (float x : samples) {
+        const double s0 = static_cast<double>(x) + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    return s1 * s1 + s2 * s2 - coeff * s1 * s2;
+}
 
 // 2026-10-10: a microphone paced as the PC microphone's reader is
 // (CaptureAudioBus::pull), on a clock the test moves: a pull gives at most
@@ -12273,6 +12397,300 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-10-15: VAX as the transmit source in a remote window. With VAX
+    // chosen the uplink carries the VAX transmit device's audio, never the
+    // PC microphone, and takes no microphone capture; with the PC
+    // microphone it carries the microphone as before. The VAX audio reaches
+    // the Core's ring at the level and in the form a local window's VAX
+    // path feeds its transmitter (AudioEngine::pullVaxTxMic: left and right
+    // averaged, no gain), measured against that path on the same signal.
+    void vaxSourceSendsTheVaxTransmitAudio_data()
+    {
+        QTest::addColumn<bool>("vax");
+        QTest::newRow("vax") << true;
+        QTest::newRow("pc microphone") << false;
+    }
+
+    void vaxSourceSendsTheVaxTransmitAudio()
+    {
+        QFETCH(bool, vax);
+        constexpr float kVaxLeft = 0.4f;
+        constexpr float kVaxRight = 0.2f;
+        constexpr double kVaxHz = 700.0;
+        constexpr float kMicAmplitude = 0.1f;
+        constexpr double kMicHz = 500.0;
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.declareRemoteTx = true;
+        attachRemoteMicrophone(h, kMicAmplitude, kMicHz);
+        auto device = std::make_unique<PacedVaxTxDevice>(kVaxLeft, kVaxRight, kVaxHz);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        const PacedVaxTxDevice* vaxDevice = device.get();
+        h.remote.audioEngine()->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        remoteMedia.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(daemonMedia.micReceiver() != nullptr, 5000);
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const QByteArray micDevice = daemonMedia.micDeviceId();
+        QVERIFY(h.station.remoteMicLineOpen(micDevice));
+        const MicSource source = vax ? MicSource::Vax : MicSource::Pc;
+        h.remote.transmitModel().setMicSource(source);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), source);
+        // Settled: the Core took the window's audio, and the idle line
+        // drains the chosen source (VAX read, or the microphone's preview
+        // lease held).
+        QTRY_VERIFY_WITH_TIMEOUT(
+            h.client.remoteTransmit()->acceptedMicSource() == RemoteMicSource::ClientAudio
+                && (vax ? vaxDevice->pulledFrames() > 0 : remoteMedia.micCaptureLeaseHeldForTest()),
+            5000);
+
+        h.station.setRemoteMicPriming(micDevice, true);
+        QVERIFY(feed->inUse());
+        remoteMedia.setHoldsTransmit(true);
+        QVERIFY(remoteMedia.micUplinkRunning());
+        // VAX takes no PC microphone capture; the microphone keeps its own.
+        QCOMPARE(remoteMedia.micCaptureLeaseHeldForTest(), !vax);
+        QTRY_VERIFY_WITH_TIMEOUT(feed->framesSinceInUse() >= 4 * RemoteMicConfig::kTargetDepthFrames,
+                                 5000);
+        // The ring's first blocks after the start are its lead.
+        pullFeed(feed, 10);
+        const std::vector<float> heard = pullFeed(feed, 20);
+        const double vaxPower = tonePower(heard, kVaxHz);
+        const double micPower = tonePower(heard, kMicHz);
+        // The level is the median of the ring's blocks' RMS: under load a
+        // block the ring ran short of is part silence and the splice after
+        // it rings, so neither the whole RMS nor the peak is the level.
+        std::vector<double> blockRms;
+        for (size_t at = 0; at + RemoteMicConfig::kPumpBlockFrames <= heard.size();
+             at += RemoteMicConfig::kPumpBlockFrames) {
+            double sum = 0.0;
+            for (int i = 0; i < RemoteMicConfig::kPumpBlockFrames; ++i) {
+                sum += static_cast<double>(heard[at + static_cast<size_t>(i)]) * heard[at + static_cast<size_t>(i)];
+            }
+            blockRms.push_back(std::sqrt(sum / RemoteMicConfig::kPumpBlockFrames));
+        }
+        std::sort(blockRms.begin(), blockRms.end());
+        const double level = blockRms[blockRms.size() / 2];
+        if (vax) {
+            QVERIFY2(vaxPower > 100.0 * micPower,
+                     qPrintable(QStringLiteral("VAX %1, microphone %2").arg(vaxPower).arg(micPower)));
+            QVERIFY(vaxDevice->pulledFrames() > 0);
+            // The local window's VAX path (TxWorkerThread's VAX override
+            // feeds the transmitter what pullVaxTxMic gives) on the same
+            // signal.
+            AudioEngine local;
+            auto localDevice = std::make_unique<FakeAudioBus>();
+            QVERIFY(localDevice->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+            constexpr int kFrames = 4800;
+            QByteArray stereo(kFrames * 8, '\0');
+            auto* out = reinterpret_cast<float*>(stereo.data());
+            for (int i = 0; i < kFrames; ++i) {
+                const float s = static_cast<float>(std::sin(
+                    2.0 * 3.14159265358979323846 * kVaxHz * i / 48000.0));
+                out[2 * i] = kVaxLeft * s;
+                out[2 * i + 1] = kVaxRight * s;
+            }
+            localDevice->setPullData(stereo);
+            local.setVaxTxBusForTest(std::move(localDevice));
+            std::vector<float> localMono(kFrames);
+            QCOMPARE(local.pullVaxTxMic(localMono.data(), kFrames), kFrames);
+            double localSum = 0.0;
+            for (float v : localMono) { localSum += static_cast<double>(v) * v; }
+            const double localRms = std::sqrt(localSum / kFrames);
+            // Left and right averaged: a 0.3 tone, where the left channel
+            // alone would be 0.4 (2.5 dB more).
+            QVERIFY2(std::abs(localRms - 0.3 / std::sqrt(2.0)) < 0.001,
+                     qPrintable(QString::number(localRms)));
+            qInfo("VAX uplink level %.4f, local VAX path %.4f", level, localRms);
+            QVERIFY2(std::abs(20.0 * std::log10(level / localRms)) < 0.5,
+                     qPrintable(QStringLiteral("uplink %1, local %2").arg(level).arg(localRms)));
+        } else {
+            QVERIFY2(micPower > 100.0 * vaxPower,
+                     qPrintable(QStringLiteral("VAX %1, microphone %2").arg(vaxPower).arg(micPower)));
+            QVERIFY2(std::abs(20.0 * std::log10(level / (kMicAmplitude / std::sqrt(2.0)))) < 0.5,
+                     qPrintable(QString::number(level)));
+        }
+        remoteMedia.setHoldsTransmit(false);
+        h.station.setRemoteMicPriming(micDevice, false);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-15 (fix wave): the VAX TX device has one reader. With VAX the
+    // transmit source and VOX armed, a program key that brings its own
+    // audio leaves the device alone (a remote window's rigctld key reads it
+    // for the program's audio), and the program's audio still reaches the
+    // Core. When the key ends with VAX still chosen and VOX still wanting
+    // the line, the uplink reads the VAX device again, and what an app
+    // wrote while nothing read it is not sent: the packets after the key
+    // are no more than the time since it.
+    void aProgramAudioKeyLeavesTheVaxDeviceToTheProgram()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.1f, 500.0);
+        auto device = std::make_unique<PacedVaxTxDevice>(0.1f, 0.1f, 700.0);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        const PacedVaxTxDevice* vaxDevice = device.get();
+        h.remote.audioEngine()->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
+        media.setVoxArmed(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        const qint64 beforeKey = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > beforeKey, 5000);
+
+        const std::optional<RemoteTransmitClient::Answer> answer = keyProgram(h, true);
+        QVERIFY(answer.has_value());
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QVERIFY(h.client.remoteTransmit()->programAudioKey());
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        // Nothing here reads the VAX device for the whole key.
+        const qint64 duringKey = vaxDevice->pulledFrames();
+        pushProgramChunks(media, 15, 0.25f);
+        QCOMPARE(vaxDevice->pulledFrames(), duringKey);
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 900);
+        const float highest = *std::max_element(heard.begin(), heard.end());
+        QVERIFY2(highest > 0.2f, qPrintable(QString::number(highest)));   // the program came
+        // Past the program's hold, the key still on: the device fills.
+        QTest::qWait(RemoteMediaController::kProgramAudioHoldMs + 100);
+        QCOMPARE(vaxDevice->pulledFrames(), duringKey);
+
+        QElapsedTimer sinceKey;
+        sinceKey.start();
+        const quint64 sentBefore = media.micPacketsSent();
+        h.client.remoteTransmit()->unkeyForProgram(answer->epoch);
+        QVERIFY(!h.client.remoteTransmit()->programAudioKey());
+        QVERIFY(media.micUplinkRunning());
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > duringKey, 5000);
+        QTest::qWait(10 * RemoteMediaController::kMicPumpIntervalMs);
+        // The collector reads on (not only the drop at the restart).
+        const qint64 resumed = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > resumed, 5000);
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        // 2026-10-15 (fix wave 2): the VAX feed's packets are waited for,
+        // not assumed within a fixed time (a starved collector thread).
+        QTRY_VERIFY_WITH_TIMEOUT(media.micPacketsSent() > sentBefore, 5000);
+        // 4 ms packets: no more than the time since the key, and some slack;
+        // the program run's backlog alone would be over 125.
+        const quint64 sentAfter = media.micPacketsSent() - sentBefore;
+        const qint64 elapsedMs = sinceKey.elapsed();
+        QVERIFY2(sentAfter <= quint64(elapsedMs * 48 / PcmAudioCodecConfig::kPacketFrames + 10),
+                 qPrintable(QStringLiteral("%1 packets in %2 ms").arg(sentAfter).arg(elapsedMs)));
+        media.setVoxArmed(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-15 (fix wave 2): with the screen key down and the line on
+    // VAX, a program key that brings its own audio does not move the key
+    // down, yet the collector is joined before keyForProgram returns: the
+    // program's pump reads the VAX device on its first tick right after,
+    // and nothing else reads it then or later in the key. When the program
+    // lets go with the screen key still down, the collector reads VAX
+    // again at once.
+    void aProgramAudioKeyUnderTheScreenKeyTakesTheVaxDeviceAtOnce()
+    {
+        const RestoreAudioChoice restore;
+        Test::RemoteAudioSessionHarness h;
+        // The collector's own thread (the harness collects inline).
+        RemoteMediaController::setMicCollectorInlineForTest(false);
+        const auto inlineAgain = qScopeGuard([] {
+            RemoteMediaController::setMicCollectorInlineForTest(true);
+        });
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        attachRemoteMicrophone(h, 0.1f, 500.0);
+        auto device = std::make_unique<PacedVaxTxDevice>(0.1f, 0.1f, 700.0);
+        QVERIFY(device->open(AudioFormat{48000, 2, AudioFormat::Sample::Float32}));
+        PacedVaxTxDevice* vaxDevice = device.get();
+        AudioEngine* engine = h.remote.audioEngine();
+        engine->setVaxTxBusForTest(std::move(device));
+        h.remote.transmitModel().setVaxSourceAvailable(true);
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        media.setAudioProfileChoice(RemoteAudioProfile::Lossless);
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(media.micLineOpen(), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT(daemon.micReceiver() != nullptr, 5000);
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        QVERIFY(takeTransmit(h));
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QTRY_COMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
+        RemoteTransmitClient* transmit = h.client.remoteTransmit();
+        transmit->setScreenKey(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        const qint64 beforeKey = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > beforeKey, 5000);
+        QVERIFY(media.micCollectorThreadRunningForTest());
+
+        std::optional<RemoteTransmitClient::Answer> answer;
+        transmit->keyForProgram(true, [&answer](const RemoteTransmitClient::Answer& a) { answer = a; });
+        // Right after the call, no event loop in between: the key is still
+        // the screen's, and the collector is already joined.
+        QVERIFY(transmit->micKeyDown());
+        QVERIFY(transmit->programAudioKey());
+        QVERIFY(!media.micCollectorThreadRunningForTest());
+        // The program's pump reads the device from its first tick on.
+        vaxDevice->setProgramReaderIsThisThread(true);
+        const qint64 atKey = vaxDevice->pulledFrames();
+        std::vector<float> scratch(960);
+        const std::vector<float> program(960, 0.25f);
+        engine->pullVaxTxMic(scratch.data(), 960);
+        for (int tick = 0; tick < 15; ++tick) {
+            QTest::qWait(20);
+            engine->pullVaxTxMic(scratch.data(), 960);
+            media.pushProgramAudio(program.data(), 960, 1, 48000);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(answer.has_value(), 5000);
+        QVERIFY2(answer->accepted, qPrintable(answer->reason));
+        QVERIFY(vaxDevice->pulledFrames() > atKey);   // the program's own reads
+        QCOMPARE(vaxDevice->readsBesideTheProgram(), 0);
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+        QVERIFY(!media.micCollectorThreadRunningForTest());
+        // The program's audio goes out.
+        RemoteMicFeed* feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        const std::vector<float> heard = pullFeed(feed, 900);
+        const float highest = *std::max_element(heard.begin(), heard.end());
+        QVERIFY2(highest > 0.2f, qPrintable(QString::number(highest)));
+
+        // The program stops reading, then lets go; the screen key stays.
+        vaxDevice->setProgramReaderIsThisThread(false);
+        transmit->unkeyForProgram(answer->epoch);
+        QVERIFY(!transmit->programAudioKey());
+        QVERIFY(transmit->micKeyDown());
+        QVERIFY(media.micCollectorThreadRunningForTest());
+        const qint64 afterKey = vaxDevice->pulledFrames();
+        QTRY_VERIFY_WITH_TIMEOUT(vaxDevice->pulledFrames() > afterKey, 5000);
+        QVERIFY(h.station.moxController()->isMox());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QCOMPARE(vaxDevice->overlappingReads(), 0);
+
+        transmit->setScreenKey(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // ---- 2026-10-08: TCI program keys that bring their own audio ----
 
     // Case A: a program key with its own audio (",tci") and a microphone
@@ -12814,7 +13232,15 @@ private slots:
         QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Failed);
         const quint32 failed = engine->captureStatus().generation;
 
+        // 2026-10-15: a key with VAX the source sends VAX and takes no
+        // capture at all; the running line moved onto the microphone takes
+        // the lease from no demand, which opens one generation by itself.
         media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QTest::qWait(10 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, failed);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
         QVERIFY(media.micUplinkRunning());
         QVERIFY(media.micCaptureLeaseHeldForTest());
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > failed, 5000);
@@ -12864,7 +13290,15 @@ private slots:
                                   CaptureSupervisor::Status::State::Failed, 5000);
         const quint32 failed = engine->captureStatus().generation;
 
+        // 2026-10-15: a key with VAX the source takes no lease and retries
+        // nothing; the running line moved onto the microphone takes a
+        // lease, which opens nothing by itself, so it retries once.
         media.setMicKeyDown(true);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QTest::qWait(10 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, failed);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
         QVERIFY(media.micUplinkRunning());
         QVERIFY(media.micCaptureLeaseHeldForTest());
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > failed, 5000);
@@ -13062,7 +13496,10 @@ private slots:
                                   CaptureSupervisor::Status::State::Ready,
                                   Test::kFakeCaptureChildStartMs);
         const quint32 generation = engine->captureStatus().generation;
-        QVERIFY(media.micCollectorThreadRunningForTest());
+        // 2026-10-15 (fix wave 2): Ready comes from the Test Mic demand,
+        // which can be before this window's preview takes its lease (the
+        // Core's answer to the source change); the collector is waited for.
+        QTRY_VERIFY_WITH_TIMEOUT(media.micCollectorThreadRunningForTest(), 5000);
         media.pumpMicUplinkForTest();
 
         g_remoteMediaMessages.clear();
@@ -13194,9 +13631,15 @@ private slots:
         QVERIFY(takeTransmit(h));
         const quint32 previewed = engine->captureStatus().generation;
 
-        // VOX takes the lease from no demand: one new generation, Failed.
+        // 2026-10-15: VOX with VAX the source streams VAX and takes no
+        // capture; moved onto the microphone, the line takes the lease
+        // from no demand: one new generation, Failed.
         media.setVoxArmed(true);
         QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
+        QTest::qWait(10 * RemoteMediaController::kMicPumpIntervalMs);
+        QCOMPARE(engine->captureStatus().generation, previewed);
+        h.remote.transmitModel().setMicSource(MicSource::Pc);
         QVERIFY(media.micCaptureLeaseHeldForTest());
         QTRY_VERIFY_WITH_TIMEOUT(engine->captureStatus().generation > previewed, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(engine->captureStatus().state,
@@ -13221,6 +13664,10 @@ private slots:
         QCOMPARE(engine->captureStatus().generation, generation);
         QCOMPARE(engine->captureStatus().state, CaptureSupervisor::Status::State::Failed);
 
+        // Back on VAX, VOX still armed: the lease goes.
+        h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QVERIFY(media.micUplinkRunning());
+        QVERIFY(!media.micCaptureLeaseHeldForTest());
         media.setVoxArmed(false);
         QVERIFY(!media.micUplinkRunning());
         QVERIFY(!media.micCaptureLeaseHeldForTest());
@@ -13287,6 +13734,9 @@ const QStringList kAudioFunctions{
     QStringLiteral("micLineOnlyWithACoreThatTakesTheMicrophone"),
     QStringLiteral("micUplinkRunsOnlyWhileTransmittingOrVoxArmed"),
     QStringLiteral("microphoneAndProgramReachTheCoresRing"),
+    QStringLiteral("vaxSourceSendsTheVaxTransmitAudio"),
+    QStringLiteral("aProgramAudioKeyLeavesTheVaxDeviceToTheProgram"),
+    QStringLiteral("aProgramAudioKeyUnderTheScreenKeyTakesTheVaxDeviceAtOnce"),
     QStringLiteral("aProgramAudioKeyWithNoMicrophoneIsAdmittedOnSilence"),
     QStringLiteral("aProgramAudioKeyNeverSendsTheMicrophone"),
     QStringLiteral("aProgramAudioLapseSendsSilenceNotTheMicrophone"),

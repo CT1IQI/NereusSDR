@@ -17,6 +17,9 @@
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
 //                                    OpenAI Codex.
+//   2026-10-12  J.J. Boyd / KG4VCF  The radio's second firmware number: the
+//                                    hello declares firmwareBeta.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  R-DISP-RETUNE (third wave): the hello
 //                                    declares spectrumPicture.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -1016,6 +1019,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // R-DISP-RETUNE: this client reads the picture a spectrum context
     // continues, when the Core states it.
     m_declaredFeatures.insert(QByteArrayLiteral("spectrumPicture"), 1);
+    // This client words the firmware release of the Core's radio with its
+    // second number, when the Core sends it (the model reads it from the
+    // capabilities).
+    m_declaredFeatures.insert(QByteArrayLiteral("firmwareBeta"), 1);
     // Each transmit verb goes out as the same command three times (the
     // copies rule); the Core acts on the first and answers every copy.
     m_remoteTransmit = new RemoteTransmitClient(

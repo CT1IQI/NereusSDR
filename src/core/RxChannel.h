@@ -728,14 +728,24 @@ public:
     void setAmsqThresh(double dB);
 
     // Squelch — FM (WDSP FMSQ module)
-    // From Thetis Project Files/Source/Console/radio.cs:1274-1329
-    // WDSP: third_party/wdsp/src/fmsq.c:236,244
-    // threshold: linear 0..1 (Thetis fm_squelch_threshold = 1.0f, NOT dB)
-    // SliceModel m_fmsqThresh{-150.0} is in dB and must be converted:
-    //   linear = pow(10.0, dB / 20.0)
+    // From Thetis Project Files/Source/Console/radio.cs:1274-1329 [v2.10.3.15]
+    // WDSP: third_party/wdsp/src/fmsq.c:239,247
+    // WDSP takes a linear threshold (Thetis fm_squelch_threshold = 1.0f).
+    // SliceModel fmsqThresh is Thetis's -160..0 squelch slider position;
+    // setFmsqThresh sends fmsqThresholdForWdsp(value).
     bool fmsqEnabled() const { return m_fmsqEnabled.load(); }
     void setFmsqEnabled(bool enabled);
-    void setFmsqThresh(double dB);  // converts dB → linear before WDSP call
+    void setFmsqThresh(double dB);  // slider value -160..0, mapped for WDSP
+    // The threshold setFmsqThresh sends to SetRXAFMSQThreshold for a slider
+    // value, from Thetis console.cs:47295-47304 [v2.10.3.15]:
+    // n = (int)(((value + 160) / 160f) * 100f), threshold = 10^(-2n/100),
+    // so -160 sends 1.0 (opens most easily) and 0 sends 0.01 (tightest).
+    static double fmsqThresholdForWdsp(double sliderValue);
+    // Thetis's 0-100 squelch number n for a slider value (held to -160..0
+    // first), from console.cs:47296-47298 [v2.10.3.15]. fmsqThresholdForWdsp
+    // sends 10^(-2n/100); Setup > DSP > FM shows n, as Thetis's SQL button
+    // text does (console.cs:47318).
+    static int fmsqScaleValue(double sliderValue);
 
     // --- Audio panel (mute / pan / binaural) ---
 

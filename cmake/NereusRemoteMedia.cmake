@@ -71,6 +71,11 @@
 #               (PortAudio's, on Windows) is still read as LF. J.J. Boyd
 #               (KG4VCF), with AI-assisted implementation via Anthropic
 #               Claude Code.
+#   2026-10-16: libdatachannel-0007, applied to MinGW builds only, locks
+#               each of the library's shared mutexes once when it is made,
+#               so winpthreads' lazy rwlock setup is never raced on Windows.
+#               J.J. Boyd (KG4VCF), with AI-assisted implementation via
+#               Anthropic Claude Code.
 #
 # =================================================================
 
@@ -291,6 +296,13 @@ function(nereus_add_remote_media_dependency)
         "libdatachannel-0005-defer-dtls-startup.patch")
     _nereus_apply_vendor_patch("${_dc_build_source}"
         "libdatachannel-0006-recheck-pool-queue-while-idle.patch")
+    # MinGW only: there libstdc++'s std::shared_mutex is a winpthreads rwlock,
+    # whose lazy setup on first lock two threads can race (the loser runs
+    # without the lock). Other toolchains keep the library as it was.
+    if(MINGW)
+        _nereus_apply_vendor_patch("${_dc_build_source}"
+            "libdatachannel-0007-lock-shared-mutexes-once-when-made.patch")
+    endif()
 
     # These are function-scope normal variables. They configure only the
     # nested project and leave the parent cache, BUILD_SHARED_LIBS, and later

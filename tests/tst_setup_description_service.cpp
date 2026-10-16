@@ -1546,6 +1546,36 @@ private slots:
         }
     }
 
+    // Radio Info's firmware row carries the radio's second firmware number
+    // where the radio reported one, so a phone or a window on this Core can
+    // tell one release from the next (22.14 from 22.15). A radio that
+    // reported none reads as before.
+    void radioInfoFirmwareCarriesTheSecondNumber()
+    {
+        RadioInfo info;
+        info.name = QStringLiteral("Anvelina Pro 3");
+        info.boardType = HPSDRHW::OrionMKII;
+        info.protocol = ProtocolVersion::Protocol2;
+        info.firmwareVersion = 22;
+        info.firmwareBetaVersion = 14;
+        const BoardCapabilities board = BoardCapsTable::forBoard(HPSDRHW::OrionMKII);
+        SetupDescriptionService service;
+        service.setRadioContext(board, HPSDRModel::ANVELINAPRO3, info);
+        const auto firmwareRow = [&service]() {
+            return rowsOf(pageById(projectedCategory(service.hardware(), 13),
+                                   "hardware.radioInfo")).at(4).toObject();
+        };
+        QCOMPARE(firmwareRow().value("id"), QJsonValue("hardware.radioInfo.firmware"));
+        QCOMPARE(firmwareRow().value("value"), QJsonValue("22.14"));
+        const RadioInfoFacts facts = radioInfoFacts(info, board, HPSDRModel::ANVELINAPRO3);
+        QVERIFY2(facts.supportText().contains(QStringLiteral("Firmware: 22.14\n")),
+                 qPrintable(facts.supportText()));
+
+        info.firmwareBetaVersion = 0;
+        service.setRadioContext(board, HPSDRModel::ANVELINAPRO3, info);
+        QCOMPARE(firmwareRow().value("value"), QJsonValue("22"));
+    }
+
     // Version 13: Hardware Config's Radio Info (the Core's radio, as the
     // desktop tab shows it), TX Display Cal and the HL2's N2ADR switch.
     void hardwareV13PublishesRadioInfoCalibrationAndN2adr()

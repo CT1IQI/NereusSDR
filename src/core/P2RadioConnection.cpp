@@ -170,6 +170,11 @@
 //                TxIqNativeDest.h, shared with the Protocol 1 EP2 sender.
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - On the Mac the transmit I/Q send thread is raised to
+//                USER_INTERACTIVE QoS without the output device's audio
+//                workgroup, whose Core Audio lookup could hold up the first
+//                frames and stopTxIqSender's join. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //
@@ -2848,15 +2853,33 @@ void P2RadioConnection::stopTxIqSender()
 void P2RadioConnection::txIqSenderMain()
 {
     // Priority as the TX pump has it (TxWorkerThread::run): in nereusd on
-    // Linux thread placement gives this thread a core and raised priority
-    // while transmitting (R-R3-41); elsewhere it runs at audio priority, as
+    // Linux thread placement owns this thread (R-R3-41, role TxIqSender).
+    // While transmitting it gets a signal core and raised priority only if
+    // one is left after the first receiver, the DSP thread and the two
+    // transmit workers. On the Pi 4 (two signal cores) and the Rock (four
+    // fast cores) none is, so it runs on the housekeeping cores at nice 0,
+    // as it does while receiving. Elsewhere it runs at audio priority, as
     // Thetis's ob_main runs at "Pro Audio" (obbuffs.c:155-158 [v2.10.3.15]).
+    //
+    // On the Mac that is USER_INTERACTIVE QoS without joining the default
+    // output device's audio workgroup, as P1's EP2 sender does. This thread
+    // does no work for that device's I/O cycle, and finding the workgroup
+    // is a Core Audio query (the first in a process starts the audio server
+    // connection) that took 0.25 to 1.9 s under load: no transmit I/Q went
+    // out until it returned, and stopTxIqSender's join on disconnect waited
+    // for it. Under load tst_p2_tx_iq_send_realtime saw the first frame
+    // about 580 ms late (2026-10-15). prio stays nullptr, which
+    // leaveAudioThreadPriority takes as a no-op.
     const bool placed = ThreadPlacement::managesThreadPriority();
     AudioPriorityToken* prio = nullptr;
     if (placed) {
         ThreadPlacement::instance().registerCurrentThread(ThreadRole::TxIqSender);
     } else {
+#ifdef Q_OS_MAC
+        elevateLatencyCriticalThreadPriority(/*logSuccess=*/false);
+#else
         prio = elevateAudioThreadPriority();
+#endif
     }
 
     TxIqNativeDest dest;
