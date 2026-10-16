@@ -1095,13 +1095,15 @@ pre {
 
 /* SpectrumStatusOverlay: 108 x 22 at 8 px from the top and 8 px left of the
    dBm strip; #0c0c0e at 240 with a #1f1f23 edge, radius 3. The channel tag
-   is 36 x 14, the TX pill 60 x 14, mono bold 11 px. PanadapterApplet raises
-   it over the SpectrumWidget, so it sits above the flag. */
+   is 36 x 14, the TX pill 60 x 14, mono bold 11 px. The receiver flags stay
+   on top: PanadapterApplet::applyStatusOverlayMask cuts the strip out of the
+   flag and lock button area (VfoWidget::occupiedRegion), and initPan sets
+   the same cut as a clip path. */
 .pstat {
   position: absolute;
   top: 8px;
   right: calc(var(--strip-w) + 8px);
-  z-index: 4;
+  z-index: 2;
   display: flex;
   gap: 4px;
   width: 108px;
@@ -1601,9 +1603,8 @@ pre {
 /* The fold ladder (ChromeBarItems rungs): the system tile leaves first, then
    CAT and TCI, the channel chain, AGC and TNF. The overflow chip appears once
    anything has folded. Rung 0 never folds in the program; on a phone the site
-   also drops the station block and the overload slot (fold-site), the
-   channel and TX badges over the pan, and the title bar's RADIO, PC and
-   name, so the rest stays readable. */
+   also drops the station block and the overload slot (fold-site) and the
+   title bar's RADIO, PC and name, so the rest stays readable. */
 @media (max-width: 1180px) {
   .banner .fold-1 { display: none; }
   .banner__more { display: inline-block; }
@@ -1629,7 +1630,6 @@ pre {
 
 @media (max-width: 640px) {
   .banner .fold-site { display: none; }
-  .pstat { display: none; }
   .app-title__name { display: none; }
   .app-title__utc { margin-right: 4px; }
 }
@@ -2908,9 +2908,25 @@ html:not(.js) .tabs {
 .core__cards a { font-size: 0.9rem; }
 .desktop .app { margin-top: 2rem; }
 
-@media (min-width: 861px) and (max-width: 1100px) {
+/* The inline menu needs about 950 px at its full size. Below about 1220 px it
+   wrapped to two lines, and below about 1000 px it ran past the viewport
+   (34 px over at 900 px), so it steps down in three bands until the menu
+   toggle takes over at 860 px. Each band keeps every link on one line. */
+@media (min-width: 1080px) and (max-width: 1219px) {
   .nav__menu { gap: 0.35rem; }
-  .nav__menu a { padding-inline: 0.45rem; font-size: 0.8rem; }
+  .nav__menu a { padding-inline: 0.45rem; font-size: 0.8rem; white-space: nowrap; }
+}
+
+@media (min-width: 941px) and (max-width: 1079px) {
+  .nav__menu { gap: 0.1rem; }
+  .nav__menu a { padding-inline: 0.3rem; font-size: 0.72rem; letter-spacing: 0.03em; white-space: nowrap; }
+  .nav__menu .nav__gh { margin-left: 0.2rem; }
+}
+
+@media (min-width: 861px) and (max-width: 940px) {
+  .nav__menu { gap: 0.05rem; }
+  .nav__menu a { padding-inline: 0.25rem; font-size: 0.68rem; letter-spacing: 0.02em; white-space: nowrap; }
+  .nav__menu .nav__gh { margin-left: 0.15rem; }
 }
 @media (max-width: 1100px) {
   .hero__grid { grid-template-columns: minmax(0, 1fr) 235px; gap: 2rem; }

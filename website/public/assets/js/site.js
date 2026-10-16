@@ -739,6 +739,7 @@
     var levelCanvas = vfoEl.querySelector('[data-vfo-level]');
     var levelCtx = levelCanvas.getContext('2d');
     var fbtnsEl = pan.querySelector('[data-vfo-fbtns]');
+    var pstatEl = pan.querySelector('[data-pstat]');
     var dashMode = document.querySelector('[data-dash-mode]');
     var dashBw = document.querySelector('[data-dash-bw]');
     var toggleBtn = inert ? inert.querySelector('.ovl__btn--toggle') : null;
@@ -1247,12 +1248,39 @@
       var bx = onLeft ? x + flagW + 2 * scale : x - 22 * scale;
       bx = clamp(bx, 0, PW - 20 * scale);
       fbtnsEl.style.transform = 'translateX(' + bx.toFixed(1) + 'px) scale(' + scale + ')';
+      maskStatus([[x, 0, flagW, vfoEl.offsetHeight * scale], [bx, 0, 20 * scale, 20 * scale]]);
 
       // The VFO triangle hangs from the flag's bottom edge.
       var triTop = Math.min(Math.round(vfoEl.offsetHeight * scale), specH - 10);
       triEl.style.transform = 'translate(' + xv.toFixed(1) + 'px, ' + triTop + 'px)';
 
       freqOut.textContent = fmtVfo(vfo.f);
+    }
+
+    // PanadapterApplet::applyStatusOverlayMask: the CH / TX strip is cut out
+    // wherever the flag or its lock button covers it, so the flag shows whole.
+    function maskStatus(rects) {
+      if (!pstatEl) {
+        return;
+      }
+      var sx = pstatEl.offsetLeft;
+      var sy = pstatEl.offsetTop;
+      var sw = pstatEl.offsetWidth;
+      var sh = pstatEl.offsetHeight;
+      var d = 'M0 0H' + sw + 'V' + sh + 'H0Z';
+      var cut = false;
+      rects.forEach(function (r) {
+        var x0 = Math.max(0, r[0] - sx);
+        var y0 = Math.max(0, r[1] - sy);
+        var x1 = Math.min(sw, r[0] + r[2] - sx);
+        var y1 = Math.min(sh, r[1] + r[3] - sy);
+        if (x1 > x0 && y1 > y0) {
+          d += 'M' + x0.toFixed(1) + ' ' + y0.toFixed(1) + 'H' + x1.toFixed(1) +
+            'V' + y1.toFixed(1) + 'H' + x0.toFixed(1) + 'Z';
+          cut = true;
+        }
+      });
+      pstatEl.style.clipPath = cut ? "path(evenodd, '" + d + "')" : '';
     }
 
     function setTarget(f, mode, snapNow) {
