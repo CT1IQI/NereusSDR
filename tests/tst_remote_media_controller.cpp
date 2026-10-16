@@ -2,8 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-10-16  J.J. Boyd / KG4VCF  A display allocation pending across
 //                                    a media move is asked again on the
-//                                    new connection. AI-assisted via
-//                                    Anthropic Claude Code.
+//                                    new connection; a lost re-ask still
+//                                    times out and releases. AI-assisted
+//                                    via Anthropic Claude Code.
 //   2026-10-16  J.J. Boyd / KG4VCF  The pixel-grant rows place their pans
 //                                    with applyLayout so each fills the
 //                                    600 px stack; the crop row's 4 kHz
@@ -5981,13 +5982,18 @@ private slots:
     void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth_data()
     {
         QTest::addColumn<bool>("removePan");
-        QTest::newRow("slice-rebind") << false;
-        QTest::newRow("pan-removal") << true;
+        QTest::addColumn<bool>("reaskLost");
+        QTest::newRow("slice-rebind") << false << false;
+        QTest::newRow("pan-removal") << true << false;
+        // The re-ask's answer is lost too: the acknowledgement timeout
+        // still releases the closed display.
+        QTest::newRow("re-ask-lost") << false << true;
     }
 
     void retiredPendingDisplayAfterPeerReplacementReleasesBeforeSurvivorGrowth()
     {
         QFETCH(bool, removePan);
+        QFETCH(bool, reaskLost);
         // A genuine accepted result is held on the old media connection,
         // then delivered after both production controllers promote a peer.
         // The window asks again on the new connection (2026-10-16), so
@@ -6096,17 +6102,22 @@ private slots:
         QTRY_COMPARE(stationLink->held.size(), 2);
         // No identities or result fields are manufactured: the first is the
         // original Core reply, now fenced out by the promoted connection.
+        if (reaskLost) { stationLink->held.removeLast(); }
         stationLink->releaseHeld();
-        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 3);
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")),
+                     reaskLost ? 2 : 3);
         const QJsonObject oldResult =
             controlsFor(inbound, QStringLiteral("allocation-result")).at(1);
         QCOMPARE(oldResult.value(QStringLiteral("connectionId")).toString(), oldConnection);
         QCOMPARE(quint32(oldResult.value(QStringLiteral("revision")).toDouble()), pendingRevision);
-        const QJsonObject againResult = lastControl(inbound, QStringLiteral("allocation-result"));
-        QCOMPARE(againResult.value(QStringLiteral("connectionId")).toString(),
-                 controller.mediaConnectionId());
-        QCOMPARE(quint32(againResult.value(QStringLiteral("revision")).toDouble()),
-                 pendingRevision + 1);
+        if (!reaskLost) {
+            const QJsonObject againResult =
+                lastControl(inbound, QStringLiteral("allocation-result"));
+            QCOMPARE(againResult.value(QStringLiteral("connectionId")).toString(),
+                     controller.mediaConnectionId());
+            QCOMPARE(quint32(againResult.value(QStringLiteral("revision")).toDouble()),
+                     pendingRevision + 1);
+        }
 
         QPointer<SpectrumWidget> retiredWidget(widget);
         if (removePan) {
@@ -6123,8 +6134,18 @@ private slots:
             if (timer->interval() == 100) { subscriptionTimer = timer; break; }
         }
         QVERIFY(subscriptionTimer);
-        // The answered endpoint is released at once; no pending gate is left.
         QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout", Qt::DirectConnection));
+        if (reaskLost) {
+            // Still waiting on the lost re-ask: nothing is released or grown
+            // until its acknowledgement times out.
+            QCOMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 0);
+            QCOMPARE(countControl(outbound, QStringLiteral("subscribe")), 3);
+            QVERIFY(widget->renderedPixels().isEmpty());
+            nowMs = 10'000;
+            QVERIFY(QMetaObject::invokeMethod(subscriptionTimer, "timeout",
+                                              Qt::DirectConnection));
+        }
+        // The answered endpoint is released at once; no pending gate is left.
         QTRY_COMPARE(countControl(outbound, QStringLiteral("unsubscribe")), 1);
         const QJsonObject release = lastControl(outbound, QStringLiteral("unsubscribe"));
         QCOMPARE(release.value(QStringLiteral("connectionId")).toString(), controller.mediaConnectionId());
@@ -6150,7 +6171,8 @@ private slots:
         // the new binding, even after its own reservation was confirmed.
         stationLink->passNextAllocationResult();
         QVERIFY(server.sendMediaControl(oldResult, server.mediaSessionEpoch()));
-        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")), 6);
+        QTRY_COMPARE(countControl(inbound, QStringLiteral("allocation-result")),
+                     reaskLost ? 5 : 6);
         QCOMPARE(controller.activeEndpointCount(), 1);
         QCOMPARE(daemon.activeEndpointCount(), 1);
 
