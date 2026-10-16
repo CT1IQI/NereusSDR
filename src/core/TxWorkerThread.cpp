@@ -10,6 +10,11 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-15 - startPump starts the worker without a Qt priority on
+//                 macOS, so run()'s USER_INTERACTIVE QoS elevation is no
+//                 longer refused. Finding and measurement by Martin
+//                 Fischer (OE5SOS) in Longpath PR 174. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-09-27 - R-IOS-13, R-R3-42 by J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. The remote microphone ring is
 //                 pulled with the send ring's fill; a block it sheds for
@@ -331,7 +336,21 @@ void TxWorkerThread::startPump()
     qCInfo(lcTxWorker) << "startPump: launching worker thread"
                        << "blockFrames=" << kBlockFrames
                        << "(semaphore-wake, fexchange0)";
+#ifdef Q_OS_MAC
+    // No Qt priority on macOS. For an explicit priority Qt sets the new
+    // thread's scheduling parameters, and Darwin then refuses
+    // pthread_set_qos_class_self_np with EPERM, so the USER_INTERACTIVE
+    // elevation in run() failed and the mic feeder ran at
+    // QOS_CLASS_UNSPECIFIED while transmitting. Measured 2026-10-15 on
+    // Apple Silicon, Qt 6 (same result as Longpath PR 174, OE5SOS):
+    //   start()                      set -> 0   QoS 0x21 USER_INTERACTIVE
+    //   start(HighPriority)          set -> 1   QoS 0x00 UNSPECIFIED
+    //   start(TimeCriticalPriority)  set -> 1   QoS 0x00 UNSPECIFIED
+    // RxDspWorker's thread starts the same way (RadioModel: start()).
+    QThread::start();
+#else
     QThread::start(QThread::HighPriority);
+#endif
 }
 
 void TxWorkerThread::stopPump()

@@ -682,7 +682,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
     m_receiverNextTimestamp.fill(0);
     m_shared->join(this);
     m_sendTimer.setInterval(kDisplaySenderIntervalMs);
-    connect(&m_sendTimer, &QTimer::timeout, this, &DaemonMediaController::onSendTick);
+    connect(&m_sendTimer, &QTimer::timeout, this, &DaemonMediaController::onSendTimerTurn);
     m_audioDiagnosticsTimer.setInterval(kAudioDiagnosticsLogIntervalMs);
     connect(&m_audioDiagnosticsTimer, &QTimer::timeout, this, [this] {
         maybeLogAudioDiagnostics(false);
@@ -983,13 +983,28 @@ DaemonDisplayDiagnostics DaemonMediaController::displayDiagnostics() const
     return m_displayDiagnostics;
 }
 
+namespace {
+
+// A gap between sender turns in milliseconds to one decimal, -1 for none,
+// as the audio diagnostics line writes its send gaps.
+QString senderGapMs(qint64 gapUs)
+{
+    constexpr double kUsPerMs = 1000.0;
+    return gapUs < 0 ? QStringLiteral("-1")
+                     : QString::number(static_cast<double>(gapUs) / kUsPerMs, 'f', 1);
+}
+
+} // namespace
+
 QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics)
 {
     return QStringLiteral("largestKeyframe=%1 bytes/%2 fragments"
                           " largestDelta=%3 bytes/%4 fragments"
                           " maxFragments=%5 sendRefusals=%6 transportErrors=%7"
                           " queuedLate=%8 keyframeRequests=%9"
-                          " keyframeRequestsRefused=%10")
+                          " keyframeRequestsRefused=%10"
+                          " sourceFramesReplaced=%11 panFramesReplaced=%12"
+                          " senderGapMaxMs=%13")
         .arg(diagnostics.displayMaxKeyframeBytes)
         .arg(IMediaTransport::sctpFragmentCount(diagnostics.displayMaxKeyframeBytes))
         .arg(diagnostics.displayMaxDeltaBytes)
@@ -999,7 +1014,10 @@ QString daemonDisplayDiagnosticsLine(const DaemonDisplayDiagnostics& diagnostics
         .arg(diagnostics.displayTransportErrors)
         .arg(diagnostics.displayQueuedLate)
         .arg(diagnostics.displayKeyframeRequests)
-        .arg(diagnostics.displayKeyframeRequestsRefused);
+        .arg(diagnostics.displayKeyframeRequestsRefused)
+        .arg(diagnostics.displaySourceFramesReplaced)
+        .arg(diagnostics.displayPanFramesReplaced)
+        .arg(senderGapMs(diagnostics.displaySenderGapMaxUs));
 }
 
 void DaemonMediaController::recordDisplaySent(const QByteArray& spectrumFrame, bool keyframe)
@@ -1060,10 +1078,16 @@ void DaemonMediaController::logDisplayDiagnostics(bool final)
     m_displayDiagnosticsLogged = m_displayDiagnostics;
     // Control logging lane: the media connection's SCTP rtt rides along.
     const std::optional<qint64> rtt = m_peer ? m_peer->rttMs() : std::nullopt;
+    // The longest gap between sender turns since the line before this one
+    // rides along too. Like the rtt it writes no line by itself, so a Core
+    // with nothing new to report stays quiet; only a line really written
+    // takes it.
     qCInfo(lcDaemonMedia).noquote()
-        << QStringLiteral("daemon display diagnostics %1 %2 mediaRttMs=%3")
+        << QStringLiteral("daemon display diagnostics %1 %2"
+                          " senderGapMaxSinceLastMs=%3 mediaRttMs=%4")
                .arg(final ? QStringLiteral("final") : QStringLiteral("periodic"),
                     daemonDisplayDiagnosticsLine(m_displayDiagnostics),
+                    senderGapMs(std::exchange(m_senderGapMaxSinceLoggedUs, qint64{-1})),
                     rtt ? QString::number(*rtt) : QStringLiteral("none"));
 }
 
@@ -1993,6 +2017,8 @@ bool DaemonMediaController::handleStart(const QJsonObject& control)
     MediaPeer* const peer = m_peer.get();
     m_displayDiagnostics = {};
     m_displayDiagnosticsLogged = {};
+    m_lastSenderTurnNs.reset();
+    m_senderGapMaxSinceLoggedUs = -1;
     m_loggedTransportErrorKinds.clear();
     m_displayDiagnosticsTimer.start();
     // Control logging lane: a new session's pair is logged afresh.
@@ -2636,6 +2662,8 @@ void DaemonMediaController::finishReplacement()
     }
     m_displayDiagnostics = {};
     m_displayDiagnosticsLogged = {};
+    m_lastSenderTurnNs.reset();
+    m_senderGapMaxSinceLoggedUs = -1;
     m_loggedTransportErrorKinds.clear();
     sendControl({{QStringLiteral("op"), QStringLiteral("replace")},
                  {QStringLiteral("connectionId"), connectionId},
@@ -4759,6 +4787,18 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
         return;
     }
     const DaemonSpectrumFrame& frame = *sourceFrame;
+    // Display diagnostics: frames replaced in the source's slot before this
+    // thread took one, counted once when a pan here is sending from it.
+    if (frame.replacedBefore != 0) {
+        for (const auto& [unused, entry] : m_endpoints) {
+            Q_UNUSED(unused);
+            if (entry.request.source == key && !entry.txViewer && entry.contextSent
+                && entry.endpoint.configured()) {
+                m_displayDiagnostics.displaySourceFramesReplaced += frame.replacedBefore;
+                break;
+            }
+        }
+    }
     MediaPeer* const peer = m_peer.get();
     const quint64 epoch = m_epoch;
     const QList<quint32> ids = endpointIds();
@@ -4784,6 +4824,10 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
                                     && std::isfinite(duplexOffsetDb)
             ? duplexOffsetDb
             : stationOffsetDb;
+        // Display diagnostics: the frame this one replaces was never sent.
+        if (heldFrameWouldBeSent(entry)) {
+            ++m_displayDiagnostics.displayPanFramesReplaced;
+        }
         entry.latestInput = frame;
         const auto wideband = widebandContext(entry);
         if (!wideband) {
@@ -5392,6 +5436,36 @@ bool DaemonMediaController::trySendDisplayExtras(MediaPeer* peer, quint64 epoch,
         return true;
     }
     return false;
+}
+
+void DaemonMediaController::onSendTimerTurn()
+{
+    // Display diagnostics: how long the timer went between two turns with
+    // a ready peer. A peer that is not ready is sent nothing, so a turn
+    // without one ends no gap and starts none.
+    if (!m_peer || !m_peer->isReady()) {
+        m_lastSenderTurnNs.reset();
+    } else {
+        const qint64 nowNs = displayNowNs();
+        if (m_lastSenderTurnNs) {
+            constexpr qint64 kNsPerUs = 1000;
+            const qint64 gapUs = (nowNs - *m_lastSenderTurnNs) / kNsPerUs;
+            m_displayDiagnostics.displaySenderGapMaxUs =
+                std::max(m_displayDiagnostics.displaySenderGapMaxUs, gapUs);
+            m_senderGapMaxSinceLoggedUs = std::max(m_senderGapMaxSinceLoggedUs, gapUs);
+        }
+        m_lastSenderTurnNs = nowNs;
+    }
+    onSendTick();
+}
+
+bool DaemonMediaController::heldFrameWouldBeSent(const EndpointEntry& entry) const
+{
+    // What trySendSpectrum() asks of an endpoint and consume() of a frame.
+    return entry.latestInput.has_value() && entry.contextSent && !entry.txViewer
+        && entry.endpoint.configured()
+        && entry.endpoint.context().sourceGeneration == entry.latestInput->generation
+        && entry.endpoint.outputDeadlineNs(entry.latestInput->producedAtNs).has_value();
 }
 
 void DaemonMediaController::onSendTick()
@@ -6841,6 +6915,8 @@ void DaemonMediaController::clearProduction()
         sendIqContext(sliceId, found->second, QStringLiteral("The Core radio is offline."));
     }
     m_sendTimer.stop();
+    // The time the timer stands stopped is not a gap between its turns.
+    m_lastSenderTurnNs.reset();
     m_ps3CurrentChunks.clear();
     m_ps3LatestChunks.clear();
     m_ps3CurrentAttempted = false;

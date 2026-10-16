@@ -8,6 +8,9 @@
 //               Claude Code.
 //   2026-10-12: collectOnce() counts its wakes and frames.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: stop() lets a thread still waiting on its priority request
+//               go instead of joining it.  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/MicUplinkCollector.h"
@@ -16,13 +19,30 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <utility>
 
 namespace NereusSDR {
 
+// Whether the thread got past its priority request before stop() came.
+// Whichever of the two takes the lock first decides: the thread runs and
+// stop() joins it, or stop() lets it go and it never touches the collector.
+struct MicUplinkCollector::ThreadGate {
+    std::mutex mutex;
+    bool running = false;
+    bool letGo = false;
+};
+
 MicUplinkCollector::MicUplinkCollector(Source source, int wakeIntervalMs)
+    : MicUplinkCollector(std::move(source), wakeIntervalMs,
+                         PriorityCalls{ &elevateAudioThreadPriority, &leaveAudioThreadPriority })
+{
+}
+
+MicUplinkCollector::MicUplinkCollector(Source source, int wakeIntervalMs, PriorityCalls priority)
     : m_source(std::move(source))
     , m_wakeIntervalMs(std::max(1, wakeIntervalMs))
+    , m_priority(std::move(priority))
     , m_ring(std::make_unique<std::atomic<float>[]>(static_cast<std::size_t>(kQueueFrames)))
 {
     for (int i = 0; i < kQueueFrames; ++i) {
@@ -45,25 +65,60 @@ void MicUplinkCollector::start()
     m_stopRequested.store(false, std::memory_order_release);
     while (m_stopWake.tryAcquire(1)) {
     }
-    m_thread = std::thread([this] { run(); });
+    m_gate = std::make_shared<ThreadGate>();
+    // Until it is past the gate the thread uses only what it holds itself:
+    // stop() may let it go, and the collector may be gone, before the
+    // priority request returns.
+    m_thread = std::thread([this, gate = m_gate, priority = m_priority] {
+        // Real-time audio priority, as the local transmit pump takes it
+        // (TxWorkerThread::run): asked for on this thread, given back on it
+        // before it ends.  nullptr is a refusal; the thread runs regardless.
+        AudioPriorityToken* token = priority.elevate();
+        bool letGo = false;
+        {
+            std::lock_guard<std::mutex> lock(gate->mutex);
+            letGo = gate->letGo;
+            gate->running = !letGo;
+        }
+        if (letGo) {
+            priority.leave(token);
+            return;
+        }
+        run(token);
+    });
 }
 
-void MicUplinkCollector::stop()
+MicUplinkCollector::StopOutcome MicUplinkCollector::stop()
 {
+    StopOutcome outcome = StopOutcome::NotRunning;
     if (m_thread.joinable()) {
-        m_stopRequested.store(true, std::memory_order_release);
-        m_stopWake.release();
-        m_thread.join();
+        bool letGo = false;
+        {
+            std::lock_guard<std::mutex> lock(m_gate->mutex);
+            if (!m_gate->running) {
+                m_gate->letGo = true;
+                letGo = true;
+            }
+        }
+        if (letGo) {
+            // Still waiting on its priority request (Core Audio on the Mac):
+            // it ends on its own once answered.
+            m_thread.detach();
+            outcome = StopOutcome::LeftWaitingOnPriority;
+        } else {
+            m_stopRequested.store(true, std::memory_order_release);
+            m_stopWake.release();
+            m_thread.join();
+            outcome = StopOutcome::Joined;
+        }
+        m_gate.reset();
     }
     discardQueued();
+    return outcome;
 }
 
-void MicUplinkCollector::run()
+void MicUplinkCollector::run(AudioPriorityToken* priority)
 {
-    // Real-time audio priority, as the local transmit pump takes it
-    // (TxWorkerThread::run): asked for on this thread, given back on it
-    // before it ends.  nullptr is a refusal; the thread runs regardless.
-    AudioPriorityToken* priority = elevateAudioThreadPriority();
     m_elevated.store(priority != nullptr, std::memory_order_release);
 
     using Clock = std::chrono::steady_clock;
@@ -87,7 +142,7 @@ void MicUplinkCollector::run()
     }
 
     m_elevated.store(false, std::memory_order_release);
-    leaveAudioThreadPriority(priority);
+    m_priority.leave(priority);
 }
 
 int MicUplinkCollector::collectOnce()
