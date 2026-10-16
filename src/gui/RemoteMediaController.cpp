@@ -1,5 +1,35 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: a control path whose ICE pair is not known yet keeps the
+//               direct-path media rules, as before it ranked as relayed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: the direct media ladder and the tunnel-rate heartbeat count
+//               only a connection whose ICE settings came from the media
+//               tunnel, not any loopback shim: media on the web relay leg
+//               (the tunnel declared for a later move) tries no direct-only
+//               replace, so a session move is followed at once instead of
+//               waiting behind one that cannot connect where UDP is
+//               blocked. The stall rule still covers any loopback shim on a
+//               start that declared the tunnel. The stall tick's timer is
+//               named remoteMediaStallTimer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: fix wave 2: the line follows programAudioKeyChanged at
+//               once (a direct connection), so a program key that arrives
+//               or ends under the screen key joins or restarts the VAX
+//               collector before the call returns. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: fix wave: the VAX collector reads nothing while a program
+//               brings its own audio (the VAX TX device has one reader),
+//               and a VAX feed that starts or comes back first drops what
+//               apps wrote while nothing read it. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: VAX as the transmit source in a remote window: the uplink
+//               carries the VAX TX device's audio (pullVaxTxMic, as the
+//               local VAX override feeds the transmitter), never the PC
+//               microphone, and takes no capture lease for it; a line that
+//               moves from VAX onto the microphone retries a failed capture
+//               once, as a key's start does. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: stopping the microphone collector no longer waits on its
 //               thread's priority request; the log says when it was let go
 //               still waiting. The collector comments now say its thread
@@ -300,6 +330,8 @@
 #include "gui/RemoteDisplayPresenter.h"
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/RemoteIqCodec.h"
+#include "core/session/media/WaveformCodec.h"
+#include <set>
 #include "core/session/media/RemoteSpectrumContext.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "core/session/media/WidebandDisplayContext.h"
@@ -1203,6 +1235,12 @@ struct RemoteMediaController::Private {
     bool currentRouted = false;
     bool replacementRouted = false;
     bool replacementDirect = false;
+    // Whether the connection in use, and the one being started, took
+    // their ICE settings from the media tunnel. The web relay leg is a
+    // loopback shim too, and the tunnel may be declared on it for a later
+    // move, so only this says media rides the tunnel.
+    bool currentTunnelIce = false;
+    bool replacementTunnelIce = false;
     // The direct media ladder: the next direct-only replace while media
     // rides the tunnel (PathRacer::kUpgradeRetryMs steps), and when a media
     // packet last came (allocationClock; -1 before the first).
@@ -1610,6 +1648,21 @@ struct RemoteMediaController::Private {
     // connection, so a slice id's revision only ever grows, even when a new
     // slice reuses the id; a new connection starts afresh.
     QHash<int, quint32> receiverRevisions;
+    using WaveformKey = std::pair<int, WaveformKind>;
+    struct WaveformStream {
+        bool wanted = false;
+        bool enabled = false;
+        quint32 revision = 0;
+        quint64 sourceGeneration = 0;
+        quint64 deliveryGeneration = 0;
+        quint64 lastSerial = 0;
+        quint64 nextSequence = 0;
+        quint64 lastDroppedTotal = 0;
+        int sampleRate = 0;
+    };
+    std::map<WaveformKey, WaveformStream> waveformStreams;
+    bool waveformNegotiated = false;
+    quint64 waveformBytesPerSecond = 0;
     struct IqStream {
         bool wanted = false;
         bool enabled = false;
@@ -1754,6 +1807,17 @@ struct RemoteMediaController::Private {
     // on its priority request.
     std::unique_ptr<MicUplinkCollector> micCollector;
     AudioEngine* micCollectorEngine = nullptr;
+    // 2026-10-15: the collector pulls the VAX TX device
+    // (AudioEngine::pullVaxTxMic) when VAX is the transmit source, with no
+    // capture lease: VAX is not the PC microphone.
+    bool micCollectorVax = false;
+    // 2026-10-15 (fix wave): the collector reads the VAX TX device now.
+    // False from the moment it stops (stopMicCollector), so the next VAX
+    // feed starts by dropping what apps wrote meanwhile.
+    bool micVaxFed = false;
+    // The uplink started with VAX chosen and no VAX TX device open: said
+    // once per run.
+    bool micVaxMissingReported = false;
     // What the collector had dropped when the line last started or
     // reported: the rest is this key's.
     quint64 micDroppedReported = 0;
@@ -1821,6 +1885,12 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
 {
     d->client = client;
     d->model = model;
+    if (model && model->radeWaveformModel()) {
+        connect(model->radeWaveformModel(), &RadeWaveformModel::remoteDemandChanged,
+                this, &RemoteMediaController::reconcileWaveformDemand);
+        model->radeWaveformModel()->setRemoteSupported(false,
+            QStringLiteral("This Core does not support exact waveform observation."));
+    }
     d->stack = stack;
     d->factory = std::move(factory);
     d->clock.start();
@@ -1845,6 +1915,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     // Task 29 step 2b: the media stall rule's check.
     d->stallTimer = new QTimer(this);
     d->stallTimer->setInterval(500);
+    d->stallTimer->setObjectName(QStringLiteral("remoteMediaStallTimer"));
     connect(d->stallTimer, &QTimer::timeout, this, [this] {
         // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
@@ -1858,12 +1929,17 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         // The tunnel counts only once ICE settled on it (a host pair on an
         // open network is not a slow path); the control heartbeat follows.
+        // The ladder and the heartbeat count only media on the tunnel's own
+        // settings; the stall rule still covers any loopback shim on a start
+        // that declared the tunnel, the web relay leg included (media left
+        // on it after the session moved to a better path).
         const std::optional<MediaIcePath> path = d->peer->selectedPath();
-        const bool viaTunnel = d->tunnelNegotiated && path && path->viaLoopbackShim();
+        const bool viaShim = path && path->viaLoopbackShim();
+        const bool viaTunnel = d->currentTunnelIce && viaShim;
         d->client->setMediaTunnelInUse(viaTunnel);
         const int rank = d->client->pathRank();
-        const bool slowPath = rank == PathRacer::ServiceRelayed || rank == PathRacer::Floor
-            || viaTunnel;
+        const bool slowPath = (rank == PathRacer::ServiceRelayed && !d->client->pathPairUnknown())
+            || rank == PathRacer::Floor || (d->tunnelNegotiated && viaShim);
         // The Core stops RX audio for the TX-bound slice while keyed. Only
         // its negotiated txState can establish that this silence is expected.
         // Keep the media connection and display alive; the independent TX
@@ -2136,6 +2212,14 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     if (RemoteTransmitClient* transmit = client->remoteTransmit()) {
         connect(transmit, &RemoteTransmitClient::micKeyDownChanged, this,
                 &RemoteMediaController::setMicKeyDown);
+        // 2026-10-15 (fix wave 2): a program key that brings its own
+        // audio takes the VAX TX device from the collector, and gives it
+        // back, at once, even under the screen key (the key down does not
+        // move then). Direct: the transmit client and this controller both
+        // live on the GUI thread, and the collector must be joined before
+        // keyForProgram returns, ahead of the program's first read.
+        connect(transmit, &RemoteTransmitClient::programAudioKeyChanged, this,
+                [this](bool) { reconcileMicUplink(); }, Qt::DirectConnection);
         connect(transmit, &RemoteTransmitClient::holdsTransmitChanged, this,
                 &RemoteMediaController::setHoldsTransmit);
         connect(transmit, &RemoteTransmitClient::micSourceChanged, this,
@@ -2709,7 +2793,9 @@ void RemoteMediaController::reconcileClockProbe()
         && std::any_of(d->bindings.cbegin(), d->bindings.cend(),
                        [](const auto& entry) { return entry.second.accepted; });
     const bool probe = d->peer && audioClockNegotiated()
-        && ((d->audioEnabled && d->audio->isRunning()) || displaying);
+        && ((d->audioEnabled && d->audio->isRunning()) || displaying
+            || std::any_of(d->waveformStreams.cbegin(), d->waveformStreams.cend(),
+                [](const auto& entry) { return entry.second.wanted; }));
     if (probe && !d->clockProbeTimer->isActive()) {
         d->clockProbeTimer->start();
     } else if (!probe && d->clockProbeTimer->isActive()) {
@@ -2719,6 +2805,7 @@ void RemoteMediaController::reconcileClockProbe()
 
 void RemoteMediaController::sendClockProbe()
 {
+    updateWaveformClock();
     if (!d->peer || !audioClockNegotiated()) {
         return;
     }
@@ -2759,6 +2846,7 @@ void RemoteMediaController::receiveClockEcho(const QJsonObject& payload, qint64 
     if (!d->clockEstimator.addSample({t0, t1, t2, receivedNs})) {
         return;
     }
+    updateWaveformClock();
     if (generation != 0) {
         d->captureAnchor = AudioCaptureAnchor{quint32(generation), quint32(rtpTimestamp), capturedNs};
     } else {
@@ -3025,10 +3113,28 @@ void RemoteMediaController::reconcileMicUplink()
     const bool preview = micLineOpen() && d->model && d->model->audioEngine()
         && d->model->transmitModel().micSource() == MicSource::Pc
         && transmit && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio;
-    const bool captureWanted = (wanted && !programAudio) || preview;
+    // 2026-10-15: VAX as the transmit source. The line carries what apps
+    // write to this computer's VAX TX device, as a local window's VAX
+    // override feeds its transmitter (TxWorkerThread.cpp, the
+    // isVaxMicOverrideActive branch: pullVaxTxMic, left and right averaged,
+    // no gain), and never the PC microphone, so it takes no capture lease.
+    // The device is drained while the line is open, as preview drains the
+    // microphone, so a key never sends what an app wrote before it.
+    // 2026-10-15 (fix wave): not while a program brings its own audio
+    // (programAudio). The VAX TX device has one reader (its read position
+    // and meter are not shared), and a program key's audio may itself come
+    // from it (a remote window's rigctld key pumps pullVaxTxMic into
+    // pushProgramAudio), so the collector is joined first and reads
+    // nothing until the program's run ends.
+    const bool vaxSource = d->model && d->model->audioEngine()
+        && d->model->transmitModel().micSource() == MicSource::Vax;
+    const bool vaxFeed = vaxSource && !programAudio && d->model->audioEngine()->isVaxTxBusOpen()
+        && (wanted || (micLineOpen() && transmit
+                       && transmit->acceptedMicSource() == RemoteMicSource::ClientAudio));
+    const bool captureWanted = !vaxSource && ((wanted && !programAudio) || preview);
     // 2026-10-09: such a key takes no demand of its own, and keeps a lease
     // VOX or preview already holds (its samples are drained and dropped).
-    const bool keepLease = wanted && programAudio;
+    const bool keepLease = wanted && programAudio && !vaxSource;
     const bool leaseWasActive = d->micLease.isActive();
     // 2026-10-09: read before the acquire. A first lease opens a new
     // generation by itself; with demand already held (this window's
@@ -3045,8 +3151,31 @@ void RemoteMediaController::reconcileMicUplink()
         d->micLease.release();
     }
     // 2026-10-10: the collector runs exactly while the lease is held.
-    if (d->micLease.isActive()) {
-        startMicCollector(d->model->audioEngine());
+    // 2026-10-15: or, with VAX the transmit source, while the VAX TX device
+    // is fed (vaxFeed).
+    if (vaxFeed) {
+        if (!d->micVaxFed) {
+            // 2026-10-15 (fix wave): the VAX feed starts or comes back
+            // (after a program's run, a line that reopens, a move from the
+            // PC microphone). What apps wrote while nothing here read the
+            // device is old: it is read and dropped before the collector
+            // starts, so it never follows into this run. Nothing else here
+            // reads the device now: the collector (on either source) is
+            // joined first.
+            stopMicCollector();
+            AudioEngine* engine = d->model->audioEngine();
+            const int block = static_cast<int>(d->micScratch.size());
+            for (int pull = 0; pull < kVaxBacklogDiscardPulls; ++pull) {
+                if (engine->pullVaxTxMic(d->micScratch.data(), block) < block) {
+                    break;
+                }
+            }
+        }
+        startMicCollector(d->model->audioEngine(), true);
+        d->micVaxFed = true;
+    } else if (d->micLease.isActive()) {
+        startMicCollector(d->model->audioEngine(), false);
+        d->micVaxFed = false;
     } else {
         stopMicCollector();
     }
@@ -3059,13 +3188,15 @@ void RemoteMediaController::reconcileMicUplink()
         if (wanted) {
             qCInfo(lcRemoteMedia) << "Microphone uplink started"
                                   << (programAudio ? "with the program's audio or silence"
+                                      : vaxSource  ? "with VAX"
                                                    : "with the microphone");
+            d->micVaxMissingReported = false;
             // 2026-10-08: a capture that failed earlier never comes back by
             // itself; a key that will send the microphone asks once.
             // 2026-10-09: only when capture demand was already held:
             // acquiring it from no demand starts a new generation by
             // itself. Both are read before the acquire.
-            retryCapture = !programAudio && demandBefore && captureFailedBefore;
+            retryCapture = !programAudio && !vaxSource && demandBefore && captureFailedBefore;
             d->micDroppedReported = d->micCollector ? d->micCollector->droppedFrames() : 0;
         } else {
             reportMicDropped();
@@ -3079,6 +3210,13 @@ void RemoteMediaController::reconcileMicUplink()
             qCInfo(lcRemoteMedia) << "Microphone uplink stopped";
         }
     }
+    // 2026-10-15: a running line that moves from VAX onto the microphone
+    // takes the lease now, as a key would at its start: the same one retry
+    // when demand was already held.
+    if (wanted && !starting && !programAudio && !vaxSource && !leaseWasActive
+        && demandBefore && captureFailedBefore) {
+        retryCapture = true;
+    }
     const QPointer<RemoteMediaController> self(this);
     if (retryCapture) {
         qCInfo(lcRemoteMedia) << "Microphone capture had failed; retrying for this key";
@@ -3091,14 +3229,19 @@ void RemoteMediaController::reconcileMicUplink()
     if (!self) {
         return;
     }
-    if (!programAudio && !d->micLease.isActive()) {
+    if (d->micRunning && vaxSource && !vaxFeed && !programAudio && !d->micVaxMissingReported) {
+        d->micVaxMissingReported = true;
+        qCWarning(lcRemoteMedia) << "Microphone uplink: VAX is the transmit source but this"
+                                    " computer's VAX TX device is not open; nothing is sent";
+    }
+    if (!programAudio && !d->micLease.isActive() && !vaxFeed) {
         return;
     }
     // A program's audio, while it keeps coming, replaces the microphone:
     // what the microphone captured meanwhile is drained and dropped.
     const qint64 nowMs = micNowMs();
     const bool program = nowMs < d->programUntilMs;
-    if (d->micLease.isActive() && d->micCollector) {
+    if ((d->micLease.isActive() || vaxFeed) && d->micCollector) {
         // 2026-10-10: the collector's thread pulled the microphone; this
         // drains what it queued. (Inline, a test's collector has no thread
         // and collects here, as this pump itself did before.)
@@ -3128,7 +3271,8 @@ void RemoteMediaController::reconcileMicUplink()
         // is ready leaves the helper's ring unread and the uplink silent.
         // Said once per stall, with whether the thread still wakes, and
         // again when it ends.
-        const bool captureReady = d->micCollector->isRunning()
+        // 2026-10-15: not for VAX, which gives nothing while no app writes.
+        const bool captureReady = d->micCollector->isRunning() && !d->micCollectorVax
             && d->model->audioEngine()->captureStatus().state
                 == CaptureSupervisor::Status::State::Ready;
         const quint64 collected = d->micCollector->collectedFrames();
@@ -3226,18 +3370,26 @@ void RemoteMediaController::pumpMicUplinkForTest()
     reconcileMicUplink();
 }
 
-void RemoteMediaController::startMicCollector(AudioEngine* engine)
+void RemoteMediaController::startMicCollector(AudioEngine* engine, bool vax)
 {
     if (engine == nullptr) {
         stopMicCollector();
         return;
     }
-    if (!d->micCollector || d->micCollectorEngine != engine) {
+    // 2026-10-15: a change of source makes a new collector: what the old
+    // one queued is discarded with it, so the two never mix.
+    if (!d->micCollector || d->micCollectorEngine != engine || d->micCollectorVax != vax) {
         stopMicCollector();
         d->micCollector.reset();
         d->micCollectorEngine = engine;
-        d->micCollector = std::make_unique<MicUplinkCollector>(
-            [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        d->micCollectorVax = vax;
+        if (vax) {
+            d->micCollector = std::make_unique<MicUplinkCollector>(
+                [engine](float* dst, int frames) { return engine->pullVaxTxMic(dst, frames); });
+        } else {
+            d->micCollector = std::make_unique<MicUplinkCollector>(
+                [engine](float* dst, int frames) { return engine->pullTxMic(dst, frames); });
+        }
         d->micDroppedReported = 0;
     }
     if (g_micCollectorInlineForTest.load(std::memory_order_acquire)) {
@@ -3256,6 +3408,9 @@ void RemoteMediaController::startMicCollector(AudioEngine* engine)
 
 void RemoteMediaController::stopMicCollector()
 {
+    // 2026-10-15 (fix wave): nothing reads the VAX TX device after this; a
+    // later VAX feed drops what waits there first.
+    d->micVaxFed = false;
     // The next run starts its diagnostic clock when capture is ready.
     d->micCollectedSeen = 0;
     d->micWakesAtProgress = 0;
@@ -3748,6 +3903,8 @@ void RemoteMediaController::stop()
     d->currentRouted = false;
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->currentTunnelIce = false;
+    d->replacementTunnelIce = false;
     d->silenceFallbackFired = false;
     d->replacementFallback = false;
     d->fallbackFinishedMs = -1;
@@ -3814,6 +3971,18 @@ void RemoteMediaController::stop()
     // session; a reconnect measures afresh.
     d->clockProbeTimer->stop();
     d->clockEstimator.reset();
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+    }
+    for (auto& [key, stream] : d->waveformStreams) {
+        stream.enabled = false; stream.revision = 0; stream.sourceGeneration = 0;
+        stream.deliveryGeneration = 0; stream.lastSerial = 0; stream.nextSequence = 0; stream.lastDroppedTotal = 0; stream.sampleRate = 0;
+        if (d->model && d->model->radeWaveformModel()) {
+            d->model->radeWaveformModel()->applyRemoteContext(key.first, key.second, 0, 0, 0,
+                WaveformAvailability::Unavailable, QStringLiteral("The waveform media connection closed."));
+        }
+    }
+    d->waveformNegotiated = false; d->waveformBytesPerSecond = 0;
     d->captureAnchor.reset();
     d->pendingClockProbes.clear();
     // R-R3-21: so do the display's map and counters.
@@ -4061,6 +4230,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
         }
     }
     std::optional<IceConfiguration> nextIce;
+    bool nextTunnelIce = false;
     if (direct) {
         nextIce = d->client->mediaDirectIceConfiguration();
     } else if (kind == ReplaceKind::TunnelFallback && d->tunnelNegotiated) {
@@ -4068,9 +4238,10 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
         // candidates), so ICE cannot settle on the silent direct pair
         // again. The replace on the wire is the plain three-field one.
         nextIce = d->client->mediaTunnelOnlyIceConfiguration();
-        if (!nextIce) { nextIce = mediaIceConfiguration(); }
+        nextTunnelIce = nextIce.has_value();
+        if (!nextIce) { nextIce = mediaIceConfiguration(&nextTunnelIce); }
     } else {
-        nextIce = mediaIceConfiguration();
+        nextIce = mediaIceConfiguration(&nextTunnelIce);
     }
     // A raw tag-2 relay leg in use has one agent destination: a new
     // connection without the tunnel's own framing would redirect it.
@@ -4119,6 +4290,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
     });
     d->replacementRouted = nextIce && nextIce->mediaRouting();
     d->replacementDirect = direct;
+    d->replacementTunnelIce = nextTunnelIce;
     d->replacementFallback = kind == ReplaceKind::TunnelFallback;
     d->replacementMoveFolded = carriesFoldedMove;
     peer->setIceConfiguration(nextIce);
@@ -4127,7 +4299,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
                                 IMediaTransport::kDefaultAudioTargetBitrate,
                                 /*offerLosslessAudio=*/false, receiverAudioNegotiated(),
                                 headphonesMixNegotiated(), micLineNegotiated(),
-                                d->iqNegotiated);
+                                d->iqNegotiated, d->waveformNegotiated);
     if (!ok || !started) {
         dropReplacement(QStringLiteral("the new connection could not start"));
         // Re-review: a connection that cannot start is tried again only a
@@ -4233,6 +4405,7 @@ void RemoteMediaController::promoteReplacement()
     // The direct media ladder: the connection in use is now the new one,
     // and its silence is counted from here.
     d->currentRouted = std::exchange(d->replacementRouted, false);
+    d->currentTunnelIce = std::exchange(d->replacementTunnelIce, false);
     d->replacementDirect = false;
     d->replacementMoveFolded = false;
     d->lastMediaMs = d->allocationClock();
@@ -4262,6 +4435,10 @@ void RemoteMediaController::promoteReplacement()
         }
     }
     connectPeer(next, d->epoch);
+    for (const auto& [key, stream] : d->waveformStreams) {
+        if (stream.wanted) { sendWaveformRequest(key.first, key.second, true); }
+    }
+    reconcileClockProbe();
     for (const auto& [sliceId, stream] : d->iqStreams) {
         if (stream.wanted) { sendIqRequest(sliceId, true); }
     }
@@ -4296,12 +4473,18 @@ void RemoteMediaController::retireOldPeer()
     }
 }
 
-std::optional<IceConfiguration> RemoteMediaController::mediaIceConfiguration()
+std::optional<IceConfiguration> RemoteMediaController::mediaIceConfiguration(bool* fromTunnel)
 {
+    if (fromTunnel != nullptr) {
+        *fromTunnel = false;
+    }
     // Task 29 step 2b: over the tunnel while it was declared and the
     // session still runs on a WebSocket (as the Core decides the same).
     if (d->tunnelNegotiated) {
         if (auto tunnel = d->client->mediaTunnelIceConfiguration()) {
+            if (fromTunnel != nullptr) {
+                *fromTunnel = true;
+            }
             return tunnel;
         }
     }
@@ -4416,6 +4599,7 @@ void RemoteMediaController::dropReplacement(const QString& why)
     d->replacementId.clear();
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->replacementTunnelIce = false;
     d->replacementMoveFolded = false;
     if (std::exchange(d->replacementFallback, false)) {
         d->fallbackFinishedMs = d->allocationClock();
@@ -4500,7 +4684,7 @@ void RemoteMediaController::runDirectUpgradeStep()
     }
     const auto onTunnel = [this] {
         const std::optional<MediaIcePath> path = d->peer->selectedPath();
-        return d->tunnelNegotiated && path && path->viaLoopbackShim();
+        return d->currentTunnelIce && path && path->viaLoopbackShim();
     };
     if (!onTunnel()) {
         updateDirectUpgrade(false);
@@ -4560,7 +4744,8 @@ void RemoteMediaController::checkMediaSilence()
     }
     const std::optional<MediaIcePath> path = d->peer->selectedPath();
     const int rank = d->client->pathRank();
-    if (!path || path->viaLoopbackShim() || rank == PathRacer::ServiceRelayed
+    if (!path || path->viaLoopbackShim()
+        || (rank == PathRacer::ServiceRelayed && !d->client->pathPairUnknown())
         || rank == PathRacer::Floor) {
         return; // the tunnel and relays have the stall rule
     }
@@ -4597,6 +4782,18 @@ void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
         // Rendering can end this session; report drops for it first.
         reportDisplayDrops();
         receiveDisplay(packet);
+    });
+    connect(peer, &MediaPeer::waveformReceived, this, [this, current](const QByteArray& packet) {
+        if (current()) { receiveWaveformFrame(packet); }
+    });
+    connect(peer, &MediaPeer::waveformErrorOccurred, this, [this, current](const QString& reason) {
+        if (!current() || !d->model || !d->model->radeWaveformModel()) { return; }
+        for (auto& [key, stream] : d->waveformStreams) {
+            stream.enabled = false;
+            d->model->radeWaveformModel()->applyRemoteContext(key.first, key.second, 0, 0, 0,
+                WaveformAvailability::Unavailable, reason);
+        }
+        d->waveformBytesPerSecond = 0;
     });
     connect(peer, &MediaPeer::iqReceived, this, [this, current](const QByteArray& packet) {
         if (current()) { receiveIqFrame(packet); }
@@ -4641,6 +4838,10 @@ void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
             // R-R3-43: each receiver stream an app wants, after the mix.
             requestWantedReceiverAudio();
             if (!self || !current()) { return; }
+            for (const auto& [key, stream] : d->waveformStreams) {
+                if (stream.wanted) { sendWaveformRequest(key.first, key.second, true); }
+            }
+            reconcileClockProbe();
             for (const auto& [sliceId, stream] : d->iqStreams) {
                 if (stream.wanted) { sendIqRequest(sliceId, true); }
             }
@@ -4776,6 +4977,11 @@ void RemoteMediaController::start()
     // Task 36: likewise the microphone line.
     const bool micLine = micLineNegotiated();
     d->iqNegotiated = remoteIqNegotiated();
+    d->waveformNegotiated = waveformNegotiated();
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->setRemoteSupported(d->waveformNegotiated,
+            QStringLiteral("This Core does not support exact waveform observation."));
+    }
     // iPhone app plan Task 28 (R-IOS-16): a session through the remote
     // access service makes its media connection with the same ICE settings
     // as its control connection. Task 29 step 2b: a direct WebSocket
@@ -4786,12 +4992,15 @@ void RemoteMediaController::start()
     // The window pings faster once media rides the tunnel (step 2b; the
     // stall check sets it when ICE has settled on the tunnel's pair).
     d->client->setMediaTunnelInUse(false);
-    const auto startIce = mediaIceConfiguration();
+    bool startTunnelIce = false;
+    const auto startIce = mediaIceConfiguration(&startTunnelIce);
     // The direct media ladder: a new media start begins its direct-only
     // schedule at the first step.
     d->currentRouted = startIce && startIce->mediaRouting();
+    d->currentTunnelIce = startTunnelIce;
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->replacementTunnelIce = false;
     d->directUpgrade->stop();
     d->directUpgradeStep = 0;
     d->lastMediaMs = -1;
@@ -4802,7 +5011,7 @@ void RemoteMediaController::start()
     const bool started = peer->start(IMediaTransport::Role::Answerer, d->connectionId,
                                      IMediaTransport::kDefaultAudioTargetBitrate,
                                      /*offerLosslessAudio=*/false, receiverAudioNegotiated(),
-                                     headphonesMixNegotiated(), micLine, d->iqNegotiated);
+                                     headphonesMixNegotiated(), micLine, d->iqNegotiated, d->waveformNegotiated);
     if (!self) { return; }
     d->startingPeer = false;
     d->receiverSsrcs = started && startedPeer ? startedPeer->receiverAudioSsrcs() : QList<quint32>{};
@@ -4853,6 +5062,7 @@ void RemoteMediaController::start()
     if (receiverAudioNegotiated()) {
         startControl.insert(QStringLiteral("receiverAudioVersion"), 1);
     }
+    if (d->waveformNegotiated) { startControl.insert(QStringLiteral("waveformVersion"), 1); }
     if (d->iqNegotiated) {
         startControl.insert(QStringLiteral("remoteIqVersion"), 1);
     }
@@ -5693,7 +5903,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         d->wantedIntents = intents;
     }
     const bool askWanted = d->askingWanted && !retainedPs3ExceedsCap
-        && d->iqBytesPerSecond == 0;
+        && d->iqBytesPerSecond == 0 && d->waveformBytesPerSecond == 0;
     // While asking, plan without the share: every pan at its wanted quality.
     // The Core admits or refuses each against the share it gives this
     // device with the new request.
@@ -5701,10 +5911,11 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         ? DisplayBudgetLimits{kDisplayBudgetJsonSafePositiveLimit,
                               kDisplayBudgetJsonSafePositiveLimit, limits->generation}
         : *limits;
-    if (d->iqBytesPerSecond != 0) {
+    const quint64 observationBytes = d->iqBytesPerSecond + d->waveformBytesPerSecond;
+    if (observationBytes != 0) {
         planLimits.applicationBytesPerSecond =
-            planLimits.applicationBytesPerSecond > d->iqBytesPerSecond
-                ? planLimits.applicationBytesPerSecond - d->iqBytesPerSecond : 1;
+            planLimits.applicationBytesPerSecond > observationBytes
+                ? planLimits.applicationBytesPerSecond - observationBytes : 1;
     }
     const QString cacheIdentity = allocationIdentity(
         planLimits, intents, targetPs3, retainedPs3ExceedsCap);
@@ -5725,7 +5936,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         } else {
             d->cachedAllocation = allocateRemoteDisplay(
                 planLimits, intents, targetPs3, &d->cachedAllocationError,
-                d->iqBytesPerSecond != 0);
+                observationBytes != 0);
             if (!d->cachedAllocation) {
                 qCInfo(lcRemoteMedia).noquote() << "Remote display allocation failed:"
                                                 << d->cachedAllocationError;
@@ -6374,6 +6585,171 @@ std::shared_ptr<RemoteTciAudioStage> RemoteMediaController::requestReceiverAudio
     if (!self) { return {}; }
     refreshAudioStatus();
     return stage;
+}
+
+bool RemoteMediaController::waveformNegotiated() const
+{
+    return d->client && d->client->mediaAvailable() && d->client->capabilities().waveformVersion == 1;
+}
+
+void RemoteMediaController::reconcileWaveformDemand(const QList<WaveformRequest>& requests)
+{
+    if (!d->model || !d->model->radeWaveformModel()) { return; }
+    const QPointer<RemoteMediaController> self(this);
+    const quint64 epoch = d->epoch;
+    d->model->radeWaveformModel()->setRemoteSupported(waveformNegotiated(),
+        QStringLiteral("This Core does not support exact waveform observation."));
+    if (!self || d->epoch != epoch) { return; }
+    std::set<Private::WaveformKey> wanted;
+    for (const WaveformRequest& request : requests) {
+        if (request.sliceId >= 0 && d->model->sliceById(request.sliceId)) {
+            wanted.emplace(request.sliceId, request.kind);
+        }
+    }
+    QList<Private::WaveformKey> changed;
+    for (auto& [key, stream] : d->waveformStreams) {
+        const bool enabled = wanted.contains(key);
+        if (enabled != stream.wanted) {
+            stream.wanted = enabled; stream.enabled = false;
+            changed.append(key);
+        }
+    }
+    for (const auto& key : wanted) {
+        if (!d->waveformStreams.contains(key)) {
+            d->waveformStreams[key].wanted = true;
+            changed.append(key);
+        }
+    }
+    for (const auto& key : changed) {
+        if (!self || d->epoch != epoch) { return; }
+        const auto current = d->waveformStreams.find(key);
+        if (current != d->waveformStreams.end()) { sendWaveformRequest(key.first, key.second, current->second.wanted); }
+    }
+    if (self && d->epoch == epoch) { reconcileClockProbe(); }
+}
+
+void RemoteMediaController::sendWaveformRequest(int sliceId, WaveformKind kind, bool enabled)
+{
+    if (!d->waveformNegotiated || !d->peer || !d->peer->isReady()) { return; }
+    auto& stream = d->waveformStreams[{sliceId,kind}];
+    ++stream.revision;
+    if (!stream.revision) { ++stream.revision; }
+    stream.enabled = false;
+    const quint32 revision = stream.revision;
+    const quint64 epoch = d->epoch;
+    const QPointer<RemoteMediaController> self(this);
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->applyRemoteContext(sliceId, kind, 0, 0, 0,
+            WaveformAvailability::Unavailable, enabled ? QStringLiteral("Waiting for the Core waveform source.")
+                                                     : QStringLiteral("Waveform observation is disabled."));
+    }
+    if (!self || d->epoch != epoch) { return; }
+    send({{QStringLiteral("op"), QStringLiteral("waveform-stream")},
+          {QStringLiteral("connectionId"), d->connectionId},
+          {QStringLiteral("sliceId"), sliceId}, {QStringLiteral("kind"), WaveformCodec::kindName(kind)},
+          {QStringLiteral("revision"), qint64(revision)}, {QStringLiteral("enabled"), enabled}});
+}
+
+void RemoteMediaController::receiveWaveformContext(const QJsonObject& payload)
+{
+    static const QSet<QString> expected{QStringLiteral("op"), QStringLiteral("connectionId"),
+        QStringLiteral("sliceId"), QStringLiteral("kind"), QStringLiteral("revision"),
+        QStringLiteral("enabled"), QStringLiteral("availability"), QStringLiteral("reason"),
+        QStringLiteral("sourceGeneration"), QStringLiteral("deliveryGeneration"), QStringLiteral("sampleRateHz")};
+    if (payload.size() != expected.size()) { return; }
+    for (auto it = payload.begin(); it != payload.end(); ++it) { if (!expected.contains(it.key())) { return; } }
+    double slice = -1, revision = 0, rate = 0;
+    const auto kind = WaveformCodec::parseKind(payload.value(QStringLiteral("kind")).toString());
+    const auto source = WaveformCodec::decimalIdentity(payload.value(QStringLiteral("sourceGeneration")));
+    const auto delivery = WaveformCodec::decimalIdentity(payload.value(QStringLiteral("deliveryGeneration")));
+    if (!kind || !source || !delivery || payload.value(QStringLiteral("connectionId")).toString() != d->connectionId
+        || !number(payload, "sliceId", 0, INT_MAX, slice, true)
+        || !number(payload, "revision", 1, UINT32_MAX, revision, true)
+        || !number(payload, "sampleRateHz", 0, 48000, rate, true)
+        || !payload.value(QStringLiteral("enabled")).isBool()
+        || !payload.value(QStringLiteral("reason")).isString()) { return; }
+    const auto found = d->waveformStreams.find({int(slice), *kind});
+    if (found == d->waveformStreams.end() || found->second.revision != quint32(revision)) { return; }
+    const bool enabled = payload.value(QStringLiteral("enabled")).toBool();
+    const QString availability = payload.value(QStringLiteral("availability")).toString();
+    if ((enabled && (availability != QLatin1String("Available") || !*source || !*delivery
+                     || int(rate) != WaveformCodec::sampleRate(*kind) || !found->second.wanted))
+        || (!enabled && (availability != QLatin1String("Unavailable") || rate != 0))) { return; }
+    Private::WaveformStream& stream = found->second;
+    if (stream.sourceGeneration != *source || stream.deliveryGeneration != *delivery || stream.enabled != enabled) {
+        stream.lastSerial = 0; stream.nextSequence = 0; stream.lastDroppedTotal = 0;
+    }
+    stream.sourceGeneration = *source; stream.deliveryGeneration = *delivery;
+    stream.enabled = enabled; stream.sampleRate = int(rate);
+    const QPointer<RemoteMediaController> self(this);
+    const quint64 epoch = d->epoch;
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->applyRemoteContext(int(slice), *kind, *source, *delivery, int(rate),
+            enabled ? WaveformAvailability::Available : WaveformAvailability::Unavailable,
+            payload.value(QStringLiteral("reason")).toString());
+    }
+    if (!self || d->epoch != epoch) { return; }
+    d->waveformBytesPerSecond = 0;
+    for (const auto& [key, current] : d->waveformStreams) {
+        Q_UNUSED(key);
+        if (current.enabled) {
+            const int segments = current.sampleRate == 24000 ? 100 : 750;
+            d->waveformBytesPerSecond += quint64(current.sampleRate) * 4
+                + quint64(WaveformCodec::kHeaderBytes) * quint64(segments + (current.sampleRate + 1023) / 1024 + 30);
+        }
+    }
+    refreshSubscriptions();
+    if (self && d->epoch == epoch) { reconcileClockProbe(); }
+}
+
+void RemoteMediaController::updateWaveformClock()
+{
+    if (!d->model || !d->model->radeWaveformModel() || !d->audio) { return; }
+    // Probes and the estimator use RemoteAudioReceiver's actual local clock.
+    // Its default clock is elapsed from a process-local steady-clock base,
+    // whereas waveform snapshots use the absolute steady-clock epoch. Convert
+    // that origin here without changing audio release/presentation timing.
+    const qint64 audioNow = d->audio->nowNs();
+    const qint64 waveformNow = waveformNowNs();
+    const auto map = d->clockEstimator.offset(audioNow);
+    if (!map || audioNow < 0 || waveformNow < 0) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+        return;
+    }
+    // Both clocks are nonnegative int64 readings, so their difference fits.
+    const qint64 originDifference = waveformNow - audioNow;
+    const qint64 offset = map->offsetNs;
+    if ((originDifference > 0 && offset < std::numeric_limits<qint64>::min() + originDifference)
+        || (originDifference < 0 && offset > std::numeric_limits<qint64>::max() + originDifference)) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+        return;
+    }
+    d->model->radeWaveformModel()->setRemoteClockMap(offset - originDifference, true);
+}
+
+void RemoteMediaController::receiveWaveformFrame(const QByteArray& bytes)
+{
+    const auto packet = WaveformCodec::decode(bytes);
+    if (!packet || !d->model || !d->model->radeWaveformModel()) { return; }
+    const auto found = d->waveformStreams.find({packet->sliceId, packet->batch.kind});
+    if (found == d->waveformStreams.end()) { return; }
+    Private::WaveformStream& stream = found->second;
+    const WaveformSegment& segment = packet->batch.segments[0];
+    if (!stream.wanted || !stream.enabled || !d->model->sliceById(packet->sliceId)
+        || stream.sourceGeneration != packet->sourceGeneration
+        || stream.deliveryGeneration != packet->deliveryGeneration
+        || stream.sampleRate != packet->batch.sampleRate
+        || packet->batch.serial <= stream.lastSerial || segment.firstSequence < stream.nextSequence) { return; }
+    if (packet->batch.droppedFrames < stream.lastDroppedTotal) { return; }
+    auto batch = std::make_shared<WaveformBatch>(packet->batch);
+    batch->droppedFrames = std::max(packet->batch.droppedFrames - stream.lastDroppedTotal,
+        segment.firstSequence - stream.nextSequence);
+    stream.lastDroppedTotal = packet->batch.droppedFrames;
+    stream.lastSerial = packet->batch.serial;
+    stream.nextSequence = segment.firstSequence + quint64(segment.count);
+    updateWaveformClock();
+    d->model->radeWaveformModel()->appendRemoteBatch(packet->sliceId, packet->sourceGeneration,
+        batch);
 }
 
 void RemoteMediaController::requestRawIq(int sliceId)
@@ -7080,6 +7456,10 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         if (receiverAudioNegotiated()) { receiveReceiverAudioContext(payload); }
         return;
     }
+    if (op == QLatin1String("waveform-stream-context")) {
+        if (d->waveformNegotiated) { receiveWaveformContext(payload); }
+        return;
+    }
     if (op == QLatin1String("iq-stream-context")) {
         if (d->iqNegotiated) { receiveIqContext(payload); }
         return;
@@ -7657,10 +8037,16 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
         }
         // A lost message: the rows wait for a keyframe, repeating the last
         // good row while none comes, and blend in when it does.
-        if (!binding.presenter.waitingForKeyframe()) {
+        const bool enteringKeyframeWait = !binding.presenter.waitingForKeyframe();
+        if (enteringKeyframeWait) {
             ++d->displayCounters.keyframeWaits;
         }
         binding.presenter.noteLoss();
+        if (enteringKeyframeWait && binding.widget) {
+            // The held picture and repeated waterfall rows remain visible,
+            // but they are no longer current receiver measurement input.
+            binding.widget->noteImdReceiverInputLost();
+        }
         requestKeyframe(id);
         scheduleDisplayPresentation(d->displayDelay.mapNs());
     } else if (decoded.disposition == DisplayCodecDisposition::Accepted) {
@@ -7912,7 +8298,8 @@ void RemoteMediaController::presentDueDisplay()
                 }
                 continue;
             }
-            const bool rendered = widget->updateRemoteSpectrum(item.frame, item.capture);
+            const bool rendered = widget->updateRemoteSpectrum(
+                item.frame, item.capture, item.measurementCurrent);
             // Rendering emits application signals; a receiver may end this session.
             if (!self || d->connectionId != connectionId) { return; }
             if (!rendered) {

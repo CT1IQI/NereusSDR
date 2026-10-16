@@ -15,6 +15,8 @@
 //   2026-10-12 — Transmit receiver state adaptation by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code; attribution remediation via OpenAI Codex.
+//   2026-10-16 - Include QTimer for the inline timer accessors by J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 // --- From TCIServer.cs ---
@@ -158,6 +160,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointer>
 #include <QMutex>
 #include <QSet>
+#include <QTimer>
 #include <QVector>
 #include <array>
 #include <atomic>

@@ -21,6 +21,8 @@
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 //   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -106,6 +108,9 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): the mode combo resets too before a
+//               RADE v2 mode is added or removed. AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 //=================================================================
@@ -349,6 +354,33 @@ RxApplet::RxApplet(SliceModel* slice, RadioModel* model, QWidget* parent)
     , m_slice(slice)
 {
     buildUi();
+    const auto refreshRadeV2Modes = [this] {
+        const QSignalBlocker block(m_modeCombo);
+        const bool enabled = m_model && m_model->radeV2Enabled();
+        for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
+            const int index = m_modeCombo->findText(name);
+            if (enabled && index < 0) {
+                resetItemsBeforeRowChange(m_modeCombo);
+                m_modeCombo->addItem(name);
+                m_modeCombo->setItemData(m_modeCombo->count() - 1,
+                    QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
+            } else if (!enabled && index >= 0) {
+                resetItemsBeforeRowChange(m_modeCombo);
+                m_modeCombo->removeItem(index);
+            }
+        }
+        if (m_slice) {
+            const QString name = SliceModel::modeName(m_slice->dspMode());
+            m_modeCombo->setPlaceholderText(name);
+            m_modeCombo->setCurrentIndex(m_modeCombo->findText(name));
+            if (isRade2DspMode(m_slice->dspMode())) { rebuildFilterButtons(m_slice->dspMode()); }
+        }
+    };
+    refreshRadeV2Modes();
+    if (m_model) {
+        connect(m_model, &RadioModel::radeV2AvailabilityChanged, this, refreshRadeV2Modes);
+    }
+
 
     // Phase 3P-F Task 4: observe the first panadapter for band changes so the
     // antenna buttons repopulate when the user QSYs across a band boundary.
@@ -923,8 +955,13 @@ void RxApplet::buildUi()
             QStringLiteral("FM"),  QStringLiteral("DSB"),
             QStringLiteral("DIGU"),QStringLiteral("DIGL"),
             QStringLiteral("DRM"),
-            QStringLiteral("RADE-U"), QStringLiteral("RADE-L")
+            QStringLiteral("RADE-U"), QStringLiteral("RADE-L"),
+            QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")
         });
+        for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
+            m_modeCombo->setItemData(m_modeCombo->findText(name),
+                QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
+        }
         applyComboStyle(m_modeCombo);
 
         // Tier 1 wiring: mode combo → SliceModel::setDspMode()
@@ -1532,14 +1569,16 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
     FilterPresetStore* store = m_model ? m_model->filterPresetStore() : nullptr;
 
     QList<FilterPreset> storePresets;
-    if (store) {
+    const bool offered = !isRade2DspMode(mode) || (m_model && m_model->radeV2Enabled());
+    m_filterPresets.clear();
+    if (store && offered) {
         storePresets = store->presetsForMode(mode);
         // Mirror as pairs for m_filterPresets (needed by updateFilterButtons).
         m_filterPresets.clear();
         for (const FilterPreset& fp : storePresets) {
             m_filterPresets.append({fp.low, fp.high});
         }
-    } else {
+    } else if (offered) {
         m_filterPresets = SliceModel::presetsForMode(mode);
         for (const auto& [low, high] : m_filterPresets) {
             FilterPreset fp;
@@ -1578,6 +1617,7 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
         const int low  = fp.low;
         const int high = fp.high;
         connect(btn, &QPushButton::clicked, this, [this, low, high, mode] {
+            if (isRade2DspMode(mode) && (!m_model || !m_model->radeV2Enabled())) { return; }
             // Task 15: another device controls this slice; neither the RX
             // preset nor the Shift-click TX match applies.
             if (isListening()) { return; }
@@ -1655,7 +1695,8 @@ void RxApplet::rebuildFilterButtons(DSPMode mode)
 
 void RxApplet::applyFilterPreset(int low, int high)
 {
-    if (!m_slice || isListening()) { return; }
+    if (!m_slice || isListening()
+        || (isRade2DspMode(m_slice->dspMode()) && (!m_model || !m_model->radeV2Enabled()))) { return; }
     // low/high come directly from SliceModel::presetsForMode() — no mode-switching needed.
     m_slice->setFilter(low, high);
 }
@@ -2072,7 +2113,8 @@ void RxApplet::syncFromModel()
     {
         const QString name = SliceModel::modeName(m_slice->dspMode());
         const int idx = m_modeCombo->findText(name);
-        if (idx >= 0) { m_modeCombo->setCurrentIndex(idx); }
+        m_modeCombo->setPlaceholderText(name);
+        m_modeCombo->setCurrentIndex(idx);
     }
 
     // AGC combo
@@ -2168,7 +2210,8 @@ void RxApplet::connectSlice(SliceModel* s)
         m_updatingFromModel = true;
         const QString name = SliceModel::modeName(mode);
         const int idx = m_modeCombo->findText(name);
-        if (idx >= 0) { m_modeCombo->setCurrentIndex(idx); }
+        m_modeCombo->setPlaceholderText(name);
+        m_modeCombo->setCurrentIndex(idx);
         m_updatingFromModel = false;
         // Rebuild filter buttons for the new mode (canonical preset list from SliceModel)
         rebuildFilterButtons(mode);

@@ -36,6 +36,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  A remote window opens its VAX TX
+//                                    device too. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-09-23  J.J. Boyd / KG4VCF  R3 receiver audio plan, Task 5.
 //                                    AI-assisted transformation via
 //                                    Anthropic Claude Code.
@@ -1344,8 +1347,9 @@ private slots:
     }
 
     // A Core opens no VAX device, receive or transmit; a remote window
-    // opens this computer's receive outputs and no transmit device; a
-    // local engine opens all five, as before.
+    // opens this computer's receive outputs and, since 2026-10-15, its VAX
+    // transmit device (VAX as a remote window's transmit source); a local
+    // engine opens all five, as before.
     void aCoreOpensNoVaxDeviceOfEitherDirection()
     {
         const auto countingFactory = [](QList<int>* asked) {
@@ -1390,18 +1394,22 @@ private slots:
             QCOMPARE(asked, (QList<int>{0, 1, 2, 3, 4}));
             local.stop();
         }
-        // A remote window: the receive outputs only, without a start.
+        // A remote window: the receive outputs and the TX device (0),
+        // without a start.
         {
             RadioModel remote(RadioModel::Role::Remote);
             AudioEngine* engine = remote.localAudioDevices();
             QList<int> asked;
             engine->setVaxBusFactoryForTest(countingFactory(&asked));
+            QVERIFY(!engine->isVaxTxBusOpen());
             engine->openVaxOutputs();
             engine->openVaxOutputs();  // idempotent
-            QCOMPARE(asked, (QList<int>{1, 2, 3, 4}));
+            std::sort(asked.begin(), asked.end());
+            QCOMPARE(asked, (QList<int>{0, 1, 2, 3, 4}));
             for (int ch = 1; ch <= 4; ++ch) {
                 QVERIFY(engine->isVaxBusOpen(ch));
             }
+            QVERIFY(engine->isVaxTxBusOpen());
             engine->setVaxBusFactoryForTest({});
             engine->stop();
         }

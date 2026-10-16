@@ -58,6 +58,7 @@ public enum SettingsScope: Sendable, Equatable {
         Rule(text: "radios/", scope: .operatorLocal),
         Rule(text: "ConnectionTargets/", scope: .operatorLocal),
         Rule(text: "RemoteVax/", scope: .operatorLocal),
+        Rule(text: "RemoteRigctld/", scope: .operatorLocal),
         Rule(text: "PGXL_", scope: .station),
         Rule(text: "TGXL_", scope: .station),
         Rule(text: "RfKit_", scope: .station),

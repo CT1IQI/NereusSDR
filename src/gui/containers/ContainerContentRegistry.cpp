@@ -21,6 +21,7 @@
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerContentRegistry.h"
+#include "gui/meters/WaveformMeterItem.h"
 #include "ContainerControlCatalog.h"
 #include "gui/meters/MeterItem.h"
 #include "core/UnbuiltFeatureList.h"
@@ -69,6 +70,8 @@
 namespace NereusSDR {
 namespace {
 std::unique_ptr<MeterItem> allocate(const QString& type) {
+    if(type=="meter.radeMicWaveform") { return std::make_unique<WaveformMeterItem>(); }
+    if(type=="meter.radeSpeechWaveform") { return std::make_unique<WaveformMeterItem>(WaveformMeterItem::Source::DecodedSpeech); }
     if(type=="meter.powerSwr" || type=="PowerSwrPreset") { return std::make_unique<PowerSwrPresetItem>(); }
     if(type=="meter.ananMulti" || type=="AnanMM") { return std::make_unique<AnanMultiMeterItem>(); }
     if(type=="meter.crossNeedle" || type=="CrossNeedle") { return std::make_unique<CrossNeedleItem>(); }
@@ -235,6 +238,8 @@ QString ContainerContentRegistry::unavailableReason(const QString& typeId) const
 }
 QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     QVector<ContentDescriptor> result;
+    result.append({"meter.radeMicWaveform","Microphone waveform",false,true,{}});
+    result.append({"meter.radeSpeechWaveform","Decoded speech waveform",false,true,{}});
     result.append({QStringLiteral("meter.powerSwr"),QStringLiteral("Power / SWR"),false,true,{}});
     result.append({QStringLiteral("meter.ananMulti"),QStringLiteral("ANAN multi meter"),false,true,{}});
     result.append({QStringLiteral("meter.crossNeedle"),QStringLiteral("Cross needle"),false,true,{}});
@@ -334,6 +339,7 @@ ContentEntry ContainerContentRegistry::makeEntry(const QString& typeId) const {
         return entry;
     }
     const auto item = allocate(typeId);
+    if (const auto* waveform=qobject_cast<const WaveformMeterItem*>(item.get())) { entry.config.insert("properties",waveform->configuration()); }
     if (const auto* face=qobject_cast<const BarPresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (const auto* face=qobject_cast<const CompositePresetItem*>(item.get())) { entry.config.insert(QStringLiteral("properties"),face->configuration()); }
     if (item) { entry.config.insert(QStringLiteral("legacyRecord"), item->serialize()); entry.canvasRect = QRectF(item->x(),item->y(),item->itemWidth(),item->itemHeight()); entry.paintOrder = item->zOrder(); }
@@ -360,7 +366,11 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
     const QString raw = entry.config.value(QStringLiteral("legacyRecord")).toString();
     auto* face=qobject_cast<BarPresetItem*>(item.get());
     auto* composite=qobject_cast<CompositePresetItem*>(item.get());
-    if(composite) {
+    auto* waveform=qobject_cast<WaveformMeterItem*>(item.get());
+    if(waveform) {
+        if(!raw.isEmpty() && !waveform->deserialize(raw)) { return nullptr; }
+        if(!waveform->applyConfiguration(entry.config.value("properties").toObject())) { return nullptr; }
+    } else if(composite) {
         if(!raw.isEmpty() && !composite->deserialize(raw)) { return nullptr; }
         if(!composite->applyConfiguration(entry.config.value(QStringLiteral("properties")).toObject())) { return nullptr; }
         composite->setPreviewInert(mode!=ContentRenderMode::Live);
@@ -371,7 +381,7 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
         if (!validBaseFields(raw) || raw.section(QLatin1Char('|'), 0, 0) != (entry.typeId=="meter.spacer" ? QStringLiteral("SPACER") : entry.typeId) || !item->deserialize(raw)) { return nullptr; }
     }
     const QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();
-    if (!face && !composite && !overrides.isEmpty()) {
+    if (!face && !composite && !waveform && !overrides.isEmpty()) {
         QStringList fields = item->serialize().split(QLatin1Char('|'));
         for (auto it = overrides.begin(); it != overrides.end(); ++it) {
             bool ok = false; const int index = it.key().toInt(&ok);
@@ -381,8 +391,11 @@ MeterItem* ContainerContentRegistry::createMeterItem(const ContentEntry& entry, 
         const QString effective = fields.join(QLatin1Char('|'));
         if (!validBaseFields(effective) || !item->deserialize(effective)) { return nullptr; }
     }
-    if (entry.context.contains(QStringLiteral("bindingId"))) { item->setBindingId(entry.context.value(QStringLiteral("bindingId")).toInt()); }
-    item->setMmioBinding(QUuid(entry.context.value(QStringLiteral("mmioGuid")).toString()), entry.context.value(QStringLiteral("mmioVariable")).toString());
+    // PCM faces retain imported scalar/MMIO context as data, never activate it.
+    if (!waveform) {
+        if (entry.context.contains(QStringLiteral("bindingId"))) { item->setBindingId(entry.context.value(QStringLiteral("bindingId")).toInt()); }
+        item->setMmioBinding(QUuid(entry.context.value(QStringLiteral("mmioGuid")).toString()), entry.context.value(QStringLiteral("mmioVariable")).toString());
+    }
     if (entry.context.contains(QStringLiteral("stackSlot"))) {
         item->setStackSlot(entry.context.value(QStringLiteral("stackSlot")).toInt(-1));
         item->setSlotLocalY(entry.context.value(QStringLiteral("slotLocalY")).toDouble());
@@ -489,6 +502,9 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     const QString serialized = item.serialize();
     const auto* face=qobject_cast<const BarPresetItem*>(&item);
     const auto* composite=qobject_cast<const CompositePresetItem*>(&item);
+    const auto* waveform=qobject_cast<const WaveformMeterItem*>(&item);
+    if(waveform && entry.typeId.isEmpty()) { entry=makeEntry(waveform->typeId()); }
+    if(waveform) { entry.config.insert("properties",waveform->configuration()); entry.config.insert("legacyRecord",serialized); entry.extensions.remove("unavailableReason"); }
     if (face && entry.typeId.isEmpty()) { entry=makeEntry(face->typeId()); entry.config.insert(QStringLiteral("legacyRecord"),serialized); }
     if(composite && entry.typeId.isEmpty()) { entry=makeEntry(composite->typeId()); entry.config.insert(QStringLiteral("legacyRecord"),serialized); }
     if (entry.typeId.isEmpty()) { entry = makeEntry(serialized.section(QLatin1Char('|'),0,0)); entry.config.insert(QStringLiteral("legacyRecord"), serialized); }
@@ -497,7 +513,7 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
     if(composite) { entry.config.insert(QStringLiteral("properties"),composite->configuration()); entry.extensions.remove(QStringLiteral("unavailableReason")); }
     auto baseline = allocate(entry.typeId);
     if (auto* web = qobject_cast<WebImageItem*>(baseline.get())) { web->setFetchEnabled(false); }
-    if (!face && !composite && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
+    if (!face && !composite && !waveform && baseline && baseline->deserialize(entry.config.value(QStringLiteral("legacyRecord")).toString())) {
         const QStringList before = baseline->serialize().split(QLatin1Char('|'));
         const QStringList after = serialized.split(QLatin1Char('|'));
         QJsonObject overrides = entry.config.value(QStringLiteral("overrides")).toObject();
@@ -513,9 +529,11 @@ ContentEntry ContainerContentRegistry::captureMeterItem(const MeterItem& item, c
         entry.canvasRect = QRectF(item.x(),item.y(),item.itemWidth(),item.itemHeight());
     }
     entry.paintOrder = item.zOrder();
-    entry.context.insert(QStringLiteral("bindingId"),item.bindingId());
-    entry.context.insert(QStringLiteral("mmioGuid"),item.mmioGuid().toString(QUuid::WithoutBraces));
-    entry.context.insert(QStringLiteral("mmioVariable"),item.mmioVariable());
+    if (!waveform) {
+        entry.context.insert(QStringLiteral("bindingId"),item.bindingId());
+        entry.context.insert(QStringLiteral("mmioGuid"),item.mmioGuid().toString(QUuid::WithoutBraces));
+        entry.context.insert(QStringLiteral("mmioVariable"),item.mmioVariable());
+    }
     entry.context.insert(QStringLiteral("stackSlot"),item.stackSlot());
     entry.context.insert(QStringLiteral("slotLocalY"),item.slotLocalY());
     entry.context.insert(QStringLiteral("slotLocalH"),item.slotLocalH());

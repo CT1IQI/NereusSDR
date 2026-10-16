@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: restoreMainWindowGeometry()'s note says the constructor
+//               calls it last (issue #525). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-14: Follow window moves with the existing toast anchor and add
 //               access-only display regression friendship. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -176,6 +179,10 @@
 //                slice: streamShownOnPan, panShowsStream, sliceIsOffPanStream,
 //                showOwnStreamOnPan, panIdOfSpectrum, m_panShownStream.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - J.J. Boyd (KG4VCF). A remote window's rigctld:
+//                m_remoteRigctl, refreshRigctlRemoteTransmit,
+//                applyRemoteRigctldSettings. AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -952,6 +959,11 @@ private slots:
     /// program's transmit to the Core while the Core takes this window's
     /// keys, and not otherwise.
     void refreshTciRemoteTransmit();
+    // 2026-10-15: the remote window's own rigctld (RemoteRigctlServer):
+    // its forwarder follows the TCI server's, and it listens while
+    // RemoteRigctld/Enabled says so.
+    void refreshRigctlRemoteTransmit();
+    void applyRemoteRigctldSettings();
     // Group B fix wave: whether BYPS (RX bypass on TX) may change the
     // radio's relay setting, and why not.
     bool rxBypassPermitted() const;
@@ -1170,6 +1182,7 @@ private slots:
     void pushSpectrumCalToPans();
 
 private:
+    friend class ImdPanelTestAccess;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
     friend class DisplaySettingsCorrectnessAccess;
@@ -1400,8 +1413,9 @@ private:
     // under MainWindowGeometry / MainWindowState (base64 of Qt's native
     // QByteArray blobs). restoreMainWindowGeometry() returns true if a
     // valid saved geometry was applied, false otherwise (first launch
-    // or corrupted blob); buildUI() uses the return to decide whether
-    // to keep the 1280×800 default. Multi-screen safety clamp: if the
+    // or corrupted blob), in which case the 1280×800 default set in
+    // buildUI() stays. The constructor calls it last, after the pans exist
+    // (issue #525). Multi-screen safety clamp: if the
     // restored geometry sits entirely outside every connected screen
     // (monitor disconnected since last save), fall back to centering
     // on the primary screen at the default size.
@@ -1579,6 +1593,10 @@ private:
     // R-R3-44: this computer's VAX channels, fed from the Core's receiver
     // streams. Remote windows only; deleted right after m_remoteMedia.
     class RemoteVaxRouter* m_remoteVax{nullptr};
+    // 2026-10-15: this computer's rigctld acting as the window (WSJT-X CAT
+    // and VAX). Remote windows only; deleted before m_remoteMedia.
+    class RemoteRigctlServer* m_remoteRigctl{nullptr};
+    bool m_rigctlRemoteTransmitInstalled{false};
     // R-R3-42, R-R3-44 fix wave: one toast per receiver-audio stop across
     // TCI and the VAX channels.
     ReceiverStopNotices m_receiverStopNotices;
@@ -1755,6 +1773,16 @@ private:
     QPointer<QAction> m_displayDuplexAction;
     void setDisplayDuplexSetting(bool on);
     void applyDisplayDuplex();
+    void wireImdMeasurementForwarding();
+    void refreshImdMeasurementForwarding();
+    void onImdPureSignalStatusChanged();
+    void setImdMeasurementsShown(bool shown);
+    void hideImdMeasurements();
+    void enableImdDisplayDuplex();
+    void refreshImdRailControls();
+    QPointer<class PureSignalSessionFacade> m_imdObservedFacade;
+    bool m_imdStatusBaselineKnown{false};
+    bool m_imdLastCorrectionsApplied{false};
     // Display pill plan Task 13: what a key edge does beyond m_moxDisplay's
     // own pans. wireDisplayKeyEdges gives m_moxDisplay each pan's band and
     // purges every FFT engine's input on keyedChanged; called wherever
@@ -1938,10 +1966,10 @@ private:
     /// the status-bar light and this item never disagree.
     QAction*      m_tnfAction = nullptr;
 
-    // Mode menu actions (14 modes: 12 Thetis + NereusSDR-native
-    // RADE-U / RADE-L from Phase 3R L3; mutual exclusion via
-    // QActionGroup).
-    QAction*      m_modeActions[14]  = {};
+    // Mode menu actions (16 modes: 12 Thetis + NereusSDR-native
+    // RADE-U / RADE-L from Phase 3R L3 + experimental RADE2-U / RADE2-L;
+    // mutual exclusion via QActionGroup).
+    QAction*      m_modeActions[16]  = {};
     QActionGroup* m_modeActionGroup  = nullptr;
 
     // AGC menu action group (Task 12)

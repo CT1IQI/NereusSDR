@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 : isVaxTxBusOpen(); openVaxOutputs() opens the VAX TX
+//                 device in a remote window too. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-13 : Owner-thread ASIO output snapshots without role locks.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
@@ -1028,10 +1031,17 @@ public:
 
     // A remote window opens the four VAX receive outputs start() opens (the
     // engine itself never starts there), skipping a slot that already has
-    // one. It opens no VAX TX device: VAX as the microphone waits for
-    // remote transmit. In a test run (QStandardPaths test mode) it opens
-    // only what setVaxBusFactoryForTest() supplies. Owner thread.
+    // one. 2026-10-15: it opens the VAX TX device too, as start() does, so
+    // VAX as a remote window's transmit source has something to send
+    // (RemoteMediaController's uplink pulls it through pullVaxTxMic). In a
+    // test run (QStandardPaths test mode) it opens only what
+    // setVaxBusFactoryForTest() supplies. Owner thread.
     void openVaxOutputs();
+
+    // 2026-10-15: whether the VAX transmit device (what apps write to
+    // "NereusSDR TX") is open: a remote window sends it as its microphone
+    // when VAX is the transmit source. Owner thread.
+    bool isVaxTxBusOpen() const { return m_vaxTxBus != nullptr && m_vaxTxBus->isOpen(); }
 
     // A remote window's VAX feeder writes a channel from its own worker
     // thread, never an audio callback. vaxOutputPacing() is the output's

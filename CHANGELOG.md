@@ -90,6 +90,29 @@ Advanced, and each control appears on one page only.
 - Digital modes holds VAX and TCI.
 - Every page opens at the top. Your saved audio settings carry over unchanged.
 
+### Tuner and amplifier meters while transmitting
+
+- The Tuner Genius XL and Power Genius XL meters follow the signal while you
+  transmit or tune: NereusSDR asks the tuner for its readings about 16 times a
+  second and the amplifier 10 times a second while keyed, and for two seconds
+  after. In receive the tuner's readings now update four times a second; it
+  was once a second.
+- The Tuner Genius XL, Power Genius XL and RF2K-S panels show forward power as
+  one large bar with its scale, a legal-limit marker and a mark that holds the
+  peak. Reflected power, SWR and temperature are slim rows under it, each with
+  its number on the row (whole watts and whole degrees).
+- Forward power, reflected power and SWR show dashes when no power is passing,
+  where they used to read 0 W and 1.00. Forward power turns red past the
+  1500 W legal display marker; SWR and temperature turn red past 2.5 and
+  80 °C. Reflected power has no limit marker. The RF2K-S line under the
+  meters now shows only volts and amps.
+- Main power meters use a connected amplifier in OPERATE, with Power Genius
+  XL taking precedence over RF2K-S. They show its forward power and SWR on
+  a 0 to 2000 W display; standby or disconnection restores the radio's
+  readings and scale. The transmit row also shows the radio's DRIVE power.
+  The 1500 W marker is visual only, and reported readings such as 2300 W
+  remain complete. It does not change drive, keying or output controls.
+
 ### Tuner Genius XL firmware 1.2.44
 
 - A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a
@@ -172,6 +195,18 @@ right-click menu keeps only what is left.
   and presets, the transmit display settings, the radio list, and the
   accessory fault and limit records. Each of these saved the settings file on
   the thread that sends the audio and now hands it to the same writer thread.
+- A Core on Linux is now given the network receive buffer it asks for. It
+  asks for 4 MB on the socket its radio sends to, and Linux granted only what
+  its limit (`net.core.rmem_max`) allowed: 212992 bytes on a Rock 5C, which
+  three or four wide receivers fill in 6 to 9 ms. The `nereusd` packages, the
+  station images and the Pi 4 and Rock install scripts now install
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
+  apply it at install without lowering a limit that is already higher. This
+  is the only system setting the packages and the Pi 4 scripts change (the
+  Rock script also writes a login-manager drop-in); removing the package or
+  the file undoes it from the next system start. The Core's log
+  now says how much of the buffer it was given. See "The system setting the
+  Core's installer changes" in the README.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.
@@ -197,6 +232,13 @@ right-click menu keeps only what is left.
   transmit until the window has transmit; when a program's request is refused
   for that reason, the notice now says so and names the button. Before, the
   button appeared only while another device had transmit.
+- An Anvelina Pro 3's third receiver no longer shows a comb over a floor
+  about 58 dB too high. On the bench, the receiver channel in the radio that
+  served the third receiver sent damaged samples; the third and fourth
+  receivers now use two other channels. The fix applies when Radio Model is
+  set to Anvelina Pro 3 in the Connect to Radio window (pick the radio in the
+  list, then choose the model). The radio reports itself as an Orion MkII,
+  so auto-detect does not choose it.
 
 ## [2026.10.0] - 2026-10-05
 

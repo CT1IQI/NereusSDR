@@ -23,6 +23,11 @@
 //   2026-10-06: Issue #351: inPlaceRecoveryMs, how long a lost link keeps
 //               trying to come back on the same connection. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11: kRadioSocketReceiveBufferBytes names the receive buffer both
+//               protocols ask for, and grantedReceiveBufferBytes reads what
+//               the system gave, so the connect log can say when a request
+//               was cut short. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-14: The ping timestamp is atomic: P1 notes its pings on the
 //               EP2 sender thread. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
@@ -34,6 +39,11 @@
 //               read them on the main thread while the connection thread
 //               records. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-15: The transmit cut: cutTransmit, transmitCut,
+//               clearTransmitCut and applyTransmitCut, a latch any thread
+//               may set that unkeys on this object's thread and refuses a
+//               key until it is cleared. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
@@ -167,6 +177,28 @@ public:
 
     // Factory — creates the appropriate subclass based on RadioInfo::protocol.
     static std::unique_ptr<RadioConnection> create(const RadioInfo& info);
+
+    /// The receive buffer both protocols ask for on the socket the radio
+    /// sends to (applySocketBufferSizes in P1RadioConnection.cpp and
+    /// P2RadioConnection.cpp): 4 MB, raised from Thetis's 0xfa000 after the
+    /// 2026-05-26 bench. The system may grant less. On Linux the limit is
+    /// net.core.rmem_max, and the Core's packages and install scripts raise
+    /// it to this figure (packaging/nereusd-receive-buffer.conf, which
+    /// tests/release/test_core_receive_buffer_limit.py holds to it).
+    static constexpr int kRadioSocketReceiveBufferBytes = 0x400000;
+    /// The receive buffer the system granted, from the size a socket
+    /// reports. Linux doubles a request to leave room for its own
+    /// bookkeeping and reports the doubled figure (socket(7), SO_RCVBUF), so
+    /// there a full grant of N reads 2N and a request held at
+    /// net.core.rmem_max reads twice that limit.
+    static constexpr int grantedReceiveBufferBytes(int reportedBytes) noexcept
+    {
+#ifdef Q_OS_LINUX
+        return reportedBytes / 2;
+#else
+        return reportedBytes;
+#endif
+    }
 
     // State (atomic for cross-thread reads from main thread)
     ConnectionState state() const { return m_state.load(); }
@@ -922,6 +954,32 @@ public slots:
 
     bool isWatchdogEnabled() const noexcept { return m_watchdogEnabled; }
 
+public:
+    // --- Transmit cut (2026-10-15) ---
+    // A remote device keyed through the Core whose link goes quiet is cut
+    // off the main thread when that thread stalls (RemoteTxCutGuard, through
+    // TransmitCutLine). cutTransmit() may be called from any thread and
+    // never blocks: the first call sets the latch and queues
+    // applyTransmitCut() onto this object's thread; later calls add nothing
+    // until clearTransmitCut(). While the latch is set, P1 and P2 refuse
+    // setMox(true) and every point that puts the MOX/PTT bit or TX I/Q on
+    // the wire reads it as unkeyed. setMox(false) never clears it.
+    void cutTransmit();
+    bool transmitCut() const noexcept { return m_transmitCut.load(std::memory_order_acquire); }
+
+public slots:
+    // This object's thread; queued from the main thread's catch-up
+    // (RadioModel::catchUpTransmitCut), after the setMox(false) its stop
+    // posted.
+    void clearTransmitCut();
+
+protected:
+    // This object's thread. The default unkeys as the emergency stop does:
+    // setMox(false); setTrxRelay(false). P1 then puts bank 0 on its next
+    // frame and drops queued TX I/Q; P2 sends its high-priority packet at
+    // once and keeps re-sending MOX off for its grace window.
+    virtual void applyTransmitCut();
+
 signals:
     // --- Telemetry ---
     // Emitted when a C&C round-trip completes. rttMs is the elapsed time
@@ -1204,6 +1262,8 @@ private:
     // Initialised to -1 so the first call always emits.
     std::atomic<float> m_lastSupplyVolts{-1.0f};
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
+    // The transmit cut latch (cutTransmit / clearTransmitCut).
+    std::atomic<bool> m_transmitCut{false};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one

@@ -53,6 +53,14 @@
 //   2026-10-14: Retire a station session even when remote transmit was
 //               already unavailable. J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
+//   2026-10-15: programAudioKeyChanged, published with the key, so the
+//               microphone line follows a program key that arrives or ends
+//               under the screen key (the key down does not move then).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: keyForProgram refuses while another program's key is on,
+//               not only while one waits: the TCI server and the remote
+//               window's rigctld share this one program key. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -528,6 +536,15 @@ void RemoteTransmitClient::keyForProgram(bool programAudio,
         if (answer) { answer(refusedAnswer); }
         return;
     }
+    if (m_program.phase == Phase::On) {
+        // 2026-10-15: the TCI server and the rigctld each ask once per key,
+        // so a key asked while one is on is the other's: refused, so that
+        // neither one's release ends the other's transmission.
+        Answer refusedAnswer;
+        refusedAnswer.reason = QStringLiteral("Another program is transmitting.");
+        if (answer) { answer(refusedAnswer); }
+        return;
+    }
     const QPointer<RemoteTransmitClient> self(this);
     const quint32 id = send(QByteArrayLiteral("tx.key"),
                             {utf8Argument("trigger", QString::fromLatin1(kProgramTrigger))},
@@ -841,6 +858,12 @@ void RemoteTransmitClient::publish()
     if (down != m_publishedKeyDown) {
         m_publishedKeyDown = down;
         emit micKeyDownChanged(down);
+        if (!self) { return; }
+    }
+    const bool programAudio = programAudioKey();
+    if (programAudio != m_publishedProgramAudio) {
+        m_publishedProgramAudio = programAudio;
+        emit programAudioKeyChanged(programAudio);
         if (!self) { return; }
     }
     const bool holds = holdsTransmit();

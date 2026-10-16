@@ -138,9 +138,9 @@ inline constexpr int kAmsqThreshMinDb = -160;
 inline constexpr int kAmsqThreshMaxDb = 0;
 inline constexpr int kAmsqThreshStepDb = 1;
 
-// FM squelch, Setup > DSP > FM's threshold slider, in dB (SliceModel
-// fmsqThresh; RxChannel::setFmsqThresh converts it for WDSP). The page
-// uses the AM slider's range.
+// FM squelch, Setup > DSP > FM's threshold slider (SliceModel fmsqThresh):
+// the slider position, -160 to 0, which RxChannel::fmsqThresholdForWdsp
+// maps to the WDSP threshold. The page uses the AM slider's range.
 inline constexpr int kFmsqThreshMinDb = -160;
 inline constexpr int kFmsqThreshMaxDb = 0;
 inline constexpr int kFmsqThreshStepDb = 1;

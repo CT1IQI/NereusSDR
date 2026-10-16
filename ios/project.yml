@@ -73,6 +73,9 @@ targets:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) PTT_PROBE"
 
   NereusActivity:
+    dependencies:
+      - package: NereusKit
+        product: NereusModels
     type: app-extension
     platform: iOS
     sources:

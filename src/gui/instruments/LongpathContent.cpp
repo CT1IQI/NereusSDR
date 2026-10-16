@@ -34,6 +34,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - The frequency instrument's VFO row uses the slice
@@ -63,6 +66,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "models/MainPowerMeter.h"
+#include "gui/instruments/PowerReadingDescriptor.h"
 #include "gui/instruments/LongpathContent.h"
 
 #include "core/ControlRanges.h"
@@ -413,6 +418,20 @@ void registerAll(ContainerContentRegistry& registry, const Sources& sources)
                 if (binding == primary && available) { guard->setOffline(false); }
             };
             widget = needle;
+        }
+        // Per-model or amplifier scale belongs to this instance, not the
+        // fixed descriptor table. Keep its binding and current value intact.
+        if (primary == MeterBinding::TxPower && sources.radio) {
+            MainPowerMeter* meter = sources.radio->mainPowerMeter();
+            const auto scale = [widget, meter] {
+                const ReadingDescriptor d = powerReadingDescriptor(meter->visualLimitW(), meter->scaleTopW());
+                if (auto* bar = qobject_cast<BarInstrument*>(widget)) { bar->setPrimaryScale(d); }
+                if (auto* needle = qobject_cast<NeedleInstrument*>(widget)) { needle->setPrimaryScale(d); }
+            };
+            scale();
+            if (mode != ContentRenderMode::Preview) {
+                QObject::connect(meter, &MainPowerMeter::scaleChanged, widget, scale);
+            }
         }
         widget->setProperty("longpathPrimaryBinding", primary);
         if (sources.poller && available && mode == ContentRenderMode::Preview) {
