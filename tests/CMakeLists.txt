@@ -3146,6 +3146,8 @@ nereus_add_test(tst_workspace_default_button
 target_compile_definitions(tst_workspace_default_button PRIVATE NEREUS_BUILD_TESTS)
 # A DSP parameter popup opened against the screen's lower edge is placed from
 # the size it ends at with the workspace look on, and does not grow after.
+nereus_add_test(tst_dsp_popup_bounds)
+nereus_add_test(tst_nnr_popup_bounds)
 nereus_add_test(tst_dsp_popup_stays_on_screen
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_dsp_popup_stays_on_screen PRIVATE NEREUS_BUILD_TESTS)
