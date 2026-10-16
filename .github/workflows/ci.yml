@@ -146,8 +146,8 @@ jobs:
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
       # ------------------------------------------------------------------
       - name: Cache pinned Thetis + mi0bot-Thetis upstream checkouts
-        # Both upstreams are pinned to fixed SHAs (ramdor 501e3f5,
-        # mi0bot c26a8a4) so the cache key never invalidates until we
+        # Both upstreams are pinned to fixed SHAs (ramdor 3759d09 and
+        # 501e3f5, mi0bot c26a8a4) so the cache key never invalidates until we
         # re-pin upstream — bump the trailing -vN if the pinned SHAs
         # change. Saves ~90 seconds per run vs a fresh full clone.
         id: thetis-cache
@@ -156,10 +156,11 @@ jobs:
           path: |
             ${{ github.workspace }}/../Thetis
             ${{ github.workspace }}/../Thetis-v2.10.3.15
+            ${{ github.workspace }}/../Thetis-v2.10.3.13
             ${{ github.workspace }}/../mi0bot-Thetis
             ${{ github.workspace }}/../freedv-gui
             ${{ github.workspace }}/../deskhpsdr
-          key: thetis-clones-501e3f5-3759d09-c26a8a4-77e793a-f3d857c-v4
+          key: thetis-clones-3759d09-501e3f5-c26a8a4-77e793a-f3d857c-v5
 
       - name: Clone Thetis + mi0bot-Thetis upstream (cache miss only)
         if: steps.thetis-cache.outputs.cache-hit != 'true'
@@ -169,9 +170,16 @@ jobs:
         # phantom missing tags that live at the NEW line of an unrelated
         # edit.
         #
-        # ramdor/Thetis pinned to 501e3f5 (tag v2.10.3.13, "Archive
-        # project and end active development") to match every
-        # `[v2.10.3.13]` inline cite stamp.
+        # ramdor/Thetis pinned to 3759d09 (tag v2.10.3.15), the pin
+        # CLAUDE.md names, so ../Thetis here and in a local checkout are
+        # the same tree. Until 2026-10-15 ../Thetis was 501e3f5, and the
+        # author-tag corpus and contributor indexes were built from a
+        # tree no local checkout had.
+        #
+        # ramdor/Thetis ALSO cloned at 501e3f5 (v2.10.3.13 plus seven
+        # commits, "Archive project and end active development") into
+        # ../Thetis-v2.10.3.13, to match every `[v2.10.3.13]` and
+        # `[@501e3f5]` inline cite stamp.
         # See PR #120 CI failure 2026-04-23 for the original incident.
         #
         # ramdor/Thetis ALSO cloned at 3759d09 (tag v2.10.3.15, "g2e") into
@@ -216,8 +224,13 @@ jobs:
           mkdir -p ../Thetis
           git -C ../Thetis init -q
           git -C ../Thetis remote add origin https://github.com/ramdor/Thetis.git
-          git -C ../Thetis fetch --depth=1 -q origin 501e3f513f73f07742d7e1b85a0e9528bd14977d
+          git -C ../Thetis fetch --depth=1 -q origin 3759d096067b7574550b963c1e7a22003da2ab00
           git -C ../Thetis checkout -q FETCH_HEAD
+          mkdir -p ../Thetis-v2.10.3.13
+          git -C ../Thetis-v2.10.3.13 init -q
+          git -C ../Thetis-v2.10.3.13 remote add origin https://github.com/ramdor/Thetis.git
+          git -C ../Thetis-v2.10.3.13 fetch --depth=1 -q origin 501e3f513f73f07742d7e1b85a0e9528bd14977d
+          git -C ../Thetis-v2.10.3.13 checkout -q FETCH_HEAD
           mkdir -p ../Thetis-v2.10.3.15
           git -C ../Thetis-v2.10.3.15 init -q
           git -C ../Thetis-v2.10.3.15 remote add origin https://github.com/ramdor/Thetis.git
@@ -240,13 +253,15 @@ jobs:
           git -C ../deskhpsdr checkout -q FETCH_HEAD
 
       - name: Corpus drift — upstream author tags match committed corpus
-        # Fails if upstream Thetis (ramdor or mi0bot fork) contains
-        # contributor tags that the committed
+        # Fails if upstream Thetis (ramdor or mi0bot fork, or the
+        # v2.10.3.13 tree that `[v2.10.3.13]` cites resolve against)
+        # contains contributor tags that the committed
         # docs/attribution/thetis-author-tags.json does not yet list.
         # Forces corpus refresh before any port can cite a new region.
         env:
           NEREUS_THETIS_DIR: ${{ github.workspace }}/../Thetis
           NEREUS_MI0BOT_DIR: ${{ github.workspace }}/../mi0bot-Thetis
+          NEREUS_THETIS_V21013_DIR: ${{ github.workspace }}/../Thetis-v2.10.3.13
         run: python3 scripts/discover-thetis-author-tags.py --drift
 
       - name: Verify inline author-tag preservation in ported code
@@ -909,9 +924,14 @@ jobs:
       - name: Configure (macOS)
         if: runner.os == 'macOS'
         run: |
+          # Build against the openssl@3 keg only; the reason is in
+          # scripts/ci/macos-openssl.sh. The unlink runs here, after the
+          # job's last brew install.
+          scripts/ci/macos-openssl.sh unlink
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -941,6 +961,13 @@ jobs:
       - name: Build (Linux/macOS)
         if: runner.os != 'Windows'
         run: cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+      # Every libcrypto or libssl the built binaries link must be openssl@3's
+      # libcrypto.3 or libssl.3. release.yml runs the same check, but only
+      # when a release is cut; this leg runs the same configure on every PR.
+      - name: Check OpenSSL link (macOS)
+        if: runner.os == 'macOS'
+        run: scripts/ci/macos-openssl.sh check-link build "$(brew --prefix openssl@3)/lib"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'

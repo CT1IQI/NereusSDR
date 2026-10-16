@@ -9,9 +9,18 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
+//                 capability changes as well as remote changes. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-14 - Preserve SKU-specific RX-only selections during antenna
+//                 read-back and initial populate (PR #262 review finding).
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
 //   2026-10-14 - Refuse blocked TX popup choices using the existing local
 //                 or mirrored Alex flags (PR #96 review). J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -94,6 +103,9 @@
 //                 shows the app's own lock / unlock icons (AppIcon) in place
 //                 of colour emoji text. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -217,6 +229,7 @@
 #include "core/accessories/AlexController.h"
 #include "core/session/IStationLink.h"
 #include "gui/ComboStyle.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/AppIcon.h"
@@ -232,7 +245,6 @@
 
 #include <QAction>
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -543,23 +555,7 @@ void RxApplet::fillPreampCombo(bool rx2)
     // starts from the first item, and the caller shows that list's mode.
     const QVariant current = rx2 == m_preampShowsRx2 ? m_preampCombo->currentData() : QVariant();
     QSignalBlocker blk(m_preampCombo);
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
-        // cache through the public API before the combo mutates its model.
-        QAbstractItemView* view = m_preampCombo->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
-        }
-    }
-#endif
+    resetItemsBeforeRowChange(m_preampCombo);
     m_preampCombo->clear();
     const auto items = rx2 ? BoardCapsTable::rx2PreampItemsForBoard(m_preampBoard)
                            : BoardCapsTable::preampItemsForBoard(m_preampBoard, m_preampAlex);
@@ -2018,6 +2014,16 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
     m_popupCaps = caps;
 
+    // The same late-capability lifecycle also applies to local windows.
+    // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
+    // applet was usually built before the Core's board was known.
+    if (caps.p2PreampPerAdc) {
+        ensureRx1PreampToggle();
+    }
+    if (m_rx1PreampToggle) {
+        m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
+    }
+
     // R-R3-46: a remote window has no radio connection of its own, so
     // connectSlice()'s per-board rebuild below never runs there; the Core's
     // radio arrives through here instead. Same tables as that rebuild
@@ -2027,14 +2033,6 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_model && !m_model->ownsLocalDsp()) {
         rebuildPreampAndAttRangeForBoard(caps.board, caps.hasAlexFilters,
                                          caps.attenuator.minDb);
-        // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
-        // applet was usually built before the Core's board was known.
-        if (caps.p2PreampPerAdc) {
-            ensureRx1PreampToggle();
-        }
-        if (m_rx1PreampToggle) {
-            m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
-        }
         // R-R3-46 / R-R3-21: then the Core's own range and values, once it
         // offers its attenuator (the rebuild may have reset the combo), and
         // whether the row (the toggle too) takes edits now.
@@ -2326,7 +2324,7 @@ void RxApplet::connectSlice(SliceModel* s)
                 && (attCtrl->rx2SliceMask() & (1u << sliceId)) != 0) {
                 attCtrl->setRx2Attenuation(val);
             } else {
-                attCtrl->setAttenuation(val);
+                attCtrl->setDisplayedAttenuation(val);
             }
         });
 
@@ -2512,7 +2510,18 @@ void RxApplet::populateAntennaButtons(Band band)
 
     // RX antenna: AlexController stores 1/2/3; map to "ANT1"/"ANT2"/"ANT3".
     const int rxNum = alex.rxAnt(band);
-    const QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
+    QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
+    // Match SliceModel::refreshAntennasFromAlex's RX-only resolution while
+    // leaving TX intent below with the slice. An ANT-only echo would clear
+    // the RX-only mux through RadioModel's rxAntennaChanged handler.
+    const int rxOnly = alex.rxOnlyAnt(band);
+    if (rxOnly >= 1 && rxOnly <= 3) {
+        const SkuUiProfile sku = skuUiProfileFor(m_model->hardwareProfile().model);
+        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        if (!label.isEmpty()) {
+            rxLabel = label;
+        }
+    }
 
     // TX antenna is bound-slice intent, not an AlexController read-back.
     // RadioModel reconciles that intent into Alex on a bound-slice edit,

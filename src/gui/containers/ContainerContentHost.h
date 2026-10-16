@@ -31,6 +31,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include "ContainerDocument.h"
 #include "ContainerTypes.h"
+#include "gui/NereusGuiExport.h"
 #include <QHash>
 #include <QWidget>
 #include <QPointer>
@@ -45,7 +46,7 @@ class MeterWidget;
 class MeterItem;
 class FreeCanvasSurface;
 class WorkspaceEntryHeader;
-class ContainerContentHost : public QWidget {
+class NEREUS_GUI_EXPORT ContainerContentHost : public QWidget {
     Q_OBJECT
 public:
     struct EntryRow {

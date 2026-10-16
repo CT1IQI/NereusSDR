@@ -28,6 +28,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/setup/ThisCorePage.h"
@@ -119,8 +122,6 @@ ThisCorePage::ThisCorePage(RadioModel* model, QWidget* parent)
     auto* modelRow = new QHBoxLayout;
     auto* modelLabel = new QLabel(tr("Model:"), section);
     m_modelCombo = new QComboBox(section);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Refilled as the selected radio changes.
-    installQtCocoaAccessibleTableCacheRepair(m_modelCombo->view());
     m_modelCombo->setObjectName(QStringLiteral("thisCoreModel"));
     modelRow->addWidget(modelLabel);
     modelRow->addWidget(m_modelCombo, 1);
