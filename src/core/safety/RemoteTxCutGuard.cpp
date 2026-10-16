@@ -10,6 +10,9 @@
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-16: cuts after more than kDeadlineMs of silence, not at it,
+//               as the watchdog does. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxCutGuard.h"
@@ -134,7 +137,12 @@ void RemoteTxCutGuard::run()
             m_wake.wait(lock);
             continue;
         }
-        const Clock::time_point deadline = m_lastHeard + std::chrono::milliseconds(kDeadlineMs);
+        // "More than 400 ms", as RemoteTxWatchdog judges it: the first
+        // millisecond past the deadline. Cutting at the deadline itself cut
+        // at exactly 400 ms of silence, and the watchdog's stop then
+        // reported 400 (CI, 2026-10-16).
+        const Clock::time_point deadline =
+            m_lastHeard + std::chrono::milliseconds(kDeadlineMs + 1);
         const Clock::time_point now = Clock::now();
         if (now < deadline) {
             // Woken early or spuriously, or last-heard moved: recheck then.
