@@ -565,6 +565,16 @@ import Testing
     /// band draw is paired with a reference draw into a target of the same
     /// size, timed in the same loop: contention slows both, a slower
     /// renderer slows only the band.
+    ///
+    /// The two are compared by what each draw costs, as the app's 3D pacer
+    /// counts a frame: the encoding, here on the test thread's own CPU
+    /// clock, plus the GPU's own time for the command buffer. Neither
+    /// clock runs while the draw waits: for a core that other suites hold,
+    /// behind their work on the GPU, or for the test thread to wake once
+    /// the GPU is done. By the wall clock a busy host did not slow the two
+    /// alike: on a hosted runner a band frame went from its usual 3.7 ms or
+    /// so to 12.1 ms while the reference went from 2.9 to 5.3 ms. A
+    /// renderer that does more work still costs more.
     @Test func aPhoneWideBandDrawsInUnderEightMilliseconds() throws {
         let width = 1179
         let height = 1200
@@ -586,8 +596,22 @@ import Testing
         var generator = SystemRandomNumberGenerator()
         var times: [Double] = []
         var referenceTimes: [Double] = []
+        var encodings: [Double] = []
+        var gpuTimes: [Double] = []
+        var costs: [Double] = []
+        var referenceCosts: [Double] = []
         func milliseconds(since start: UInt64) -> Double {
             Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        }
+        func cpuMilliseconds(since start: UInt64) -> Double {
+            Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1e6
+        }
+        // The GPU's own time, none where the device reports none (as the renderer counts it).
+        func gpuMilliseconds(_ buffer: (any MTLCommandBuffer)?) -> Double {
+            guard let buffer, buffer.gpuEndTime > buffer.gpuStartTime else {
+                return 0
+            }
+            return (buffer.gpuEndTime - buffer.gpuStartTime) * 1e3
         }
         for sequence in 1...90 {
             let trace = (0..<width).map { _ in Float.random(in: -135 ... -95, using: &generator) }
@@ -598,20 +622,30 @@ import Testing
                                                       levels: (-130, -70)),
                           manualLevels: settings.manualLevels)
             var start = DispatchTime.now().uptimeNanoseconds
+            var cpuStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
             let buffer = renderer.draw(frame: state.frame, history: state.history, extras: state.frameExtras,
                                        overlays: overlays, into: target.texture)
+            let encoding = cpuMilliseconds(since: cpuStart)
             buffer?.waitUntilCompleted()
             let elapsed = milliseconds(since: start)
             start = DispatchTime.now().uptimeNanoseconds
-            try reference.draw()
+            cpuStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            let referenceBuffer = try reference.draw()
+            let referenceEncoding = cpuMilliseconds(since: cpuStart)
+            referenceBuffer.waitUntilCompleted()
             let referenceElapsed = milliseconds(since: start)
             if sequence > 10 {
                 times.append(elapsed)
                 referenceTimes.append(referenceElapsed)
+                encodings.append(encoding)
+                gpuTimes.append(gpuMilliseconds(buffer))
+                costs.append(encoding + gpuMilliseconds(buffer))
+                referenceCosts.append(referenceEncoding + gpuMilliseconds(referenceBuffer))
             }
         }
         times.sort()
         referenceTimes.sort()
+        func middle(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
         let median = times[times.count / 2]
         let worst = times[times.count - 1]
         let mean = times.reduce(0, +) / Double(times.count)
@@ -620,20 +654,31 @@ import Testing
         let kept = times.prefix(times.count - times.count / 20)
         let trimmedMean = kept.reduce(0, +) / Double(kept.count)
         let referenceMedian = referenceTimes[referenceTimes.count / 2]
-        let ratio = median / referenceMedian
+        let wallRatio = median / referenceMedian
+        let cost = middle(costs)
+        let referenceCost = middle(referenceCosts)
+        let ratio = cost / referenceCost
         func ms(_ value: Double) -> String { String(format: "%.2f", value) }
         print("BandRenderer 1179 x 1200 px on \(target.device.name): median \(ms(median)) ms, "
               + "mean of the fastest \(kept.count) \(ms(trimmedMean)) ms, mean \(ms(mean)) ms, "
               + "worst \(ms(worst)) ms over \(times.count) frames; reference median \(ms(referenceMedian)) ms, "
-              + "ratio \(ms(ratio))")
-        #expect(ratio < Self.speedRatioLimit, "the band's median against the reference draw's")
-        // A backstop for a renderer slow whatever the host is doing.
+              + "wall ratio \(ms(wallRatio)); cost median \(ms(cost)) ms (encoding \(ms(middle(encodings))) ms, "
+              + "GPU \(ms(middle(gpuTimes))) ms), reference cost median \(ms(referenceCost)) ms, ratio \(ms(ratio))")
+        #expect(ratio < Self.speedRatioLimit, "the band's cost against the reference draw's")
+        // A backstop for a renderer slow whatever the host is doing, and
+        // for one that waits inside its draw, which costs it no CPU time.
         #expect(median < Self.speedCeilingMs)
     }
 
-    /// Measured on an M5 Max on 2026-09-25: the renderer as built ran at
-    /// 1.06 to 1.41 times the reference (load averages 13 to 134), and one
-    /// doing three times its drawing work ran at 2.20 to 3.32.
+    /// Measured on an M5 Max on 2026-09-25, by the wall clock: the renderer
+    /// as built ran at 1.06 to 1.41 times the reference (load averages 13 to
+    /// 134), and one doing three times its drawing work ran at 2.20 to 3.32.
+    /// By cost, on the iPhone 17 simulator on the same Mac on 2026-10-15:
+    /// the renderer as built cost 1.40 to 1.66 times the reference, 1.44 to
+    /// 1.56 while another command queue kept the GPU busy, and 1.11 to 1.45
+    /// with waits added to both draws like those of a busy hosted runner;
+    /// one doing its drawing twice cost 2.59 to 2.78, and one drawing each
+    /// frame twice 2.75 to 2.92.
     static let speedRatioLimit = 1.8
     static let speedCeilingMs = 25.0
 }
@@ -641,9 +686,10 @@ import Testing
 /// A fixed reference draw for the speed test, shaped like a band frame:
 /// a fixed amount of vertex building on the CPU, copied into a buffer, then
 /// a full-target clear and one trivial pass over a target of the band's
-/// size, committed and waited for. The band's time is mostly the CPU's
-/// encoding plus the wait for the GPU, so the reference has both: a busy
-/// CPU or a shared GPU slows it as it slows the band.
+/// size, committed, as the band's draw is, for the test to wait for. The
+/// band's time is mostly the CPU's encoding plus the wait for the GPU, so
+/// the reference has both: a busy CPU or a shared GPU slows it as it slows
+/// the band.
 @MainActor
 final class ReferenceDraw {
     private let queue: any MTLCommandQueue
@@ -689,7 +735,8 @@ final class ReferenceDraw {
         self.pipeline = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
     }
 
-    func draw() throws {
+    /// Returns the committed command buffer, as the band's draw does.
+    func draw() throws -> any MTLCommandBuffer {
         vertices.removeAll(keepingCapacity: true)
         for index in 0..<Self.vertexCount {
             let x = Float(index) / Float(Self.vertexCount)
@@ -711,7 +758,7 @@ final class ReferenceDraw {
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
         commands.commit()
-        commands.waitUntilCompleted()
+        return commands
     }
 }
 
