@@ -97,6 +97,10 @@
 //   2026-09-30: take-over fix wave (M-2): forgetTakeBacks on its own. J.J.
 //               Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-12: aPinRequestOnTheCoresOwnReceiverNamesTheCore: the pin
+//               refusal names the Core when its own position holds the
+//               receiver. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -512,6 +516,37 @@ private slots:
             s.appA, "requestStreamCtunPinned",
             {int64("sliceId", 0), MirrorUpdate{0, "pinned", MirrorWireKind::Bool, true}});
         QCOMPARE(pinned.value(QStringLiteral("accepted")).toBool(false), true);
+    }
+
+    // The Core's own position holds the receiver on a Core no desktop hosts
+    // (CAT or TCI there). It has no entry among the connected devices, and
+    // the reason used to come out with an empty name: "This panadapter shows
+    // 's receiver." It names the Core, as the other slice refusals do.
+    void aPinRequestOnTheCoresOwnReceiverNamesTheCore()
+    {
+        Core core;
+        Device b{QStringLiteral("iPad"), QStringLiteral("tablet")};
+        core.model->configureStreamPool(2, 5, 192000);
+        core.model->sliceById(0)->setFrequency(7074000.0);
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        ownership->setOwner(0, SliceOwnership::stationDevice());
+        core.pair(b);
+        LoopbackTransport* appB = core.signIn(b);
+        QVERIFY(admitted(appB));
+        const QList<int> own = ownership->ownedBy(b.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        core.model->sliceById(own.first())->setFrequency(7150000.0);
+        QCOMPARE(streamOf(core, own.first()), streamOf(core, 0));
+        QCOMPARE(ownership->anchorOf(streamOf(core, 0)), SliceOwnership::stationDevice());
+        const QJsonObject refused = core.invoke(
+            appB, "requestStreamCtunPinned",
+            {int64("sliceId", own.first()), MirrorUpdate{0, "pinned", MirrorWireKind::Bool, true}});
+        QCOMPARE(refused.value(QStringLiteral("accepted")).toBool(true), false);
+        const QString reason = refused.value(QStringLiteral("reason")).toString();
+        QCOMPARE(reason, QStringLiteral("This panadapter shows the Core's receiver. Its C-Tune "
+                                        "setting is the Core's."));
+        QVERIFY(OperatorWording::isPlain(reason));
+        QVERIFY(!core.model->sliceById(0)->streamCtunPinned());
     }
 
     void theAnchorsCtuneMoveAsksNamingBThenMovesItsSlice()

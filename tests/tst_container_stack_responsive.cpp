@@ -2,6 +2,11 @@
 // Modification history (NereusSDR):
 //   2026-10-04 — Live stack resize regressions by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-12 - The fixture's screen is taller than the stacks it shows:
+//                 a window is no taller than all the screens together,
+//                 and the test platform's one 800 px screen is shorter
+//                 than nine bars. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-11 - A widened auto-height stack comes to rest at its content's
 //                 height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -30,6 +35,7 @@
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/containers/ScreenSource.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/presets/BarPresetItem.h"
 
@@ -45,6 +51,19 @@ public:
     QSize sizeHint() const override { return {180, 48}; }
 };
 
+// One screen tall enough for every stack shown here at its natural height
+// (a window is never taller than all the screens together, and the test
+// platform has one screen of 800 x 800).
+class TallScreen : public ScreenSource {
+public:
+    QVector<ScreenInfo> screens() const override { return {primary()}; }
+    ScreenInfo primary() const override
+    {
+        constexpr QRect kTall(0, 0, 3840, 4320);
+        return ScreenInfo{QStringLiteral("Tall"), QStringLiteral("SN-TALL"), kTall, kTall};
+    }
+};
+
 // This fixture exercises the manager's real floating shell and arrange margins.
 // It has no MainWindow, discovery, RadioModel, poller or settings singleton.
 struct StackFixture {
@@ -56,10 +75,12 @@ struct StackFixture {
     QWidget dock;
     QSplitter splitter;
     ContainerContentRegistry registry;
+    TallScreen screens;
     ContainerManager manager{&dock, &splitter};
 
     StackFixture() {
         dock.resize(1200, 1000);
+        manager.setScreenSourceForTest(&screens);
         registry.attachSingleton("applet:rx", &applet);
         manager.setWorkspaceAdapter(&store, &registry);
     }

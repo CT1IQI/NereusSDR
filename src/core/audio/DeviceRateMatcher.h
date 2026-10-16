@@ -29,6 +29,13 @@
 //               playback) gets a size that holds one, and stats() says
 //               whether one fits (R-AUD-15, bench regression). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setWritePacketFrames() takes a MatcherPacketTiming (the
+//               packet's wait for room, how long ago it arrived, its place
+//               in the source's stream), where it took only whether it had
+//               waited: the control finds the clocks' ratio from when each
+//               packet arrived, and plays down a backlog that stands behind
+//               the writer (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -110,17 +117,24 @@ public:
     // (queuedFrames + packetOutFrames at or below packetHighWaterFrames)
     // and keeps the burst until it does.
     //
-    // `waited` says the packet about to be written was kept back for room
-    // (it is part of a burst), so the fill it meets was set by the room
-    // check and says nothing of the clocks.  The control then steers by
-    // the packets that came in their own time: the fill each of them met,
-    // plus half a packet, is held at the target, and the device's rate is
-    // counted from one such packet to the next.  A dry run restarts a
-    // packet writer's control: the source stopped, so the rates measured
-    // across it are not the clocks'.  Calling it again with another value,
-    // 0 included, starts the next stream from its own first size.
+    // `timing` is what the writer knows of the packet about to be written
+    // (MatcherPacketTiming).  Its wait says how long it was kept back for
+    // room, itself or behind one that was (0: it was not, it came in its
+    // own time).  The fill a kept packet meets was set by the room check
+    // and says nothing of the clocks, so the control steers by the packets
+    // that came in their own time: the fill each of them met, plus half a
+    // packet, is held at the target.  The clocks' ratio is found from when
+    // each packet arrived from its source and its place in the source's
+    // stream, against the frames the device had asked for by then; a
+    // writer that gives no arrival leaves the ratio at the nominal one and
+    // the steering to the fill alone.  When every packet of the last
+    // second or two waited, a backlog is standing behind the writer: it is
+    // played down, at a speed at most 0.5% above the clocks'.  A dry run
+    // does not restart a packet writer's control.  Calling it with another
+    // count of frames, 0 included, starts the next stream from its own
+    // first size.
     static constexpr int kMaxWritePacketFrames = 65536;
-    void setWritePacketFrames(int frames, bool waited = false);
+    void setWritePacketFrames(int frames, const MatcherPacketTiming& timing = {});
 
     MatcherReader makeReader();
     MatcherRingHeader* ring();
@@ -156,7 +170,9 @@ private:
     // The packet writer: what was asked (with a count of the changes) and
     // what the writer has applied.
     std::atomic<int> m_writePacketRequested{0};
-    std::atomic<bool> m_writePacketWaited{false};
+    std::atomic<std::int64_t> m_writePacketWaitedNs{0};
+    std::atomic<std::int64_t> m_writePacketArrivedAgoNs{-1};
+    std::atomic<std::int64_t> m_writePacketSourceFrame{0};
     std::atomic<std::uint32_t> m_writePacketGeneration{0};
     std::atomic<std::uint32_t> m_writePacketApplied{0};
     std::atomic<int> m_packetFrames{0};

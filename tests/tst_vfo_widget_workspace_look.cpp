@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QLabel>
+#include <QFontMetrics>
 #include <QPushButton>
 #include <QSlider>
 #include <QStackedWidget>
@@ -260,6 +261,44 @@ private slots:
         // The flag stays a translucent widget over the spectrum.
         QVERIFY(f.flag->testAttribute(Qt::WA_TranslucentBackground));
         QVERIFY(!f.flag->autoFillBackground());
+    }
+
+    void autoBadgeFitsAfterLateStateUpdatesAndRestoresClassicBox()
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        Flag f;
+        f.tabs().at(0)->click();
+        QPushButton* badge = nullptr;
+        for (QPushButton* button : f.flag->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("AUTO")) { badge = button; }
+        }
+        QVERIFY(badge);
+        for (bool active : {true, false, true}) {
+            f.flag->updateAgcAutoVisuals(active, -98.0f, 20.0, true);
+            WorkspacePreview::themeSubtree(f.flag);
+            QCoreApplication::processEvents();
+            const QFontMetrics metrics(badge->font(), badge);
+            QVERIFY(badge->contentsRect().width() >= metrics.horizontalAdvance(badge->text()) + 8);
+            QVERIFY(badge->height() >= metrics.height() + 4);
+            if (active) {
+                QVERIFY(badge->styleSheet().contains(QStringLiteral("#adff2f")));
+            }
+        }
+        WorkspacePreview::setEnabledForTest(false);
+        // Changing the test switch does not repaint or rewrite a live sheet.
+        // Exercise the real late state update with the classic look active.
+        f.flag->updateAgcAutoVisuals(false, -98.0f, 20.0, true);
+        QCoreApplication::processEvents();
+        QCOMPARE(badge->font().pixelSize(), 7);
+        QCOMPARE(badge->size(), QSize(30, 14));
+        Flag classic;
+        QPushButton* classicBadge = nullptr;
+        for (QPushButton* button : classic.flag->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("AUTO")) { classicBadge = button; }
+        }
+        QVERIFY(classicBadge);
+        QCOMPARE(classicBadge->font().pixelSize(), 7);
+        QCOMPARE(classicBadge->size(), QSize(30, 14));
     }
 
     void lookOn_aSkippedParentStillSkipsWhatDidNotOptIn()

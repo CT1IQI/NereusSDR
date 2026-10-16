@@ -167,6 +167,32 @@ private slots:
         QCOMPARE(pulls.load(), after);
     }
 
+    // 2026-10-12: the counts behind the owner's "the collector took no
+    // audio" report.  A source that gives nothing moves the wakes and not
+    // the frames; a source that gives moves both.
+    void wakesAndFramesAreCountedApart()
+    {
+        bool give = false;
+        MicUplinkCollector collector([&give](float* dst, int) {
+            if (!give) {
+                return 0;
+            }
+            dst[0] = 1.0f;
+            dst[1] = 2.0f;
+            return 2;
+        });
+        QCOMPARE(collector.wakes(), quint64(0));
+        QCOMPARE(collector.collectedFrames(), quint64(0));
+        QCOMPARE(collector.collectOnce(), 0);
+        QCOMPARE(collector.collectOnce(), 0);
+        QCOMPARE(collector.wakes(), quint64(2));
+        QCOMPARE(collector.collectedFrames(), quint64(0));
+        give = true;
+        QCOMPARE(collector.collectOnce(), 2);
+        QCOMPARE(collector.wakes(), quint64(3));
+        QCOMPARE(collector.collectedFrames(), quint64(2));
+    }
+
     // The thread hands over every frame, in order, to a consumer on
     // another thread that takes them late and in odd sizes.
     void theThreadHandsOverEveryFrameInOrder()

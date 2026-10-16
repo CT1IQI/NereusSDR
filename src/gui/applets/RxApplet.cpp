@@ -9,6 +9,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - Create/hide the existing RX1 preamp toggle on local late
+//                 capability changes as well as remote changes. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-14 - Preserve SKU-specific RX-only selections during antenna
+//                 read-back and initial populate (PR #262 review finding).
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 OpenAI Codex.
+//   2026-10-14 - Refuse blocked TX popup choices using the existing local
+//                 or mirrored Alex flags (PR #96 review). J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-10-03 — Clear Qt6.11 Cocoa's stale preamp popup cell cache before
 //                 rebuilding its items. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex.
@@ -88,6 +101,9 @@
 //                 shows the app's own lock / unlock icons (AppIcon) in place
 //                 of colour emoji text. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -191,8 +207,11 @@
 //============================================================================================//
 
 #include "RxApplet.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/TuneStepLabel.h"
 
+#include <QFontMetrics>
+#include <QEvent>
 #include <QGuiApplication>
 
 #include "core/BoardCapabilities.h"
@@ -201,12 +220,14 @@
 #include "core/SkuUiProfile.h"
 #include "core/P2RadioConnection.h"
 #include "gui/AntennaPopupBuilder.h"
+#include "core/accessories/AlexAntennaFacade.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/accessories/AlexController.h"
 #include "core/session/IStationLink.h"
 #include "gui/ComboStyle.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/StyleConstants.h"
 #include "gui/styles/PopupMenuStyle.h"
 #include "gui/widgets/AppIcon.h"
@@ -222,10 +243,10 @@
 
 #include <QAction>
 #include <QAbstractItemView>
-#include <QAccessible>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QStyleOptionComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -241,6 +262,80 @@
 namespace NereusSDR {
 
 namespace {
+
+// Fixed controls retain their classic geometry when the look is switched off.
+class RxControlFit final : public QObject {
+public:
+    explicit RxControlFit(QWidget* control, bool combo) : QObject(control), m_combo(combo) {
+        control->installEventFilter(this);
+        fit(control);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange
+            || event->type() == QEvent::Show || event->type() == QEvent::Polish) {
+            fit(static_cast<QWidget*>(watched));
+        }
+        return false;
+    }
+private:
+    void fit(QWidget* control) const {
+        if (!m_combo) {
+            control->setFixedHeight(WorkspacePreview::enabled() ? 49 : 48);
+            return;
+        }
+        if (!WorkspacePreview::enabled()) {
+            control->setFixedWidth(52);
+            return;
+        }
+        auto* combo = static_cast<QComboBox*>(control);
+        const QFontMetrics metrics(WorkspacePreview::readableFont(combo->font(), combo), combo);
+        int widest = 0;
+        for (int index = 0; index < combo->count(); ++index) {
+            widest = std::max(widest, metrics.horizontalAdvance(combo->itemText(index)));
+        }
+        QStyleOptionComboBox option;
+        option.initFrom(combo);
+        option.currentText = combo->currentText();
+        option.rect.setWidth(54);
+        const QRect field = combo->style()->subControlRect(QStyle::CC_ComboBox, &option,
+                                                           QStyle::SC_ComboBoxEditField, combo);
+        // The resolved style supplies its arrow, frame and horizontal padding.
+        const int chrome = option.rect.width() - field.width();
+        combo->setFixedWidth(std::max(54, widest + chrome + 2));
+    }
+    bool m_combo;
+};
+
+// JJ's option B, 2026-10-12 (Codex): keep the AUTO badge's original
+// palette and classic box, and fit the final workspace font after updates.
+class AutoBadgeFit final : public QObject {
+public:
+    explicit AutoBadgeFit(QPushButton* badge) : QObject(badge) {
+        badge->installEventFilter(this);
+        fit(badge);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::Show || event->type() == QEvent::Polish) {
+            fit(static_cast<QPushButton*>(watched));
+        }
+        return false;
+    }
+private:
+    static void fit(QPushButton* badge) {
+        if (!WorkspacePreview::enabled()) {
+            badge->setFixedSize(30, 14);
+            return;
+        }
+        const QFontMetrics metrics(WorkspacePreview::readableFont(badge->font(), badge), badge);
+        // Three pixels padding and the one-pixel border on each side.
+        badge->setFixedSize(std::max(30, metrics.horizontalAdvance(badge->text()) + 8),
+                            std::max(14, metrics.height() + 4));
+    }
+};
+
 // Logical size of the lock button's icon inside its 20 x 20 button.
 constexpr int kLockIconPx = 16;
 } // namespace
@@ -458,23 +553,7 @@ void RxApplet::fillPreampCombo(bool rx2)
     // starts from the first item, and the caller shows that list's mode.
     const QVariant current = rx2 == m_preampShowsRx2 ? m_preampCombo->currentData() : QVariant();
     QSignalBlocker blk(m_preampCombo);
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
-        // cache through the public API before the combo mutates its model.
-        QAbstractItemView* view = m_preampCombo->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
-        }
-    }
-#endif
+    resetItemsBeforeRowChange(m_preampCombo);
     m_preampCombo->clear();
     const auto items = rx2 ? BoardCapsTable::rx2PreampItemsForBoard(m_preampBoard)
                            : BoardCapsTable::preampItemsForBoard(m_preampBoard, m_preampAlex);
@@ -764,6 +843,13 @@ void RxApplet::buildUi()
         ));
         connect(m_txAntBtn, &QPushButton::clicked, this, [this] {
             if (isListening()) { return; }  // Task 15: another device controls it
+            // Follow the Setup grid's blocked-port refusal, using the facade
+            // for both local controller state and the remote Core's mirror.
+            auto isBlocked = [this](const QString& ant) {
+                const AlexAntennaFacade* const alex = m_model ? m_model->alexAntennaFacade() : nullptr;
+                return alex && ((ant == QStringLiteral("ANT2") && alex->blockTxAnt2())
+                             || (ant == QStringLiteral("ANT3") && alex->blockTxAnt3()));
+            };
             // B3: AntennaPopupBuilder TX mode — only main ANT1-3 (Phase 3P-I-a T22).
             QMenu menu(this);
             // Dark popup palette — see RX button above. Issue #98.
@@ -783,13 +869,19 @@ void RxApplet::buildUi()
                     act->setChecked(ant == cur);
                 }
             }
+            for (QAction* action : menu.actions()) {
+                const QString ant = action->data().isValid() ? action->data().toString()
+                                                            : action->text();
+                if (isBlocked(ant)) { action->setEnabled(false); }
+            }
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Phase 3P-I-a T22 — issue #98
             const QAction* sel = menu.exec(
                 m_txAntBtn->mapToGlobal(QPoint(0, m_txAntBtn->height())));
             if (sel && m_slice) {
                 const QString text = sel->data().isValid() ? sel->data().toString()
                                                            : sel->text();
-                m_slice->setTxAntenna(text);
+                // Block flags can change while the popup's event loop runs.
+                if (!isBlocked(text)) { m_slice->setTxAntenna(text); }
             }
         });
         row->addWidget(m_txAntBtn);
@@ -938,6 +1030,7 @@ void RxApplet::buildUi()
         // ~4× its intended height.  Fixed vertical avoids that
         // re-flow whiplash.
         m_filterPassband->setFixedHeight(48);
+        new RxControlFit(m_filterPassband, false);
         m_filterPassband->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_filterPassband, &FilterPassbandWidget::filterChanged,
                 this, [this](int lo, int hi) {
@@ -1126,6 +1219,7 @@ void RxApplet::buildUi()
         }
         m_agcCombo->setFixedWidth(52);
         m_agcCombo->setFixedHeight(20);
+        new RxControlFit(m_agcCombo, true);
         applyComboStyle(m_agcCombo);
 
         // Tier 1 wiring
@@ -1164,6 +1258,7 @@ void RxApplet::buildUi()
                             "QPushButton:hover { border-color: #adff2f; }"));
         m_agcAutoLabel->setFixedHeight(14);
         m_agcAutoLabel->setFixedWidth(30);
+        new AutoBadgeFit(m_agcAutoLabel);
         m_agcAutoLabel->setCursor(Qt::PointingHandCursor);
         // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
         m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
@@ -1917,6 +2012,16 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     // B3: store caps for AntennaPopupBuilder (popup lambdas read this).
     m_popupCaps = caps;
 
+    // The same late-capability lifecycle also applies to local windows.
+    // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
+    // applet was usually built before the Core's board was known.
+    if (caps.p2PreampPerAdc) {
+        ensureRx1PreampToggle();
+    }
+    if (m_rx1PreampToggle) {
+        m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
+    }
+
     // R-R3-46: a remote window has no radio connection of its own, so
     // connectSlice()'s per-board rebuild below never runs there; the Core's
     // radio arrives through here instead. Same tables as that rebuild
@@ -1926,14 +2031,6 @@ void RxApplet::setBoardCapabilities(const BoardCapabilities& caps)
     if (m_model && !m_model->ownsLocalDsp()) {
         rebuildPreampAndAttRangeForBoard(caps.board, caps.hasAlexFilters,
                                          caps.attenuator.minDb);
-        // R-R3-46: the RX1 preamp toggle belongs to dual-ADC boards; the
-        // applet was usually built before the Core's board was known.
-        if (caps.p2PreampPerAdc) {
-            ensureRx1PreampToggle();
-        }
-        if (m_rx1PreampToggle) {
-            m_rx1PreampToggle->setVisible(caps.p2PreampPerAdc);
-        }
         // R-R3-46 / R-R3-21: then the Core's own range and values, once it
         // offers its attenuator (the rebuild may have reset the combo), and
         // whether the row (the toggle too) takes edits now.
@@ -2411,7 +2508,18 @@ void RxApplet::populateAntennaButtons(Band band)
 
     // RX antenna: AlexController stores 1/2/3; map to "ANT1"/"ANT2"/"ANT3".
     const int rxNum = alex.rxAnt(band);
-    const QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
+    QString rxLabel = QStringLiteral("ANT") + QString::number(rxNum);
+    // Match SliceModel::refreshAntennasFromAlex's RX-only resolution while
+    // leaving TX intent below with the slice. An ANT-only echo would clear
+    // the RX-only mux through RadioModel's rxAntennaChanged handler.
+    const int rxOnly = alex.rxOnlyAnt(band);
+    if (rxOnly >= 1 && rxOnly <= 3) {
+        const SkuUiProfile sku = skuUiProfileFor(m_model->hardwareProfile().model);
+        const QString& label = sku.rxOnlyLabels[static_cast<size_t>(rxOnly - 1)];
+        if (!label.isEmpty()) {
+            rxLabel = label;
+        }
+    }
 
     // TX antenna is bound-slice intent, not an AlexController read-back.
     // RadioModel reconciles that intent into Alex on a bound-slice edit,

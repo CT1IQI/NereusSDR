@@ -34,6 +34,10 @@
 //                 also sends the receive audio, no longer waits for the
 //                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-15 - addWriteObserver(): more than one observer of local
+//                 writes, beside the single change hook the Core's
+//                 settings proxy owns. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -285,6 +289,19 @@ public:
     // Pass an empty std::function (or nullptr) to stop observing.
     // ------------------------------------------------------------------
     void setChangeHook(std::function<void(const QString& key)> hook);
+
+    // Further observers of the same per-key fires as the change hook
+    // above: setValue() and remove() on this instance's own map, after
+    // the map is updated, on the caller's thread. The change hook stays a
+    // single slot because the Core's settings proxy owns it; these are
+    // for a model that holds values it will write later and must learn
+    // that someone else wrote one of those keys first (RadioModel's held
+    // per-band values). A write delegated to a remote backend does not
+    // fire them, as it does not fire the change hook. An observer must
+    // not add or remove observers from inside its own call. Returns the
+    // id removeWriteObserver() takes.
+    int addWriteObserver(std::function<void(const QString& key)> observer);
+    void removeWriteObserver(int id);
 
     // ------------------------------------------------------------------
     // Remote Daemon R2, Task 15 -- the delegation seam.
@@ -835,6 +852,10 @@ private:
     // above. Instance-scoped; empty (default-constructed) means "no
     // observer", checked before every fire.
     std::function<void(const QString& key)> m_changeHook;
+    // See addWriteObserver(). Keyed by the id it returned.
+    QMap<int, std::function<void(const QString& key)>> m_writeObservers;
+    int m_nextWriteObserverId = 1;
+    void notifyWriteObservers(const QString& key) const;
 
     // Remote Daemon R2, Task 15 -- see setRemoteBackend()'s doc comment
     // above. Non-owning; nullptr means "not in remote mode", checked

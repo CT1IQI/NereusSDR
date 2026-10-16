@@ -41,6 +41,12 @@
 //               reset the session's new size and rate stand for later
 //               opens; a running state follows the session's caps.  J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: the lost-input watch counts the blocks the device delivers
+//               (CaptureInputWatch), not the blocks the ring accepted: a
+//               window that stops reading no longer loses the input.  J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: process/generation tags and debug command timestamps.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -55,6 +61,7 @@
 #include "core/audio/AsioSessionNotifier.h"
 #include "core/audio/AudioDeviceMatching.h"
 #include "core/audio/AudioTestBarrier.h"
+#include "core/audio/CaptureInputWatch.h"
 #include "core/audio/CaptureProtocol.h"
 #include "core/audio/CaptureShm.h"
 #include "core/audio/DeviceRateMatcher.h"
@@ -436,6 +443,8 @@ public:
             return;
         }
         matcher->write(stereo, frames, audioProbeNowNs());
+        // 2026-10-12: the device delivered, whether or not the ring took it.
+        m_watch.noteBlock();
         probe(stereo, frames, captureNsOfFrame0);
         static_cast<void>(sampleRate);
         m_region.load(std::memory_order_acquire)->postWake();
@@ -462,8 +471,13 @@ public:
                                                          / static_cast<double>(sampleRate)));
             probe(m_stereo.data(), count, chunkNs);
         }
+        // 2026-10-12: the device delivered, whether or not the ring took it.
+        m_watch.noteBlock();
         m_region.load(std::memory_order_acquire)->postWake();
     }
+
+    // Main thread only: whether the device still delivers (2026-10-12).
+    CaptureInputWatch& watch() { return m_watch; }
 
     // Main thread only.
     std::optional<std::int64_t> takeHit()
@@ -480,6 +494,8 @@ public:
 private:
     static constexpr int kChunkFrames = 256;
     static constexpr std::size_t kHitSlots = 16;
+
+    CaptureInputWatch m_watch;
 
     void probe(const float* stereo, int frames, std::int64_t captureNs)
     {
@@ -581,6 +597,11 @@ private:
 
     void execute(const ParentCommand& command)
     {
+        qCDebug(lcAudio).nospace() << "capture-command execute type=" << static_cast<int>(command.type)
+                                 << " pid=" << QCoreApplication::applicationPid()
+                                 << " generation=" << command.generation
+                                 << " monotonic-ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        Clock::now().time_since_epoch()).count();
         switch (command.type) {
         case P::RecordType::Configure:
             configure(command.configure);
@@ -993,9 +1014,9 @@ private:
         // V-HW-8: the detector at the stream's own rate.
         m_detector = std::make_unique<AudioDelayProbeDetector>(rate);
         m_tap.publish(m_matcher.get(), m_region.get(), m_detector.get());
-        m_lastWriteNs = 0;
-        m_lastProgress = Clock::now();
-        m_nextTick = m_lastProgress + kTickInterval;
+        const Clock::time_point now = Clock::now();
+        m_tap.watch().restart(now);
+        m_nextTick = now + kTickInterval;
         write(record);
         reportOpenStep("ready sent");
         m_firstSamplesReported = false;
@@ -1009,7 +1030,9 @@ private:
     {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - m_openStarted);
-        std::fprintf(stderr, "nereus-audio-capture: open step: %s at %lld ms\n", step,
+        std::fprintf(stderr, "nereus-audio-capture: open step: [pid=%lld generation=%u] %s at %lld ms\n",
+                     static_cast<long long>(QCoreApplication::applicationPid()),
+                     static_cast<unsigned int>(m_generation), step,
                      static_cast<long long>(elapsed.count()));
         std::fflush(stderr);
     }
@@ -1036,19 +1059,19 @@ private:
                                             : QStringLiteral("the input device was reset"));
             return;
         }
-        // No block written for 500 ms: the input is lost.
-        const auto now = Clock::now();
-        const std::int64_t lastWrite = (m_matcher && m_matcher->ring() != nullptr)
-            ? m_matcher->ring()->lastWriteNs.load(std::memory_order_acquire)
-            : 0;
-        if (lastWrite != m_lastWriteNs) {
-            m_lastWriteNs = lastWrite;
-            m_lastProgress = now;
+        // No block from the device for 500 ms: the input is lost.
+        // 2026-10-12: counted where the device delivers, not where the ring
+        // accepts.  The ring drops every block while its reader is away, and
+        // that is the window not reading, not the input gone
+        // (CaptureInputWatch.h).
+        const CaptureInputWatch::Verdict verdict =
+            m_tap.watch().check(Clock::now(), kInputLostAfter);
+        if (verdict == CaptureInputWatch::Verdict::FirstBlock) {
             if (!m_firstSamplesReported) {
                 m_firstSamplesReported = true;
                 reportOpenStep("first samples");
             }
-        } else if (now - m_lastProgress >= kInputLostAfter) {
+        } else if (verdict == CaptureInputWatch::Verdict::Lost) {
             qCWarning(lcAudio) << "capture helper: no input for 500 ms on generation"
                                << m_generation;
             closeInput();
@@ -1474,10 +1497,8 @@ private:
     std::atomic<int> m_streamEvent{kEventNone};
     std::unique_ptr<PortAudioBus> m_bus;
     std::unique_ptr<IAudioInputStream> m_stream;
-    std::int64_t m_lastWriteNs = 0;
     Clock::time_point m_openStarted = Clock::now();
     bool m_firstSamplesReported = true;
-    Clock::time_point m_lastProgress;
     Clock::time_point m_nextTick;
     // ASIO.  The driver outlives the session; the session (declared last,
     // so destroyed first) stops its callbacks before the rings, readers

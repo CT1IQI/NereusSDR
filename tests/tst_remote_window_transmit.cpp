@@ -2088,7 +2088,11 @@ private slots:
             window.applet.setTransmitHolderText(h.client.transmitHolderText());
             return window.applet.transmitHolderText();
         };
-        QCOMPARE(show(), QString());
+        // 2026-10-12: nobody holds transmit yet, and the window says how
+        // it is taken (a program's key is refused until it is).
+        QTRY_VERIFY(h.client.transmitTakeAvailable());
+        QCOMPARE(show(), QStringLiteral("No device has transmit. MOX and TUNE take it here. A "
+                                        "program needs Take transmit first."));
         // This window keys: it holds transmit.
         QVERIFY(pressMoxUntilKeyed(h));
         QTRY_COMPARE(show(), QStringLiteral("This computer holds transmit."));

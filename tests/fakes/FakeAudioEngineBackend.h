@@ -34,6 +34,8 @@
 //               runs inside rescan(); sinkSetsDuringCalls() counts notice
 //               sinks set while another call is inside the backend.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: setListsOnDemand(). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -256,6 +258,7 @@ public:
         --m_rescansInFlight;
     }
     bool opensOneStreamAtATime() const override { return m_oneStreamAtATime.load(); }
+    bool listsOnDemand() const override { return m_listsOnDemand.load(); }
 
     // -- What the test sets ---------------------------------------------
     void setDevices(QList<AudioDeviceInfo> devices)
@@ -281,6 +284,7 @@ public:
         (direction == AudioDeviceDirection::Output ? m_defaultOutput : m_defaultInput) = std::move(id);
     }
     void setRunning(bool running) { m_running.store(running); }
+    void setListsOnDemand(bool onDemand) { m_listsOnDemand.store(onDemand); }
     // Outputs made for these request device ids fail to open ("" is the
     // system default).  Applies to outputs made after the call.
     void setFailingOutputs(QStringList deviceIds)
@@ -435,6 +439,7 @@ private:
 
     const AudioBackendId m_id;
     std::atomic<bool> m_running{true};
+    std::atomic<bool> m_listsOnDemand{false};
     bool m_takesStereoMix = true;
     bool m_hasControlPanel = false;
 

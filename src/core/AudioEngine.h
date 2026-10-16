@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 : Owner-thread ASIO output snapshots without role locks.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 : Native audio plan Task 16 fix round (R-AUD-01, R-AUD-03)
 //                 by J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. catalogue() lists the devices before start();
@@ -289,6 +291,13 @@
 //               clock matcher checks the matcher's room itself; the
 //               comments say so. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: PortAudio no longer starts in the constructor (it starts on
+//               first need); m_paInitialized is gone. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: writeRemotePlayback() takes a packet's timing for the
+//               bus's clock matcher (MatcherPacketTiming), where it said
+//               only whether the packet had waited for room (R-AUD-15).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27) by J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -667,11 +676,12 @@ public:
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
     std::optional<IAudioBus::OutputPacing> remotePlaybackPacing(
         RemotePlaybackOutput output = RemotePlaybackOutput::Speakers);
-    // `waitedForRoom`: into a bus's own clock matcher, the caller kept
-    // this packet back until the matcher had room (see below).
+    // `timing`: into a bus's own clock matcher, what the caller knows of
+    // this packet (how long it kept it back until the matcher had room,
+    // how long ago it arrived, its place in the stream); see below.
     bool writeRemotePlayback(const QVector<float>& pcm,
                              RemotePlaybackOutput output = RemotePlaybackOutput::Speakers,
-                             bool waitedForRoom = false);
+                             const MatcherPacketTiming& timing = {});
 
     // R-AUD-15 (settled call 30): true when the output's bus takes the
     // 48 kHz stereo mix into its own clock matcher.  Remote playback then
@@ -682,8 +692,10 @@ public:
     // checks the room first (remotePlaybackMatcherStats(): queuedFrames +
     // packetOutFrames at or below packetHighWaterFrames) and keeps a burst
     // until there is room, because the matcher makes none, and says with
-    // the write whether the packet waited, so the matcher's control steers
-    // by the packets that came in their own time.
+    // the write how long the packet waited, how long ago it arrived and
+    // where it stands in the stream, so the matcher's control knows when
+    // each packet came, steers by the packets that came in their own time,
+    // and plays down a backlog that stands behind it.
     // remotePlaybackMatcherStats() is that bus's matcher counters and
     // sizes.  Any thread.
     bool remotePlaybackIntoMatcher(
@@ -735,6 +747,22 @@ public:
     // lock.  Owner (main) thread.
     AudioDelayParts delayPartsNow(AudioRole role) const;
     std::optional<AudioFormat> roleFormatNow(AudioRole role) const;
+    // Synchronous owner-thread diagnostic only: the ASIO bus stays alive
+    // throughout this call. No pointer escapes and no role lock is taken.
+    // Individual matcher atomics are not a coherent callback snapshot.
+    struct AsioOutputSnapshot {
+        QString capturedUtc;
+        std::int64_t capturedNs = 0;
+        QString backend;
+        QString openDeviceId; // actual open identity; empty means unknown
+        std::uint64_t instanceId = 0;
+        quint64 roleGeneration = 0;
+        bool moxObserved = false; // observation, not the first resumed RX sample
+        AudioFormat busInputFormat; // ASIO API format, not driver output rate
+        DeviceRateMatcherStats matcher;
+    };
+    // None for wrong thread/role, missing/closed/non-ASIO bus or no matcher.
+    std::optional<AsioOutputSnapshot> asioOutputSnapshotNow(AudioRole role) const;
     // delayPartsNow(Speakers).totalMs(): -1 with none.
     double speakersDelayNowMs() const;
     // A published value older than this is not used.
@@ -1051,8 +1079,8 @@ public:
     {
         m_deviceBusFactoryForTest = std::move(factory);
     }
-    // R-R3-21: how many times any AudioEngine in this process has called
-    // Pa_Initialize / Pa_Terminate. A test run calls neither
+    // R-R3-21: how many times this process has called Pa_Initialize /
+    // Pa_Terminate through PortAudioLibrary. A test run calls neither
     // (PortAudioBus::portAudioBarredForTestRun).
     static int paInitializeCallsForTest();
     static int paTerminateCallsForTest();
@@ -1643,6 +1671,9 @@ private:
     // for a role with nothing saved), and the in-memory choices it changed.
     void migrateSavedChoices();
     bool audioDevicesApply() const;
+    // A saved device choice is on the older drivers, or they are the
+    // default engine: their devices are listed from the catalog's start.
+    bool savedChoicesNeedOlderDrivers() const;
     void tearDownAudioDevices();
     // The config with R-AUD-02's engine on "(platform default)".
     AudioDeviceConfig withDefaultEngine(const AudioDeviceConfig& cfg) const;
@@ -2137,13 +2168,9 @@ private:
     FlowState m_flowState{FlowState::Dead};
     int       m_successiveUnderruns{0};
 
-    // Was Pa_Initialize() actually successful? Guards the matching
-    // Pa_Terminate() in the destructor so unit tests that construct
-    // AudioEngine without a real audio subsystem don't hit a spurious
-    // terminate.
-    bool m_paInitialized{false};
-    // The device paths may run: PortAudio came up, or this is a test run,
-    // where makeBus supplies only the test's fake devices (R-R3-21).
+    // The device paths may run.  Set in the constructor; PortAudio is not
+    // part of it (it starts on first need).  In a test run makeBus supplies
+    // only the test's fake devices (R-R3-21).
     bool m_deviceLayerReady{false};
     bool m_running{false};
     // High-water mark of slice ids registered with MasterMixer: ids

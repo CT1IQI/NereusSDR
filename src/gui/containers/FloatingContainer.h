@@ -10,6 +10,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - setScreenSource, sizeWithin, fittedSize and
+//                 refreshDesktopLimit: a floating window is never wider or
+//                 taller than all the screens together. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - ensureVisiblePosition reads the screens through a
 //                 ScreenSource and says whether it moved the form, by J.J.
 //                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -102,13 +106,14 @@ mw0lge@grange-lane.co.uk
 
 #include <QWidget>
 #include <QString>
+#include "gui/NereusGuiExport.h"
 
 namespace NereusSDR {
 
 class ContainerWidget;
 class ScreenSource;
 
-class FloatingContainer : public QWidget {
+class NEREUS_GUI_EXPORT FloatingContainer : public QWidget {
     Q_OBJECT
 
 public:
@@ -154,6 +159,20 @@ public:
     bool ensureVisiblePosition(QWidget* anchor, const ScreenSource* screens = nullptr);
     static QRect clampedGeometry(const QRect& geometry, const QRect& available, const QSize& minimum);
 
+    // The screens the size limit is read from (the application's own
+    // when null). Sets the limit.
+    void setScreenSource(const ScreenSource* screens);
+    // `size`, no larger than `limit` and no smaller than `minimum` (the
+    // minimum wins). Unbounded when `limit` is not valid.
+    static QSize sizeWithin(const QSize& size, const QSize& limit, const QSize& minimum);
+    // `wanted`, no wider and no taller than all the screens together and
+    // no smaller than the form's minimum. A window stretched across
+    // monitors keeps its size; a runaway or absurd saved size does not.
+    QSize fittedSize(const QSize& wanted) const;
+    // Sets the form's maximum size to all the screens together. Called
+    // when the screens are set and whenever one comes, goes or changes.
+    void refreshDesktopLimit();
+
 signals:
     void aboutToClose();
 
@@ -178,6 +197,7 @@ private:
     bool m_floating{false};
     bool m_hiddenByMacro{false};
     int  m_unminimisedHeight{0};   // cached height before minimise collapse
+    const ScreenSource* m_screens{nullptr};
 };
 
 } // namespace NereusSDR

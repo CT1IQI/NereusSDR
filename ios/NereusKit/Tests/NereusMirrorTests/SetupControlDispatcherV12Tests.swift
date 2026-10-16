@@ -131,7 +131,7 @@ private final class V12PhoneKeys: SetupPhoneKeys {
         #expect(rig.dispatcher.state(of: monitor, in: "display").editable)
         // 120 Hz is held to the FPS row's 60, written as the Core's setting.
         let pressing = Task { await rig.dispatcher.edit(monitor, in: "display", to: nil) }
-        #expect(await rig.route.waitForCount(1, unless: pressing))
+        try #require(await rig.route.waitForCount(1, unless: pressing))
         guard case .settingsWrite(let write) = rig.route.sent[0].message else {
             Issue.record("no settings write"); return
         }

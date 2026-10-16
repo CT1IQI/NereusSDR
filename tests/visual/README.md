@@ -202,15 +202,41 @@ The pages that rearrange to fit the Settings window also have
 1440 x 900, from `setupSizeSpecs()`.
 All of them have `look-` pairs.
 
+Three scenes pose a Setup page the way a manual figure shows it:
+`dialog-setup-tx-profile-active` seeds the TX profiles a first connect
+writes ("Default" active, in the throwaway profile) before opening TX
+Profile; `dialog-setup-digital-modes-full` grows the dialog down, at its
+own width, until Digital modes has nothing left to scroll (the VAX 1 to 4
+cards and the TCI audio settings in one image); and
+`dialog-remote-setup-tci-server` does the same for TCI Server in a
+never-dialed remote window, the only window that shows the Core's TCI
+server group. Its Core link is posed with `tests/fakes/FakeStationLink.h`
+and the Core's server values (on, port 50001, the rest at their defaults),
+so that group shows them, enabled; nothing is dialed. The sidecar's
+`grown_to_fit` or notes give the sizes.
+
+`baseline-connected` is the manual's overview window: one pan on slice A
+receiving 7.185 LSB, the TX applet moved to just under RX in the Main
+Panel, "You control" on the flag (`SliceChooser::flagAccessFor` for a row
+this window controls) and the fixture's ANAN-G2 named in the status bar
+(`StationBlock`). Nothing connects or keys. `baseline-connected-tx` is
+the same window with the Main Panel's S-meter and RX hidden
+(`ContentEntry::visible`), so the whole TX applet, down to TX BW, is in
+view.
+
 ### Workspace look scenes
 
-`look-two-band`, `look-four-rx`, `look-tx` and `look-dialog-*` (one per
+`look-two-band`, `look-four-rx`, `look-tx`, `look-connected`,
+`look-connected-tx` and
+`look-dialog-*` (one per
 `dialog-*` scene) pose the same state as the scene they are named after
 with the workspace preview switch on, so they show the proposed Longpath
 look (the Glass and Depth palette in `src/gui/styles/WorkspacePalette`).
-The binary sets the switch itself for a `look-*` scene; `--workspace-preview`
-sets it for any scene. In the app the switch is the environment variable
-`NEREUS_WORKSPACE_PREVIEW=1`; with it unset nothing changes, and the
+The binary sets the switch itself: on for a `look-*` scene, and for any
+scene with `--workspace-preview`; off for every other scene. It never reads
+the environment. In the app the look is on by default and the environment
+variable `NEREUS_WORKSPACE_PREVIEW=0` turns it off (unset, empty, `1` and
+any other value leave it on). With the switch off nothing changes, and the
 `baseline-*` and `dialog-*` scenes stay pixel-identical (check with
 `--verify --against`).
 

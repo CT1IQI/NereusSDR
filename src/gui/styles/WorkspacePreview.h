@@ -5,11 +5,13 @@
 // no-port-check: NereusSDR-original. The workspace preview switch and
 // the scoped stylesheet pass used to preview the Longpath look.
 //
-// The switch is on when the environment variable
-// NEREUS_WORKSPACE_PREVIEW is "1" at the first call to enabled(), or
-// after setEnabledForTest(true). There is no settings key and no UI.
-// Every visual change of the workspace look branches on enabled(); with
-// the switch off the application is unchanged.
+// The switch is on by default. It is off only when the environment
+// variable NEREUS_WORKSPACE_PREVIEW is "0" at the first call to enabled(),
+// or after setEnabledForTest(false). Unset, empty and "1" are on; any
+// other value is treated as unset, so it is on too
+// (enabledFromEnvironmentValue() is the rule). There is no settings key
+// and no UI. Every visual change of the workspace look branches on
+// enabled(); with the switch off the application has the classic look.
 //
 // themeSubtree() is preview scaffolding, not the final migration: it
 // rewrites the retained stylesheets of a widget subtree through
@@ -57,22 +59,45 @@
 //   2026-10-11 - kThemedIslandProperty: the slice flag takes the look
 //                 under the skipped SpectrumWidget. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The switch is on unless NEREUS_WORKSPACE_PREVIEW is "0";
+//                 enabledFromEnvironmentValue() is the rule. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Shared 11 px text floor, J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #pragma once
 
 #include <QColor>
 #include <QHash>
+#include <QFont>
 #include <QString>
 
 class QApplication;
 class QObject;
 class QWidget;
+class QPaintDevice;
 
 namespace NereusSDR::WorkspacePreview {
 
+// JJ's option B (2026-10-12): an 11 logical-pixel text floor.
+// Point fonts are compared using Qt's logical font DPI, without device
+// pixel ratio scaling. Fonts at or above the floor are returned exactly;
+// smaller fonts retain their other attributes and become pixel-sized.
+// Both helpers return the original value with the classic look.
+QFont readableFont(const QFont& font);
+// Painter callsites pass their actual device to compare point sizes at
+// that device's logical DPI (e.g. a 96 DPI image versus a 72 DPI widget).
+QFont readableFont(const QFont& font, const QPaintDevice* device);
+int readableTextPixelSize(int pixels);
+
 bool enabled();
 void setEnabledForTest(bool on);
+// The rule enabled() applies, once, to the value of
+// NEREUS_WORKSPACE_PREVIEW: false only for "0". A null or empty value (the
+// variable unset or empty), "1" and any other value are true. It reads
+// nothing, so a test can cover it without the process environment.
+bool enabledFromEnvironmentValue(const QString& value);
 
 // Dynamic property names used by themeSubtree().
 inline constexpr auto kOriginalQssProperty = "_nereusWorkspaceOriginalQss";

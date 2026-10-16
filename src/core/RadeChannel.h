@@ -93,6 +93,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd / KG4VCF  Export the channel's Qt signal
+//                 addresses from the Windows Core DLL. AI-assisted via
+//                 OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave (RADE EOO): queueEndOfOver
 //                 encodes the held speech first and never waits for the
 //                 decoder; a busy codec defers the EOO (onSent callback).
@@ -194,6 +197,7 @@
 // =================================================================
 
 #pragma once
+#include "core/NereusCoreExport.h"
 
 #include <QLoggingCategory>
 #include <QObject>
@@ -254,7 +258,7 @@ class RadeRxWorker;
 // Signals follow the AetherSDR surface (syncChanged / snrChanged /
 // freqOffsetChanged) plus the NereusSDR-specific rxTextDecoded
 // signal that I4 will hook up to the embedded rade_text channel.
-class RadeChannel : public QObject {
+class NEREUS_CORE_EXPORT RadeChannel : public QObject {
     Q_OBJECT
 
 public:

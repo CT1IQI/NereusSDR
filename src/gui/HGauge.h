@@ -1,4 +1,7 @@
 // src/gui/HGauge.h
+// Modification history (NereusSDR):
+//   2026-10-12 - Preserve caller width constraints around the workspace text floor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
 #include <QFont>
 #include <QStringList>
@@ -79,6 +82,9 @@ private:
     QStringList m_tickLabels;
     int m_scaleFontPixelSize = 0;
     int m_titleFontPixelSize = 0;
+    int m_minimumWidthBeforeTextFloor = 0;
+    int m_textFloorMinimumWidth = 0;
+    bool m_textFloorMinimumApplied = false;
 };
 
 } // namespace NereusSDR

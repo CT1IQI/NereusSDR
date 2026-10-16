@@ -86,6 +86,10 @@
 //                                    lights from the transmit model's TUNE,
 //                                    which the release press clears.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  The CTUN button is unavailable, with
+//                                    the reason, while the receiver's
+//                                    C-Tune setting is another's to change.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/containers/ContainerButtonDispatcher.h"
@@ -358,6 +362,10 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
             st.on = sw->ctunEnabled();
             if (!sw->ctunAvailable()) {
                 unavailable(QStringLiteral("C-Tune needs a connected Core that supports it."));
+            } else if (!sw->ctunHeldReason().isEmpty()) {
+                // Another holder's receiver, or a slice this window only
+                // listens to: the Core's words for why.
+                unavailable(sw->ctunHeldReason());
             }
         }
         break;

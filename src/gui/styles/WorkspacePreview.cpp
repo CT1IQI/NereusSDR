@@ -53,6 +53,11 @@
 //                 object (Workspace::LookStyle): the default button's rim
 //                 and the current cell's outline. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - enabled() is on unless NEREUS_WORKSPACE_PREVIEW is "0"
+//                 (enabledFromEnvironmentValue()). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Shared/live 11 px font floor, J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "WorkspacePreview.h"
@@ -67,6 +72,15 @@
 #include <QBoxLayout>
 #include <QEvent>
 #include <QGroupBox>
+#include <QFontMetricsF>
+#include <QLabel>
+#include <QRegularExpression>
+#include <QTextEdit>
+#include <QTextDocument>
+#include <QTextBlock>
+#include <QTextFragment>
+#include <QTextCursor>
+#include <QScopedValueRollback>
 #include <QMetaObject>
 #include <QObject>
 #include <QSet>
@@ -83,6 +97,9 @@
 namespace NereusSDR::WorkspacePreview {
 
 namespace {
+
+constexpr int kMinimumTextPixels = 11;
+constexpr qreal kPointsPerInch = 72.0;
 
 std::optional<bool>& switchState()
 {
@@ -561,8 +578,215 @@ QString sliderFit(QWidget* w)
     return fit;
 }
 
+QFont readableFontAtDpi(const QFont& font, qreal logicalDpi)
+{
+    if (!enabled()) {
+        return font;
+    }
+    const qreal pixels = font.pixelSize() > 0
+        ? font.pixelSize()
+        : font.pointSizeF() * logicalDpi / kPointsPerInch;
+    if (pixels >= kMinimumTextPixels || pixels <= 0) {
+        return font;
+    }
+    QFont readable = font;
+    readable.setPixelSize(kMinimumTextPixels);
+    return readable;
+}
+
+void floorWidgetFont(QWidget* w)
+{
+    // setFont() delivers FontChange synchronously, including to descendants.
+    // The guard prevents a style from re-entering while resolving its font.
+    static bool applying = false;
+    if (applying) {
+        return;
+    }
+    const QFont current = w->font();
+    const QFont readable = readableFontAtDpi(current, QFontMetricsF(current, w).fontDpi());
+    if (readable != current) {
+        QScopedValueRollback<bool> guard(applying, true);
+        w->setFont(readable);
+    }
+}
+
+void setFontFloorOptions(QssTranslator::Options& options, const QWidget* owner)
+{
+    options.minimumTextPixelSize = kMinimumTextPixels;
+    options.textLogicalDpi = owner != nullptr
+        ? QFontMetricsF(owner->font(), owner).fontDpi()
+        : QFontMetricsF(QApplication::font()).fontDpi();
+}
+
+constexpr auto kRichTextCache = "_nereusWorkspaceReadableRichText";
+constexpr auto kRichTextFormatCache = "_nereusWorkspaceReadableRichFormat";
+constexpr auto kRichDocumentConnected = "_nereusWorkspaceReadableDocumentConnected";
+
+QString floorRichHtml(const QString& html, const QWidget* owner)
+{
+    // Consume whole attributes, so style-like words inside another quoted
+    // attribute, prose, URLs, escaped code and HTML comments stay untouched.
+    static const QRegularExpression tags(QStringLiteral(
+        R"re(<!--[\s\S]*?-->|<(?:[^<>"']|"[^"]*"|'[^']*')+>)re"));
+    static const QRegularExpression attributes(QStringLiteral(
+        R"re(([\w:-]+)\s*=\s*("[^"]*"|'[^']*'))re"));
+    QssTranslator::Options options;
+    setFontFloorOptions(options, owner);
+    options.translateColours = false;
+    QString result;
+    qsizetype copied = 0;
+    QRegularExpressionMatchIterator matches = tags.globalMatch(html);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        result += QStringView(html).mid(copied, match.capturedStart() - copied);
+        QString tag = match.captured();
+        if (!tag.startsWith(QLatin1String("<!--"))) {
+            QRegularExpressionMatchIterator attrs = attributes.globalMatch(tag);
+            QVector<QPair<qsizetype, QPair<qsizetype, QString>>> changes;
+            while (attrs.hasNext()) {
+                const QRegularExpressionMatch attr = attrs.next();
+                if (attr.captured(1).compare(QLatin1String("style"), Qt::CaseInsensitive) != 0) {
+                    continue;
+                }
+                const QString value = attr.captured(2).mid(1, attr.capturedLength(2) - 2);
+                const QString floored = QssTranslator::translate(value, options).qss;
+                if (floored != value) {
+                    changes.append({attr.capturedStart(2) + 1,
+                                    {attr.capturedLength(2) - 2, floored}});
+                }
+            }
+            for (auto it = changes.crbegin(); it != changes.crend(); ++it) {
+                tag.replace(it->first, it->second.first, it->second.second);
+            }
+        }
+        result += tag;
+        copied = match.capturedEnd();
+    }
+    result += QStringView(html).mid(copied);
+    return result;
+}
+
+void floorRichDocument(QTextEdit* edit)
+{
+    // Read-only displays can adapt typography without changing an editor's
+    // user-authored formatting or its undo history.
+    if (!enabled() || !edit->isReadOnly()) {
+        return;
+    }
+    QTextDocument* document = edit->document();
+    constexpr auto kApplying = "_nereusWorkspaceApplyingDocumentFont";
+    if (document->property(kApplying).toBool()) {
+        return;
+    }
+    struct Change { int start; int length; QTextCharFormat format; };
+    QVector<Change> changes;
+    const qreal dpi = QFontMetricsF(edit->font(), edit).fontDpi();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            QTextCharFormat format = fragment.charFormat();
+            if (!format.hasProperty(QTextFormat::FontPixelSize)
+                && !format.hasProperty(QTextFormat::FontPointSize)) {
+                continue;
+            }
+            const QFont original = format.font();
+            if (readableFontAtDpi(original, dpi) == original) {
+                continue;
+            }
+            format.clearProperty(QTextFormat::FontPointSize);
+            format.setProperty(QTextFormat::FontPixelSize, kMinimumTextPixels);
+            changes.append({fragment.position(), fragment.length(), format});
+        }
+    }
+    if (changes.isEmpty()) {
+        return;
+    }
+    document->setProperty(kApplying, true);
+    const bool modified = document->isModified();
+    QTextCursor cursor(document);
+    cursor.beginEditBlock();
+    for (const Change& change : changes) {
+        cursor.setPosition(change.start);
+        cursor.setPosition(change.start + change.length, QTextCursor::KeepAnchor);
+        cursor.setCharFormat(change.format);
+    }
+    cursor.endEditBlock();
+    document->setModified(modified);
+    document->setProperty(kApplying, false);
+}
+
+void floorRichText(QWidget* w)
+{
+    if (QLabel* label = qobject_cast<QLabel*>(w)) {
+        const QString current = label->text();
+        if (label->property(kRichTextCache).isValid()
+            && label->property(kRichTextCache).toString() == current
+            && label->property(kRichTextFormatCache).toInt() == label->textFormat()) {
+            return;
+        }
+        QString readable = current;
+        if (label->textFormat() == Qt::RichText
+            || (label->textFormat() == Qt::AutoText && Qt::mightBeRichText(current))) {
+            readable = floorRichHtml(current, label);
+        }
+        // Cache before setText: its update/layout events may be synchronous.
+        label->setProperty(kRichTextCache, readable);
+        label->setProperty(kRichTextFormatCache, static_cast<int>(label->textFormat()));
+        if (readable != current) {
+            label->setText(readable);
+        }
+    } else if (QTextEdit* edit = qobject_cast<QTextEdit*>(w)) {
+        QTextDocument* document = edit->document();
+        if (!document->property(kRichDocumentConnected).toBool()) {
+            document->setProperty(kRichDocumentConnected, true);
+            QObject::connect(document, &QTextDocument::contentsChanged, edit, [edit] {
+                floorRichDocument(edit);
+            });
+        }
+        floorRichDocument(edit);
+    }
+}
+
+constexpr auto kFontOnlyOriginalQss = "_nereusWorkspaceFontOnlyOriginalQss";
+constexpr auto kFontOnlyThemedQss = "_nereusWorkspaceFontOnlyThemedQss";
+
+void themeTypographyOnly(QWidget* w)
+{
+    floorWidgetFont(w);
+    floorRichText(w);
+    const QString current = w->styleSheet();
+    const QVariant themed = w->property(kFontOnlyThemedQss);
+    if (!themed.isValid() || themed.toString() != current) {
+        w->setProperty(kFontOnlyOriginalQss, current);
+        QssTranslator::Options options;
+        setFontFloorOptions(options, w);
+        options.translateColours = false;
+        const QString readable = QssTranslator::translate(current, options).qss;
+        // Record before setStyleSheet's synchronous StyleChange. Nothing
+        // from the color/component pass is applied to a skipped surface.
+        w->setProperty(kFontOnlyThemedQss, readable);
+        if (readable != current) {
+            w->setStyleSheet(readable);
+        }
+    }
+    floorWidgetFont(w);
+}
+
+void themeTypographyRecursive(QWidget* w)
+{
+    themeTypographyOnly(w);
+    const QObjectList kids = w->children();
+    for (QObject* child : kids) {
+        if (child->isWidgetType()) {
+            themeTypographyRecursive(static_cast<QWidget*>(child));
+        }
+    }
+}
+
 void themeOne(QWidget* w)
 {
+    floorWidgetFont(w);
+    floorRichText(w);
     const QString current = w->styleSheet();
     const QVariant themed = w->property(kThemedQssProperty);
     const QVariant stored = w->property(kOriginalQssProperty);
@@ -604,6 +828,7 @@ void themeOne(QWidget* w)
 
     QssTranslator::Options options;
     options.resolveAmbiguousByContext = true;
+    setFontFloorOptions(options, w);
     const QssTranslator::Result r = QssTranslator::translate(original, options);
     if (fresh) {
         // A sheet set by a call-site role (applied when the switch is
@@ -644,11 +869,13 @@ void themeOne(QWidget* w)
     if (look != current) {
         w->setStyleSheet(look);
     }
+    floorWidgetFont(w);
 }
 
 void themeRecursive(QWidget* w)
 {
     if (skipped(w)) {
+        themeTypographyRecursive(w);
         return;
     }
     themeOne(w);
@@ -683,11 +910,14 @@ constexpr auto kLiveFilterName = "workspacePreviewLiveTheming";
 // children get their own Show events, so it does not recurse.
 void themeLive(QWidget* w)
 {
-    const QVariant themed = w->property(kThemedQssProperty);
-    if (themed.isValid() && themed.toString() == w->styleSheet()) {
+    if (skippedInWindow(w)) {
+        themeTypographyOnly(w);
         return;
     }
-    if (skippedInWindow(w)) {
+    floorWidgetFont(w);
+    floorRichText(w);
+    const QVariant themed = w->property(kThemedQssProperty);
+    if (themed.isValid() && themed.toString() == w->styleSheet()) {
         return;
     }
     themeOne(w);
@@ -702,15 +932,28 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override
     {
         // Every event of the application passes here: anything but Show
-        // and StyleChange leaves after one comparison.
+        // StyleChange, FontChange or Paint leaves after one comparison.
         const QEvent::Type type = event->type();
-        if (type != QEvent::Show && type != QEvent::StyleChange) {
+        if (type != QEvent::Show && type != QEvent::StyleChange
+            && type != QEvent::FontChange && type != QEvent::Paint) {
             return false;
         }
         if (!watched->isWidgetType() || !enabled()) {
             return false;
         }
         auto* w = static_cast<QWidget*>(watched);
+        if (type == QEvent::Paint) {
+            // QLabel has no textChanged signal. Compare its cached text at
+            // the paint boundary; only changed HTML runs the token pass.
+            if (qobject_cast<QLabel*>(w) != nullptr) {
+                floorRichText(w);
+            }
+            return false;
+        }
+        if (type == QEvent::FontChange) {
+            floorWidgetFont(w);
+            return false;
+        }
         // A new stylesheet on a hidden widget waits for its next Show,
         // when its size (and so its radius) is known.
         if (type == QEvent::StyleChange && !w->isVisible()) {
@@ -723,13 +966,35 @@ protected:
 
 } // namespace
 
+int readableTextPixelSize(int pixels)
+{
+    return enabled() ? std::max(pixels, kMinimumTextPixels) : pixels;
+}
+
+QFont readableFont(const QFont& font)
+{
+    return readableFont(font, nullptr);
+}
+
+QFont readableFont(const QFont& font, const QPaintDevice* device)
+{
+    return readableFontAtDpi(font, QFontMetricsF(font, device).fontDpi());
+}
+
 bool enabled()
 {
     std::optional<bool>& state = switchState();
     if (!state.has_value()) {
-        state = qEnvironmentVariable("NEREUS_WORKSPACE_PREVIEW") == QLatin1String("1");
+        state = enabledFromEnvironmentValue(qEnvironmentVariable("NEREUS_WORKSPACE_PREVIEW"));
     }
     return *state;
+}
+
+bool enabledFromEnvironmentValue(const QString& value)
+{
+    // On by default: only "0" turns the look off. Unset and empty (both
+    // an empty string here), "1" and anything else are on.
+    return value != QLatin1String("0");
 }
 
 void setEnabledForTest(bool on)
@@ -784,6 +1049,7 @@ QString lookQss(const QString& original, const QWidget* owner)
     }
     QssTranslator::Options options;
     options.resolveAmbiguousByContext = true;
+    setFontFloorOptions(options, owner);
     return Workspace::Components::componentize(
         QssTranslator::translate(original, options).qss, owner);
 }

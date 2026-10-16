@@ -4,9 +4,15 @@
 //            AI-assisted via Anthropic Claude Code.
 // 2026-10-11 One serial device under two spellings. J.J. Boyd (KG4VCF),
 //            AI-assisted via Anthropic Claude Code.
+// 2026-10-12 Each refused setting names the rule it broke. J.J. Boyd (KG4VCF),
+//            AI-assisted via Anthropic Claude Code.
+// 2026-10-12 Invalid reported radio model refusal uses operator words.
+//            J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QTcpServer>
+#include <QRegularExpression>
+#include <functional>
 #include "core/AppSettings.h"
 #include "core/cat/CatSettings.h"
 #include "core/cat/CatService.h"
@@ -220,6 +226,117 @@ private slots:
         config.serialParity = "None"; config.rigctldEnabled = true; QVERIFY(!CatSettings::validate(config));
         config.rigctldPort = 5555; QVERIFY(CatSettings::validate(config));
         config.tcpBindAddress = "invalid-address"; QVERIFY(!CatSettings::validate(config));
+    }
+    void serialRefusalNamesTheDeviceOrTheFormat() {
+        const QString noDevice=QStringLiteral("This serial port has no device. Choose a device, then turn the port on.");
+        const QString badFormat=QStringLiteral("The serial port's baud rate, parity, data bits or stop bits are not valid.");
+        CatEndpointConfig config; QString reason=QStringLiteral("left over");
+        QVERIFY(CatSettings::validate(config,&reason)); QVERIFY(reason.isEmpty());
+        config.serialEnabled=true; QVERIFY(!CatSettings::validate(config,&reason)); QCOMPARE(reason,noDevice);
+        config.serialDevice=QStringLiteral("   "); QVERIFY(!CatSettings::validate(config,&reason)); QCOMPARE(reason,noDevice);
+        // Both wrong: the missing device is said first, as it was checked first.
+        config.serialParity=QStringLiteral("invented"); QVERIFY(!CatSettings::validate(config,&reason)); QCOMPARE(reason,noDevice);
+        config.serialDevice=QStringLiteral("saved-device"); QVERIFY(!CatSettings::validate(config,&reason)); QCOMPARE(reason,badFormat);
+        // The format is checked on a port that is off too, as before.
+        config.serialEnabled=false; config.serialDevice.clear(); QVERIFY(!CatSettings::validate(config,&reason)); QCOMPARE(reason,badFormat);
+        for (const auto& broken:{std::function<void(CatEndpointConfig&)>([](CatEndpointConfig& c) { c.serialBaud=0; }),std::function<void(CatEndpointConfig&)>([](CatEndpointConfig& c) { c.serialDataBits=9; }),std::function<void(CatEndpointConfig&)>([](CatEndpointConfig& c) { c.serialStopBits=QStringLiteral("3"); })}) {
+            CatEndpointConfig other; broken(other); QVERIFY(!CatSettings::validate(other,&reason)); QCOMPARE(reason,badFormat);
+        }
+        config.serialParity=QStringLiteral("None"); QVERIFY(CatSettings::validate(config,&reason)); QVERIFY(reason.isEmpty());
+        // The other reasons keep their words.
+        CatEndpointConfig tcp; tcp.tcpEnabled=true; QVERIFY(!CatSettings::validate(tcp,&reason)); QCOMPARE(reason,QString("Invalid CAT listener address or port."));
+        CatEndpointConfig channel; channel.channel=5; QVERIFY(!CatSettings::validate(channel,&reason)); QCOMPARE(reason,QString("Invalid CAT channel or slice selection."));
+        CatEndpointConfig dialect; dialect.ptyDialect=QStringLiteral("invented"); QVERIFY(!CatSettings::validate(dialect,&reason)); QCOMPARE(reason,QString("Invalid CAT PTY dialect."));
+    }
+    void globalRefusalNamesTheRuleItBroke_data() {
+        QTest::addColumn<CatGlobalConfig>("config"); QTest::addColumn<QString>("sentence");
+        const auto row=[](const char* name,const std::function<void(CatGlobalConfig&)>& change,const char* sentence) {
+            // A valid Input PTT that is on, so one change breaks one rule.
+            CatGlobalConfig config; config.pttEnabled=true; config.pttDeviceSource=QStringLiteral("Physical"); config.pttUseCts=true; config.pttSerialDevice=QStringLiteral("ptt-device");
+            change(config); QTest::newRow(name)<<config<<QString::fromLatin1(sentence);
+        };
+        row("valid",[](CatGlobalConfig&) {},"");
+        row("no source",[](CatGlobalConfig& c) { c.pttDeviceSource=QStringLiteral("None"); },"Input PTT has no input source. Choose a source, then turn it on.");
+        row("no input",[](CatGlobalConfig& c) { c.pttUseCts=false; c.pttUseDsr=false; },"Input PTT has no input to watch. Tick the CTS or the DSR input, then turn it on.");
+        row("no device",[](CatGlobalConfig& c) { c.pttSerialDevice=QStringLiteral("  "); },"Input PTT has no physical device. Enter the device, then turn it on.");
+        row("baud",[](CatGlobalConfig& c) { c.pttSerialBaud=0; },"Input PTT's baud rate, parity, data bits or stop bits are not valid.");
+        row("parity",[](CatGlobalConfig& c) { c.pttSerialParity=QStringLiteral("invented"); },"Input PTT's baud rate, parity, data bits or stop bits are not valid.");
+        row("data bits",[](CatGlobalConfig& c) { c.pttSerialDataBits=4; },"Input PTT's baud rate, parity, data bits or stop bits are not valid.");
+        row("stop bits",[](CatGlobalConfig& c) { c.pttSerialStopBits=QStringLiteral("3"); },"Input PTT's baud rate, parity, data bits or stop bits are not valid.");
+        row("DIGU offset low",[](CatGlobalConfig& c) { c.rttyDiguHz=CatDefaults::kRttyMinimumHz-1; },"The RTTY offset is out of range.");
+        row("DIGU offset high",[](CatGlobalConfig& c) { c.rttyDiguHz=CatDefaults::kRttyMaximumHz+1; },"The RTTY offset is out of range.");
+        row("DIGL offset low",[](CatGlobalConfig& c) { c.rttyDiglHz=CatDefaults::kRttyMinimumHz-1; },"The RTTY offset is out of range.");
+        row("DIGL offset high",[](CatGlobalConfig& c) { c.rttyDiglHz=CatDefaults::kRttyMaximumHz+1; },"The RTTY offset is out of range.");
+        row("identity",[](CatGlobalConfig& c) { c.rigIdentity=QStringLiteral("invented"); },"The CAT radio model is not valid.");
+        row("port number low",[](CatGlobalConfig& c) { c.pttChannel=0; },"The Input PTT CAT port number is not valid.");
+        row("port number high",[](CatGlobalConfig& c) { c.pttChannel=5; },"The Input PTT CAT port number is not valid.");
+        row("source",[](CatGlobalConfig& c) { c.pttDeviceSource=QStringLiteral("CAT5"); },"The Input PTT source is not valid.");
+    }
+    void globalRefusalNamesTheRuleItBroke() {
+        QFETCH(CatGlobalConfig,config); QFETCH(QString,sentence);
+        QString reason=QStringLiteral("left over");
+        QCOMPARE(CatSettings::validateGlobal(config,&reason),sentence.isEmpty()); QCOMPARE(reason,sentence);
+        // No reason asked for: the same answer.
+        QCOMPARE(CatSettings::validateGlobal(config),sentence.isEmpty());
+    }
+    void globalRulesAcceptAndRefuseWhatTheyDid() {
+        // The serial format rule is the endpoint's, read here through validate().
+        const auto formatValid=[](const CatGlobalConfig& c) {
+            CatEndpointConfig endpoint; endpoint.serialBaud=c.pttSerialBaud; endpoint.serialParity=c.pttSerialParity; endpoint.serialDataBits=c.pttSerialDataBits; endpoint.serialStopBits=c.pttSerialStopBits;
+            return CatSettings::validate(endpoint);
+        };
+        // The rule list as it stood when it was one test with no reason.
+        const auto refusedBefore=[&formatValid](const CatGlobalConfig& config) {
+            return config.rttyDiguHz < CatDefaults::kRttyMinimumHz || config.rttyDiguHz > CatDefaults::kRttyMaximumHz
+                || config.rttyDiglHz < CatDefaults::kRttyMinimumHz || config.rttyDiglHz > CatDefaults::kRttyMaximumHz
+                || !QStringList{"PowerSDR", "TS-2000", "TS-50S", "TS-480"}.contains(config.rigIdentity)
+                || config.pttChannel < 1 || config.pttChannel > 4
+                || !QStringList{"None", "CAT1", "CAT2", "CAT3", "CAT4", "Physical"}.contains(config.pttDeviceSource)
+                || (config.pttEnabled && (config.pttDeviceSource == "None" || (!config.pttUseCts && !config.pttUseDsr)))
+                || (config.pttEnabled && config.pttDeviceSource == "Physical" && config.pttSerialDevice.trimmed().isEmpty())
+                || !formatValid(config);
+        };
+        int accepted=0; int refused=0;
+        for (int digu:{-3001,-3000,2125,3000,3001}) { for (int digl:{-3001,2125,3001}) { for (const char* identity:{"TS-2000","PowerSDR","invented"}) {
+        for (int channel:{0,1,4,5}) { for (const char* source:{"None","CAT1","CAT4","Physical","CAT5",""}) { for (bool enabled:{false,true}) {
+        for (bool cts:{false,true}) { for (bool dsr:{false,true}) { for (const char* device:{""," ","ptt-device"}) { for (const char* parity:{"None","invented"}) {
+            CatGlobalConfig config; config.rttyDiguHz=digu; config.rttyDiglHz=digl; config.rigIdentity=QString::fromLatin1(identity); config.pttChannel=channel;
+            config.pttDeviceSource=QString::fromLatin1(source); config.pttEnabled=enabled; config.pttUseCts=cts; config.pttUseDsr=dsr;
+            config.pttSerialDevice=QString::fromLatin1(device); config.pttSerialParity=QString::fromLatin1(parity);
+            QString reason=QStringLiteral("left over"); const bool valid=CatSettings::validateGlobal(config,&reason);
+            if (valid==refusedBefore(config) || valid!=reason.isEmpty()) { QFAIL(qPrintable(QStringLiteral("digu %1 digl %2 identity %3 port %4 source %5 on %6 cts %7 dsr %8 device '%9' parity %10: %11").arg(digu).arg(digl).arg(QLatin1String(identity)).arg(channel).arg(QLatin1String(source)).arg(enabled).arg(cts).arg(dsr).arg(QLatin1String(device),QLatin1String(parity),reason))); }
+            ++(valid ? accepted : refused);
+        } } } } } } } } } }
+        QVERIFY(accepted>0); QVERIFY(refused>accepted);
+    }
+    void serviceHandsBackTheReasonItRefusedFor() {
+        AppSettings::instance().clear(); RadioModel model; CatService& service=*model.catService(); QString reason=QStringLiteral("left over");
+        CatEndpointConfig one=service.channelConfig(1); one.serialEnabled=true;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("This serial port has no device")));
+        QVERIFY(!service.reconfigureChannel(1,one,&reason)); QCOMPARE(reason,QString("This serial port has no device. Choose a device, then turn the port on."));
+        one.serialDevice=QStringLiteral("shared-device"); QVERIFY(service.reconfigureChannel(1,one,&reason)); QVERIFY(reason.isEmpty());
+        // Another port asks for the device port 1 holds.
+        CatEndpointConfig three=service.channelConfig(3); three.serialEnabled=true; three.serialDevice=QStringLiteral(" shared-device ");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT 3 refused: serial device")));
+        reason=QStringLiteral("left over"); QVERIFY(!service.reconfigureChannel(3,three,&reason)); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        // Input PTT asks for it as its own physical device.
+        CatGlobalConfig global=service.globalConfig(); global.pttEnabled=true; global.pttDeviceSource=QStringLiteral("Physical"); global.pttUseCts=true; global.pttSerialDevice=QStringLiteral("shared-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT PTT refused: serial device")));
+        reason=QStringLiteral("left over"); QVERIFY(!service.reconfigureGlobal(global,&reason)); QCOMPARE(reason,QString("That serial device is already used by CAT 1."));
+        global.pttSerialDevice=QStringLiteral("ptt-device"); QVERIFY(service.reconfigureGlobal(global,&reason)); QVERIFY(reason.isEmpty());
+        // A port asks for the device Input PTT now holds.
+        CatEndpointConfig two=service.channelConfig(2); two.serialEnabled=true; two.serialDevice=QStringLiteral("ptt-device");
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("CAT 2 refused: serial device")));
+        reason=QStringLiteral("left over"); QVERIFY(!service.reconfigureChannel(2,two,&reason)); QCOMPARE(reason,QString("That serial device is already used by Input PTT."));
+        // A rule of the global settings.
+        global.pttUseCts=false;
+        QTest::ignoreMessage(QtWarningMsg,QRegularExpression(QStringLiteral("Input PTT has no input to watch")));
+        reason=QStringLiteral("left over"); QVERIFY(!service.reconfigureGlobal(global,&reason)); QCOMPARE(reason,QString("Input PTT has no input to watch. Tick the CTS or the DSR input, then turn it on."));
+        // Refused with no cause to name: nothing is said.
+        reason=QStringLiteral("left over"); QVERIFY(!service.reconfigureChannel(5,one,&reason)); QVERIFY(reason.isEmpty());
+        RadioModel window(RadioModel::Role::Remote);
+        reason=QStringLiteral("left over"); QVERIFY(!window.catService()->reconfigureChannel(1,CatEndpointConfig{},&reason)); QVERIFY(reason.isEmpty());
+        reason=QStringLiteral("left over"); QVERIFY(!window.catService()->reconfigureGlobal(CatGlobalConfig{},&reason)); QVERIFY(reason.isEmpty());
     }
     void serialDeviceNamesCompareAsTheSystemDoes() {
         // Windows: one device whatever the case, with or without the \\.\ prefix.

@@ -44,6 +44,11 @@
 //                 Anthropic Claude (Cowork), operator Martin Fischer.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/RotorDialWidget.h"
 
 #include "core/AppSettings.h"
@@ -142,7 +147,7 @@ QFont monoFont(int pixelSize)
     f.setFamilies({QStringLiteral("Menlo"), QStringLiteral("Consolas"),
                    QStringLiteral("DejaVu Sans Mono")});
     f.setStyleHint(QFont::Monospace);
-    f.setPixelSize(pixelSize);
+    f.setPixelSize(WorkspacePreview::readableTextPixelSize(pixelSize));
     return f;
 }
 
@@ -641,8 +646,8 @@ void RotorDialWidget::paintTape(QPainter& p)
                       cardinal ? 1.5 : major ? 1.0 : 0.6));
         p.drawLine(QPointF(x, yb - len), QPointF(x, yb));
         if (!major) { continue; }
-        f.setPixelSize(qBound(9, int(unit * 0.30), 15)
-                       + (cardinal ? 2 : 0));
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(qBound(9, int(unit * 0.30), 15)
+                       + (cardinal ? 2 : 0)));
         f.setBold(cardinal);
         p.setFont(f);
         // Die vier Himmelsrichtungen in der Textfarbe: sie sind die

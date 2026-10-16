@@ -22,6 +22,8 @@
 //               saves or compares what it reads can wait for a first list
 //               that is slow to arrive. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-12: wantOlderDrivers(). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -48,6 +50,12 @@ public:
     virtual std::optional<AudioDeviceInfo> defaultDevice(AudioBackendId id,
                                                          AudioDeviceDirection direction) const = 0;
     virtual void rescanOlderDrivers() = 0;
+    // The older drivers' devices are not listed until something asks for
+    // them: listing them starts PortAudio, which is slow to start.  This
+    // asks: the list follows through devicesChanged().  Reading the older
+    // drivers' devices() or defaultDevice() asks too.  Nothing on a
+    // catalog whose lists are there from the start.
+    virtual void wantOlderDrivers() {}
 
     // R-AUD-03: false until the first device list is in.  The catalog
     // waits a few seconds for it at its start and goes on without it when

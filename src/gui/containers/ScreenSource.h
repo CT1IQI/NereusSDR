@@ -1,6 +1,9 @@
 #pragma once
 // no-port-check: NereusSDR-original list of the screens the containers code consults.
 // Modification history (NereusSDR):
+//   2026-10-12 - desktopSize(): how wide and tall all the screens are
+//                 together. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - The screens floating and popped-out windows are placed
 //                 on, read in one place so tests can stand in for
 //                 monitors that are not there, by J.J. Boyd (KG4VCF),
@@ -52,6 +55,9 @@ public:
     ScreenInfo screenFor(const QRect& rect) const;
     // True when any part of `rect` is on a present screen.
     bool onAnyScreen(const QRect& rect) const;
+    // How wide and how tall the present screens are together (the size of
+    // the rect around all of them). Not valid with no screen.
+    QSize desktopSize() const;
 
     // The application's own screens.
     static ScreenSource* system();

@@ -59,7 +59,7 @@ QByteArray losslessTonePacket(int packet, quint32 ssrc)
 {
     QVector<float> pcm(PcmAudioCodecConfig::kPacketFrames * 2);
     for (int i = 0; i < PcmAudioCodecConfig::kPacketFrames; ++i) {
-        const double t = double(packet * PcmAudioCodecConfig::kPacketFrames + i) / 48000;
+        const double t = double(qint64(packet) * PcmAudioCodecConfig::kPacketFrames + i) / 48000;
         pcm[2 * i] = float(0.2 * std::sin(t * 2 * 3.141592653589793 * 997));
         pcm[2 * i + 1] = float(0.2 * std::sin(t * 2 * 3.141592653589793 * 1703));
     }
@@ -156,12 +156,15 @@ public:
     static constexpr quint32 kSsrc = 0x4e520a10;
     static constexpr int kCallbackFrames = 128;
 
-    explicit MatcherPlaybackRig(RemoteAudioProfile profile, int batch = 1, int deviceDelayMs = 0)
+    explicit MatcherPlaybackRig(RemoteAudioProfile profile, int batch = 1, int deviceDelayMs = 0,
+                                qint64 firstPacket = 0)
         : m_profile(profile), m_batch(batch),
           m_receiver(&m_engine, nullptr, [this] { return m_now; }),
           errors(&m_receiver, &RemoteAudioReceiver::errorOccurred),
           restarts(&m_receiver, &RemoteAudioReceiver::restartRequested)
     {
+        m_ms = firstPacket * packetMs();
+        m_nextPacket = firstPacket;
         m_engine.setVolume(1.0f);
         AudioStreamRequest request;
         request.sampleRate = 48000;
@@ -193,6 +196,8 @@ public:
             && m_receiver.start(kSsrc, quint32(m_nextPacket) * quint32(packetFrames()), m_profile);
     }
     void stop() { m_receiver.stop(); }
+    void submitPacket(qint64 index) { m_receiver.submit(packet(index)); }
+    quint64 concealedPackets() const { return m_receiver.concealedPackets(); }
 
     // One millisecond. `linkDelivers` false: the link holds its packets
     // back. `workerRuns` false: the receive worker does not get to run.
@@ -2183,6 +2188,117 @@ private slots:
         QVERIFY2(qint64(rig.heardPackets()) >= rig.sentPackets() - unheardAllowance,
                  qPrintable(QStringLiteral("%1 of %2").arg(rig.heardPackets())
                                 .arg(rig.sentPackets())));
+        rig.stop();
+    }
+
+    // R-AUD-15: what the receiver says to the bus's matcher of each packet
+    // it writes. A steady stream's packets did not wait, each arrived the
+    // jitter hold before its write, and each stands a packet after the
+    // last. After the receive side was held up its backlog is kept back
+    // for room: those packets say that they waited and for how long, and
+    // a packet's place stays its own in the stream when the queue has
+    // skipped intervals to bring the delay back, so the matcher's measure
+    // of the Core's clock is not moved by what the queue did.
+    void theMatcherIsToldEachPacketsWaitArrivalAndPlace()
+    {
+        constexpr qint64 kMs = 1'000'000;
+        MatcherPlaybackRig rig(RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(4'000), qPrintable(rig.faults()));
+        const int steadyWrites = rig.device->packetWriteCount();
+        QVERIFY2(steadyWrites > 90, qPrintable(QString::number(steadyWrites)));
+        QCOMPARE(rig.device->waitedWriteCount(), 0);
+        QCOMPARE(rig.device->lastArrivedAgoNs(), AudioJitterBuffer::kHoldNs);
+        QCOMPARE(rig.device->lastSourceFrame(), qint64(steadyWrites - 1) * rig.packetFrames());
+
+        // Nothing arrives and the worker does not run; then the backlog
+        // arrives in one tick, and the matcher has room for one packet of
+        // it at a time.
+        QVERIFY2(rig.run(250, false, false), qPrintable(rig.faults()));
+        QVERIFY2(rig.run(1'000), qPrintable(rig.faults()));
+        QVERIFY2(rig.device->waitedWriteCount() >= 3,
+                 qPrintable(QString::number(rig.device->waitedWriteCount())));
+        // The longest wait is the last of the backlog's: a packet's worth
+        // of playing for each packet ahead of it, and no more than the
+        // backlog was long.
+        QVERIFY2(rig.device->longestWaitNs() >= 40 * kMs && rig.device->longestWaitNs() <= 250 * kMs,
+                 qPrintable(QString::number(rig.device->longestWaitNs() / kMs)));
+
+        QVERIFY2(rig.run(20'000), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
+        // The stream is back in step: the last packet written arrived the
+        // hold ago, or a packet's time more while one waits its turn.
+        QVERIFY2(rig.device->lastArrivedAgoNs() >= AudioJitterBuffer::kHoldNs
+                     && rig.device->lastArrivedAgoNs() <= AudioJitterBuffer::kHoldNs + 40 * kMs,
+                 qPrintable(QString::number(rig.device->lastArrivedAgoNs() / kMs)));
+        // Its place is the stream's, whatever was skipped on the way: the
+        // packet sent that long ago. Counting the writes would put it
+        // behind by every interval the queue skipped.
+        const qint64 place = rig.device->lastSourceFrame() / rig.packetFrames();
+        QCOMPARE(rig.device->lastSourceFrame() % rig.packetFrames(), qint64(0));
+        const qint64 behind = rig.sentPackets() - 1 - place;
+        QVERIFY2(behind >= 2 && behind <= 3, qPrintable(QString::number(behind)));
+        qInfo("%d writes, place %lld, %lld sent, %d waited, longest %lld ms",
+              rig.device->packetWriteCount(), static_cast<long long>(place),
+              static_cast<long long>(rig.sentPackets()), rig.device->waitedWriteCount(),
+              static_cast<long long>(rig.device->longestWaitNs() / kMs));
+        rig.stop();
+    }
+
+    // A wrap changes the RTP timestamp's unsigned value, but each packet's
+    // place stays one interval farther into this context. Restarting the
+    // device matcher mid-context must not reset that source origin.
+    void matcherPacketPlaceSurvivesRtpWrapAndDeviceRestart()
+    {
+        constexpr qint64 kFirstPacket = (qint64(1) << 32) / PcmAudioCodecConfig::kPacketFrames;
+        MatcherPlaybackRig rig(RemoteAudioProfile::Lossless, 1, 0, kFirstPacket);
+        QVERIFY(quint32(kFirstPacket) * quint32(rig.packetFrames())
+                > quint32(kFirstPacket + 1) * quint32(rig.packetFrames()));
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(160), qPrintable(rig.faults()));
+        const int beforeWrites = rig.device->packetWriteCount();
+        QVERIFY(beforeWrites > 10);
+        const qint64 beforePlace = qint64(beforeWrites - 1) * rig.packetFrames();
+        QCOMPARE(rig.device->lastSourceFrame(), beforePlace);
+        QCOMPARE(rig.device->lastArrivedAgoNs(), AudioJitterBuffer::kHoldNs);
+
+        const int beforeRestarts = rig.device->restartCount();
+        rig.device->restartClockMatch();
+        QCOMPARE(rig.device->restartCount(), beforeRestarts + 1);
+        QVERIFY2(rig.run(160), qPrintable(rig.faults()));
+        const int afterWrites = rig.device->packetWriteCount();
+        QVERIFY(afterWrites > beforeWrites);
+        QCOMPARE(rig.device->lastSourceFrame(), qint64(afterWrites - 1) * rig.packetFrames());
+        QVERIFY(rig.device->lastSourceFrame() > beforePlace);
+        QCOMPARE(rig.device->lastArrivedAgoNs(), AudioJitterBuffer::kHoldNs);
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
+        rig.stop();
+    }
+
+    // Two missing intervals have already reached the matcher. The late
+    // first one is rewound by the jitter buffer, so its true stream place
+    // moves backward even though its arrival is new and the write is new.
+    void matcherPacketPlaceFollowsARewoundInterval()
+    {
+        MatcherPlaybackRig rig(RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        rig.submitPacket(0);
+        QVERIFY2(rig.run(80, false), qPrintable(rig.faults()));
+        QCOMPARE(rig.device->lastSourceFrame(), qint64(0));
+        QVERIFY2(rig.run(80, false), qPrintable(rig.faults()));
+        QCOMPARE(rig.concealedPackets(), quint64(2));
+        QCOMPARE(rig.device->lastSourceFrame(), qint64(2 * rig.packetFrames()));
+        const int writesBeforeRewind = rig.device->packetWriteCount();
+
+        rig.submitPacket(1);
+        // Replaying two intervals grows the hold from 80 to 180 ms.
+        QVERIFY2(rig.run(190, false), qPrintable(rig.faults()));
+        QVERIFY(rig.device->packetWriteCount() > writesBeforeRewind);
+        QCOMPARE(rig.device->lastSourceFrame(), qint64(rig.packetFrames()));
+        QVERIFY(rig.device->lastArrivedAgoNs() >= 180'000'000
+                && rig.device->lastArrivedAgoNs() <= 190'000'000);
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
         rig.stop();
     }
 

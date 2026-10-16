@@ -13,6 +13,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14 - The flag's squelch slider tooltip says it sets SSB
+//                squelch, 0 to 100, and that AM and FM thresholds are on
+//                their Settings > DSP pages in dB. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - JJ's option B: fit small workspace text to the approved
+//                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex. Classic geometry and colors retained.
 //   2026-09-30 - VFO flag crash lane: Slice A's close-button comment no
 //                 longer names the removed m_vfoWidget. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -442,6 +449,7 @@ warren@wpratt.com
 #include "gui/widgets/FilterPresetEditDialog.h"
 #include "core/AppSettings.h"
 
+#include <QFontMetrics>
 #include <QAccessible>
 #include <QAccessibleWidget>
 #include <QCoreApplication>
@@ -467,6 +475,36 @@ warren@wpratt.com
 namespace NereusSDR {
 
 namespace {
+
+// JJ's option B, 2026-10-12 (Codex): keep the AUTO badge's original
+// palette and classic box, and fit the final workspace font after updates.
+class AutoBadgeFit final : public QObject {
+public:
+    explicit AutoBadgeFit(QPushButton* badge) : QObject(badge) {
+        badge->installEventFilter(this);
+        fit(badge);
+    }
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::FontChange || event->type() == QEvent::StyleChange
+            || event->type() == QEvent::Show || event->type() == QEvent::Polish) {
+            fit(static_cast<QPushButton*>(watched));
+        }
+        return false;
+    }
+private:
+    static void fit(QPushButton* badge) {
+        if (!WorkspacePreview::enabled()) {
+            badge->setFixedSize(30, 14);
+            return;
+        }
+        const QFontMetrics metrics(WorkspacePreview::readableFont(badge->font(), badge), badge);
+        // Three pixels padding and the one-pixel border on each side.
+        badge->setFixedSize(std::max(30, metrics.horizontalAdvance(badge->text()) + 8),
+                            std::max(14, metrics.height() + 4));
+    }
+};
+
 // The TX badge's own words while it is held or offers a take
 // (updateTransmitControlAvailability, setInUseByRadio).
 constexpr const char* kSavedTransmitTooltip = "VfoSavedTransmitTooltip";
@@ -1686,7 +1724,21 @@ void VfoWidget::buildAudioTab()
             QStringLiteral("QSlider::groove:horizontal { background: #1a2a3a; height: 6px; border-radius: 3px; }"
                             "QSlider::handle:horizontal { background: #00b4d8; width: 12px; margin: -3px 0; border-radius: 6px; }"));
         // NereusSDR native — Thetis ptbSquelch has no ToolTip entry in console.resx
-        m_sqlSlider->setToolTip(QStringLiteral("Squelch threshold. SSB: 0–100 maps to 0.0–1.0 linear. AM: dB scale. FM: linear 0–1."));
+        // This slider and the SQL button drive SSB squelch (SSQL) only, in
+        // every mode: MainWindow wires them to SliceModel::setSsqlEnabled /
+        // setSsqlThresh (0 to 100, RadioModel divides by 100 for WDSP).
+        // AM and FM squelch thresholds live on Settings > DSP > AM/SAM and
+        // Settings > DSP > FM, in dB (-160 to 0, ControlRanges.h).
+        // FM squelch scale, for reference: Thetis maps its -160..0 slider to
+        // 0..100 and passes 10^(-2 * n / 100) (1.0 down to 0.01) to WDSP.
+        // From Thetis Project Files/Source/Console/console.cs:47295-47304 [v2.10.3.15]
+        // From Thetis Project Files/Source/Console/radio.cs:1276-1291 [v2.10.3.15]
+        //   (FMSquelchThreshold -> WDSP.SetRXAFMSQThreshold)
+        // WDSP third_party/wdsp/src/fmsq.c:247-251: the value is linear noise
+        //   level; tail_thresh = threshold, unmute_thresh = 0.9 * threshold.
+        m_sqlSlider->setToolTip(QStringLiteral(
+            "SSB squelch threshold, 0 to 100. AM and FM squelch thresholds "
+            "are set in dB in Settings > DSP > AM/SAM and Settings > DSP > FM."));
         row->addWidget(m_sqlSlider);
 
         connect(m_sqlBtn, &QPushButton::toggled, this, [this](bool on) {
@@ -1744,6 +1796,7 @@ void VfoWidget::buildAudioTab()
                             "QPushButton:hover { border-color: #adff2f; }"));
         m_agcAutoLabel->setFixedHeight(14);
         m_agcAutoLabel->setFixedWidth(30);
+        new AutoBadgeFit(m_agcAutoLabel);
         m_agcAutoLabel->setCursor(Qt::PointingHandCursor);
         // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
         m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));

@@ -7,6 +7,7 @@ class QFormLayout;
 
 #include "gui/SetupPage.h"
 #include "gui/setup/RemoteStationPage.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -61,6 +62,10 @@ private:
     /// What the computer running CAT offers; a device path typed and not
     /// finished stays (`keepTyped`).
     void syncPlatform(bool keepTyped);
+    /// A serial row's Enable tick waits for a device: unticked with a blank
+    /// Device box it cannot be ticked, and its tooltip says why. A ticked
+    /// box can always be unticked.
+    void syncEnableWaits(int row);
 };
 class CatSerialPortsPage : public CatChannelSetupPage {
     Q_OBJECT
@@ -248,6 +253,12 @@ protected:
     QGroupBox* m_serialGroup{};
     QComboBox* m_parity{};
     QComboBox* m_stops{};
+    /// Input PTT's Enable tick and the four controls it waits for.
+    QCheckBox* m_pttEnabled{};
+    QComboBox* m_pttSource{};
+    QCheckBox* m_pttCts{};
+    QCheckBox* m_pttDsr{};
+    QLineEdit* m_pttDevice{};
     std::vector<QWidget*> m_controls;
     std::vector<std::function<void(const CatGlobalConfig&)>> m_updates;
     void applyConfiguration(const CatGlobalConfig&);
@@ -255,9 +266,14 @@ protected:
     /// leaves the other controls (and text typed in them) alone.
     void syncPlatform();
     void syncPtt();
+    /// Input PTT's Enable tick waits for a source, a CTS or DSR input and,
+    /// for a physical source, a device: unticked without them it cannot be
+    /// ticked, and its tooltip names the first one missing. A ticked box can
+    /// always be unticked.
+    void syncPttEnableWaits();
     bool m_syncing{false};
 };
-class CatOptionsSetupPage : public CatGlobalSetupPage {
+class NEREUS_GUI_EXPORT CatOptionsSetupPage : public CatGlobalSetupPage {
     Q_OBJECT
 public:
     explicit CatOptionsSetupPage(RadioModel*, QWidget* parent = nullptr);

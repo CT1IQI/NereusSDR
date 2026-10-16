@@ -3,6 +3,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-12: Separate mirrored pin projection from preference requests.
+//               J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: the microphone is collected by a real-time thread while
@@ -441,6 +443,9 @@ public:
     /// A program key that brings its own audio (programAudioKey()) never
     /// hears the microphone: silence follows its audio instead.
     static constexpr int kProgramAudioHoldMs = 200;
+    // 2026-10-12: how long the microphone's collector may take no audio,
+    // with capture ready, before the window says so in its log.
+    static constexpr int kMicCollectorStallMs = 1000;
     /// R-R3-37: how long a pan in budget mode may wait for the Core's first
     /// answer before it says "Waiting for the Core". A Core that answers
     /// within this (the usual case at session start) never flashes the line.
@@ -661,7 +666,7 @@ private:
     PanDisplayState statusWithGrant(const QString& panId, PanDisplayState status) const;
     void refreshPanGrantStatus(const QString& panId);
     PanDisplayState perPanRefusalStatus(const QString& panId) const;
-    void refreshCtunState();
+    void refreshCtunState(bool restorePreference = true);
     // R-R3-18/19: a C-Tune centre gesture from one pan, at most one request
     // in flight per stream, never a zoom on a stream other receivers share.
     void requestCentreFromGesture(quint32 endpointId, double centreHz);

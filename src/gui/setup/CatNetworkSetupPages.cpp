@@ -16,6 +16,10 @@
 //              window, so it scrolls sideways inside its own frame
 //              (SetupFit::SidewaysFrame) instead of being squeezed. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-11 - The Peripherals rows' Connect and Disconnect in a window
+//              running its own radio go through RadioModel
+//              (connect*FromWindow), the connection that window shares.
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "CatNetworkSetupPages.h"
 #include "gui/setup/SetupFit.h"
@@ -439,11 +443,13 @@ void CatTciServerPage::buildCoreGroup()
         m_coreSettings.insert(QByteArrayLiteral("txChannel"), combo);
     }
     addSpin("rxSensorIntervalMs", tr("RX interval:"), 30, 1000, tr(" ms"),
-            tr("How often RX sensor data (signal level, AGC gain, etc.) is pushed to TCI clients "
-               "that subscribe to sensors (30 to 1000 ms)."));
+            tr("How often RX sensor values (signal level, AGC gain and so on) are sent "
+               "to an app that turns sensors on without choosing its own rate "
+               "(30 to 1000 ms)."));
     addSpin("txSensorIntervalMs", tr("TX interval:"), 30, 1000, tr(" ms"),
-            tr("How often TX sensor data (forward power, SWR, ALC, etc.) is pushed to TCI "
-               "clients that subscribe to sensors (30 to 1000 ms)."));
+            tr("How often TX sensor values (forward power, SWR, ALC and so on) are sent "
+               "to an app that turns sensors on without choosing its own rate "
+               "(30 to 1000 ms)."));
     // The three RX2 VFO options (TciProtocol.cpp applies them).
     addCheck("forgetRx2VfoBOnDisconnect", rx2VfoForgetLabel(), rx2VfoForgetTip());
     addCheck("useRx1VfoaForRx2Vfoa", rx2VfoUseRx1Label(), rx2VfoUseRx1Tip());
@@ -818,8 +824,9 @@ void CatTciServerPage::buildSensorsGroup()
     m_rxSensorSpin->setRange(30, 1000);
     m_rxSensorSpin->setSuffix(tr(" ms"));
     m_rxSensorSpin->setToolTip(
-        tr("How often RX sensor data (signal level, AGC gain, etc.) is pushed to "
-           "TCI clients that subscribe to sensors (30–1000 ms)."));
+        tr("How often RX sensor values (signal level, AGC gain and so on) are sent "
+           "to an app that turns sensors on without choosing its own rate "
+           "(30 to 1000 ms)."));
     m_rxSensorSpin->setValue(
         s.value(QStringLiteral("TciRxSensorIntervalMs"), 200).toInt());
     connect(m_rxSensorSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int v) {
@@ -834,8 +841,9 @@ void CatTciServerPage::buildSensorsGroup()
     m_txSensorSpin->setRange(30, 1000);
     m_txSensorSpin->setSuffix(tr(" ms"));
     m_txSensorSpin->setToolTip(
-        tr("How often TX sensor data (forward power, SWR, ALC, etc.) is pushed to "
-           "TCI clients that subscribe to sensors (30–1000 ms)."));
+        tr("How often TX sensor values (forward power, SWR, ALC and so on) are sent "
+           "to an app that turns sensors on without choosing its own rate "
+           "(30 to 1000 ms)."));
     m_txSensorSpin->setValue(
         s.value(QStringLiteral("TciTxSensorIntervalMs"), 200).toInt());
     connect(m_txSensorSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int v) {
@@ -845,15 +853,20 @@ void CatTciServerPage::buildSensorsGroup()
 
     // Informational note — not an AppSettings key
     auto* noteLabel = new QLabel(
-        tr("Effective rate is the minimum across all subscribed clients "
-           "(TciSensorManager aggregation)."),
+        tr("Apps that turn on sensors without choosing their own rate use these intervals. "
+           "Apps already connected keep the rate they started with. When apps use "
+           "different rates, all of them get updates at the fastest one."),
         group);
     noteLabel->setStyleSheet(QString::fromLatin1(Style::kSecondaryLabelStyle));
     noteLabel->setWordWrap(true);
     form->addRow(noteLabel);
 
     addContent(group);
-    // R-R3-49: the sensor intervals are not applied yet; hidden until they are.
+    // R-R3-49: the sensor intervals are applied and the group is shown.
+    // TciServer copies both into each app's session when it connects; an
+    // rx_sensors_enable / tx_sensors_enable without an interval uses them,
+    // and one shared timer runs at the shortest interval among the apps
+    // with sensors on (TciSensorManager::minimumRequiredInterval).
 }
 
 // ---------------------------------------------------------------------------
@@ -1987,14 +2000,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (pgxl->isConnected()) {
-            pgxl->disconnect();
+            m_model->disconnectPgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(PGXL): host or port not set; fill in the fields first";
                 return;
             }
-            pgxl->connectToPgxl(host, port);
+            m_model->connectPgxlFromWindow(host, port);
         }
     } else {
         // TGXL row (rowIdx == 0).
@@ -2004,14 +2017,14 @@ void PeripheralsPage::onConnect(int rowIdx)
             return;
         }
         if (tgxl->isConnected()) {
-            tgxl->disconnect();
+            m_model->disconnectTgxlFromWindow();
         } else {
             if (host.isEmpty() || port == 0) {
                 qCWarning(lcPeripherals)
                     << "onConnect(TGXL): host or port not set; fill in the fields first";
                 return;
             }
-            tgxl->connectToTgxl(host, port);
+            m_model->connectTgxlFromWindow(host, port);
         }
     }
 }

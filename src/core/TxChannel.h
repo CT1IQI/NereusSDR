@@ -362,6 +362,9 @@ warren@wpratt.com
 //                 enums.cs:404-408, radio.cs:2659 [v2.10.3.15]; it was
 //                 inverted). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-14 - Atomic VOX target publication and retirement guards across
+//                 lane rebuilds. J.J. Boyd (KG4VCF), AI-assisted via OpenAI
+//                 Codex. NereusSDR-original.
 // =================================================================
 
 #pragma once
@@ -389,6 +392,7 @@ warren@wpratt.com
 #include "dsp/Ps3DisplayAdapter.h"
 #include "dsp/TxChannelState.h"
 #include "wdsp_api.h"  // NEREUS_STDCALL macro for s_pushVoxCallback (Task 17)
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -465,7 +469,7 @@ class WdspEngine;  // forward declaration for rebuild()
 //
 // Ported from Thetis wdsp/TXA.c:31-479 [v2.10.3.13] — create_txa() signal
 // flow order determines the Stage enum ordinal values.
-class TxChannel : public QObject {
+class NEREUS_CORE_EXPORT TxChannel : public QObject {
     Q_OBJECT
 
 public:
@@ -2645,6 +2649,16 @@ public:
         s_pushVoxCallback(id, active);
     }
 
+    // Interpose retirement after lookup while the fixture still owns the
+    // captured wrapper. The production callback uses the same dispatch body.
+    static void invokePushVoxAfterLookupForTest(
+        int id, int active, const std::function<void()>& afterLookup)
+    {
+        TxChannel* inst = s_voxKeyInstance.load(std::memory_order_acquire);
+        afterLookup();
+        dispatchPushVoxCallback(inst, id, active);
+    }
+
     // ── Test seam (Phase 3M-3a-iii Task 18 — bench fix) — VOX-listening gate ─
     //
     // Read-only access to the VOX-listening atomic.  Test verifies that
@@ -3249,20 +3263,20 @@ private:
     // NereusSDR).  Emitting a Qt signal here is safe because Qt's
     // AutoConnection promotes to QueuedConnection on a thread crossing.
     static void NEREUS_STDCALL s_pushVoxCallback(int id, int active);
+    static void dispatchPushVoxCallback(TxChannel* inst, int id, int active);
 
     // Single-instance lookup table.  3M-3a-iii ships exactly one TxChannel
     // (channel id 1) — phase 3F multi-pan TX will turn this into a small
     // std::array<TxChannel*, N> indexed by id.  Set in registerVoxCallback,
     // cleared in unregisterVoxCallback and the dtor.
-    static TxChannel* s_voxKeyInstance;
+    static std::atomic<TxChannel*> s_voxKeyInstance;
 
     // Wires SendCBPushDexpVox(m_channelId, &s_pushVoxCallback) and stores
-    // `this` in s_voxKeyInstance.  Called once from the constructor —
-    // Thetis create_xmtr (cmaster.c:130-157 [v2.10.3.13]) has already
-    // run create_dexp by the time WdspEngine::createTxChannel constructs
-    // this wrapper, so pdexp[m_channelId] is non-null and the WDSP setter
-    // is safe to call (matches the rsmpin.p / pdexp guards used throughout
-    // the existing DEXP setters).
+    // `this` in s_voxKeyInstance. Called from the constructor without a
+    // lane, or from onWdspOpenedOnLane before worker admission. Nereus
+    // has opened TXA and created DEXP by this point, matching Thetis
+    // create_xmtr (cmaster.c:130-157 [v2.10.3.13]). The rsmpin.p / pdexp
+    // guards also permit unopened wrappers in direct test fixtures.
     void registerVoxCallback();
 
     // Clears s_voxKeyInstance and re-registers nullptr with WDSP so a

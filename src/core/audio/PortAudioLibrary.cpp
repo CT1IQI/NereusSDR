@@ -10,11 +10,15 @@
 //               (lockBounded, LongHold); the counts are atomics read
 //               without the lock. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-12: PortAudio starts on first need, not at launch
+//               (ensureStarted, addUser, removeUser). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/audio/PortAudioLibrary.h"
 
 #include "core/LogCategories.h"
+#include "core/audio/PortAudioBus.h"
 
 #include <portaudio.h>
 
@@ -23,6 +27,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <utility>
 
 namespace NereusSDR::PortAudioLibrary {
 
@@ -41,6 +46,40 @@ std::atomic<std::int64_t> g_reportedHoldNs{0};
 
 constexpr std::int64_t kBoundedWaitNs = std::int64_t(kBoundedWaitMs) * 1000000;
 constexpr int kPollMs = 1;
+
+// ensureStarted()'s reference is held; changed under mutex().
+std::atomic<bool> g_startedOnDemand{false};
+std::atomic<int> g_users{0};
+std::atomic<int> g_initializeCalls{0};
+std::atomic<int> g_terminateCalls{0};
+
+#ifdef NEREUS_BUILD_TESTS
+// Set by a test before any thread uses PortAudio.
+std::function<int()> g_initializeForTest;
+std::function<int()> g_terminateForTest;
+#endif
+
+PaError paInitialize()
+{
+    g_initializeCalls.fetch_add(1, std::memory_order_relaxed);
+#ifdef NEREUS_BUILD_TESTS
+    if (g_initializeForTest) {
+        return PaError(g_initializeForTest());
+    }
+#endif
+    return Pa_Initialize();
+}
+
+PaError paTerminate()
+{
+    g_terminateCalls.fetch_add(1, std::memory_order_relaxed);
+#ifdef NEREUS_BUILD_TESTS
+    if (g_terminateForTest) {
+        return PaError(g_terminateForTest());
+    }
+#endif
+    return Pa_Terminate();
+}
 
 std::int64_t nowNs()
 {
@@ -106,7 +145,7 @@ bool acquire()
     if (!lock.owns_lock()) {
         return false;
     }
-    const PaError err = Pa_Initialize();
+    const PaError err = paInitialize();
     if (err != paNoError) {
         qCWarning(lcAudio) << "Pa_Initialize failed:" << Pa_GetErrorText(err);
         return false;
@@ -130,13 +169,85 @@ void release()
         return;
     }
     g_references.fetch_sub(1, std::memory_order_acq_rel);
-    Pa_Terminate();
+    paTerminate();
 }
 
 int references()
 {
     return g_references.load(std::memory_order_acquire);
 }
+
+bool ensureStarted()
+{
+    if (PortAudioBus::portAudioBarredForTestRun()) {
+        return false;
+    }
+    std::unique_lock<std::recursive_mutex> lock = lockBounded();
+    if (!lock.owns_lock()) {
+        return g_startedOnDemand.load(std::memory_order_acquire);
+    }
+    if (g_startedOnDemand.load(std::memory_order_acquire)) {
+        return true;
+    }
+    // Already running on another start (acquire(), or the mic helper's
+    // own): nothing to add.  Pa_GetHostApiCount answers from PortAudio's
+    // initialization count alone and touches no device.
+    if (g_references.load(std::memory_order_acquire) > 0
+        || Pa_GetHostApiCount() != PaHostApiIndex(paNotInitialized)) {
+        return true;
+    }
+    if (!acquire()) {
+        return false;
+    }
+    g_startedOnDemand.store(true, std::memory_order_release);
+    qCInfo(lcAudio) << "Older drivers: PortAudio started on first need:" << Pa_GetVersionText();
+    return true;
+}
+
+bool startedOnDemand()
+{
+    return g_startedOnDemand.load(std::memory_order_acquire);
+}
+
+void addUser()
+{
+    g_users.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void removeUser()
+{
+    if (g_users.fetch_sub(1, std::memory_order_acq_rel) > 1) {
+        return;
+    }
+    if (!g_startedOnDemand.load(std::memory_order_acquire)) {
+        return;
+    }
+    // release() leaves the reference, and says so, when a driver call has
+    // not returned; the reference is then still ensureStarted()'s.
+    const int before = g_references.load(std::memory_order_acquire);
+    release();
+    if (g_references.load(std::memory_order_acquire) < before) {
+        g_startedOnDemand.store(false, std::memory_order_release);
+    }
+}
+
+int initializeCalls()
+{
+    return g_initializeCalls.load(std::memory_order_relaxed);
+}
+
+int terminateCalls()
+{
+    return g_terminateCalls.load(std::memory_order_relaxed);
+}
+
+#ifdef NEREUS_BUILD_TESTS
+void setDriverForTest(std::function<int()> initialize, std::function<int()> terminate)
+{
+    g_initializeForTest = std::move(initialize);
+    g_terminateForTest = std::move(terminate);
+}
+#endif
 
 bool reinitialize()
 {
@@ -152,11 +263,11 @@ bool reinitialize()
         return false;   // not running: the next start lists the devices present then
     }
     for (int i = 0; i < references; ++i) {
-        Pa_Terminate();
+        paTerminate();
     }
     g_references.store(0, std::memory_order_release);
     for (int i = 0; i < references; ++i) {
-        const PaError err = Pa_Initialize();
+        const PaError err = paInitialize();
         if (err != paNoError) {
             qCWarning(lcAudio) << "Older drivers: PortAudio did not start again:"
                                << Pa_GetErrorText(err);

@@ -15,6 +15,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-09 - The spin arrow urls take the workspace variants.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Token-aware font-size floor, J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "QssTranslator.h"
@@ -418,7 +420,9 @@ Result translate(const QString& original, const Options& options)
         if (inBlock && startsWithUrl(original, i)) {
             qsizetype end = original.indexOf(QLatin1Char(')'), i + 4);
             end = end < 0 ? n : end + 1;
-            out += workspaceUrl(QStringView(original).mid(i, end - i));
+            out += options.translateColours
+                ? workspaceUrl(QStringView(original).mid(i, end - i))
+                : QStringView(original).mid(i, end - i).toString();
             i = end;
             continue;
         }
@@ -454,7 +458,32 @@ Result translate(const QString& original, const Options& options)
             continue;
         }
 
-        if (c == QLatin1Char('#')) {
+        // Only a font-size declaration's numeric token is eligible. The
+        // comment/string/url paths above preserve their contents verbatim.
+        if (inBlock && inValue && options.minimumTextPixelSize > 0
+            && property.trimmed().compare(QLatin1String("font-size"), Qt::CaseInsensitive) == 0
+            && (c.isDigit() || c == QLatin1Char('.'))
+            && (i == 0 || original.at(i - 1).isSpace() || original.at(i - 1) == QLatin1Char(':'))) {
+            qsizetype end = i;
+            while (end < n && (original.at(end).isDigit() || original.at(end) == QLatin1Char('.'))) {
+                ++end;
+            }
+            bool valid = false;
+            const qreal size = original.mid(i, end - i).toDouble(&valid);
+            const QStringView unit = QStringView(original).mid(end, 2);
+            const bool pixels = unit.compare(QLatin1String("px"), Qt::CaseInsensitive) == 0;
+            const bool points = unit.compare(QLatin1String("pt"), Qt::CaseInsensitive) == 0;
+            const qreal logicalPixels = points ? size * options.textLogicalDpi / 72.0 : size;
+            if (valid && (pixels || points) && size > 0
+                && logicalPixels < options.minimumTextPixelSize
+                && (end + 2 == n || !isTokenChar(original.at(end + 2)))) {
+                out += QString::number(options.minimumTextPixelSize) + QLatin1String("px");
+                i = end + 2;
+                continue;
+            }
+        }
+
+        if (options.translateColours && c == QLatin1Char('#')) {
             qsizetype j = i + 1;
             while (j < n && isTokenChar(original.at(j))) {
                 ++j;
@@ -478,7 +507,7 @@ Result translate(const QString& original, const Options& options)
         }
 
         // rgb(), rgba() and colour names, in a declaration's value.
-        if (inBlock && inValue && c.isLetter() && (i == 0 || !isTokenChar(original.at(i - 1)))) {
+        if (options.translateColours && inBlock && inValue && c.isLetter() && (i == 0 || !isTokenChar(original.at(i - 1)))) {
             qsizetype j = i + 1;
             while (j < n && isTokenChar(original.at(j))) {
                 ++j;

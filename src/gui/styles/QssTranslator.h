@@ -53,6 +53,8 @@
 //   2026-10-08 - Every colour form through one lookup, rows by
 //                 property kind, and the kept list.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Optional font-size floor, J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #pragma once
@@ -96,6 +98,12 @@ QString propertyKind(const QString& property);
 inline constexpr auto kAmbiguousHex = "#203040";
 
 struct Options {
+    // Opt-in logical-pixel floor for unquoted font-size px/pt values.
+    // Zero keeps typography unchanged. Point values use the caller's
+    // logical font DPI (device pixel ratio is not a font-size unit).
+    bool translateColours = true;
+    int minimumTextPixelSize = 0;
+    qreal textLogicalDpi = 96.0;
     // Table to use; nullptr means defaultTable().
     const Table* table = nullptr;
     // Kept list to use; nullptr means defaultKept().

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14: Follow window moves with the existing toast anchor and add
+//               access-only display regression friendship. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-08 - buildWisdomProgressDialog: the FFTW wisdom progress dialog
 //                 is built by one function the visual preview can call.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -155,6 +158,10 @@
 //   2026-10-01 - VFO flag crash lane fix round: createSliceFlag's comment
 //                covers Slice A's flag. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - J.J. Boyd (KG4VCF). A pan shows the stream of its own
+//                slice: streamShownOnPan, panShowsStream, sliceIsOffPanStream,
+//                showOwnStreamOnPan, panIdOfSpectrum, m_panShownStream.
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -236,6 +243,7 @@
 #include "gui/ReceiverStopNotices.h"
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
+#include "gui/NereusGuiExport.h"
 
 class QProgressDialog;
 class QSplitter;
@@ -323,7 +331,7 @@ class ClientChainApplet;
 // Phase 3J-1 closeout Item 2 (2026-05-12): TciLogWindow viewer.
 class TciLogWindow;
 
-class MainWindow : public QMainWindow {
+class NEREUS_GUI_EXPORT MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
@@ -584,6 +592,7 @@ public slots:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -1075,6 +1084,7 @@ private slots:
 private:
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
+    friend class DisplaySettingsCorrectnessAccess;
 #endif
     // Parity Task 21 (R-IOS-18, B6.2, B6.3): the Core's radio from a remote
     // window: Setup > This Core opened on what the menu asked for.
@@ -1212,6 +1222,27 @@ private:
     /// SpectrumWidget so visibleBinRange maps its bins against the right
     /// window. No-op for a stream we have never seen a centre for.
     void applyStreamWindowToPan(const QString& panId, int streamIndex);
+
+    /// The stream a pan shows: its own slice's. A pan has one view and one
+    /// DDC center, and it can host slices on several streams (two bands on
+    /// one pan, or a slice a layout change moved onto it), so exactly one
+    /// stream is the one it draws, follows and drags. -1 when nothing picks
+    /// one (no bound slice of its own yet, or a remote window, whose pans
+    /// take the Core's geometry); the pan then takes every stream it is
+    /// subscribed to, as it always did.
+    int streamShownOnPan(const QString& panId) const;
+    bool panShowsStream(const QString& panId, int streamIndex) const;
+    /// The id of the pan a spectrum widget belongs to (empty for none).
+    QString panIdOfSpectrum(const SpectrumWidget* sw) const;
+    /// True for a slice this pan hosts on a stream it does not show. Such a
+    /// slice is a flag and, off the span, its own edge marker there: it
+    /// never moves the pan's view, VFO or DDC center.
+    bool sliceIsOffPanStream(const QString& panId, const SliceModel* slice) const;
+    /// Put a pan on the stream of its own slice. Moves the view only when
+    /// that stream changed since the last pass or is one of `gained` (the
+    /// subscriptions this routing pass added), and re-marks the pan's
+    /// slices as shown or edge markers either way.
+    void showOwnStreamOnPan(const QString& panId, const QList<int>& gained = {});
 
     /// Re-derive the entire pan-to-stream topology from the current slice
     /// set. Cheap (one pass) and called on slice add / remove / migration
@@ -1650,6 +1681,9 @@ private:
         int    sampleRateHz{0};
     };
     QHash<int, StreamWindow> m_streamWindows;
+    /// The stream each pan was last put on (showOwnStreamOnPan), so a
+    /// routing pass moves a pan only when its own slice's stream changed.
+    QHash<QString, int> m_panShownStream;
     PanClarityRegistry* m_clarityRegistry{nullptr};
     class StepAttenuatorController* m_stepAttController{nullptr};
     /// Phase 3F Sub-Epic D Task 11: CH 1 stacked-indicator widget in the

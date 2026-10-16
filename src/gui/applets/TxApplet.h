@@ -149,6 +149,9 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix round 1 (minor 5): m_psBoardUnknown,
 //                PS-A shown disabled while the board is not known.
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Expose the window-owned DUP presentation and click signal.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 
 //=================================================================
@@ -215,6 +218,7 @@
 // =================================================================
 
 #include "AppletWidget.h"
+#include "gui/NereusGuiExport.h"
 #include <QPointer>
 #include <QList>
 #include <functional>
@@ -284,7 +288,7 @@ class SliceModel;
 //   VOX engage surface next to MOX/TUNE on the right pane.  Full row moves
 //   as a unit including the live DexpPeakMeter strip + 100 ms poller.
 // Out-of-phase controls (2-Tone, PS-A) are hidden.
-class TxApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT TxApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit TxApplet(RadioModel* model, QWidget* parent = nullptr);
@@ -322,6 +326,9 @@ public:
     // button's clicked-state drives controller.setActive(checked); the
     // controller's twoToneActiveChanged signal mirrors back into the button.
     void setTwoToneController(TwoToneController* controller);
+
+    // The window owns this display preference; the applet only presents it.
+    void setDisplayDuplexState(bool checked, bool available, const QString& tooltip);
 
     // ── Phase 3M-3a-ii Batch 6 (Task A): TxCfcDialog launch ─────────────────
     // Public slot so external surfaces (CfcSetupPage's [Configure CFC bands…]
@@ -540,6 +547,7 @@ signals:
     // PureSignal…); the same singleton dialog instance is opened by the
     // [PS-A] button right-click and the matching control on PureSignalApplet.
     void openPureSignalDialogRequested();
+    void displayDuplexRequested(bool on);
 
 private slots:
     /// Phase 3M-3a-iii bench polish (2026-05-04): 100 ms timer slot — pulls
@@ -557,6 +565,7 @@ private:
     static QString micSourceBadgeStyle(bool amber);
     void wireControls();  // called after buildUI() — attaches signals/slots
     void syncPsaFromFacade();
+    void syncRemoteIndicators();
     // Fix wave GUI-I7: put back PS-A's tooltip under the facade's reason.
     void removePsaFacadeReason();
     // R-R3-45: show the MON output choice (true = headphones) without
@@ -695,6 +704,7 @@ private:
     QPushButton* m_twoToneBtn = nullptr;
     // 9. PS-A (Phase 3M-4 Task 13)
     QPushButton* m_psaBtn     = nullptr;
+    QPushButton* m_dupBtn     = nullptr;
     // Shared session facade owned by RadioModel. setPureSignal() changes its
     // local coordinator only for the established standalone test seam.
     QPointer<NereusSDR::PureSignalSessionFacade> m_psFacade;

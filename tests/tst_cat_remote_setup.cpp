@@ -24,12 +24,23 @@
 //                                    split, kept settings, log history,
 //                                    refusals, device refresh, test gaps.
 //                                    AI tooling: Claude Code.
+//   2026-10-12  J.J. Boyd / KG4VCF  A refused change shows the rule it
+//                                    broke. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  The CAT pages survive the Core's
+//                                    echoes with accessibility on. AI-
+//                                    assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 #include "SessionWait.h"
 
 #include <QtTest/QtTest>
+#include <QAbstractItemView>
+#include <QAccessible>
+#include <private/qguiapplication_p.h>
+#include <qpa/qplatformaccessibility.h>
+#include <qpa/qplatformintegration.h>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
@@ -83,6 +94,47 @@ template<class T> T* control(QWidget& page, const char* name)
 {
     return page.findChild<T*>(QString::fromLatin1(name));
 }
+
+// Does to a selector's list what the macOS accessibility bridge does when it
+// drops its table rows (Qt 6.11 qcocoaaccessibilityelement.mm,
+// removeElementsFromCache): each cell's interface is deleted while the list
+// view's QAccessibleTable still caches its id. Returns the cells dropped.
+int dropCellsAsTheMacBridgeDoes(QComboBox* box)
+{
+    QAccessibleInterface* table = QAccessible::queryAccessibleInterface(box->view());
+    if (!table || !table->tableInterface()) { return 0; }
+    QList<QAccessible::Id> cells;
+    for (int i = 0; i < table->childCount(); ++i) {
+        // A cell already dropped stays cached as a stale id and reads null.
+        if (QAccessibleInterface* cell = table->child(i)) { cells.push_back(QAccessible::uniqueId(cell)); }
+    }
+    for (const QAccessible::Id id : cells) { QAccessible::deleteAccessibleInterface(id); }
+    return int(cells.size());
+}
+
+// Turns the platform's accessibility on or off. Qt 6.11's
+// QAccessible::setActive does that; Qt 6.8's (Linux CI) only tells the
+// activation observers and leaves QAccessible::isActive() false, so there
+// the platform's own switch is set, as Qt's tests do.
+void setAccessibilityActive(bool active)
+{
+    QAccessible::setActive(active);
+    if (QAccessible::isActive() == active) {
+        return;
+    }
+    if (QPlatformAccessibility* platform = QGuiApplicationPrivate::platformIntegration()->accessibility()) {
+        platform->setActive(active);
+    }
+}
+
+// Accessibility on for one test, as VoiceOver or an accessibility query
+// turns it on in the app; off again after.
+struct AccessibilityOn {
+    AccessibilityOn() { setAccessibilityActive(true); }
+    ~AccessibilityOn() { setAccessibilityActive(false); }
+    AccessibilityOn(const AccessibilityOn&) = delete;
+    AccessibilityOn& operator=(const AccessibilityOn&) = delete;
+};
 
 // A remote window connected to a real Core over loopback.
 struct Session {
@@ -232,8 +284,9 @@ private slots:
         NEREUS_TRY_VERIFY(session.coreCat().channelConfig(1).tcpPort == 0);
         NEREUS_TRY_VERIFY(session.window->catControl()->channelConfig(1).tcpPort == 0);
         enabled->setChecked(true);
+        // A listener turned on with no port: the Core says which rule.
         NEREUS_TRY_VERIFY(control<QLabel>(page, "cat1Status")->text()
-                          == StationCatController::channelRefusedReason());
+                          == QStringLiteral("Invalid CAT listener address or port."));
         QVERIFY(!enabled->isChecked());
         QVERIFY(!session.coreCat().channelConfig(1).tcpEnabled);
     }
@@ -798,6 +851,112 @@ private slots:
         QCOMPARE(window.findChildren<CatLogWindow*>().size(), 1);
         QCOMPARE(window.findChild<CatLogWindow*>(), log);
         QVERIFY(log->isVisible());
+    }
+
+    // 2026-10-15 crashes: with accessibility on, each change made on the
+    // TCP/IP CAT page came back from the Core and the window crashed
+    // emptying the VFO slice selectors (QAccessibleTable::modelChange read
+    // a cell the macOS bridge had deleted). The page survives the echoes,
+    // a slice opened on the Core and an invalid binding, and still shows
+    // each one.
+    void tcpPageSurvivesEchoesWithAccessibilityOn()
+    {
+        Session session;
+        QVERIFY(session.open(this));
+        CatTcpIpPage page(session.window.get());
+        auto* primary = control<QComboBox>(page, "cat1Primary");
+        auto* port = control<QSpinBox>(page, "cat1Port");
+        auto* rigAddress = control<QLineEdit>(page, "cat1RigctldAddress");
+        QVERIFY(primary && port && rigAddress);
+        const AccessibilityOn accessibility;
+        QVERIFY(QAccessible::isActive());
+        const auto dropAllCells = [&page] {
+            int dropped = 0;
+            for (QComboBox* box : page.findChildren<QComboBox*>()) {
+                if (box->objectName().endsWith(QStringLiteral("Primary"))
+                    || box->objectName().endsWith(QStringLiteral("Secondary"))) {
+                    dropped += dropCellsAsTheMacBridgeDoes(box);
+                }
+            }
+            return dropped;
+        };
+        QVERIFY(dropAllCells() > 0);
+
+        // Each change comes back from the Core and fills the page again.
+        for (int round = 0; round < 3; ++round) {
+            const quint16 chosen = freePort();
+            QVERIFY(chosen > 0);
+            port->setValue(chosen);
+            NEREUS_TRY_VERIFY(session.window->catControl()->channelConfig(1).tcpPort == int(chosen));
+            QCoreApplication::processEvents();
+            QCOMPARE(port->value(), int(chosen));
+            dropAllCells();
+        }
+        const QString address = QStringLiteral("127.0.0.1");
+        rigAddress->setText(address);
+        emit rigAddress->editingFinished();
+        NEREUS_TRY_VERIFY(session.window->catControl()->channelConfig(1).rigctldBindAddress == address);
+        QCoreApplication::processEvents();
+        QCOMPARE(rigAddress->text(), address);
+        dropAllCells();
+
+        // A slice opened on the Core lists one more slice.
+        const int second = session.core->model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(second >= 0);
+        NEREUS_TRY_VERIFY(primary->findData(second) >= 0);
+        QCOMPARE(primary->currentData().toInt(), session.window->catControl()->channelConfig(1).binding.primarySliceId);
+        dropAllCells();
+
+        // An invalid binding adds its own entry, disabled.
+        StationCatModel* core = session.core->model->stationCatModel();
+        QJsonObject channel = core->channelObject(1);
+        QJsonObject config = channel.value(QStringLiteral("config")).toObject();
+        config.insert(QStringLiteral("primarySliceId"), 0);
+        channel.insert(QStringLiteral("config"), config);
+        channel.insert(QStringLiteral("primaryValid"), false);
+        core->setChannel(1, StationCatModel::toText(channel));
+        NEREUS_TRY_VERIFY(primary->currentText() == QStringLiteral("Invalid binding — ID 0"));
+        auto* items = qobject_cast<QStandardItemModel*>(primary->model());
+        QVERIFY(items && !items->item(primary->currentIndex())->isEnabled());
+        dropAllCells();
+        channel.insert(QStringLiteral("primaryValid"), true);
+        core->setChannel(1, StationCatModel::toText(channel));
+        NEREUS_TRY_VERIFY(primary->currentText() == QStringLiteral("Slice ID 0"));
+        QVERIFY(items->item(primary->currentIndex())->isEnabled());
+        QVERIFY(primary->findText(QStringLiteral("Invalid binding — ID 0")) < 0);
+    }
+
+    // The serial page's device list, filled again from the Core with
+    // accessibility on, is not emptied row by row either.
+    void serialDeviceListSurvivesAccessibilityOn()
+    {
+        Session session;
+        QVERIFY(session.open(this));
+        CatSerialPortsPage page(session.window.get());
+        auto* device = control<QComboBox>(page, "cat1Device");
+        QVERIFY(device);
+        const auto publish = [&session](const QStringList& devices) {
+            QJsonObject platform = session.window->stationCatModel()->platformObject();
+            platform.insert(QStringLiteral("serial"), true);
+            platform.insert(QStringLiteral("serialDevices"), QJsonArray::fromStringList(devices));
+            session.core->model->stationCatModel()->setPlatform(StationCatModel::toText(platform));
+        };
+        publish({QStringLiteral("/dev/one"), QStringLiteral("/dev/two")});
+        NEREUS_TRY_VERIFY(device->findText(QStringLiteral("/dev/two")) >= 0);
+        const AccessibilityOn accessibility;
+        QVERIFY(dropCellsAsTheMacBridgeDoes(device) > 0);
+        publish({QStringLiteral("/dev/three")});
+        NEREUS_TRY_VERIFY(device->findText(QStringLiteral("/dev/three")) >= 0);
+        QVERIFY(device->findText(QStringLiteral("/dev/one")) < 0);
+
+        // A device typed on the page comes back from the Core and is added to the list.
+        QVERIFY(dropCellsAsTheMacBridgeDoes(device) > 0);
+        const QString typed = QStringLiteral("/dev/typed");
+        device->lineEdit()->setText(typed);
+        emit device->lineEdit()->editingFinished();
+        NEREUS_TRY_VERIFY(session.window->catControl()->channelConfig(1).serialDevice == typed);
+        NEREUS_TRY_VERIFY(device->findText(typed) >= 0);
+        QCOMPARE(device->currentText(), typed);
     }
 
 private:

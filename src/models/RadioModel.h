@@ -9,6 +9,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-15 - Test-only seams for the TGXL autotune RF settle: its
+//                length (setTgxlRfSettleMsForTest) and an observer called
+//                when it fires (setTgxlSettleFiredObserverForTest). Release
+//                behavior unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
+//                sharing its input on the Anvelina Pro 3. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Settings restore: addSlice and addSliceOnPan take
 //                restoreSavedState. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -632,6 +645,13 @@
 //                OPERATE and STANDBY, for an app that runs its own radio
 //                whether or not it shares the amplifier. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit with the windows and
+//                phones signed in to it: enableStationAccessoryIdentity
+//                takes how the device is admitted, and the window's own
+//                Connect and Disconnect go through the controllers
+//                (connect*FromWindow, disconnect*FromWindow). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -735,6 +755,7 @@
 #include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
 #include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
 #include "core/StationNetwork.h"  // StationBind (R-R3-22 station listeners)
+#include "core/StationAccessoryAdmission.h"
 #include "core/SkuUiProfile.h"  // issue #257 — setLastBandForTest passes the SKU into refreshAntennasFromAlex
 #include "core/safety/SwrProtectionController.h"
 #include "core/safety/TxInhibitMonitor.h"
@@ -2104,6 +2125,18 @@ public:
                               const QList<const SliceModel*>& held,
                               const QList<const SliceModel*>& highPassOff = {}) const;
 
+    /// Where the radio's band filters combine and a 6 m slice shares an
+    /// input with other bands (codec::alex::combineRxBandSelections): what
+    /// the 6 m BPF/LNA costs the slices on that input, as sentences for
+    /// the shared-input reason. `lna` are the slices it is in for, `low`
+    /// those behind another row, which read lower, and `noFilter` those
+    /// whose row is not sent. `lnaDisabled`: Disable 6m LNA on RX took the
+    /// BPF/LNA out, and `noFilter` are the 6 m slices.
+    QString sharedLnaReason(const QList<const SliceModel*>& lna,
+                            const QList<const SliceModel*>& low,
+                            const QList<const SliceModel*>& noFilter,
+                            bool lnaDisabled) const;
+
     // Band-plan overlay manager — loaded once on construction from bundled
     // Qt resource JSON files. Active plan persists in AppSettings under
     // "BandPlanName". Phase 3G RX Epic sub-epic D.
@@ -3183,6 +3216,13 @@ public:
     void setContainerManager(class ContainerManager* cm) { m_containerManager = cm; }
     QTimer* autoAgcTimer() const { return m_autoAgcTimer; }
 
+    /// True while a source of its own (the headless Core's DaemonAgcSource)
+    /// writes each slice's station Auto AGC noise floor. Otherwise this
+    /// model writes it on the Auto AGC tick from the slice's registered
+    /// tracker, so a window signed in to a desktop window's Core reads the
+    /// floor that desktop window shows.
+    void setAutoAgcFloorPublishedBySource(bool on) { m_autoAgcFloorPublishedBySource = on; }
+
     // 3M-1a G.1: expose MoxController so MainWindow can wire
     // StepAttenuatorController::onMoxHardwareFlipped (F.2 connect) after
     // both objects exist.  Non-owning; lifetime is RadioModel's lifetime.
@@ -3447,6 +3487,11 @@ public:
     /// that needs "where is this slice transmitting" should come here
     /// rather than re-derive the offset.
     quint64 txFrequencyForSlice(const SliceModel* slice) const;
+
+    /// The radio NCO and TX analyzer's baseband origin. During Tune this
+    /// subtracts the existing signed tone from dial+XIT, so the tone lands
+    /// on txFrequencyForSlice(). Other transmit modes keep dial+XIT.
+    quint64 txNcoFrequencyForSlice(const SliceModel* slice) const;
 
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
@@ -3796,13 +3841,32 @@ public:
     // R3 station-owned accessory lifecycle. Installed by DaemonApp before
     // radio startup, independently of the temporary receive-only policy.
     // Makes the rotor too, through enableStationRotor().
-    void enableStationAccessoryIdentity();
+    // 2026-10-11: a desktop window running its own radio installs it too
+    // (GuiSessionCoordinator), with TypedAddress, so the windows and phones
+    // signed in to it get its Tuner Genius, Power Genius and RF-Kit as
+    // nereusd's clients get the Core's. Its links behave on the wire as
+    // they did in a window with no controller.
+    void enableStationAccessoryIdentity(
+        StationAccessoryAdmission admission = StationAccessoryAdmission::Identified);
     bool stationAccessoryIdentityEnabled() const { return m_stationTgxl != nullptr; }
+    // The Connect and Disconnect of the window that runs the radio (its
+    // Tuner, Amplifier and RF-Kit applets and its Setup pages). One owner
+    // per device: with the station controllers installed the dial and the
+    // hang-up go through them, so every window and client of this Core sees
+    // the same connection; without them (a model nobody installed them on)
+    // the link is dialed directly, as before. Local role only; a remote
+    // window asks its Core (IStationLink) instead.
+    void connectTgxlFromWindow(const QString& host, quint16 port);
+    void disconnectTgxlFromWindow();
+    void connectPgxlFromWindow(const QString& host, quint16 port);
+    void disconnectPgxlFromWindow();
+    void connectRfKitFromWindow(const QString& host, quint16 port);
+    void disconnectRfKitFromWindow();
     // Rotor control plan Task 4c: the antenna rotor alone (cty.dat, the
     // controller from the saved Rotor/* settings, rotorModel() bound to it).
-    // nereusd reaches it through enableStationAccessoryIdentity(); a desktop
-    // running its own radio calls it by itself, without the Tuner Genius,
-    // Power Genius or RF-Kit controllers. Local role only; a second call
+    // nereusd and a desktop running its own radio reach it through
+    // enableStationAccessoryIdentity(); a model with no station accessories
+    // may call it by itself. Local role only; a second call
     // makes nothing. The controller lives as long as this model: a switch to
     // a remote Core replaces the whole model, which closes the rotor's port.
     void enableStationRotor();
@@ -4957,6 +5021,17 @@ public:
     // schedule on the next event loop iteration, so QCoreApplication::processEvents
     // can drive the deferred completion synchronously.
     void setTuneOffSettleMsForTest(int ms) noexcept { m_tuneOffSettleMs = ms; }
+    // TGXL autotune: the RF settle between the carrier gate opening and the
+    // `autotune` command (kTgxlRfSettleMs in release). A test can lengthen
+    // it so its own setup cannot outrun the window, and observe each settle
+    // callback: `cycle` is the tune cycle that armed it, `stale` is true
+    // when that cycle (or its carrier) is no longer current, so the
+    // callback sends nothing.
+    void setTgxlRfSettleMsForTest(int ms) noexcept { m_tgxlRfSettleMs = ms; }
+    void setTgxlSettleFiredObserverForTest(std::function<void(quint64 cycle, bool stale)> observer)
+    {
+        m_tgxlSettleFiredObserverForTest = std::move(observer);
+    }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
@@ -5049,6 +5124,11 @@ public:
                           userAdc0Raw, userAdc1Raw, supplyRaw);
         m_forceTxForTest = false;
     }
+
+    // Drives the steady clock handlePaTelemetry reads (nanoseconds), so a
+    // test can time the HL2 temperature's 8 ms polls without sleeping. Once
+    // set, every later telemetry call on this model uses the value given.
+    void setPaTelemetryNowNsForTest(qint64 nowNs) { m_paTelemetryNowNsForTest = nowNs; }
 
     // P1 full-parity §3.5 test seam — pure-function counterpart of the
     // percent-to-wire-byte SWR-foldback formula inlined at every
@@ -6486,6 +6566,7 @@ private:
     // is down (no link, or stationLinkReady() false).
     bool remoteCoreLinkDown() const;
     void updateAutoAgc();
+    void publishStationAutoAgcNoiseFloors();
 
     // RADE end-of-over callsigns (MoxController::setEndOfOverTail). Starts
     // the tail when this release is an operator's and the transmitter runs
@@ -7578,6 +7659,13 @@ private:
     std::array<quint16, 100> m_hl2TempRing{};
     int m_hl2TempCount{0};   // 0..100 — slots filled
     int m_hl2TempHead{0};    // next slot to write
+    // The ring is filled on mi0bot's 8 ms poll, not one entry per
+    // telemetry call, so it spans 800 ms at any status rate (see
+    // handlePaTelemetry). Cleared when the connection leaves Connected.
+    qint64  m_hl2TempLastPollNs{0};  // time of the latest 8 ms poll
+    quint16 m_hl2TempHeld{0};        // latest reading, held between calls
+    // Test-only clock for handlePaTelemetry (setPaTelemetryNowNsForTest).
+    std::optional<qint64> m_paTelemetryNowNsForTest;
 
     // Settings hygiene — validated against caps at connect time.
     // Phase 3P-H Task 2.
@@ -8021,6 +8109,16 @@ private:
     void onBackgroundSettingsSaveFinished(quint64 ticket, bool saved, const QString& error);
     QString m_settingsSaveError;
     QSet<int> m_dirtySettingsSliceIds;
+    // Latest captured value for each fully qualified per-band key. No map
+    // change hooks run until the existing save/explicit recall boundary.
+    QHash<int, QMap<QString, QVariant>> m_pendingBandSettings;
+    void materializePendingBandSettings(int sliceId);
+    // A write of a held key by anyone but materializePendingBandSettings()
+    // is newer than the held copy, so that key leaves the hold and the
+    // other write survives. The rest of the hold is still saved.
+    void onSettingsKeyWritten(const QString& key);
+    int m_settingsWriteObserverId = 0;
+    bool m_materializingPendingBandSettings = false;
     // Phase 3P-I-a — dirty flag for AlexController persistence.
     // AlexController::antennaChanged can fire 14× during load(); the
     // flag + scheduleSettingsSave() timer coalesces them into a single
@@ -8127,6 +8225,7 @@ private:
 
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
+    bool m_autoAgcFloorPublishedBySource{false};
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
     QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.
@@ -8750,6 +8849,10 @@ private:
     static constexpr int kTgxlDeviceCycleStartMs = 3000;
     static constexpr int kTgxlCarrierReadyMs = 3000;
     static constexpr int kTgxlRfSettleMs = 150;
+    // The settle length in use: kTgxlRfSettleMs except under
+    // setTgxlRfSettleMsForTest.
+    int m_tgxlRfSettleMs{kTgxlRfSettleMs};
+    std::function<void(quint64, bool)> m_tgxlSettleFiredObserverForTest;
     // Completion ownership: actual channel, its latest run request and
     // the tune cycle that requested it. The completion is always queued.
     QPointer<TxChannel> m_tgxlCarrierChannel;

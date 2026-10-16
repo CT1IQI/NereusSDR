@@ -196,6 +196,24 @@
 //   2026-10-11 - flag-tab--* scenes: each tab of the open slice flag, in
 //                 today's look and the workspace look. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Scenes for the manual figures: baseline-connected (one
+//                 pan, the TX applet under RX, "You control" on slice A's
+//                 flag, the radio named in the status bar, TX profiles
+//                 seeded), dialog-setup-tx-profile-active (Default
+//                 active), dialog-setup-digital-modes-full and
+//                 dialog-remote-setup-tci-server (the dialog grown until
+//                 the page needs no scrolling; the Core's TCI group shows
+//                 only in a remote window). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - dialog-remote-setup-tci-server poses the Core's station
+//                 link (tests/fakes/FakeStationLink.h) and its TCI server
+//                 values, so the Core's group shows them, enabled.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
+//   2026-10-15 - baseline-connected-tx: the same window with the Main
+//                 Panel's entries above the TX applet hidden, so the whole
+//                 applet shows. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 
 #include "PreviewScenes.h"
 
@@ -219,6 +237,9 @@
 #include <QEnterEvent>
 #include <QHoverEvent>
 #include <QLabel>
+#include <QFontInfo>
+#include <QFontMetrics>
+#include <QGroupBox>
 #include <QMenu>
 #include <QCheckBox>
 #include <QLineEdit>
@@ -368,10 +389,15 @@
 #include "core/TxInterlockPolicy.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/IStationLink.h"
+#include "core/StationTciController.h"
+#include "models/StationTciModel.h"
+#include "fakes/FakeStationLink.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/widgets/AntennaSwitchToast.h"
 #include "gui/widgets/RxDashboard.h"
 #include "gui/widgets/StationBlock.h"
+#include "gui/SliceChooser.h"
+#include "gui/chrome/ChromeBarController.h"
 #include "gui/widgets/StatusToast.h"
 #include "gui/widgets/SystemTile.h"
 #include "models/FreeDVStationModel.h"
@@ -846,6 +872,50 @@ void dumpGeometry(QWidget* root, const QString& region, QStringList& lines)
     walk(root, QString::fromLatin1(root->metaObject()->className()));
 }
 
+// Capture resolved widget fonts as evidence alongside the raster image.
+// Painted fonts and explicit rich spans have separate source/test coverage.
+QJsonArray visibleTextFonts(QWidget* root)
+{
+    QJsonArray rows;
+    QList<QWidget*> widgets = root->findChildren<QWidget*>();
+    widgets.prepend(root);
+    for (QWidget* widget : widgets) {
+        if (!widget->isVisible()) {
+            continue;
+        }
+        QString text;
+        if (auto* label = qobject_cast<QLabel*>(widget)) {
+            text = label->text();
+        } else if (auto* button = qobject_cast<QAbstractButton*>(widget)) {
+            text = button->text();
+        } else if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
+            text = edit->text();
+        } else if (auto* combo = qobject_cast<QComboBox*>(widget)) {
+            text = combo->currentText();
+        } else if (auto* group = qobject_cast<QGroupBox*>(widget)) {
+            text = group->title();
+        } else if (auto* tabs = qobject_cast<QTabBar*>(widget)) {
+            for (int i = 0; i < tabs->count(); ++i) {
+                text += tabs->tabText(i) + QLatin1Char(' ');
+            }
+        }
+        if (text.isEmpty()) {
+            continue;
+        }
+        const QFontInfo info(widget->font());
+        const QFontMetrics metrics(widget->font(), widget);
+        rows.append(QJsonObject{
+            {QStringLiteral("class"), QString::fromLatin1(widget->metaObject()->className())},
+            {QStringLiteral("object"), widget->objectName()},
+            {QStringLiteral("text"), text},
+            {QStringLiteral("resolved_px"), info.pixelSize()},
+            {QStringLiteral("font_height"), metrics.height()},
+            {QStringLiteral("rect"), QJsonArray{widget->width(), widget->height()}},
+        });
+    }
+    return rows;
+}
+
 // The control kind a widget is, for masking a diff against the controls
 // a look restyles; "other" for everything else.
 QString controlKind(const QWidget* w)
@@ -1281,6 +1351,7 @@ void captureWindow(SceneContext& ctx, const QString& name)
         }
     }
     full.extra[QStringLiteral("applet_fit")] = measureAppletFit(ctx.window);
+    full.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(ctx.window);
     attachRegions(full, ctx.window);
     ctx.images.append(full);
     appendCropImages(ctx, full, name);
@@ -2229,6 +2300,7 @@ void captureDialog(SceneContext& ctx, QWidget* dialog, const QString& name)
     img.dpr = img.image.devicePixelRatio();
     img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(dialog->metaObject()->className());
     img.extra[QStringLiteral("window_title")] = dialog->windowTitle();
+    img.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(dialog);
     img.geometry = widgetGeometry(dialog);
     attachRegions(img, dialog);
     ctx.images.append(img);
@@ -3257,6 +3329,7 @@ QVector<PanPose> cwDigitalPoses()
 }
 
 QJsonObject seedTxProfiles(SceneContext& ctx);
+QSize growSetupToFit(SceneContext& ctx, SetupDialog* d, const QString& where);
 
 void sceneCwDigital(SceneContext& ctx)
 {
@@ -5169,6 +5242,63 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
             }
             return setup;
         });
+    }});
+    // The manual's TCI Server figure: this window's server and the Core's
+    // TCI server, which the page shows only in a remote window
+    // (CatTciServerPage::refreshCoreGroup), in one image: the dialog grown
+    // until the page needs no scrolling. The window is never dialed; the
+    // Core's station link is posed instead (Test::FakeStationLink, ready,
+    // with stationTciVersion 2 and stationTciSettingsVersion 1), with the
+    // Core's server on, listening on the Core's default port and every
+    // other value at the readers' defaults (StationTciModel::State). The
+    // window's own StationClient is attached again afterwards.
+    scenes.append({QStringLiteral("dialog-remote-setup-tci-server"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        Test::FakeStationLink coreLink;
+        QPointer<RadioModel> posedModel;
+        QPointer<StationClient> ownLink;
+        runRemoteDialogScene(ctx, QStringLiteral("dialog-remote-setup-tci-server"),
+                             [&coreLink, &posedModel, &ownLink](SceneContext& c,
+                                                                MainWindow* remote) -> QWidget* {
+            RadioModel* model = remote->radioModel();
+            if (model == nullptr || model->stationTciModel() == nullptr) {
+                c.failure = QStringLiteral("the remote window has no RadioModel station TCI model");
+                return nullptr;
+            }
+            posedModel = model;
+            ownLink = dynamic_cast<StationClient*>(model->stationLink());
+            model->attachStation(&coreLink);
+            StationTciModel::State core;
+            core.enabled = true;
+            core.port = StationTciController::kDefaultPort;
+            core.listening = true;
+            model->stationTciModel()->setState(core);
+            c.notes.append(QStringLiteral("Core link posed: Test::FakeStationLink (ready, station TCI "
+                                          "server and settings available), StationTciModel on, "
+                                          "port %1, listening, other values at their defaults")
+                               .arg(core.port));
+            const QString page = QStringLiteral("TCI Server");
+            if (!QMetaObject::invokeMethod(remote, "openSetupAtPage", Qt::DirectConnection,
+                                           Q_ARG(QString, page))) {
+                c.failure = QStringLiteral("MainWindow has no slot openSetupAtPage");
+                return nullptr;
+            }
+            auto* setup = visibleTopLevel<SetupDialog>();
+            if (setup == nullptr) {
+                return nullptr;
+            }
+            poseSetupTree(setup, page);
+            pump(kDialogSettleMs);
+            growSetupToFit(c, setup, QStringLiteral("Setup > CAT & Network > TCI Server (remote window)"));
+            return c.failure.isEmpty() ? setup : nullptr;
+        });
+        if (posedModel != nullptr && posedModel->stationLink() == &coreLink) {
+            if (ownLink != nullptr) {
+                posedModel->attachStation(ownLink.data());
+            } else {
+                posedModel->detachStation();
+            }
+        }
     }});
 }
 
@@ -7181,6 +7311,173 @@ void noteMeterWindows(SceneContext& ctx, QScrollArea* scroll, const QString& whe
     }
 }
 
+// ---- the connected window of the manual's overview (baseline-connected) -----
+
+namespace {
+
+// The firmware the status bar's hardware line shows for the posed radio
+// (the connection panel scene's ANAN-G2, sampleRadio).
+constexpr int kConnectedFirmware = 27;
+
+// The TX applet straight under RX in the Main Panel, where the manual's
+// overview shows it; by default it sits below Mod Monitor, off the first
+// screen.
+bool moveTxUnderRx(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return false;
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    bool moved = false;
+    for (ContainerDocument& c : draft.containers) {
+        if (c.id != draft.mainContainerId) {
+            continue;
+        }
+        int rx = -1;
+        int tx = -1;
+        for (int i = 0; i < c.contents.size(); ++i) {
+            if (c.contents.at(i).typeId == QLatin1String("applet:rx")) {
+                rx = i;
+            } else if (c.contents.at(i).typeId == QLatin1String("applet:TX")) {
+                tx = i;
+            }
+        }
+        if (rx < 0 || tx < 0) {
+            ctx.failure = QStringLiteral("the Main Panel has no RX or no TX applet");
+            return false;
+        }
+        const ContentEntry entry = c.contents.takeAt(tx);
+        if (tx < rx) {
+            --rx;
+        }
+        c.contents.insert(rx + 1, entry);
+        moved = true;
+    }
+    if (!moved) {
+        ctx.failure = QStringLiteral("no Main Panel container");
+        return false;
+    }
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not move the TX applet under RX");
+        return false;
+    }
+    ctx.notes.append(QStringLiteral("Main Panel: applet:TX moved to just after applet:rx "
+                                    "(ContainerManager::commitWorkspace)"));
+    return true;
+}
+
+// The status bar's station block names the radio, as a local connect
+// does (MainWindow's currentRadioChanged and hardware-line handlers), then
+// the chrome bar lays out at its new natural width. The model's own
+// currentRadioChanged is not emitted: its listeners load per-radio state.
+void nameConnectedRadio(SceneContext& ctx)
+{
+    auto* station = ctx.window->findChild<StationBlock*>();
+    if (station == nullptr) {
+        ctx.failure = QStringLiteral("no StationBlock");
+        return;
+    }
+    const RadioInfo radio = sampleRadio(QStringLiteral("ANAN-G2"), QStringLiteral("00:1C:C0:4E:21:0A"),
+                                        QStringLiteral("192.168.1.20"), HPSDRHW::Saturn,
+                                        ProtocolVersion::Protocol2, kConnectedFirmware);
+    station->setRadioName(radio.name);
+    station->setHardwareLine(QString::fromLatin1(boardCodeName(radio.boardType)),
+                             QStringLiteral("v%1").arg(radio.firmwareVersion));
+    auto* chrome = ctx.window->findChild<ChromeBarController*>();
+    if (chrome != nullptr && station->parentWidget() != nullptr) {
+        chrome->setNaturalWidth(station, station->sizeHint().width());
+        chrome->relayout(station->parentWidget()->width());
+    }
+    ctx.notes.append(QStringLiteral("StationBlock::setRadioName(\"%1\"), setHardwareLine(\"%2\", \"v%3\"); "
+                                    "ChromeBarController::setNaturalWidth and relayout%4")
+                         .arg(radio.name, QString::fromLatin1(boardCodeName(radio.boardType)))
+                         .arg(radio.firmwareVersion)
+                         .arg(chrome != nullptr ? QString() : QStringLiteral(" (no ChromeBarController found)")));
+}
+
+// Slice A's flag says this window controls it, the words SliceChooser
+// gives a flag whose row this window controls (MainWindow's slice access
+// pass). Set after the freeze, so nothing refreshes it before the grab.
+void showYouControl(SceneContext& ctx)
+{
+    SliceModel* sliceA = ctx.model->sliceById(0);
+    VfoWidget* flag = flagForSlice(ctx.window, sliceA);
+    if (flag == nullptr) {
+        ctx.failure = QStringLiteral("no flag for slice A");
+        return;
+    }
+    SliceChooser::Row row;
+    row.sliceId = 0;
+    row.controller = SliceChooser::Controller::ThisWindow;
+    row.activeHere = true;
+    flag->setSliceAccess(SliceChooser::flagAccessFor(row));
+    ctx.notes.append(QStringLiteral("slice A flag: VfoWidget::setSliceAccess(SliceChooser::flagAccessFor(row "
+                                    "controlled by this window)), \"%1\"")
+                         .arg(flag->accessLineText()));
+}
+
+// The Main Panel's entries above the TX applet (the S-meter and RX, once
+// moveTxUnderRx has run) hidden through the workspace (ContentEntry::visible),
+// so the whole TX applet fits in the panel.
+bool hideMainPanelAboveTx(SceneContext& ctx)
+{
+    auto* manager = ctx.window->findChild<ContainerManager*>();
+    if (manager == nullptr || manager->workspaceStore() == nullptr) {
+        ctx.failure = QStringLiteral("no container workspace");
+        return false;
+    }
+    WorkspaceDocument draft = manager->workspaceStore()->snapshot();
+    QStringList hidden;
+    for (ContainerDocument& c : draft.containers) {
+        if (c.id != draft.mainContainerId) {
+            continue;
+        }
+        for (ContentEntry& entry : c.contents) {
+            if (entry.typeId == QLatin1String("applet:TX")) {
+                break;
+            }
+            if (entry.visible) {
+                entry.visible = false;
+                hidden.append(entry.typeId);
+            }
+        }
+    }
+    if (hidden.isEmpty()) {
+        ctx.failure = QStringLiteral("nothing above the TX applet in the Main Panel");
+        return false;
+    }
+    if (manager->commitWorkspace(draft, draft.revision).status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("could not hide the entries above the TX applet");
+        return false;
+    }
+    ctx.notes.append(QStringLiteral("Main Panel: %1 hidden above applet:TX "
+                                    "(ContentEntry::visible, ContainerManager::commitWorkspace)")
+                         .arg(hidden.join(QStringLiteral(", "))));
+    return true;
+}
+
+// baseline-connected's state before the freeze; with txOnly, the Main
+// Panel's entries above the TX applet are hidden too.
+void poseConnected(SceneContext& c, bool txOnly)
+{
+    if (!moveTxUnderRx(c)) {
+        return;
+    }
+    if (txOnly && !hideMainPanelAboveTx(c)) {
+        return;
+    }
+    nameConnectedRadio(c);
+    // The TX applet's profile selector lists them, "Default" active.
+    const QJsonObject seed = seedTxProfiles(c);
+    if (!seed.isEmpty()) {
+        c.notes.append(QJsonObject{{QStringLiteral("tx_profile_seed"), seed}});
+    }
+}
+
+} // namespace
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -7213,6 +7510,26 @@ QVector<Scene> fixedScenes()
         }
         runWindowScene(ctx, twoBandPoses(), 0, poseTxBeforeFreeze, poseTxAfterFeed);
         if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-tx")); }
+    }});
+
+    // The manual's overview (desktop-overview, -vfo and -tx): one pan on
+    // slice A, receiving, with the TX applet in view, "You control" on the
+    // flag and the radio named in the status bar. Nothing connects or keys.
+    scenes.append({QStringLiteral("baseline-connected"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, {twoBandPoses().first()}, 0,
+                       [](SceneContext& c) { poseConnected(c, false); }, showYouControl);
+        if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-connected")); }
+    }});
+
+    // The manual's TX figure: the same window with the S-meter and RX
+    // hidden from the Main Panel, so the whole TX applet (down to TX BW)
+    // is in view.
+    scenes.append({QStringLiteral("baseline-connected-tx"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, {twoBandPoses().first()}, 0,
+                       [](SceneContext& c) { poseConnected(c, true); }, showYouControl);
+        if (ctx.failure.isEmpty()) { captureWindow(ctx, QStringLiteral("baseline-connected-tx")); }
     }});
 
     scenes.append({QStringLiteral("baseline-arrange"), QStringLiteral("2v"), false,
@@ -7381,6 +7698,24 @@ QVector<Scene> fixedScenes()
             }, look});
         }
     }
+    // Font B review: display-only AUTO/NF state in both matching surfaces.
+    scenes.append({QStringLiteral("font-minimum--auto-info"), QStringLiteral("1"), false,
+                   [](SceneContext& ctx) {
+        runWindowScene(ctx, defaultPoses(), 0, {}, [](SceneContext& c) {
+            VfoWidget* flag = flagA(c);
+            if (flag != nullptr) {
+                flag->showTab(VfoWidget::Tab::Audio);
+                flag->updateAgcAutoVisuals(true, -98.0f, 20.0);
+            }
+            if (RxApplet* rx = c.window->findChild<RxApplet*>()) {
+                rx->updateAgcAutoVisuals(true, -98.0f, 20.0);
+            }
+            pump(kFinalSettleMs);
+        });
+        if (ctx.failure.isEmpty()) {
+            captureWindow(ctx, QStringLiteral("font-minimum--auto-info"));
+        }
+    }, true});
     // Four folded flags: A right of its marker (LSB), B left of its marker
     // (DIGU), C as the TX slice (the flag's display setter only), D locked
     // (the flag's display setter only). Crops of each at the crop profile.
@@ -8248,6 +8583,25 @@ QVector<SetupSizeSpec> setupSizeSpecs()
     };
 }
 
+// The pages a manual figure shows whole, in one image: the dialog keeps
+// its width and grows down until the page's own scroll area has nothing
+// left to scroll. `name` is the scene's full name after dialog-setup-.
+struct SetupFullSpec {
+    QString page;   // the page scene's stem
+    QString name;
+};
+
+QVector<SetupFullSpec> setupFullSpecs()
+{
+    return {
+        // desktop-modes-audio: the VAX 1 to 4 cards and the TCI audio settings.
+        {QStringLiteral("digital-modes"), QStringLiteral("digital-modes-full")},
+    };
+}
+
+// At most this many growths before a page that still scrolls fails.
+constexpr int kSetupGrowSteps = 6;
+
 QString setupTabStem(const QStringList& path)
 {
     QString stem;
@@ -8587,6 +8941,45 @@ void captureSetupScrollSteps(SceneContext& ctx, SetupDialog* d, const QString& n
                          .arg(where).arg(steps.size()));
 }
 
+// Grows the dialog down by what its page still scrolls, until nothing
+// scrolls down. Returns the size it started at, or an empty size (with
+// ctx.failure set) when it could not.
+QSize growSetupToFit(SceneContext& ctx, SetupDialog* d, const QString& where)
+{
+    const QSize start = d->size();
+    for (int i = 0; i < kSetupGrowSteps; ++i) {
+        int more = 0;
+        for (QScrollArea* area : overflowingAreas(d)) {
+            if (barOverflows(area->verticalScrollBar())) {
+                more = std::max(more, area->verticalScrollBar()->maximum());
+            }
+        }
+        if (more == 0) {
+            if (d->size() == start) {
+                ctx.failure = QStringLiteral("%1: nothing scrolls at %2 x %3, so the page scene shows it whole")
+                                  .arg(where).arg(start.width()).arg(start.height());
+                ctx.nothingToScroll = true;
+                return {};
+            }
+            ctx.notes.append(QStringLiteral("%1: the dialog grown from %2 x %3 to %4 x %5, where nothing scrolls")
+                                 .arg(where).arg(start.width()).arg(start.height())
+                                 .arg(d->width()).arg(d->height()));
+            return start;
+        }
+        const QSize want(d->width(), d->height() + more);
+        d->resize(want);
+        pump(kFinalSettleMs);
+        if (d->size() != want) {
+            ctx.failure = QStringLiteral("%1: the dialog is %2 x %3, not %4 x %5")
+                              .arg(where).arg(d->width()).arg(d->height())
+                              .arg(want.width()).arg(want.height());
+            return {};
+        }
+    }
+    ctx.failure = QStringLiteral("%1: still scrolls after %2 growths").arg(where).arg(kSetupGrowSteps);
+    return {};
+}
+
 } // namespace
 
 QVector<Scene> setupPageScenes(MainWindow* window)
@@ -8697,6 +9090,59 @@ QVector<Scene> setupPageScenes(MainWindow* window)
             ctx.notes.append(QStringLiteral("%1 (registry index %2) at %3 x %4")
                                  .arg(title).arg(leaf.index).arg(spec.size.width()).arg(spec.size.height()));
             captureDialog(ctx, d, name);
+        }});
+    }
+    // The manual's figures: pages shown whole, and TX Profile with an
+    // active profile.
+    for (const SetupFullSpec& spec : setupFullSpecs()) {
+        if (!leafByStem.contains(spec.page)) {
+            continue;
+        }
+        const SetupLeaf leaf = leafByStem.value(spec.page);
+        const QString name = QStringLiteral("dialog-setup-") + spec.name;
+        const QString title = where(leaf, {});
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d == nullptr) {
+                return;
+            }
+            const QSize start = growSetupToFit(ctx, d, title);
+            if (!ctx.failure.isEmpty()) {
+                return;
+            }
+            clearScrollBarHover(d);
+            ctx.notes.append(QStringLiteral("%1 (registry index %2)").arg(title).arg(leaf.index));
+            captureDialog(ctx, d, name);
+            if (ctx.failure.isEmpty()) {
+                ctx.images.last().extra[QStringLiteral("grown_to_fit")] = QJsonObject{
+                    {QStringLiteral("from"), QJsonArray{start.width(), start.height()}},
+                    {QStringLiteral("to"), QJsonArray{d->width(), d->height()}}};
+            }
+        }});
+    }
+    if (leafByStem.contains(QStringLiteral("tx-profile"))) {
+        const SetupLeaf leaf = leafByStem.value(QStringLiteral("tx-profile"));
+        const QString name = QStringLiteral("dialog-setup-tx-profile-active");
+        const QString title = where(leaf, {});
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            // The profiles a first connect writes, "Default" active, in this
+            // process's throwaway test profile (seedTxProfiles).
+            const QJsonObject seed = seedTxProfiles(ctx);
+            if (seed.isEmpty()) {
+                ctx.failure = QStringLiteral("%1: the TX profiles could not be seeded").arg(title);
+                return;
+            }
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d == nullptr) {
+                return;
+            }
+            ctx.notes.append(QStringLiteral("%1 (registry index %2), active profile \"%3\"")
+                                 .arg(title).arg(leaf.index)
+                                 .arg(seed.value(QStringLiteral("active")).toString()));
+            captureDialog(ctx, d, name);
+            if (ctx.failure.isEmpty()) {
+                ctx.images.last().extra[QStringLiteral("tx_profile_seed")] = seed;
+            }
         }});
     }
     dialog->close();

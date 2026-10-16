@@ -1,4 +1,9 @@
 // src/gui/HGauge.cpp
+// Modification history (NereusSDR):
+//   2026-10-12 - Apply the approved workspace-only 11 px text minimum.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
+#include "gui/styles/WorkspacePreview.h"
 #include "HGauge.h"
 #include "StyleConstants.h"
 #include <QEvent>
@@ -73,18 +78,18 @@ void HGauge::setTitleFontPixelSize(int pixelSize)
 
 QFont HGauge::titleFont(const QString& family) const
 {
-    QFont f(family, kTitlePointSize, QFont::Bold);
+    QFont f = WorkspacePreview::readableFont(QFont(family, kTitlePointSize, QFont::Bold), this);
     if (m_titleFontPixelSize > 0) {
-        f.setPixelSize(m_titleFontPixelSize);
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(m_titleFontPixelSize));
     }
     return f;
 }
 
 QFont HGauge::scaleFont(const QString& family) const
 {
-    QFont f(family, kScalePointSize);
+    QFont f = WorkspacePreview::readableFont(QFont(family, kScalePointSize), this);
     if (m_scaleFontPixelSize > 0) {
-        f.setPixelSize(m_scaleFontPixelSize);
+        f.setPixelSize(WorkspacePreview::readableTextPixelSize(m_scaleFontPixelSize));
     }
     return f;
 }
@@ -99,18 +104,58 @@ int HGauge::heightForScale() const
     // 9 px at 96 dpi (ascent 10 in Segoe UI, so 33 px); at a fixed 30 px
     // the larger font lost its bottom two rows.
     const QFontMetrics fm(scaleFont(font().family()), this);
-    return qMax(kBaseHeight, kScaleTop + fm.ascent() + 1);
+    return qMax(kBaseHeight, kScaleTop
+        + (WorkspacePreview::enabled() ? fm.height() : fm.ascent()) + 1);
 }
 
 void HGauge::updateFixedHeight()
 {
     setFixedHeight(heightForScale());
+    const int currentMinimum = minimumWidth();
+    if (m_textFloorMinimumApplied && currentMinimum != m_textFloorMinimumWidth) {
+        // A caller changed its own constraint while the floor was active.
+        m_minimumWidthBeforeTextFloor = currentMinimum;
+    }
+    const int baselineMinimum = m_textFloorMinimumApplied
+        ? m_minimumWidthBeforeTextFloor : currentMinimum;
+    int textMinimum = 0;
+    if (WorkspacePreview::enabled() && m_tickLabels.size() > 1) {
+        const QFontMetrics metrics(scaleFont(font().family()), this);
+        const int intervals = m_tickLabels.size() - 1;
+        // End labels stay inside the face while inner labels stay centered
+        // on their ticks. Reserve the space those two requirements need;
+        // shrinking the font or dropping a scale value would hide information.
+        const qreal first = metrics.horizontalAdvance(m_tickLabels.first());
+        const qreal second = metrics.horizontalAdvance(m_tickLabels.at(1));
+        const qreal last = metrics.horizontalAdvance(m_tickLabels.last());
+        const qreal beforeLast = metrics.horizontalAdvance(m_tickLabels.at(intervals - 1));
+        qreal spacing = qMax(first + second / 2 + 2, last + beforeLast / 2 + 2);
+        for (int i = 1; i < intervals; ++i) {
+            spacing = qMax(spacing, (metrics.horizontalAdvance(m_tickLabels.at(i))
+                + metrics.horizontalAdvance(m_tickLabels.at(i + 1))) / 2.0 + 2);
+        }
+        textMinimum = qCeil(spacing * intervals) + 4;
+    }
+    if (textMinimum > baselineMinimum) {
+        if (!m_textFloorMinimumApplied) {
+            m_minimumWidthBeforeTextFloor = currentMinimum;
+        }
+        m_textFloorMinimumApplied = true;
+        m_textFloorMinimumWidth = textMinimum;
+        setMinimumWidth(textMinimum);
+    } else if (m_textFloorMinimumApplied) {
+        // Remove only this floor's extra width; the caller's baseline survives.
+        m_textFloorMinimumApplied = false;
+        setMinimumWidth(baselineMinimum);
+    }
 }
 
 void HGauge::changeEvent(QEvent* event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::FontChange) {
+    if (event->type() == QEvent::FontChange
+        || event->type() == QEvent::StyleChange
+        || event->type() == QEvent::PaletteChange) {
         updateFixedHeight();
     }
 }
@@ -234,7 +279,8 @@ void HGauge::paintEvent(QPaintEvent*)
             const int textW = fm.horizontalAdvance(m_tickLabels[i]);
             const int halfW = (textW + 1) / 2;
             if (x - halfW < barX) {
-                p.drawText(QRect(barX, kScaleTop, textW + kScaleSlotWidth, scaleH),
+                p.drawText(QRect(barX - (WorkspacePreview::enabled() ? 1 : 0), kScaleTop,
+                                 textW + kScaleSlotWidth, scaleH),
                            Qt::AlignLeft | Qt::AlignTop, m_tickLabels[i]);
             } else if (x + halfW > barX + barW) {
                 p.drawText(QRect(barX + barW - textW - kScaleSlotWidth, kScaleTop,

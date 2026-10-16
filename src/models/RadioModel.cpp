@@ -17,6 +17,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The HL2 temperature average spans mi0bot's 800 ms (100
+//                samples of the latest reading, 8 ms apart) at any
+//                telemetry rate, and starts fresh when the connection
+//                leaves Connected. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
+//   2026-10-15 - The TGXL autotune RF settle reads its length from
+//                m_tgxlRfSettleMs (kTgxlRfSettleMs unless a test sets it)
+//                and calls a test observer when it fires. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Clear the retired connection's discovery exemption before
+//                publishing intentional disconnect. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Settings restore: addSliceOnPan can make a slice that
 //                comes back as it was saved, for the standalone app's
 //                receivers B to D at connect. NereusSDR-original. J.J. Boyd
@@ -1137,10 +1154,38 @@
 //                resampled to the mix rate (it was mixed at 192 kHz on a
 //                Protocol 2 radio). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-11 - Receive filters on the Anvelina Pro 3: slices on different
+//                bands sharing an input get all of their band filters
+//                together, in place of a bypass that passes nothing on that
+//                radio (republishAlexAdcSlices). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - The same radio: a bypass the filter policy reports (Force
+//                bypass, extended view), a filter row's own bypass and the
+//                Alex-2 master bypass go out as the five ordinary band
+//                filters together. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - The same radio: a 6 m slice sharing an input keeps the
+//                6 m BPF/LNA, the 12/10 m row stays out while it is in, and
+//                the chain says what that costs the other slices
+//                (sharedLnaReason). J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-11 - setPgxlOperateFromApplet: the local Power Genius OPERATE
 //                click no longer needs the station amplifier object, which
 //                only a Core that shares its accessories has. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-11 - A desktop window that runs its own radio shares its Tuner
+//                Genius, Power Genius and RF-Kit: enableStationAccessoryIdentity
+//                takes the admission rule, and the window's own Connect and
+//                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The saved FFT plans are looked for where the process was
+//                told (DspCacheLocation): a background Core started by the
+//                app reuses the app's plans. A process told nothing keeps
+//                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-14 - The HL2 I/O board's I2C signals now come from the P1 EP2
+//                sender thread; still queued, so nothing here changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1416,6 +1461,7 @@ mw0lge@grange-lane.co.uk
 #include "core/PaTelemetryScaling.h"
 #include "core/AlexSettingsKeys.h"
 #include "models/PureSignalSettings.h"
+#include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/session/RemoteTransmitClient.h"
@@ -1446,6 +1492,7 @@ mw0lge@grange-lane.co.uk
 // 3M-1b L.1: concrete mic-source strategy objects.
 #include "core/audio/PcMicSource.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/PortAudioLibrary.h"
 #include "core/audio/RadioMicSource.h"
 #include "core/audio/RealtimeAudioPriority.h"
 #include "core/audio/VaxTxMicSource.h"
@@ -1763,6 +1810,12 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
             this, &RadioModel::onBackgroundSettingsSaveFinished);
+    m_settingsWriteObserverId = AppSettings::instance().addWriteObserver(
+        [this](const QString& key) { onSettingsKeyWritten(key); });
+    // Keying marks the published Auto AGC noise floor stale at once, as the
+    // headless Core's source does, not up to a tick later.
+    connect(&m_transmitModel, &TransmitModel::moxChanged, this,
+            [this](bool) { publishStationAutoAgcNoiseFloors(); });
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -2384,6 +2437,23 @@ RadioModel::RadioModel(Role role, QObject* parent)
         if (m_role != Role::Remote && state != ConnectionState::Connected) {
             m_paCurrentReported = false;
             m_paTemperatureReported = false;
+        }
+        // The HL2 temperature average starts fresh on the next connection,
+        // so a reconnect (perhaps to another radio) never averages in the
+        // old readings. mi0bot zeroes the shown temperature when its
+        // reading loop ends but leaves _tempQueue full (it clears only the
+        // volts and amps queues):
+        // From mi0bot console.cs:25022-25024 [v2.10.3.13-beta2 @c26a8a4]:
+        //   _MKIIHL2Temp = 0f;      // MI0BOT: HL2 temperature
+        //
+        //   //there is no clear for ConcurrentQueues, we need to dequeue to clear
+        // Ours clears the samples too, so the old readings are gone.
+        if (state != ConnectionState::Connected) {
+            m_hl2TempRing.fill(0);
+            m_hl2TempCount = 0;
+            m_hl2TempHead = 0;
+            m_hl2TempLastPollNs = 0;
+            m_hl2TempHeld = 0;
         }
         emit paReadingsChanged();
     });
@@ -3029,8 +3099,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
     // ── H.5: P1/P2 status-frame mic_ptt → MoxController PTT-source dispatch ──
     //
-    // RadioConnection::micPttFromRadio(bool) is emitted unconditionally on every
-    // status frame (P1 EP6, P2 High-Priority) with the instantaneous PTT state.
+    // RadioConnection::micPttFromRadio(bool) is emitted for each P1 packet
+    // carrying ordinary status and every P2 High-Priority packet, with the
+    // instantaneous PTT state. The P1 all-I2C path publishes no PTT update.
     // MoxController::onMicPttFromRadio is idempotent on repeated same-state calls.
     //
     // The actual connect() is deferred to wireConnectionSignals() where
@@ -4697,10 +4768,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
     //
     // The lambda runs on the main thread (RadioModel + arbiter both live
     // here), so AppSettings access is safe.  load() may call
-    // requestHandoff() which flips txSlice flags on SliceModel instances;
-    // by the time currentRadioChanged fires, the slice list is already
-    // populated by addSlice() in onConnected() (which runs earlier on the
-    // same callstack inside onConnectionStateChanged).
+    // requestHandoff() which flips txSlice flags on SliceModel instances.
+    // Managed roster admission has normally completed here; legacy desktop
+    // pan population is queued, so a missing saved TX ID waits for that batch.
     connect(this, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo& info) {
         // R-R3-46: a remote model emits this for the Core's radio too. Its
@@ -4710,8 +4780,16 @@ RadioModel::RadioModel(Role role, QObject* parent)
             return;
         }
         if (m_txSliceArbiter) {
-            m_txSliceArbiter->setMacAddress(info.macAddress);
-            m_txSliceArbiter->load();
+            const QPointer<RadioModel> self(this);
+            const QPointer<TxSliceArbiter> arbiter(m_txSliceArbiter);
+            arbiter->setMacAddress(info.macAddress);
+            arbiter->load();
+            if (!self || !arbiter) { return; }
+            // Managed roster admission normally finishes before this signal.
+            // Legacy desktop pan population instead finishes in its queued batch.
+            if (m_receiveLayoutManaged && !m_receiveLayoutPendingAdmission) {
+                arbiter->finishRestore();
+            }
         }
     });
 
@@ -4734,6 +4812,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
     if (m_catService) { m_catService->beginRetirement(); }
@@ -6003,10 +6082,10 @@ void RadioModel::clearRemoteFourO3AState()
     emit fourO3AStatusChanged();
 }
 
-void RadioModel::enableStationAccessoryIdentity()
+void RadioModel::enableStationAccessoryIdentity(StationAccessoryAdmission admission)
 {
     if (m_role != Role::Local || m_stationTgxl) { return; }
-    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this);
+    m_stationTgxl = new StationTgxlController(m_tgxlConnection, m_tunerModel, this, admission);
     m_stationTgxl->cancel(!fourO3AEnabled());
     // R-R3-47: the Tuner Genius's faults, recorded on the Core.
     connect(m_stationTgxl, &StationTgxlController::faultObserved, this,
@@ -6015,13 +6094,15 @@ void RadioModel::enableStationAccessoryIdentity()
     });
     // R-R3-47: the Power Genius, likewise identified before it is admitted
     // (and so before onPgxlConnected pairs it).
-    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this);
+    m_stationPgxl = new StationPgxlController(m_pgxlConnection, m_amplifierModel, this,
+                                              admission);
     m_stationPgxl->cancel(!fourO3AEnabled());
     // R-R3-47 / R-R3-22: the amp's and tuner's own settings for a window.
     m_stationPgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     m_stationTgxl->deviceSettings()->setModel(m_accessorySettingsModel);
     // R-R3-47: the RF-Kit too: admitted once its /info names an RF2K-S.
-    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this);
+    m_stationRfKit = new StationRfKitController(m_rfKitConnection.get(), m_rfKitModel, this,
+                                                admission);
     m_stationRfKit->cancel(!rfKitEnabled());
     if (m_stationTciModel) {
         connect(m_stationTciModel, &StationTciModel::stateChanged, m_stationRfKit, [this] {
@@ -6034,6 +6115,69 @@ void RadioModel::enableStationAccessoryIdentity()
     // running its own radio makes it.
     enableStationRotor();
     applyStationBind();
+}
+
+// The window's own Connect and Disconnect (RadioModel.h). Nothing is saved
+// and nothing is refused here: the caller read or typed the address, as it
+// did when it dialed the link itself.
+void RadioModel::connectTgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->start(host, port);
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->connectToTgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectTgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationTgxl) {
+        m_stationTgxl->cancel(!fourO3AEnabled());
+    } else if (m_tgxlConnection) {
+        m_tgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectPgxlFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->start(host, port);
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->connectToPgxl(host, port);
+    }
+}
+
+void RadioModel::disconnectPgxlFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationPgxl) {
+        m_stationPgxl->cancel(!fourO3AEnabled());
+    } else if (m_pgxlConnection) {
+        m_pgxlConnection->disconnect();
+    }
+}
+
+void RadioModel::connectRfKitFromWindow(const QString& host, quint16 port)
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->start(host, port);
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->connectToAmp(host, port);
+    }
+}
+
+void RadioModel::disconnectRfKitFromWindow()
+{
+    if (m_role != Role::Local) { return; }
+    if (m_stationRfKit) {
+        m_stationRfKit->cancel(!rfKitEnabled());
+    } else if (m_rfKitConnection) {
+        m_rfKitConnection->disconnect();
+    }
 }
 
 void RadioModel::enableStationRotor()
@@ -13354,14 +13498,35 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         // binds, so there is nothing to widen yet and nothing to warn about.
         return;
     }
-    if (m_streamAllocator.streamSampleRateHz(stream) == restored) {
+    const int effective = m_streamAllocator.streamSampleRateHz(stream);
+    if (effective == restored) {
         // Already there. Skipping keeps a band change that did not actually
         // change the rate from running the whole rebind transaction, and
         // from emitting a rejection toast for a rate the radio is on.
         return;
     }
 
-    requestSliceSampleRate(slice->sliceIndex(), restored);
+    const int sliceId = slice->sliceIndex();
+    if (m_role == Role::Local && effective > 0) {
+        // Until the request commits, the property describes the effective
+        // stream rate. A rejected or pending request must not display the
+        // restored preference as though it has already been applied.
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const double frequencyHz = slice->frequency();
+        slice->setSampleRateHz(effective);
+        // The reset emits: an observer can retire, rebind, retune or re-rate the
+        // slice. A newer change owns it rather than this saved preference.
+        if (!self || !target || self->sliceById(sliceId) != target.data()
+            || target->streamIndex() != stream
+            || target->frequency() != frequencyHz
+            || target->sampleRateHz() != effective
+            || self->m_streamAllocator.streamSampleRateHz(stream) != effective) {
+            return;
+        }
+    }
+
+    requestSliceSampleRate(sliceId, restored);
 }
 
 // R-R3-49. NereusSDR-original: per-slice per-band rates are a Phase 3F
@@ -15930,6 +16095,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
     wasPublished = m_slicePublications.value(originalVictim.data()).published;
     m_slicePublications.remove(originalVictim.data());
     SliceModel* slice = m_slices.takeAt(position);
+    m_pendingBandSettings.remove(sliceId);
     detached = true;
     removalBegun = true; // Remote removal also owns detached-object completion.
     // R-R3-49: the audio thread stops seeing this slice before it is
@@ -17548,6 +17714,7 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // mode, filter, AGC tuple, NB, step, antennas, etc.) before we
     // overwrite the slice. See SliceModel::saveToSettings for the exact
     // key set persisted.
+    materializePendingBandSettings(slice->sliceIndex());
     slice->saveToSettings(current);
 
     if (slice->hasSettingsFor(band)) {
@@ -18473,7 +18640,9 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
 
     // Initialize WDSP DSP engine (wisdom runs async — channel creation
     // is deferred until initializedChanged fires)
-    QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    // The program's own configuration folder, unless the process was given
+    // another (a background Core is given the app's: DspCacheLocation.h).
+    QString configDir = DspCacheLocation::directory();
     // Sample rate + active RX count come from Hardware Config (per-MAC).
     // Falls back to Thetis default (192000, setup.cs:866) when nothing
     // is persisted, and to the board-cap first-entry if 192000 isn't
@@ -20749,15 +20918,62 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //   ...
     //   // MI0BOT: temp for HL2
     //   _MKIIHL2Temp = (3.26f * (tempAverage / 4096.0f) - 0.5f) / 0.01f;
+    //
+    // mi0bot samples the latest reading on a fixed schedule, not once per
+    // status frame, so its 100 samples always span 800 ms:
+    // From mi0bot console.cs:24926-24930 [v2.10.3.13-beta2 @c26a8a4]:
+    //   // MW0LGE_21k9c
+    //   // old method ran ~100ms of volts and ~100ms of amps, then waited 600ms, total time for 100 readings of each = 800ms
+    //   // new method takes two readings every 8ms into a threadsafe fifo queue, so those 100 of each will be spread over 800ms
+    //   // MW0LGE [2.9.0.7] changed volts to 150
+    //   //G8NJJ need similar code for Saturn here, but rates from Ssaturn will be different
+    // NereusSDR's telemetry arrives once per status tick (every 200 ms
+    // idle, every 1 ms keyed), so the ring takes one sample of the latest
+    // reading per 8 ms poll that has passed: the reading held from the
+    // last call fills the polls in between, and this call's reading takes
+    // the latest poll. The window is 100 x 8 ms = 800 ms at either rate.
+    // From mi0bot console.cs:24976 [v2.10.3.13-beta2 @c26a8a4]:
+    //   while (_tempQueue.Count > 100 && nTries < 100) //  MI0BOT: HL2 temperature, keep max 100 in the queue
+    // From mi0bot console.cs:24987-24989 [v2.10.3.13-beta2 @c26a8a4]:
+    //   await Task.Delay(8);
+    //
+    //   // [2.10.1.0]MW0LGE log data to VALog.txt
+    // (the Volts/Amps log is VoltsAmpsLog, sampled above.)
+    constexpr int    kHl2TempSamples = 100;                 // console.cs:24976
+    constexpr qint64 kHl2TempPollNs  = 8LL * 1000 * 1000;   // 8 ms, console.cs:24987
+    static_assert(kHl2TempSamples == static_cast<int>(std::tuple_size_v<decltype(m_hl2TempRing)>),
+                  "the HL2 temperature ring holds mi0bot's 100 samples");
     double hl2TempC = 0.0;
     bool   hl2TempValid = false;
     if (model == HPSDRModel::HERMESLITE) {
-        m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = exciterRaw;
-        m_hl2TempHead = (m_hl2TempHead + 1) %
-                        static_cast<int>(m_hl2TempRing.size());
-        if (m_hl2TempCount < static_cast<int>(m_hl2TempRing.size())) {
-            ++m_hl2TempCount;
+        const qint64 nowNs = m_paTelemetryNowNsForTest
+            ? *m_paTelemetryNowNsForTest
+            : static_cast<qint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch()).count());
+        const auto pushHl2Temp = [this](quint16 value) {
+            m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = value;
+            m_hl2TempHead = (m_hl2TempHead + 1) % kHl2TempSamples;
+            if (m_hl2TempCount < kHl2TempSamples) {
+                ++m_hl2TempCount;
+            }
+        };
+        if (m_hl2TempCount == 0) {
+            // First reading since the reset: it is the first sample.
+            pushHl2Temp(exciterRaw);
+            m_hl2TempLastPollNs = nowNs;
+        } else {
+            const qint64 polls = (nowNs - m_hl2TempLastPollNs) / kHl2TempPollNs;
+            if (polls > 0) {
+                const qint64 heldPolls =
+                    std::min<qint64>(polls - 1, kHl2TempSamples);
+                for (qint64 i = 0; i < heldPolls; ++i) {
+                    pushHl2Temp(m_hl2TempHeld);
+                }
+                pushHl2Temp(exciterRaw);
+                m_hl2TempLastPollNs += polls * kHl2TempPollNs;
+            }
         }
+        m_hl2TempHeld = exciterRaw;
         quint64 sum = 0;
         for (int i = 0; i < m_hl2TempCount; ++i) {
             sum += m_hl2TempRing[static_cast<std::size_t>(i)];
@@ -22657,7 +22873,7 @@ void RadioModel::pushTxFrequencyFromTxSlice()
         return;
     }
 
-    const quint64 txFreqHz = txFrequencyForSlice(slice);
+    const quint64 txFreqHz = txNcoFrequencyForSlice(slice);
 
     // Recomputed rather than read from RadioModel::xitOffset(). The XIT that
     // went into txFreqHz is the BOUND SLICE's, which is what this line is
@@ -24163,6 +24379,16 @@ void RadioModel::applyAlexAntennaForBand(Band band, bool isTx)
 //     cover the case where three slices share one ADC across three bands.
 // Operators who prefer a filtered chain over a wide one keep BpfMode::
 // ForceBand.
+//
+// One radio is known not to fit "bypass is correct under either reading":
+// on the Anvelina Pro 3 the bypass passes nothing at all, and several band
+// filters selected together pass each band at the level it has behind its
+// own filter (measured; codec::alex::combinesRxBandFilters). There the Auto
+// policy selects the filter of every slice counted on the chain, and the
+// chain stays Filtered.
+// A bypass the policy still reports there (Force bypass, extended view) goes
+// out as the five ordinary band filters together, the nearest thing to a
+// bypass that board has (codec::alex::receiveBypassSelection).
 // ---------------------------------------------------------------------------
 void RadioModel::republishAlexAdcSlices()
 {
@@ -24282,10 +24508,24 @@ void RadioModel::republishAlexAdcSlices()
     // for the board's ladder, as before.
     const bool alex2Chain = codec::alex::usesAlex2Hpf(m_hardwareProfile.model);
     const codec::alex::AlexHpfEdges edges = m_alexHpfEdges;
-    const auto preselectorFor = [alexBoard, alex2Chain, edges](int chain, double hz) {
+    // The radio whose band filters combine, where a band difference on a
+    // chain selects every band's filter in place of the bypass (below, at
+    // hpfBitsFor). Never the OC-matrix path, whose identities are pin masks.
+    const bool combineBandFilters = !ocFilterPath
+        && codec::alex::combinesRxBandFilters(m_hardwareProfile.model);
+    // What a bypass the policy reports goes out as on receive: 0x20, or on
+    // that radio, whose bypass passes nothing, the five ordinary band
+    // filters together (measured; codec::alex::receiveBypassSelection).
+    const quint8 receiveBypass = ocFilterPath
+        ? quint8(0x20)
+        : codec::alex::receiveBypassSelection(m_hardwareProfile.model);
+    // A row's own Bypass box and the Alex-2 master bypass send the same
+    // (receiveBypass); a frequency no row holds stays 0x20.
+    const auto preselectorFor = [alexBoard, alex2Chain, edges, receiveBypass](int chain,
+                                                                              double hz) {
         return (chain == 1 && alex2Chain)
-            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges)
-            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges);
+            ? codec::alex::computeAlex2Hpf(hz / 1.0e6, edges, receiveBypass)
+            : codec::alex::computeRxPreselector(hz / 1.0e6, alexBoard, edges, receiveBypass);
     };
     auto addToChain = [&bands, &preselectors, &counts, &lowestHz, &preselectorFor,
                         ocFilterPath, this](
@@ -24556,11 +24796,80 @@ void RadioModel::republishAlexAdcSlices()
         if (!currentParticipants()) { return; }
     }
 
+    // ── Where the band filters combine: the 6 m BPF/LNA on a shared input ──
+    //
+    // The selection for a chain whose slices need more than one row
+    // (codec::alex::combineRxBandSelections, measured). A 6 m slice keeps
+    // the BPF/LNA (the maintainer's ruling, 2026-10-11), and that costs the
+    // slices sharing its input: every other row passes its band 10 to 20 dB
+    // lower, and the 12/10 m row stays out, so a slice there has no filter
+    // of its own. The chain says so, after its bands
+    // (AlexController::setCombineNote) and in the shared-input reason
+    // below. With Disable 6m LNA on RX on, Alex0 loses the BPF/LNA in the
+    // connection (codec::alex::applyAlex1HpfSwitches) and it is the 6 m
+    // slice that has no filter. NereusSDR-original.
+    std::array<quint8, kAdcCount> combinedSelection {};
+    std::array<QString, kAdcCount> combineNote;
+    std::array<QString, kAdcCount> sharedLnaText;
+    for (int adc = 0; adc < chainCount; ++adc) {
+        if (!combineBandFilters || counts[adc] < 2) { continue; }
+        static constexpr quint8 kBypassBits  = 0x20;
+        static constexpr quint8 k6mBpfLnaRow = 0x40;
+        quint8 selection = 0;
+        for (int i = 0; i < counts[adc]; ++i) {
+            selection |= preselectors[adc][i];
+        }
+        // The switch is Alex0's alone (SetAlexHPFBits, the block above).
+        const bool lnaStays = adc != 0 || !m_alexDisable6mLnaOnRxSwitch;
+        const quint8 sent = codec::alex::combineRxBandSelections(selection, lnaStays);
+        combinedSelection[adc] = sent;
+        if ((selection & k6mBpfLnaRow) == 0) { continue; }
+        // The rows on the wire once the switch has had its say.
+        const quint8 heard = lnaStays ? sent : static_cast<quint8>(sent & ~k6mBpfLnaRow);
+
+        QList<const SliceModel*> lna;        // the BPF/LNA is in for these
+        QList<const SliceModel*> low;        // behind another row, with it in
+        QList<const SliceModel*> noFilter;   // their row is not sent
+        QStringList noFilterBands;
+        for (const SliceModel* s : std::as_const(countedSlices[static_cast<size_t>(adc)])) {
+            const quint8 own = preselectorFor(adc, s->frequency());
+            if ((own & ~kBypassBits) == 0) { continue; }   // no row of its own
+            if (lnaStays && (own & k6mBpfLnaRow) != 0) {
+                lna.append(s);
+            } else if ((own & heard) == 0) {
+                noFilter.append(s);
+                const QString band = bandLabel(bandFromFrequency(s->frequency()));
+                if (!noFilterBands.contains(band)) { noFilterBands << band; }
+            } else if (lnaStays) {
+                low.append(s);
+            }
+        }
+        QStringList costs;
+        if (lnaStays && !low.isEmpty()) {
+            costs << QStringLiteral("HF reads low");
+        }
+        if (!noFilter.isEmpty()) {
+            costs << QStringLiteral("%1 filter out").arg(noFilterBands.join(QStringLiteral(" + ")));
+        }
+        if (costs.isEmpty() || (lnaStays && lna.isEmpty())) { continue; }
+        combineNote[adc] = QStringLiteral("%1: %2").arg(
+            lnaStays ? QStringLiteral("6m LNA in") : QStringLiteral("6m LNA off on RX"),
+            costs.join(QStringLiteral(", ")));
+        sharedLnaText[adc] = sharedLnaReason(lna, low, noFilter, !lnaStays);
+    }
+
     // Every chain AlexController models is notified, including one the board
     // does not have: the array for it is empty, which is the correct input for
     // a chain with nothing on it and which clears any state left over from a
     // previously connected two-chain radio.
     for (int adc = 0; adc < kAdcCount; ++adc) {
+        // Set first, so the one recompute that reports this pass's slices
+        // already knows whether a band difference bypasses or combines, and
+        // what combining costs them.
+        m_alexController.setBandFiltersCombine(adc, combineBandFilters);
+        if (!currentParticipants()) { return; }
+        m_alexController.setCombineNote(adc, combineNote[adc]);
+        if (!currentParticipants()) { return; }
         m_alexController.notifySlicesOnAdc(adc, bands[adc]);
         if (!currentParticipants()) { return; }
     }
@@ -24572,7 +24881,8 @@ void RadioModel::republishAlexAdcSlices()
     // prbpfilter2's HPF nibble.
     // Upstream inline attribution preserved verbatim (console.cs:15441):
     //   HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
-    auto hpfBitsFor = [this, &counts, &lowestHz, &preselectorFor, chainCount](int adc) -> int {
+    auto hpfBitsFor = [this, &counts, &lowestHz, &combinedSelection, &preselectorFor,
+                       chainCount, combineBandFilters, receiveBypass](int adc) -> int {
         // Defect D4. A board that does not drive this chain never gets a word
         // composed for it, whatever the slice grouping says. chainForStream
         // already folds every stream onto chain 0 on such a board, so this is
@@ -24594,7 +24904,11 @@ void RadioModel::republishAlexAdcSlices()
             // From Thetis ChannelMaster/netInterface.c:604-651 [v2.10.3.15]:
             //   prbpfilter->_Bypass  = (bits & 0x20) != 0;
             //   prbpfilter2->_Bypass = (bits & 0x20) != 0;
-            return 0x20;
+            // On the radio whose bypass passes nothing, the five band
+            // filters go out in its place (receiveBypass above). The chain
+            // still reports the bypass: Force bypass and extended view mean
+            // what they did, and the WIDE badge stays. NereusSDR-original.
+            return int(receiveBypass);
         }
 
         // Filtered. Select from the LOWEST frequency on the chain, which is
@@ -24610,6 +24924,22 @@ void RadioModel::republishAlexAdcSlices()
         //    || (HardwareSpecific.Hardware == HPSDRHW.HermesC10))  //N1GP G2E added (HermesC10) //DK1HLM
         // With the Alex tab's rows, and on chain 1 the Alex-2 bank where
         // Thetis sets it (preselectorFor above).
+        //
+        // Where the radio's band filters combine, Auto over more than one
+        // filter selects them all: the relay bits are one per filter, so
+        // the selections are added (0x04 for 40 m and 0x01 for 20 m go out
+        // as Alex0's receive half 0x0012, the word measured at
+        // codec::alex::combinesRxBandFilters). A slice with no filter of
+        // its own (below the lowest row) brings the bypass, which is left
+        // out while another slice has a filter: it passes nothing there,
+        // and with two filters it cost them 3 to 5 dB. The 6 m BPF/LNA and
+        // the 12/10 m row never go out together (combinedSelection above).
+        // Force filter keeps one filter, as the operator asked.
+        // NereusSDR-original; Thetis never selects two rows.
+        if (combineBandFilters && st.mode == AlexController::BpfMode::Auto
+            && counts[adc] > 1) {
+            return int(combinedSelection[adc]);
+        }
         return int(preselectorFor(adc, lowestHz[adc]));
     };
 
@@ -24723,10 +25053,25 @@ void RadioModel::republishAlexAdcSlices()
                 }
             }
         }
-        m_alexController.setLowPassHold(0, forcing, lowPassReason);
+        // The 6 m BPF/LNA's cost to a shared input (sharedLnaText above)
+        // joins the reason on either chain, while the combined selection is
+        // what the chain sends: Auto, with no switch, override or extended
+        // view over it.
+        const auto withSharedLna = [this, &sharedLnaText](int adc,
+                                                          const QString& reason) -> QString {
+            const AlexController::AlexAdcState& st = m_alexController.adcState(adc);
+            const QString& lna = sharedLnaText[static_cast<size_t>(adc)];
+            if (lna.isEmpty() || st.mode != AlexController::BpfMode::Auto
+                || st.effective != AlexController::BpfEffective::Filtered) {
+                return reason;
+            }
+            if (reason.isEmpty()) { return lna; }
+            return QStringLiteral("%1 %2").arg(reason, lna);
+        };
+        m_alexController.setLowPassHold(0, forcing, withSharedLna(0, lowPassReason));
         if (!currentParticipants()) { return; }
         // The low-pass is on ADC0's input only.
-        m_alexController.setLowPassHold(1, -1, QString());
+        m_alexController.setLowPassHold(1, -1, withSharedLna(1, QString()));
         if (!currentParticipants()) { return; }
     }
 
@@ -25381,10 +25726,108 @@ QString RadioModel::lowPassHoldReason(const SliceModel* top,
     return parts.join(QLatin1Char(' '));
 }
 
+// ---------------------------------------------------------------------------
+// sharedLnaReason: what the 6 m BPF/LNA costs the slices sharing its input
+// where the radio's band filters combine (the Anvelina Pro 3; measured,
+// codec::alex::combineRxBandSelections). NereusSDR-original. Joins
+// AlexAdcState::lowPassReason, the chain's shared-input reason.
+//
+// Plain words, read by an operator. The filter names are the Alex tab's.
+// Kept short: the sentences follow lowPassHoldReason's in one string, and a
+// remote window refuses a reason over 512 characters
+// (applyStationFilterValue).
+// ---------------------------------------------------------------------------
+QString RadioModel::sharedLnaReason(const QList<const SliceModel*>& lna,
+                                    const QList<const SliceModel*>& low,
+                                    const QList<const SliceModel*>& noFilter,
+                                    bool lnaDisabled) const
+{
+    const auto named = [](const QList<const SliceModel*>& slices) {
+        QStringList names;
+        for (const SliceModel* s : slices) {
+            names << QStringLiteral("%1 on %2").arg(
+                s->sliceLetter(), bandLabel(bandFromFrequency(s->frequency())));
+        }
+        return joinRangeNames(names);
+    };
+    if (lnaDisabled) {
+        if (noFilter.isEmpty()) { return QString(); }
+        return noFilter.size() == 1
+            ? tr("Disable 6m LNA on RX is on, so the 6m BPF/LNA is out and slice %1 "
+                 "hears nothing while other bands share its receiver input.")
+                  .arg(named(noFilter))
+            : tr("Disable 6m LNA on RX is on, so the 6m BPF/LNA is out and slices %1 "
+                 "hear nothing while other bands share their receiver input.")
+                  .arg(named(noFilter));
+    }
+    if (lna.isEmpty() || (low.isEmpty() && noFilter.isEmpty())) { return QString(); }
+    QStringList parts;
+    parts << (lna.size() == 1 ? tr("The 6m BPF/LNA is in for slice %1.").arg(named(lna))
+                              : tr("The 6m BPF/LNA is in for slices %1.").arg(named(lna)));
+    if (low.size() == 1) {
+        parts << tr("The meter and panadapter of slice %1 read about 10 to 20 dB lower "
+                    "with it in.").arg(named(low));
+    } else if (!low.isEmpty()) {
+        parts << tr("The meters and panadapters of slices %1 read about 10 to 20 dB "
+                    "lower with it in.").arg(named(low));
+    }
+    if (noFilter.size() == 1) {
+        parts << tr("The 12/10m BPF stays out with it, so slice %1 has no filter and "
+                    "may hear little or nothing.").arg(named(noFilter));
+    } else if (!noFilter.isEmpty()) {
+        parts << tr("The 12/10m BPF stays out with it, so slices %1 have no filter and "
+                    "may hear little or nothing.").arg(named(noFilter));
+    }
+    return parts.join(QLatin1Char(' '));
+}
+
+namespace {
+// DaemonAgcSource.cpp kFftDbmFloor: what the headless Core publishes with
+// a reading that is not valid.
+constexpr double kStaleAutoAgcNoiseFloorDbm = -200.0;
+} // namespace
+
+// A desktop window acting as Core: each slice's station noise floor, the
+// value a signed-in window or phone shows beside AUTO, from the same tracker
+// this window's own flag reads. The headless Core's DaemonAgcSource writes
+// these fields itself and turns this off.
+void RadioModel::publishStationAutoAgcNoiseFloors()
+{
+    if (!ownsLocalDsp() || m_autoAgcFloorPublishedBySource) {
+        return;
+    }
+    // Not valid by the headless Core's conditions
+    // (DaemonAgcSource::canReceiveFromStream): radio down, transmitting, or
+    // the slice's stream suspended or not running.
+    const bool receiving = isConnected() && !m_transmitModel.isMox();
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (!slice) {
+            continue;
+        }
+        const int stream = slice->streamIndex();
+        const bool streamReceives = stream < 0
+            || (!m_suspendedStreams.contains(stream) && streamActive(stream));
+        const NoiseFloorTracker* tracker = noiseFloorTrackerForSlice(slice);
+        const quint64 generation = slice->stationAutoAgcNoiseFloorGeneration();
+        if (receiving && streamReceives && tracker && tracker->isGood()) {
+            slice->setStationAutoAgcNoiseFloor(
+                static_cast<double>(tracker->noiseFloor()), true, generation);
+        } else if (slice->stationAutoAgcNoiseFloorValid()) {
+            // The headless Core's stale value, and a new generation for
+            // whatever is measured next.
+            slice->setStationAutoAgcNoiseFloor(kStaleAutoAgcNoiseFloorDbm, false,
+                                               generation + 1);
+        }
+    }
+}
+
 // The same station-owned tick runs in the desktop local mode and daemon.
 // Source selection is registered separately; there is no GUI dependency.
 void RadioModel::updateAutoAgc()
 {
+    // Before the guards: a dropped radio has to mark the floor stale.
+    publishStationAutoAgcNoiseFloors();
+
     // From Thetis v2.10.3.13 console.cs:46059 — guard: skip if not connected or MOX
     if (!ownsLocalDsp() || !isConnected()) {
         return;
@@ -25508,6 +25951,7 @@ void RadioModel::prepareReceiveLayout(const QString& radioMac)
         return;
     }
     m_receiveLayoutManaged = true;
+    m_pendingBandSettings.clear();
     m_receiveLayoutPendingAdmission = true;
     if (radioMac.isEmpty()) {
         setReceiveLayoutRestoreStatus(QStringLiteral("pending"),
@@ -25648,6 +26092,11 @@ void RadioModel::completeReceiveLayoutStartup()
         }
     }
     m_receiveLayoutPendingAdmission = false;
+    if (m_txSliceArbiter) {
+        const QPointer<RadioModel> self(this);
+        m_txSliceArbiter->finishRestore();
+        if (!self) { return; }
+    }
     m_receiveLayoutHydratedIds.clear();
     // RADE reason: admission is over, so a RADE slice left without a
     // decoder says why.
@@ -25773,6 +26222,7 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     }
 
     const QPointer<RadioModel> self(this);
+    m_pendingBandSettings.clear();
     m_receiveLayoutHydrating = true;
     const auto finishHydration = qScopeGuard([self] {
         if (self) { self->m_receiveLayoutHydrating = false; }
@@ -25920,7 +26370,16 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
         slice = m_activeSlice;
     }
     if (slice) {
-        m_dirtySettingsSliceIds.insert(slice->sliceIndex());
+        const int id = slice->sliceIndex();
+        m_dirtySettingsSliceIds.insert(id);
+        QMap<QString, QVariant>& pending = m_pendingBandSettings[id];
+        // frequencyChanged runs before SliceModel updates its cached band.
+        // Capture the destination from the already-updated VFO, never pair
+        // that new VFO with the outgoing band's key.
+        for (const QPair<QString, QVariant>& value :
+             slice->captureBandSettings(bandFromFrequency(slice->frequency()))) {
+            pending.insert(value.first, value.second);
+        }
     }
     m_settingsSaveScheduled = true;
     // Fix wave (2026-09-30): one coalescing timer at a time, tracked apart
@@ -26136,6 +26595,38 @@ void RadioModel::applyStationSettingsSaveError(const QString& reason)
     emit settingsSaveErrorChanged(reason);
 }
 
+// Captures are consumed into the normal in-memory store, which retains
+// them through a failed file write and the existing background/retry path.
+void RadioModel::materializePendingBandSettings(int sliceId)
+{
+    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+        return;
+    }
+    const QMap<QString, QVariant> pending = m_pendingBandSettings.take(sliceId);
+    auto& settings = AppSettings::instance();
+    m_materializingPendingBandSettings = true;
+    const auto clearMaterializing = qScopeGuard([this] { m_materializingPendingBandSettings = false; });
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
+}
+
+void RadioModel::onSettingsKeyWritten(const QString& key)
+{
+    // The hold is this model's thread's alone. Slice keys are written on
+    // it (the proxy applies remote writes there); a write from any other
+    // thread is left alone rather than racing the hold.
+    if (QThread::currentThread() != thread()) {
+        return;
+    }
+    if (m_materializingPendingBandSettings || m_pendingBandSettings.isEmpty()) {
+        return;
+    }
+    for (auto it = m_pendingBandSettings.begin(); it != m_pendingBandSettings.end(); ++it) {
+        it.value().remove(key);
+    }
+}
+
 // Persist current slice state to AppSettings (per-band + session state).
 // Also flushes AlexController persistence if the dirty flag was set —
 // see the antennaChanged / blockTxChanged handlers in wireSliceSignals.
@@ -26145,7 +26636,8 @@ void RadioModel::saveSliceState(SliceModel* slice)
         return;
     }
     if (slice) {
-        slice->saveToSettings(slice->band());
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(bandFromFrequency(slice->frequency()));
     }
 
     // Flush AlexController if any per-band antenna or block-TX toggle
@@ -26219,6 +26711,9 @@ void RadioModel::wirePcMicConfigProjection()
                 cfg.hostApiIndex = index;
                 cfg.driverApi.clear();
                 if (index >= 0) {
+                    // A host API picked by its PortAudio index is an older
+                    // driver: PortAudio starts here if it has not yet.
+                    PortAudioLibrary::ensureStarted();
                     const QVector<PortAudioBus::HostApiInfo> apis = PortAudioBus::hostApis();
                     for (const PortAudioBus::HostApiInfo& api : apis) {
                         if (api.index == index) {
@@ -26767,6 +27262,12 @@ void RadioModel::teardownConnection()
     // but isConnected() still read stale-Connected. See design addendum
     // docs/architecture/2026-08-03-remote-daemon-r2-r3-design-addendum.md
     // section 5.
+    // The disconnected callback is severed above, so its discovery cleanup
+    // must also happen here. Clear before observers see Disconnected; an
+    // unsaved radio that has stopped replying may now age out normally.
+    if (m_discovery) {
+        m_discovery->clearConnectedMac();
+    }
     setConnectionState(ConnectionState::Disconnected);
 
     // TX safety fix round 2 (2026-09-30): the forced Disconnected above never
@@ -27919,6 +28420,31 @@ static bool isLsbFamily(DSPMode mode) noexcept
     return mode == DSPMode::LSB || mode == DSPMode::CWL || mode == DSPMode::DIGL;
 }
 
+// Existing Tune generator frequency, shared by its NCO compensation.
+// From Thetis console.cs:18211,30082-30085 [v2.10.3.15].
+static double signedTuneToneHz(DSPMode mode) noexcept
+{
+    constexpr double kCwPitch = 600.0;
+    return isLsbFamily(mode) ? -kCwPitch : +kCwPitch;
+}
+
+quint64 RadioModel::txNcoFrequencyForSlice(const SliceModel* slice) const
+{
+    if (!slice) {
+        return 0;
+    }
+    const quint64 dialHz = txFrequencyForSlice(slice);
+    if (!m_isTuning) {
+        return dialHz;
+    }
+    // Retunes and delayed connect seeds must keep the same compensation
+    // as setTune. Use the saved mode that chose the active generator tone.
+    // From Thetis console.cs:31782-31783,31820-31868 [v2.10.3.15].
+    const qint64 adjustedHz = static_cast<qint64>(dialHz)
+        - static_cast<qint64>(signedTuneToneHz(m_savedTxDspMode));
+    return adjustedHz < 0 ? 0 : static_cast<quint64>(adjustedHz);
+}
+
 bool RadioModel::tuneCycleCurrent(quint64 serial) const
 {
     return serial == m_tuneCycleSerial && (!m_tuneCycleGuarded
@@ -28179,9 +28705,8 @@ void RadioModel::setTune(bool on)
         //   the correct sideband. This ordering is preserved here.
         //
         // cw_pitch: from Thetis console.cs:18182 [v2.10.3.13] — private int cw_pitch = 600;
-        static constexpr double kCwPitch = 600.0;
         const DSPMode modeBeforeSwap = m_savedTxDspMode;
-        const double signedFreq = isLsbFamily(modeBeforeSwap) ? -kCwPitch : +kCwPitch;
+        const double signedFreq = signedTuneToneHz(modeBeforeSwap);
 
         // ── SET TUNE TONE ──────────────────────────────────────────────────────
         // Cite: console.cs:30038-30040 [v2.10.3.13]:
@@ -28399,11 +28924,7 @@ void RadioModel::setTune(bool on)
             // Dial plus XIT, not the raw dial: Thetis applies the TUNE offset
             // to tx_freq, which already carries XIT
             // (console.cs:31782-31783 then 31845-31860 [v2.10.3.15]).
-            const quint64 dialHz = txFrequencyForSlice(tuneSlice);
-            const qint64 adjustedTxHz =
-                static_cast<qint64>(dialHz) - static_cast<qint64>(signedFreq);
-            const quint64 wireHz =
-                (adjustedTxHz < 0) ? 0 : static_cast<quint64>(adjustedTxHz);
+            const quint64 wireHz = txNcoFrequencyForSlice(tuneSlice);
             auto* conn = m_connection;
             const QPointer<RadioConnection> tuneConnection(conn);
             QMetaObject::invokeMethod(this, [this, serial, tuneConnection, wireHz]() {
@@ -31785,8 +32306,8 @@ void RadioModel::wireIoBoardTool()
         return;
     }
     m_ioBoardToolWired = true;
-    // The codec emits these on the connection thread; they arrive queued,
-    // in the order they were sent.
+    // The codec emits these on the P1 EP2 sender thread, where frames are
+    // composed; they arrive queued, in the order they were sent.
     connect(&m_ioBoard, &IoBoardHl2::i2cTxComposed, this,
             [this](quint8 /*c0*/, quint8 c1, quint8 c2, quint8 c3, quint8 /*c4*/) {
                 // A read goes out with C1 0x07; C2 is 0x80 | the address and
@@ -33189,10 +33710,14 @@ void RadioModel::scheduleTgxlAutotune()
     const quint64 cycle = m_tgxlCycleGeneration;
     const QPointer<TxChannel> channel = m_tgxlCarrierChannel;
     const quint64 sequence = m_tgxlCarrierSequence;
-    QTimer::singleShot(kTgxlRfSettleMs, Qt::PreciseTimer, this,
+    QTimer::singleShot(m_tgxlRfSettleMs, Qt::PreciseTimer, this,
                       [this, cycle, channel, sequence]() {
-        if (cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
-            || sequence != m_tgxlCarrierSequence) {
+        const bool stale = cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
+            || sequence != m_tgxlCarrierSequence;
+        if (m_tgxlSettleFiredObserverForTest) {
+            m_tgxlSettleFiredObserverForTest(cycle, stale);
+        }
+        if (stale) {
             return;
         }
         m_tgxlSettlePending = false;

@@ -47,6 +47,10 @@
 //               answers log at debug; an S-frame logs at info only when
 //               its state or tuning flag changes. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: One `status` in flight (GeniusStatusGate), as on the
+//               amplifier link: the poll waits for the tuner's answer
+//               to the one before. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #include "TgxlConnection.h"
 #include "AppSettings.h"
@@ -567,6 +571,10 @@ void TgxlConnection::onConnected(quint64 attemptGeneration)
     // "disconnected" forever despite an ESTABLISHED TCP socket. Same bug
     // pattern existed in PgxlConnection.
     m_gotVersion = false;
+    // A `status` the last connection never answered holds nothing back on
+    // this one. The handshake's own `status` restarts the wait before any
+    // poll can run, so today this only guards a change in that order.
+    m_statusGate.reset();
     clearIdentityAttempt();
     if (m_identityAdmissionRequired) {
         // Bound the complete TCP-handshake/V/info/owner-approval interval. A
@@ -765,6 +773,9 @@ void TgxlConnection::processLine(const QString& line,
 
             QString body = line.mid(pipe2 + 1).trimmed();
 
+            // A refused `status` is answered here; the next one may go.
+            m_statusGate.answered(rseq);
+
             // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)
             if (hexOk && hexCode != 0) {
                 qCWarning(lcTgxl) << "RX R-frame seq=" << rseq << "hex=" << QString::number(hexCode, 16) << "body:" << body;
@@ -935,6 +946,12 @@ void TgxlConnection::processLine(const QString& line,
 
         QString rest = line.mid(pipe + 1);
 
+        // The tuner answers `C<seq>|status` with `S<seq>|status ...`
+        // (captures/flex-tgxl-direct-NOTES.md:73); the next one may go.
+        if (rest.startsWith(QLatin1String("status"))) {
+            m_statusGate.answered(line.mid(1, pipe - 1).toUInt());
+        }
+
         // Find object name -- everything before first key=val
         // "state bypassA=0 ..." or "status fwd=0.0000 ..."
         int firstEq = rest.indexOf('=');
@@ -992,6 +1009,12 @@ quint32 TgxlConnection::sendCommand(const QString& cmd)
     if (!m_connected) {
         return 0;
     }
+    // One `status` in flight (GeniusStatusGate.h): the poll, the keepalive
+    // and any other caller wait for the tuner's answer to the one before.
+    // Nothing is queued; the next poll asks.
+    if (cmd == QLatin1String("status") && m_statusGate.answerPending()) {
+        return 0;
+    }
     return writeProtocolCommand(cmd);
 }
 
@@ -999,6 +1022,9 @@ quint32 TgxlConnection::writeProtocolCommand(const QString& cmd)
 {
     quint32 seq = ++m_seq;
     QString line = QString("C%1|%2\n").arg(seq).arg(cmd);
+    if (cmd == QLatin1String("status")) {
+        m_statusGate.sent(seq);
+    }
     m_socket->write(line.toUtf8());
     qCDebug(lcTgxl) << "TgxlConnection: sent" << line.trimmed();
     // Phase 3P-II bench-diagnostic logging (remove after pairing protocol confirmed)

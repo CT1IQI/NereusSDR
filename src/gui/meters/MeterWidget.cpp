@@ -92,6 +92,10 @@ mw0lge@grange-lane.co.uk
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
+// Modification history (NereusSDR):
+//   2026-10-12 - Refresh cached text layers when the workspace floor changes.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include "MeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
@@ -1073,6 +1077,13 @@ void MeterWidget::initialize(QRhiCommandBuffer* cb)
 
 void MeterWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 {
+    const bool readableText = WorkspacePreview::enabled();
+    if (m_readableTextCache != readableText) {
+        m_readableTextCache = readableText;
+        markOverlayDirty();
+        m_bgDirty = true;
+    }
+
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
