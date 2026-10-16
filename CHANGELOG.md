@@ -168,6 +168,11 @@ The workspace look is now the default.
 - While transmitting, an edit to the RX1 S-ATT readout (which shows the
   attenuation on TX then) changes the TX attenuation and leaves the receive
   value for when you unkey.
+- When a keyed remote window or phone loses its link, the Core cuts its
+  transmit 400 ms after the link goes quiet, even while the Core's main thread
+  is busy. Before, a stall on that thread (about half a second in a Windows
+  desktop Core with the screen locked) could keep the radio keyed for about a
+  second.
 
 ### Receivers and radios
 
@@ -399,6 +404,11 @@ Advanced, and each control appears on one page only.
   value, and the window shows the Core's reason. Before, the window could keep
   a refused tune step until the next reconnect, and a refused change showed no
   reason.
+- A phone or window that connects to a Core sees one active slice, so TUNE
+  and transmit go to the slice it shows. Before, a phone could show its own
+  saved slice on 40 m while TUNE keyed the Core's slice on 20 m. Each device's
+  active slice is also marked again when transmit is taken or released, a
+  device leaves, or a saved layout is restored.
 
 ## [2026.10.0] - 2026-10-05
 
