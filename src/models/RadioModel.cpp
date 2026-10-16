@@ -1192,6 +1192,9 @@
 //                sender thread; still queued, so nothing here changes.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - Slices B to D open their channel with the slice's saved
+//                AGC threshold, Fixed Gain and Max Gain, as Slice A does.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - Slices B to D open their channel with the slice's saved
 //                squelch (thresholds, then enables), and a squelch edit is
 //                saved to the slice it was made on, not the active slice.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -23744,8 +23747,9 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
 
     // Squelch — FM → WDSP
     // From Thetis Project Files/Source/Console/radio.cs:1274-1329
-    // WDSP: third_party/wdsp/src/fmsq.c:236,244
-    // SliceModel stores fmsqThresh in dB; RxChannel::setFmsqThresh converts to linear
+    // WDSP: third_party/wdsp/src/fmsq.c:239,247
+    // SliceModel stores fmsqThresh as the -160..0 slider value;
+    // RxChannel::setFmsqThresh maps it to WDSP's linear threshold
     connect(slice, &SliceModel::fmsqEnabledChanged, this, [this, slice](bool on) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {

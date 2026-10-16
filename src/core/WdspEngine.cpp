@@ -80,6 +80,11 @@
 //                 channel was created with, not its input rate. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-15 - openRxChannelWdsp seeds AGC Fixed Gain (20 dB) and Max
+//                 Gain (90 dB) from RxChannel's cached defaults instead of
+//                 leaving WDSP's create values (60 dB, 80 dB). J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From cmaster.c ---
@@ -744,7 +749,17 @@ void WdspEngine::openRxChannelWdsp(int channelId, int inputBufferSize, int dspBu
     SetRXABandpassFreqs(channelId, -2850.0, -150.0);
     RXANBPSetFreqs(channelId, -2850.0, -150.0);
     SetRXAAGCMode(channelId, static_cast<int>(AGCMode::Med));
-    SetRXAAGCTop(channelId, 80.0);
+    // AGC Max Gain: seed RxChannel's cached default (90 dB, Thetis's), not
+    // WDSP's create value (80 dB, RXA.c:383); a cache and WDSP that disagree
+    // let setAgcMaxGain skip the push that should set it.
+    // [WDSP call as at Thetis Project Files/Source/Console/radio.cs:1032 [v2.10.3.15]]
+    SetRXAAGCTop(channelId, static_cast<double>(RxChannel::kDefaultAgcMaxGainDb));
+    // Fixed Gain (AGC Off): WDSP opens at 60 dB (RXA.c:385, fixed_gain
+    // 1000.0); RxChannel caches kDefaultAgcFixedGainDb, so without this
+    // seed the slice's default push hits the setter's equality guard and
+    // AGC Off runs at 60 dB after every open and rebuild.
+    // [WDSP call as at Thetis Project Files/Source/Console/radio.cs:1013 [v2.10.3.15]]
+    SetRXAAGCFixed(channelId, static_cast<double>(RxChannel::kDefaultAgcFixedGainDb));
 
     // Dual-mono audio output. WDSP's create_panel default is copy=0
     // (binaural — I and Q carry separate phase-shifted content for

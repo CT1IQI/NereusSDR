@@ -4291,6 +4291,19 @@ nereus_add_test(tst_wdsp_engine_tx_channel)
 #   wdsp/dexp.c:230-239    - destroy_dexp impl: frees, but does NOT null pdexp[id].
 nereus_add_test(tst_wdsp_engine_dexp_init)
 
+# AGC Fixed Gain seed: a new or rebuilt WDSP RX channel must run the Fixed
+# Gain RxChannel caches (20 dB), not WDSP's create_wcpagc default of 1000.0
+# linear (60 dB, third_party/wdsp/src/RXA.c:385). Reads rxa[].agc.p back.
+nereus_add_test(tst_rx_channel_agc_fixed_seed)
+if(FFTW3_FOUND AND WDSP_FOUND)
+    target_include_directories(tst_rx_channel_agc_fixed_seed PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_compile_definitions(tst_rx_channel_agc_fixed_seed PRIVATE WDSP_STATIC_BUILD)
+endif()
+
+# Settings > DSP > AGC/ALC: the Fixed Gain spinner follows a model change
+# without echoing it back.
+nereus_add_test(tst_agc_alc_fixed_gain_sync)
+
 # ── Phase B4'/B5': WdspEngine::setAdcSupply / setLRAudioSwap wrappers ────────
 # Pins the per-board ChannelMaster-layer WDSP call wrappers introduced during
 # the ANAN-G2E port (Phase B4'/B5').  The stubs in netinterface_stub.c always
