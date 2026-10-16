@@ -251,6 +251,30 @@ public:
         }
         return true;
     }
+    // 2026-10-16: packets the link has held back so far, and delivering
+    // the next `count` of them with no time passing; workerPass() then
+    // runs the receive worker once, so a held-back burst can be split
+    // across passes as submit()'s per-packet wakes can split it.
+    qint64 heldPackets() const { return sentByNow() - m_nextPacket; }
+    void deliverHeld(qint64 count)
+    {
+        for (qint64 i = 0; i < count && m_nextPacket < sentByNow(); ++i) {
+            m_receiver.submit(packet(m_nextPacket));
+            ++m_nextPacket;
+        }
+    }
+    bool workerPass() { return m_receiver.runWorkerPassForTest(); }
+    // The delay standing above the hold: queued in the jitter buffer plus
+    // the bus matcher's fill above its target, in ms (as shedding counts
+    // it); -1 when either is unavailable.
+    double standingDelayMs() const
+    {
+        const auto telemetry = m_receiver.telemetry();
+        const auto stats = device->matcherStats();
+        if (!telemetry.reorderQueuedMs || !stats) { return -1.0; }
+        return *telemetry.reorderQueuedMs
+            + (stats->fillFrames - double(stats->rsizeFrames) / 2.0) / 48.0;
+    }
     RemoteAudioReceiverTelemetry telemetry() const { return m_receiver.telemetry(); }
     quint64 decodedPackets() const { return m_receiver.decodedPackets(); }
 
@@ -3489,6 +3513,72 @@ private slots:
         QCOMPARE(rig.restarts.count(), 1);
         QCOMPARE(rig.restarts.first().at(1).value<RemoteAudioReceiver::Fault>(),
                  RemoteAudioReceiver::Fault::NoPackets);
+        rig.stop();
+    }
+
+    // 2026-10-16 (JJ, lowest latency): a held-back burst after a stall can
+    // leave old audio queued ahead of the head. Two ways: it reaches the
+    // worker in two passes (first only packets behind the head, which
+    // re-anchors on the newest of them, then up to 300 ms more), or the
+    // worker woke late all through the stall, so the empty-queue loss
+    // deadline (which follows each actual release) lagged and one pass
+    // queues part of the burst ahead. That backlog is the outage's and is
+    // shed back to the hold plus its reserve, as a consumer stall's is,
+    // instead of standing until some later late packet.
+    void anOutageBurstsBacklogIsShed_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::addColumn<int>("passes");
+        QTest::addColumn<int>("wakeMs");
+        for (bool lossless : {false, true}) {
+            const char* name = lossless ? "lossless" : "Opus";
+            QTest::addRow("%s, two passes", name) << lossless << 2 << 1;
+            // The less certain case: the worker wakes late all through the
+            // stall, so the empty-queue loss deadline (which follows each
+            // actual release) lags, and one pass of the burst can leave
+            // packets queued ahead of the lagging head.
+            QTest::addRow("%s, one pass, 8 ms wakes", name) << lossless << 1 << 8;
+        }
+    }
+    void anOutageBurstsBacklogIsShed()
+    {
+        QFETCH(bool, lossless);
+        QFETCH(int, passes);
+        QFETCH(int, wakeMs);
+        constexpr qint64 kStallMs = 700;
+        constexpr qint64 kTailMs = 300;
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(3'000), qPrintable(rig.faults()));
+        for (qint64 ms = 1; ms <= kStallMs; ++ms) {
+            QVERIFY2(rig.tick(false, ms % wakeMs == 0), qPrintable(rig.faults()));
+        }
+        if (passes == 2) {
+            const qint64 tail = kTailMs / rig.packetMs();
+            rig.deliverHeld(rig.heldPackets() - tail);
+            QVERIFY2(rig.workerPass(), qPrintable(rig.faults()));
+        }
+        rig.deliverHeld(rig.heldPackets());
+        QVERIFY2(rig.workerPass(), qPrintable(rig.faults()));
+        QCOMPARE(rig.heldPackets(), qint64(0));
+        QVERIFY2(rig.run(500), qPrintable(rig.faults()));
+        const double standing = rig.standingDelayMs();
+        // 40 ms is shed a second once it has stood a second.
+        QVERIFY2(rig.run(12'000), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.restarts.isEmpty() && rig.errors.isEmpty(), qPrintable(rig.faults()));
+        const auto telemetry = rig.telemetry();
+        const double target = double(AudioJitterBuffer::kHoldNs + AudioJitterBuffer::kShedReserveNs)
+            / 1e6 + rig.packetMs();
+        const double after = rig.standingDelayMs();
+        const QString evidence = QStringLiteral("%1 ms standing after shedding (%2 ms right after "
+                                                "the burst, target %3 ms, skipped %4, hold %5)")
+            .arg(after).arg(standing).arg(target).arg(telemetry.skippedIntervals)
+            .arg(telemetry.jitterHoldMs.value_or(-1));
+        // Either way the burst does leave a backlog.
+        QVERIFY2(standing > 200.0, qPrintable(evidence));
+        QVERIFY2(after >= 0.0 && after <= target, qPrintable(evidence));
+        QCOMPARE(telemetry.jitterHoldMs.value_or(-1), double(AudioJitterBuffer::kHoldNs) / 1e6);
         rig.stop();
     }
 

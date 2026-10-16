@@ -13,8 +13,9 @@
 //   2026-10-16: concealExpectedNow(arrivalsStopped) also conceals an empty
 //               queue at the base hold once arrivals have stopped, so a
 //               short network stall plays on; insert(afterOutage) keeps
-//               an outage's late packets from deepening the hold. J.J.
-//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               an outage's late packets from deepening the hold and arms
+//               shedding for its burst's backlog. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 #include <QByteArray>
 #include <QtGlobal>
 #include <algorithm>
@@ -141,7 +142,9 @@ public:
     /// longer than the deepest hold. A late packet whose interval was
     /// concealed is then an outage's leftover, not jitter: it neither
     /// deepens the hold nor rewinds, so a ridden-out stall leaves the
-    /// latency where it was.
+    /// latency where it was. It arms shedding instead (as a consumer stall
+    /// does), so a backlog the outage's burst leaves is shed back to the
+    /// hold plus kShedReserveNs.
     Admission insert(const QByteArray& packet, quint32 timestamp, qint64 arrivalNs,
                      bool afterOutage = false);
     std::optional<Playout> takeReady(qint64 nowNs);
@@ -244,6 +247,9 @@ private:
     // armed shedding.
     std::optional<qint64> m_lastTickNs;
     bool m_stallArmed{false};
+    // JJ 2026-10-16: when an outage's late packet armed shedding (insert()
+    // with afterOutage); it is not disarmed for kShrinkIntervalNs after.
+    std::optional<qint64> m_outageArmedNs;
     // Since when the queue has stood above its target, while armed.
     std::optional<qint64> m_excessSinceNs;
     std::vector<QByteArray> m_shedPackets;

@@ -9,7 +9,8 @@
 //               Claude Code.
 //   2026-10-16: concealExpectedNow() conceals an empty queue at the base
 //               hold once the consumer says arrivals have stopped; an
-//               outage's late packets do not deepen the hold. J.J. Boyd
+//               outage's late packets do not deepen the hold, and arm
+//               shedding for the backlog its burst can leave. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/session/media/AudioJitterBuffer.h"
 #include "core/session/media/OpusAudioCodec.h"
@@ -89,9 +90,13 @@ void AudioJitterBuffer::shedExcess(qint64 nowNs)
     const qint64 content = queuedSpanNs() + m_downstreamExcessNs;
     if (m_packets.empty() || content <= target) {
         m_excessSinceNs.reset();
-        if (m_holdNs <= kHoldNs) { // paid: disarm
+        // JJ 2026-10-16: an outage's arming outlasts its first empty wake
+        // by one shed interval (see insert()).
+        const bool outageLanding = m_outageArmedNs && nowNs - *m_outageArmedNs < kShrinkIntervalNs;
+        if (m_holdNs <= kHoldNs && !outageLanding) { // paid: disarm
             m_lastLateNs.reset();
             m_stallArmed = false;
+            m_outageArmedNs.reset();
         }
         return;
     }
@@ -154,7 +159,18 @@ AudioJitterBuffer::Admission AudioJitterBuffer::insert(
             // deepest hold) the lateness is the outage's, not the link's
             // jitter; growing the hold for it would leave every ridden-out
             // stall up to kMaxHoldNs late for the whole easing time.
-            if (!m_adaptive || afterOutage) { return Admission::LateConcealed; }
+            if (!m_adaptive) { return Admission::LateConcealed; }
+            if (afterOutage) {
+                // The burst that brought it can leave a backlog standing
+                // (the rest of it queued ahead in a later pass), which no
+                // late packet would announce: shedding is armed at once,
+                // as a consumer stall arms it, and stays armed for one
+                // shed interval, so the burst's rest can land before an
+                // empty queue disarms it.
+                m_stallArmed = true;
+                m_outageArmedNs = arrivalNs;
+                return Admission::LateConcealed;
+            }
             m_lastLateNs = arrivalNs;
             const qint64 lateNs = arrivalNs - it->releasedNs;
             // A rewind replays every interval released since this one, so
