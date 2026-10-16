@@ -1023,6 +1023,17 @@ not declare it sees exactly the wire it was built for: no capability entry,
 and `firmwareVersion` as before. The station does not declare it; the
 desktop's remote window and the phone app do.
 
+**`waveform` 1** (the RADE waveform meters): the client draws the exact
+samples of the RADE microphone and decoded-speech waveforms. A peer that
+declares it at agreed minor 11, while media is available on a Core that runs a
+radio model, is sent `waveformVersion` (section 6.3) and may declare
+`waveformVersion` 1 in its media `start`, ask for a waveform with
+`waveform-stream`, and read the Core's answer in `waveform-stream-context`
+(the waveform media document, `2026-10-11-waveform-media-v1.md`). A peer that
+does not declare it sees exactly the wire it was built for: no capability
+entry, and none of the new ops. The station does not declare it; the
+desktop's remote window does (`StationClient`). The phone app does not.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -2360,6 +2371,18 @@ feature is sent no entry. A client connected to a Core that sends no entry
 words the firmware by its first number alone; nothing is shown to the
 operator for it.
 
+**The RADE waveform feed.** A client at agreed minor 11 that declared
+`waveform` 1 is sent `waveformVersion`, an `i64`, 1, after `firmwareBeta` (or
+after the last entry before it when that is absent) and before
+`coreBuildInfo`. The Core sends it while media is enabled, the Core is not
+itself a remote client, and it has a waveform model for its radios. At 1 the
+client's media `start` may declare `waveformVersion` 1, the client may send
+`waveform-stream`, and the Core answers with `waveform-stream-context`; the
+samples travel on the optional `waveform` data channel (the waveform media
+document). A peer that did not declare the feature is sent no entry. A client
+connected to a Core that sends no entry shows a waveform meter as unsupported
+("Core does not advertise waveform telemetry"); nothing else changes for it.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2400,7 +2423,9 @@ declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a 
 declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
 `coreSpeaker` on a Core with its own speaker; `spectrumPictureVersion` only
 for a peer that declared `spectrumPicture` while media is available;
-`firmwareBeta` only for a peer that declared `firmwareBeta`. A client ignores a capability it does not know
+`firmwareBeta` only for a peer that declared `firmwareBeta`;
+`waveformVersion` only for a peer that declared `waveform` while media is
+available on a Core that runs a radio model. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -4754,8 +4779,8 @@ orientation setting; bearing 0 is the radar's north.
 
 #### The RADE status (`radeSynced`, `radeFreqOffsetHz`)
 
-`radeStatusVersion` 1. While a slice is in RADE (`dspMode` `RADE_U` or
-`RADE_L`) the desktop's VFO flag shows one RADE row built from the RADE
+`radeStatusVersion` 1. While a slice is in RADE (`dspMode` `RADE_U`,
+`RADE_L`, `RADE2_U` or `RADE2_L`) the desktop's VFO flag shows one RADE row built from the RADE
 decoder: the last speaker's callsign (or "RADE"), a sync dot, the SNR and
 the frequency offset (`VfoWidget::setRadeSynced`, `setRadeSnrLabel`,
 `setRadeFreqOffset`). The slice already carries `lastRadeRxCallsign` and
@@ -5325,14 +5350,16 @@ Colours are `#RRGGBB`, upper case. Labels are the desktop's own words,
 shown as sent. A key an app does not know is ignored; an app given an
 empty `json` (the stand-in of section 16.3) has no catalogue yet.
 
-The object has exactly these sixteen keys (a Core from before
-`noiseReduction` sends fifteen, and one from before `display` fourteen; an
+The object has exactly these seventeen keys (a Core from before
+`radeV2Enabled` sends sixteen, one from before `noiseReduction` fifteen, and
+one from before `display` fourteen; an
 app detects each by its presence, as it does `board`'s `transmit`,
 `rx1Preamp` and `relays`):
 
 | Key | Holds |
 | --- | --- |
-| `modes` | `[{id, label, sideband}]`: the 14 modes, `id` the slice's `dspMode` value 0 to 13, `label` its name (`LSB`, `USB`, ..., `RADE-U`, `RADE-L`), `sideband` `lower`, `upper` or `both` |
+| `modes` | `[{id, label, sideband}]`: the 14 modes, or 16 when `radeV2Enabled` is true, `id` the slice's `dspMode` value 0 to 13 (0 to 15), `label` its name (`LSB`, `USB`, ..., `RADE-U`, `RADE-L`, and `RADE2-U`, `RADE2-L` when on), `sideband` `lower`, `upper` or `both` |
+| `radeV2Enabled` | Boolean: true when the Core has the experimental RADE V2 modes turned on (its `NEREUS_ENABLE_RADE_V2` is 1). When it is false the `modes` list and `filterPresets` leave out `RADE2-U` and `RADE2-L`. A client offers the modes only on an explicit true; a Core that sends no key is read as false |
 | `filterPresets` | `{<mode label>: [{slot, label, lowHz, highHz}]}`: each mode's presets from the Core's store, slot 0 first (`F1`), edges signed as a slice's `filterLow` and `filterHigh`; a mode has 1 to 10 |
 | `tuneSteps` | `[{hz, label}]`: the step list, smallest first, as the slice's `stepHz` takes it; `label` like `500 Hz`, `1 kHz`, `2.5 kHz`, `1 MHz` |
 | `agc` | `{modes: [{id, label}], thresholdDb: {min, max, step}}`: the AGC modes an operator picks (`id` the slice's `agcMode`: `Off`, `Long`, `Slow`, `Med`, `Fast`), and AGC-T's range for `agcThreshold`. The Modes tab's AGC section shows no other range; a later one arrives as another `{min, max, step}` key named after the setting it bounds |
@@ -8574,7 +8601,7 @@ microphone because a device armed VOX.
 while it is keyed on it, the transmit mode decides: LSB, USB, DSB, CWL,
 CWU, DIGL, DIGU and SPEC stay keyed (silence there puts no carrier on the
 air; WDSP's DSB adds none), until the time-out or the operator ends it;
-AM, SAM, FM, DRM, RADE_U and RADE_L stop at once with "No microphone audio
+AM, SAM, FM, DRM, RADE_U, RADE_L, RADE2_U and RADE2_L stop at once with "No microphone audio
 arrived from <device>, so the Core stopped transmitting." TUNE and
 two-tone use no microphone and are never stopped by it.
 
