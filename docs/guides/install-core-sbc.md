@@ -138,10 +138,16 @@ groups the Core does not belong to, so each needs a small systemd drop-in.
   own mixer has the output switched off. On a board with a DAC, check that its
   DAC switches are on (`alsamixer` or `amixer -c <card>`). NereusSDR does not
   change a card's mixer.
-- **Real-time priority.** Some vendor kernels refuse real-time scheduling to
-  every service. The Core then logs "Raised thread priority was refused" and
-  its audio threads run without real-time priority. Nothing
-  needs fixing; it is a note about that kernel. Check how heavily the board is
+- **Real-time priority.** Some vendor kernels, the Rock 5C's among them,
+  refuse real-time scheduling to every service while the system's CPU
+  controller is on, and on Debian any login switches it on. The Core then logs
+  "Raised thread priority was refused" and its audio threads run at normal
+  priority. The Rock installer writes a drop-in,
+  `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`, so
+  logins no longer switch the controller on. It takes effect for logins
+  after it is written, so restart the Rock once after installing. To see
+  whether the controller is on, look for `cpu` in
+  `cat /sys/fs/cgroup/cgroup.subtree_control`. Check how heavily the board is
   loaded if audio breaks up.
 
 ## 5. Pair a console

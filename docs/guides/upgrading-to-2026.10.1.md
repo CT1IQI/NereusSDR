@@ -66,6 +66,9 @@ cards and serial adapters each need a small systemd drop-in.
   the station image write it; the
   `.deb` packages do not. After adding either file, run
   `sudo systemctl daemon-reload` and `sudo systemctl restart nereusd`.
+- **Rock real-time priority.** On a Rock, run the 2026.10.1 installer once and
+  then restart the board. It adds a drop-in so that logging in over ssh no
+  longer costs the Core its real-time priority.
 
 The [SBC install guide](install-core-sbc.md) has the details, including the
 sound card's own mixer and kernels that refuse real-time priority.

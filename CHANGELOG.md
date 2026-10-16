@@ -128,6 +128,9 @@ The workspace look is now the default.
 - The waterfall stays lit while you drag a dock edge, instead of going dark
   until you let go.
 - The Core does less work for each wide display row it sends.
+- A remote window wider than the shared transmit picture keeps the TX trace
+  and waterfall at their real frequencies instead of stretching them, and TX
+  filter shading comes back after Tune.
 
 
 ### Transmit, two-tone and PureSignal
@@ -209,6 +212,11 @@ Cores and apps still connect.
   also add the serial drop-in that rotor and serial CAT need on the Core; the
   `.deb` packages do not ship it. See the Core install guide.
 - Building the PulseAudio engine from source on Linux needs `libpulse-dev`.
+- The Rock installer adds a drop-in so that logging in no longer costs the
+  Core its real-time priority on the Rock's kernel. Restart the Rock once
+  after installing.
+- On Windows the Core can lock its signal-processing buffers in memory; before,
+  Windows refused the lock and logged a warning for every FFT buffer.
 
 ### Settings, support and spotting
 
@@ -340,6 +348,18 @@ Advanced, and each control appears on one page only.
   pages, device lists, rotor page, VAX cable picker, Spot List and FreeDV
   station table no longer crash the window when their rows change.
 - NereusSDR builds against OpenSSL 4.
+- A window reaches its Core through the remote access service again. The
+  window left the service as soon as its end of the connection opened, and
+  the Core then closed the connection before its own end opened, ending in
+  "The Core could not be reached from here."
+- On Windows the background Core started at sign-in or at window close runs
+  at normal priority, as one started from its shortcut does. Before, Windows
+  ran it below normal, with low disk and memory priority.
+- On Windows, quitting no longer hangs while the last settings save finishes.
+- Closing a remote window while it is connected to a Core no longer reads
+  freed memory, which could crash it on exit.
+- On Windows the warning signs on the PureSignal and DSP Options pages are
+  drawn as text instead of color emoji.
 
 ## [2026.10.0] - 2026-10-05
 
