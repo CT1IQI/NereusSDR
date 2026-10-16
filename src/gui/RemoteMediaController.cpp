@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: stopping the microphone collector no longer waits on its
+//               thread's priority request; the log says when it was let go
+//               still waiting. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -3171,10 +3175,14 @@ void RemoteMediaController::stopMicCollector()
     }
     const bool wasRunning = d->micCollector->isRunning();
     const bool realtime = d->micCollector->realtimePriorityHeld();
-    // Joins the thread and discards what it queued: nothing collected under
-    // this lease follows into the next.
-    d->micCollector->stop();
-    if (wasRunning) {
+    // Joins the thread, or lets go of one still waiting on its priority
+    // request, and discards what it queued: nothing collected under this
+    // lease follows into the next.
+    const MicUplinkCollector::StopOutcome stopped = d->micCollector->stop();
+    if (stopped == MicUplinkCollector::StopOutcome::LeftWaitingOnPriority) {
+        qCInfo(lcRemoteMedia) << "Microphone collector thread stopped while it still waited on"
+                              << "the system for real-time priority; it ends on its own";
+    } else if (wasRunning) {
         qCInfo(lcRemoteMedia) << "Microphone collector thread stopped"
                               << (realtime ? "(it ran at real-time audio priority)"
                                            : "(the system gave it no real-time priority)");

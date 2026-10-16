@@ -13,8 +13,14 @@
 // Modification history (NereusSDR):
 //   2026-10-10: created.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: stop() and the thread's priority request: a stop does not
+//               wait for it, and a thread let go meanwhile gives its
+//               priority back and never reaches the source.  J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
+#include <QScopeGuard>
+#include <QSemaphore>
 
 #include "core/audio/CaptureAudioBus.h"
 #include "core/audio/MicUplinkCollector.h"
@@ -22,6 +28,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <memory>
+#include <thread>
 #include <vector>
 
 using namespace NereusSDR;
@@ -94,6 +102,46 @@ bool isRamp(const std::vector<float>& frames, std::int64_t first)
         }
     }
     return true;
+}
+
+// How long a stop may take while the thread waits on its priority
+// request, and how long a test waits for what it expects to happen.
+constexpr int kPromptStopMs = 1000;
+constexpr int kExpectMs = 5000;
+
+// A priority request that answers only when the test says, as Core Audio's
+// does while it starts up or a voice isolation storm runs.  Shared with the
+// collector's thread, which may outlive the collector.
+struct HeldPriority {
+    QSemaphore asked;
+    QSemaphore answer;
+    QSemaphore gaveBack;
+    std::atomic<int> gaveBackCount{0};
+    std::atomic<AudioPriorityToken*> gaveBackToken{nullptr};
+    std::atomic<std::thread::id> askedOn{};
+    std::atomic<std::thread::id> gaveBackOn{};
+    int tokenStorage = 0;
+
+    // Never dereferenced: the collector only hands it back.
+    AudioPriorityToken* token() { return reinterpret_cast<AudioPriorityToken*>(&tokenStorage); }
+};
+
+MicUplinkCollector::PriorityCalls heldPriorityCalls(const std::shared_ptr<HeldPriority>& held)
+{
+    return MicUplinkCollector::PriorityCalls{
+        [held] {
+            held->askedOn.store(std::this_thread::get_id());
+            held->asked.release();
+            held->answer.acquire();
+            return held->token();
+        },
+        [held](AudioPriorityToken* token) {
+            held->gaveBackOn.store(std::this_thread::get_id());
+            held->gaveBackToken.store(token);
+            held->gaveBackCount.fetch_add(1);
+            held->gaveBack.release();
+        },
+    };
 }
 
 } // namespace
@@ -241,6 +289,88 @@ private slots:
         QVERIFY(!collector.isRunning());
         QVERIFY2(timer.elapsed() < 30'000, qPrintable(QString::number(timer.elapsed())));
         QCOMPARE(pulls.load(), 1);
+    }
+
+    // 2026-10-15: the owner (the GUI thread) does not wait while the
+    // thread's priority request is still out.
+    void stopDoesNotWaitOnThePriorityRequest()
+    {
+        const auto held = std::make_shared<HeldPriority>();
+        const auto pulls = std::make_shared<std::atomic<int>>(0);
+        MicUplinkCollector collector([pulls](float*, int) { pulls->fetch_add(1); return 0; },
+                                     1, heldPriorityCalls(held));
+        collector.start();
+        QVERIFY(held->asked.tryAcquire(1, kExpectMs));
+
+        QSemaphore stopped;
+        MicUplinkCollector::StopOutcome outcome = MicUplinkCollector::StopOutcome::NotRunning;
+        std::thread stopper([&] {
+            outcome = collector.stop();
+            stopped.release();
+        });
+        // Leave nothing blocked behind a failed check.
+        const auto unblock = qScopeGuard([&] {
+            held->answer.release(1000);
+            stopper.join();
+        });
+
+        QVERIFY(stopped.tryAcquire(1, kPromptStopMs));
+        QCOMPARE(outcome, MicUplinkCollector::StopOutcome::LeftWaitingOnPriority);
+        QVERIFY(!collector.isRunning());
+        QVERIFY(!collector.realtimePriorityHeld());
+    }
+
+    // 2026-10-15: a thread let go before its answer came gives the priority
+    // back on its own thread and never reaches the source, though the
+    // collector (and the engine the source reads) is gone by then.
+    void aThreadLetGoGivesItsPriorityBackAndNeverPulls()
+    {
+        const auto held = std::make_shared<HeldPriority>();
+        const auto pulls = std::make_shared<std::atomic<int>>(0);
+        auto collector = std::make_unique<MicUplinkCollector>(
+            [pulls](float*, int) { pulls->fetch_add(1); return 0; }, 1, heldPriorityCalls(held));
+        collector->start();
+        QVERIFY(held->asked.tryAcquire(1, kExpectMs));
+
+        QSemaphore gone;
+        std::thread destroyer([&] {
+            collector.reset();
+            gone.release();
+        });
+        const auto unblock = qScopeGuard([&] {
+            held->answer.release(1000);
+            destroyer.join();
+        });
+
+        QVERIFY(gone.tryAcquire(1, kPromptStopMs));
+        held->answer.release();
+        QVERIFY(held->gaveBack.tryAcquire(1, kExpectMs));
+        QCOMPARE(held->gaveBackCount.load(), 1);
+        QVERIFY(held->gaveBackToken.load() == held->token());
+        QVERIFY(held->gaveBackOn.load() == held->askedOn.load());
+        QCOMPARE(pulls->load(), 0);
+    }
+
+    // A stop after the answer came still joins: the source is not called
+    // after stop() returns, and the priority goes back on the thread.
+    void aStopAfterThePriorityAnswerJoins()
+    {
+        const auto held = std::make_shared<HeldPriority>();
+        held->answer.release();
+        const auto pulls = std::make_shared<std::atomic<int>>(0);
+        MicUplinkCollector collector([pulls](float*, int) { pulls->fetch_add(1); return 0; },
+                                     1, heldPriorityCalls(held));
+        collector.start();
+        QTRY_VERIFY(pulls->load() > 0);
+        QVERIFY(collector.realtimePriorityHeld());
+        QCOMPARE(collector.stop(), MicUplinkCollector::StopOutcome::Joined);
+        QCOMPARE(held->gaveBackCount.load(), 1);
+        QVERIFY(held->gaveBackToken.load() == held->token());
+        QVERIFY(held->gaveBackOn.load() == held->askedOn.load());
+        const int after = pulls->load();
+        QTest::qWait(30);
+        QCOMPARE(pulls->load(), after);
+        QCOMPARE(collector.stop(), MicUplinkCollector::StopOutcome::NotRunning);
     }
 
     // A second run starts clean, and stop discards what was queued.
