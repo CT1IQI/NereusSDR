@@ -179,8 +179,8 @@ LimitRTPRIO=99
 # src/core/platform/ThreadPlacement.h). A real-time policy is refused to a
 # systemd service anyway on a kernel with CONFIG_RT_GROUP_SCHED and the
 # cgroup v2 cpu controller (the Rock's 6.1 kernel: every such request
-# returns EPERM), and a never-sleeping real-time thread would starve its
-# core's kernel threads. With thread_placement = off nothing is moved, but
+# returns EPERM while the controller is on), and a never-sleeping real-time
+# thread would starve its core's kernel threads. With thread_placement = off nothing is moved, but
 # the same threads still get nice -10 and still do not ask for SCHED_FIFO,
 # so spectrum and networking (which skip their own nice -5 whenever nereusd
 # manages priority) never run above signal processing. LimitRTPRIO above is

@@ -207,8 +207,8 @@ report_cpu_controller() {
     echo "login managers ask for cgroup controllers: ${delegated:-none}"
     echo "cgroup controllers on as the Core starts: ${controllers:-none}"
     if [[ " $controllers " == *" cpu "* ]] && kernel_has_rt_group_sched; then
-        echo "WARNING: the cgroup CPU controller is on, so this start of the Core runs without real-time priority." >&2
-        echo "A login from before this change keeps it on until about ten seconds after it ends; the Core gets the priority at its next start after that." >&2
+        echo "WARNING: the cgroup CPU controller is on as the Core starts. While it stays on, each audio thread of the Core is refused real-time priority when it starts, as a radio or client connects." >&2
+        echo "A login from before this change keeps it on until about ten seconds after it ends, or until a reboot for a user who lingers; audio threads that start after that get the priority." >&2
     fi
 }
 # END real-time priority drop-in

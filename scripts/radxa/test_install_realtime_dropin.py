@@ -147,7 +147,8 @@ class RealtimeDropin(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("login managers ask for cgroup controllers: " + STOCK, result.stdout)
         self.assertIn("cgroup controllers on as the Core starts: " + STOCK, result.stdout)
-        self.assertIn("runs without real-time priority", result.stderr)
+        self.assertIn("is refused real-time priority when it starts", result.stderr)
+        self.assertIn("or until a reboot for a user who lingers", result.stderr)
 
     def test_report_is_quiet_when_the_cpu_controller_is_off(self):
         self.kernel_config_gz(SET)

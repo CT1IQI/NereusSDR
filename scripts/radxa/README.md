@@ -28,12 +28,14 @@ On a kernel built with `CONFIG_RT_GROUP_SCHED=y` (the Radxa vendor kernel
 the cgroup CPU controller is on, that kernel refuses real-time priority to the
 Core, and Debian's login managers (`user@.service`, `Delegate=pids memory
 cpu`) switch it on at any login and leave it on until about ten seconds after
-the last logout. The drop-in takes `cpu` out of that list for every user on
-the box, so user services there can no longer be given CPU weights or quotas.
-It applies to login managers started after it is written. The installer prints
-which controllers are on as the Core starts and warns when `cpu` still is; the
-Core then gets real-time priority from its next start made after the earlier
-logins have ended. An existing file is left as found, a kernel that does not
+the last logout (until a reboot for a user who lingers). The drop-in takes
+`cpu` out of that list for every user on the box, so user services there can
+no longer be given CPU weights or quotas. It applies to login managers started
+after it is written. The installer prints which controllers are on as the Core
+starts and warns when `cpu` still is. The Core's audio threads ask for
+real-time priority when they start, as a radio or client connects, so those
+that start after the earlier logins have ended (or after a reboot, for a user
+who lingers) get it. An existing file is left as found, a kernel that does not
 report the setting gets no file, and a failed installation removes only a file
 it added. To undo it, remove the file and run `systemctl daemon-reload`.
 
