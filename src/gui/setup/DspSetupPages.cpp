@@ -76,6 +76,11 @@
 //   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
 //               (resetItemsBeforeRowChange), so accessibility cannot read a
 //               deleted cell. AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The DSP > FM squelch readout shows Thetis's 0-100 number
+//               (console.cs:47296-47318 [v2.10.3.15]) from
+//               RxChannel::fmsqScaleValue, with no unit; the slider and its
+//               saved -160..0 value are unchanged and AM still reads dB.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - The AGC Fixed Gain spinner follows the slice when another
 //               window or the phone changes it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -276,28 +281,36 @@ static void setSliceAvailable(QWidget* w, bool available, const QString& tip = Q
     w->setToolTip(available ? tip : QStringLiteral("Connect to a radio to change this."));
 }
 
-// R-R3-21: a squelch threshold slider (dB) bound both ways to one setting of
-// the active slice; with no slice it says why it is off.
+// The AM squelch readout: the threshold in dB.
+static QString squelchDbText(int sliderValue)
+{
+    return QStringLiteral("%1 dB").arg(sliderValue);
+}
+
+// R-R3-21: a squelch threshold slider bound both ways to one setting of the
+// active slice; with no slice it says why it is off. text() turns the slider
+// value into the readout.
 static void bindSquelchThreshold(QObject* owner, RadioModel* model,
                                  DspReceiverSelection* selection, QSlider* slider,
                                  QLabel* value,
                                  double (SliceModel::*getter)() const,
                                  void (SliceModel::*setter)(double),
-                                 void (SliceModel::*changed)(double))
+                                 void (SliceModel::*changed)(double),
+                                 QString (*text)(int) = squelchDbText)
 {
     bindToActiveSlice(owner, model, selection, [=](SliceModel* slice) {
         SliceBindings conns;
         setSliceAvailable(slider, slice != nullptr);
         if (!slice) { return conns; }
-        const auto show = [slider, value](double dB) {
+        const auto show = [slider, value, text](double dB) {
             QSignalBlocker block(slider);
             slider->setValue(static_cast<int>(std::lround(dB)));
-            value->setText(QStringLiteral("%1 dB").arg(slider->value()));
+            value->setText(text(slider->value()));
         };
         show((slice->*getter)());
         conns << QObject::connect(slider, &QSlider::valueChanged, slice,
-                                  [slice, setter, value](int dB) {
-            value->setText(QStringLiteral("%1 dB").arg(dB));
+                                  [slice, setter, value, text](int dB) {
+            value->setText(text(dB));
             (slice->*setter)(static_cast<double>(dB));
         });
         conns << QObject::connect(slice, changed, slider, show);
@@ -2354,6 +2367,7 @@ AmSamSetupPage::AmSamSetupPage(RadioModel* model, QWidget* parent,
     sqThresh->setRange(ControlRanges::kAmsqThreshMinDb, ControlRanges::kAmsqThreshMaxDb);
     sqThresh->setSingleStep(ControlRanges::kAmsqThreshStepDb);
     auto* sqThreshValue = new QLabel;
+    sqThreshValue->setObjectName(QStringLiteral("amSquelchThresholdValue"));
     addLabeledSlider(sqLay, "AM Squelch Threshold", sqThresh, sqThreshValue);
     bindSquelchThreshold(this, model, receiverSelection(), sqThresh, sqThreshValue,
                          &SliceModel::amsqThresh, &SliceModel::setAmsqThresh,
@@ -2394,17 +2408,30 @@ FmSetupPage::FmSetupPage(RadioModel* model, QWidget* parent,
                                            UnbuiltFeature::FmDeviation);
 
     // R-R3-21: the active slice's FM squelch threshold (SliceModel
-    // fmsqThresh, dB; RxChannel::setFmsqThresh converts it for WDSP).
+    // fmsqThresh): the slider position, -160 to 0, which
+    // RxChannel::fmsqThresholdForWdsp maps to the WDSP threshold.
     auto* squelchThresh = new QSlider(Qt::Horizontal);
     squelchThresh->setProperty("nereusSetupId", "dsp.fm.fmsqThresh");
     squelchThresh->setObjectName(QStringLiteral("fmSquelchThresholdSlider"));
     squelchThresh->setRange(ControlRanges::kFmsqThreshMinDb, ControlRanges::kFmsqThreshMaxDb);
     squelchThresh->setSingleStep(ControlRanges::kFmsqThreshStepDb);
     auto* squelchThreshValue = new QLabel;
+    squelchThreshValue->setObjectName(QStringLiteral("fmSquelchThresholdValue"));
     addLabeledSlider(rxLay, "Squelch Threshold", squelchThresh, squelchThreshValue);
+    // The readout is Thetis's 0-100 number n, with no unit; the slider still
+    // holds -160..0.
+    // From Thetis console.cs:47296-47318 [v2.10.3.15]
+    //[2.10.3.5]MW0LGE convert to a 0-100 scale from a -160 to 0 scale [original inline comment from console.cs:47298]
+    // AM keeps the -160..0 value in dB:
+    //[2.10.3.5]MW0LGE reverted back to a -160 to 0 scale [original inline comment from console.cs:47310]
+    // VSQL (console.cs:47321-47329) also shows n; it is not on this page:
+    //[2.10.3.5]MW0LGE convert to a 0-100 scale from a -160 to 0 scale [original inline comment from console.cs:47322]
     bindSquelchThreshold(this, model, receiverSelection(), squelchThresh,
                          squelchThreshValue, &SliceModel::fmsqThresh,
-                         &SliceModel::setFmsqThresh, &SliceModel::fmsqThreshChanged);
+                         &SliceModel::setFmsqThresh, &SliceModel::fmsqThreshChanged,
+                         [](int sliderValue) {
+        return QString::number(RxChannel::fmsqScaleValue(sliderValue));
+    });
 
     // No slice setting holds these two yet; they stay as they were.
     rxDeviation->setEnabled(false);
