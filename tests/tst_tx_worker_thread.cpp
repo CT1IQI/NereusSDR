@@ -289,39 +289,6 @@ private slots:
         worker.stopPump();
     }
 
-    // ── 18. macOS: the worker runs at USER_INTERACTIVE QoS ──────────────────
-    // run() elevates its own thread with pthread_set_qos_class_self_np.
-    // Starting the QThread with a Qt priority (the old
-    // start(QThread::HighPriority)) makes Darwin refuse that with EPERM and
-    // the thread stays at QOS_CLASS_UNSPECIFIED (0x00).
-    void startPump_workerThreadRunsAtUserInteractiveQos()
-    {
-#ifdef Q_OS_MAC
-        AudioEngine engine;
-        TxChannel ch(kChannelId, kBufSize, kBufSize);
-        MockConnection conn;
-        ch.setConnection(&conn);
-        ch.setRunning(true);
-        TxMicSource src;
-        src.start();
-        TxWorkerThread worker;
-        worker.setTxChannel(&ch);
-        worker.setAudioEngine(&engine);
-        worker.setMicSource(&src);
-
-        worker.startPump();
-        std::vector<float> samples(kBufSize, 0.25f);
-        src.inbound(samples.data(), kBufSize);
-        QTRY_COMPARE_WITH_TIMEOUT(conn.callCount.load(), 1, 1000);
-        const unsigned qos = conn.callerQos.load();
-        worker.stopPump();
-
-        QCOMPARE(qos, static_cast<unsigned>(QOS_CLASS_USER_INTERACTIVE));
-#else
-        QSKIP("QoS classes exist only on macOS");
-#endif
-    }
-
     // ── 4. One inbound block → tickForTest fires exactly one fexchange0 ─────
     void tickForTest_drivesOneSendTxIq_whenBlockAvailable()
     {
@@ -1089,6 +1056,40 @@ private slots:
         QCOMPARE(warningCount.load(), 0);
 
         qInstallMessageHandler(prev);
+    }
+
+    // ── 18. macOS: the worker runs at USER_INTERACTIVE QoS ──────────────────
+    // run() elevates its own thread with pthread_set_qos_class_self_np.
+    // Starting the QThread with a Qt priority (the old
+    // start(QThread::HighPriority)) makes Darwin refuse that with EPERM and
+    // the thread stays at QOS_CLASS_UNSPECIFIED (0x00).
+    void startPump_workerThreadRunsAtUserInteractiveQos()
+    {
+#ifdef Q_OS_MAC
+        AudioEngine engine;
+        TxChannel ch(kChannelId, kBufSize, kBufSize);
+        MockConnection conn;
+        ch.setConnection(&conn);
+        ch.setRunning(true);
+        TxMicSource src;
+        src.start();
+        TxWorkerThread worker;
+        worker.setTxChannel(&ch);
+        worker.setAudioEngine(&engine);
+        worker.setMicSource(&src);
+
+        worker.startPump();
+        std::vector<float> samples(kBufSize, 0.25f);
+        src.inbound(samples.data(), kBufSize);
+        QTRY_COMPARE_WITH_TIMEOUT(conn.callCount.load(), 1, 1000);
+        // stopPump joins the worker (QThread::wait), which makes its
+        // callerQos store visible here.
+        worker.stopPump();
+
+        QCOMPARE(conn.callerQos.load(), static_cast<unsigned>(QOS_CLASS_USER_INTERACTIVE));
+#else
+        QSKIP("QoS classes exist only on macOS");
+#endif
     }
 };
 
