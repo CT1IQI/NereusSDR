@@ -2891,6 +2891,10 @@ html:not(.js) .tabs {
 .screen figcaption b { color: var(--text-strong); margin-bottom: 0.2rem; }
 .screen figcaption span { color: var(--text-2); }
 .screen--wide { max-width: 920px; margin: 1.5rem auto 0; }
+.desk-shot { margin-top: 3rem; }
+.desk-shot > a, .desk-shots .screen > a { border-radius: 8px; }
+.desk-shots { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 0 2rem; max-width: 920px; margin: 0.5rem auto 0; align-items: start; }
+.desk-shots__tall { grid-row: span 2; }
 .capture-note { color: var(--text-3); font-size: 0.8rem; text-align: center; }
 .availability { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; margin-top: 2rem; background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius); }
 .availability .tag { white-space: nowrap; flex-shrink: 0; }
@@ -2942,6 +2946,8 @@ html:not(.js) .tabs {
   .screens { grid-template-columns: minmax(0, 1fr); max-width: 290px; gap: 1rem; }
   .screen figcaption { font-size: 0.9rem; }
   .screen > a { border-radius: 7px; }
+  .desk-shots { grid-template-columns: minmax(0, 1fr); }
+  .desk-shots__tall { grid-row: auto; order: 3; max-width: 240px; margin-inline: auto; }
   .availability { align-items: flex-start; flex-direction: column; }
   .station-path { grid-template-columns: minmax(0, 1fr); }
   .station-path li + li { border-left: 0; border-top: 1px solid var(--border); }
