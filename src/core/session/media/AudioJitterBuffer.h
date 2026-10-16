@@ -162,8 +162,12 @@ public:
     /// deepened (playback then runs on demand) once something has been
     /// released, so a gap in arrivals is concealed before the matcher
     /// underflows. At the base hold, and before the first release, an
-    /// empty queue is never concealed here.
-    std::optional<Playout> concealExpectedNow(qint64 nowNs);
+    /// empty queue is never concealed here, unless arrivalsStopped: the
+    /// consumer has seen no packet for longer than the deepest hold, so no
+    /// packet can arrive in time and an underflow would only turn a short
+    /// stall into a fresh context (JJ 2026-10-16; the consumer's no-packet
+    /// bound still ends a true outage).
+    std::optional<Playout> concealExpectedNow(qint64 nowNs, bool arrivalsStopped = false);
     /// R-R3-21: eases the hold and sheds a standing excess, as takeReady()
     /// does first; for a consumer that may not reach takeReady() on a wake
     /// (the speaker's release is held back while the matcher is full).

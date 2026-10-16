@@ -207,7 +207,7 @@ public:
         m_now += 1'000'000;
         ++m_ms;
         if (linkDelivers) {
-            const qint64 sent = m_ms / packetMs() + 1;
+            const qint64 sent = sentByNow();
             const qint64 deliverable = sent - sent % m_batch;
             while (m_nextPacket < deliverable) {
                 m_receiver.submit(packet(m_nextPacket));
@@ -231,6 +231,28 @@ public:
         }
         return true;
     }
+
+    // 2026-10-16: the link held its packets back and lost them: whatever
+    // was sent and not delivered is never delivered.
+    void dropUndelivered()
+    {
+        const qint64 sent = sentByNow();
+        m_nextPacket = std::max(m_nextPacket, sent - sent % m_batch);
+    }
+    // 2026-10-16: the Core's source pauses for `ms` and then goes on where
+    // it stopped: nothing is sent meanwhile, and the next packet carries
+    // the next timestamp, so the stream comes back behind the time this
+    // computer played on. False if the worker ended.
+    bool pauseSource(qint64 ms)
+    {
+        for (qint64 i = 0; i < ms; ++i) {
+            ++m_sourcePausedMs;
+            if (!tick()) { return false; }
+        }
+        return true;
+    }
+    RemoteAudioReceiverTelemetry telemetry() const { return m_receiver.telemetry(); }
+    quint64 decodedPackets() const { return m_receiver.decodedPackets(); }
 
     // The context's counts as the app's diagnostics read them, and the
     // bus matcher's own overruns since it was built.
@@ -258,6 +280,8 @@ public:
     FakeMatcherAudioBus* device = nullptr;
 
 private:
+    // Packets the Core has sent by now, its pauses left out.
+    qint64 sentByNow() const { return (m_ms - m_sourcePausedMs) / packetMs() + 1; }
     QByteArray packet(qint64 index)
     {
         if (m_profile == RemoteAudioProfile::Lossless) {
@@ -279,6 +303,7 @@ private:
     AudioEngine m_engine;
     qint64 m_now = 1'000'000'000;
     qint64 m_ms = 0;
+    qint64 m_sourcePausedMs = 0;
     qint64 m_nextPacket = 0;
     int m_owedFrames = 0;
     bool m_opened = false;
@@ -3354,10 +3379,184 @@ private slots:
         QVERIFY2(telemetry.decodedPackets >= quint64(kPackets / 2), qPrintable(evidence));
     }
 
+    // 2026-10-16 (JJ): a link that stalls for 0.7 s keeps its context. The
+    // bench log showed a Wi-Fi, cellular or VPN link going quiet for 0.5 to
+    // 0.9 s with no loss, and each stall cost a fresh context: 1.3 to 2.4 s
+    // more silence and the jitter state thrown away. Now the receiver
+    // conceals the gap and plays on, whatever the stall did to the packets:
+    // delivered late all at once, lost, or held back at the Core, which
+    // then goes on from the timestamp it stopped at (the stream comes back
+    // behind what this computer played, and is re-anchored). The stall
+    // counts as a link interruption, as the restart it used to cause did,
+    // so the lossless link trial still sees it.
+    void shortStallKeepsTheContextAndPlaysOn_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::addColumn<QString>("stall");
+        for (bool lossless : {false, true}) {
+            for (const char* stall : {"late", "lost", "paused"}) {
+                QTest::addRow("%s, %s", lossless ? "lossless" : "Opus", stall)
+                    << lossless << QString::fromLatin1(stall);
+            }
+        }
+    }
+    void shortStallKeepsTheContextAndPlaysOn()
+    {
+        QFETCH(bool, lossless);
+        QFETCH(QString, stall);
+        constexpr qint64 kStallMs = 700;
+        constexpr qint64 kAfterMs = 3'000;
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(3'000), qPrintable(rig.faults()));
+        const RemoteAudioReceiverTelemetry before = rig.telemetry();
+        QVERIFY(before.running);
+
+        bool alive = false;
+        if (stall == QLatin1String("paused")) {
+            alive = rig.pauseSource(kStallMs);
+        } else {
+            alive = rig.run(kStallMs, false);
+            if (stall == QLatin1String("lost")) { rig.dropUndelivered(); }
+        }
+        QCoreApplication::processEvents();
+        QVERIFY2(alive && rig.restarts.isEmpty() && rig.errors.isEmpty(),
+                 qPrintable(QStringLiteral("the stall ended the context: %1").arg(rig.faults())));
+        // The gap was heard as concealment (Opus) or silence (lossless).
+        const RemoteAudioReceiverTelemetry during = rig.telemetry();
+        QVERIFY2(during.concealedPackets - before.concealedPackets
+                     >= quint64((kStallMs - 200) / rig.packetMs()),
+                 qPrintable(QString::number(during.concealedPackets - before.concealedPackets)));
+
+        QVERIFY2(rig.run(kAfterMs), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.errors.isEmpty() && rig.restarts.isEmpty(), qPrintable(rig.faults()));
+        const RemoteAudioReceiverTelemetry after = rig.telemetry();
+        QVERIFY(after.running);
+        QCOMPARE(after.generation, before.generation);
+        // The stream plays again: all but the deepest hold and a margin of
+        // the time since the link came back was decoded audio.
+        const quint64 decodedSince = after.decodedPackets - during.decodedPackets;
+        const quint64 expected = quint64(
+            (kAfterMs - AudioJitterBuffer::kMaxHoldNs / 1'000'000 - 300) / rig.packetMs());
+        QVERIFY2(decodedSince >= expected,
+                 qPrintable(QStringLiteral("%1 decoded since the stall, expected %2")
+                                .arg(decodedSince).arg(expected)));
+        QVERIFY2(after.linkInterruptions > before.linkInterruptions,
+                 qPrintable(QString::number(after.linkInterruptions)));
+        if (stall == QLatin1String("paused")) {
+            // The stream came back behind the head: re-anchored to it.
+            QVERIFY2(after.streamGapReanchors > before.streamGapReanchors,
+                     qPrintable(QString::number(after.streamGapReanchors)));
+        }
+        QCOMPARE(rig.busOverruns(), quint64(0));
+        rig.stop();
+    }
+
+    // 2026-10-16 (JJ): a stream that stays quiet past the approved 2.5 s
+    // asks for a fresh context, once, with the no-packets fault; just short
+    // of the bound it is still running.
+    void outagePastTheBoundAsksForAFreshContext_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::newRow("Opus") << false;
+        QTest::newRow("lossless") << true;
+    }
+    void outagePastTheBoundAsksForAFreshContext()
+    {
+        QFETCH(bool, lossless);
+        constexpr qint64 kRideOutMs = 2'500; // JJ, 2026-10-16
+        QCOMPARE(RemoteAudioReceiver::kNoPacketsRestartNs, kRideOutMs * 1'000'000);
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(3'000), qPrintable(rig.faults()));
+        // The last packet arrived up to one packet time before the link
+        // went quiet, so the bound can come that much sooner.
+        QVERIFY2(rig.run(kRideOutMs - rig.packetMs() - 1, false), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.restarts.isEmpty() && rig.errors.isEmpty(), qPrintable(rig.faults()));
+        QVERIFY(!rig.run(2 * rig.packetMs() + 2, false));
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.errors.count(), 0);
+        QCOMPARE(rig.restarts.count(), 1);
+        QCOMPARE(rig.restarts.first().at(1).value<RemoteAudioReceiver::Fault>(),
+                 RemoteAudioReceiver::Fault::NoPackets);
+        rig.stop();
+    }
+
+    // 2026-10-16 (JJ): on the receiver's own rate matcher, against a paced
+    // device on the wall clock: 0.7 s with no packets (those sent in it
+    // lost) is concealed, and the stream plays on in the same context.
+    void shortGapOnTheOwnRateMatcherPlaysOn()
+    {
+        constexpr quint32 kSsrc = 764;
+        constexpr int kPacketMs = 40;
+        constexpr int kBeforeMs = 1'000;
+        constexpr int kGapMs = 700;
+        constexpr int kAfterMs = 1'500;
+        OpusAudioEncoder encoder;
+        const QVector<float> pcm(3840, 0.1f);
+        AudioEngine engine;
+        engine.setVolume(1.0f);
+        auto sink = std::make_unique<PacedAudioBus>();
+        auto* bus = sink.get();
+        engine.setSpeakersBusForTest(std::move(sink));
+        RemoteAudioReceiver receiver(&engine);
+        QSignalSpy errors(&receiver, &RemoteAudioReceiver::errorOccurred);
+        QSignalSpy restarts(&receiver, &RemoteAudioReceiver::restartRequested);
+        QVERIFY(receiver.start(kSsrc, 0));
+        QVERIFY(!engine.remotePlaybackIntoMatcher());
+        using Clock = std::chrono::steady_clock;
+        const auto started = Clock::now();
+        DeviceThread device([bus, started](const DeviceThread::StopFlag& stop) {
+            quint64 callback = 1;
+            while (!stop.stopRequested()) {
+                std::this_thread::sleep_until(started + std::chrono::nanoseconds(
+                    callback * 480ull * 1'000'000'000ull / 48'000ull));
+                if (stop.stopRequested()) { break; }
+                bus->render(480);
+                ++callback;
+            }
+        });
+        const auto send = [&](int packet) {
+            std::this_thread::sleep_until(started + std::chrono::milliseconds(kPacketMs * packet));
+            const auto encoded = encoder.encode(pcm, quint16(packet), quint32(packet) * 1920u, kSsrc);
+            receiver.submit(encoded.packet);
+        };
+        for (int packet = 0; packet < kBeforeMs / kPacketMs; ++packet) { send(packet); }
+        const quint64 generation = receiver.telemetry().generation;
+        const quint64 decodedBefore = receiver.decodedPackets();
+        // The gap: the packets due in it are lost.
+        const int resume = (kBeforeMs + kGapMs) / kPacketMs;
+        for (int packet = resume; packet < resume + kAfterMs / kPacketMs; ++packet) {
+            send(packet);
+        }
+        QTest::qWait(300);
+        device.requestStop();
+        device.join();
+        QCoreApplication::processEvents();
+        const RemoteAudioReceiverTelemetry telemetry = receiver.telemetry();
+        const QString evidence = QStringLiteral("running=%1 restarts=%2 errors=%3 decoded=%4 "
+                                                "concealed=%5 reason=%6")
+            .arg(receiver.isRunning()).arg(restarts.count()).arg(errors.count())
+            .arg(telemetry.decodedPackets).arg(telemetry.concealedPackets)
+            .arg(restarts.isEmpty() ? QStringLiteral("none")
+                                    : restarts.first().first().toString());
+        QVERIFY2(receiver.isRunning() && restarts.isEmpty() && errors.isEmpty(),
+                 qPrintable(evidence));
+        QCOMPARE(telemetry.generation, generation);
+        QVERIFY2(telemetry.decodedPackets - decodedBefore >= quint64(kAfterMs / kPacketMs / 2),
+                 qPrintable(evidence));
+        QVERIFY2(telemetry.concealedPackets >= quint64((kGapMs - 200) / kPacketMs),
+                 qPrintable(evidence));
+        receiver.stop();
+    }
+
     // R-R3-21: a true outage still asks for a fresh context, once. The
-    // Core's packets stop entirely (late ones included) for 600 ms while
-    // the speaker plays on; the window asks for a new context after the
-    // 500 ms bound, with the no-packets fault.
+    // Core's packets stop entirely (late ones included) while the speaker
+    // plays on. 2026-10-16 (JJ): the bound is 2.5 s, not 500 ms: nothing
+    // is asked for 2.3 s into the outage, and the window asks for a new
+    // context, with the no-packets fault, soon after 2.5 s.
     void trueOutageAsksForOneFreshContext()
     {
         constexpr quint32 kSsrc = 763;
@@ -3391,9 +3590,15 @@ private slots:
             receiver.submit(encoded.packet);
         }
         QCOMPARE(restarts.count(), 0);
-        // 600 ms with nothing at all.
-        QTRY_VERIFY_WITH_TIMEOUT(!restarts.isEmpty() || !errors.isEmpty(), 1000);
-        QTest::qWait(600 - 500);
+        // Nothing at all: still running 2.3 s in.
+        std::this_thread::sleep_until(started
+                                      + std::chrono::milliseconds(40 * (kPackets - 1) + 2'300));
+        QCoreApplication::processEvents();
+        QVERIFY2(restarts.isEmpty() && errors.isEmpty(),
+                 qPrintable(restarts.isEmpty() ? QStringLiteral("error")
+                                               : restarts.first().first().toString()));
+        QTRY_VERIFY_WITH_TIMEOUT(!restarts.isEmpty() || !errors.isEmpty(), 1500);
+        QTest::qWait(100);
         device.requestStop();
         device.join();
         QCOMPARE(errors.count(), 0);

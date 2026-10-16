@@ -7,6 +7,9 @@
 //   2026-10-12: readyForNs(); a released packet carries its arrival
 //               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: concealExpectedNow() conceals an empty queue at the base
+//               hold once the consumer says arrivals have stopped. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/session/media/AudioJitterBuffer.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include <bit>
@@ -240,7 +243,7 @@ std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::takeReady(qint64 no
     return result;
 }
 
-std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::concealExpectedNow(qint64 nowNs)
+std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::concealExpectedNow(qint64 nowNs, bool arrivalsStopped)
 {
     // The expected packet missing: a hole (a later one queued), or an
     // empty queue while the hold is deepened and something has played. A
@@ -250,9 +253,14 @@ std::optional<AudioJitterBuffer::Playout> AudioJitterBuffer::concealExpectedNow(
     // empty queue keeps its deadline and the matcher's own accounting (a
     // device outrunning the stream is still a clock-buffer fault). A true
     // outage is still ended by the no-packet rule.
+    // JJ 2026-10-16: once arrivals have stopped for longer than the deepest
+    // hold, an empty queue is concealed on demand at any hold; the loss
+    // deadline follows each late worker wake and would fall behind the
+    // device over a stall of a second or more.
     const auto first = m_packets.begin();
-    if (first != m_packets.end() ? first->first == m_nextIndex
-                                 : (!m_nextMissingDue || m_holdNs <= kHoldNs)) {
+    if (first != m_packets.end()
+            ? first->first == m_nextIndex
+            : (!m_nextMissingDue || (m_holdNs <= kHoldNs && !arrivalsStopped))) {
         return std::nullopt;
     }
     Playout result;
