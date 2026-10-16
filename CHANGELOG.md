@@ -159,7 +159,7 @@ The workspace look is now the default.
   when its packets stop, so a held key went on and off.
 - Physical PTT from a Protocol 1 radio is read in the order the radio sent it.
 - A remote microphone on a Protocol 1 radio sees the radio's transmit queue,
-  so its latency handling works as it does on Protocol 2.
+  so its latency handling can use it.
 - On the Mac, the thread that feeds the microphone to the radio while
   transmitting now gets the high scheduling class it asks for. macOS refused
   it before, so the thread ran at the default class.
