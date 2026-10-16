@@ -14,6 +14,9 @@
 //   2026-10-15: A refused slice change from a remote window shows the Core's
 //               reason in a toast (NNR edits keep their own page message).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-15: ~MainWindow clears each member it deletes before deleting it,
 //               so callbacks fired during that teardown see no object; the
 //               station client's TransmitState had reached a freed client
@@ -706,6 +709,10 @@
 //                teardown no longer reaches this window's meter source
 //                lambdas (a use-after-free on exit). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Also detach the common power meter before RadioModel
+//                teardown, so its destroyed hook cannot republish binding
+//                support through the dying window. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
 //   2026-10-09 - Workspace preview only: the zoom bar carries
 //                kVisibleTrackProperty, so its track reads against the bar
 //                (JJ's D24). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -1017,6 +1024,7 @@ warren@wpratt.com
 #include "core/FFTRouter.h"
 #include "StyleConstants.h"
 #include "models/RadioModel.h"
+#include "models/MainPowerMeter.h"
 #include "models/StationTciModel.h"
 #include "core/session/IStationLink.h"
 #include "core/session/RemoteTransmitClient.h"
@@ -2028,11 +2036,12 @@ MainWindow::~MainWindow()
     // parked native applet safely back into this window.
     if (m_meterPoller) {
         m_meterPoller->stop();
-        // The poller lets go of the model's PA readings and status now. QObject
-        // destroys the RadioModel child before the poller, and the poller's
-        // destroyed hooks republished binding support from inside that
-        // teardown, into this window's source lambdas, which read the model's
-        // already deleted slices.
+        // The poller lets go of the model's common power meter, PA readings,
+        // and status now. QObject destroys the RadioModel child before the
+        // poller, and the poller's destroyed hooks republished binding support
+        // from inside that teardown, into this window's source lambdas, which
+        // read the model's already deleted slices.
+        m_meterPoller->setMainPowerMeter(nullptr);
         m_meterPoller->setPaReadingsModel(nullptr);
         m_meterPoller->setRadioStatus(nullptr);
     }
@@ -8019,7 +8028,9 @@ void MainWindow::buildUI()
         if (m_meterPoller) { m_meterPoller->rescalePowerMeters(maxW); }
         for (ContainerWidget* c : m_containerManager->allContainers()) {
             for (MeterWidget* mw : c->findChildren<MeterWidget*>()) {
-                mw->rescalePowerMeters(maxW);
+                const MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+                if (meter->onAmplifier()) { mw->rescalePowerMeters(meter->visualLimitW(), meter->scaleTopW()); }
+                else { mw->rescalePowerMeters(maxW); }
             }
         }
     };
@@ -10055,68 +10066,21 @@ void MainWindow::populateDefaultMeter()
         });
     }
 
-    // Task 43 (Phase 3P-II): PGXL-aware power scale + TX meter feed.
-    //
-    // Four permanent connects (RadioModel persists across radio connects):
-    //
-    // 1. ampMetersChanged: when PGXL is OPERATE, forward the amp's
-    //    forward-power/SWR readings to the SMeterWidget TX display.
-    //    RadioModel::ampMetersChanged is fired by PgxlConnection on each
-    //    statusUpdated containing "peakfwd" and "swr" keys.
-    //
-    // 2. RadioStatus::powerChanged: when PGXL is absent or STANDBY, use the
-    //    radio's own PA telemetry (barefoot or Aurora) for the TX display.
-    //    fwd is forward power in watts; the third argument (swr) is used.
-    //
-    // 3. amplifierChanged: snap the power scale to 2 kW on PGXL connect.
-    //
-    // 4. ampStateChanged: re-evaluate scale whenever OPERATE/STANDBY toggles.
-    //    When returning to STANDBY (amp present but not OPERATE), the scale
-    //    reverts to barefoot by passing hasAmplifier()=false to setPowerScale.
+    // One mirrored source selects main power in local and remote windows.
+    // Bench history: connect alone formerly selected 2 kW; radio readings
+    // could overwrite the slower RF-Kit sample; STANDBY from either vendor
+    // could also mask the other. MainPowerMeter resolves all three cases.
     if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
-        // Connect 1: PGXL amp meters (OPERATE path).
-        connect(m_radioModel, &RadioModel::ampMetersChanged, this,
-                [this, sm](float fwd, float swr) {
-            if (m_radioModel->hasAmplifier() && m_radioModel->ampOperate()) {
-                sm->setTxMeters(fwd, swr);
-            }
-        });
-
-        // Connect 2: radio barefoot/Aurora TX meters (STANDBY or no amp).
-        // RadioStatus::powerChanged carries (fwdWatts, revWatts, swr); we
-        // take fwdWatts (arg 1) and swr (arg 3) to match setTxMeters() signature.
-        //
-        // 2026-05-25 KG4VCF bench fix: gate on isAnyExternalAmpInOperate
-        // (cross-vendor) instead of just PGXL state.  RadioStatus::powerChanged
-        // fires much faster than RF-Kit's 1 Hz REST poll, so when RF-Kit
-        // (without PGXL) is in OPERATE, the radio's barefoot reading was
-        // overwriting the RF-Kit amp reading at ~20 Hz.  Now barefoot only
-        // feeds when no external amp is amplifying.
-        connect(&m_radioModel->radioStatus(), &RadioStatus::powerChanged,
-                this, [this, sm](double fwd, double /*rev*/, double swr) {
-            if (!m_radioModel->isAnyExternalAmpInOperate()) {
-                sm->setTxMeters(static_cast<float>(fwd), static_cast<float>(swr));
-            }
-        });
-
-        // Connect 3: PGXL connect event snaps scale to 2 kW.
-        connect(m_radioModel, &RadioModel::amplifierChanged, this,
-                [sm](bool present) {
-            sm->setPowerScale(/*maxWatts=*/0, present);
-        });
-
-        // Connect 4: OPERATE/STANDBY state change re-evaluates scale.
-        // When STANDBY: hasAmplifier()=true but we want barefoot scale,
-        // so pass false (treat as absent) until OPERATE resumes.
-        //
-        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
-        // PGXL going STANDBY does not flip the SMeterWidget back to
-        // barefoot scale if RF-Kit is still amplifying (and vice versa).
-        connect(m_radioModel, &RadioModel::ampStateChanged, this,
-                [this, sm]() {
-            sm->setPowerScale(/*maxWatts=*/0,
-                              m_radioModel->isAnyExternalAmpInOperate());
-        });
+        MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+        const auto setScale = [sm, meter] { sm->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
+        const auto setReading = [sm, meter] {
+            sm->setTxMeters(static_cast<float>(meter->forwardW()),
+                            static_cast<float>(meter->swr()));
+        };
+        connect(meter, &MainPowerMeter::scaleChanged, sm, setScale);
+        connect(meter, &MainPowerMeter::readingChanged, sm, setReading);
+        setScale();
+        setReading();
 
         // Connect 5: 2026-05-20 bench fix -- SMeterWidget::setTransmitting
         // was implemented but never wired. m_transmitting stayed false so
@@ -10131,55 +10095,6 @@ void MainWindow::populateDefaultMeter()
             connect(mox, &MoxController::moxStateChanged,
                     sm, &SMeterWidget::setTransmitting);
         }
-    }
-
-    // Phase 3P-III review fix C1: wire the production SMeterWidget to the
-    // cross-vendor RF-Kit aggregate signals.
-    //
-    // The displayed SMeterWidget is constructed via the QWidget-only ctor in
-    // AppletPanelWidget, so the SMeterWidget(RadioModel*, QWidget*) overload +
-    // connectToRadioModel() added in Task 13 are dead code in production.
-    // externalAmpOperateChanged and externalAmpFwdSwrUpdated fire correctly
-    // from RadioModel but the displayed widget never subscribed, leaving the
-    // 2 kW scale switch silent on RF-Kit OPERATE and the TX needle frozen.
-    //
-    // Wire here, immediately after the analogous PGXL SMeterWidget block,
-    // so all SMeterWidget signal connections live in one place. PGXL paths
-    // (Connect 1..5 above) remain unchanged; these two add RF-Kit on top.
-    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
-        // RF-Kit Connect A: snap 2 kW scale on RF-Kit OPERATE.
-        // externalAmpOperateChanged is now transition-gated (fix I2) so this
-        // fires only when the amp enters or leaves OPERATE, not every poll.
-        //
-        // 2026-05-25 KG4VCF bench fix: use the cross-vendor predicate so
-        // RF-Kit going STANDBY does not flip back to barefoot scale if
-        // PGXL is still amplifying.
-        connect(m_radioModel, &RadioModel::externalAmpOperateChanged, this,
-                [this, sm](bool /*inOp*/) {
-            sm->setPowerScale(/*maxWatts=*/0,
-                              m_radioModel->isAnyExternalAmpInOperate());
-        });
-
-        // RF-Kit Connect B: feed RF-Kit forward power + SWR to the TX needle.
-        // externalAmpFwdSwrUpdated carries watts (int) and SWR (float);
-        // setTxMeters takes (float fwdPower, float swr).
-        //
-        // 2026-05-25 KG4VCF bench fix: gate so a STANDBY amp doesn't push
-        // 0 W into the needle while the radio's barefoot reading is also
-        // wanting the meter.  Only fire when the amp is actually amplifying.
-        //
-        // The gate is RF-Kit's own OPERATE state, not the cross-vendor
-        // isAnyExternalAmpInOperate(): this signal carries RF-Kit telemetry
-        // exclusively, so the cross-vendor form let a PGXL in OPERATE pass
-        // RF-Kit /power polls through from an RF2K-S sitting in STANDBY,
-        // clobbering the live PGXL reading with RF-Kit's 0 W once per poll.
-        // Codex review, PR #291.
-        connect(m_radioModel, &RadioModel::externalAmpFwdSwrUpdated, this,
-                [this, sm](int fwd, float swr) {
-            if (m_radioModel->isRfKitInOperate()) {
-                sm->setTxMeters(static_cast<float>(fwd), swr);
-            }
-        });
     }
 
     // Connect 5: Phase 3P-II Phase 4 Task 97 -- PGXL power cap soft-alert.
@@ -10491,38 +10406,15 @@ void MainWindow::populateDefaultMeter()
     m_rotorApplet = new RotorApplet(m_radioModel, nullptr);
     panel->addApplet(m_rotorApplet);
 
-    // 2026-05-20 bench fix: rescale TunerApplet's fwd-power bar when
-    // PGXL comes into the chain. TunerApplet defaults to 0-200 W
-    // (barefoot) which pegs out the moment PGXL pushes its amplified
-    // ~450-2000 W through the tuner. Mirror the same amplifierChanged
-    // + ampStateChanged wires we use for the SMeterWidget above.
+    // The tuner's scale follows actual OPERATE state from either amplifier,
+    // including the Core's mirrored devices in a remote window.
     if (m_tunerApplet) {
-        // Initial scale: match current PGXL state at construction time.
-        const bool amplifyingNow =
-            m_radioModel->hasAmplifier() && m_radioModel->ampOperate();
-        m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifyingNow);
-
-        // PGXL connect/disconnect snaps the scale to 2 kW or back to
-        // barefoot. maxWatts=0 means "use the standard barefoot/PGXL
-        // range from TunerApplet::setPowerScale defaults".
-        connect(m_radioModel, &RadioModel::amplifierChanged, this,
-                [this](bool present) {
-            if (m_tunerApplet) {
-                m_tunerApplet->setPowerScale(/*maxWatts=*/0, present);
-            }
-        });
-
-        // OPERATE/STANDBY edges re-evaluate scale. STANDBY -> barefoot
-        // until OPERATE resumes (pass amplifying=false to drop the
-        // 2 kW scale back to 200 W).
-        connect(m_radioModel, &RadioModel::ampStateChanged, this,
-                [this]() {
-            if (m_tunerApplet) {
-                const bool amplifying = m_radioModel->hasAmplifier()
-                                        && m_radioModel->ampOperate();
-                m_tunerApplet->setPowerScale(/*maxWatts=*/0, amplifying);
-            }
-        });
+        MainPowerMeter* meter = m_radioModel->mainPowerMeter();
+        const auto setScale = [this, meter] {
+            if (m_tunerApplet) { m_tunerApplet->setPowerScale(0, meter->onAmplifier()); }
+        };
+        connect(meter, &MainPowerMeter::sourceChanged, m_tunerApplet, setScale);
+        setScale();
     }
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
@@ -10916,6 +10808,7 @@ void MainWindow::populateDefaultMeter()
         registry->setAvailable(type, m_appletVis->isAvailable(id));
         registry->attachSingleton(type, m_appletsById.value(id));
     }
+    m_meterPoller->setMainPowerMeter(m_radioModel->mainPowerMeter());
     if (WorkspacePreview::enabled()) {
         // Workspace preview only: the ported Longpath instruments as
         // per-instance container content.

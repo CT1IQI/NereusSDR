@@ -541,6 +541,9 @@
 //   2026-10-13: Route PS two-tone through the transmit keepalive tracker,
 //               preserving PS wire/result phases. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
+//   2026-10-12: a held change is logged as a confirmation request rather
+//               than a refusal. J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -7856,11 +7859,24 @@ void StationClient::handleCommandResult(const SessionMessage& message)
         handleSettingsHygieneResult(message);
         return;
     }
+    // iPhone app plan Task 78 (the several-devices design, section 7.3): a
+    // change held for a question is answered "Waiting for you to confirm."
+    // with `phase` `needsConfirmation`; the question follows. It is not a
+    // refusal to show, so it takes none of the refusal routes below.
+    bool awaiting = false;
+    for (const MirrorUpdate& value : message.updates) {
+        if (value.name == "phase"
+            && value.value.toString() == QStringLiteral("needsConfirmation")) {
+            awaiting = !message.accepted;
+        }
+    }
     // R-R3-21: the app shows a refusal in user words (OperatorReasonText),
     // so the Core's own text is kept here, each time, as it arrived.
+    // A change held for confirmation is logged as a question, not a refusal.
     if (!message.accepted) {
         qCInfo(lcStationClient).noquote()
-            << "Station refused" << QString::fromUtf8(message.commandVerb)
+            << (awaiting ? "Station asks before" : "Station refused")
+            << QString::fromUtf8(message.commandVerb)
             << "command" << message.commandId << ":" << message.reason;
     }
     // Desktop remote transmit: the transmit verbs' answers (every copy's)
@@ -7878,17 +7894,6 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             onPathTicket(message);
         }
         return;
-    }
-    // iPhone app plan Task 78 (the several-devices design, section 7.3): a
-    // change held for a question is answered "Waiting for you to confirm."
-    // with `phase` `needsConfirmation`; the question follows. It is not a
-    // refusal to show, so it takes none of the refusal routes below.
-    bool awaiting = false;
-    for (const MirrorUpdate& value : message.updates) {
-        if (value.name == "phase"
-            && value.value.toString() == QStringLiteral("needsConfirmation")) {
-            awaiting = !message.accepted;
-        }
     }
     // Slice control plan Task 5: the four slice access verbs are answered
     // where the window's several-devices refusals are shown; Task 14b adds

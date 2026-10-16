@@ -74,6 +74,29 @@ Advanced, and each control appears on one page only.
 - Digital modes holds VAX and TCI.
 - Every page opens at the top. Your saved audio settings carry over unchanged.
 
+### Tuner and amplifier meters while transmitting
+
+- The Tuner Genius XL and Power Genius XL meters follow the signal while you
+  transmit or tune: NereusSDR asks the tuner for its readings about 16 times a
+  second and the amplifier 10 times a second while keyed, and for two seconds
+  after. In receive the tuner's readings now update four times a second; it
+  was once a second.
+- The Tuner Genius XL, Power Genius XL and RF2K-S panels show forward power as
+  one large bar with its scale, a legal-limit marker and a mark that holds the
+  peak. Reflected power, SWR and temperature are slim rows under it, each with
+  its number on the row (whole watts and whole degrees).
+- Forward power, reflected power and SWR show dashes when no power is passing,
+  where they used to read 0 W and 1.00. Forward power turns red past the
+  1500 W legal display marker; SWR and temperature turn red past 2.5 and
+  80 °C. Reflected power has no limit marker. The RF2K-S line under the
+  meters now shows only volts and amps.
+- Main power meters use a connected amplifier in OPERATE, with Power Genius
+  XL taking precedence over RF2K-S. They show its forward power and SWR on
+  a 0 to 2000 W display; standby or disconnection restores the radio's
+  readings and scale. The transmit row also shows the radio's DRIVE power.
+  The 1500 W marker is visual only, and reported readings such as 2300 W
+  remain complete. It does not change drive, keying or output controls.
+
 ### Tuner Genius XL firmware 1.2.44
 
 - A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a

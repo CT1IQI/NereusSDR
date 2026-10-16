@@ -59,6 +59,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-07 - Footer fit (resizeEvent, fullHeight, fitFooter): the
@@ -67,13 +70,26 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Adds hasSecondValue() and clearSecondValue().
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - A reading of the caller's own (setReading, setValue,
+//                 value), the size of the compact form's number
+//                 (setCompactValuePx), a small second reading after the
+//                 compact form's name (setCompactNote) and the footer
+//                 without its peak and limit text (setFooterDetailVisible),
+//                 for the tuner and amplifier panels.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
 
 #include "gui/instruments/PeakHold.h"
+// NereusSDR: the instrument holds a ReadingDescriptor of its own, see
+// setReading().
+#include "gui/instruments/ReadingSource.h"
 
+#include <QString>
 #include <QWidget>
+
+#include <optional>
 
 namespace NereusSDR {
 
@@ -97,6 +113,28 @@ public:
     int  secondary() const { return m_secondary; }
 
     void onReading(int bindingId, double value);
+
+    // NereusSDR: a reading of the caller's own, in place of one from the
+    // meter binding table (setPrimary): the scale, limit and text rules
+    // in `d`, and `name` where a bound reading shows its Thetis name. A
+    // panel that owns its numbers (the tuner and amplifier panels) feeds
+    // them with setValue(). A value already shown stays, so a change of
+    // scale does not blank the row; the held peak stays with it.
+    // setPrimary() goes back to the binding table.
+    void setReading(const ReadingDescriptor& d, const QString& name);
+    // Override a bound primary scale without changing its binding or value.
+    void setPrimaryScale(const ReadingDescriptor& d);
+    bool hasOwnReading() const { return m_ownReading.has_value(); }
+    // NereusSDR: the primary reading as shown, the caller's own or the
+    // bound one; nullptr when there is neither.
+    const ReadingDescriptor* reading() const { return primaryReading(); }
+    // NereusSDR: the name the primary reading is shown under.
+    QString readingName() const;
+    // NereusSDR: the primary reading's value, as onReading() sets it for
+    // a bound reading. value() is the last one set; hasValue() says
+    // whether it is shown or the instrument is in its no-reading state.
+    void setValue(double value);
+    double value() const { return m_value; }
 
     /// Zurück in den Zustand „keine Messung". Siehe
     /// NeedleInstrument::clearValue — dieselbe Regel, damit beide
@@ -156,6 +194,25 @@ public:
     void setCompact(bool on);
     bool isCompact() const { return m_compact; }
 
+    // NereusSDR: the pixel size of the number in the compact form. 0
+    // keeps the look's own size (Style::kFontCaption).
+    void setCompactValuePx(int px);
+    int  compactValuePx() const { return m_compactValuePx; }
+
+    // NereusSDR: a small second reading after the compact form's name: a
+    // hairline, `label` a size down from the name and `number` in the dim
+    // reading color. Both empty takes it away. The full form does not
+    // draw it.
+    void setCompactNote(const QString& label, const QString& number);
+    QString compactNoteLabel() const { return m_noteLabel; }
+    QString compactNoteNumber() const { return m_noteNumber; }
+
+    // NereusSDR: false leaves the footer's middle text ("PK ... LIM ...")
+    // empty, for a width where it does not fit beside the number. The
+    // marks on the bar still show the peak and the limit.
+    void setFooterDetailVisible(bool on);
+    bool footerDetailVisible() const { return m_footerDetail; }
+
     PeakHold&       peakHold()       { return m_peak; }
     const PeakHold& peakHold() const { return m_peak; }
     void resetPeak() { m_peak.reset(m_value); update(); }
@@ -187,6 +244,12 @@ protected:
 
 private:
     void refreshFooter();
+    // NereusSDR: the primary reading, the caller's own (setReading) or
+    // the one the binding table has for m_primary; and the name a reading
+    // is shown under, the caller's for its own reading and the Thetis
+    // name for any other.
+    const ReadingDescriptor* primaryReading() const;
+    QString nameOf(const ReadingDescriptor& d) const;
     // NereusSDR: the height the trough, scale numbers and footer need
     // together, and the footer shown only when that height is there.
     int fullHeight() const;
@@ -204,6 +267,14 @@ private:
     bool m_segmented{false};
     bool m_tube{false};
     bool m_compact{false};
+    // NereusSDR: see setReading(), setCompactValuePx(), setCompactNote()
+    // and setFooterDetailVisible().
+    std::optional<ReadingDescriptor> m_ownReading;
+    QString m_ownName;
+    int     m_compactValuePx{0};
+    QString m_noteLabel;
+    QString m_noteNumber;
+    bool    m_footerDetail{true};
     PeakHold m_peak;
 
     /// Ohne gültige Messung: kein Verlauf, keine Glut, keine Wertkante,

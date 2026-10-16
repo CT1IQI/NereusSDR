@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // 2026-10-15 - A held per-band value gives way to a newer write of its key
 //              from outside (a remote window through the settings proxy).
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -933,6 +936,7 @@ class StationCatModel;
 class CatControl;
 class SliceOwnership;
 class RfKitBandFollow;
+class MainPowerMeter;
 class AmplifierModel;
 class RfKitModel;
 class AccessoryDataModel;
@@ -3792,6 +3796,7 @@ public:
     // the Core mirrors them (`amplifier`, `rfkit`). Non-null from
     // construction. A Local model binds them to its own connections; a
     // Remote model's hold the Core's values only.
+    MainPowerMeter* mainPowerMeter() const { return m_mainPowerMeter; }
     AmplifierModel* amplifierModel() const { return m_amplifierModel; }
     RfKitModel*     rfKitModel()     const { return m_rfKitModel; }
     // R-R3-48: the Core's station TCI server as the `stationTci` object.
@@ -8779,6 +8784,7 @@ private:
     QHash<QString, StationLanScan> m_stationLanScans;
     StationPgxlController* m_stationPgxl{nullptr};
     TunerModel*     m_tunerModel{nullptr};
+    MainPowerMeter* m_mainPowerMeter{nullptr};
     AmplifierModel* m_amplifierModel{nullptr};
     RfKitModel*     m_rfKitModel{nullptr};
     // R-R3-47 / R-R3-48: the Core's RF-Kit controller, station TCI server
