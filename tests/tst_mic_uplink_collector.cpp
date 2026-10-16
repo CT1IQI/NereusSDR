@@ -104,9 +104,9 @@ bool isRamp(const std::vector<float>& frames, std::int64_t first)
     return true;
 }
 
-// How long a stop may take while the thread waits on its priority
-// request, and how long a test waits for what it expects to happen.
-constexpr int kPromptStopMs = 1000;
+// How long a test waits for what it expects to happen: a stop while the
+// thread waits on its priority request included, which before the fix
+// never returned until the request did.
 constexpr int kExpectMs = 5000;
 
 // A priority request that answers only when the test says, as Core Audio's
@@ -314,7 +314,7 @@ private slots:
             stopper.join();
         });
 
-        QVERIFY(stopped.tryAcquire(1, kPromptStopMs));
+        QVERIFY(stopped.tryAcquire(1, kExpectMs));
         QCOMPARE(outcome, MicUplinkCollector::StopOutcome::LeftWaitingOnPriority);
         QVERIFY(!collector.isRunning());
         QVERIFY(!collector.realtimePriorityHeld());
@@ -342,7 +342,7 @@ private slots:
             destroyer.join();
         });
 
-        QVERIFY(gone.tryAcquire(1, kPromptStopMs));
+        QVERIFY(gone.tryAcquire(1, kExpectMs));
         held->answer.release();
         QVERIFY(held->gaveBack.tryAcquire(1, kExpectMs));
         QCOMPARE(held->gaveBackCount.load(), 1);

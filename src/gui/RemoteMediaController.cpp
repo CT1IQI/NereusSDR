@@ -2,8 +2,10 @@
 // Modification history (NereusSDR):
 //   2026-10-15: stopping the microphone collector no longer waits on its
 //               thread's priority request; the log says when it was let go
-//               still waiting. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               still waiting. The collector comments now say its thread
+//               never calls the source once stop() returns, rather than
+//               that it is always joined. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-12: Project mirrored CTUN pins after delayed command deltas,
 //               without another request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-12: TX mini identity follows the Core's versioned txState or
@@ -1659,8 +1661,10 @@ struct RemoteMediaController::Private {
     // 2026-10-10: the microphone's collector: its real-time thread pulls
     // the microphone (AudioEngine::pullTxMic, whose one caller it is)
     // while micLease is held, and the pump drains its queue. Made for
-    // micCollectorEngine on the first lease; stopped (joined) before the
-    // lease is released and before that engine goes.
+    // micCollectorEngine on the first lease; stopped before the lease is
+    // released and before that engine goes. Once stop() returns its thread
+    // never calls the source: it is joined, or let go while still waiting
+    // on its priority request.
     std::unique_ptr<MicUplinkCollector> micCollector;
     AudioEngine* micCollectorEngine = nullptr;
     // What the collector had dropped when the line last started or
@@ -2028,8 +2032,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     d->micEncoder = std::make_unique<RemoteMicEncoder>();
     resetMicrophoneQuality();
     // 2026-10-10: the collector's thread reads the model's audio engine;
-    // it is joined before the model deletes that engine (a child of the
-    // model, deleted after this signal).
+    // it is stopped before the model deletes that engine (a child of the
+    // model, deleted after this signal), and once stopped never calls it.
     if (model) {
         connect(model, &QObject::destroyed, this, [this] {
             stopMicCollector();
