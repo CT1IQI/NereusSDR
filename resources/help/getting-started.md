@@ -10,8 +10,14 @@ NereusSDR is under active development. This guide will be updated as features ar
 ## Connecting to Your Radio
 
 1. Launch NereusSDR
-2. Go to Radio > Discover to find radios on your network
-3. Select your radio and click Connect
+2. Open **Radio > Connections…** (in some windows, **Radio > Manage Radios…**)
+   and find your radio under the radios on your network. Press **Scan** if it
+   is not listed yet.
+3. Select your radio and press **Connect**. The Connections picker closes once the radio
+   connects; if it stays open, read the reason it shows.
+
+The [user guide](https://nereussdr.com/manual/) covers connecting through a
+Core, the phone app and everything after the first connection.
 
 ## Supported Radios
 

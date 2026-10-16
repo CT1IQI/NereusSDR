@@ -155,6 +155,11 @@ The workspace look is now the default.
   packets back for long stretches while keyed; a Hermes Lite 2 drops PTT
   when its packets stop, so a held key went on and off.
 - Physical PTT from a Protocol 1 radio is read in the order the radio sent it.
+- Saved TX profiles show in the TX and Phone/CW pickers at startup, instead of
+  leaving them empty until a profile is chosen again.
+- While transmitting, an edit to the RX1 S-ATT readout (which shows the
+  attenuation on TX then) changes the TX attenuation and leaves the receive
+  value for when you unkey.
 
 ### Receivers and radios
 
@@ -215,6 +220,8 @@ Cores and apps still connect.
 - A window no longer freezes for hours while it redials through the
   rendezvous route.
 - USB audio inputs named "Line" are no longer offered as virtual cables.
+- The Connections picker closes once the radio you chose there connects, or
+  the Core you chose signs you in. A pending or failed attempt keeps it open.
 - Settings are saved when the computer logs off or shuts down, not only on a
   normal close.
 - Network Diagnostics names the sound system the way the Audio pages do
