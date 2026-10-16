@@ -9,6 +9,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-15 - catchUpTransmitCut does not stop a second time when all that
+//              is left is a release already under way. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude Code.
+// 2026-10-15 - The transmit cut line (transmitCutLine) a thread other than
+//              main cuts through, kept on the current connection and TX
+//              channel, and catchUpTransmitCut for the main thread after
+//              it. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-15 - A held per-band value gives way to a newer write of its key
 //              from outside (a remote window through the settings proxy).
 //              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -18,6 +25,10 @@
 //                length (setTgxlRfSettleMsForTest) and an observer called
 //                when it fires (setTgxlSettleFiredObserverForTest). Release
 //                behavior unchanged. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-14 - remarkActiveSlicesForOwnership: one slice marked active
+//                per device after every ownership change (ruling 5.10).
+//                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
@@ -768,6 +779,7 @@
 #include "core/safety/TxInhibitMonitor.h"
 #include "core/safety/BandPlanGuard.h"
 #include "core/safety/TxTimeOutTimer.h"
+#include "core/safety/TransmitCutLine.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -4901,6 +4913,7 @@ public:
     void wireReceiverManagerHardwarePushesForTest() { wireReceiverManagerHardwarePushes(); }
     void injectConnectionForTest(RadioConnection* conn) {
         m_connection = conn;
+        syncTransmitCutTargets();
         setConnectionState(conn != nullptr ? ConnectionState::Connected
                                             : ConnectionState::Disconnected);
     }
@@ -5222,7 +5235,11 @@ public:
     // Production code never calls this — m_txChannel is wired by the
     // WDSP-init lambda inside connectToRadio() (see "createTxChannel(kTxChannelId)"
     // around RadioModel.cpp:1514).
-    void injectTxChannelForTest(class TxChannel* ch) { m_txChannel = ch; }
+    void injectTxChannelForTest(class TxChannel* ch)
+    {
+        m_txChannel = ch;
+        syncTransmitCutTargets();
+    }
     void bindTxEqProfileChannelForTest(TxChannel* ch) { bindTxEqProfileChannel(ch); }
     void bindCfcProfileChannelForTest(TxChannel* ch) { bindCfcProfileChannel(ch); }
     void replayCfcProfileForTest() { replayCfcProfile(); }
@@ -5473,6 +5490,19 @@ public slots:
     // nothing. A held PTT then does not key again until it is released
     // (MoxController::latchStopAllTx).
     void stopAllTx(const QString& message = QString());
+
+    // The transmit cut (2026-10-15). transmitCutLine() is the line a thread
+    // other than main (RemoteTxCutGuard) cuts through: it closes the TX
+    // channel's RF gate and sets the connection's cut latch
+    // (RadioConnection::cutTransmit), and its targets always follow this
+    // model's connection and TX channel. catchUpTransmitCut(stopText) runs
+    // on the main thread once it is free again: stopAllTx(stopText) (which
+    // does nothing when nothing is keyed, and is skipped when all that is
+    // left is a release already under way, an earlier stop's), then
+    // clearTransmitCut posted to the connection, queued behind the MOX off
+    // stopAllTx posted, so the next key keys normally.
+    std::shared_ptr<TransmitCutLine> transmitCutLine() const { return m_transmitCutLine; }
+    void catchUpTransmitCut(const QString& stopText);
 
 public:
     // ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ──
@@ -7476,6 +7506,13 @@ private:
     /// the active-slice signals when it moves). Local only.
     void applyActiveSlices();
 
+    /// Ruling 5.10: reruns applyActiveSlices when SliceOwnership changes a
+    /// device's active slice (adoptUnowned at admission among others), so
+    /// each device sees exactly one slice marked active. Skipped inside
+    /// addSliceImpl and removeSliceImpl, which end with their own call;
+    /// a change that arrives while it runs makes it run once more.
+    void remarkActiveSlicesForOwnership();
+
     /// The operator's reason for a refused add at the slice cap:
     /// "<radio> supports a maximum of <cap> slices" ("1 slice" for one), or,
     /// before a radio has sized the stream pool, "The Core supports a
@@ -7556,6 +7593,13 @@ private:
     // Connection (owned, lives on m_connThread)
     RadioConnection* m_connection{nullptr};
     QThread*         m_connThread{nullptr};
+
+    // The transmit cut line (2026-10-15): shared with RemoteTxCutGuard,
+    // which may outlive this model. Its targets are set wherever
+    // m_connection or m_txChannel is set, injected or cleared, before either
+    // object can be destroyed (syncTransmitCutTargets).
+    std::shared_ptr<TransmitCutLine> m_transmitCutLine{std::make_shared<TransmitCutLine>()};
+    void syncTransmitCutTargets() { m_transmitCutLine->setTargets(m_connection, m_txChannel); }
 
     // I/Q DSP worker (owned, lives on m_dspThread). Fed by a queued
     // connection from ReceiverManager::iqDataForReceiverStamped (R-R3-40).
@@ -7847,6 +7891,13 @@ private:
     // iPhone app Task 73 (ruling 5.11): the frequency the FreeDV Reporter
     // lists, the station-level active slice's; published when connected.
     quint64 m_freedvWantedHz{0};
+    // Ruling 5.10 (remarkActiveSlicesForOwnership): how many add or remove
+    // sequences are open, which re-mark the slices themselves at their end;
+    // whether a re-mark is running; and whether another change came in
+    // while it ran.
+    int m_activeSliceSequences{0};
+    bool m_remarkingActiveSlices{false};
+    bool m_remarkActiveSlicesAgain{false};
 
     // View hooks (non-owning, set by MainWindow). Phase 3G-8 + 3G-9c +
     // 3M-5d (m_txAnalyzer).

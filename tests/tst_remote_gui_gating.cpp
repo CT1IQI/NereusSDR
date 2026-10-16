@@ -2481,12 +2481,15 @@ private slots:
             }
             }
         }
-        // R-R3-49: six This Computer leaves (UI Scale & Theme, Navigation,
-        // Skins, Collapsible Display, MIDI Control, Shortcuts) and seven Core
-        // leaves (Serial Ports, TCP/IP CAT, CAT Options, CAT PTT, TX Profiles,
-        // Signal Generator, Hardware Tests) are not registered while their
-        // features are not built, so each floor drops by that many.
-        QVERIFY(thisComputer >= 12);
+        // R-R3-49: seven This Computer leaves (UI Scale & Theme, Navigation,
+        // Skins, Collapsible Display, MIDI Control, Shortcuts, Logging &
+        // Performance) and seven Core leaves (Serial Ports, TCP/IP CAT, CAT
+        // Options, CAT PTT, TX Profiles, Signal Generator, Hardware Tests) are
+        // not registered while their features are not built, so each floor
+        // drops by that many. Spectrum Peaks, Waterfall Defaults and 3D View
+        // moved to the Display pill (PR 443), where they are the Mixed Peaks &
+        // Markers, Waterfall and View pages, leaving 9 This Computer pages.
+        QVERIFY(thisComputer >= 9);
         QVERIFY(core >= 22);
         QVERIFY(mixed >= 8);
 

@@ -183,6 +183,10 @@
 //               carries the radio speaker out's counters
 //               (RadioConnection::radioAudioStatsText). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: each media peer reports its "tx" receipts
+//               to the Core's cut guard for its epoch (txReceiptHook).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 // Modification history (NereusSDR):
@@ -2255,6 +2259,18 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
     // replacement or retiring one; any other is stopped, which ends its
     // thread.
     peer->setMicPacketSink(micRouteSink());
+    // Remote transmit cut off the main thread: the "tx" channel's messages
+    // are heard at their receipt by the Core's cut guard, for this media
+    // session's epoch, while this event loop is held.
+    peer->setTxReceiptHook(txReceiptHook(peerEpoch));
+}
+
+IMediaTransport::TxReceiptHook DaemonMediaController::txReceiptHook(quint64 epoch) const
+{
+    if (!m_server) {
+        return {};
+    }
+    return m_server->txChannelReceiptHook(epoch);
 }
 
 void DaemonMediaController::MicRoute::deliver(const QByteArray& packet, qint64 heldUs)
@@ -2609,6 +2625,10 @@ bool DaemonMediaController::handleReplace(const QJsonObject& control)
         }
     });
     peer->setMicPacketSink(micRouteSink());
+    // Remote transmit cut off the main thread: the "tx" channel's messages
+    // are heard at their receipt by the Core's cut guard, for this media
+    // session's epoch, while this event loop is held.
+    peer->setTxReceiptHook(txReceiptHook(peerEpoch));
     m_replacementRouted = nextIce && nextIce->mediaRouting();
     peer->setIceConfiguration(nextIce);
     if (!peer->start(IMediaTransport::Role::Offerer, connectionId, m_audioTargetBitrate,

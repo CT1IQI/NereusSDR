@@ -25,6 +25,8 @@
 //   2026-10-01: TX diagnostics lane: the device id prints as hex in the
 //               log, not as raw bytes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: tripQuiet. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -160,6 +162,15 @@ void RemoteTxWatchdog::linkClosed(const QByteArray& deviceId)
         return;
     }
     trip(deviceId, true);
+}
+
+bool RemoteTxWatchdog::tripQuiet(const QByteArray& deviceId)
+{
+    if (!m_devices.contains(deviceId)) {
+        return false;
+    }
+    trip(deviceId, false);
+    return true;
 }
 
 void RemoteTxWatchdog::onTimer()

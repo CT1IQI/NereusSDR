@@ -1436,6 +1436,11 @@ nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
 nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
 nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
 nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
+# A Core that has a radio saves a remote window's tune step for a slice that
+# is not its active one, under that slice's key, and brings it back after a
+# restart (found reviewing PR 517). A connection that sends nothing, a real
+# StationServer and a remote window over the loopback; no radio, no audio.
+nereus_add_test(tst_core_saves_remote_slice_step fakes/LoopbackTransport.cpp)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
@@ -9024,6 +9029,13 @@ nereus_split_test(tst_remote_window_harness
 nereus_add_test(tst_pan_actions_per_pan fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_pan_actions_per_pan PRIVATE NEREUS_BUILD_TESTS)
 
+# Step persistence lane (2026-10-15): a remote window's tune step is the
+# Core's; a step the Core refuses goes back and says why, a listened slice
+# holds it with the reason, and the controller's step survives a reconnect.
+# Loopback WebSocket and test models only; no RF, no audio device.
+nereus_add_test(tst_remote_step_persistence fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_remote_step_persistence PRIVATE NEREUS_BUILD_TESTS)
+
 # VFO flag crash lane (2026-09-30): Slice A closed from its flag in a remote
 # window leaves no flag writing the freed slice, and a Slice A made again
 # gets a flag and a pan bound to the new slice. Loopback WebSocket and test
@@ -9247,6 +9259,12 @@ nereus_add_test(tst_station_fifth_device
 nereus_add_test(tst_slice_access_verbs
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Where transmit lands when a phone takes it with tx.tune and no
+# tx.setTxSlice, its own slice restored at admission beside the Core's
+# slice (Pi 4 bench, 2026-10-14). No radio, no RF: the fake MOX is keyed.
+nereus_add_test(tst_phone_take_tx_slice
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
 # Slice control and shared listening plan Task 7: zero slices is a valid
 # idle Core. The claims rule's close of the last unclaimed slice, the state
 # it leaves, a working new slice from zero, and every first-slice reader at
@@ -9310,6 +9328,14 @@ nereus_add_test(tst_remote_keying
 # a key on (real time).
 # The watchdog's wording check needs only this text table from the GUI.
 nereus_add_test(tst_remote_tx_watchdog ../src/gui/OperatorReasonText.cpp CORE_ONLY EXTRA_LABELS session)
+# The keyed remote device's transmit cut on a thread of its own when the
+# Core's main thread stalls (real time).
+nereus_add_test(tst_remote_tx_cut_guard CORE_ONLY REALTIME EXTRA_LABELS session)
+# The transmit cut line: the connection's cut latch runs its unkey on the
+# connection's thread while main sleeps, and RadioModel's catch-up after it
+# (real time).
+nereus_add_test(tst_transmit_cut_line REALTIME EXTRA_LABELS session)
+target_compile_definitions(tst_transmit_cut_line PRIVATE NEREUS_BUILD_TESTS)
 nereus_add_test(tst_tx_watch_server EXTRA_LABELS session)
 nereus_add_test(tst_station_watch_relay
     fakes/LoopbackTransport.cpp

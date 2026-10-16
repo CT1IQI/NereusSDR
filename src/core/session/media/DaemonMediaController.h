@@ -104,6 +104,9 @@
 //               selected pair at selection and on change, and its rtt in
 //               the periodic display diagnostics line. Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: txReceiptHook(epoch) for the remote
+//               transmit cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NoiseFloorEstimator.h"
@@ -921,6 +924,9 @@ private:
     std::shared_ptr<MicRoute> m_micRoute{std::make_shared<MicRoute>()};
     void syncMicRoute();
     IMediaTransport::MicPacketSink micRouteSink() const;
+    // Remote transmit cut off the main thread: the hook a peer of media
+    // epoch `epoch` reports its "tx" receipts to (empty without a server).
+    IMediaTransport::TxReceiptHook txReceiptHook(quint64 epoch) const;
     // R-AUD-SEND: the mirror of MicRoute for receive audio. m_sendThread
     // drains every sender this controller runs; a sender hands each packet
     // to its own route's deliver(), on that thread. The route holds what
