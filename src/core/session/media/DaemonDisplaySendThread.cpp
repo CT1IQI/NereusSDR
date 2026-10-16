@@ -12,6 +12,8 @@
 //               as a failed wait is; a timer that cannot be made is
 //               reported once per process, naming the call that failed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: that report waits for a thread that starts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/DaemonDisplaySendThread.h"
@@ -105,33 +107,25 @@ void DaemonDisplayLock::setHookExemptThread(std::thread::id hookExempt)
 DaemonDisplaySendThread::DaemonDisplaySendThread()
 {
 #ifdef Q_OS_WIN
-    const char* missing = "this build's Windows SDK has none";
-    DWORD error = 0;
 #ifdef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
     m_turnTimer = CreateWaitableTimerExW(nullptr, nullptr,
                                          CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                          TIMER_ALL_ACCESS);
     if (m_turnTimer == nullptr) {
-        missing = "CreateWaitableTimerExW failed";
-        error = GetLastError();
+        m_turnTimerMissing = "CreateWaitableTimerExW failed";
+        m_turnTimerError = GetLastError();
     } else {
         m_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         if (m_wakeEvent == nullptr) {
-            missing = "CreateEventW failed";
-            error = GetLastError();
+            m_turnTimerMissing = "CreateEventW failed";
+            m_turnTimerError = GetLastError();
             CloseHandle(m_turnTimer);
             m_turnTimer = nullptr;
         }
     }
+#else
+    m_turnTimerMissing = "this build's Windows SDK has none";
 #endif
-    // Once per process: every controller makes a thread, and the reason is
-    // the same for each of them.
-    static std::atomic<bool> s_warned{false};
-    if (m_turnTimer == nullptr && !s_warned.exchange(true)) {
-        qCWarning(lcDaemonMedia) << "no high-resolution timer:" << missing << "( error" << error
-                                 << "); the display send thread's timed turns wait"
-                                    " a whole scheduler tick";
-    }
 #endif
 }
 
@@ -153,6 +147,18 @@ void DaemonDisplaySendThread::start(Pass pass)
     if (m_thread.joinable()) {
         return;
     }
+#ifdef Q_OS_WIN
+    // Once per process, and only for a thread that starts: every
+    // controller makes one, and the reason is the same for each of them.
+    // A timer given up after a failure (dropTurnTimer) was reported there.
+    static std::atomic<bool> s_warned{false};
+    if (m_turnTimer == nullptr && m_turnTimerMissing != nullptr && !s_warned.exchange(true)) {
+        qCWarning(lcDaemonMedia) << "no high-resolution timer:" << m_turnTimerMissing
+                                 << "( error" << m_turnTimerError
+                                 << "); the display send thread's timed turns wait"
+                                    " a whole scheduler tick";
+    }
+#endif
     m_pass = std::move(pass);
     m_stopRequested.store(false, std::memory_order_release);
     m_thread = std::thread([this] { run(); });

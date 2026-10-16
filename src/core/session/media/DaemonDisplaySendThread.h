@@ -23,6 +23,8 @@
 //               as a failed wait is; a timer that cannot be made is
 //               reported once per process, naming the call that failed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: that report waits for a thread that starts. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -188,6 +190,10 @@ private:
     // the wait is the condition variable's).
     void* m_turnTimer{nullptr};
     void* m_wakeEvent{nullptr};
+    // Why there is no timer (the call that failed, and its GetLastError),
+    // for start()'s one warning.
+    const char* m_turnTimerMissing{nullptr};
+    unsigned long m_turnTimerError{0};
 #endif
     std::thread m_thread;
 };
