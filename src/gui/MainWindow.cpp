@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: A remote window opens its speakers at window start, before
+//               the Core is asked for audio (openRemoteSpeakers), as a local
+//               start() opens them before the radio streams. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: A refused slice change from a remote window shows the Core's
 //               reason in a toast (NNR edits keep their own page message).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4395,6 +4399,13 @@ void MainWindow::ensureRemoteSession()
             if (vaxEngine->headphonesEnabled() && !vaxEngine->headphonesAvailable()) {
                 vaxEngine->setHeadphonesEnabled(true);
             }
+            // 2026-10-16: and the speakers, before the Core is asked for
+            // audio, as a local start() opens them before the radio streams
+            // (AetherSDR opens its speaker sink at connect, Thetis its VAC
+            // streams at power-on). Opened only at the Core's first audio,
+            // they failed whenever this computer's device list was still
+            // out; now the device layer opens them as the list comes in.
+            vaxEngine->openRemoteSpeakers();
             m_remoteVax = new RemoteVaxRouter(m_radioModel, vaxEngine,
                                               RemoteVaxRouter::coreKeyFor(m_station), this);
             // 2026-10-15: this computer's rigctld, acting as the window; its

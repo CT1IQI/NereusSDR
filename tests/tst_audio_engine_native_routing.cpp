@@ -56,6 +56,10 @@
 //   2026-10-12: regression for a first TX input configuration overwriting
 //               its migrated native engine during catalog setup.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-16: a remote window's speakers opened before this computer's
+//               first device list wait for it (speakersAwaitDeviceList)
+//               and open once, when it comes in. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -520,6 +524,46 @@ private slots:
         QCOMPARE(speakers->pushCount(), 1);
         QVERIFY(speakers->matcher() != nullptr);
         QVERIFY(speakers->matcher()->fillFrames() > 0.0);
+        rig.engine->endRemotePlayback();
+        rig.engine->stop();
+    }
+
+    // 2026-10-16: a remote window opens its speakers at window start
+    // (openRemoteSpeakers). Before this computer's first device list is in
+    // they wait for it and say so, and playback asked for meanwhile fails
+    // without opening anything. The list's arrival opens them once (its
+    // default change names the device they opened on) and tells the window
+    // (speakersConfigChanged), with nothing asking again.
+    void remoteSpeakersWaitForTheFirstDeviceList()
+    {
+        Rig rig;
+        rig.native->holdEnumerate();
+        rig.build();
+        QVERIFY(!rig.engine->speakersAwaitDeviceList()); // no device layer yet
+        QSignalSpy opened(rig.engine.get(), &AudioEngine::speakersConfigChanged);
+        QTest::ignoreMessage(QtWarningMsg,
+                             QRegularExpression(QStringLiteral("Audio device list took longer than")));
+        rig.engine->openRemoteSpeakers();
+        QVERIFY(rig.engine->speakersAwaitDeviceList());
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(0));
+        QString error;
+        QVERIFY(!rig.engine->beginRemotePlayback(&error));
+        QVERIFY(rig.engine->speakersAwaitDeviceList());
+        QCOMPARE(opened.size(), 0);
+
+        rig.native->releaseEnumerate();
+        QTRY_COMPARE_WITH_TIMEOUT(opened.size(), 1, 5000);
+        QVERIFY(!rig.engine->speakersAwaitDeviceList());
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+        QVERIFY(rig.native->outputRequests().front().deviceId.isEmpty()); // the system default
+        QCOMPARE(rig.engine->roleStatus(AudioRole::Speakers).state, AudioRoleState::Playing);
+        QCoreApplication::processEvents();
+        QCOMPARE(opened.size(), 1);
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
+
+        // Playback now finds the speakers open and opens nothing more.
+        QVERIFY2(rig.engine->beginRemotePlayback(&error), qPrintable(error));
+        QCOMPARE(rig.native->outputRequests().size(), std::size_t(1));
         rig.engine->endRemotePlayback();
         rig.engine->stop();
     }

@@ -19,6 +19,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 : openRemoteSpeakers() opens a remote window's speakers at
+//                 window start; speakersAwaitDeviceList() says they wait
+//                 for this computer's first device list. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 : openVaxOutputs() opens the VAX TX device in a remote
 //                 window, as start() does, so VAX can be its transmit
 //                 source. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -3546,6 +3550,26 @@ void AudioEngine::openVaxOutputs()
             qCWarning(lcAudio) << "VAX TX bus open failed in a remote window: VAX cannot be sent";
         }
     }
+}
+
+void AudioEngine::openRemoteSpeakers()
+{
+    if (m_running) {
+        return;
+    }
+    // With the device layer this starts the outputs; with the speakers'
+    // device not listed yet they open on the list's arrival.
+    ensureSpeakersOpen();
+}
+
+bool AudioEngine::speakersAwaitDeviceList() const
+{
+#ifdef NEREUS_BUILD_TESTS
+    if (m_speakersAwaitDeviceListForTest) {
+        return *m_speakersAwaitDeviceListForTest;
+    }
+#endif
+    return m_streamSupervisor && m_catalogue && !m_catalogue->hasListed();
 }
 
 void AudioEngine::openVaxOutputSlots()

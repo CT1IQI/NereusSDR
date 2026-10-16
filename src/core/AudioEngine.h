@@ -21,6 +21,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 : openRemoteSpeakers() and speakersAwaitDeviceList(): a
+//                 remote window opens its speakers at window start, and
+//                 says when they wait for this computer's first device
+//                 list. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-15 : isVaxTxBusOpen(); openVaxOutputs() opens the VAX TX
 //                 device in a remote window too. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -1038,6 +1043,20 @@ public:
     // setVaxBusFactoryForTest() supplies. Owner thread.
     void openVaxOutputs();
 
+    // 2026-10-16: a remote window opens its speakers at window start, as
+    // start() opens a local radio's before the radio streams, so remote
+    // playback finds them open, or the device layer opens them the moment
+    // this computer's device list comes in (speakersConfigChanged). Opened
+    // only at the Core's first audio, they failed whenever the list was
+    // still out. Does nothing while the engine runs. Owner thread.
+    void openRemoteSpeakers();
+
+    // 2026-10-16: the speakers wait for this computer's first device list:
+    // the device layer started without it (the list took longer than
+    // AudioDeviceCatalog::kStartWaitMs) and opens them when it comes in.
+    // Owner thread.
+    bool speakersAwaitDeviceList() const;
+
     // 2026-10-15: whether the VAX transmit device (what apps write to
     // "NereusSDR TX") is open: a remote window sends it as its microphone
     // when VAX is the transmit source. Owner thread.
@@ -1111,6 +1130,14 @@ public:
     // Test seam — inject a fake IAudioBus into the speakers slot so unit
     // tests can verify speakers tee without opening a PortAudio device.
     void setSpeakersBusForTest(std::unique_ptr<IAudioBus> bus);
+
+    // Test seam (2026-10-16): what speakersAwaitDeviceList() answers, for a
+    // window test whose speakers are an injected bus; nullopt (the
+    // default) answers from the device layer.
+    void setSpeakersAwaitDeviceListForTest(std::optional<bool> waiting)
+    {
+        m_speakersAwaitDeviceListForTest = waiting;
+    }
 
     // Test seam — inject a fake IAudioBus into the headphones slot.
     void setHeadphonesBusForTest(std::unique_ptr<IAudioBus> bus);
@@ -1900,6 +1927,7 @@ private:
 #ifdef NEREUS_BUILD_TESTS
     std::function<std::unique_ptr<IAudioBus>(int)> m_vaxBusFactoryForTest;
     DeviceBusFactory m_deviceBusFactoryForTest;
+    std::optional<bool> m_speakersAwaitDeviceListForTest;
 #endif
     MasterMixer m_masterMix;
 

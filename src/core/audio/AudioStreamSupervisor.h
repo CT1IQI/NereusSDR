@@ -20,7 +20,8 @@
 //   listed; leaving the list stops the retries and coming back starts the
 //   schedule again from 250 ms.
 // - Outputs on "(platform default)" follow the system default output at
-//   once (R-AUD-12).  The mic on "(platform default)" follows the default
+//   once (R-AUD-12); a default change that names the device they play on
+//   (the first list of a run reports its default so) reopens nothing.  The mic on "(platform default)" follows the default
 //   input, never while transmitting (the change applies at unkey) and
 //   never to a Bluetooth mic (R-AUD-13); a Bluetooth default at start
 //   opens the built-in input, else another input that is not Bluetooth,
@@ -53,6 +54,10 @@
 //               so a signal of it is found from outside the DLL on
 //               Windows. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-16: an output on the system default is not reopened by a
+//               default change that names the device it opened on
+//               (playsOnCurrentDefault).  J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -129,6 +134,10 @@ private:
         bool open = false;
         bool onDefault = false;
         std::optional<AudioDeviceInfo> openDevice;
+        // onDefault: the system default's ID when it opened (empty if the
+        // list named none), so a default change that names it again is no
+        // move.
+        QString openDefaultId;
 
         // A Pending open (the mic): the device it was asked for.
         bool pending = false;
@@ -176,6 +185,7 @@ private:
     void attemptTarget(AudioRole role);
     void applyTargetResult(AudioRole role, AudioOpenResult result, const AudioDeviceInfo& device);
     bool openSystemDefault(AudioRole role);
+    bool playsOnCurrentDefault(AudioRole role) const;
     void ensureFallback(AudioRole role, bool defaultMoved);
     void closeIfOpen(AudioRole role);
     void markTrouble(AudioRole role, AudioRoleReason reason);

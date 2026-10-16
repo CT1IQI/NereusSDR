@@ -3,6 +3,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: scheduleAudioRetry (a speaker failure is asked for again on
+//               the restart backoff); a held restart step no longer
+//               replaces another. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: startMicCollector's vax source (VAX as a remote window's
@@ -545,8 +549,11 @@ public:
     /// due waits instead of running; releasing runs it (through the same
     /// fence as ever). No production caller.
     void holdAudioRestartForTest(bool held);
-    /// Test only: whether a backoff step came due while held.
+    /// Test only: whether a backoff step came due while held (each one
+    /// that did runs, in order, on release).
     bool audioRestartStepHeldForTest() const;
+    /// Test only: how many backoff steps came due while held.
+    int audioRestartStepsHeldForTest() const;
     /// Test only: the speakers' receiver asks for a restart with `fault`,
     /// as it does itself, so a test can raise a fault a real stream cannot
     /// produce on demand. No production caller.
@@ -699,6 +706,9 @@ private:
     void reportDisplayDrops();
     void requestKeyframe(quint32 endpointId);
     void requestAudio();
+    // R-R3-21, 2026-10-16: the next request on the restart backoff, for a
+    // restart or a speaker failure; one waits at a time.
+    void scheduleAudioRetry();
     void sendReceiverAudioRequest(int sliceId, bool enabled);
     void requestWantedReceiverAudio();
     void receiveReceiverAudioContext(const QJsonObject& payload);
