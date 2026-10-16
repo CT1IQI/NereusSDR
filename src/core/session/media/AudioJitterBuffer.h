@@ -10,6 +10,11 @@
 //               when it arrived (Playout::arrivalNs), for a consumer that
 //               measures the source's clock by it (R-AUD-15). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: concealExpectedNow(arrivalsStopped) also conceals an empty
+//               queue at the base hold once arrivals have stopped, so a
+//               short network stall plays on; insert(afterOutage) keeps
+//               an outage's late packets from deepening the hold. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QByteArray>
 #include <QtGlobal>
 #include <algorithm>
@@ -132,7 +137,13 @@ public:
     /// Clears the queue and anchors it on firstTimestamp. The hold is the
     /// link's, not the anchor's, so it is kept.
     void reset(quint32 firstTimestamp);
-    Admission insert(const QByteArray& packet, quint32 timestamp, qint64 arrivalNs);
+    /// afterOutage (JJ 2026-10-16): the consumer has seen no packet for
+    /// longer than the deepest hold. A late packet whose interval was
+    /// concealed is then an outage's leftover, not jitter: it neither
+    /// deepens the hold nor rewinds, so a ridden-out stall leaves the
+    /// latency where it was.
+    Admission insert(const QByteArray& packet, quint32 timestamp, qint64 arrivalNs,
+                     bool afterOutage = false);
     std::optional<Playout> takeReady(qint64 nowNs);
     /// Whether takeReady(nowNs) would release an interval now (a packet,
     /// or a missing one's concealment), without taking it or moving the

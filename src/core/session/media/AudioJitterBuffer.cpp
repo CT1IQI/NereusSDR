@@ -8,8 +8,9 @@
 //               (R-AUD-15). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 //   2026-10-16: concealExpectedNow() conceals an empty queue at the base
-//               hold once the consumer says arrivals have stopped. J.J.
-//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               hold once the consumer says arrivals have stopped; an
+//               outage's late packets do not deepen the hold. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include "core/session/media/AudioJitterBuffer.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include <bit>
@@ -136,7 +137,7 @@ void AudioJitterBuffer::noteRelease(quint32 timestamp, qint64 releasedNs, bool c
 }
 
 AudioJitterBuffer::Admission AudioJitterBuffer::insert(
-    const QByteArray& packet, quint32 timestamp, qint64 arrivalNs)
+    const QByteArray& packet, quint32 timestamp, qint64 arrivalNs, bool afterOutage)
 {
     if (packet.isEmpty() || packet.size() > OpusAudioCodecConfig::kMaxRtpPacketBytes
         || arrivalNs < 0 || arrivalNs > std::numeric_limits<qint64>::max() - kMaxHoldNs) {
@@ -149,7 +150,11 @@ AudioJitterBuffer::Admission AudioJitterBuffer::insert(
         for (auto it = m_released.rbegin(); it != m_released.rend(); ++it) {
             if (it->timestamp != timestamp) { continue; }
             if (!it->concealed || arrivalNs <= it->releasedNs) { break; }
-            if (!m_adaptive) { return Admission::LateConcealed; }
+            // JJ 2026-10-16: after an outage (no packet for longer than the
+            // deepest hold) the lateness is the outage's, not the link's
+            // jitter; growing the hold for it would leave every ridden-out
+            // stall up to kMaxHoldNs late for the whole easing time.
+            if (!m_adaptive || afterOutage) { return Admission::LateConcealed; }
             m_lastLateNs = arrivalNs;
             const qint64 lateNs = arrivalNs - it->releasedNs;
             // A rewind replays every interval released since this one, so

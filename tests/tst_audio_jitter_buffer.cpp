@@ -1,7 +1,8 @@
 // no-port-check: NereusSDR-original network ordering regression.
 //
 // Modification history (NereusSDR):
-//   2026-10-16: stopped arrivals conceal an empty queue at the base hold.
+//   2026-10-16: stopped arrivals conceal an empty queue at the base hold;
+//               an outage's late packet leaves the hold.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QRandomGenerator>
@@ -711,6 +712,28 @@ private slots:
         // A present expected packet is never concealed.
         QCOMPARE(queue.insert("2", 3840, 25 * ms), Admission::Accepted);
         QVERIFY(!queue.concealExpectedNow(30 * ms, true));
+    }
+    // JJ 2026-10-16: a late packet after an outage is the outage's, not
+    // jitter: it neither rewinds nor deepens the hold, which the same
+    // packet does without the flag.
+    void anOutagesLatePacketLeavesTheHold()
+    {
+        constexpr qint64 ms = 1'000'000;
+        for (bool afterOutage : {true, false}) {
+            AudioJitterBuffer queue;
+            queue.reset(0);
+            QCOMPARE(queue.insert("0", 0, 0), Admission::Accepted);
+            QCOMPARE(queue.takeExpectedPresentEarly(10 * ms)->packet, QByteArray("0"));
+            QVERIFY(queue.takeReady(130 * ms)->concealed());
+            const Admission admitted = queue.insert("1", 1920, 700 * ms, afterOutage);
+            if (afterOutage) {
+                QCOMPARE(admitted, Admission::LateConcealed);
+                QCOMPARE(queue.holdNs(), AudioJitterBuffer::kHoldNs);
+                QCOMPARE(queue.queuedPackets(), 0);
+            } else {
+                QVERIFY(queue.holdNs() > AudioJitterBuffer::kHoldNs);
+            }
+        }
     }
     // R-R3-21 (review I4): a fixed-hold queue (the PCM sink's) keeps a
     // late packet late: no rewind and no deeper hold.

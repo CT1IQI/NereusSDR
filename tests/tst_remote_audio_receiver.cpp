@@ -3434,16 +3434,24 @@ private slots:
         const RemoteAudioReceiverTelemetry after = rig.telemetry();
         QVERIFY(after.running);
         QCOMPARE(after.generation, before.generation);
-        // The stream plays again: all but the deepest hold and a margin of
-        // the time since the link came back was decoded audio.
+        // The stream plays again: all but the base hold and a margin of the
+        // time since the link came back was decoded audio.
         const quint64 decodedSince = after.decodedPackets - during.decodedPackets;
         const quint64 expected = quint64(
-            (kAfterMs - AudioJitterBuffer::kMaxHoldNs / 1'000'000 - 300) / rig.packetMs());
+            (kAfterMs - AudioJitterBuffer::kHoldNs / 1'000'000 - 300) / rig.packetMs());
         QVERIFY2(decodedSince >= expected,
                  qPrintable(QStringLiteral("%1 decoded since the stall, expected %2")
                                 .arg(decodedSince).arg(expected)));
         QVERIFY2(after.linkInterruptions > before.linkInterruptions,
                  qPrintable(QString::number(after.linkInterruptions)));
+        // Lowest latency (JJ): the stall's late packets were the outage's,
+        // not jitter, so the hold is where it was before the stall, not
+        // deepened toward kMaxHoldNs for the whole easing time.
+        QVERIFY(before.jitterHoldMs.has_value());
+        QVERIFY2(after.jitterHoldMs == before.jitterHoldMs,
+                 qPrintable(QStringLiteral("hold %1 ms after the stall, %2 ms before")
+                                .arg(after.jitterHoldMs.value_or(-1))
+                                .arg(*before.jitterHoldMs)));
         if (stall == QLatin1String("paused")) {
             // The stream came back behind the head: re-anchored to it.
             QVERIFY2(after.streamGapReanchors > before.streamGapReanchors,
@@ -3481,6 +3489,35 @@ private slots:
         QCOMPARE(rig.restarts.count(), 1);
         QCOMPARE(rig.restarts.first().at(1).value<RemoteAudioReceiver::Fault>(),
                  RemoteAudioReceiver::Fault::NoPackets);
+        rig.stop();
+    }
+
+    // 2026-10-16 (JJ): before anything has played, the 500 ms rule stands:
+    // a context that never gets a packet asks for a fresh one just after
+    // 500 ms, with the no-packets fault, and not before.
+    void aContextThatNeverPlaysAsksAgainAfterHalfASecond_data()
+    {
+        QTest::addColumn<bool>("lossless");
+        QTest::newRow("Opus") << false;
+        QTest::newRow("lossless") << true;
+    }
+    void aContextThatNeverPlaysAsksAgainAfterHalfASecond()
+    {
+        QFETCH(bool, lossless);
+        constexpr qint64 kBeforePlayMs = 500;
+        QCOMPARE(RemoteAudioReceiver::kNoPacketsBeforePlayNs, kBeforePlayMs * 1'000'000);
+        MatcherPlaybackRig rig(lossless ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus);
+        QVERIFY(rig.start());
+        QVERIFY2(rig.run(kBeforePlayMs - 1, false), qPrintable(rig.faults()));
+        QCoreApplication::processEvents();
+        QVERIFY2(rig.restarts.isEmpty() && rig.errors.isEmpty(), qPrintable(rig.faults()));
+        QVERIFY(!rig.run(5, false));
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.errors.count(), 0);
+        QCOMPARE(rig.restarts.count(), 1);
+        QCOMPARE(rig.restarts.first().at(1).value<RemoteAudioReceiver::Fault>(),
+                 RemoteAudioReceiver::Fault::NoPackets);
+        QCOMPARE(rig.telemetry().decodedPackets, quint64(0));
         rig.stop();
     }
 

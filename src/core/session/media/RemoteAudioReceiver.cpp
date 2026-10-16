@@ -993,10 +993,12 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
         // 2026-10-16: the stream comes back after a quiet spell longer
         // than any rewind can cover. Before JJ's ride-out rule such a spell
         // ended the context (a NoPackets restart, which the lossless link
-        // trial counted); it still counts as a link interruption.
+        // trial counted); it still counts as a link interruption. Its late
+        // packets are the outage's, not jitter, so they leave the hold
+        // where it was (lowest latency after a ride-out).
         const bool afterQuiet = released
             && packet.arrival - lastAdmitted > kResumeReanchorQuietNs;
-        auto admitted = jitter.insert(packet.bytes, packet.timestamp, packet.arrival);
+        auto admitted = jitter.insert(packet.bytes, packet.timestamp, packet.arrival, afterQuiet);
         if (admitted == AudioJitterBuffer::Admission::OutsideWindow) {
             // R-R3-21: a stream gap re-anchors here: the head moves
             // forward just far enough for this packet to fit the
@@ -1006,7 +1008,7 @@ bool RemoteAudioReceiver::WorkerState::pass(bool waitForWork)
             ++d->streamGapReanchors;
             interrupted = true;
             jitter.advanceToFit(packet.timestamp);
-            admitted = jitter.insert(packet.bytes, packet.timestamp, packet.arrival);
+            admitted = jitter.insert(packet.bytes, packet.timestamp, packet.arrival, afterQuiet);
         }
         switch (admitted) {
         case AudioJitterBuffer::Admission::Accepted:
