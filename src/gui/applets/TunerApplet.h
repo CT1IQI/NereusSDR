@@ -48,6 +48,7 @@
 #include "AppletWidget.h"
 #include "models/Band.h"
 #include "core/TuneMemoryStore.h"
+#include "gui/NereusGuiExport.h"
 
 class QContextMenuEvent;
 class QLabel;
@@ -88,7 +89,7 @@ class TunerModel;
 //   Copy diagnostics to clipboard             -> diagnosticsCopyRequested()
 //
 // From AetherSDR src/gui/TunerApplet.h [@0cd4559]
-class TunerApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT TunerApplet : public AppletWidget {
     Q_OBJECT
 public:
     // Phase 3P-II Phase 4 Task 89: tuneStore is a non-owning pointer to the

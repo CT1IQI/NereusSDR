@@ -121,6 +121,7 @@ mw0lge@grange-lane.co.uk
 
 #include "core/WdspTypes.h"
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QHash>
@@ -207,7 +208,7 @@ namespace MeterBinding {
     constexpr int RotatorEle     = 301;  // Elevation (0-90)
 }
 
-class MeterPoller : public QObject {
+class NEREUS_GUI_EXPORT MeterPoller : public QObject {
     Q_OBJECT
 
 public:

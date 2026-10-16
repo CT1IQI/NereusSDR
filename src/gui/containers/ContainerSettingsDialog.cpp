@@ -60,6 +60,9 @@
 //                 editor opens for the button boxes and the VFO display (its
 //                 tags match what they save). J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -148,6 +151,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerSettingsDialog.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "ContainerControlCatalog.h"
 #include "ContainerContentRegistry.h"
@@ -1210,6 +1214,7 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
             ContainerWidget* dup = m_manager->duplicateContainer(m_container->id());
             if (dup && m_containerDropdown) {
                 const QString label = dup->notes().isEmpty() ? dup->id().left(8) : dup->notes();
+                resetItemsBeforeRowChange(m_containerDropdown);
                 m_containerDropdown->addItem(label, dup->id());
             }
         }
@@ -2110,23 +2115,7 @@ void ContainerSettingsDialog::refreshDraftDropdown()
 {
     if (!m_editSession || !m_containerDropdown) { return; }
     const QSignalBlocker blocker(m_containerDropdown);
-#if defined(Q_OS_MAC)
-    if (QGuiApplication::platformName() == QStringLiteral("cocoa")
-        && qVersion() == QStringLiteral("6.11.0")) {
-        // Qt6.11 Cocoa expires promoted popup cells with its old native
-        // rows (qcocoaaccessibilityelement.mm:219-226,257-267,342-362),
-        // but QAccessibleTable retains their IDs and dereferences them on
-        // RowsRemoved (itemviews.cpp:696-741). Clear only that accessibility
-        // cache through the public API before the combo mutates its model.
-        QAbstractItemView* view = m_containerDropdown->view();
-        QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(view);
-        if (accessible != nullptr && accessible->tableInterface() != nullptr) {
-            QAccessibleTableModelChangeEvent reset(
-                view, QAccessibleTableModelChangeEvent::ModelReset);
-            accessible->tableInterface()->modelChange(&reset);
-        }
-    }
-#endif
+    resetItemsBeforeRowChange(m_containerDropdown);
     m_containerDropdown->clear();
     for (const auto& c : m_editSession->draft().containers) { m_containerDropdown->addItem(c.name.isEmpty()?c.id.left(8):c.name,c.id); }
     m_containerDropdown->setCurrentIndex(m_containerDropdown->findData(m_selectedId));

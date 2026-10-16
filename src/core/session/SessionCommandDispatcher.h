@@ -259,6 +259,7 @@
 #include "core/session/SessionMessages.h"
 #include "core/session/StationDevicesFacade.h"
 #include "core/safety/TxRefusal.h"
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -288,7 +289,7 @@ struct CommandVerbSpec {
     quint16 minMinor = 0;
 };
 
-class SessionCommandDispatcher : public QObject {
+class NEREUS_CORE_EXPORT SessionCommandDispatcher : public QObject {
     Q_OBJECT
 
 public:

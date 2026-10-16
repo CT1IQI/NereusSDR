@@ -39,6 +39,9 @@
 //                columns that fit side by side without a scroll bar are
 //                side by side whatever was shown before. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Reset only this page's HPF and LPF frequency edges.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 //
 //=================================================================
@@ -111,6 +114,7 @@
 #include <QLabel>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 namespace NereusSDR {
@@ -210,6 +214,13 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
     outerVBox->addWidget(scroll);
 
     auto* contentLayout = new QVBoxLayout(content);
+    m_resetFilterDefaults = new QPushButton(tr("Reset filter defaults"), content);
+    m_resetFilterDefaults->setObjectName(QStringLiteral("resetFilterDefaults"));
+    m_resetFilterDefaults->setAutoDefault(false);
+    m_resetFilterDefaults->setToolTip(tr("Restore the frequency edges shown on this tab. Bypass and routing settings are kept."));
+    contentLayout->addWidget(m_resetFilterDefaults, 0, Qt::AlignLeft);
+    connect(m_resetFilterDefaults, &QPushButton::clicked,
+            this, &AntennaAlexAlex2Tab::resetFilterDefaults);
     contentLayout->setContentsMargins(8, 8, 8, 8);
     contentLayout->setSpacing(6);
 
@@ -450,6 +461,8 @@ AntennaAlexAlex2Tab::AntennaAlexAlex2Tab(RadioModel* model, QWidget* parent)
         lpfFormLayout->addRow(tr(band.label), rowWidget);
 
         const QString slug = QString::fromLatin1(band.slug);
+        w.start->setObjectName(QStringLiteral("alex2LpfStart_%1").arg(slug));
+        w.end->setObjectName(QStringLiteral("alex2LpfEnd_%1").arg(slug));
         const QString startKey = QStringLiteral("alex2/lpf/%1/start").arg(slug);
         const QString endKey   = QStringLiteral("alex2/lpf/%1/end").arg(slug);
 
@@ -545,11 +558,56 @@ void AntennaAlexAlex2Tab::updateBoardCapabilities(bool hasAlex2)
     }
 }
 
+void AntennaAlexAlex2Tab::updateResetFilterGate()
+{
+    if (!m_resetFilterDefaults || m_hpfRows.empty()) {
+        return;
+    }
+    const QDoubleSpinBox* row = m_hpfRows.front().start;
+    // Ignore temporary disabling of ancestors outside the tab, so an
+    // available row cannot latch the button disabled during reconnect.
+    HardwareTransmitGate::apply(m_resetFilterDefaults, row->isEnabledTo(this),
+                               row->isEnabledTo(this) ? QString() : row->toolTip());
+}
+
+void AntennaAlexAlex2Tab::resetFilterDefaults()
+{
+    if (!m_resetFilterDefaults->isEnabled()) {
+        return;
+    }
+    // Reuse the restore fallback tables and the ordinary edit paths, which
+    // delegate station hardware keys to the Core in a remote window.
+    for (std::size_t i = 0; i < m_hpfRows.size(); ++i) {
+        const QSignalBlocker startBlock(m_hpfRows[i].start);
+        const QSignalBlocker endBlock(m_hpfRows[i].end);
+        m_hpfRows[i].start->setValue(hpfBands()[i].startMhz);
+        m_hpfRows[i].end->setValue(hpfBands()[i].endMhz);
+    }
+    for (std::size_t i = 0; i < m_lpfRows.size(); ++i) {
+        const QSignalBlocker startBlock(m_lpfRows[i].start);
+        const QSignalBlocker endBlock(m_lpfRows[i].end);
+        m_lpfRows[i].start->setValue(lpfBands()[i].startMhz);
+        m_lpfRows[i].end->setValue(lpfBands()[i].endMhz);
+    }
+    for (std::size_t i = 0; i < m_hpfRows.size(); ++i) {
+        const QString prefix = QStringLiteral("alex2/hpf/%1/").arg(QString::fromLatin1(hpfBands()[i].slug));
+        onHpfSpinChanged(m_hpfRows[i].start->value(), prefix + QStringLiteral("start"));
+        onHpfSpinChanged(m_hpfRows[i].end->value(), prefix + QStringLiteral("end"));
+    }
+    for (std::size_t i = 0; i < m_lpfRows.size(); ++i) {
+        const QString prefix = QStringLiteral("alex2/lpf/%1/").arg(QString::fromLatin1(lpfBands()[i].slug));
+        onLpfSpinChanged(m_lpfRows[i].start->value(), prefix + QStringLiteral("start"));
+        onLpfSpinChanged(m_lpfRows[i].end->value(), prefix + QStringLiteral("end"));
+    }
+    updateActiveLeds();
+}
+
 // ── restoreSettings ───────────────────────────────────────────────────────────
 
 void AntennaAlexAlex2Tab::restoreSettings(const QString& macAddress)
 {
     m_currentMac = macAddress;
+    updateResetFilterGate();
     if (macAddress.isEmpty()) { return; }
 
     auto& settings = AppSettings::instance();
@@ -664,6 +722,7 @@ void AntennaAlexAlex2Tab::setHpfRowsAvailable(bool available, const QString& rea
             HardwareTransmitGate::apply(w, available, reason);
         }
     }
+    updateResetFilterGate();
 }
 
 void AntennaAlexAlex2Tab::onMasterCheckChanged(bool checked, const QString& settingsKey)

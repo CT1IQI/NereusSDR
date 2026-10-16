@@ -14,9 +14,25 @@
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
+//   2026-10-15: ~MainWindow clears each member it deletes before deleting it,
+//               so callbacks fired during that teardown see no object; the
+//               station client's TransmitState had reached a freed client
+//               through containerSessionId. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-14: Restore saved spans down to the existing 1 kHz zoom minimum;
+//               re-anchor toasts on window geometry changes and remove a
+//               closing toast before restacking. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-11 - Settings restore: the settings are saved when the
+//                session ends (logoff, shutdown, a forced close), through
+//                SessionEndSave. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - Settings restore: the slices made for empty pans at
+//                connect come back as they were saved (populatePanSlices).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -747,6 +763,9 @@
 //                last or hidden. The S-Meter has a check box in the
 //                Containers menu's applet list. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 
 /*  MeterManager.cs
@@ -968,6 +987,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
 #include "gui/multidevice/NoticeCard.h"
@@ -1032,6 +1052,7 @@ warren@wpratt.com
 #include "core/accessories/AlexAntennaFacade.h"
 
 #include <array>
+#include <utility>
 #include "core/MoxController.h"  // 3M-1a G.1: F.2 connect (hardwareFlipped → onMoxHardwareFlipped)
 #include "core/NoiseFloorTracker.h"
 #include "core/BoardCapabilities.h"
@@ -1204,6 +1225,7 @@ warren@wpratt.com
 #include <QScreen>
 #include <QSlider>
 #include <QCloseEvent>
+#include <QMoveEvent>
 #include <QResizeEvent>
 #include <QEvent>
 #include <QHelpEvent>
@@ -1951,6 +1973,36 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         AppSettings::instance().save();
     });
 
+    // A logoff, shutdown or an installer closing the app (settings restore
+    // audit 2026-10-11, gap 8). closeEvent and aboutToQuit above cover a
+    // normal close and a signal; the session manager's request reached
+    // neither in time, so whatever the 500 ms save timer had not written
+    // was lost. The same saves as closeEvent, and nothing else: the
+    // session's end can still be called off, so the radio stays connected
+    // and nothing is torn down. If the session does end, the quit that
+    // follows runs the handler above.
+    new SessionEndSave([this]() {
+        if (m_radioModel) {
+            m_radioModel->flushPendingSettingsSave();
+        }
+        if (m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    applet->spectrumWidget()->saveSettings();
+                }
+            }
+        }
+        if (m_containerManager) {
+            m_containerManager->saveState();
+        }
+        if (m_panStack) {
+            m_panStack->saveSplitterState();
+            m_panStack->saveFloatingGeometry();
+        }
+        saveMainWindowGeometry();
+        AppSettings::instance().save();
+    }, this);
+
     // ── Remote-daemon R2 Task 20: the remote gate, then the dial ─────────
     //
     // Last in the constructor on purpose. applyRemoteRoleGating() reaches
@@ -1986,7 +2038,7 @@ MainWindow::~MainWindow()
     if (m_containerManager) {
         auto* registry=m_containerManager->contentRegistry();
         if (m_radioModel && m_radioModel->containerManager()==m_containerManager) { m_radioModel->setContainerManager(nullptr); }
-        delete m_containerManager; m_containerManager=nullptr;
+        delete std::exchange(m_containerManager, nullptr);
         delete registry;
     }
     setDesktopStationController(nullptr);
@@ -2007,8 +2059,11 @@ MainWindow::~MainWindow()
         m_stationClient->leaveSession();
         m_stationClient->disconnectFromStation(QStringLiteral("client shutting down"));
     }
-    delete m_remoteTelemetry;
-    m_remoteTelemetry = nullptr;
+    // Each member below is cleared before it is deleted. Its teardown emits
+    // signals (StationClient's TransmitState reaches MeterPoller, which asks
+    // containerSessionId for the station fingerprint), and a callback that
+    // still found the pointer set would read the half-destroyed object.
+    delete std::exchange(m_remoteTelemetry, nullptr);
     // Parity Task 29: the MOX display controller (a child, destroyed after
     // the members) lets go of its transmit source before the source and the
     // media controller it draws from go.
@@ -2019,19 +2074,14 @@ MainWindow::~MainWindow()
     m_localTxDisplaySource.reset();
     // Join remote playback before QObject destroys the earlier-created
     // RadioModel child and its speaker AudioEngine.
-    delete m_remoteMedia;
-    m_remoteMedia = nullptr;
+    delete std::exchange(m_remoteMedia, nullptr);
     // R-R3-44: likewise the VAX feeders' workers, which write this
     // computer's VAX outputs on the same engine. The controller is gone, so
     // the router's final releases find nothing to release.
-    delete m_remoteVax;
-    m_remoteVax = nullptr;
-    delete m_remoteConnectionPanel;
-    m_remoteConnectionPanel = nullptr;
-    delete m_remoteConnection;
-    m_remoteConnection = nullptr;
-    delete m_stationClient;
-    m_stationClient = nullptr;
+    delete std::exchange(m_remoteVax, nullptr);
+    delete std::exchange(m_remoteConnectionPanel, nullptr);
+    delete std::exchange(m_remoteConnection, nullptr);
+    delete std::exchange(m_stationClient, nullptr);
     if (m_panStack) { m_panStack->prepareShutdown(); }
 }
 
@@ -3968,7 +4018,7 @@ void MainWindow::setDisplayDuplexSetting(bool on)
 // The setting to what the pan does (MoxDisplayController: none in a remote
 // window whose Core is below txDisplayVersion 3), to this window's own
 // noise blanking rule (RadioModel, a window running its own DSP), and to
-// the two controls: checked from the setting, disabled with the reason
+// all DUP controls: checked from the setting, disabled with the reason
 // when DUP cannot apply.
 void MainWindow::applyDisplayDuplex()
 {
@@ -3979,14 +4029,17 @@ void MainWindow::applyDisplayDuplex()
         m_radioModel->setLocalDisplayDuplex(m_displayDuplexSetting);
     }
     const QString reason = MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+    const QString tip = reason.isEmpty()
+        ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
+                         "transmitting, under the transmit grid and colors.")
+        : reason;
+    if (m_txApplet) {
+        m_txApplet->setDisplayDuplexState(m_displayDuplexSetting, reason.isEmpty(), tip);
+    }
     if (m_displayDuplexAction) {
         const QSignalBlocker block(m_displayDuplexAction);
         m_displayDuplexAction->setChecked(m_displayDuplexSetting);
         m_displayDuplexAction->setEnabled(reason.isEmpty());
-        const QString tip = reason.isEmpty()
-            ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
-                             "transmitting, under the transmit grid and colors.")
-            : reason;
         m_displayDuplexAction->setToolTip(tip);
         m_displayDuplexAction->setStatusTip(tip);
     }
@@ -10140,6 +10193,9 @@ void MainWindow::populateDefaultMeter()
     // through to TxApplet::requestOpenCfcDialog.
     auto* txApplet = new TxApplet(m_radioModel, nullptr);
     m_txApplet = txApplet;
+    connect(txApplet, &TxApplet::displayDuplexRequested,
+            this, &MainWindow::setDisplayDuplexSetting);
+    applyDisplayDuplex();
     panel->addApplet(txApplet);
 
     // ── 3M-1c Phase L: hand TxApplet the controllers it needs ──────────────
@@ -13294,8 +13350,12 @@ StatusToast* MainWindow::showToast(const QString& message,
     }
 
     auto* toast = new StatusToast(message, severity, timeoutMs, this);
-    connect(toast, &QObject::destroyed, this, [this]() {
-        m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+    connect(toast, &QObject::destroyed, this, [this](QObject* destroyedToast) {
+        // QWidget's QPointer may still be non-null during destroyed().
+        // Remove the dying window by identity before reading live geometry.
+        m_toasts.removeIf([destroyedToast](const QPointer<StatusToast>& t) {
+            return t.isNull() || t.data() == destroyedToast;
+        });
         restackToasts();
     });
     m_toasts.append(toast);
@@ -14711,7 +14771,8 @@ void MainWindow::wireSliceToSpectrum()
     // persisted zoom level if present. SpectrumWidget::loadSettings()
     // has already read "DisplayBandwidth" from AppSettings into
     // m_bandwidthHz by this point. If the loaded value is sensible
-    // (between 10 kHz and the DDC sample rate), keep it; otherwise
+    // (between the 1 kHz zoom minimum and the permitted ceiling), keep it;
+    // otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     const double freq = slice->frequency();
     if (firstWiring) {
@@ -14722,8 +14783,8 @@ void MainWindow::wireSliceToSpectrum()
 
         // Same ceiling as setDisplayWindowClamped, spelled out here because the
         // FALLBACK differs: an out-of-range stored value goes to the full-span
-        // 768 kHz default rather than to the ceiling, and there is a 10 kHz floor
-        // that only applies to a restored value. The ceiling is the shared part.
+        // 768 kHz default rather than to the ceiling. The 1 kHz floor matches
+        // the operator zoom controls; the ceiling is the shared part.
         //
         // The upper bound is that extended ceiling, not a hardcoded 768 kHz.
         //
@@ -14735,7 +14796,7 @@ void MainWindow::wireSliceToSpectrum()
         // old literal meant to say. Codex, PR #318.
         const double loadedBw = host->bandwidth();
         const double ceiling  = host->maxZoomOutBandwidthHz();
-        const double initialBw = (loadedBw >= 10000.0 && loadedBw <= ceiling)
+        const double initialBw = (loadedBw >= 1000.0 && loadedBw <= ceiling)
                                  ? loadedBw : 768000.0;
         // The provisional remote Slice A has no authoritative hosting key.
         // Preserve this pane's view until its record completes, just as the
@@ -15426,6 +15487,12 @@ double MainWindow::readSystemCpuPercent()
                               / static_cast<double>(totalDelta));
 }
 
+void MainWindow::moveEvent(QMoveEvent* event)
+{
+    QMainWindow::moveEvent(event);
+    restackToasts();
+}
+
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
@@ -15450,6 +15517,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         m_chromeBar->relayout(m_chromeBarWidget->width());
     }
     placeCoreStopBanner();
+    restackToasts();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -17601,7 +17669,11 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         if (hosting) {
             hosting->addOnPan(emptyPan);
         } else {
-            model->addSliceOnPan(emptyPan);
+            // Settings restore (2026-10-11): the slices made here at
+            // connect (not asked for by the operator) come back as they
+            // were saved, so receivers B to D return like A without a
+            // Core. A layout change or +RX still makes a new slice.
+            model->addSliceOnPan(emptyPan, !operatorRequested);
         }
     }
 }
@@ -18135,7 +18207,11 @@ void MainWindow::onConnectionStateChanged()
         // the operator's own Disconnect (RemoteConnectionController::
         // operatorDisconnected); a Disconnected state it reaches through
         // link loss or an offline radio at the Core opens nothing.
-        if (!m_autoReconnectInProgress && !m_shuttingDown
+        // Connecting/Probing also enter this non-connected branch. They
+        // are startup progress, not a reason to reopen the connection picker.
+        const ConnectionState state = m_radioModel->connectionState();
+        if ((state == ConnectionState::Disconnected || state == ConnectionState::LinkLost)
+            && !m_autoReconnectInProgress && !m_shuttingDown
             && m_radioModel->ownsLocalDsp()) {
             // Only open if we were previously connected (transition from Connected,
             // not the initial Disconnected state at startup). We detect this by

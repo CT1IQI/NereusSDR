@@ -47,6 +47,7 @@
 #pragma once
 #include "AppletWidget.h"
 #include "models/TunerModel.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QPushButton>
 
@@ -75,7 +76,7 @@ class RadioModel;
 //   Copy diagnostics to clipboard -> diagnosticsCopyRequested()
 //
 // From AetherSDR src/gui/AmpApplet.h [@0cd4559]
-class AmpApplet : public AppletWidget {
+class NEREUS_GUI_EXPORT AmpApplet : public AppletWidget {
     Q_OBJECT
 public:
     explicit AmpApplet(RadioModel* model, QWidget* parent = nullptr);
