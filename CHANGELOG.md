@@ -19,9 +19,16 @@ Thetis-compatible CAT commands.
   time without a program.
 - CAT keys the radio (PTT, Tune and two-tone) under the same transmit rules as
   every other source. Opening a channel or loading settings never keys.
-- Every listener stays off until you turn it on. CAT runs only on the Core. A
-  headless Core's CAT is set up from a connected desktop's Setup pages, applet,
-  tester and log, or from the iPhone or iPad app's Tools tab (CAT Control).
+- Every listener stays off until you turn it on. The CAT channels run only on
+  the Core. A headless Core's CAT is set up from a connected desktop's Setup
+  pages, applet, tester and log, or from the iPhone or iPad app's Tools tab
+  (CAT Control).
+- A remote window can run its own rigctld, at **CAT & Network > rigctld**, so
+  WSJT-X and other Hamlib programs on that computer control the slice the
+  window transmits on and key it as the window. While they key, what they play
+  into NereusSDR TX goes on the air, never the microphone. It is off until you
+  turn it on and listens on 127.0.0.1, port 4532. VFO B is refused, so set the
+  program's split operation to None or Fake It.
 - Serial CAT and serial-pin PTT work in every package: the macOS, Windows and
   Linux builds and the `nereusd` packages all include serial-port support.
 - When Setup refuses a CAT setting it now says why, in plain words. The

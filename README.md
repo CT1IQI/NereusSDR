@@ -36,7 +36,9 @@ for bug reports and feature requests that need tracking.
 
 - **CAT and Hamlib rigctld.** Logging, contest and digital-mode programs
   control NereusSDR over four slice-bound CAT channels, on TCP, serial or a
-  virtual serial port, with a separate rigctld port for Hamlib programs.
+  virtual serial port, with a separate rigctld port for Hamlib programs. A
+  remote window can run its own rigctld, so WSJT-X on that computer tunes and
+  keys the window, with its audio from NereusSDR TX.
 - **Antenna rotor control.** Turn a Yaesu GS-232A/B or Hamlib `rotctld` rotor
   through the Core, from a Rotor applet, the iPhone or iPad app, or a spot.
 - **Native audio engines.** Each system uses its own audio system, device lists
