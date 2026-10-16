@@ -13,6 +13,20 @@
 //                                    value puts the Core's last value back
 //                                    on screen. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  PR 524 review: the service dial's log
+//                                    line says when the ICE pair is not
+//                                    known yet, and logs the rank it gives
+//                                    it once; setPathRankForTest().
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  A session through the service whose ICE
+//                                    pair is not known yet ranks as relayed,
+//                                    so its better-path searches retry ICE;
+//                                    the heartbeat keeps the direct interval
+//                                    until the pair is known. AI-assisted
+//                                    via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  A canceled path race says why in its
+//                                    log line. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
@@ -1519,10 +1533,19 @@ void StationClient::dialThroughService()
             emit connectionAttemptChanged();
         }
         qCInfo(lcStationClient) << "Connected to the Core through the remote access service"
-                                << (path && path->viaLoopbackShim() ? "(web relay)"
-                                    : path && path->relayed()       ? "(relayed)"
-                                                                    : "(direct)");
+                                << (!path                     ? "(ICE pair not known yet)"
+                                    : path->viaLoopbackShim() ? "(web relay)"
+                                    : path->relayed()         ? "(relayed)"
+                                                              : "(direct)");
         m_pathRank = PathRacer::rankForPath(path);
+        m_pathPairUnknown = !path;
+        if (m_pathPairUnknown) {
+            // Outside race mode no better-path search runs (scheduleUpgrade).
+            qCInfo(lcStationClient).noquote()
+                << (m_raceMode ? "ICE pair not known yet; ranked as relayed so a better-path "
+                                 "search retries ICE"
+                               : "ICE pair not known yet; ranked as relayed until it is known");
+        }
         // Trusted by the identity key alone: the hello's binding is checked
         // against the certificate the Core presented in DTLS before
         // anything is sent (handleHello()).
@@ -2347,7 +2370,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         PathRacer* racer = m_upgradeRacer;
         m_upgradeRacer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("the session ended"));
         racer->deleteLater();
     }
     // iPhone app plan Task 27: an address still being tried ended here (the
@@ -2670,8 +2693,8 @@ int StationClient::effectiveHeartbeatIntervalMs() const
     if (m_heartbeatIntervalMs <= 0) {
         return m_heartbeatIntervalMs;
     }
-    const bool relayed = m_pathRank == PathRacer::ServiceRelayed || m_pathRank == PathRacer::Floor
-        || m_mediaTunnelInUse;
+    const bool relayed = (m_pathRank == PathRacer::ServiceRelayed && !m_pathPairUnknown)
+        || m_pathRank == PathRacer::Floor || m_mediaTunnelInUse;
     return relayed ? std::min(m_heartbeatIntervalMs, kRelayedHeartbeatIntervalMs)
                    : m_heartbeatIntervalMs;
 }
@@ -9054,6 +9077,7 @@ void StationClient::startRace()
     m_raceWinnerLine = -1;
     m_raceLines.clear();
     m_pathRank = -1;
+    m_pathPairUnknown = false;
     PathRacer* racer = newRacer(/*upgrade=*/false);
     m_racer = racer;
     connect(racer, &PathRacer::linesChanged, this, [this, racer] {
@@ -9082,14 +9106,14 @@ void StationClient::stopRace()
         PathRacer* racer = m_racer;
         m_racer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("stopped"));
         racer->deleteLater();
     }
     if (m_upgradeRacer) {
         PathRacer* racer = m_upgradeRacer;
         m_upgradeRacer = nullptr;
         racer->disconnect(this);
-        racer->cancel();
+        racer->cancel(QStringLiteral("stopped"));
         racer->deleteLater();
     }
     m_upgradeTimer->stop();
@@ -9164,6 +9188,9 @@ void StationClient::adoptRaceWinner(const PathRacer::Ready& ready)
     }
     m_raceWinnerUrl = ready.url;
     m_pathRank = ready.rank;
+    // The rendezvous rung names a pair not known yet a service path.
+    m_pathPairUnknown = ready.rank == PathRacer::ServiceRelayed
+        && ready.kind == PathRacer::PathKind::Service;
     m_pinRequired = false;
     m_transportOpened = true;
     SessionTransport* transport = ready.transport;
@@ -9255,7 +9282,9 @@ void StationClient::refreshPathRank()
         return;
     }
     const int rank = PathRacer::rankForPath(path);
-    if (rank == m_pathRank) {
+    const bool wasUnknown = m_pathPairUnknown;
+    m_pathPairUnknown = false;
+    if (rank == m_pathRank && !wasUnknown) {
         return;
     }
     qCInfo(lcStationClient) << "The connection through the service settled on rank" << rank;
@@ -9439,6 +9468,7 @@ void StationClient::onPathTicket(const SessionMessage& result)
             m_serviceIce = leavingIce;
         }
         m_pathRank = rank;
+        m_pathPairUnknown = rank == PathRacer::ServiceRelayed && kind == PathRacer::PathKind::Service;
         ++m_pathSwitches;
         if (url.isValid()) {
             m_connectedUrl = url;

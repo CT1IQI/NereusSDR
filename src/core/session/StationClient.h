@@ -481,6 +481,9 @@
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: txPeakReadingsAvailable (txReadingsVersion 4). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: pathPairUnknown(), a rank of ServiceRelayed that only
+//               means the ICE pair is not known yet; setPathRankForTest().
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -859,6 +862,16 @@ public:
     /// The rank of the path the session runs on (PathRacer::Rank), or -1
     /// when it did not come from a race.
     int pathRank() const { return m_pathRank; }
+    /// True while pathRank() is ServiceRelayed only because libjuice had
+    /// not reported the selected ICE pair: not known to be the relay.
+    bool pathPairUnknown() const { return m_pathPairUnknown; }
+    /// Test seam: the path rank and whether its pair is known, as a race
+    /// or the service dial sets them.
+    void setPathRankForTest(int rank, bool pairUnknown)
+    {
+        m_pathRank = rank;
+        m_pathPairUnknown = pairUnknown;
+    }
     /// Moves of this session to a better path (link section 21.2).
     int pathSwitches() const { return m_pathSwitches; }
     /// Test seams: the upgrade schedule (PathRacer::kUpgradeRetryMs; the
@@ -2259,6 +2272,7 @@ private:
     int m_raceWinnerLine = -1;
     QList<PathRacer::Line> m_raceLines;
     int m_pathRank = -1;
+    bool m_pathPairUnknown = false;
     int m_pathSwitches = 0;
     QString m_stationRendezvousId;
     QTimer* m_upgradeTimer = nullptr;

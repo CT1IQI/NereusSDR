@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-15: a control path whose ICE pair is not known yet keeps the
+//               direct-path media rules, as before it ranked as relayed.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15: fix wave 2: the line follows programAudioKeyChanged at
 //               once (a direct connection), so a program key that arrives
 //               or ends under the screen key joins or restarts the VAX
@@ -1871,8 +1874,8 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         const bool viaTunnel = d->tunnelNegotiated && path && path->viaLoopbackShim();
         d->client->setMediaTunnelInUse(viaTunnel);
         const int rank = d->client->pathRank();
-        const bool slowPath = rank == PathRacer::ServiceRelayed || rank == PathRacer::Floor
-            || viaTunnel;
+        const bool slowPath = (rank == PathRacer::ServiceRelayed && !d->client->pathPairUnknown())
+            || rank == PathRacer::Floor || viaTunnel;
         // The Core stops RX audio for the TX-bound slice while keyed. Only
         // its negotiated txState can establish that this silence is expected.
         // Keep the media connection and display alive; the independent TX
@@ -4644,7 +4647,8 @@ void RemoteMediaController::checkMediaSilence()
     }
     const std::optional<MediaIcePath> path = d->peer->selectedPath();
     const int rank = d->client->pathRank();
-    if (!path || path->viaLoopbackShim() || rank == PathRacer::ServiceRelayed
+    if (!path || path->viaLoopbackShim()
+        || (rank == PathRacer::ServiceRelayed && !d->client->pathPairUnknown())
         || rank == PathRacer::Floor) {
         return; // the tunnel and relays have the stall rule
     }
