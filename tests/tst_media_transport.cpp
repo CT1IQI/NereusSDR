@@ -59,9 +59,10 @@
 // channel that closed before the owner heard of it is reported once.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
-// 2026-10-15: the display sink's case offers large messages until one is
-// held, since a sender starved between the first two lost the race with
-// the first one's acknowledgment on the STRIX at 100% CPU. J.J. Boyd
+// 2026-10-15: the display sink's case takes its two large sends, the busy
+// check and the Busy send as one attempt and tries a fresh pair when any
+// step loses the race with the first one's acknowledgment, as a sender
+// starved between the first two did on the STRIX at 100% CPU. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
 // =================================================================
@@ -76,6 +77,7 @@
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include <QElapsedTimer>
+#include <QMetaEnum>
 #include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
@@ -827,11 +829,11 @@ void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
 // and the receiver gets both. Then sends beside the owner's drains, and a
 // stop while the other thread is sending.
 //
-// A sender starved between the first two loses the race with the first
-// one's acknowledgment, and the second goes straight to SCTP as well (this
-// case did so on the STRIX at 100% CPU, 2026-10-15). So messages, each
-// different, are offered until one is held: every one before it was Sent,
-// and the first always is.
+// Every step after the first races the first message's acknowledgment. A
+// sender starved between two steps finds the second message sent (this case
+// did so on the STRIX at 100% CPU, 2026-10-15), the held one already gone or
+// the third taken. Such an attempt shows nothing either way: once the path
+// is idle, the other thread tries a fresh pair.
 void TestMediaTransport::displaySinkSendsFromAnotherThread()
 {
     using Result = IMediaTransport::DisplaySendResult;
@@ -845,36 +847,6 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     startPair(offerer, answerer);
     QVERIFY(sink->ready());
 
-    constexpr qsizetype kChunkBytes = 49'216; // one PureSignal display chunk
-    // Far more than a race lost now and then: a sender that never meets a
-    // full send buffer still fails.
-    constexpr int kMostOffered = 8;
-    QList<QByteArray> offered;
-    const QByteArray busy(kChunkBytes, char(0x22));
-    Result heldResult = Result::Refused;
-    Result busyResult = Result::Refused;
-    bool busyAfterHeld = false;
-    std::thread sender([&] {
-        Result result = Result::Sent;
-        while (result == Result::Sent && offered.size() < kMostOffered) {
-            offered.append(QByteArray(kChunkBytes, char(0x44 + 0x11 * offered.size())));
-            result = sink->submitDisplay(offered.constLast());
-        }
-        heldResult = result;
-        busyAfterHeld = sink->displayBusy();
-        busyResult = sink->submitDisplay(busy);
-    });
-    sender.join();
-    QVERIFY2(heldResult == Result::Queued && offered.size() >= 2,
-             qPrintable(QStringLiteral("%1 messages offered, none held; the last answered %2")
-                            .arg(offered.size()).arg(int(heldResult))));
-    QVERIFY(busyAfterHeld);
-    QCOMPARE(busyResult, Result::Busy);
-    QCOMPARE(offerer.telemetry()->submittedDisplayPayloadBytes,
-             quint64(offered.size()) * quint64(kChunkBytes));
-
-    QTRY_VERIFY_WITH_TIMEOUT(!writable.isEmpty(), 10'000);
-    QVERIFY(!sink->displayBusy());
     // The display channel never retransmits: on a slowed run (a sanitizer,
     // a loaded machine) a message can be lost whole, or arrive seconds
     // late, after the far end is read below. What arrives is whole and in
@@ -892,15 +864,77 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
             return seen >= atLeast && quiet.elapsed() >= 300;
         }, 30'000);
     };
-    QVERIFY(farEndSettles(1));
-    QVERIFY(displayReceived.count() <= offered.size());
-    qsizetype nextOffered = 0;
-    for (const QList<QVariant>& call : std::as_const(displayReceived)) {
-        const qsizetype at = offered.indexOf(call.at(0).toByteArray(), nextOffered);
-        QVERIFY2(at >= 0, "a large message arrived that was not offered, or out of order");
-        nextOffered = at + 1;
+
+    constexpr qsizetype kChunkBytes = 49'216; // one PureSignal display chunk
+    // Far more than a race lost now and then; a send buffer with room for
+    // two such messages loses every attempt.
+    constexpr int kMostAttempts = 5;
+    const QMetaEnum resultName = QMetaEnum::fromType<Result>();
+    QList<QByteArray> taken;
+    int submitted = 0;
+    QStringList steps;
+    // The other thread only; the test thread reads these after the join.
+    const auto submit = [&]() {
+        // Each message different, so the far end's order can be checked.
+        const QByteArray message(kChunkBytes, char(0x44 + submitted++));
+        const Result result = sink->submitDisplay(message);
+        if (result == Result::Sent || result == Result::Queued) {
+            taken.append(message);
+        }
+        steps << QString::fromLatin1(resultName.valueToKey(int(result)));
+        return result;
+    };
+    QStringList attempts;
+    bool held = false;
+    while (!held && attempts.size() < kMostAttempts) {
+        steps.clear();
+        Result first = Result::Refused;
+        std::thread sender([&] {
+            first = submit();
+            if (first == Result::Sent && submit() == Result::Queued) {
+                const bool busy = sink->displayBusy();
+                steps << (busy ? QStringLiteral("busy") : QStringLiteral("not busy"));
+                held = busy && submit() == Result::Busy;
+            }
+        });
+        sender.join();
+        // The path is idle before the first attempt: usrsctp always has room.
+        if (attempts.isEmpty()) {
+            QCOMPARE(first, Result::Sent);
+        }
+        attempts << steps.join(QStringLiteral(", "));
+        if (held) {
+            break;
+        }
+        // Idle again: nothing held, and the far end quiet for 300 ms, which
+        // also gives a delayed acknowledgment its time.
+        if (!QTest::qWaitFor([&] { return !sink->displayBusy(); }, 10'000)
+            || !farEndSettles(0)) {
+            QFAIL(qPrintable(QStringLiteral("the path did not go idle after attempt %1 (%2)")
+                                 .arg(attempts.size()).arg(attempts.constLast())));
+        }
+        writable.clear();
     }
-    const int stillToCome = int(offered.size() - displayReceived.count());
+    QVERIFY2(held, qPrintable(QStringLiteral("no attempt held the second of two messages: %1")
+                                  .arg(attempts.join(QStringLiteral("; ")))));
+    if (attempts.size() > 1) {
+        qInfo().noquote() << QStringLiteral("held on attempt %1: %2")
+                                 .arg(attempts.size()).arg(attempts.join(QStringLiteral("; ")));
+    }
+    QCOMPARE(offerer.telemetry()->submittedDisplayPayloadBytes,
+             quint64(taken.size()) * quint64(kChunkBytes));
+
+    QTRY_VERIFY_WITH_TIMEOUT(!writable.isEmpty(), 10'000);
+    QVERIFY(!sink->displayBusy());
+    QVERIFY(farEndSettles(1));
+    QVERIFY(displayReceived.count() <= taken.size());
+    qsizetype nextTaken = 0;
+    for (const QList<QVariant>& call : std::as_const(displayReceived)) {
+        const qsizetype at = taken.indexOf(call.at(0).toByteArray(), nextTaken);
+        QVERIFY2(at >= 0, "a large message arrived that was not taken, or out of order");
+        nextTaken = at + 1;
+    }
+    const int stillToCome = int(taken.size() - displayReceived.count());
 
     // The other thread sends while the owner drains its events, as the
     // display thread does beside the station thread: a send that meets a
@@ -947,7 +981,7 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     int lateChunks = 0;
     for (const QList<QVariant>& call : std::as_const(displayReceived)) {
         const QByteArray received = call.at(0).toByteArray();
-        if (offered.contains(received)) {
+        if (taken.contains(received)) {
             ++lateChunks;
             continue;
         }
@@ -998,7 +1032,7 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     stream.join();
     QCOMPARE(takenAfterStop.load(std::memory_order_acquire), 0);
     Result afterStop = Result::Sent;
-    std::thread late([&] { afterStop = sink->submitDisplay(offered.constFirst()); });
+    std::thread late([&] { afterStop = sink->submitDisplay(taken.constFirst()); });
     late.join();
     QCOMPARE(afterStop, Result::Refused);
     answerer.stop();
