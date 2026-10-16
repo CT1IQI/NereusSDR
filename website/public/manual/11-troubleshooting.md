@@ -26,13 +26,13 @@ On iPhone/iPad, check the phone's output route and volume, then open **Tools > C
 
 ## PTT is refused or a TCI or CAT program will not transmit
 
-Check the selected TX slice and the transmit permission/ownership indication. When another device holds transmit, this device cannot key until a supported takeover succeeds. Desktop offers its transmit takeover workflow; the phone build covered here has no general transmit takeover action. An unheld transmitter has a separate first-human-key path, described with its RF prerequisites in [phone transmit preparation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone). Do not repeatedly tap PTT to clear an ownership refusal. A TCI client also needs the owning window's **TXcontrol**. Confirm the server is running at **File > Settings... > CAT & Network > TCI Server** and that the client appears in its client list. A CAT program, a Hamlib rigctld client or a hardware line set up on **CAT PTT** is a key source like any other: it is subject to the same transmit ownership and the same refusals, and a working CAT connection or a moving frequency does not mean it may key. Check the channel's status on **File > Settings... > CAT & Network > Serial Ports** or **TCP/IP CAT**, then the transmit indication. Do not troubleshoot this as an audio problem until ownership and server state are confirmed.
+Check the selected TX slice and the transmit permission/ownership indication. When another device holds transmit, this device cannot key until a supported takeover succeeds. Desktop offers its transmit takeover workflow; on the phone, use **Take transmit** in the TX panel or in the refusal notice and confirm in the sheet. An unheld transmitter has a separate first-human-key path, described with its RF prerequisites in [phone transmit preparation](07-iphone-operate.md#prepare-and-transmit-voice-from-the-phone). Do not repeatedly tap PTT to clear an ownership refusal. A TCI client also needs the owning window's **TXcontrol**. Confirm the server is running at **File > Settings... > CAT & Network > TCI Server** and that the client appears in its client list. A CAT program, a Hamlib rigctld client or a hardware line set up on **CAT PTT** is a key source like any other: it is subject to the same transmit ownership and the same refusals, and a working CAT connection or a moving frequency does not mean it may key. Check the channel's status on **File > Settings... > CAT & Network > Serial Ports** or **TCP/IP CAT**, then the transmit indication. Do not troubleshoot this as an audio problem until ownership and server state are confirmed.
 
 [![iPhone TX panel explicitly reporting the Core microphone muted and unavailable transmit readings](images/iphone-mic-muted-original.png)](images/iphone-mic-muted-original.png)
 
 *Read the reason beside the control: this example says the Core microphone is muted and that transmit readings are absent. Empty stage bars are unavailable data, not measured zero levels. The native simulator screen uses scripted Core state; the indicated values are not a voice setup recipe.*
 
-## A control is greyed or a change does not stick
+## A control is grayed or a change does not stick
 
 Read its reason before reconnecting or repeating the request. Common cases
 need different remedies:
@@ -123,7 +123,7 @@ The local radio dialog groups its readings as follows:
 | **Latency (RTT)** and **Max RTT**. | Current and observed maximum round-trip delay. A maximum alone does not describe when a break happened. |
 | **Jitter**, **Packet loss**, **UDP seen**. | Packet timing/loss observations when measured. |
 | TX/RX rates and Sample rate. | Traffic and the connected receive configuration. Traffic can be present even with silent or misrouted audio. |
-| **Audio**: Backend, Packet gap and Underruns. | Observed audio shortages. **Packet gap** is the longest datagram interval in the recent sampling window. The Buffer row has no production reading in the covered local dialog. |
+| **Audio**: Backend, Packet gap and Underruns. | **Backend** names the sound system chosen in the Audio settings (Core Audio, Windows audio, ASIO, PipeWire, PulseAudio, ALSA direct or older drivers). The other readings show observed audio shortages. **Packet gap** is the longest datagram interval in the recent sampling window. The Buffer row has no production reading in the covered local dialog. |
 | **Radio Telemetry**: PA voltage and ADC overload. | Reported radio conditions where the hardware supplies them. Not reported is different from zero. |
 
 **Not measured**, a dash, or a graph gap is missing evidence, not a healthy

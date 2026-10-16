@@ -44,7 +44,7 @@ Use this chapter to locate common commands and distinguish which part of the sta
 
 ### Change the radio a connected Core runs
 
-With the phone connected to the Core you intend to change, open **Radio > More > Manage Radios**. The page asks the Core for its radio list while the page is open. Read each card's name (or MAC if unnamed), model, protocol, IP address and MAC; **In use** identifies the radio it currently runs. **Scan again** requests a fresh LAN scan. Wait for **The Core is looking for radios** and the refreshed list. An empty-list message or a greyed action states when the Core is offline, too old, on air, or this session did not use a paired device key.
+With the phone connected to the Core you intend to change, open **Radio > More > Manage Radios**. The page asks the Core for its radio list while the page is open. Read each card's name (or MAC if unnamed), model, protocol, IP address and MAC; **In use** identifies the radio it currently runs. **Scan again** requests a fresh LAN scan. Wait for **The Core is looking for radios** and the refreshed list. An empty-list message or a grayed action states when the Core is offline, too old, on air, or this session did not use a paired device key.
 
 To switch radios, choose an inactive radio, review the confirmation, then tap **Choose**. The confirmation says the Core switches and every connected device, including this phone, reconnects. After the phone reconnects, read the Core/link and radio identity before continuing; do not assume a successful tap changed the selected radio. If the Core refuses the request, its words appear in **Refusal**. A disconnect or missing capability disables the action with its reason. Choosing the current **In use** radio is not a switch.
 

@@ -105,7 +105,7 @@ Rendered on 9 October 2026 by the native audio engines plan's widget and phone-p
 
 | Image | State illustrated |
 | --- | --- |
-| [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker greyed, Rescan devices greyed. |
+| [desktop-audio-outputs.png](desktop-audio-outputs.png) | Audio > Outputs on a Mac, no radio: This computer, Headphones off, Radio speaker grayed, Rescan devices grayed. |
 | [desktop-modes-audio.png](desktop-modes-audio.png) | Audio > Digital modes on a Mac: four VAX cards off, TCI settings. |
 | [iphone-sound-core-speaker.png](iphone-sound-core-speaker.png) | Sound panel with Radio speaker 40, Core speaker 60, AirPods route. |
 

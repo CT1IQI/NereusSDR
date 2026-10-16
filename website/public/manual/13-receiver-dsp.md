@@ -79,7 +79,7 @@ DFNR, NR3 and NNR use neural processing; MNR is a separate macOS MMSE-Wiener met
    Compatibility. Select the row and expand **Details** for validation errors.
    **Refresh files** reloads the Core list; **Import...** transfers a local
    asset to the Core; **Export...** saves the selected Core asset locally.
-   These actions do not download models from a network catalogue.
+   These actions do not download models from a network catalog.
 4. Select the intended compatible model, then inspect the pending/active
    readbacks. The pending choice takes effect through **Apply models and
    reconnect**. Do this off air: it reconnects the radio and the Core refuses

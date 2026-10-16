@@ -36,6 +36,14 @@ with this look. Locks you saved earlier open unlocked. Your saved layout is
 copied the first time you start, so nothing is lost.</li>
 <li><strong>Attenuator and preamp are remembered.</strong> They are saved and sent to the
 radio each time you connect. Connecting never keys the radio.</li>
+<li><strong>Each receiver keeps more of its own settings.</strong> L/R pan, binaural,
+squelch, APF, the FM settings, the DIGL and DIGU offsets and the RTTY mark
+and shift are now saved for each receiver, so they start saving from the
+first launch. AGC-T AUTO and its offset move from each band to each
+receiver: the first time, a receiver takes the value it had saved for the
+band it opens on. Receivers B, C and D now run on the settings they show,
+so one whose saved settings differ from the defaults may sound different
+from before.</li>
 </ul>
 <h2 id="core-installs-on-a-raspberry-pi-rock-or-other-sbc">Core installs on a Raspberry Pi, Rock or other SBC</h2>
 <p>The Core runs as a service account with no groups of its own, so Linux sound
@@ -52,6 +60,9 @@ the Core speaker will not work until you add
 the station image write it; the
 <code>.deb</code> packages do not. After adding either file, run
 <code>sudo systemctl daemon-reload</code> and <code>sudo systemctl restart nereusd</code>.</li>
+<li><strong>Rock real-time priority.</strong> On a Rock, run the 2026.10.1 installer once and
+then restart the board. It adds a drop-in meant to keep an ssh login from
+costing the Core its real-time priority. See What to try.</li>
 </ul>
 <p>The <a href="/guides/install-core-sbc.html">SBC install guide</a> has the details, including the
 sound card's own mixer and kernels that refuse real-time priority.
@@ -85,6 +96,17 @@ Hold Shift (or press Ctrl+Shift+A) to arrange, dock a container on each
 edge, pop one out, pin it and return it. Save a workspace profile and
 switch to it with <strong>Containers &gt; Manage Workspace Profiles…</strong>. Choose
 <strong>Reset Default Layout</strong> and confirm the S-Meter comes back.</li>
+<li><strong>Receivers after a relaunch.</strong> Give two receivers different squelch, L/R
+pan, APF and AGC-T AUTO settings, close NereusSDR normally, open it again
+and confirm each receiver comes back as you left it and sounds the way it
+did.</li>
+<li><strong>Hermes Lite 2 through a Pi Core.</strong> Key the radio from a window or the
+phone through a Core on a Raspberry Pi and hold it for half a minute.
+Confirm the radio stays keyed for the whole time.</li>
+<li><strong>Rock real-time priority.</strong> After installing on a Rock and restarting it,
+log in over ssh and run <code>cat /sys/fs/cgroup/cgroup.subtree_control</code>.
+Confirm that <code>cpu</code> is not in the list, and that the Core's log has no
+&quot;Raised thread priority was refused&quot; line from after the restart.</li>
 <li><strong>Two-tone and PureSignal.</strong> If you use PureSignal, run a two-tone test and
 a calibration at your new two-tone level and compare it with what you
 expect.</li>

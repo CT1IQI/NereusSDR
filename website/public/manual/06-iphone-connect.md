@@ -131,7 +131,7 @@ Before operating, confirm all of the following from the connected band:
 - The toolbar names the intended Core and shows a live link indication.
 - Spectrum and waterfall update, and a slice flag is present.
 - The speaker control opens **Sound**; the current phone route is the one you expect.
-- **Modes** shows the selected slice and current mode. A control that is unavailable may be greyed with a reason because the Core does not describe or support that setting.
+- **Modes** shows the selected slice and current mode. A control that is unavailable may be grayed with a reason because the Core does not describe or support that setting.
 - The **TX** badge is set on the slice you intend to use before you consider PTT. Pairing and connecting never select the correct transmit slice on your behalf.
 
 For the receive, touch, audio, and transmit procedures, continue to [Operate from an iPhone](07-iphone-operate.md). For receiver ownership and handoff, see [Share a Core with other devices](08-shared-core.md).

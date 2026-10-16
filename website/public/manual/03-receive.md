@@ -29,6 +29,11 @@ your output. Temporarily mute the others when diagnosing the selected
 receiver, then restore the mix. Do not change several receivers' DSP settings
 merely because the combined audio is difficult to understand.
 
+Each receiver keeps its own settings. A change is saved to the receiver you
+made it on, and after you close and reopen NereusSDR every receiver comes
+back with its own L/R pan, binaural, squelch, APF, FM settings, DIGL and DIGU
+offsets, RTTY mark and shift, and AGC-T AUTO.
+
 ## Tune by frequency, signal position or step
 
 For a known frequency, double-click the flag's frequency display, enter an
@@ -164,7 +169,8 @@ and conditions; this manual does not treat a captured setting as a universal
 preset. Use **AUTO** when you want noise-floor-based adjustment, and check
 its indication before making a manual AGC-T change. The line under AGC-T reads
 **NF <n> dB · offset +<n>** once a noise floor is measured and **NF awaiting
-measurement** until then. **AUTO** acts on the slice the applet is showing. A
+measurement** until then. **AUTO** acts on the slice the applet is showing,
+and each receiver keeps its own AUTO setting and offset on every band. A
 window signed in to a desktop Core shows a real noise-floor reading too.
 
 ## Set squelch without losing weak signals
@@ -281,9 +287,10 @@ slice can make the two operating frequencies clearer.
 **CTUN** concerns the receiver window and band view. Right-click empty spectrum
 and enable **CTUN (independent pan)** under **Tuning** to keep the receive window
 fixed while tuning within it. The VFO moves while the pan stays put. Turn it off
-to return to a view following the VFO. The checkbox is grayed, with the Core's reason as its tooltip, on a slice you
-only listen to or a receiver another device holds, and when the Core does not
-provide remote C-Tune support. None of these three controls is a
+to return to a view following the VFO. The checkbox is grayed on a slice you
+only listen to or a receiver another device holds, with the Core's reason as
+its tooltip. When the Core does not provide remote C-Tune, it is grayed with
+**C-Tune requires a connected Core with remote C-Tune support**. None of these three controls is a
 substitute for selecting the intended transmit slice.
 
 ## Worked example: improve a weak voice signal

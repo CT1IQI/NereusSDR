@@ -148,11 +148,13 @@ than extra reader chapters. The original PNGs, annotations/exports and capture
 provenance were unchanged. Chapter and section disclosure controls still carry
 `open`; no new browser inspection or release/runtime certification is claimed.
 
-The 2026.10.1 documentation pass reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 21 preserved screenshot originals matched their recorded hashes. No new browser inspection or release/runtime certification is claimed.
+The first run of the 2026.10.1 documentation pass reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 21 preserved screenshot originals matched their recorded hashes. No new browser inspection or release/runtime certification is claimed.
 
 The 14 October 2026 workspace-look recapture reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 726 local manuscript links and images, and all 27 preserved screenshot originals matched their recorded hashes (the 21 earlier ones plus six new workspace-look originals). The new images were each inspected by eye for the workspace look, no debug overlay and the same subject as the figure replaced. No new browser inspection or release/runtime certification is claimed.
 
 The 15 October 2026 connected-window recapture reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 736 local manuscript links and images, and all 32 preserved screenshot originals matched their recorded hashes (five more workspace-look originals, including the TX applet and TCI Server). The new images were inspected by eye. No new browser inspection or release/runtime certification is claimed.
+
+The 16 October 2026 text update for the PRs merged on 15 and 16 October reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 738 local manuscript links and images, and all 32 preserved screenshot originals matched their recorded hashes. No figures changed. No new browser inspection or release/runtime certification is claimed.
 
 ## Evidence still required for publication
 

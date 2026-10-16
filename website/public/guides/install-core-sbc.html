@@ -114,10 +114,17 @@ on the iPhone or iPad. The Core speaker needs a 2026.10.1 Core.</li>
 own mixer has the output switched off. On a board with a DAC, check that its
 DAC switches are on (<code>alsamixer</code> or <code>amixer -c &lt;card&gt;</code>). NereusSDR does not
 change a card's mixer.</li>
-<li><strong>Real-time priority.</strong> Some vendor kernels refuse real-time scheduling to
-every service. The Core then logs &quot;Raised thread priority was refused&quot; and
-its audio threads run without real-time priority. Nothing
-needs fixing; it is a note about that kernel. Check how heavily the board is
+<li><strong>Real-time priority.</strong> Some vendor kernels, the Rock 5C's among them,
+refuse real-time scheduling to every service while the system's CPU
+controller is on, and on Debian any login switches it on. The Core then logs
+&quot;Raised thread priority was refused&quot; and its audio threads run at normal
+priority. The Rock installer writes a drop-in,
+<code>/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf</code>, meant
+to keep logins from switching the controller on; this is not yet confirmed
+on a Rock. It takes effect for logins after it is written, so restart the
+Rock once after installing. To see
+whether the controller is on, look for <code>cpu</code> in
+<code>cat /sys/fs/cgroup/cgroup.subtree_control</code>. Check how heavily the board is
 loaded if audio breaks up.</li>
 </ul>
 <h2 id="5-pair-a-console">5. Pair a console</h2>
