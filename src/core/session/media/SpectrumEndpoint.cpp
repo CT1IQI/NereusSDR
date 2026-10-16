@@ -5,6 +5,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 Task 2.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: The wide row is cropped and peak-reduced as powers and only
+//               the values sent are converted to dBm (wideRowDbm), in place
+//               of converting every FFT bin first. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): configure records the context
 //               generation at which the planes now running were started
 //               (pictureGeneration). J.J. Boyd (KG4VCF), AI-assisted via
@@ -138,25 +142,41 @@ bool finiteRow(const QVector<float>& row)
     });
 }
 
-QVector<float> calibratedDbm(const DaemonSpectrumFrame& frame, double offsetDb)
+// The wide row in dBm, or an empty row for a frame that does not convert.
+//
+// Cropped and peak-reduced as powers, then converted. The conversion rises
+// with the power, so the largest power of a group gives the largest dBm of
+// that group: the row is the one a conversion of every bin gives
+// (tst_spectrum_endpoint holds the two equal). Converting every FFT bin
+// first cost a log10 a bin where at most maximumSamples are sent. On the
+// Rock 5C on 2026-10-10, eight pans' worth from two windows, that was a
+// fifth of the Core's main thread, which was using 91% of its core.
+QVector<float> wideRowDbm(const DaemonSpectrumFrame& frame, double offsetDb,
+                          const DssWideRowRequest& request, int maximumSamples)
 {
     const double scale = std::pow(10.0, offsetDb / 10.0);
     if (!finite(scale) || scale <= 0.0) {
         return {};
     }
-    QVector<float> output;
-    output.resize(frame.binsLinear.size());
-    for (int index = 0; index < frame.binsLinear.size(); ++index) {
-        const float linear = frame.binsLinear.at(index);
-        if (!std::isfinite(linear) || linear < 0.0f) {
-            return {};
-        }
-        output[index] = static_cast<float>(10.0 * std::log10(scale * linear + 1.0e-60));
-        if (!std::isfinite(output[index])) {
-            return {};
-        }
+    const auto dbm = [scale](float linear) {
+        return static_cast<float>(10.0 * std::log10(scale * linear + 1.0e-60));
+    };
+    // A frame with a bin that does not convert is refused whole, wherever
+    // the bin sits. Every bin converts if the largest does. consume has
+    // already refused a frame with a bin that is not finite or is negative
+    // (finiteNonnegativeBins), so only the conversion is checked here.
+    const float largest = frame.binsLinear.isEmpty()
+        ? 0.0f
+        : *std::max_element(frame.binsLinear.cbegin(), frame.binsLinear.cend());
+    if (!std::isfinite(dbm(largest))) {
+        return {};
     }
-    return output;
+    const DssWideRow wide = cropDssWideRow(frame.binsLinear, request);
+    QVector<float> row = peakReduceDssWideRow(wide.binsDbm, maximumSamples);
+    for (float& value : row) {
+        value = dbm(value);
+    }
+    return row;
 }
 
 bool matchesWidebandSource(const WidebandSpectrumFrame& frame,
@@ -519,12 +539,10 @@ std::optional<DisplayCodecFrame> SpectrumEndpoint::consume(
     output.traceDbm = std::move(trace);
     output.waterfallDbm = std::move(waterfall);
     if (m_context.codec.wideSamples != 0) {
-        const QVector<float> fullDbm = calibratedDbm(frame,
-                                                      frame.dbmOffset + stationOffsetDb);
-        const DssWideRow wide = cropDssWideRow(fullDbm, {
+        output.wideDbm = wideRowDbm(frame, frame.dbmOffset + stationOffsetDb, {
             m_request.centreHz, m_request.spanHz, m_sourceContext.centreHz,
-            m_sourceContext.sampleRateHz, m_request.requestedWideSpanFactor});
-        output.wideDbm = peakReduceDssWideRow(wide.binsDbm, kMaxWideSamples);
+            m_sourceContext.sampleRateHz, m_request.requestedWideSpanFactor},
+            kMaxWideSamples);
         if (output.wideDbm.size() != m_context.codec.wideSamples) {
             return std::nullopt;
         }

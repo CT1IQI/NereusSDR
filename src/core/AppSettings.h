@@ -50,6 +50,10 @@
 //                 writes, beside the single change hook the Core's
 //                 settings proxy owns. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-15 - The writer thread is finished as the QCoreApplication
+//                 ends, so a background save still writing at exit no
+//                 longer leaves the Windows process waiting forever.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -890,6 +894,12 @@ private:
     // Private default constructor — used only by instance().
     AppSettings();
 
+    // Registered with qAddPostRoutine() for instance() only: finishes its
+    // writer thread while the QCoreApplication ends and every thread still
+    // runs. instance() is a static in the Core library, and on Windows its
+    // destructor runs after the process has ended the writer thread.
+    static void finishInstanceWriter();
+
     // Shared init (resolves file path on macOS/Linux/Win).
     void initFilePath();
 
@@ -936,6 +946,8 @@ private:
     };
     std::shared_ptr<BackgroundSaveState> m_backgroundSave{
         std::make_shared<BackgroundSaveState>()};
+    // True for instance() only.
+    bool m_isInstance{false};
     // Declared last: destroyed first, which waits for the writer thread
     // while the rest of this store is still whole.
     std::unique_ptr<SettingsFileWriter> m_fileWriter;

@@ -241,6 +241,23 @@ struct DaemonDisplayDiagnostics {
     /// message), and those refused by the five-a-second limit.
     quint64 displayKeyframeRequests = 0;
     quint64 displayKeyframeRequestsRefused = 0;
+    /// Frames a newer frame replaced before they were sent, by where they
+    /// waited; each place holds one frame. At the source: frames an FFT
+    /// engine finished for a source one of this peer's pans is sending
+    /// from, which the Core's main thread had not taken when the next one
+    /// came. One per source frame, whatever the number of pans on it. At a
+    /// pan: frames a pan held and would have sent, which no sender turn
+    /// had taken when the next one came (no turn ran, the turn went to
+    /// another pan, the channel was busy, or the display budget had no
+    /// room). One per pan. A frame the pan's own pacing would have dropped
+    /// is not counted.
+    quint64 displaySourceFramesReplaced = 0;
+    quint64 displayPanFramesReplaced = 0;
+    /// The longest time between two turns of the display sender's timer
+    /// while this peer was ready, in microseconds; -1 before two turns.
+    /// The turns are kDisplaySenderIntervalMs apart when the Core's main
+    /// thread is free, and a turn sends one display message at most.
+    qint64 displaySenderGapMaxUs = -1;
 
     bool operator==(const DaemonDisplayDiagnostics&) const = default;
 };
@@ -630,6 +647,12 @@ private:
     bool reconcileWidebandDemand(EndpointEntry& entry);
     std::optional<WidebandDisplayContext> widebandContext(const EndpointEntry& entry) const;
     void onSendTick();
+    /// A turn of the display sender's timer: notes the time since the
+    /// turn before for the display diagnostics, then onSendTick().
+    void onSendTimerTurn();
+    /// Whether the frame `entry` holds is one a sender turn would send:
+    /// its context is out and its own pacing would take the frame.
+    bool heldFrameWouldBeSent(const EndpointEntry& entry) const;
     void onStreamGeometryChanged(int streamIndex, double centreHz, int sampleRateHz);
     void onStreamBindingsChanged(int streamIndex, const QVector<int>& sliceIds);
     void onSliceRemoved(int sliceId);
@@ -1045,6 +1068,12 @@ private:
     QElapsedTimer m_mediaPathChecked;
     DaemonDisplayDiagnostics m_displayDiagnostics;
     DaemonDisplayDiagnostics m_displayDiagnosticsLogged;
+    /// When the display sender's timer last turned with this peer ready
+    /// (displayNowNs), and the longest gap between two such turns since
+    /// the last display diagnostics line (-1: none), which that line
+    /// carries and takes.
+    std::optional<qint64> m_lastSenderTurnNs;
+    qint64 m_senderGapMaxSinceLoggedUs{-1};
     QSet<QString> m_loggedTransportErrorKinds;
     int m_roundRobinCursor{0};
     QList<QByteArray> m_ps3CurrentChunks;

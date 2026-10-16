@@ -290,6 +290,17 @@ function(nereus_add_test name)
     endif()
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
+    # MinGW test executables reserve 2 MB for the main thread, Linux and
+    # macOS 8 MB. Tests that keep two or three SpectrumWidget locals need
+    # 2.3 to 3.1 MB and overflowed it on Windows; give them 8 MB there too.
+    if(WIN32)
+        if(MSVC)
+            target_link_options(${name} PRIVATE "/STACK:8388608")
+        else()
+            target_link_options(${name} PRIVATE "-Wl,--stack,8388608")
+        endif()
+    endif()
+
     # Reuse the shared test PIE/nonpedantic Qt/STL PCH (CMakeLists.txt §PCH).
     # 589 test executables × per-target PCH compile would burn the wins;
     # REUSE_FROM means the PCH is built once and shared
@@ -1411,6 +1422,17 @@ nereus_add_test(tst_dig_rtty_wire)
 
 # ── Phase 3G-10 Stage 2: per-slice-per-band DSP persistence (S2.P) ───────────
 nereus_add_test(tst_slice_persistence_per_band)
+
+# ── Settings restore (2026-10-11): what a slice is closed with comes back ───
+# The audio panel, squelch, APF, BIN, FM, DIG and RTTY values were never
+# saved; AGC-T AUTO is kept per receiver; a change is saved under the slice
+# it was made on; a restored slice pushes its state to its WDSP channel; and
+# without a Core, receivers B to D come back at connect like A.
+# Source: NereusSDR-original tests.
+nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
+nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
+nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
+nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
@@ -3143,6 +3165,8 @@ nereus_add_test(tst_workspace_default_button
 target_compile_definitions(tst_workspace_default_button PRIVATE NEREUS_BUILD_TESTS)
 # A DSP parameter popup opened against the screen's lower edge is placed from
 # the size it ends at with the workspace look on, and does not grow after.
+nereus_add_test(tst_dsp_popup_bounds)
+nereus_add_test(tst_nnr_popup_bounds)
 nereus_add_test(tst_dsp_popup_stays_on_screen
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_dsp_popup_stays_on_screen PRIVATE NEREUS_BUILD_TESTS)
@@ -8765,7 +8789,7 @@ else()
     set(NEREUS_TEST_PYTHON python3)
 endif()
 
-nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
@@ -8914,6 +8938,8 @@ if(_nereus_unsharded_checks_here AND DEFINED libdatachannel_SOURCE_DIR
             -DPC_CPP=${libdatachannel_SOURCE_DIR}/src/peerconnection.cpp
             -DDTLS_CPP=${libdatachannel_SOURCE_DIR}/src/impl/dtlstransport.cpp
             -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libdatachannel-patch
+            "-DGENERATOR=${CMAKE_GENERATOR}"
+            "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             -P ${CMAKE_SOURCE_DIR}/tests/scripts/check-libdatachannel-patch.cmake)
     set_tests_properties(libdatachannel_patch_applies PROPERTIES LABELS "session" TIMEOUT 120)
 endif()

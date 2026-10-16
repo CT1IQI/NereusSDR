@@ -2110,6 +2110,10 @@ void TciServer::stop()
     }
     m_clients.clear();
     m_remoteAudioSockets.clear();
+    // Every app is gone: the sensor timers go back to the idle default, so
+    // a restarted server does not tick at a departed app's rate. They are
+    // stopped above; setInterval does not start them.
+    updateSensorTimerIntervals();
 
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
         if (m_remoteIqRequested[rx]) {
@@ -2447,6 +2451,10 @@ void TciServer::onClientDisconnected()
 
     m_clients.erase(it);
     ws->deleteLater();
+
+    // A fast app that leaves without turning its sensors off no longer sets
+    // the rate the others get.
+    updateSensorTimerIntervals();
 
     // R-R3-42: the last app listening to a Core receiver releases it.
     for (int rx = 0; rx < kMaxTciRxSlices; ++rx) {
@@ -3077,6 +3085,38 @@ void TciServer::handleAudioUnsubscribe(std::shared_ptr<TciClientSession>& sessio
         session->audioResamplers.erase(rIt);
         qCInfo(lcTci) << "TciServer: audio resampler destroyed for rx" << rx
                       << "peer" << session->peer;
+    }
+}
+
+// ── updateSensorTimerIntervals() ──────────────────────────────────────────────
+//
+// The shared sensor timers follow the apps that are left. In Thetis each
+// listener runs its own sensor timers, stopped when it leaves
+// (StopSocketListener, TCIServer.cs:3045-3056 [v2.10.3.15]), and the
+// server-wide MinimumRequiredRxSensorInterval / MinimumRequiredTxSensorInterval
+// (TCIServer.cs:8092-8130) skip it once PurgingThreadStart removes it from
+// the listener list (TCIServer.cs:7199-7221). NereusSDR runs one RX and one
+// TX timer for all apps, so a leaving app's interval is dropped here, as
+// rx_sensors_enable / tx_sensors_enable already drop a disabled one.
+void TciServer::updateSensorTimerIntervals()
+{
+    QList<int> rxIntervals;
+    QList<int> txIntervals;
+    for (auto it = m_clients.cbegin(); it != m_clients.cend(); ++it) {
+        if (it.value()->rxSensorsEnabled) {
+            rxIntervals.append(it.value()->rxSensorIntervalMs);
+        }
+        if (it.value()->txSensorsEnabled) {
+            txIntervals.append(it.value()->txSensorIntervalMs);
+        }
+    }
+    const int rxInterval = TciSensorManager::minimumRequiredInterval(rxIntervals);
+    if (m_rxSensorTimer->interval() != rxInterval) {
+        m_rxSensorTimer->setInterval(rxInterval);
+    }
+    const int txInterval = TciSensorManager::minimumRequiredInterval(txIntervals);
+    if (m_txSensorTimer->interval() != txInterval) {
+        m_txSensorTimer->setInterval(txInterval);
     }
 }
 

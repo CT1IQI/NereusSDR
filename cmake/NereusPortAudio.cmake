@@ -1,5 +1,7 @@
 # NereusSDR-original: checked patches on a build-owned PortAudio copy.
 # 2026-10-14, J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+# 2026-10-15, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: the
+# staging comment now says the Windows copy is CRLF and how the patch reads it.
 include_guard(GLOBAL)
 if(NOT COMMAND _nereus_apply_vendor_patch)
     include("${CMAKE_CURRENT_LIST_DIR}/NereusRemoteMedia.cmake")
@@ -60,8 +62,10 @@ function(nereus_stage_portaudio source_dir out_var)
     file(REMOVE_RECURSE "${_built}")
     file(MAKE_DIRECTORY "${_built}")
     file(COPY "${source_dir}/" DESTINATION "${_built}" PATTERN ".git" EXCLUDE)
-    # Apply the checked LF patch to an LF build copy on every platform. Keep
-    # the fetched source pristine because FetchContent may share that checkout.
+    # Apply the checked LF patch to a build copy. On Windows file(WRITE)
+    # writes CRLF, so the copy is CRLF there and the patch step reads it as
+    # LF (core.autocrlf=input). Keep the fetched source pristine because
+    # FetchContent may share that checkout.
     foreach(_relative IN LISTS _pinned_paths)
         _nereus_read_portaudio_lf("${_built}/${_relative}" _staged_content)
         file(WRITE "${_built}/${_relative}" "${_staged_content}")
