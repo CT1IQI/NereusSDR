@@ -212,6 +212,58 @@ fails on the unpatched pool and passes on the patched one. The fault
 itself has not been seen against the patched pool. Drop or revisit this
 patch when the upstream pin changes.
 
+## Desktop/Core shared mutex patch
+
+`cmake/patches/libdatachannel-0007-lock-shared-mutexes-once-when-made.patch`
+changes the pinned v0.24.5 `src/impl/datachannel.cpp`,
+`src/impl/peerconnection.cpp`, `src/impl/sctptransport.cpp` and
+`src/impl/track.cpp` in the build-owned desktop/Core copy (2026-10-16,
+J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code). It is MPL-2.0
+and carries each of those files' copyright lines and MPL notice byte for
+byte, under a `// --- From <file> ---` line each. The iOS copy does not take
+it: that build uses libc++ on Apple's threads library, and the fault below
+is in libstdc++ on MinGW-w64's winpthreads.
+
+With MinGW-w64, the toolchain of the Windows CI leg and of local Windows
+builds (Qt's MinGW 13.1, winpthreads v11.0.1), libstdc++'s
+`std::shared_mutex` holds a pthread rwlock made with
+`PTHREAD_RWLOCK_INITIALIZER`, and winpthreads sets the lock up on its first
+use. When two threads take the first lock at the same moment, the one that
+loses the setup race gets `EINVAL` (`rwlock_static_init` and `rwl_ref` in
+winpthreads' `rwlock.c`, the same in mingw-w64 v11.0.1 through v14.0.0 and
+master). libstdc++ checks that result only when built with
+`_GLIBCXX_ASSERTIONS`, which these builds do not set, so the losing thread
+goes on as if it held the lock, and its unlock releases the other thread's
+hold. A stand-alone probe built with the same toolchain on the Windows test
+machine had two threads take the first lock of a fresh lock together 20,000
+times: the loser got `EINVAL` 19,911 times, and both threads were inside a
+`std::shared_mutex`'s exclusive lock 11,669 times; with the lock taken once
+beforehand, 0 times. The release workflow builds the Windows installer with
+MSVC, whose `std::shared_mutex` is an SRWLOCK that needs no setup, so
+released Windows builds do not have this fault.
+
+In the library, the first two SCTP transports of a process insert into
+`SctpTransport`'s instance set at the same moment. Under load on that
+machine (16 copies of `tst_media_transport` beside 48 busy loops),
+`encryptedPeersCarryDisplayAndRtp` timed out waiting for `ready()` in 6 of
+520 copies. Counters in a scratch build showed the set had lost a
+transport while it still counted two: every write and upcall for that
+transport was dropped, so it never sent its INIT, and the far end's
+receive thread waited in `incoming()` for a first write that could not
+come. The association never formed. With the patch, 1,440 copies under the
+same load had no miss.
+
+The patch locks and unlocks each of the library's six shared mutexes once
+in its owner's constructor, while only the constructing thread can see it,
+so their setup is never raced: the instance set's (made in
+`SctpTransport::Init`, under the library's init lock), the peer
+connection's three, and those of each track and data channel.
+`cmake/NereusRemoteMedia.cmake` applies the patch to MinGW builds only, so
+other toolchains build the library as before. NereusSDR's own `WdspEngine`
+does the same for its RX channel map's lock, on Windows only. Drop or
+revisit this patch when the upstream pin or the MinGW toolchain changes,
+and check any shared mutex a new release adds.
+
 ## Build wiring
 
 `ios/NereusKit/Package.swift` builds the copy as the C++17 target
