@@ -4,6 +4,11 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: Merge of the display pill's hold length into the display
+//               send thread: the display extras' inputs carry the
+//               endpoint's own un-key hold length on the display thread
+//               too, not the shortest. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-16: Merge of the display pill's key state into the display
 //               send thread: a MOX edge (moxStateChanged, or moxChanged
 //               with no MoxController) is taken under the display lock, so
@@ -6581,9 +6586,7 @@ DisplayExtrasInputs DaemonMediaController::displayExtrasInputs(const EndpointEnt
         inputs.band = entry.snapshotSlice.band;
         inputs.mox = entry.snapshotSlice.mox;
         inputs.transmitting = entry.snapshotSlice.transmitting;
-        return inputs;
-    }
-    if (m_radioModel) {
+    } else if (m_radioModel) {
         if (const SliceModel* slice = m_radioModel->sliceById(entry.sliceId)) {
             inputs.sliceHz = slice->frequency();
             inputs.filterLowHz = slice->filterLow();
@@ -6596,7 +6599,8 @@ DisplayExtrasInputs DaemonMediaController::displayExtrasInputs(const EndpointEnt
         }
     }
     // One hold length for this endpoint's Clarity, waterfall AGC and
-    // noise-floor fast attack, from the engine it is shown from.
+    // noise-floor fast attack, from the engine it is shown from. On either
+    // thread: the entry's engine fields are written under the display lock.
     inputs.holdLengthMs = moxHoldLengthMs(entry.sourceFftSize, entry.sourceDecimation,
                                           entry.sourceSampleRateHz);
     return inputs;
