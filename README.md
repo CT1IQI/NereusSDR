@@ -50,6 +50,18 @@ for bug reports and feature requests that need tracking.
 - **Receivers come back as you left them.** After a relaunch every receiver
   returns with its own pan, squelch, APF, FM and AGC-T settings, and receivers
   B, C and D run on the values they show.
+- **A Display pill on every pan.** Each panadapter has its own Display pill with
+  Spectrum, Levels, Waterfall, View and FFT tabs, and Setup's Display pages set
+  the defaults every pan starts from. A pan you adjust keeps its own value until
+  you reset it. Waterfall levels are one choice: Clarity, Auto, Floor, Manual or
+  Scale.
+- **PureSignal Bench and two-tone measurements.** The PureSignal applet and
+  Bench read the same correction and feedback instruments, AmpView has a
+  cursor readout, and a two-tone test measures IMD3 and IMD5 on the display.
+- **RADE waveform meters.** Add a microphone waveform and a decoded-speech
+  waveform to any container to watch RADE audio, on the desktop or a remote
+  desktop. Experimental RADE2-U and RADE2-L modes stay off until you turn them
+  on.
 - **Fixes.** Display and waterfall, two-tone and PureSignal, remote audio, and
   Core installs. Protocol 1 radios get their transmit packets from a thread of
   their own, aimed at Hermes Lite 2 PTT dropping through a Pi Core; that is

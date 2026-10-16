@@ -86,7 +86,9 @@ Choose the mode in the RX applet, open the flag's mode tab and select it
 there, or use the **Mode** menu. The current mode name is shown on the flag and
 changes the preset bank. The RX applet and the flag's mode list offer every
 mode except **SPEC**; only the **Mode** menu offers all 14, so choose **SPEC**
-there.
+there. When the experimental RADE2 modes are turned on (see
+[chapter 15](15-rade-freedv.md#turn-on-the-experimental-rade2-modes)), each
+list gains **RADE2-U** and **RADE2-L**, and the **Mode** menu offers 16.
 
 | Mode family | What to check in NereusSDR |
 | --- | --- |
@@ -98,6 +100,7 @@ there.
 | **DRM** | A mode choice does not itself configure an external digital decoder or audio connection. |
 | **SPEC** | A receive/spectrum mode choice; it cannot be used for transmit. |
 | **RADE-U**, **RADE-L** | Correct sideband and RADE profile/status, using the digital-voice instructions. |
+| **RADE2-U**, **RADE2-L** | Experimental, and shown only after the Core turns them on. Same sideband and status checks as RADE-U and RADE-L; no callsign is decoded. |
 
 A mode label describes how the slice demodulates. It does not by itself
 select the transmitter, establish a software audio route or connect a

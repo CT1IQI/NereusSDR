@@ -141,12 +141,15 @@ edit. These controls do not themselves start the generator. Two-tone settings ar
    for that station; a quiet microphone meter does not indicate a quiet test.
 2. Reopen the page if needed and confirm both tone frequencies, level, source
    and drive value. Defaults and Stealth leave drive and mode flags intact.
-3. Press the TX applet's **2-Tone** button, or the PureSignal form's **Two-tone**
-   toggle. The controller starts the generator and requests MOX. Observe the
+3. Press the TX applet's **2-Tone** button, the PureSignal applet's **2-Tone**
+   button, or the Bench's **Two-tone** toggle. The controller starts the generator and requests MOX. Observe the
    active button and actual transmit/protection indications. If keying is
    refused, read the reason and verify that the generator returned to off.
 4. Read the intended spectrum/IMD, power/SWR and feedback measurements during
-   a brief test. For a correction, follow [Single Cal](18-puresignal-diversity.md#calibrate-and-apply-a-correction).
+   a brief test; for IMD on the display, turn on **Show 2Tone measurements** and
+   **View > Display duplex (DUP)** first, see [Read two-tone measurements on the
+   display](18-puresignal-diversity.md#read-two-tone-measurements-on-the-display).
+   For a correction, follow [Single Cal](18-puresignal-diversity.md#calibrate-and-apply-a-correction).
 5. Press the active test button again to stop. Confirm the generator and MOX are
    off and receive returns. Fixed mode restores the previous ordinary drive on
    stop; verify that value before returning to speech operation. Recheck the

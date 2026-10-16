@@ -138,7 +138,64 @@ The workspace look is now the default.
 - A remote window wider than the shared transmit picture keeps the TX trace
   and waterfall at their real frequencies instead of stretching them, and TX
   filter shading comes back after Tune.
-
+- Each panadapter has a **Display** pill with Spectrum, Levels, Waterfall, View
+  and FFT tabs. Open it from the **Display** button on the pan's strip or from
+  **Display settings...** in the right-click menu, which now keeps only Display
+  Range, Tuning and Notch. Levels holds the spectrum scale and the waterfall
+  levels together, and Background is on View.
+- Setup's Display pages are now Spectrum, Levels, Waterfall, View, Peaks &
+  Markers, FFT & Engine, Transmit Display and Multimeter. They set the default
+  for every pan. A **Settings for:** strip picks All pans or one pan. A pan you
+  adjusted keeps its own value, marked with an amber dot, until you click the
+  dot, choose **Reset this pan**, or set the value back to the default.
+  Changing a default reaches every pan, including pans that are not open.
+  **Setup defaults →** on a pill tab opens the Setup page that holds that tab's
+  defaults.
+- Child rows stay visible, grayed, with the reason they cannot act. Grid
+  spacing follows Grid, averaging time follows averaging, and trace, fill,
+  background and 3D rows follow the chosen view. Each tab has a fixed area for
+  the reason under the pointer.
+- On the pill, Spectrum groups Trace, Grid and Markers, and Waterfall groups
+  Drawing, Overlays and Time. **Normalize to 1 Hz** is available with the
+  Average, Sample and RMS detectors. Rewind explains how much history fits at
+  the selected waterfall rate.
+- New on the pill: **NB Blank**, a Background picture or color with opacity,
+  grid spacing, scale text, and trace and fill colors.
+- Waterfall levels have one chooser: Clarity, Auto, Floor, Manual or Scale.
+  Clarity sets Low and High from the noise floor. Auto sets Low from the
+  weakest signals and you set High. Floor puts Low at the noise floor plus NF
+  Offset and you set High. Manual lets you set both. Scale uses the spectrum's
+  dB Min and dB Max. **Black Level** now runs 0 to 100 in half-dB steps with 50
+  at the noise floor (default 57), and **Color Gain** sets how many dB the
+  colors cover (default 60, which is 38 dB). Your saved levels are converted
+  once.
+- The spectrum scale is Manual or Track floor. Each pan's dB Max and dB Min are
+  kept per band, and the pill and the right-click menu's **Ref Level** and
+  **Dyn Range** change the same band value.
+- Normalization, the noise-floor and peak-value markers, and the Track floor
+  choices are saved for each pan. Level calibration pauses tracking and gives
+  each pan its own choice back afterward.
+- FFT size has a **Sizing** choice: **Auto** lets the zoom pick the size,
+  **Hz/bin** follows the bin width you set (0.5 to 200 Hz), and **Fixed** uses
+  the **FFT Size** slider. It is one station setting, shared by every pan and
+  every window connected to the Core, and it is kept after a restart. A saved
+  Hz/bin target above zero opens as Hz/bin; anything else opens as Auto. A
+  remote window pan picks its FFT size by the same rule as a local pan, so the
+  pan's width in pixels no longer changes it.
+- After a key or un-key every pan keeps its level. The FFT input is cleared on
+  both, and Clarity waits before it measures again: about 11 seconds at a
+  262144-point FFT and 48 kHz.
+- Setup's Waterfall page has **Edit Custom gradient…** for the receive
+  waterfall, as Transmit Display has for transmit. Pick the Custom scheme to
+  use it.
+- The phone's Setup shows the same Display pages from a 2026.10.1 Core, with
+  the same All pans and Pan 1 choice, and the waterfall levels chooser on the
+  phone's Display sheet has the same five choices.
+- Fixed: Setup's **dB Step** now sets the spacing of the horizontal dB lines on
+  every pan. It was saved and drew nothing. With a dB range of 50 or less the
+  lines were 5 dB apart; they are now dB Step apart (10 unless you change it).
+- Fixed: the FFT size looking like it reset after a restart (Setup showed the
+  zoomed size instead of the one you chose).
 
 ### Transmit, two-tone and PureSignal
 
@@ -160,6 +217,38 @@ The workspace look is now the default.
 - A TCI program that connects late gets the transmit slice's frequency at once.
 - The TX applet has a **DUP** button next to PS-A. It is the same Display
   Duplex setting as the View menu item and the container DUP button.
+- The **PureSignal** applet and the **PureSignal Bench** show the same
+  readings. **CORRECTION** reads **Applied**, **Off** or **Unavailable**, and
+  **CALIBRATION FEEDBACK** shows the raw number on a bar with the classes
+  **Too low** (90 or below), **Low / marginal**, **In range** (129 to 181)
+  and **High**, the calibration stage, and the successful and attempted
+  calibration counts. The applet's old gauges, lamps and iteration count are
+  gone. Right-click anything in the applet, or press **Details →**, to open
+  the Bench.
+- The Bench has two button rows (**Two-tone**, **Single Cal**, **Start Auto**,
+  **OFF**; **Apply Current**, **AmpView**, **Advanced**), a **Calibration**
+  tab and an **IMD measurements** tab, and a **Calibration details** group in
+  place of **Calibration Information**. **Save**, **Restore** and **Always On
+  Top** moved to a strip at the bottom, and **Advanced** now hides that strip
+  too. The **Feedback Level** and **Correcting** readouts became badges named
+  **Feedback Level** and **Correction applied / feedback >90**.
+- **AmpView** has a cursor readout of the input, amplifier and correction
+  magnitude or gain and phase at the cursor (click or drag, or the Left,
+  Right, Home and End keys), clearer series names, and a status line that
+  says whether the curve is **Current** or **Retained** and how old it is.
+- Two-tone intermodulation is measured on the display. With **Show 2Tone
+  measurements** on (**PureSignal Bench > IMD measurements**), a two-tone test
+  keyed and **View > Display duplex (DUP)** on, the keyed pan marks the tones
+  and the third- and fifth-order products, and reads **WORST IMD3** and
+  **WORST IMD5** in dBc, with each product's dBm, dBc and MHz and derived
+  OIP3 and OIP5.
+- A rail above the spectrum shows the measurement status (for example
+  **Waiting for two-tone TX** or **Products outside view · widen span**) with
+  **Enable DUP**, **Guides**, **Inspect** and **×** controls. **Inspect**
+  opens the full readout beside the pan, or below a narrow one.
+- The waterfall draws the same guides during a measured test and tags rows
+  **Correction applied** or **Correction off**, so you can see where
+  correction changed the products.
 - Protocol 1 radios get their transmit packets from a thread of their own, as
   Protocol 2 radios do. Before, a busy receive loop on a Pi could hold those
   packets back for long stretches while keyed; a Hermes Lite 2 drops PTT
@@ -181,6 +270,20 @@ The workspace look is now the default.
   desktop Core with the screen locked) could keep the radio keyed for about a
   second.
 
+### RADE digital voice
+
+- Two new container meters, **Microphone waveform** and **Decoded speech
+  waveform**, draw the audio RADE works with. Add them in **Containers > Edit
+  Container** from **Available**. They follow a slice that is in a RADE mode;
+  the microphone one follows the transmit slice and can show the conditioned
+  encoder input or the raw microphone.
+- A remote desktop shows the waveforms from a 2026.10.1 Core. An older Core
+  gives a reason in the meter.
+- Experimental **RADE2-U** and **RADE2-L** modes are off by default. Start the
+  Core with the environment variable `NEREUS_ENABLE_RADE_V2` set to `1` to
+  show them in the Mode menu, the RX applet and the VFO flag. They send and
+  show no callsign at the end of an over.
+
 ### Receivers and radios
 
 - A short Protocol 1 dropout recovers in place instead of costing about 16
@@ -188,6 +291,13 @@ The workspace look is now the default.
 - Remote receive audio returns at once after you unkey.
 - Anvelina Pro 3: two bands on one input no longer go deaf, and 6 m is
   handled.
+- An Anvelina Pro 3's third receiver no longer shows a comb over a floor
+  about 58 dB too high. On the bench, the radio's receiver channel DDC4
+  sent damaged samples, and the third receiver used it. The third and fourth
+  receivers now use DDC5 and DDC6. This applies when **Radio Model** is set
+  to Anvelina Pro 3 in the **Connect to Radio** window (pick the radio in the
+  list, then choose the model). The radio reports itself as an Orion MkII, so
+  auto-detect does not choose it.
 - The RX applet's TX antenna menu grays out a port that Setup blocks for
   transmit, and refuses it if the block changes while the menu is open.
 - The RX applet's AGC-T AUTO acts on its own slice. A desktop acting as a Core
@@ -223,6 +333,27 @@ The workspace look is now the default.
   Status** and support bundles, and a remote window or the phone shows the
   number its Core sent. An ANAN-G2, and any radio that reports no second number, reads
   as before.
+- With AGC Off, a receiver now runs the **Fixed Gain** that **File >
+  Settings... > DSP > AGC/ALC** shows, 20 dB by default. Before, a receiver
+  left at 20 dB ran 60 dB, so AGC Off is about 40 dB quieter than in
+  2026.10.0. The **Fixed Gain** and **Max Gain** boxes also follow a change
+  made by CAT, TCI or a remote window.
+- Every receiver starts with the sizes saved on **File > Settings... > DSP >
+  Options**. Before, receivers B to D never took them and ran a 4096-sample
+  block with a Linear Phase filter, 85 ms of delay. They now run the block
+  size, filter size and filter type for their mode, 64, 4096 and Low Latency
+  unless you changed them, so expect less delay and a different filter shape
+  on those receivers.
+- A change on the **DSP Options** page now reaches every receiver in the
+  mode group you edited, not only the first. The FM row starts at 64 for
+  receive and transmit, which is what ran; it showed 256 and 128.
+- With Auto AGC-T on, the AGC threshold no longer drops as you zoom a pan in.
+  It used to fall 3 dB each time the zoom doubled the FFT size, up to 15 dB on
+  a 192 kHz receiver, so zoomed in it now sits higher than before, where it
+  sits at full span. The FFT Size slider no longer moves it either, and a
+  local console and a Core set the same threshold for the same band noise. The
+  "NF" number beside AGC-T shows the noise floor that threshold is built from,
+  so it no longer drops as you zoom in either.
 
 ### iPhone and iPad app
 
@@ -231,6 +362,8 @@ The workspace look is now the default.
 - The Sound panel has Radio speaker and Core speaker sections, and its Mute
   becomes **Mute this phone**.
 - The picture carries on through a retune.
+- The mode list shows **RADE2-U** and **RADE2-L** with an asterisk, and a note
+  that they are experimental, when the Core has turned them on.
 
 These need a 2026.10.1 Core. An older Core grays them with a reason, and older
 Cores and apps still connect.
@@ -254,6 +387,18 @@ Cores and apps still connect.
   cores. With four receivers at 1.536 MHz, kernel packet drops on the Rock
   fell from about 12,000 a second to about 1. With VOX on, the receivers keep their
   fast cores between transmissions. Pi 4, Pi 5 and x86 placement is unchanged.
+- A Core on Linux is now given the network receive buffer it asks for. It
+  asks for 4 MB on the socket its radio sends to, and Linux granted only what
+  its limit (`net.core.rmem_max`) allowed: 212992 bytes on a Rock 5C, which
+  three or four wide receivers fill in 6 to 9 ms. The `nereusd` packages, the
+  station images and the Pi 4 and Rock install scripts now install
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
+  apply it at install without lowering a limit that is already higher. This
+  is the only system setting the packages and the Pi 4 scripts change (the
+  Rock script also writes a login-manager drop-in); removing the package or
+  the file undoes it from the next system start. The Core's log
+  now says how much of the buffer it was given. See "The system setting the
+  Core's installer changes" in the README.
 
 ### Settings, support and spotting
 
@@ -315,78 +460,46 @@ Advanced, and each control appears on one page only.
 ### Tuner and amplifier meters while transmitting
 
 - The Tuner Genius XL and Power Genius XL meters follow the signal while you
-  transmit or tune: NereusSDR asks the tuner for its readings about 16 times a
-  second and the amplifier 10 times a second while keyed, and for two seconds
-  after. In receive the tuner's readings now update four times a second; it
-  was once a second.
+  transmit or tune: NereusSDR asks the tuner for its readings up to about 16
+  times a second and the amplifier up to 10 times a second while keyed (the
+  tuner also while it reports tuning), and for two seconds after. In receive
+  the tuner's readings now update four times a second; it was once a second.
 - The Tuner Genius XL, Power Genius XL and RF2K-S panels show forward power as
-  one large bar with its scale, a legal-limit marker and a mark that holds the
-  peak. Reflected power, SWR and temperature are slim rows under it, each with
-  its number on the row (whole watts and whole degrees).
+  one large bar with its scale, a limit marker and a mark that holds the
+  peak. Reflected power and SWR are slim rows under it, and the Power Genius
+  XL and RF2K-S panels add temperature. Each row has its number on it (whole
+  watts and whole degrees).
 - Forward power, reflected power and SWR show dashes when no power is passing,
-  where they used to read 0 W and 1.00. Forward power turns red past the
-  1500 W legal display marker; SWR and temperature turn red past 2.5 and
-  80 °C. Reflected power has no limit marker. The RF2K-S line under the
-  meters now shows only volts and amps.
+  where they used to read 0 W and 1.00: the Power Genius XL when it is not
+  transmitting, the RF2K-S at 0 W forward, and the Tuner Genius XL below
+  0.5 W forward. Temperature stays live. On the amplifier panels forward
+  power turns red past the 1500 W legal display marker; on the Tuner Genius XL
+  panel the bar runs 0 to 200 W with its marker at 125 W, and 0 to 2000 W
+  with the 1500 W marker when an amplifier is in OPERATE. SWR turns red past
+  2.5 and temperature past 80 °C. Reflected power has no limit marker. The
+  RF2K-S line under the meters now shows only volts and amps.
 - Main power meters use a connected amplifier in OPERATE, with Power Genius
   XL taking precedence over RF2K-S. They show its forward power and SWR on
   a 0 to 2000 W display; standby or disconnection restores the radio's
-  readings and scale. The transmit row also shows the radio's DRIVE power.
-  The 1500 W marker is visual only, and reported readings such as 2300 W
-  remain complete. It does not change drive, keying or output controls.
+  readings and scale. Reverse power on a meter stays the radio's reading.
+  The TX applet's **Power** gauge shows the radio's own power as a small
+  **DRIVE** figure while you transmit on an amplifier, and its gauges now
+  show dashes instead of 0 and 1.0 when you are not transmitting. The
+  1500 W marker is visual only, and reported readings such as 2300 W remain
+  complete. It does not change drive, keying or output controls.
+- The phone shows the same readings. The Power Genius XL, RF2K-S and Tuner
+  Genius XL pages put each reading in its gauge title (for example **Fwd Pwr
+  850 W**, or `--` when there is none), so the Power Genius XL page no longer
+  has a separate **Output** row; the three pages gain a **Ref Pwr** gauge,
+  the RF2K-S line shows only volts and amps, and the TX panel shows
+  **DRIVE** beside the meter while an amplifier is in use and you are keyed.
+  The Live Activity shows forward power and SWR.
 
 ### Tuner Genius XL firmware 1.2.44
 
 - A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a
   field to the tuner's network announcement, which NereusSDR rejected, so the
   tuner stayed disconnected after the upgrade.
-
-### A Display pill and steadier waterfall levels
-
-Each pan now has a Display pill with four tabs: Spectrum, FFT, Waterfall and
-3D View. It holds the display controls you reach for most, per pan, and the
-right-click menu keeps only what is left.
-
-- Setup's Display pages now set the defaults for every pan and follow changes
-  live. A pan you adjusted keeps its own value until you reset it.
-- New on the pill: NB Blank, a Background picture or colour with opacity, grid
-  spacing, scale text and a trace colour.
-- Waterfall Black Level now runs 0 to 100 in half-dB steps, with 50 at the noise
-  floor (default 57). Color Gain sets how many dB the colours cover (default
-  60, which is 38 dB). Your saved levels are converted once.
-- With Clarity on, AGC, NF-AGC, Low and High are greyed and Clarity sets the
-  levels. With Clarity off, Low and High set them and Black Level and Color
-  Gain are greyed. With AGC on, only the low edge follows the signal; High stays
-  where you set it. NF-AGC is an option under AGC.
-- Each pan's dB range is now kept per band, and the pill and the right-click
-  menu edit the same value.
-- On un-key every pan keeps its level. The FFT input is cleared on key and
-  un-key, and Clarity waits before it measures again: about 11 seconds at a
-  262144-point FFT and 48 kHz.
-- The FFT Size slider sets the size once for every pan and keeps it after a
-  restart, and the other FFT controls reach every pan and every open pill.
-- A remote window pan picks its FFT size by the same rule as a local pan, so the
-  pan's width in pixels no longer changes it.
-- With Auto AGC-T on, the AGC threshold no longer drops as you zoom a pan in.
-  It used to fall 3 dB each time the zoom doubled the FFT size, up to 15 dB on
-  a 192 kHz receiver, so zoomed in it now sits higher than before, where it
-  sits at full span. The FFT Size slider no longer moves it either, and a
-  local console and a Core set the same threshold for the same band noise.
-  The "NF" number beside AGC-T shows the noise floor that threshold is built
-  from, so it no longer drops as you zoom in either.
-- The phone's Display setup greys the same level rows under Clarity and "Use
-  spectrum min/max".
-- Fixed: the waterfall's Low is gray while waterfall AGC is on, in the Display
-  pill and on Setup's Waterfall Defaults page, because AGC sets it. It was live
-  and moving it did nothing. Turn AGC off to set Low yourself.
-- Fixed: Setup's dB Step (Display > Grid & Scales) now sets the spacing of the
-  horizontal dB lines on every pan. It was saved and drew nothing. With a dB
-  range of 50 or less the lines were 5 dB apart; they are now dB Step apart
-  (10 unless you change it).
-- Fixed: the FFT size looking like it reset after a restart (Setup showed the
-  zoomed size instead of the one you chose).
-- Fixed: a remote window's VFO flag level meters now work when there is no
-  S-meter item.
 
 ### Fixes
 
@@ -417,18 +530,6 @@ right-click menu keeps only what is left.
   and presets, the transmit display settings, the radio list, and the
   accessory fault and limit records. Each of these saved the settings file on
   the thread that sends the audio and now hands it to the same writer thread.
-- A Core on Linux is now given the network receive buffer it asks for. It
-  asks for 4 MB on the socket its radio sends to, and Linux granted only what
-  its limit (`net.core.rmem_max`) allowed: 212992 bytes on a Rock 5C, which
-  three or four wide receivers fill in 6 to 9 ms. The `nereusd` packages, the
-  station images and the Pi 4 and Rock install scripts now install
-  `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
-  apply it at install without lowering a limit that is already higher. This
-  is the only system setting the packages and the Pi 4 scripts change (the
-  Rock script also writes a login-manager drop-in); removing the package or
-  the file undoes it from the next system start. The Core's log
-  now says how much of the buffer it was given. See "The system setting the
-  Core's installer changes" in the README.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.
@@ -498,6 +599,17 @@ right-click menu keeps only what is left.
   saved slice on 40 m while TUNE keyed the Core's slice on 20 m. Each device's
   active slice is also marked again when transmit is taken or released, a
   device leaves, or a saved layout is restored.
+- A window that reaches its Core through the remote access service before the
+  connection's path is known now keeps looking for a better path. Before, it
+  counted as already direct, so its better-path search never tried the
+  direct route through the service again. The log now says which addresses
+  each path search tries or drops and why, and how each attempt ended.
+- A remote window whose media starts on the web relay now follows a move to
+  a direct secure WebSocket (WSS) at once. Where UDP between the window and
+  the Core is blocked but TCP port 443 works, it used to wait 40 to 85
+  seconds first. Audio and display kept flowing on the relay meanwhile.
+- A remote window's VFO flag level meters now work when there is no S-meter
+  item.
 
 ## [2026.10.0] - 2026-10-05
 

@@ -35,7 +35,7 @@ Use this chapter to locate common commands and distinguish which part of the sta
 | PA calibration and readings | **File > Settings... > PA > PA Gain / Watt Meter / PA Values** | Offered Core Setup pages | Radio/Core; compatible PA profile required |
 | Voice processor, expander, VOX | **File > Settings... > Transmit > Speech Processor / DEXP/VOX**; **File > Settings... > DSP > CFC** | Offered Core controls, Modes transmit section | Core TX, subject to transmit-settings permission |
 | External amplifiers and tuners | **File > Settings... > CAT & Network > 4O3A / RF-Kit**, accessory applets | **Radio** accessory pages, offered Core Setup | Core station accessories |
-| Waterfall history and 3D | Band display; **File > Settings... > Display > Waterfall Defaults / 3D View** | Main Display; **Setup > Display > On this phone** | Local picture/history; Core capability governs feeds |
+| Waterfall history and 3D | Band display; **File > Settings... > Display > Waterfall / View** | Main Display; **Setup > Display > On this phone** | Local picture/history; Core capability governs feeds |
 | Meter containers | **Containers > New Container... / Edit Container** | No desktop container designer on phone | Desktop layout and item sources |
 | Settings validation and backup | **File > Settings... > Diagnostics > Settings Validation / Export / Import** | Offered Core hygiene controls; device-key backup in Devices | Operation-dependent scope, explained before confirmation |
 | Logs | **File > Settings... > Diagnostics > Logs**, Support dialog | **Setup > Diagnostics > Logs**; Support Bundle | Desktop/phone view; Core categories are shared |
@@ -84,7 +84,7 @@ until that readback is ready.
 | **PA** | PA Gain; Watt Meter; PA Values, with radio capability reasons. | [Calibration](17-hardware-antennas-calibration.md). |
 | **Audio** | Outputs (speakers, headphones, radio speaker, Core speaker); Microphone; Digital modes (VAX and TCI); Advanced; TX Profile. | [Transmit](05-transmit.md), [digital routing](09-tools.md), [profiles](14-voice-profiles.md). |
 | **DSP** | AGC/ALC; NR/ANF; NB/SNB; CW; AM/SAM; FM; CFC; TNF; Filter Presets; Options. | [Receiver DSP](13-receiver-dsp.md), [voice processing](14-voice-profiles.md). A parent page can contain disabled or hidden unbuilt groups. |
-| **Display** | Spectrum Defaults; Spectrum Peaks; Waterfall Defaults; Grid & Scales; Multimeter; TX Display; 3D View. | [Display and layout](10-customize.md). |
+| **Display** | Spectrum; Levels; Waterfall; View; Peaks & Markers; FFT & Engine; Transmit Display; Multimeter. | [Display and layout](10-customize.md). |
 | **Transmit** | Power; Speech Processor; DEXP/VOX. | [Transmit](05-transmit.md), [voice processing](14-voice-profiles.md). TX Profile is under Audio. |
 | **Appearance** | Colors & Theme; Meter Styles. | [Display and layout](10-customize.md). |
 | **CAT & Network** | Serial Ports; TCI Server when built; 4O3A; Remote Access; RF-Kit; Rotor; TCP/IP CAT; CAT Options; CAT PTT. | [CAT and digital routing](09-tools.md), [phone connection](06-iphone-connect.md), [accessories](19-amplifiers-tuners.md), [shared rotor](08-shared-core.md). |
@@ -205,7 +205,7 @@ The operator-facing exclusions below explain common missing controls.
 | ACC microphone input/Phone-CW +ACC; Phone-CW MON. | Offered MIC/BAL/LINE/PC routes; TX applet MON is separate and implemented. |
 | RF-Kit TUNE/BYPASS. | Use the accessory's implemented status and controls; do not assume these key/tune it. |
 | Audio bit-depth/default-rate lookup, mic monitor/first-PTT tone check, IQ/TX-monitor-to-VAX and mute-VAX-during-other-slice-TX. | Implemented device/capture, VAX audio and TX monitor paths. |
-| Desktop TX grid controls and waterfall low-level color. | Supported TX analyzer/palette and phone-local grid controls are separate. |
+| Desktop TX grid controls. | Supported TX analyzer/palette and phone-local grid controls are separate. |
 | Generic Logging & Performance and 60-second Connection Quality history. | Implemented Logs, Support diagnostic categories and current network measurements. |
 | Phone headset/Bluetooth/Action-button/locked-phone PTT; High audio quality. | On-screen PTT; Standard audio. Disabled labels do not establish accessory support. |
 | Spot Hub's unbuilt WSJT-X filter group, RBN rate limit and FreeDV-decode-to-PSK option. | The implemented feed/listener/filter controls described in the spots chapter. |
@@ -242,6 +242,7 @@ desktop build. Those are different from the explicit unbuilt surfaces above.
 | Prepare a microphone and make an over. | [Transmit](05-transmit.md), then [voice profiles](14-voice-profiles.md). |
 | Connect a digital application. | [Complete VAX receive/TX/restore route](09-tools.md#worked-route-receive-through-vax-key-from-nereussdr). |
 | Use RADE digital voice and find another station. | [RADE receive](15-rade-freedv.md#receive-with-rade), [short call](15-rade-freedv.md#prepare-and-transmit-rade), then [reporter connection](15-rade-freedv.md#open-freedv-reporter). |
+| Watch the RADE microphone or decoded speech. | [Watch the RADE audio in a container](15-rade-freedv.md#watch-the-rade-audio-in-a-container). |
 | Configure the radio front end, antenna or PA readings. | [Hardware/calibration](17-hardware-antennas-calibration.md). |
 | Operate feedback calibration or two-ADC diversity. | [PureSignal/diversity](18-puresignal-diversity.md). |
 | Configure an external amplifier/tuner. | [Accessories](19-amplifiers-tuners.md). |
@@ -264,6 +265,6 @@ desktop build. Those are different from the explicit unbuilt surfaces above.
 
 **VAX**: Virtual audio channels for routing receive and transmit sound to digital-mode software on the computer running those channels.
 
-**RADE**: A digital voice mode with receive decoding and a Core transmit vocoder. Select **RADE-U** or **RADE-L** for the appropriate sideband, then use the RADE applet for profile and decode status.
+**RADE**: A digital voice mode with receive decoding and a Core transmit vocoder. Select **RADE-U** or **RADE-L** for the appropriate sideband, then use the RADE applet for profile and decode status. The experimental **RADE2-U** and **RADE2-L** modes are off until the Core turns them on.
 
 **TXcontrol**: Ownership held by the desktop window that is allowed to control transmit. TCI transmit requires this ownership.
