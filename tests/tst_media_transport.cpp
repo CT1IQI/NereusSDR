@@ -65,6 +65,12 @@
 // acknowledgment. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 // Code.
 //
+// 2026-10-15: review of pull request 542. The held-message case takes its
+// two sends, the busy check and the Busy send as one attempt, and tries a
+// fresh pair when any step loses the race; a handshake miss ends its case
+// and builds its stage text only on a miss. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
+//
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -77,6 +83,7 @@
 #include "core/session/media/RemoteMicReceiver.h"
 
 #include <QElapsedTimer>
+#include <QMetaEnum>
 #include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
@@ -430,6 +437,7 @@ void TestMediaTransport::startPair(LibDataChannelMediaTransport& offerer,
     QVERIFY(offerer.start({IMediaTransport::Role::Offerer,
                            kTestAudioSsrc}));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
     QVERIFY(offerer.isReady());
     QVERIFY(answerer.isReady());
 }
@@ -446,20 +454,19 @@ void TestMediaTransport::waitForReady(const LibDataChannelMediaTransport& offere
                                       const QSignalSpy& offerReady,
                                       const QSignalSpy& answerReady)
 {
-    const bool offererReady =
-        QTest::qWaitFor([&offerReady] { return offerReady.count() == 1; }, kHandshakeWaitMs);
-    QVERIFY2(offererReady,
-             qPrintable(QStringLiteral("the offerer's ready() came %1 times in %2 ms. %3")
-                            .arg(offerReady.count())
-                            .arg(kHandshakeWaitMs)
-                            .arg(handshakeStages(offerer, answerer))));
-    const bool answererReady =
-        QTest::qWaitFor([&answerReady] { return answerReady.count() == 1; }, kHandshakeWaitMs);
-    QVERIFY2(answererReady,
-             qPrintable(QStringLiteral("the answerer's ready() came %1 times in %2 ms. %3")
-                            .arg(answerReady.count())
-                            .arg(kHandshakeWaitMs)
-                            .arg(handshakeStages(offerer, answerer))));
+    // QVERIFY2 builds its text on every pass; the stages are read on a miss.
+    if (!QTest::qWaitFor([&offerReady] { return offerReady.count() == 1; }, kHandshakeWaitMs)) {
+        QFAIL(qPrintable(QStringLiteral("the offerer's ready() came %1 times in %2 ms. %3")
+                             .arg(offerReady.count())
+                             .arg(kHandshakeWaitMs)
+                             .arg(handshakeStages(offerer, answerer))));
+    }
+    if (!QTest::qWaitFor([&answerReady] { return answerReady.count() == 1; }, kHandshakeWaitMs)) {
+        QFAIL(qPrintable(QStringLiteral("the answerer's ready() came %1 times in %2 ms. %3")
+                             .arg(answerReady.count())
+                             .arg(kHandshakeWaitMs)
+                             .arg(handshakeStages(offerer, answerer))));
+    }
 }
 
 void TestMediaTransport::dedicatedIqChannelPreservesOrder()
@@ -478,6 +485,7 @@ void TestMediaTransport::dedicatedIqChannelPreservesOrder()
     QVERIFY(answerer.start(answered));
     QVERIFY(offerer.start(offered));
     waitForReady(offerer, answerer, offeredReady, answeredReady);
+    if (QTest::currentTestFailed()) { return; }
     for (quint32 sequence = 0; sequence < 128; ++sequence) {
         const auto frame = RemoteIqCodec::encode(1, 9, sequence,
                                                   {float(sequence), -float(sequence)});
@@ -521,6 +529,7 @@ void TestMediaTransport::dedicatedTxAndIqTelemetryCountsPayloadsAndResets()
     QVERIFY(answerer.start(answered));
     QVERIFY(offerer.start(offered));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     const QByteArray tx = QByteArrayLiteral("watch-keepalive");
     const auto iq = RemoteIqCodec::encode(1, 9, 1, {0.25f, -0.25f});
@@ -559,6 +568,7 @@ void TestMediaTransport::dedicatedTxAndIqTelemetryCountsPayloadsAndResets()
     QVERIFY(answerer.start(answered));
     QVERIFY(offerer.start(offered));
     waitForReady(offerer, answerer, offerReadyAgain, answerReadyAgain);
+    if (QTest::currentTestFailed()) { return; }
     QCOMPARE(offerer.telemetry()->submittedTxPayloadBytes, quint64(0));
     QCOMPARE(offerer.telemetry()->submittedIqPayloadBytes, quint64(0));
     QCOMPARE(answerer.telemetry()->receivedTxPayloadBytes, quint64(0));
@@ -582,6 +592,7 @@ void TestMediaTransport::iqTelemetryCountsValidArrivalBeforeReceiveQueueFails()
     QVERIFY(answerer.start(answered));
     QVERIFY(offerer.start(offered));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     // With no Qt drain, the ninth valid frame exceeds the existing eight-
     // message receive queue. The callback counter still measures its arrival.
@@ -662,6 +673,7 @@ void TestMediaTransport::sctpSettingsAppliedOnceBeforeFirstPeer()
         LibDataChannelMediaTransport offerer;
         LibDataChannelMediaTransport answerer;
         startPair(offerer, answerer);
+        if (QTest::currentTestFailed()) { return; }
         const MediaSctpSettingsRecord first = mediaSctpSettingsRecord();
         QCOMPARE(first.applications, 1);
         QCOMPARE(first.peersCreatedBeforeApplication, quint64(0));
@@ -675,6 +687,7 @@ void TestMediaTransport::sctpSettingsAppliedOnceBeforeFirstPeer()
     LibDataChannelMediaTransport offerer;
     LibDataChannelMediaTransport answerer;
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
     const MediaSctpSettingsRecord second = mediaSctpSettingsRecord();
     QCOMPARE(second.applications, 1);
     QCOMPARE(second.peersCreatedBeforeApplication, quint64(0));
@@ -692,6 +705,7 @@ void TestMediaTransport::encryptedPeersCarryDisplayAndRtp()
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     QSignalSpy rtpReceived(&answerer, &IMediaTransport::rtpReceived);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     QCOMPARE(offerDescriptions.count(), 1);
     QCOMPARE(answerDescriptions.count(), 1);
@@ -748,6 +762,7 @@ void TestMediaTransport::stalledReceiverRefusesDisplayInsteadOfQueueing()
     LibDataChannelMediaTransport answerer;
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     // The largest spectrum frame: 4096/4096 points plus a 768-point 3D row.
     constexpr qsizetype kFrameBytes = 9361;
@@ -821,11 +836,13 @@ void TestMediaTransport::stalledReceiverRefusesDisplayInsteadOfQueueing()
 // display channel reports writable once the held message has gone, and the
 // receiver gets both messages.
 //
-// A sender starved between the first two loses the race with the first
-// one's acknowledgment, and the second goes straight to SCTP as well (the
-// display send thread's copy of this case did so on the STRIX at 100% CPU,
-// 2026-10-15). So messages, each different, are offered until one is held:
-// every one before it was Sent, and the first always is.
+// Every step after the first races the first message's acknowledgment. A
+// sender starved between two steps finds the second message sent, the held
+// one already gone or the third taken (this case's copy on the display send
+// thread's branch, pull request 539, found the second sent on the STRIX at
+// 100% CPU, 2026-10-15). Such an attempt shows nothing either way: once the
+// path is idle, a fresh pair is tried. Every message taken in any attempt
+// must reach the receiver, in order.
 void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
 {
     using Result = IMediaTransport::DisplaySendResult;
@@ -834,35 +851,75 @@ void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     QSignalSpy writable(&offerer, &IMediaTransport::displayWritable);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     constexpr qsizetype kChunkBytes = 49'216; // one PureSignal display chunk
-    // Far more than a race lost now and then: a sender that never meets a
-    // full send buffer still fails.
-    constexpr int kMostOffered = 8;
-    QList<QByteArray> offered;
-    Result result = Result::Sent;
-    while (result == Result::Sent && offered.size() < kMostOffered) {
-        offered.append(QByteArray(kChunkBytes, char(0x11 * (offered.size() + 1))));
-        result = offerer.submitDisplay(offered.constLast());
+    // Far more than a race lost now and then; a send buffer with room for
+    // two such messages loses every attempt.
+    constexpr int kMostAttempts = 5;
+    const QMetaEnum resultName = QMetaEnum::fromType<Result>();
+    QList<QByteArray> taken;
+    int submitted = 0;
+    QStringList steps;
+    const auto submit = [&]() {
+        // Each message different, so the receiver's order can be checked.
+        const QByteArray message(kChunkBytes, char(0x11 + submitted++));
+        const Result result = offerer.submitDisplay(message);
+        if (result == Result::Sent || result == Result::Queued) {
+            taken.append(message);
+        }
+        steps << QString::fromLatin1(resultName.valueToKey(int(result)));
+        return result;
+    };
+    QStringList attempts;
+    bool held = false;
+    while (!held && attempts.size() < kMostAttempts) {
+        steps.clear();
+        const Result first = submit();
+        // The path is idle before the first attempt: usrsctp always has room.
+        if (attempts.isEmpty()) {
+            QCOMPARE(first, Result::Sent);
+        }
+        if (first == Result::Sent && submit() == Result::Queued) {
+            const bool busy = offerer.displayBusy();
+            steps << (busy ? QStringLiteral("busy") : QStringLiteral("not busy"));
+            held = busy && submit() == Result::Busy;
+        }
+        attempts << steps.join(QStringLiteral(", "));
+        if (held) {
+            break;
+        }
+        // Idle again: nothing held, everything taken delivered, and a
+        // delayed acknowledgment's time for the last of it.
+        if (!QTest::qWaitFor([&] {
+                return !offerer.displayBusy() && displayReceived.count() == taken.size();
+            }, 10'000)) {
+            QFAIL(qPrintable(QStringLiteral("the path did not go idle after attempt %1 (%2): "
+                                            "%3 of %4 taken messages delivered")
+                                 .arg(attempts.size()).arg(attempts.constLast())
+                                 .arg(displayReceived.count()).arg(taken.size())));
+        }
+        QTest::qWait(250);
+        writable.clear();
     }
-    QVERIFY2(result == Result::Queued && offered.size() >= 2,
-             qPrintable(QStringLiteral("%1 messages offered, none held; the last answered %2")
-                            .arg(offered.size()).arg(int(result))));
-    QVERIFY(offerer.displayBusy());
-    const QByteArray busy(kChunkBytes, char(0x99));
-    QCOMPARE(offerer.submitDisplay(busy), Result::Busy);
+    QVERIFY2(held, qPrintable(QStringLiteral("no attempt held the second of two messages: %1")
+                                  .arg(attempts.join(QStringLiteral("; ")))));
+    if (attempts.size() > 1) {
+        qInfo().noquote() << QStringLiteral("held on attempt %1: %2")
+                                 .arg(attempts.size()).arg(attempts.join(QStringLiteral("; ")));
+    }
 
     QTRY_VERIFY_WITH_TIMEOUT(!writable.isEmpty(), 10'000);
     QVERIFY(!offerer.displayBusy());
-    QTRY_COMPARE_WITH_TIMEOUT(displayReceived.count(), offered.size(), 10'000);
-    for (qsizetype index = 0; index < offered.size(); ++index) {
-        QCOMPARE(displayReceived.at(index).at(0).toByteArray(), offered.at(index));
+    QTRY_COMPARE_WITH_TIMEOUT(displayReceived.count(), taken.size(), 10'000);
+    for (qsizetype index = 0; index < taken.size(); ++index) {
+        QCOMPARE(displayReceived.at(index).at(0).toByteArray(), taken.at(index));
     }
     // Busy was not taken: nothing more arrives.
     QTest::qWait(200);
-    QCOMPARE(displayReceived.count(), offered.size());
+    QCOMPARE(displayReceived.count(), taken.size());
     QCOMPARE(offerer.telemetry()->submittedDisplayPayloadBytes,
-             quint64(offered.size()) * quint64(kChunkBytes));
+             quint64(taken.size()) * quint64(kChunkBytes));
 
     offerer.stop();
     answerer.stop();
@@ -874,6 +931,7 @@ void TestMediaTransport::queuedDisplayOverflowDropsOldestAndCountsIt()
     LibDataChannelMediaTransport answerer;
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     QList<QByteArray> sent;
     quint64 sentBytes = 0;
@@ -922,6 +980,7 @@ void TestMediaTransport::heldBurstAfterAStallIsDeliveredWhole()
     LibDataChannelMediaTransport answerer;
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     // The largest delta the operator's Core logged: 2150 bytes, 3 fragments.
     constexpr qsizetype kDeltaBytes = 2150;
@@ -964,6 +1023,7 @@ void TestMediaTransport::telemetryCountsValidatedTrafficAndResets()
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     QSignalSpy rtpReceived(&answerer, &IMediaTransport::rtpReceived);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     QVERIFY(offerer.telemetry().has_value());
     QVERIFY(answerer.telemetry().has_value());
@@ -1033,6 +1093,7 @@ void TestMediaTransport::telemetryCountsValidatedTrafficAndResets()
     QVERIFY(countersAreZero(*offerer.telemetry()));
     QVERIFY(countersAreZero(*answerer.telemetry()));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     offerer.stop();
     answerer.stop();
@@ -1106,6 +1167,7 @@ void TestMediaTransport::stopCancelsOldCallbacksAndRecreates()
     LibDataChannelMediaTransport offerer;
     LibDataChannelMediaTransport answerer;
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     QSignalSpy offerClosed(&offerer, &IMediaTransport::closed);
     QSignalSpy answerClosed(&answerer, &IMediaTransport::closed);
@@ -1124,6 +1186,7 @@ void TestMediaTransport::stopCancelsOldCallbacksAndRecreates()
     disconnect(&offerer, nullptr, &answerer, nullptr);
     disconnect(&answerer, nullptr, &offerer, nullptr);
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     QSignalSpy displayReceived(&answerer, &IMediaTransport::displayReceived);
     QSignalSpy rtpReceived(&answerer, &IMediaTransport::rtpReceived);
@@ -1142,6 +1205,7 @@ void TestMediaTransport::signalRestartDropsRemainingOldGenerationMedia()
     LibDataChannelMediaTransport offerer;
     LibDataChannelMediaTransport answerer;
     startPair(offerer, answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     int displaysReceived = 0;
     int rtpReceived = 0;
@@ -1176,6 +1240,7 @@ void TestMediaTransport::deletionFromReceivedSignalIsSafe()
     QPointer<LibDataChannelMediaTransport> answerer =
         new LibDataChannelMediaTransport;
     startPair(offerer, *answerer);
+    if (QTest::currentTestFailed()) { return; }
 
     connect(answerer, &IMediaTransport::displayReceived, answerer,
             [&answerer](const QByteArray&) { delete answerer.data(); });
@@ -1259,8 +1324,9 @@ void TestMediaTransport::readyPrecedesMessagesThatArriveWithIt()
     }
     // The offerer becomes ready without the answerer's owner thread: its
     // display channel opens on the answerer library's acknowledgement.
-    QVERIFY2(QTest::qWaitFor([&offerReady] { return offerReady.count() == 1; }, kHandshakeWaitMs),
-             qPrintable(handshakeStages(offerer, answerer)));
+    if (!QTest::qWaitFor([&offerReady] { return offerReady.count() == 1; }, kHandshakeWaitMs)) {
+        QFAIL(qPrintable(handshakeStages(offerer, answerer)));
+    }
     QCOMPARE(answerReady.count(), 0);
 
     // The traversal helper's payload: 60000 bytes, many SCTP fragments.
@@ -1379,6 +1445,7 @@ void TestMediaTransport::answererAcceptsNewAndOldCoreOffers()
     QVERIFY(answerer.start({IMediaTransport::Role::Answerer, kTestAudioSsrc}));
     QVERIFY(offerer.start({IMediaTransport::Role::Offerer, kTestAudioSsrc, bitrate}));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
     QCOMPARE(opusFormatLine(deliveredOffer),
              oldCore ? QString::fromLatin1(kOldCoreOpusParameters)
                      : opusOfferFormatParameters(bitrate));
@@ -1499,6 +1566,7 @@ void TestMediaTransport::answerKeepsTheLosslessRtpMap()
     options.offerLosslessAudio = lossless;
     QVERIFY(offerer.start(options));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     const QStringList answerAudio = audioFormatLines(answer);
     QVERIFY2(!answerAudio.isEmpty(), qPrintable(answer));
@@ -1578,9 +1646,10 @@ void TestMediaTransport::ordinaryMediaHostOnLoopbackIsNotAnOwnedShim()
         && !loopbackFor(answeredCandidates).isEmpty(), 10000);
     QVERIFY(offerer.acceptCandidate(loopbackFor(answeredCandidates), {}));
     QVERIFY(answerer.acceptCandidate(loopbackFor(offeredCandidates), {}));
-    QVERIFY2(QTest::qWaitFor([&] { return offerer.isReady() && answerer.isReady(); },
-                             kHandshakeWaitMs),
-             qPrintable(handshakeStages(offerer, answerer)));
+    if (!QTest::qWaitFor([&] { return offerer.isReady() && answerer.isReady(); },
+                         kHandshakeWaitMs)) {
+        QFAIL(qPrintable(handshakeStages(offerer, answerer)));
+    }
     QVERIFY(offerer.selectedPath());
     QVERIFY(answerer.selectedPath());
     QVERIFY(MediaIcePath::loopbackEndpoint(offerer.selectedPath()->remoteAddress,
@@ -1675,9 +1744,10 @@ void TestMediaTransport::retiredMediaSourceCannotMarkARestartedPeer()
     QVERIFY(offerer.acceptDescription(pendingAnswer, QStringLiteral("answer")));
     QVERIFY(offerer.acceptCandidate(selectedCandidate, {}));
     QVERIFY(answerer.acceptCandidate(loopbackFor(offeredCandidates), {}));
-    QVERIFY2(QTest::qWaitFor([&] { return offerer.isReady() && answerer.isReady(); },
-                             kHandshakeWaitMs),
-             qPrintable(handshakeStages(offerer, answerer)));
+    if (!QTest::qWaitFor([&] { return offerer.isReady() && answerer.isReady(); },
+                         kHandshakeWaitMs)) {
+        QFAIL(qPrintable(handshakeStages(offerer, answerer)));
+    }
     QVERIFY(offerer.selectedPath());
     QVERIFY(MediaIcePath::loopbackEndpoint(offerer.selectedPath()->remoteAddress,
                                            offerer.selectedPath()->remotePort));
@@ -1706,6 +1776,7 @@ void TestMediaTransport::losslessAudioCrossesRealEncryptedLoopback()
     options.offerLosslessAudio = true;
     QVERIFY(offerer.start(options));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
     QVERIFY(offerer.losslessAudioNegotiated());
     QVERIFY(offerer.selectedPath());
     QVERIFY(answerer.selectedPath());
@@ -1815,6 +1886,7 @@ void TestMediaTransport::undeclaredStreamIsDeliveredByTheOneAudioLine()
     options.receiverAudioSsrcs = kTestReceiverSsrcs;
     QVERIFY(offerer.start(options));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
     QCOMPARE(audioSsrcLines(deliveredOffer),
              QStringList{QStringLiteral("a=ssrc:%1 cname:nereus-mixed-stereo")
                              .arg(kTestAudioSsrc)});
@@ -1905,6 +1977,7 @@ void TestMediaTransport::receiverStreamsAreDeclaredOnlyWhenAsked()
         QVERIFY(answerer.start(answerOptions));
         QVERIFY(offerer.start(offerOptions));
         waitForReady(offerer, answerer, offerReady, answerReady);
+        if (QTest::currentTestFailed()) { return; }
 
         QCOMPARE(audioFormatLines(offer), todaysAudio);
         QCOMPARE(offer.count(QStringLiteral("m=audio")), 1);
@@ -1959,6 +2032,7 @@ void TestMediaTransport::declaredReceiverStreamsCrossBesideTheMainOne()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
     QVERIFY(offerer.losslessAudioNegotiated());
 
     QList<QByteArray> received;
@@ -2038,6 +2112,7 @@ void TestMediaTransport::receiveQueueHoldsEveryDeclaredStream()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     QList<QByteArray> received;
     connect(&answerer, &IMediaTransport::rtpReceived, this,
@@ -2145,6 +2220,7 @@ void TestMediaTransport::headphonesMixIsDeclaredLastAndCrossesBesideTheOthers()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     QStringList expected{QStringLiteral("a=ssrc:%1 cname:nereus-mixed-stereo").arg(kTestAudioSsrc)};
     for (qsizetype index = 0; index < kTestReceiverSsrcs.size(); ++index) {
@@ -2203,6 +2279,7 @@ void TestMediaTransport::micLineIsOfferedOnlyWhenAsked()
         QVERIFY(answerer.start(answerOptions));
         QVERIFY(offerer.start(offerOptions));
         waitForReady(offerer, answerer, offerReady, answerReady);
+        if (QTest::currentTestFailed()) { return; }
         QCOMPARE(answerErrors.count(), 0);
         QCOMPARE(offerErrors.count(), 0);
 
@@ -2261,6 +2338,7 @@ void TestMediaTransport::micPacketsReportTheirWaitForTheOwnerThread()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     QElapsedTimer sinceSent;
     QList<qint64> heldUs;
@@ -2347,6 +2425,7 @@ void TestMediaTransport::micLineWarnsOfALongGapFromItsOwnThread()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     std::atomic<int> delivered{0};
     QVERIFY(offerer.setMicPacketSink(
@@ -2861,6 +2940,7 @@ void TestMediaTransport::micLineCarriesTheAnswerersMicrophoneAlone()
     QVERIFY(answerer.start(answerOptions));
     QVERIFY(offerer.start(offerOptions));
     waitForReady(offerer, answerer, offerReady, answerReady);
+    if (QTest::currentTestFailed()) { return; }
 
     QList<QByteArray> offererMain;
     QList<QByteArray> offererMic;
@@ -2931,6 +3011,7 @@ void TestMediaTransport::micLineCarriesLosslessWhenOffered()
         QVERIFY(answerer.start(answerOptions));
         QVERIFY(offerer.start(offerOptions));
         waitForReady(offerer, answerer, offerReady, answerReady);
+        if (QTest::currentTestFailed()) { return; }
 
         const QStringList micOffer = mediaSectionLines(offer, QStringLiteral("mic"));
         QVERIFY2(!micOffer.isEmpty(), qPrintable(offer));
