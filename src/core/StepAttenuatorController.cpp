@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -413,6 +415,26 @@ void StepAttenuatorController::setBand(Band band)
 
     // The band just left keeps the value it had; persist it.
     scheduleSave();
+}
+
+void StepAttenuatorController::setDisplayedAttenuation(int dB)
+{
+    // Thetis overlays a separate TX control and writes ATTOnTX from it.
+    // From Thetis console.cs:29287-29291,48104-48107 [v2.10.3.15].
+    // NereusSDR shares one readout; match the existing keyed display branch
+    // without changing the saved RX attenuation or its hardware command.
+    if (m_isMox && m_attOnTxEnabled && !m_isHpsdrBoard) {
+        setAttOnTxValue(dB);
+        const int displayedDb = attOnTxValue();
+        // Correct a widget that requested an out-of-TX-range value even
+        // when the clamped model value was already displayed.
+        if (m_attDb != displayedDb || dB != displayedDb) {
+            m_attDb = displayedDb;
+            emit attenuationChanged(displayedDb);
+        }
+        return;
+    }
+    setAttenuation(dB);
 }
 
 void StepAttenuatorController::setAttenuation(int dB, int rx)

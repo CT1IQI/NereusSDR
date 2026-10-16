@@ -290,6 +290,17 @@ function(nereus_add_test name)
     endif()
     set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS ${name})
 
+    # MinGW test executables reserve 2 MB for the main thread, Linux and
+    # macOS 8 MB. Tests that keep two or three SpectrumWidget locals need
+    # 2.3 to 3.1 MB and overflowed it on Windows; give them 8 MB there too.
+    if(WIN32)
+        if(MSVC)
+            target_link_options(${name} PRIVATE "/STACK:8388608")
+        else()
+            target_link_options(${name} PRIVATE "-Wl,--stack,8388608")
+        endif()
+    endif()
+
     # Reuse the shared test PIE/nonpedantic Qt/STL PCH (CMakeLists.txt §PCH).
     # 589 test executables × per-target PCH compile would burn the wins;
     # REUSE_FROM means the PCH is built once and shared
@@ -512,6 +523,9 @@ nereus_add_test(tst_dsp_asset_store EXTRA_LABELS core)
 nereus_add_test(tst_ps3_correction_files EXTRA_LABELS core)
 if(TARGET wdsp_static)
     nereus_add_test(tst_wdsp_nnr EXTRA_LABELS core)
+    # One profile's close never deletes the impulse cache another profile
+    # saved in the shared DSP folder.
+    nereus_add_test(tst_wdsp_impulse_cache_profiles EXTRA_LABELS core)
     nereus_add_test(tst_nnr_model_assets EXTRA_LABELS core)
     if(NOT WIN32)
         # wdsp_static arrives through the core library, as for tst_wdsp_nnr;
@@ -1223,6 +1237,10 @@ nereus_add_test(tst_p2_command_zero)
 target_compile_definitions(tst_p2_command_zero PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3P-B Task 8: Alex-1 Filters sub-sub-tab smoke test ─────────────
+
+# Filter-page reset is restricted to the selected page's frequency edges.
+nereus_add_test(tst_alex_filter_reset)
+
 nereus_add_test(tst_alex1_filters_tab)
 
 # ── Phase 3P-B Task 9: Alex-2 Filters sub-sub-tab smoke test ─────────────
@@ -1236,7 +1254,7 @@ target_compile_definitions(tst_p2_regression_freeze PRIVATE
 nereus_add_test(tst_p1_fake_radio fakes/P1FakeRadio.cpp)
 
 # P1 loopback integration test — uses P1FakeRadio from tests/fakes/
-nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp)
+nereus_add_test(tst_p1_loopback_connection fakes/P1FakeRadio.cpp REALTIME)
 target_compile_definitions(tst_p1_loopback_connection PRIVATE NEREUS_BUILD_TESTS)
 
 # P1 reconnection state machine test — uses P1FakeRadio auto-streaming (Task 10)
@@ -1399,6 +1417,17 @@ nereus_add_test(tst_dig_rtty_wire)
 
 # ── Phase 3G-10 Stage 2: per-slice-per-band DSP persistence (S2.P) ───────────
 nereus_add_test(tst_slice_persistence_per_band)
+
+# ── Settings restore (2026-10-11): what a slice is closed with comes back ───
+# The audio panel, squelch, APF, BIN, FM, DIG and RTTY values were never
+# saved; AGC-T AUTO is kept per receiver; a change is saved under the slice
+# it was made on; a restored slice pushes its state to its WDSP channel; and
+# without a Core, receivers B to D come back at connect like A.
+# Source: NereusSDR-original tests.
+nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
+nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
+nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
+nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 
 # ── v0.2.0 regression: band-change lambda reentrancy guard ───────────────────
 nereus_add_test(tst_band_change_recursion_guard)
@@ -2876,6 +2905,14 @@ nereus_add_test(tst_radio_model_status_wiring)
 #   case 0x20: adc[0..2] = ControlBytesIn[1..3] & 0x01
 nereus_add_test(tst_p1_adc_overflow_extraction)
 
+# P1 status at a Protocol 2 radio's rate (2026-10-14): PTT changes at once
+# and repeats at the status tick, telemetry, supply and ADC overloads at the
+# tick (1 ms keyed or with an overload pending, 200 ms idle, Anvelina
+# CC_encoder.v:173-175 [@8e86a61]), frameReceived once per read. Simulated
+# time through setStatusClockForTest; one loopback case uses P1FakeRadio.
+nereus_add_test(tst_p1_status_rate fakes/P1FakeRadio.cpp)
+target_compile_definitions(tst_p1_status_rate PRIVATE NEREUS_BUILD_TESTS)
+
 # ── Phase 3P-G commit 1: CalibrationController model ─────────────────────────
 # Verifies defaults (freqFactor=1.0, all offsets=0), setter signal emission
 # (idempotent no-fire), effectiveFreqCorrectionFactor() toggle between normal
@@ -3123,6 +3160,8 @@ nereus_add_test(tst_workspace_default_button
 target_compile_definitions(tst_workspace_default_button PRIVATE NEREUS_BUILD_TESTS)
 # A DSP parameter popup opened against the screen's lower edge is placed from
 # the size it ends at with the workspace look on, and does not grow after.
+nereus_add_test(tst_dsp_popup_bounds)
+nereus_add_test(tst_nnr_popup_bounds)
 nereus_add_test(tst_dsp_popup_stays_on_screen
     fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_dsp_popup_stays_on_screen PRIVATE NEREUS_BUILD_TESTS)
@@ -6818,22 +6857,22 @@ nereus_add_test(tst_spot_model)
 #   (Phase F) can reuse them. Second task of Phase D (Models).
 nereus_add_test(tst_spot_table_model)
 
-# Spot List accessibility cache under live spot traffic. Qt 6.11.0 Cocoa
-# deletes the real cell interfaces of expired native rows while
-# QAccessibleTable keeps their IDs; the next spot insert or trim then
-# dereferenced them inside SpotTableModel::addSpot. Offscreen, each case
-# performs that deletion through QAccessible::deleteAccessibleInterface and
-# drives SpotTableModel -> BandFilterProxy -> spotListTable as built by
-# SpotHubDialog: arrival, cap trim, band filter, clear and a hidden dialog.
+# Spot List under live spot traffic with accessibility on. The macOS
+# bridge deletes the cell interfaces it holds when its pool drains after a
+# table change, while QAccessibleTable keeps their IDs; the next spot insert
+# or trim then dereferenced them inside SpotTableModel::addSpot. Each case
+# walks the cells, changes rows, lets the queued reset run, deletes the
+# walked cells as the drain does and changes rows again: arrival, cap trim,
+# band filter, clear and a hidden dialog. The selected spot, current spot
+# and top visible spot stay on the same spot across a new spot, a burst (one
+# reset), a trim and an update; with accessibility off nothing is reset.
 nereus_add_test(tst_spot_list_accessibility)
 
-# The same Qt 6.11.0 Cocoa accessibility cache repair
-# (gui/QtCocoaAccessibleTableCache) on every live item view shape: a
-# QTableWidget, QTreeWidget, QListWidget and a combo popup, each changing
-# rows after the cell interfaces were deleted the way the Cocoa bridge
-# deletes them, the real FreeDVReporterDialog's proxied station table, and
-# the gate leaving the cache alone on every other platform.
-nereus_add_test(tst_qt_cocoa_accessible_table_cache)
+# The real model reset item views take before their rows change with
+# accessibility on (resetItemsBeforeRowChange): items, roles, flags,
+# current row and selection kept, no view signals, one modelReset; expired
+# cells then a row change do not crash.
+nereus_add_test(tst_item_view_model_reset)
 
 # Workspace visual review (2026-10-08): the visual preview's dialog seams.
 # ConnectionPanel and LanScanDialog start no discovery with their test seam
@@ -8650,7 +8689,7 @@ else()
     set(NEREUS_TEST_PYTHON python3)
 endif()
 
-nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp)
+nereus_add_test(tst_gui_connection_controller fakes/LoopbackTransport.cpp fakes/P1FakeRadio.cpp)
 target_compile_definitions(tst_gui_connection_controller PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
     NEREUS_TEST_PYTHON="${NEREUS_TEST_PYTHON}")
@@ -8799,6 +8838,8 @@ if(_nereus_unsharded_checks_here AND DEFINED libdatachannel_SOURCE_DIR
             -DPC_CPP=${libdatachannel_SOURCE_DIR}/src/peerconnection.cpp
             -DDTLS_CPP=${libdatachannel_SOURCE_DIR}/src/impl/dtlstransport.cpp
             -DWORK=${CMAKE_CURRENT_BINARY_DIR}/libdatachannel-patch
+            "-DGENERATOR=${CMAKE_GENERATOR}"
+            "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
             -P ${CMAKE_SOURCE_DIR}/tests/scripts/check-libdatachannel-patch.cmake)
     set_tests_properties(libdatachannel_patch_applies PROPERTIES LABELS "session" TIMEOUT 120)
 endif()

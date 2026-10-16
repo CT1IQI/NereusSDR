@@ -583,9 +583,63 @@ private slots:
         const auto latest = source.takeLatest(key);
         QVERIFY(latest.has_value());
         QCOMPARE(dominantBin(latest->binsLinear), newestPeak);
+        // The frame taken says how many were replaced before it.
+        QCOMPARE(latest->replacedBefore, quint32(kFrames - 1));
         QVERIFY(!source.takeLatest(key).has_value());
         QTest::qWait(20);
         QCOMPARE(frames.count(), 1);
+    }
+
+    // The slot holds one frame. A frame taken from it says how many frames
+    // before it were replaced there with nobody having taken them.
+    void takenFrameCountsTheFramesReplacedBeforeIt()
+    {
+        DaemonSpectrumSource source;
+        const MediaSourceKey key{0, FftTier::Wide};
+        QVERIFY(source.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
+        // The engine takes its configuration on its own thread; no I/Q is
+        // fed, so every frame below comes from here. Each is published
+        // once: a retried publish would itself replace a frame.
+        const auto ready = [&source, &key] {
+            const DaemonSpectrumSource::InputQueueDiagnostics queue =
+                source.inputQueueDiagnostics(key);
+            return queue.active && !queue.configurationPending;
+        };
+        QTRY_VERIFY(ready());
+        QVERIFY(source.publishFrameForTest(key, 1'000));
+        auto frame = source.takeLatest(key);
+        QVERIFY(frame.has_value());
+        QCOMPARE(frame->replacedBefore, quint32(0));
+
+        // Three frames with nobody taking: the two older ones are replaced.
+        QVERIFY(source.publishFrameForTest(key, 2'000));
+        QVERIFY(source.publishFrameForTest(key, 3'000));
+        QVERIFY(source.publishFrameForTest(key, 4'000));
+        frame = source.takeLatest(key);
+        QVERIFY(frame.has_value());
+        QCOMPARE(frame->producedAtNs, qint64(4'000));
+        QCOMPARE(frame->replacedBefore, quint32(2));
+
+        // The count starts again with each frame taken.
+        QVERIFY(source.publishFrameForTest(key, 5'000));
+        frame = source.takeLatest(key);
+        QVERIFY(frame.has_value());
+        QCOMPARE(frame->replacedBefore, quint32(0));
+
+        // Frames a retune discards were not lost to a slow taker: the frame
+        // replaced before the move and the one the move discarded are both
+        // left out of the next frame's count.
+        QVERIFY(source.publishFrameForTest(key, 6'000));
+        QVERIFY(source.publishFrameForTest(key, 7'000));
+        DaemonSpectrumSourceUpdate result;
+        QVERIFY(source.update(key, sourceConfig(1024, 10100000.0, 48000.0),
+                              DaemonSpectrumCenterMove::Relabel, &result));
+        QVERIFY(result.relabeled);
+        QVERIFY(!source.takeLatest(key).has_value());
+        QVERIFY(source.publishFrameForTest(key, 8'000));
+        frame = source.takeLatest(key);
+        QVERIFY(frame.has_value());
+        QCOMPARE(frame->replacedBefore, quint32(0));
     }
 
     void ingressIsBoundedAndReportsDroppedWholeFrames()

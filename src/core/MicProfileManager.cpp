@@ -11,6 +11,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-13 - Notify profile consumers when the MAC scope changes to
+//                 an existing bank, preserving same-scope load idempotence.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Align the profile two-tone default with the full-envelope
 //                 transmit-model default for PS3 calibration. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -827,10 +830,15 @@ MicProfileManager::~MicProfileManager() = default;
 void MicProfileManager::setMacAddress(const QString& mac)
 {
     // R-R3-49 (parity Task 3): a mirror keeps no profiles on this computer.
-    if (isStationMirror()) {
+    if (isStationMirror() || m_mac == mac) {
         return;
     }
     m_mac = mac;
+    // Existing banks are ready through the getters as soon as the scope changes.
+    // Notify applets created before connect without applying the saved profile.
+    if (!readManifest().isEmpty()) {
+        emit profileListChanged();
+    }
 }
 
 QStringList MicProfileManager::readManifest() const

@@ -466,6 +466,10 @@ public:
     // unguarded test-hook convention as injectAudioFrameForTest above.
     TciProtocol* protocolForTest() const { return m_protocol.get(); }
 
+    // Test-only: the shared RX and TX sensor timers' current intervals (ms).
+    int rxSensorTimerIntervalForTest() const { return m_rxSensorTimer->interval(); }
+    int txSensorTimerIntervalForTest() const { return m_txSensorTimer->interval(); }
+
 signals:
     // Emitted after the server begins listening.  port is the actual bound port
     // (useful when start() was called with port=0).
@@ -567,6 +571,12 @@ private slots:
     void sendIqToSubscribers(int receiver, int sampleRate,
                              const QVector<float>& interleavedIQ);
     int publishedIqRate() const;
+
+    // Sets the shared RX and TX sensor timers to the shortest interval among
+    // the apps still connected with sensors on (200 ms when none). Called
+    // from onClientDisconnected after the app's session is removed, and from
+    // stop() after every session is.
+    void updateSensorTimerIntervals();
 
     // Destroys all RESAMPLEF instances for the given session and clears the map.
     // Called from onClientDisconnected and stop().
