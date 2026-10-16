@@ -566,10 +566,11 @@ import Testing
     /// size, timed in the same loop: contention slows both, a slower
     /// renderer slows only the band.
     ///
-    /// The two are compared by what each draw costs, as the app's 3D pacer
-    /// counts a frame: the encoding, here on the test thread's own CPU
-    /// clock, plus the GPU's own time for the command buffer. Neither
-    /// clock runs while the draw waits: for a core that other suites hold,
+    /// The two are compared by what each draw costs, close to how the app's
+    /// 3D pacer counts a frame: the encoding, which the pacer times by the
+    /// wall clock and the test on its own thread's CPU clock, plus the GPU's
+    /// own time for the command buffer. Neither of the test's clocks runs
+    /// while the draw waits: for a core that other suites hold,
     /// behind their work on the GPU, or for the test thread to wake once
     /// the GPU is done. By the wall clock a busy host did not slow the two
     /// alike: on a hosted runner a band frame went from its usual 3.7 ms or
@@ -597,7 +598,9 @@ import Testing
         var times: [Double] = []
         var referenceTimes: [Double] = []
         var encodings: [Double] = []
+        var referenceEncodings: [Double] = []
         var gpuTimes: [Double] = []
+        var referenceGpuTimes: [Double] = []
         var costs: [Double] = []
         var referenceCosts: [Double] = []
         func milliseconds(since start: UInt64) -> Double {
@@ -638,7 +641,9 @@ import Testing
                 times.append(elapsed)
                 referenceTimes.append(referenceElapsed)
                 encodings.append(encoding)
+                referenceEncodings.append(referenceEncoding)
                 gpuTimes.append(gpuMilliseconds(buffer))
+                referenceGpuTimes.append(gpuMilliseconds(referenceBuffer))
                 costs.append(encoding + gpuMilliseconds(buffer))
                 referenceCosts.append(referenceEncoding + gpuMilliseconds(referenceBuffer))
             }
@@ -663,10 +668,23 @@ import Testing
               + "mean of the fastest \(kept.count) \(ms(trimmedMean)) ms, mean \(ms(mean)) ms, "
               + "worst \(ms(worst)) ms over \(times.count) frames; reference median \(ms(referenceMedian)) ms, "
               + "wall ratio \(ms(wallRatio)); cost median \(ms(cost)) ms (encoding \(ms(middle(encodings))) ms, "
-              + "GPU \(ms(middle(gpuTimes))) ms), reference cost median \(ms(referenceCost)) ms, ratio \(ms(ratio))")
+              + "GPU \(ms(middle(gpuTimes))) ms), reference cost median \(ms(referenceCost)) ms "
+              + "(encoding \(ms(middle(referenceEncodings))) ms, GPU \(ms(middle(referenceGpuTimes))) ms), ratio \(ms(ratio))")
+        // Where the device reports no GPU times, the costs are the encodings
+        // alone, and a slower GPU side would not move them: said where the
+        // results show it, not only in the log. Times for one draw and not
+        // the other would compare unlike costs.
+        let bandGpuTimed = gpuTimes.contains { $0 > 0 }
+        let referenceGpuTimed = referenceGpuTimes.contains { $0 > 0 }
+        if !bandGpuTimed && !referenceGpuTimed {
+            Issue.record("\(target.device.name) reported no GPU times: the ratio compares the encodings alone",
+                         severity: .warning)
+        }
+        #expect(bandGpuTimed == referenceGpuTimed, "GPU times for one draw and not the other")
         #expect(ratio < Self.speedRatioLimit, "the band's cost against the reference draw's")
-        // A backstop for a renderer slow whatever the host is doing, and
-        // for one that waits inside its draw, which costs it no CPU time.
+        // A backstop by the wall clock, for a renderer slow whatever the host
+        // is doing and for one that waits inside its draw, which costs it no
+        // CPU time.
         #expect(median < Self.speedCeilingMs)
     }
 
