@@ -1,9 +1,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
-//   2026-10-16: a media move asks for audio again when an audio request
-//               made around the move is still unanswered (lost to the
-//               move), so a restart after a stall plays on. J.J. Boyd
-//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a media move asks again for the speakers' audio, the
+//               headphones mix, the transmit monitor, receiver streams and
+//               displays whose request made around the move is still
+//               unanswered (lost to the move), so a restart after a stall
+//               plays on. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-15: a control path whose ICE pair is not known yet keeps the
 //               direct-path media rules, as before it ranked as relayed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -4439,20 +4441,96 @@ void RemoteMediaController::promoteReplacement()
                .arg(d->dualFromOld).arg(d->dualFromNew)
                .arg(d->dual->duplicatesDropped()).arg(d->dual->leadMs());
     noteMicLine();
-    // An audio request made around the move may have been lost. The Core
-    // takes one only on its current connection, so a request naming the old
-    // one after the Core moved is dropped, and one the old peer could not
-    // send was never made. The Core sends its answer before its replace on
-    // the same ordered channel, so a request still unanswered here is lost:
-    // ask again on the new connection. Without this a restart after a
-    // stall that met a move left the audio silent until mute and unmute.
-    const bool unanswered = d->audioRevision != 0
+    askAgainAfterMove();
+}
+
+void RemoteMediaController::askAgainAfterMove()
+{
+    // A request made around the move may have been lost. The Core takes a
+    // request only on its current connection, so one naming the old
+    // connection after the Core moved is dropped, and one the old peer
+    // could not send was never made. The Core sends its answer before its
+    // replace on the same ordered channel, so a request still unanswered
+    // here is lost: ask again on the new connection, each with a newer
+    // revision. Without this a restart after a stall that met a move left
+    // the audio silent until mute and unmute.
+    const QPointer<RemoteMediaController> self(this);
+    const QPointer<MediaPeer> peer = d->peer;
+    const auto current = [this, &self, &peer] { return self && d->peer == peer; };
+    // The speakers' stream. A pending restart step asks on the new
+    // connection itself (it is fenced by revision, not connection).
+    const bool audioUnanswered = d->audioRevision != 0
         && (!d->acceptedAudioContext
             || d->acceptedAudioContext->revision != d->audioRevision);
     if (!d->audioRetryPending && !d->audioHeldForTransmit
-        && (d->audioRestarting || (unanswered && !d->audioFailure))) {
+        && (d->audioRestarting || (audioUnanswered && !d->audioFailure))) {
         qCInfo(lcRemoteMedia) << "Asking for audio again on the new connection";
         requestAudio();
+        if (!current()) { return; }
+    }
+    // The headphones mix. Its restart step is fenced by connection, so a
+    // step waiting across the move would never run: ask now instead.
+    const bool headphonesUnanswered = d->headphonesRevision != 0
+        && (!d->headphonesContext
+            || d->headphonesContext->revision != d->headphonesRevision);
+    if (!d->headphonesHeldForTransmit
+        && (d->headphonesRetryPending || headphonesUnanswered)) {
+        qCInfo(lcRemoteMedia) << "Asking for the headphones mix again on the new connection";
+        requestHeadphonesAudio();
+        if (!current()) { return; }
+    }
+    // The transmit monitor's route.
+    if (d->monitorRevision != 0
+        && (!d->monitorContext || d->monitorContext->revision != d->monitorRevision)) {
+        qCInfo(lcRemoteMedia) << "Asking for the transmit monitor again on the new connection";
+        requestMonitorAudio();
+        if (!current()) { return; }
+    }
+    // Receiver streams for apps on this computer; their restart steps are
+    // fenced by connection too.
+    QList<int> receivers;
+    for (const auto& [sliceId, stream] : d->receiverStreams) {
+        const auto asked = d->receiverRevisions.constFind(sliceId);
+        if (stream.faulted || asked == d->receiverRevisions.cend()) { continue; }
+        if (stream.retryPending || !stream.context
+            || stream.context->revision != asked.value()) {
+            receivers.append(sliceId);
+        }
+    }
+    for (int sliceId : receivers) {
+        if (d->receiverStreams.count(sliceId) == 0) { continue; }
+        qCInfo(lcRemoteMedia) << "Asking for receiver audio again on the new connection"
+                              << sliceId;
+        sendReceiverAudioRequest(sliceId, true);
+        if (!current()) { return; }
+    }
+    // Displays: an allocation request still waiting for its answer is sent
+    // again as it was, with a newer revision, so a late answer to the lost
+    // one cannot be taken for it. Its charge and kind are unchanged.
+    QList<quint32> displays;
+    for (const auto& [endpointId, binding] : d->bindings) {
+        if (binding.pending) { displays.append(endpointId); }
+    }
+    for (quint32 endpointId : displays) {
+        auto found = d->bindings.find(endpointId);
+        if (found == d->bindings.end() || !found->second.pending) { continue; }
+        Private::Binding& binding = found->second;
+        ++binding.revision;
+        if (binding.revision == 0) { ++binding.revision; }
+        binding.pending->revision = binding.revision;
+        binding.pending->sentAtMs = d->allocationClock();
+        binding.pending->timedOut = false;
+        const bool unsubscribe =
+            binding.pending->kind == Private::Binding::PendingKind::Unsubscribe;
+        QJsonObject wire = unsubscribe ? QJsonObject{} : binding.pending->request;
+        wire.insert(QStringLiteral("op"), unsubscribe ? QStringLiteral("unsubscribe")
+                                                      : QStringLiteral("subscribe"));
+        wire.insert(QStringLiteral("endpointId"), static_cast<qint64>(endpointId));
+        wire.insert(QStringLiteral("revision"), static_cast<qint64>(binding.revision));
+        qCInfo(lcRemoteMedia) << "Asking for display" << endpointId
+                              << "again on the new connection";
+        send(wire);
+        if (!current()) { return; }
     }
 }
 

@@ -4,6 +4,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: askAgainAfterMove. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: mediaIceConfiguration says whether its settings are the
 //               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -769,6 +771,10 @@ private:
     void deliverRtp(const QByteArray& packet);
     void receiveReplacementControl(const QJsonObject& payload);
     void promoteReplacement();
+    // 2026-10-16: after a move, asks again for each audio stream, the
+    // transmit monitor and each display whose request is still unanswered
+    // (lost to the move).
+    void askAgainAfterMove();
     void dropReplacement(const QString& why);
     // The direct media ladder: a plain replace, a direct-only one, and the
     // silence fallback's plain replace onto the tunnel alone.

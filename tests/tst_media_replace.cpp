@@ -31,9 +31,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-16: an audio restart's request lost to a media move is
-//               asked again once the window moves. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: an audio restart's request, and a transmit monitor route,
+//               lost to a media move are asked again once the window
+//               moves. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-15: media started on a routed web relay leg (a loopback shim
 //               that is not the media tunnel, the tunnel declared while
 //               the session runs on a data channel) tries no direct-only
@@ -2288,6 +2289,62 @@ private slots:
         QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
                                       == RemoteAudioStatus::State::Playing,
                                   h.mediaStage(media).constData(), 10000);
+        source.stop();
+        speaker.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-10-16: the same loss for the transmit monitor. A route chosen
+    // after the Core moved goes out on the old connection and is dropped;
+    // the window asks again once it moves too.
+    void aMonitorRouteLostToTheMoveIsAskedAgain()
+    {
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController media(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemon(&h.server, &h.station);
+        QTimer source;
+        source.setInterval(10);
+        connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(media.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  h.mediaStage(media).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(media.txMonitorAudioNegotiated());
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedMonitorContext().has_value(), 5000);
+        QCOMPARE(media.acceptedMonitorContext()->route, TxMonitorRoute::Speakers);
+        // The Core moves first: its replace is held on the way to the
+        // window, so the window still names the old connection.
+        bool armed = true;
+        bool corePromoted = false;
+        connect(h.stationLink.data(), &Test::LoopbackTransport::outboundText, &media,
+                [&](const QByteArray& wire) {
+            if (armed && wire.contains("replaces")) {
+                armed = false;
+                corePromoted = true;
+                h.stationLink->setHoldsOutgoing(true);
+            }
+        });
+        const QString oldId = media.mediaConnectionId();
+        QVERIFY(media.replaceConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(corePromoted,
+                                 DaemonMediaController::kReplaceOverlapMs + 3000);
+        // The new route goes out on the old connection, which the Core drops.
+        media.setTxMonitorRoute(TxMonitorRoute::None);
+        QTest::qWait(200);
+        QCOMPARE(media.acceptedMonitorContext()->route, TxMonitorRoute::Speakers);
+        QCOMPARE(media.mediaConnectionId(), oldId);
+        // The Core's replace reaches the window, which moves and asks again.
+        h.stationLink->setHoldsOutgoing(false);
+        QTRY_VERIFY_WITH_TIMEOUT(media.mediaConnectionId() != oldId, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(media.acceptedMonitorContext()
+                                     && media.acceptedMonitorContext()->route
+                                            == TxMonitorRoute::None, 5000);
         source.stop();
         speaker.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
