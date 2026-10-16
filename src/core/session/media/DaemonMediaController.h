@@ -8,6 +8,8 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: readDisplayExtrasForTest. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-15: display send thread (JJ approved 2026-10-15): with a media
 //               peer whose transport sends displays from any thread, a
 //               controller's frames are taken in and its displays sent by
@@ -511,6 +513,11 @@ public:
     /// drive its computations directly (nullptr for an unknown endpoint or
     /// one that asked for none).
     DisplayExtrasProcessor* displayExtrasForTest(quint32 endpointId);
+    /// Runs read on that endpoint's display extras under the display lock,
+    /// so the display send thread does not run them meanwhile. False, and
+    /// read is not run, for an unknown endpoint or one that asked for none.
+    bool readDisplayExtrasForTest(quint32 endpointId,
+                                  const std::function<void(const DisplayExtrasProcessor&)>& read);
     /// Whether that engine's transforms follow its frame rate: true only
     /// while the display budget is lowered because the Core is busy
     /// (R-R3-08, R-R3-40). Empty for an unknown endpoint.

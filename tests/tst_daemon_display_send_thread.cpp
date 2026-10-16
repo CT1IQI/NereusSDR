@@ -25,8 +25,21 @@
 // The display thread's timed turns keep their 5 ms interval with nothing
 // else to wake it, as the main thread's sender timer did, on Windows too.
 //
+// An un-key while the main thread runs no event: the display thread hears
+// it at once, and the hold it starts is the one for the pan's own engine.
+//
+// Waveforms on a Core whose displays leave from the display thread: each
+// one is handed to the transport on the main thread, the waveform
+// channel's owner, and no waveform work runs unguarded or on the display
+// thread.
+//
 // Modification history (NereusSDR):
 //   2026-10-15  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF  The un-key and waveform cases, for the
+//                                    display pill's key state and RADE's
+//                                    waveforms merged into the display
+//                                    thread. AI-assisted via Anthropic
 //                                    Claude Code.
 // =================================================================
 
@@ -35,6 +48,7 @@
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -42,6 +56,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -57,16 +72,23 @@
 #include "core/AppSettings.h"
 #include "core/FFTEngine.h"
 #include "core/HpsdrModel.h"
+#include "core/MoxController.h"
+#include "core/SliceOwnership.h"
+#include "core/audio/WaveformPublisher.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/media/DaemonDisplaySendThread.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/DaemonSpectrumSource.h"
 #include "core/session/media/DisplayBudget.h"
+#include "core/session/media/DisplayExtras.h"
 #include "core/session/media/IMediaTransport.h"
+#include "core/session/media/WaveformCodec.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "core/spectrum/MoxDisplayHold.h"
+#include "models/RadeWaveformModel.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -84,6 +106,18 @@ constexpr int kSendsBeforeHold = 60;
 // Twice the display thread's interval. A Windows scheduler tick, 15.6 ms,
 // is three.
 constexpr qint64 kMaxTimedTurnMedianNs = 2LL * kDisplaySenderIntervalMs * 1'000'000LL;
+// The receivers' rate, and an FFT long enough that its un-key hold
+// (moxHoldLengthMs) is well past the shortest, kMoxHoldMinMs.
+constexpr int kStreamRateHz = 192000;
+constexpr int kLongFftSize = 262144;
+constexpr std::size_t kSendsAfterUnkey = 6;
+
+// What the controller logs for an entry that is missing its display guard,
+// or for station-thread work run on the display thread.
+QRegularExpression guardWarning()
+{
+    return QRegularExpression(QStringLiteral("display lock not held|display send thread ran"));
+}
 
 qint64 nowNs()
 {
@@ -163,6 +197,18 @@ public:
         return true;
     }
     bool sendRtp(const QByteArray&) override { return isReady(); }
+    // The waveform channel sends only on its owner's thread: every message
+    // is recorded with the thread it was handed over on.
+    DisplaySendResult submitWaveform(const QByteArray& message) override
+    {
+        if (!isReady() || message.isEmpty()) {
+            return DisplaySendResult::Refused;
+        }
+        const std::lock_guard<std::mutex> lock(m_waveformMutex);
+        m_waveformThreads.push_back(std::this_thread::get_id());
+        return DisplaySendResult::Sent;
+    }
+    bool waveformBusy() const override { return false; }
     bool isReady() const override { return m_sink->ready(); }
     std::shared_ptr<MediaDisplaySink> displaySink() override { return m_sink; }
     void becomeReady()
@@ -170,10 +216,17 @@ public:
         m_sink->readyState.store(true, std::memory_order_release);
         emit ready();
     }
+    std::vector<std::thread::id> waveformThreads() const
+    {
+        const std::lock_guard<std::mutex> lock(m_waveformMutex);
+        return m_waveformThreads;
+    }
 
 private:
     std::shared_ptr<SendLog> m_log;
     std::shared_ptr<RecordingDisplaySink> m_sink;
+    mutable std::mutex m_waveformMutex;
+    std::vector<std::thread::id> m_waveformThreads;
 };
 
 QJsonObject plane()
@@ -203,6 +256,28 @@ QJsonObject subscription(quint32 endpointId, int sliceId, double centerHz)
             {QStringLiteral("minDbm"), -180.0},
             {QStringLiteral("maxDbm"), 0.0},
             {QStringLiteral("wideSpanFactor"), 0.0}};
+}
+
+// A pan with display extras on the long FFT: the noise floor and the
+// waterfall AGC, whose un-key hold the test reads.
+QJsonObject extrasSubscription(quint32 endpointId, int sliceId, double centerHz)
+{
+    QJsonObject request = subscription(endpointId, sliceId, centerHz);
+    request.insert(QStringLiteral("fftSize"), kLongFftSize);
+    request.insert(QStringLiteral("fps"), 30);
+    request.insert(QStringLiteral("noiseFloor"),
+                   QJsonObject{{QStringLiteral("enabled"), true},
+                               {QStringLiteral("shiftDb"), 0.0},
+                               {QStringLiteral("fastAttack"), false}});
+    request.insert(QStringLiteral("waterfallLevels"),
+                   QJsonObject{{QStringLiteral("mode"), QStringLiteral("agc")},
+                               {QStringLiteral("lowDbm"), -122.0},
+                               {QStringLiteral("highDbm"), -62.0},
+                               {QStringLiteral("offsetDb"), 0}});
+    request.insert(QStringLiteral("normalize"), false);
+    request.insert(QStringLiteral("calibrationOffsetDb"), 0.0);
+    request.insert(QStringLiteral("averageTimeMs"), 1000);
+    return request;
 }
 
 // The feeder's 2 ms between hand-overs. On Windows a plain sleep lasts a
@@ -333,7 +408,7 @@ struct Harness {
     {
         radio.setBoardForTest(HPSDRHW::Saturn);
         radio.configureStreamPool(/*userDdcCount=*/5, /*maxSlices=*/5,
-                                  /*defaultRateHz=*/192000);
+                                  /*defaultRateHz=*/kStreamRateHz);
         radio.setConnectionStateForTest(ConnectionState::Connected);
         // One pan each, so each slice has a receiver stream of its own.
         firstSlice = radio.addSlice(QStringLiteral("pan-0"));
@@ -347,7 +422,7 @@ struct Harness {
         return slice ? slice->streamIndex() : -1;
     }
 
-    bool start()
+    bool start(bool waveforms = false)
     {
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
@@ -359,10 +434,12 @@ struct Harness {
             }, 10'000)) {
             return false;
         }
-        if (!client.sendMediaControl({{QStringLiteral("op"), QStringLiteral("start")},
-                                      {QStringLiteral("connectionId"),
-                                       QLatin1String(kConnectionId)}},
-                                     client.sessionEpoch())) {
+        QJsonObject startControl{{QStringLiteral("op"), QStringLiteral("start")},
+                                 {QStringLiteral("connectionId"), QLatin1String(kConnectionId)}};
+        if (waveforms) {
+            startControl.insert(QStringLiteral("waveformVersion"), 1);
+        }
+        if (!client.sendMediaControl(startControl, client.sessionEpoch())) {
             return false;
         }
         if (!QTest::qWaitFor([this] { return !mediaTransport.isNull(); }, 10'000)) {
@@ -560,6 +637,147 @@ private slots:
                                    .arg(sent.join(QStringLiteral(", ")));
         QVERIFY2(!centers.contains(leftCenter), qPrintable(detail));
         QCOMPARE(centers.constFirst(), newCenter);
+        h.finish();
+    }
+
+    // An un-key while the main thread runs no event and takes no lock, as
+    // while Direct3D holds it: the display thread hears the un-key at once,
+    // and the hold it starts for the waterfall AGC is the pan's own,
+    // moxHoldLengthMs of its engine's FFT size, not the shortest.
+    void anUnkeyReachesTheDisplayThreadWhileTheMainThreadIsHeld()
+    {
+        QTest::failOnWarning(guardWarning());
+        Harness h;
+        QVERIFY(h.firstSlice >= 0);
+        MoxController* const mox = h.radio.moxController();
+        QVERIFY(mox);
+        const qint64 holdMs = moxHoldLengthMs(kLongFftSize, 1, kStreamRateHz);
+        QVERIFY2(holdMs >= kMoxHoldMinMs + 1000,
+                 qPrintable(QStringLiteral("the long FFT's hold is %1 ms").arg(holdMs)));
+        QVERIFY(h.start());
+        QVERIFY(h.client.sendMediaControl(
+            extrasSubscription(kFirstEndpoint, h.firstSlice,
+                               h.radio.streamCentreHz(h.streamOf(h.firstSlice))),
+            h.client.sessionEpoch()));
+        QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+        QTRY_COMPARE(h.controller.activeSourceCount(), 1);
+        QVERIFY(h.controller.displaysSentFromThread());
+        DaemonSpectrumSource* const source = &h.controller.sharedSpectrum()->source();
+        const MediaSourceKey key = source->activeSources().constFirst();
+        const auto publish = [source, key] {
+            return source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs());
+        };
+        const auto readExtras =
+            [&h](const std::function<void(const DisplayExtrasProcessor&)>& read) {
+                return h.controller.readDisplayExtrasForTest(kFirstEndpoint, read);
+            };
+        QTRY_VERIFY_WITH_TIMEOUT(publish(), 10'000);
+        QVERIFY(QTest::qWaitFor([&] {
+            publish();
+            return h.log->copy().size() >= 5;
+        }, 10'000));
+
+        // Keyed, with events running, until the display thread has seen it.
+        emit mox->moxStateChanged(true);
+        bool keyed = false;
+        QVERIFY(QTest::qWaitFor([&] {
+            publish();
+            return readExtras([&keyed](const DisplayExtrasProcessor& extras) {
+                       keyed = extras.keyed();
+                   })
+                && keyed;
+        }, 10'000));
+
+        // From here the main thread runs no event and takes no lock until
+        // the frames after the un-key have gone out.
+        const std::size_t sentBeforeUnkey = h.log->copy().size();
+        const qint64 unkeyMs = DaemonSpectrumSource::monotonicNowNs() / 1'000'000;
+        emit mox->moxStateChanged(false);
+        QElapsedTimer sending;
+        sending.start();
+        while (h.log->copy().size() < sentBeforeUnkey + kSendsAfterUnkey
+               && sending.elapsed() < 10'000) {
+            publish();
+            QThread::msleep(5);
+        }
+        const qint64 sentMs = DaemonSpectrumSource::monotonicNowNs() / 1'000'000;
+        QVERIFY(h.log->copy().size() >= sentBeforeUnkey + kSendsAfterUnkey);
+
+        // The hold began at the first frame after the un-key, no earlier
+        // than unkeyMs and no later than sentMs, and runs holdMs from there.
+        bool keyedAfter = true;
+        bool heldToItsLength = false;
+        bool endsInTime = false;
+        QVERIFY(readExtras([&](const DisplayExtrasProcessor& extras) {
+            keyedAfter = extras.keyed();
+            heldToItsLength = extras.levelFollower().inHold(unkeyMs + holdMs - 1);
+            endsInTime = !extras.levelFollower().inHold(sentMs + holdMs);
+        }));
+        const QString detail =
+            QStringLiteral("un-keyed at %1 ms, %2 display messages by %3 ms; the hold for "
+                           "this FFT is %4 ms")
+                .arg(unkeyMs)
+                .arg(h.log->copy().size() - sentBeforeUnkey)
+                .arg(sentMs)
+                .arg(holdMs);
+        QVERIFY2(!keyedAfter,
+                 qPrintable(QStringLiteral("the display thread still sees the radio keyed; ")
+                            + detail));
+        QVERIFY2(heldToItsLength,
+                 qPrintable(QStringLiteral("the hold ends before its length; ") + detail));
+        QVERIFY2(endsInTime,
+                 qPrintable(QStringLiteral("the hold runs past its length; ") + detail));
+        h.finish();
+    }
+
+    // A waveform stream on a Core whose displays leave from the display
+    // thread: every waveform message is handed to the transport on the main
+    // thread, the waveform channel's owner, and every entry into the
+    // waveform work holds the display lock.
+    void waveformsLeaveFromTheMainThread()
+    {
+        QTest::failOnWarning(guardWarning());
+        Harness h;
+        QVERIFY(h.firstSlice >= 0);
+        QVERIFY(h.server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        QVERIFY(h.start(/*waveforms=*/true));
+        QTRY_VERIFY(h.controller.displaysSentFromThread());
+        RadeWaveformModel* const model = h.radio.radeWaveformModel();
+        QVERIFY(model);
+        const QByteArray listener = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+        h.radio.sliceOwnership()->setOwner(h.firstSlice, SliceOwnership::stationDevice());
+        QVERIFY(h.radio.sliceOwnership()->join(listener, h.firstSlice));
+        // Asked for before its source is there; the source's arrival
+        // reconciles the stream.
+        QVERIFY(h.client.sendMediaControl(
+            {{QStringLiteral("op"), QStringLiteral("waveform-stream")},
+             {QStringLiteral("connectionId"), QLatin1String(kConnectionId)},
+             {QStringLiteral("sliceId"), h.firstSlice},
+             {QStringLiteral("kind"), WaveformCodec::kindName(WaveformKind::DecodedSpeech)},
+             {QStringLiteral("revision"), 1},
+             {QStringLiteral("enabled"), true}},
+            h.client.sessionEpoch()));
+        QCoreApplication::processEvents();
+        WaveformPublisher publisher(WaveformKind::DecodedSpeech, 24000);
+        model->setEndpoint(h.firstSlice, WaveformKind::DecodedSpeech, &publisher, 1, true);
+        QTRY_VERIFY(publisher.bindingToken() != 0);
+
+        constexpr int kFrames = 2400;
+        std::vector<float> pcm(kFrames, 0.125f);
+        QVERIFY(publisher.appendFloat(publisher.bindingToken(), pcm.data(), kFrames, 1,
+                                      DaemonSpectrumSource::monotonicNowNs(), true));
+        QTRY_VERIFY(!h.mediaTransport->waveformThreads().empty());
+
+        const std::thread::id mainThread = std::this_thread::get_id();
+        const std::vector<std::thread::id> threads = h.mediaTransport->waveformThreads();
+        const auto offMain = std::count_if(threads.cbegin(), threads.cend(),
+            [mainThread](std::thread::id thread) { return thread != mainThread; });
+        const QString detail =
+            QStringLiteral("%1 of %2 waveform messages were handed over off the main thread")
+                .arg(offMain)
+                .arg(threads.size());
+        qInfo().noquote() << detail;
+        QVERIFY2(offMain == 0, qPrintable(detail));
         h.finish();
     }
 };

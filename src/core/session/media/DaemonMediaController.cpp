@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: readDisplayExtrasForTest reads an endpoint's display
+//               extras under the display lock. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: display send thread (JJ approved 2026-10-15): with a media
 //               peer whose transport sends displays from any thread, the
 //               shared spectrum's display thread takes in the frames and
@@ -1468,6 +1471,18 @@ DisplayExtrasProcessor* DaemonMediaController::displayExtrasForTest(quint32 endp
     const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     return it == m_endpoints.end() ? nullptr : it->second.extras.get();
+}
+
+bool DaemonMediaController::readDisplayExtrasForTest(
+    quint32 endpointId, const std::function<void(const DisplayExtrasProcessor&)>& read)
+{
+    const auto displayHold = displayGuard();
+    const auto it = m_endpoints.find(endpointId);
+    if (it == m_endpoints.end() || !it->second.extras) {
+        return false;
+    }
+    read(*it->second.extras);
+    return true;
 }
 
 std::optional<int> DaemonMediaController::spectrumSourceFps(quint32 endpointId) const
