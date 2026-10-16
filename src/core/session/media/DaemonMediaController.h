@@ -8,6 +8,10 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: sendWaveformsOnStationThread: the RADE waveforms stay on
+//               the station thread while the display thread sends the
+//               displays. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-16: DaemonSharedSpectrum::keyEdge takes the display lock;
 //               m_displayKeyed is written under it. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -757,8 +761,14 @@ private:
     std::optional<WidebandDisplayContext> widebandContext(const EndpointEntry& entry) const;
     void onSendTick();
     /// A turn of the display sender's timer: notes the time since the
-    /// turn before for the display diagnostics, then onSendTick().
+    /// turn before for the display diagnostics, then onSendTick(). With
+    /// the display thread sending, sendWaveformsOnStationThread() only.
     void onSendTimerTurn();
+    /// The waveform streams' part of a sender turn (a due retry, then up
+    /// to 16 messages), on the station thread while the display thread
+    /// sends the displays: the waveform channel sends only on its owner's
+    /// thread.
+    void sendWaveformsOnStationThread();
     /// Whether the frame `entry` holds is one a sender turn would send:
     /// its context is out and its own pacing would take the frame.
     bool heldFrameWouldBeSent(const EndpointEntry& entry) const;
@@ -779,7 +789,10 @@ private:
     // does. The transmit display's keyed edge does take it:
     // MoxController::moxStateChanged reaches recordTransmitPan directly,
     // so a key or unkey on the station thread can wait out one display
-    // pass, as it waited out a send turn on that thread before.
+    // pass, as it waited out a send turn on that thread before. So does
+    // the display extras' key edge, whose copy the lock's release
+    // refreshes. The RADE waveforms stay on the station thread, under the
+    // lock (sendWaveformsOnStationThread).
     /// Holds the display lock for a scope.
     DaemonDisplayLockGuard displayGuard() const { return DaemonDisplayLockGuard(m_displayLock); }
     bool onDisplayThread() const { return m_shared->onDisplayThread(); }

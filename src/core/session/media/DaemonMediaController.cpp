@@ -4,6 +4,14 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: Merge of the RADE waveforms into the display send thread:
+//               the waveforms stay on the station thread, which owns the
+//               waveform channel, where the display thread had sent none
+//               (it read no I/Q fit from its copy and reconciled instead).
+//               Their entries take the display guard: the model, mic and
+//               transmit slots through reconcileWaveforms, the batch slot,
+//               and the peer's waveformWritable and waveformErrorOccurred.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-16: Merge of the display pill's hold length into the display
 //               send thread: the display extras' inputs carry the
 //               endpoint's own un-key hold length on the display thread
@@ -2476,16 +2484,26 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
         }
     });
     connect(peer, &MediaPeer::waveformWritable, this, [this, peer, peerEpoch] {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             const QPointer<DaemonMediaController> self(this);
             if (m_waveformRetryAtNs >= 0) {
                 m_waveformRetryAtNs = -1;
                 reconcileWaveforms();
             }
-            if (self && m_peer.get() == peer && m_epoch == peerEpoch) { onSendTick(); }
+            if (self && m_peer.get() == peer && m_epoch == peerEpoch) {
+                // Display send thread: the displays are its, the waveforms
+                // stay here.
+                if (m_displayThreadMode) {
+                    sendWaveformsOnStationThread();
+                } else {
+                    onSendTick();
+                }
+            }
         }
     });
     connect(peer, &MediaPeer::waveformErrorOccurred, this, [this, peer, peerEpoch](const QString& reason) {
+        const auto displayHold = displayGuard();
         if (m_peer.get() != peer || m_epoch != peerEpoch) { return; }
         m_waveformFailed = true;
         clearWaveforms(true, reason);
@@ -4497,6 +4515,9 @@ void DaemonMediaController::reconcileWaveforms()
 {
     if (m_reconcilingWaveforms || !m_waveformNegotiated || !m_radioModel
         || !m_radioModel->radeWaveformModel()) { return; }
+    // Display send thread: the model, mic and transmit slots that call
+    // this take no guard of their own.
+    const auto displayHold = displayGuard();
     m_reconcilingWaveforms = true;
     const QPointer<DaemonMediaController> self(this);
     MediaPeer* const peer = m_peer.get();
@@ -4561,6 +4582,7 @@ void DaemonMediaController::reconcileWaveforms()
 
 void DaemonMediaController::acceptWaveformBatch(int sliceId, WaveformKind kind, quint64 source, WaveformBatchPtr batch)
 {
+    const auto displayHold = displayGuard();
     const WaveformKey key{sliceId, kind};
     const auto it = m_waveformStreams.find(key);
     if (it == m_waveformStreams.end() || !it->second.sending || !batch
@@ -4592,6 +4614,7 @@ void DaemonMediaController::acceptWaveformBatch(int sliceId, WaveformKind kind, 
 
 bool DaemonMediaController::trySendWaveform(MediaPeer* peer, quint64 epoch, qint64 nowNs)
 {
+    warnIfDisplayLockNotHeld("trySendWaveform", true);
     if (!m_waveformNegotiated || !peer || !peer->isReady()) { return false; }
     for (auto& [key, stream] : m_waveformStreams) {
         if (!stream.sending) { continue; }
@@ -6657,12 +6680,38 @@ void DaemonMediaController::onSendTimerTurn()
 {
     const auto displayHold = displayGuard();
     // Display send thread: its own timed turns stand in for this timer's,
-    // whose turn then only refreshes the copy they read (the release hook).
+    // whose turn then only refreshes the copy they read (the release hook)
+    // and sends the waveforms, which stay on this thread.
     if (m_displayThreadMode) {
+        sendWaveformsOnStationThread();
         return;
     }
     noteSenderTurn(m_peer && m_peer->isReady());
     onSendTick();
+}
+
+void DaemonMediaController::sendWaveformsOnStationThread()
+{
+    // What onSendTick does for the waveforms, which it leaves to this
+    // thread on the display thread: the waveform channel sends only on its
+    // owner's thread, and reconciling reads RadioModel and sends contexts.
+    if (!m_peer || !m_peer->isReady()) {
+        return;
+    }
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
+    const qint64 nowNs = displayNowNs();
+    const QPointer<DaemonMediaController> self(this);
+    if (m_waveformRetryAtNs >= 0 && nowNs >= m_waveformRetryAtNs) {
+        m_waveformRetryAtNs = -1;
+        reconcileWaveforms();
+        if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+    }
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const bool sent = trySendWaveform(peer, epoch, nowNs);
+        if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+        if (!sent) { break; }
+    }
 }
 
 void DaemonMediaController::noteSenderTurn(bool peerReady)
@@ -6709,7 +6758,10 @@ void DaemonMediaController::onSendTick()
     }
     const qint64 nowNs = displayNowNs();
     const QPointer<DaemonMediaController> self(this);
-    if (m_waveformRetryAtNs >= 0 && nowNs >= m_waveformRetryAtNs) {
+    // Display send thread: the waveforms are the station thread's
+    // (sendWaveformsOnStationThread).
+    const bool waveformsHere = !onDisplayThread();
+    if (waveformsHere && m_waveformRetryAtNs >= 0 && nowNs >= m_waveformRetryAtNs) {
         m_waveformRetryAtNs = -1;
         reconcileWaveforms();
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
@@ -6732,7 +6784,7 @@ void DaemonMediaController::onSendTick()
             if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
         }
     }
-    for (int attempt = 0; attempt < 16; ++attempt) {
+    for (int attempt = 0; waveformsHere && attempt < 16; ++attempt) {
         const bool sent = trySendWaveform(peer, epoch, nowNs);
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
         if (!sent) { break; }
