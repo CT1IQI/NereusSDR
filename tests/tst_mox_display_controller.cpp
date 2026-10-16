@@ -57,6 +57,8 @@
 // The test seam for a rebinding while keyed (TxSliceArbiter::flipTo moves
 // the transmit flag without requestHandoff's unkey).
 #include "core/TxSliceArbiter.h"
+#include "models/RadioModel.h"
+#include "core/WdspEngine.h"
 #undef private
 
 #include "core/AppSettings.h"
@@ -64,6 +66,10 @@
 #include "core/MoxController.h"
 #include "core/TxAnalyzer.h"
 #include "core/TxDisplayFeed.h"
+#include "core/TxChannel.h"
+#include "core/DspControlThread.h"
+#include "core/RadioConnection.h"
+#include "core/wdsp_api.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/TransmitStateFacade.h"
@@ -85,6 +91,35 @@
 using namespace NereusSDR;
 
 namespace {
+
+// The real WDSP channel writes only to this in-process discard connection.
+class WaveformConnection final : public RadioConnection {
+public:
+    void init() override {}
+    void connectToRadio(const RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void sendTxIq(const float*, int) override {}
+    void setWatchdogEnabled(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setMox(bool) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 constexpr char kMissingDisplay[] =
     "This Core does not send its transmit display. Updating the Core may help.";
@@ -772,6 +807,93 @@ private slots:
         QCOMPARE(PanState::of(two), before);
     }
 
+    void tuneDisplayOffsetRestoresCurrentXit_data()
+    {
+        QTest::addColumn<bool>("remoteWindow");
+        QTest::addColumn<DSPMode>("mode");
+        QTest::addColumn<int>("xitHz");
+        QTest::addColumn<bool>("duplexBeforeRelease");
+        for (bool remoteWindow : {false, true}) {
+            for (DSPMode mode : {DSPMode::LSB, DSPMode::USB}) {
+                for (int xitHz : {0, 350}) {
+                    for (bool duplexBeforeRelease : {false, true}) {
+                        const QByteArray name = QByteArray(remoteWindow ? "remote-" : "local-")
+                            + (mode == DSPMode::LSB ? "LSB-" : "USB-")
+                            + QByteArray::number(xitHz) + (duplexBeforeRelease ? "-DUP" : "-TX");
+                        QTest::newRow(name.constData()) << remoteWindow << mode << xitHz
+                                                     << duplexBeforeRelease;
+                    }
+                }
+            }
+        }
+    }
+
+    void tuneDisplayOffsetRestoresCurrentXit()
+    {
+        QFETCH(bool, remoteWindow);
+        QFETCH(DSPMode, mode);
+        QFETCH(int, xitHz);
+        QFETCH(bool, duplexBeforeRelease);
+        // Inject the already-compensated display context without asking a
+        // RadioModel to Tune or key a radio. Both production display sources
+        // report this NCO origin to the same presentation controller.
+        const auto exercise = [&](RadioModel& model, int sliceId, SpectrumWidget* pan,
+                                  MoxDisplayController* controller,
+                                  const std::function<void(double)>& context) {
+            SliceModel* slice = model.sliceById(sliceId);
+            QVERIFY(slice);
+            slice->setFrequency(3'865'000.0);
+            slice->setDspMode(mode);
+            slice->setXitHz(xitHz);
+            slice->setXitEnabled(xitHz != 0);
+            pan->setTxVfoOffsetHz(xitHz);
+            const double carrier = double(model.txFrequencyForSlice(slice));
+            const double signedTone = mode == DSPMode::LSB ? -600.0 : 600.0;
+            // Give the local feed the same authoritative origin as the
+            // injected remote context, without running Tune's side effects.
+            model.m_isTuning = true;
+            model.m_savedTxDspMode = mode;
+            controller->setKeyed(true, sliceId);
+            context(carrier - signedTone);
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz - int(signedTone));
+
+            if (duplexBeforeRelease) {
+                controller->setDisplayDuplex(true);
+            }
+            model.m_isTuning = false;
+            controller->setKeyed(false, sliceId);
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz);
+            controller->setDisplayDuplex(false);
+            controller->setKeyed(true, sliceId);
+            context(carrier); // Ordinary SSB context equals the rise's seed.
+            QCOMPARE(pan->m_txVfoOffsetHz, xitHz);
+            controller->setKeyed(false, sliceId);
+        };
+        if (remoteWindow) {
+            RemoteWindow window(/*withAnalyzer=*/true);
+            QVERIFY(window.connect());
+            exercise(window.remote, window.txSliceId, window.pan(QStringLiteral("two")),
+                     window.controller.get(), [&](double origin) {
+                SpectrumContextMessage context;
+                context.sourceCentreHz = origin;
+                context.centreHz = origin;
+                context.spanHz = 8000.0;
+                emit window.gui->transmitContextReceived(QStringLiteral("two"), context);
+            });
+        } else {
+            LocalWindow window;
+            exercise(window.radio, window.txSliceId, window.pan(QStringLiteral("two")),
+                     window.controller.get(), [&](double origin) {
+                TxDisplayView view;
+                view.carrierHz = origin;
+                view.lowHz = -4000;
+                view.highHz = 4000;
+                view.pixels = 1024;
+                emit window.radio.txDisplayFeed()->viewChanged(view);
+            });
+        }
+    }
+
     void remoteXitWhileKeyedMovesTheViewAndRestores()
     {
         RemoteWindow window(/*withAnalyzer=*/true);
@@ -802,6 +924,227 @@ private slots:
     }
 
     // ── A remote window ────────────────────────────────────────────────────
+
+    void realTuneFrameKeepsRfCoordinatesThroughRemoteDisplay_data()
+    {
+        QTest::addColumn<DSPMode>("mode");
+        QTest::addColumn<double>("toneHz");
+        QTest::addColumn<int>("localGovernorSpanHz");
+        QTest::addColumn<int>("remoteSpanHz");
+        QTest::addColumn<double>("remoteCentreOffsetHz");
+        QTest::addColumn<bool>("toneVisible");
+        for (DSPMode mode : {DSPMode::LSB, DSPMode::USB}) {
+            const double toneHz = mode == DSPMode::LSB ? -600.0 : 600.0;
+            const QByteArray name = mode == DSPMode::LSB ? "LSB" : "USB";
+            QTest::newRow((name + "-remote-governs").constData()) << mode << toneHz << 0 << 8000 << 0.0 << true;
+            QTest::newRow((name + "-local8k-remote4k").constData()) << mode << toneHz << 8000 << 4000 << 0.0 << true;
+            QTest::newRow((name + "-local8k-remote50k").constData()) << mode << toneHz << 8000 << 50000 << 0.0 << true;
+            const double partialOffsetHz = mode == DSPMode::LSB ? -2500.0 : 2500.0;
+            QTest::newRow((name + "-partial-source").constData()) << mode << toneHz << 8000 << 4000 << partialOffsetHz << true;
+            QTest::newRow((name + "-outside-source").constData()) << mode << toneHz << 8000 << 4000 << 12000.0 << false;
+        }
+    }
+
+    void realTuneFrameKeepsRfCoordinatesThroughRemoteDisplay()
+    {
+#ifndef HAVE_WDSP
+        QSKIP("Real generator/analyzer coordinates require WDSP");
+#else
+        QFETCH(DSPMode, mode);
+        QFETCH(double, toneHz);
+        QFETCH(int, localGovernorSpanHz);
+        QFETCH(int, remoteSpanHz);
+        QFETCH(double, remoteCentreOffsetHz);
+        QFETCH(bool, toneVisible);
+        constexpr double kDialHz = 3'865'000.0;
+        constexpr int kMicFrames = 64;
+        DspControlThread lane(DspLane::Transmit);
+        lane.start();
+        WdspEngine engine;
+        engine.m_initialized = true; // No device, wisdom generation or audio worker.
+        engine.setTransmitLane(&lane);
+        TxChannel* tx = engine.createTxChannel(WdspEngine::kTxChannelId, kMicFrames,
+            WdspEngine::kTxDspBufferSize, 48000, WdspEngine::kTxDspSampleRate, 48000);
+        QVERIFY(tx);
+        QVERIFY(lane.waitIdleForTest(5000));
+        WaveformConnection connection;
+        tx->setConnection(&connection);
+        RemoteWindow window(/*withAnalyzer=*/true);
+        int localViewer = 0;
+        const auto cleanup = qScopeGuard([&] {
+            window.station.m_isTuning = false;
+            window.key(false);
+            tx->setTuneTone(false, toneHz, 0.0);
+            tx->setRunningAsync(false);
+            lane.waitIdleForTest(5000);
+            if (localViewer != 0) {
+                window.station.txDisplayFeed()->removeViewer(localViewer);
+            }
+            window.station.injectTxChannelForTest(nullptr);
+            window.station.setTxAnalyzer(nullptr);
+            window.analyzer.reset();
+            engine.shutdown();
+            engine.setTransmitLane(nullptr);
+            lane.stop();
+        });
+        SliceModel* slice = window.station.sliceById(window.txSliceId);
+        slice->setFrequency(kDialHz);
+        slice->setDspMode(mode);
+        window.station.m_isTuning = true;
+        window.station.m_savedTxDspMode = mode;
+        window.station.injectTxChannelForTest(tx);
+        SpectrumWidget* pan = window.pan(QStringLiteral("two"));
+        pan->setDisplayWindowPreservingHistory(kDialHz + 2000.0, 32000.0);
+        pan->m_txViewBandwidthHz = remoteSpanHz;
+        if (localGovernorSpanHz != 0) {
+            localViewer = window.station.txDisplayFeed()->addViewer(
+                double(window.station.txNcoFrequencyForSlice(slice)), localGovernorSpanHz,
+                1024, /*local=*/true);
+        }
+        window.analyzer->setFftSize(32768);
+        window.analyzer->setBlockSize(tx->txDspBlockSize());
+        QVERIFY(window.connect());
+        QSignalSpy contexts(window.gui.get(), &RemoteMediaController::transmitContextReceived);
+        QSignalSpy frames(window.gui.get(), &RemoteMediaController::transmitFrameReceived);
+        window.key(true);
+        QTRY_VERIFY(window.controller->isKeyed());
+        const int expectedSpanHz = localGovernorSpanHz != 0 ? localGovernorSpanHz : remoteSpanHz;
+        const double expectedCentreHz = double(window.station.txNcoFrequencyForSlice(slice));
+        QTRY_VERIFY_WITH_TIMEOUT(!contexts.isEmpty()
+            && contexts.last().at(1).value<SpectrumContextMessage>().spanHz == expectedSpanHz
+            && contexts.last().at(1).value<SpectrumContextMessage>().centreHz == expectedCentreHz
+            && pan->centerFrequency() == expectedCentreHz, 5000);
+        window.analyzer->stop(); // Drain actual WDSP planes explicitly below.
+        const TxDisplayView view = window.station.txDisplayFeed()->currentView();
+        const TxAnalyzerArgs args = window.analyzer->currentArgs();
+        const double ncoHz = double(window.station.txNcoFrequencyForSlice(slice));
+        const SpectrumContextMessage context = contexts.last().at(1).value<SpectrumContextMessage>();
+        QCOMPARE(ncoHz, kDialHz - toneHz);
+        QCOMPARE(context.sourceCentreHz, ncoHz);
+        QCOMPARE(context.centreHz, view.centreHz());
+        QCOMPARE(context.spanHz, view.spanHz());
+        if (remoteCentreOffsetHz != 0.0) {
+            pan->setDisplayWindowPreservingHistory(ncoHz + remoteCentreOffsetHz, remoteSpanHz);
+        }
+
+        // The production PostGen setter, zero-mic fexchange pump, siphon,
+        // analyzer and sign convention; no radio connection receives I/Q.
+        tx->setTuneTone(true, toneHz, TxChannel::kMaxToneMag);
+        tx->setRunningAsync(true);
+        QTRY_VERIFY_WITH_TIMEOUT(tx->isRunning(), 5000);
+        QVERIFY(lane.waitIdleForTest(5000));
+        QVector<float> trace(args.nPix), waterfall(args.nPix);
+        std::vector<double> mic(2 * kMicFrames, 0.0);
+        int captured = 0;
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            for (int block = 0; block < 16; ++block) {
+                tx->pumpDexp(mic.data());
+                tx->driveOneTxBlockFromInterleaved(mic.data());
+            }
+            int traceReady = 0;
+            int waterfallReady = 0;
+            GetPixels(TxAnalyzer::kTxDispId, 0, trace.data(), &traceReady);
+            GetPixels(TxAnalyzer::kTxDispId, 1, waterfall.data(), &waterfallReady);
+            if (traceReady && waterfallReady) { ++captured; }
+            return captured >= 3;
+        }()), 5000);
+        const auto peakHz = [](const QVector<float>& values, double centre, double span) {
+            const int index = int(std::max_element(values.cbegin(), values.cend()) - values.cbegin());
+            return centre - span / 2.0 + index * span / values.size();
+        };
+        const double sourceTolerance = 3.0 * view.spanHz() / args.nPix;
+        const double rawTraceHz = peakHz(trace, view.centreHz(), view.spanHz());
+        const double rawWaterfallHz = peakHz(waterfall, view.centreHz(), view.spanHz());
+        qInfo("real Tune source: mode=%d NCO=%.0f context=%.0f/%.0f raw trace=%.2f WF=%.2f",
+              int(mode), ncoHz, context.centreHz, context.spanHz, rawTraceHz, rawWaterfallHz);
+        QVERIFY(std::abs(rawTraceHz - kDialHz) <= sourceTolerance);
+        QVERIFY(std::abs(rawWaterfallHz - kDialHz) <= sourceTolerance);
+        const int rowsBefore = pan->waterfallHistoryRowsForTest();
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            emit window.analyzer->txFftReady(-1, trace);
+            emit window.analyzer->txWaterfallReady(-1, waterfall);
+            return !frames.isEmpty() && pan->waterfallHistoryRowsForTest() > rowsBefore;
+        }()), 5000);
+        const DisplayCodecFrame decoded = frames.last().at(1).value<DisplayCodecFrame>();
+        const QVector<float> croppedWaterfall = pan->txWaterfallRow(decoded.waterfallDbm);
+        QVERIFY(!pan->m_renderedPixels.isEmpty());
+        QVERIFY(!croppedWaterfall.isEmpty());
+        const double drawnTraceHz = peakHz(pan->m_renderedPixels, pan->centerFrequency(), pan->bandwidth());
+        const double drawnWaterfallHz = peakHz(croppedWaterfall, pan->centerFrequency(), pan->bandwidth());
+        const double displayTolerance = 4.0 * pan->bandwidth()
+            / std::min(decoded.traceDbm.size(), decoded.waterfallDbm.size());
+        qInfo("real Tune remote: trace=%.2f WF=%.2f tolerance=%.2f", drawnTraceHz, drawnWaterfallHz,
+              displayTolerance);
+        const bool sourceDoesNotCoverView = pan->centerFrequency() - pan->bandwidth() / 2.0
+                < context.centreHz - context.spanHz / 2.0
+            || pan->centerFrequency() + pan->bandwidth() / 2.0
+                > context.centreHz + context.spanHz / 2.0;
+        if (sourceDoesNotCoverView) {
+            QCOMPARE(croppedWaterfall.size(), decoded.waterfallDbm.size());
+            const auto uncoveredAtFloor = [&](const QVector<float>& values, float floor) {
+                int checked = 0;
+                const double marginHz = 2.0 * pan->bandwidth() / values.size();
+                for (int x = 0; x < values.size(); ++x) {
+                    const double hz = pan->centerFrequency() - pan->bandwidth() / 2.0
+                        + x * pan->bandwidth() / values.size();
+                    if (hz < context.centreHz - context.spanHz / 2.0 - marginHz
+                        || hz > context.centreHz + context.spanHz / 2.0 + marginHz) {
+                        ++checked;
+                        if (std::abs(values[x] - floor) >= 0.01f) { return false; }
+                    }
+                }
+                return checked > 0;
+            };
+            QVERIFY(uncoveredAtFloor(pan->m_renderedPixels,
+                *std::min_element(decoded.traceDbm.cbegin(), decoded.traceDbm.cend())));
+            QVERIFY(uncoveredAtFloor(croppedWaterfall,
+                *std::min_element(decoded.waterfallDbm.cbegin(), decoded.waterfallDbm.cend())
+                    + pan->displayCalOffsetDb()));
+        }
+        if (!toneVisible) {
+            const float traceFloor = *std::min_element(decoded.traceDbm.cbegin(), decoded.traceDbm.cend());
+            const float waterfallFloor = *std::min_element(decoded.waterfallDbm.cbegin(), decoded.waterfallDbm.cend())
+                + pan->displayCalOffsetDb();
+            QVERIFY(std::all_of(pan->m_renderedPixels.cbegin(), pan->m_renderedPixels.cend(),
+                                [traceFloor](float value) { return std::abs(value - traceFloor) < 0.01f; }));
+            QVERIFY(std::all_of(croppedWaterfall.cbegin(), croppedWaterfall.cend(),
+                                [waterfallFloor](float value) { return std::abs(value - waterfallFloor) < 0.01f; }));
+            return;
+        }
+        QVERIFY(std::abs(drawnTraceHz - kDialHz) <= displayTolerance);
+        QVERIFY(std::abs(drawnWaterfallHz - kDialHz) <= displayTolerance);
+
+        // The same painted TX row must keep its RF coordinate when the
+        // wider, differently centered receive view is restored on unkey.
+        const auto paintedPeakHz = [](const QImage& image, int row, double centre, double span) {
+            const QRgb* pixels = reinterpret_cast<const QRgb*>(image.constScanLine(row));
+            int peak = 0;
+            int brightest = -1;
+            for (int x = 0; x < image.width(); ++x) {
+                const int brightness = qRed(pixels[x]) + qGreen(pixels[x]) + qBlue(pixels[x]);
+                if (brightness > brightest) {
+                    brightest = brightness;
+                    peak = x;
+                }
+            }
+            return centre - span / 2.0 + peak * span / image.width();
+        };
+        const double txPaintedHz = paintedPeakHz(pan->m_waterfall, pan->m_wfWriteRow,
+                                                 pan->centerFrequency(), pan->bandwidth());
+        window.station.m_isTuning = false;
+        window.key(false);
+        QTRY_VERIFY(!window.controller->isKeyed());
+        QCOMPARE(pan->centerFrequency(), kDialHz + 2000.0);
+        QCOMPARE(pan->bandwidth(), 32000.0);
+        const double rxHistoryHz = paintedPeakHz(pan->m_waterfall, pan->m_wfWriteRow,
+                                                 pan->centerFrequency(), pan->bandwidth());
+        const double historyTolerance = 3.0 * pan->bandwidth() / pan->m_waterfall.width();
+        qInfo("real Tune history: TX=%.2f restored RX=%.2f tolerance=%.2f", txPaintedHz,
+              rxHistoryHz, historyTolerance);
+        QVERIFY(std::abs(txPaintedHz - kDialHz) <= displayTolerance);
+        QVERIFY(std::abs(rxHistoryHz - txPaintedHz) <= historyTolerance);
+#endif
+    }
 
     void remoteTransmitUsesAssociatedHostWhenPanKeyDoesNotResolve_data()
     {
