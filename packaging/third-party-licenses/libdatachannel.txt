@@ -55,7 +55,16 @@ at most 100 ms before it looks at the task queue again, rather than
 waiting with no time limit for a notification, so a queued task is still
 taken when its wake-up reaches no worker.
 
-The four numbered patches are applied by cmake/NereusRemoteMedia.cmake to
+Modification (MPL-2.0 section 3.1): in Windows (MinGW) builds, NereusSDR
+applies
+cmake/patches/libdatachannel-0007-lock-shared-mutexes-once-when-made.patch
+to src/impl/datachannel.cpp, src/impl/peerconnection.cpp,
+src/impl/sctptransport.cpp and src/impl/track.cpp. Each of the library's
+shared mutexes is locked and unlocked once in its owner's constructor, so
+that on Windows (MinGW-w64) two threads never take its first lock at the
+same moment, when one of them would run without the lock.
+
+The five numbered patches are applied by cmake/NereusRemoteMedia.cmake to
 build-owned copies of the pinned source. Their changes are licensed under
 MPL-2.0, like the covered files they modify; those files retain their
 upstream notices. The exact patches are supplied with NereusSDR's source

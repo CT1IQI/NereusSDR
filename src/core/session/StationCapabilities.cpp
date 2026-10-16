@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12: The radio's second firmware number: firmwareBeta, after
+//               spectrumPictureVersion and before coreBuildInfo, for a peer
+//               that declared firmwareBeta. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion, after
 //               coreSpeakerVersion, for a peer that declared spectrumPicture.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -581,6 +585,20 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (spectrumPictureVersion > 0) {
         updates.append(intEntry("spectrumPictureVersion", spectrumPictureVersion));
     }
+    // The radio's second firmware number, after spectrumPictureVersion and
+    // before coreBuildInfo (which stays last), only for a peer that declared
+    // firmwareBeta; any other peer is sent no entry, so its capabilities are
+    // today's. A zero is sent: it says this radio reported none.
+    if (firmwareBetaEntry) {
+        updates.append(intEntry("firmwareBeta", firmwareBetaVersion));
+    }
+    // Waveform feed: the exact samples a waveform meter draws, after
+    // firmwareBeta (when declared) and before coreBuildInfo (which stays last),
+    // only for a peer that agreed the minor-11 block and declared waveform;
+    // any other peer is sent no entry, so its capabilities are today's.
+    if (radioIdentityEntries && waveformVersion > 0) {
+        updates.append(intEntry("waveformVersion", waveformVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -607,8 +625,22 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     int coreSpeakerEntries = 0;
+    int firmwareBetaEntries = 0;
     for (const MirrorUpdate& u : updates) {
-        if (u.name == "mediaDirectVersion") {
+        if (u.name == "firmwareBeta") {
+            // The radio's second firmware number: one entry, an Int64 of 0
+            // to 255 (one byte of the radio's discovery reply). Anything
+            // else reads as no entry.
+            if (++firmwareBetaEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong number = u.value.toLongLong();
+                if (number >= 0 && number <= 255) {
+                    caps.firmwareBetaEntry = true;
+                    caps.firmwareBetaVersion = static_cast<int>(number);
+                }
+            }
+        } else if (u.name == "mediaDirectVersion") {
             // The direct media ladder: one entry, an Int64 of 1 or more.
             if (++mediaDirectEntries == 1 && u.ordinal == 0 && u.kind == MirrorWireKind::Int64
                 && u.value.typeId() == QMetaType::LongLong) {
@@ -904,6 +936,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "txWatchPathVersion"
                    || u.name == "txStateVersion"
                    || u.name == "txReadingsVersion"
+                   || u.name == "waveformVersion"
                    || u.name == "remoteIqVersion"
                    || u.name == "miniDisplayVersion"
                    || u.name == "spectrumPictureVersion"
@@ -1027,6 +1060,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.controlChannelVersion = version;
                 } else if (u.name == "txMonitorAudioVersion") {
                     caps.txMonitorAudioVersion = version;
+                } else if (u.name == "waveformVersion") {
+                    caps.waveformVersion = version;
                 } else if (u.name == "remoteIqVersion") {
                     caps.remoteIqVersion = version;
                 } else if (u.name == "miniDisplayVersion") {

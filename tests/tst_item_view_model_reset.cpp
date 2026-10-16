@@ -14,7 +14,10 @@
 // helpers act on macOS only; ExpiredAccessibleCells::setActive lets them
 // act on every platform so Linux CI runs these cases too. One case checks
 // that OrderKeepingProxyModel does no extra filter work while its gate
-// (itemViewResetsActive in the app) is false.
+// (itemViewResetsActive in the app) is false. The RADE v2 cases turn the
+// Core's RADE v2 modes on and off under a shown RxApplet and VfoWidget and
+// check that each mode combo resets before every row it adds or removes,
+// and not at all when nothing changes.
 
 #include <QtTest>
 #include <QAccessible>
@@ -27,7 +30,10 @@
 
 #include "ExpiredAccessibleCells.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
+#include "gui/applets/RxApplet.h"
+#include "gui/widgets/VfoWidget.h"
 #include "models/OrderKeepingProxyModel.h"
+#include "models/RadioModel.h"
 
 using namespace NereusSDR;
 
@@ -58,6 +64,74 @@ protected:
         ++filterCalls;
         return OrderKeepingProxyModel::filterAcceptsRow(sourceRow, sourceParent);
     }
+};
+
+
+// The combo among a widget's children that lists the RADE modes.
+QComboBox* findModeCombo(QWidget* widget)
+{
+    for (QComboBox* combo : widget->findChildren<QComboBox*>()) {
+        if (combo->findText(QStringLiteral("USB")) >= 0
+            && combo->findText(QStringLiteral("RADE-U")) >= 0) {
+            return combo;
+        }
+    }
+    return nullptr;
+}
+
+QStringList comboTexts(const QComboBox& combo)
+{
+    QStringList texts;
+    for (int i = 0; i < combo.count(); ++i) {
+        texts << combo.itemText(i);
+    }
+    return texts;
+}
+
+// Watches a combo's model. The rows a reset puts back (resetItemsBeforeRowChange
+// appends every row again after the clear) are not row changes; any other
+// row inserted or removed is, and is counted as safe only when a reset came
+// after the previous one.
+class RowChangeWatch {
+public:
+    explicit RowChangeWatch(QAbstractItemModel* model)
+    {
+        QObject::connect(model, &QAbstractItemModel::modelAboutToBeReset, &m_context,
+                         [this, model] { m_restoring = model->rowCount(); });
+        QObject::connect(model, &QAbstractItemModel::modelReset, &m_context, [this] {
+            ++resets;
+            m_armed = true;
+        });
+        QObject::connect(model, &QAbstractItemModel::rowsInserted, &m_context,
+                         [this](const QModelIndex&, int first, int last) {
+                             const int rows = last - first + 1;
+                             if (m_restoring > 0) {
+                                 m_restoring -= rows;
+                                 return;
+                             }
+                             changed(rows);
+                         });
+        QObject::connect(model, &QAbstractItemModel::rowsAboutToBeRemoved, &m_context,
+                         [this](const QModelIndex&, int first, int last) { changed(last - first + 1); });
+    }
+
+    int resets{0};
+    int rowChanges{0};
+    int unguardedRowChanges{0};
+
+private:
+    void changed(int rows)
+    {
+        rowChanges += rows;
+        if (!m_armed) {
+            unguardedRowChanges += rows;
+        }
+        m_armed = false;
+    }
+
+    QObject m_context;
+    int m_restoring{0};
+    bool m_armed{false};
 };
 
 } // namespace
@@ -405,6 +479,85 @@ private slots:
         QCOMPARE(offFlushes, 0);
         QCOMPARE(filterCallsForDataChange(true, &onFlushes), plainCalls + 20);
         QCOMPARE(onFlushes, 1);
+    }
+
+    // RxApplet's mode combo gains and loses RADE2-U and RADE2-L when the
+    // Core's RADE v2 catalog changes (refreshRadeV2Modes in the ctor).
+    void rxAppletModeComboResetsBeforeRadeV2Rows()
+    {
+        RadioModel model(RadioModel::Role::Remote);
+        RxApplet applet(nullptr, &model);
+        applet.show();
+        QComboBox* combo = findModeCombo(&applet);
+        QVERIFY(combo != nullptr);
+        const QStringList before = comboTexts(*combo);
+        QVERIFY(!before.contains(QStringLiteral("RADE2-U")));
+        const int current = combo->currentIndex();
+        const QString currentText = combo->currentText();
+        RowChangeWatch watch(combo->model());
+
+        model.setStationRadeV2Enabled(true);
+        QCOMPARE(watch.rowChanges, 2);
+        QCOMPARE(watch.unguardedRowChanges, 0);
+        QCOMPARE(watch.resets, 2);
+        QCOMPARE(comboTexts(*combo),
+                 (before + QStringList{QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}));
+        QCOMPARE(combo->itemData(combo->findText(QStringLiteral("RADE2-L")), Qt::ToolTipRole).toString(),
+                 QStringLiteral("Experimental RADE v2 speech mode"));
+        QCOMPARE(combo->currentIndex(), current);
+        QCOMPARE(combo->currentText(), currentText);
+
+        // Nothing changes: no reset.
+        emit model.radeV2AvailabilityChanged();
+        QCOMPARE(watch.resets, 2);
+        QCOMPARE(watch.rowChanges, 2);
+
+        model.setStationRadeV2Enabled(false);
+        QCOMPARE(watch.rowChanges, 4);
+        QCOMPARE(watch.unguardedRowChanges, 0);
+        QCOMPARE(watch.resets, 4);
+        QCOMPARE(comboTexts(*combo), before);
+        QCOMPARE(combo->currentIndex(), current);
+        QCOMPARE(combo->currentText(), currentText);
+    }
+
+    // The VFO flag's mode combo, through VfoWidget::refreshRadeV2Modes.
+    void vfoWidgetModeComboResetsBeforeRadeV2Rows()
+    {
+        RadioModel model(RadioModel::Role::Remote);
+        VfoWidget vfo;
+        vfo.setRadioModel(&model);
+        vfo.show();
+        QComboBox* combo = findModeCombo(&vfo);
+        QVERIFY(combo != nullptr);
+        const QStringList before = comboTexts(*combo);
+        QVERIFY(!before.contains(QStringLiteral("RADE2-U")));
+        QCOMPARE(combo->currentText(), QStringLiteral("USB"));
+        const int current = combo->currentIndex();
+        RowChangeWatch watch(combo->model());
+
+        model.setStationRadeV2Enabled(true);
+        QCOMPARE(watch.rowChanges, 2);
+        QCOMPARE(watch.unguardedRowChanges, 0);
+        QCOMPARE(watch.resets, 2);
+        QCOMPARE(comboTexts(*combo),
+                 (before + QStringList{QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}));
+        QCOMPARE(combo->itemData(combo->findText(QStringLiteral("RADE2-U")), Qt::ToolTipRole).toString(),
+                 QStringLiteral("Experimental RADE v2 speech mode"));
+        QCOMPARE(combo->currentIndex(), current);
+        QCOMPARE(combo->currentText(), QStringLiteral("USB"));
+
+        emit model.radeV2AvailabilityChanged();
+        QCOMPARE(watch.resets, 2);
+        QCOMPARE(watch.rowChanges, 2);
+
+        model.setStationRadeV2Enabled(false);
+        QCOMPARE(watch.rowChanges, 4);
+        QCOMPARE(watch.unguardedRowChanges, 0);
+        QCOMPARE(watch.resets, 4);
+        QCOMPARE(comboTexts(*combo), before);
+        QCOMPARE(combo->currentIndex(), current);
+        QCOMPARE(combo->currentText(), QStringLiteral("USB"));
     }
 
     void doesNothingWithAccessibilityOff()

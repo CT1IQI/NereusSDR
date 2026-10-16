@@ -1,4 +1,4 @@
-# 19. Amplifiers and tuners
+# Amplifiers and tuners
 
 The desktop and iPhone/iPad can show and control supported station accessories through the Core. The Core owns the device connections and telemetry. A remote desktop or phone sends a supported command to the Core, then follows the Core's reported state; a click by itself is not confirmation. Read the device state and any refusal beside the control before transmitting.
 
@@ -19,11 +19,11 @@ The General page also contains **PGXL Interlock**. Its settings apply on the Cor
 
 ## Operate the Power Genius XL
 
-The **Amp** applet shows forward power, SWR and temperature gauges, and when reported, mains volts, drain amps and **MEffA**. The **OPERATE**/**STANDBY** button follows the PGXL's reported state. Click it to request the other state, then wait for the button and PGXL page's **State** badge to change. `POWERUP`, `STANDBY`, `FAULT`, `IDLE`, `OPERATE` and `TRANSMIT_A`/`TRANSMIT_B` are not interchangeable: a green-looking button is not a fault clear, and `FAULT` requires reading the cause before trying again.
+The **Amp** applet shows forward power as one large bar (0 to 2000 W, with a marker at the 1500 W legal display limit), slim **Reflected** and **SWR** rows, and a **Temp** row, and when reported, mains volts, drain amps and **MEffA**. **Forward**, **Reflected** and **SWR** show dashes unless the amplifier is transmitting; **Temp** shows whenever the amplifier reports one. Reflected power is worked out from forward power and SWR. The marker is a display aid only: a reading above it still shows in full, and it never limits drive or output. The **OPERATE**/**STANDBY** button follows the PGXL's reported state. Click it to request the other state, then wait for the button and PGXL page's **State** badge to change. `POWERUP`, `STANDBY`, `FAULT`, `IDLE`, `OPERATE` and `TRANSMIT_A`/`TRANSMIT_B` are not interchangeable: a green-looking button is not a fault clear, and `FAULT` requires reading the cause before trying again.
 
 Use the applet's right-click menu to open **Open PGXL Advanced...**, select **Disconnect** or **Reconnect**, or choose **Copy diagnostics to clipboard**. The copied diagnostics are useful when reporting an unexpected connection or meter result.
 
-The phone's **Radio > Power Genius XL** page shows the Core's PGXL state, forward power/SWR/temperature gauges, numeric output and MEffA, band-follow/paired-with status, output-cap alert, and fault history. Tap **OPERATE** or **STANDBY** to request a state change. The page reports why a switch is unavailable, such as the Core being disconnected or the radio being on the air. Wait for the state text to follow the amplifier report. The phone interlock card is readback; use its **Change in Setup** route, when offered, for the Core's interlock settings.
+The phone's **Radio > Power Genius XL** page shows the Core's PGXL state, forward power, reflected power, SWR and temperature gauges that carry their readings in the gauge titles (for example **Fwd Pwr 850 W**, or `--` when there is no reading), MEffA, band-follow/paired-with status, output-cap alert, and fault history. Tap **OPERATE** or **STANDBY** to request a state change. The page reports why a switch is unavailable, such as the Core being disconnected or the radio being on the air. Wait for the state text to follow the amplifier report. The phone interlock card is readback; use its **Change in Setup** route, when offered, for the Core's interlock settings.
 
 ### PGXL output cap
 
@@ -76,6 +76,8 @@ it is not a receive-only relay command. The cycle temporarily places an
 operating PGXL in **STANDBY** and restores its prior operating state when the
 cycle ends.
 
+The **Tuner** applet shows forward power as a bar and slim **Reflected** and **SWR** rows; it has no temperature row. With no amplifier in OPERATE the bar runs 0 to 200 W with a marker at 125 W. With an amplifier in OPERATE it runs 0 to 2000 W with the marker at 1500 W. The rows show dashes while the forward power is below 0.5 W, so the tuner shows dashes in receive and when a transmit is too weak to measure. The readings refresh up to about 16 times a second while keyed or tuning and four times a second in receive.
+
 1. Read the applet's TGXL connection/state, antenna, forward power/SWR, and
    **C1**, **L**, **C2** relay reports. Confirm the selected antenna is the one
    physically connected to the intended load. If PGXL is connected, note
@@ -112,7 +114,7 @@ state after each click. Scroll over a relay bar only for an intentional
 one-step adjustment and verify the bar changes. A gray control or refusal
 reason is the current permission/state result. The iPhone/iPad **Radio >
 Tuner Genius** page exposes reported state, meters, relay-step buttons, and
-antenna selection, but manual **TUNE** is unavailable there.
+antenna selection. Its **TUNE** runs the Core's autotune as this phone's own key, and **BYPASS** is there too; when **TUNE** is grayed, its reason shows under it. The meter titles carry the readings (**Fwd Pwr**, **Ref Pwr**, SWR), and a gauge reads `--` when the tuner has no power to report (forward below 0.5 W).
 
 ### Tuner antenna and tune memory
 
@@ -151,11 +153,11 @@ Under **4O3A > Tuner Genius XL**, **Identity & Status** shows nickname, firmware
 
 ## Operate the RF-Kit RF2K-S
 
-Open the **RF-Kit** applet to read its link indicator, model/nickname, **OPERATE/STANDBY** request, forward power, SWR, temperature, volts and amps. The applet's **ANT 1** through **ANT 4** buttons follow the amplifier's reported selection; the active button lights only after the report identifies it. Select the antenna that is physically connected to the desired path. A disabled/missing antenna reflects the amplifier's availability report.
+Open the **RF-Kit** applet to read its link indicator, model/nickname, **OPERATE/STANDBY** request, forward power (large bar, 0 to 2000 W, marker at 1500 W), reflected power, SWR, temperature, volts and amps. Forward power, reflected power and SWR show dashes when forward power is 0 W; temperature stays live. The applet's **ANT 1** through **ANT 4** buttons follow the amplifier's reported selection; the active button lights only after the report identifies it. Select the antenna that is physically connected to the desired path. A disabled/missing antenna reflects the amplifier's availability report.
 
 The RF-Kit tuner status reports **TUNING...**, **BYPASS**, **TUNED frequency (setup)**, **NOT TUNED**, or unknown state. **TUNE** and **BYPASS** buttons are intentionally disabled because the RF2K-S firmware used by this interface does not accept tuner write commands. Use the amplifier's front panel for those two functions. Never tell the applet that a tune or bypass succeeded when the firmware did not accept a command.
 
-On iPhone/iPad, **Radio > RF2K-S** shows the Core's model and status, OPERATE/STANDBY, forward power/SWR/temperature and numeric forward watts, SWR, volts and amps. Its four antenna buttons follow Core reports and may have operator labels. It displays the tuner's reported **AUTO**, **MANUAL**, **AUTO TUNING** or **BYPASS** mode, but its **TUNE** and **BYPASS** buttons remain grayed with the front-panel instruction. The phone's **RF-Kit settings** row opens the Core's connection/settings page. The Core's link/error text and the active antenna/band-follow messages take precedence over the last requested action.
+On iPhone/iPad, **Radio > RF2K-S** shows the Core's model and status, OPERATE/STANDBY, forward power, reflected power, SWR and temperature gauges whose titles carry the readings (dashes when there is no forward power; temperature stays live), plus a line of volts and amps. Its four antenna buttons follow Core reports and may have operator labels. It displays the tuner's reported **AUTO**, **MANUAL**, **AUTO TUNING** or **BYPASS** mode, but its **TUNE** and **BYPASS** buttons remain grayed with the front-panel instruction. The phone's **RF-Kit settings** row opens the Core's connection/settings page. The Core's link/error text and the active antenna/band-follow messages take precedence over the last requested action.
 
 ### RF-Kit connection and station settings
 

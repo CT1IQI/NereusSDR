@@ -21,7 +21,7 @@ receiver ownership. The settings below refine those workflows.
 
 The toolbar **Display** sheet is a quick control surface for its named pan.
 It says **Pan N · this phone** and changes that pan's local waterfall and
-spectrum presentation. **Palette**, waterfall level mode, **Color gain** and
+spectrum presentation. **Palette**, the waterfall level choice (**Clarity**, **Auto**, **Floor**, **Manual** or **Scale**), **Color gain** and
 **Black level** affect waterfall contrast. **Fill**, **Line**, and **Spectrum
 height** affect the trace. **Top** and **Range** move the visible dBm scale.
 Read the scale labels and trace after each change. **CTUN** changes the
@@ -36,14 +36,16 @@ badge on each group:
 | Group | What it changes and how to check |
 | --- | --- |
 | **Band plan** | Choose from plans advertised by the Core. This changes the Core's plan for desktop and all devices. **Size** changes the plan's visual size on this phone. Check the selected plan and strip at the bottom of the band. |
-| **Core display groups** | The Core describes its analyzer groups and owns offered FFT, window, Hz/bin target, and frame-rate settings. These are shared. Check the badge and bin-width readout; an older Core shows them grayed with an explanation. |
-| **Waterfall** | Choose palette and, when available, **Clarity**, **Auto**, **Noise floor**, or **Manual** levels. **High level** and **Low level** are manual endpoints; Core levels can arrive later. **Color gain** and **Black level** refine contrast. |
+| **Core display groups** | The Core describes its analyzer groups and owns offered Sizing, FFT size, Hz/bin target, window, and frame-rate settings. These are shared. **Sizing** (Auto, Hz/bin, or Fixed) chooses whether the zoom, the Hz/bin target, or Size sets the FFT size; the control that is not in charge is gray and the page says which choice frees it. The two averaging times start at 1 ms where the Core offers that. Check the badge and bin-width readout; an older Core shows them grayed with an explanation. |
+| **Waterfall** | Choose palette and the levels: **Clarity**, **Auto** and **Floor** when the Core offers them, **Manual**, or **Scale**. **High level** and **Low level** are manual endpoints; Core levels can arrive later. **Color gain** and **Black level** refine contrast. |
 | **Waterfall: more** | Set detector/averaging when those are not in Core groups, update period, opacity, stop-on-transmit, timestamps/time zone, look-back depth, filter and zero-line overlays, or a custom gradient. Copy buttons transfer the visible scale endpoints to levels or back. The footer reports retained history for the current period. |
 | **Spectrum / Spectrum: more** | Set fill, gradient, line width, spectrum height, trace/passband color and strength, classic peak hold, and zero line. Older-Core pages can expose detector, averaging, and decimation locally when supported. Calibration is disabled because the Core has already applied radio calibration. |
 | **Grid & Scales / Grid & Scales: more** | Set grid visibility/step and dBm top/bottom; show the dBm scale and choose frequency-label alignment. If the Core supplies a noise-floor estimate, the bottom can follow it and optionally preserve the range. |
 | **Noise floor / Peaks** | The noise-floor line and shift, active peak hold, and peak blobs require Core display extras. Classic peak hold is separate. Follow the disabled reason if extras are unavailable. |
 | **On the band / Colors / View** | Toggle cursor frequency, bin width, frame rate, and strongest-signal readout; choose its corner and update rate. Set local grid, marker, line, and label colors. Extended view is available only when described by the Core; CTUN is a pan view setting. |
 | **Transmit display** | Local transmit scale top/range, waterfall levels/palette, and DUP. **The Core's transmit display** contains station analyzer settings and affects devices viewing it. Check its badge and returned values. |
+
+A 2026.10.1 Core also lists its own **Spectrum**, **Levels**, **Waterfall**, **View**, **Peaks & Markers**, **FFT & Engine**, **Transmit Display** and **Multimeter** pages under **Setup > Display**; see [chapter 10](10-customize.md) for what each holds.
 
 For a weak-signal view, select the correct pan, set waterfall **Levels** to
 **Manual**, and adjust High/Low around the current noise and signal. Use a copy

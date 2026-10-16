@@ -86,7 +86,9 @@ Choose the mode in the RX applet, open the flag's mode tab and select it
 there, or use the **Mode** menu. The current mode name is shown on the flag and
 changes the preset bank. The RX applet and the flag's mode list offer every
 mode except **SPEC**; only the **Mode** menu offers all 14, so choose **SPEC**
-there.
+there. When the experimental RADE2 modes are turned on (see
+[chapter 15](15-rade-freedv.md#turn-on-the-experimental-rade2-modes)), each
+list gains **RADE2-U** and **RADE2-L**, and the **Mode** menu offers 16.
 
 | Mode family | What to check in NereusSDR |
 | --- | --- |
@@ -98,6 +100,7 @@ there.
 | **DRM** | A mode choice does not itself configure an external digital decoder or audio connection. |
 | **SPEC** | A receive/spectrum mode choice; it cannot be used for transmit. |
 | **RADE-U**, **RADE-L** | Correct sideband and RADE profile/status, using the digital-voice instructions. |
+| **RADE2-U**, **RADE2-L** | Experimental, and shown only after the Core turns them on. Same sideband and status checks as RADE-U and RADE-L; no callsign is decoded. |
 
 A mode label describes how the slice demodulates. It does not by itself
 select the transmitter, establish a software audio route or connect a
@@ -185,9 +188,10 @@ it does not remove an interferer from the passband.
 The **SQL** button and threshold on the flag and in the RX applet are the
 SSB-style squelch, on a scale of 0 to 100, whatever the mode. No control in the
 flag or applet turns on AM or FM squelch. Their thresholds are on their own DSP
-pages, in dB from -160 to 0: **AM Squelch Threshold** in the **Squelch** group
-of **File > Settings... > DSP > AM/SAM**, and **Squelch Threshold** on
-**File > Settings... > DSP > FM**. Do not copy a number between these unlike
+pages: **AM Squelch Threshold** in the **Squelch** group of **File >
+Settings... > DSP > AM/SAM**, in dB from -160 to 0, and **Squelch Threshold**
+on **File > Settings... > DSP > FM**, from 0 to 100, where 100 is the tightest
+and a new receiver starts. Do not copy a number between these unlike
 scales. In a no-audio
 diagnosis, turn SQL off temporarily so that a closed gate cannot be confused
 with the wrong output device. Tone squelch and FM repeater controls are not

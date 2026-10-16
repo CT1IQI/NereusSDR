@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-08 - Written for the workspace visual review by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Copies follow the external amplifier as the Main Panel's
@@ -16,6 +19,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "models/MainPowerMeter.h"
 #include "gui/instruments/SMeterDialContent.h"
 
 #include "gui/SMeterWidget.h"
@@ -166,38 +170,21 @@ QVector<ContentProperty> dialProperties()
     return {tx, rx, peak, decay, face};
 }
 
-// The external amplifier, as MainWindow feeds the Main Panel's dial
-// (MainWindow.cpp:9505-9563 for the Power Genius XL and the radio's own
-// power, 9578-9612 for RF-Kit), from the same RadioModel signals on the
-// main thread.  The radio's own forward power and SWR reach a copy as
-// TxPower / TxSwr readings, held back while an amplifier is amplifying, as
-// MainWindow holds back RadioStatus::powerChanged (MainWindow.cpp:9524-9529).
-void followExternalAmp(SMeterWidget* dial, RadioModel* radio)
+// The same mirrored source as the main applet dial, including remote
+// windows. A copy without a poller still follows its model's readings.
+void followExternalAmp(SMeterWidget* dial, RadioModel* radio, bool directReadings)
 {
-    // PGXL amp meters (OPERATE path).
-    QObject::connect(radio, &RadioModel::ampMetersChanged, dial, [radio, dial](float fwd, float swr) {
-        if (radio->hasAmplifier() && radio->ampOperate()) {
-            dial->setTxMeters(fwd, swr);
-        }
-    });
-    // PGXL connect event snaps the scale to 2 kW.
-    QObject::connect(radio, &RadioModel::amplifierChanged, dial, [dial](bool present) {
-        dial->setPowerScale(/*maxWatts=*/0, present);
-    });
-    // OPERATE / STANDBY re-evaluates the scale (cross-vendor).
-    QObject::connect(radio, &RadioModel::ampStateChanged, dial, [radio, dial]() {
-        dial->setPowerScale(/*maxWatts=*/0, radio->isAnyExternalAmpInOperate());
-    });
-    // RF-Kit OPERATE (cross-vendor predicate).
-    QObject::connect(radio, &RadioModel::externalAmpOperateChanged, dial, [radio, dial](bool /*inOp*/) {
-        dial->setPowerScale(/*maxWatts=*/0, radio->isAnyExternalAmpInOperate());
-    });
-    // RF-Kit forward power and SWR, while RF-Kit itself is in OPERATE.
-    QObject::connect(radio, &RadioModel::externalAmpFwdSwrUpdated, dial, [radio, dial](int fwd, float swr) {
-        if (radio->isRfKitInOperate()) {
-            dial->setTxMeters(static_cast<float>(fwd), swr);
-        }
-    });
+    MainPowerMeter* meter = radio->mainPowerMeter();
+    const auto scale = [dial, meter] { dial->setPowerDisplayScale(meter->visualLimitW(), meter->scaleTopW()); };
+    QObject::connect(meter, &MainPowerMeter::scaleChanged, dial, scale);
+    scale();
+    if (directReadings) {
+        const auto reading = [dial, meter] {
+            dial->setTxMeters(static_cast<float>(meter->forwardW()), static_cast<float>(meter->swr()));
+        };
+        QObject::connect(meter, &MainPowerMeter::readingChanged, dial, reading);
+        reading();
+    }
 }
 
 // The last transmit values, which SMeterWidget takes in pairs.
@@ -224,7 +211,8 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
         dial->setTransmitting(sources.radio->isTransmitting());
         // The amplifier's scale now, as ampStateChanged last set the Main
         // Panel's dial.
-        dial->setPowerScale(/*maxWatts=*/0, sources.radio->isAnyExternalAmpInOperate());
+        dial->setPowerDisplayScale(sources.radio->mainPowerMeter()->visualLimitW(),
+                                   sources.radio->mainPowerMeter()->scaleTopW());
     }
 
     QPointer<SMeterWidget> guard(dial);
@@ -248,8 +236,6 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
         default: return;
         }
         if (binding == MeterBinding::TxPower || binding == MeterBinding::TxSwr) {
-            // The amplifier's watts and SWR stand while it amplifies.
-            if (radio && radio->isAnyExternalAmpInOperate()) { return; }
             guard->setTxMeters(tx->power, tx->swr);
         } else {
             // MeterPoller feeds the Main Panel's dial the same way.
@@ -303,7 +289,7 @@ QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathCont
     }
     if (sources.radio) {
         QObject::connect(sources.radio, &RadioModel::transmittingChanged, dial, &SMeterWidget::setTransmitting);
-        followExternalAmp(dial, sources.radio);
+        followExternalAmp(dial, sources.radio, !poller);
     }
 
     // The right-click menu changed a setting: the copy keeps it in its

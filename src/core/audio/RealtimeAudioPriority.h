@@ -40,6 +40,10 @@
 //   2026-10-09: native audio plan Task 8 (R-AUD-18): rejoinAudioWorkgroup()
 //               and audioPriorityTokenInWorkgroup(). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setAudioWorkgroupLookupHookForTest(), a test seam at the
+//               start of the Mac's default output workgroup lookup. J.J.
+//               Boyd (KG4VCF), with AI-assisted implementation via Anthropic
+//               Claude Code.
 // =================================================================
 #pragma once
 
@@ -137,5 +141,13 @@ bool claimThreadPriorityRefusedWarning();
 
 // Test seam: forget that the warning was logged.
 void resetThreadPriorityRefusedForTest();
+
+// Test seam: on the Mac, elevateAudioThreadPriority() calls the hook on the
+// elevating thread just before it asks Core Audio for the default output
+// device's workgroup, so a test can stand in for a slow first query (the
+// one that starts the audio server connection). nullptr, the default,
+// removes it; with no hook nothing changes. Never called off the Mac.
+using AudioWorkgroupLookupHookForTest = void (*)();
+void setAudioWorkgroupLookupHookForTest(AudioWorkgroupLookupHookForTest hook);
 
 } // namespace NereusSDR

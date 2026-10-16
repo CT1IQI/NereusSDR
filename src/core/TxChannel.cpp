@@ -2118,9 +2118,9 @@ void TxChannel::setTxMode(DSPMode mode)
     // decision regardless of whether WDSP is wired (unit-test path
     // skips the SetTXAMode call below but still pins the contract).
     DSPMode wdspMode = mode;
-    if (mode == DSPMode::RADE_U) {
+    if (isRadeUpperDspMode(mode)) {
         wdspMode = DSPMode::USB;
-    } else if (mode == DSPMode::RADE_L) {
+    } else if (isRadeLowerDspMode(mode)) {
         wdspMode = DSPMode::LSB;
     }
     m_lastWdspTxMode = wdspMode;
@@ -2287,7 +2287,7 @@ std::pair<int, int> TxChannel::filterEdgesForMode(int audioLowHz, int audioHighH
         // modulator is in LSB mode, putting RADE audio on the wrong
         // sideband (user bench-reported on 40m).
         return m == DSPMode::LSB    || m == DSPMode::DIGL
-            || m == DSPMode::CWL    || m == DSPMode::RADE_L;
+            || m == DSPMode::CWL    || isRadeLowerDspMode(m);
     };
     auto isSymmetric = [](DSPMode m) {
         return m == DSPMode::AM  || m == DSPMode::SAM

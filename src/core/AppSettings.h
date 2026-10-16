@@ -29,11 +29,25 @@
 //                 keys saved inside profiles are removed and a live level
 //                 saved at the retired -6 dB default becomes 0, once.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 3:
+//                 convertWaterfallLevelsForClarityModel(), the one-time
+//                 conversion of stored waterfall Black Level and Color Gain.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 8:
+//                 resetPollutedDisplayCalOffset(), the one-time removal of
+//                 stored Cal Offset values that held the station's offset.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 - Display pill plan Task 12:
+//                 clearUncalibratedClarityFloors(), the one-time removal of
+//                 per-band noise floors stored before they were calibrated.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - saveInBackground(): the timed settings save writes the
 //                 file on a writer thread, so the Core's main thread, which
 //                 also sends the receive audio, no longer waits for the
 //                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-12 - Saved-radio key list: firmwareBetaVersion. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - addWriteObserver(): more than one observer of local
 //                 writes, beside the single change hook the Core's
 //                 settings proxy owns. J.J. Boyd (KG4VCF), AI-assisted via
@@ -527,6 +541,7 @@ public:
     //   radios/<macKey>/boardType       (int — HPSDRHW value)
     //   radios/<macKey>/protocol        (int — ProtocolVersion value)
     //   radios/<macKey>/firmwareVersion (int)
+    //   radios/<macKey>/firmwareBetaVersion (int; 0 = the radio reported none)
     //   radios/<macKey>/pinToMac        (bool as "True"/"False")
     //   radios/<macKey>/autoConnect     (bool as "True"/"False")
     //   radios/<macKey>/lastSeen        (ISO 8601 UTC string)
@@ -624,6 +639,14 @@ public:
     //   Slice<N>/RxAntenna  — string (e.g. "ANT1")
     //   Slice<N>/TxAntenna  — string (e.g. "ANT1")
     //   Slice<N>/SnbEnabled — "True"/"False"           — default "False" (session-level)
+    //   Slice<N>/SsqlEnabled: "True"/"False", voice squelch (Thetis VSQL)
+    //   Slice<N>/SsqlThresh:  double, slider value, 0..100
+    //   Slice<N>/AmsqEnabled: "True"/"False", AM squelch (Thetis SQL)
+    //   Slice<N>/AmsqThresh:  double, dB, -160..0
+    //   Slice<N>/FmsqEnabled: "True"/"False", FM squelch
+    //   Slice<N>/FmsqThresh:  double, slider value, -160..0
+    //     Ranges from ControlRanges.h; a load clamps to them. Squelch is per
+    //     receiver as in Thetis console.cs:2830-2852 [v2.10.3.15].
     //
     // <N> = slice index (0-based). <key> = bandKeyName(band) from Band.h
     // (e.g. "20m", "40m", "GEN"). Written by SliceModel::saveToSettings();
@@ -832,6 +855,51 @@ public:
     // Penny Ext Control's rename is per radio and happens in
     // PennyLaneController::load().
     static void migrateRenamedKeys(AppSettings& s);
+
+    // Display pill plan Task 3: one-time conversion of the waterfall's
+    // stored Black Level and Color Gain to the level model used while
+    // Clarity drives the levels (core/spectrum/ClarityLevels.h), so the
+    // waterfall looks the same after the upgrade. Converts the Setup
+    // defaults (DisplayWfBlackLevel, DisplayWfColorGain) and every pan's
+    // own values (<key>_<N>, pan 0 included). The old colour span depended
+    // on both sliders, so a Color Gain is converted with the Black Level
+    // that pan showed (its own, else the Setup default, else the old ship
+    // default), and a Color Gain key is added where a pan or the Setup
+    // default had only a Black Level of its own and would otherwise change
+    // span. Records DisplayWfClarityLevelsConverted = "True" and never
+    // runs twice on one settings file; a file with none of these keys gets
+    // only the marker. These are this computer's keys: the window calls
+    // this (src/main.cpp), the Core never does, and SettingsSchemaVersion
+    // is not involved.
+    static void convertWaterfallLevelsForClarityModel(AppSettings& settings);
+
+    // Display pill plan Task 8: one-time removal of the stored display Cal
+    // Offset: the Setup default (DisplayCalOffset) and every pan's own
+    // value (DisplayCalOffset_<N>, pan 0 included). Until this task those
+    // keys held the station's receive offset, not a value the operator
+    // chose: the spectrum kept both in one member, the station's offset
+    // was pushed into it with every frame (overwriting the Setup control)
+    // and the save wrote the result. Left in place, each would now be
+    // added to the station's offset a second time. Records
+    // DisplayCalOffsetReset = "True" and never runs twice on one settings
+    // file, so a Cal Offset set afterwards is kept; a file with none of
+    // these keys gets only the marker. These are this computer's keys: the
+    // window calls this (src/main.cpp), the Core never does, and
+    // SettingsSchemaVersion is not involved.
+    static void resetPollutedDisplayCalOffset(AppSettings& settings);
+
+    // Display pill plan Task 12: one-time removal of the stored per-band
+    // noise floors, DisplayBandNFEstimate_<band> and ClarityFloor_<band>.
+    // Until this task Clarity measured the floor on uncalibrated bins;
+    // it now measures in calibrated dB, so a floor stored before would
+    // place a band's first waterfall rows wrong by the calibration offset.
+    // Each band is measured and stored again after about 15 s of steady
+    // reception. Records ClarityFloorsCalibrated = "True" and never runs
+    // twice on one settings file, so a floor stored afterwards is kept; a
+    // file with none of these keys gets only the marker. These are this
+    // computer's keys: the window calls this (src/main.cpp), the Core never
+    // does, and SettingsSchemaVersion is not involved.
+    static void clearUncalibratedClarityFloors(AppSettings& settings);
 
 private:
     // Private default constructor — used only by instance().

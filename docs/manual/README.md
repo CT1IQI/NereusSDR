@@ -58,7 +58,7 @@ when you need a specific answer.
 | [7. Operate from the iPhone or iPad](07-iphone-operate.md) | Navigate the tabs, tune with touch controls, adjust receive settings, select audio, transmit, turn a rotor, and reach CAT Control. |
 | [8. Use several devices](08-shared-core.md) | See who owns each slice and transmit, take over when needed, and understand changes that affect other operators. |
 | [9. Digital audio and external applications](09-tools.md) | Route and test VAX/TCI audio, connect clients, and distinguish desktop-local from Core-hosted routes. |
-| [10. Display, meters and layout](10-customize.md) | Adjust FFT, spectrum, waterfall, grid, history, 3D, TX display, meters and custom containers. |
+| [10. Display, meters and layout](10-customize.md) | Use each pan's Display pill and the Setup pages behind it: FFT, spectrum, levels, waterfall, history, 3D, TX display, meters and custom containers. |
 | [11. Troubleshoot operation](11-troubleshooting.md) | Follow checks for connection failures, missing audio, unexpected tuning behavior, and refused transmit requests. |
 | [12. Control reference](12-reference.md) | Look up controls, menu paths, shortcuts, and NereusSDR terminology. |
 | [13. Receiver DSP and filter setup](13-receiver-dsp.md) | Adjust AGC, blankers, noise-reduction methods/models, notches, filter presets and DSP options. |

@@ -573,6 +573,10 @@ void TxWorkerThread::run()
 
 void TxWorkerThread::dispatchOneBlock()
 {
+    const quint64 rawToken = m_rawWaveform.bindingToken();
+    const quint64 conditionedToken = m_conditionedWaveform.bindingToken();
+    const qint64 observationNs = rawToken != 0 || conditionedToken != 0 ? waveformNowNs() : 0;
+    bool observationValid = true;
     if (m_txChannel == nullptr) {
         return;
     }
@@ -599,17 +603,37 @@ void TxWorkerThread::dispatchOneBlock()
     RemoteMicFeed* const remoteFeed = radioMic ? nullptr
         : m_remoteMicFeed.load(std::memory_order_acquire);
     const bool radePath = m_currentTxPath.load(std::memory_order_acquire) == TxPath::Rade;
+    RemoteMicFeed::Observation remoteObservation;
     const RemoteMicFeed::Pull remotePull = remoteFeed != nullptr
         ? remoteFeed->pullBlock(m_remoteMicBuf.data(), kBlockFrames,
                                 radePath || m_txChannel->isTciAudioActive()
                                     ? -1.0
                                     : m_txChannel->txIqQueuedMs(),
-                                m_txChannel->dexpTimingRunning())
+                                m_txChannel->dexpTimingRunning(), &remoteObservation)
         : RemoteMicFeed::Pull::NotInUse;
     if (remotePull == RemoteMicFeed::Pull::Shed) {
         return;
     }
     const bool remoteMicInUse = remotePull == RemoteMicFeed::Pull::Audio;
+    if (remoteMicInUse) {
+        observationValid = remoteObservation.validFrames == kBlockFrames;
+    }
+    const auto observationStillValid = [&] {
+        return observationValid &&
+               (!remoteMicInUse || (remoteFeed != nullptr &&
+                                    remoteObservation.changeGeneration == remoteFeed->currentChangeGeneration()));
+    };
+    const int observedSource = m_txChannel->isTciAudioActive()                            ? 4
+                               : remoteMicInUse                                           ? 3
+                               : radioMic                                                 ? 1
+                               : m_audioEngine && m_audioEngine->isVaxMicOverrideActive() ? 2
+                               : m_audioEngine && m_audioEngine->isPcMicSelected()        ? 0
+                                                                                          : 1;
+    const int previousSource = m_waveformMicSource.exchange(observedSource, std::memory_order_acq_rel);
+    if (previousSource != observedSource) {
+        // Observer control only: retain even A->B->A transitions between GUI ticks.
+        m_waveformMicEpoch.fetch_add(1, std::memory_order_release);
+    }
 
     // ── Phase 3J-1 bench fix (2026-05-10): TCI audio source override ───────
     //
@@ -633,6 +657,7 @@ void TxWorkerThread::dispatchOneBlock()
     if (m_txChannel->isTciAudioActive()) {
         const int got = m_txChannel->pullTciAudio(m_pcMicBuf.data(), kBlockFrames);
         const int n   = std::clamp(got, 0, kBlockFrames);
+        observationValid = n == kBlockFrames;
         for (int i = 0; i < n; ++i) {
             m_in[static_cast<size_t>(2 * i + 0)] =
                 static_cast<double>(m_pcMicBuf[static_cast<size_t>(i)]);
@@ -724,6 +749,7 @@ void TxWorkerThread::dispatchOneBlock()
             const int got = m_audioEngine->pullVaxTxMic(
                 m_pcMicBuf.data(), kBlockFrames);
             const int n = std::clamp(got, 0, kBlockFrames);
+            observationValid = n == kBlockFrames;
             for (int i = 0; i < n; ++i) {
                 m_radeMicFloat[static_cast<size_t>(i)] =
                     m_pcMicBuf[static_cast<size_t>(i)];
@@ -736,6 +762,7 @@ void TxWorkerThread::dispatchOneBlock()
             const int got = m_audioEngine->pullTxMic(
                 m_pcMicBuf.data(), kBlockFrames);
             const int n = std::clamp(got, 0, kBlockFrames);
+            observationValid = n == kBlockFrames;
             for (int i = 0; i < n; ++i) {
                 m_radeMicFloat[static_cast<size_t>(i)] =
                     m_pcMicBuf[static_cast<size_t>(i)];
@@ -751,6 +778,10 @@ void TxWorkerThread::dispatchOneBlock()
                     static_cast<float>(m_in[static_cast<size_t>(2 * i)]);
             }
         }
+
+        // Observer only: actual selected raw PCM, before conditioning/modem substitution.
+        m_rawWaveform.appendFloat(rawToken, m_radeMicFloat.data(), kBlockFrames, 1,
+                                  observationNs, observationStillValid());
 
         // ── Phase 3R K-bench: pre-RADE mic gain + leveler ──────────────
         //
@@ -878,6 +909,10 @@ void TxWorkerThread::dispatchOneBlock()
                     static_cast<int16_t>(v);
             }
 
+            // Observer only: exact encoder-input integers, also available unkeyed.
+            m_conditionedWaveform.appendInt16(conditionedToken, m_radeMicInt16.data(), out16k, 1,
+                                            observationNs, observationStillValid());
+
             // Step 5: wrap the int16 samples in a QByteArray and emit
             // (queued connection to RadeChannel::txEncode on main
             // thread; queues until txEncode runs).
@@ -991,6 +1026,7 @@ void TxWorkerThread::dispatchOneBlock()
         // remainder of the block.
         const int got = m_audioEngine->pullVaxTxMic(m_pcMicBuf.data(), kBlockFrames);
         const int n   = std::clamp(got, 0, kBlockFrames);
+        observationValid = n == kBlockFrames;
         for (int i = 0; i < n; ++i) {
             m_in[static_cast<size_t>(2 * i + 0)] =
                 static_cast<double>(m_pcMicBuf[static_cast<size_t>(i)]);
@@ -1004,6 +1040,7 @@ void TxWorkerThread::dispatchOneBlock()
                && m_audioEngine != nullptr && m_audioEngine->isPcMicSelected()) {
         const int got = m_audioEngine->pullTxMic(m_pcMicBuf.data(), kBlockFrames);
         const int n   = std::clamp(got, 0, kBlockFrames);
+        observationValid = n == kBlockFrames;
         for (int i = 0; i < n; ++i) {
             m_in[static_cast<size_t>(2 * i + 0)] =
                 static_cast<double>(m_pcMicBuf[static_cast<size_t>(i)]);
@@ -1018,6 +1055,11 @@ void TxWorkerThread::dispatchOneBlock()
             m_in[static_cast<size_t>(2 * i + 0)] = 0.0;
             m_in[static_cast<size_t>(2 * i + 1)] = 0.0;
         }
+    }
+
+    if (path != TxPath::Rade) {
+        m_rawWaveform.appendDouble(rawToken, m_in.data(), kBlockFrames, 2,
+                                  observationNs, observationStillValid());
     }
 
     // VOX / DEXP detector — mirrors Thetis cmaster.c:388 [v2.10.3.13]:

@@ -16,6 +16,9 @@
 //   2026-10-10: the six transmit peak meters follow the Core's
 //               txReadingsVersion: 3 names the reason, 4 reads the peak.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10: D35 / R-DSP-47: the VFO flag level meters with no S-meter
+//               item in a remote window. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 #include <QTest>
 #include <QSignalSpy>
 
@@ -223,6 +226,65 @@ private slots:
         QCOMPARE(meter.levelDbm(), -47.0f);
         QCOMPARE(flags.constLast().at(1).toDouble(), -47.0);
         QCOMPARE(localCalibrationCalls, 0);
+    }
+
+    // D35 / R-DSP-47: a remote window with no S-meter item still feeds the
+    // VFO flag level meters, with the signal average reading (the fallback
+    // the local window's flags use when there is no S-meter).
+    void flagsGetTheSignalAverageWhenThereIsNoSMeter()
+    {
+        RadioModel model(RadioModel::Role::Remote);
+        model.setStationConnectionState(ConnectionState::Connected);
+        QVERIFY(model.addSliceWithStationId(7) >= 0);
+        QVERIFY(model.addSliceWithStationId(23) >= 0);
+        SliceModel* first = model.sliceById(7);
+        SliceModel* second = model.sliceById(23);
+        QVERIFY(first && second);
+        first->setSignalPeakDbm(-62);
+        first->setSignalAverageDbm(-81);
+        second->setSignalPeakDbm(-42);
+        second->setSignalAverageDbm(-59);
+        model.setActiveSlice(0);
+
+        MeterWidget bars;
+        auto* peak = new TextItem(&bars);
+        peak->setBindingId(MeterBinding::SignalPeak);
+        bars.addItem(peak);
+        MeterPoller poller;   // no setSMeter
+        poller.addTarget(&bars);
+        bool snapshotReady = true;
+        poller.setRemoteRadioModel(&model, [&]() { return snapshotReady; },
+                                   [](const SliceModel* slice) {
+            return slice->sliceIndex() == 7 ? -67.0 : -47.0;
+        });
+        QSignalSpy flags(&poller, &MeterPoller::remoteSliceLevelUpdated);
+        auto tick = [&]() {
+            QVERIFY(QMetaObject::invokeMethod(&poller, "poll", Qt::DirectConnection));
+        };
+
+        tick();
+        QCOMPARE(flags.count(), 2);
+        QCOMPARE(flags.at(0).at(0).toInt(), 7);
+        QCOMPARE(flags.at(0).at(1).toDouble(), -81.0);
+        QCOMPARE(flags.at(1).at(0).toInt(), 23);
+        QCOMPARE(flags.at(1).at(1).toDouble(), -59.0);
+        // The container meter items are fed as before.
+        QCOMPARE(peak->value(), -62.0);
+
+        // The flags follow the readings from tick to tick.
+        second->setSignalAverageDbm(-48);
+        tick();
+        QCOMPARE(flags.count(), 4);
+        QCOMPARE(flags.at(3).at(0).toInt(), 23);
+        QCOMPARE(flags.at(3).at(1).toDouble(), -48.0);
+
+        // No reading (snapshot not ready): the flags get the no-reading
+        // sentinel, as they do with an S-meter.
+        snapshotReady = false;
+        tick();
+        QCOMPARE(flags.count(), 6);
+        QCOMPARE(flags.at(4).at(1).toDouble(), -400.0);
+        QCOMPARE(flags.at(5).at(1).toDouble(), -400.0);
     }
 
     void disconnectDeletionAndTxCannotPollLocalDspOrKeepLiveRxReading()

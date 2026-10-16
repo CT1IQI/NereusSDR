@@ -181,7 +181,7 @@ extension BandDisplaySettings {
     /// The levels a line is coloured against when the phone sets them: the
     /// scale's top and bottom with Use spectrum min/max, else the manual ones.
     public var phoneLevels: WaterfallHistory.Levels {
-        useSpectrumMinMax
+        waterfallLevelMode == .scale
             ? WaterfallHistory.Levels(lowDbm: Float(scaleRange.lowerBound), highDbm: Float(scaleRange.upperBound))
             : manualLevels
     }

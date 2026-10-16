@@ -14,7 +14,8 @@ where you operate. Update both. Rotor control, the **CAT Control** page on the
 phone and the Core speaker need a 2026.10.1 Core. An older Core grays them out
 with a reason such as "This Core does not control a rotor. Updating the Core
 may help.", and older Cores, desktops and phone apps still connect to each
-other.
+other. The phone shows the new Display pages only with a 2026.10.1 Core; with
+an older Core it keeps the earlier pages.
 
 ## What changes on first launch
 
@@ -49,6 +50,47 @@ normally so the new version can migrate them once.
   band it opens on. Receivers B, C and D now run on the settings they show,
   so one whose saved settings differ from the defaults may sound different
   from before.
+- **FM squelch reads 0 to 100.** **Squelch Threshold** on
+  **File > Settings... > DSP > FM** now shows 0 to 100, where 100 is the
+  tightest, instead of dB. Your saved threshold is kept: the old starting
+  value now reads 6, and with FM squelch on it now opens. A new receiver
+  starts at 100.
+- **Display settings are now defaults plus per-pan values.** Setup's Display
+  pages (now Spectrum, Levels, Waterfall, View, Peaks & Markers, FFT & Engine,
+  Transmit Display and Multimeter) set the default for every pan, and each pan's
+  Display pill can keep its own value, marked with an amber dot. Old page names
+  such as Spectrum Defaults and Grid & Scales no longer exist. **Reset this pan**
+  returns one pan to the defaults.
+- **Waterfall Black Level and Color Gain are converted once.** Black Level now
+  runs 0 to 100 with 50 at the noise floor, and Color Gain sets how many dB the
+  colors cover. Your saved values, and each pan's, are converted so the
+  waterfall looks the same as before. If it looks different, check Levels.
+- **Cal Offset and stored noise floors are cleared once.** The display Cal
+  Offset (Setup default and each pan's value) held the station's offset and is
+  removed; the stored per-band noise floors that Clarity measured before
+  calibration are removed, so Clarity measures each band again the first time
+  you tune to it. Your radio's own calibration is not touched.
+- **FFT size has a Sizing choice.** Sizing is **Auto**, **Hz/bin** or **Fixed**.
+  If you had a Hz/bin target above zero, you start in **Hz/bin**. Otherwise you
+  start in **Auto**, and the FFT Size you saved applies only if you choose
+  **Fixed**. Check FFT & Engine if your spectrum looks coarser or finer than
+  before. The setting is shared by every pan and every window connected to the
+  Core.
+- **AGC Off is quieter.** With AGC set to Off, a receiver now runs the
+  **Fixed Gain** on **File > Settings... > DSP > AGC/ALC**, 20 dB unless you
+  changed it. In 2026.10.0 it ran 60 dB until you changed the value, so AGC
+  Off is about 40 dB quieter. Raise **Fixed Gain** if you want the old level.
+- **Every receiver starts with your DSP Options sizes.** Receivers B, C and D
+  used to ignore the block size, filter size and filter type on **File >
+  Settings... > DSP > Options** and ran a 4096-sample block with a Linear
+  Phase filter. They now use the saved values for their mode, 64, 4096 and Low
+  Latency unless you changed them, so they may sound and respond differently.
+  The FM row on that page now starts at 64 for receive and transmit.
+- **PureSignal looks different.** The applet and the Bench show **CORRECTION**
+  and **CALIBRATION FEEDBACK** with a class (Too low to High), **Advanced** now
+  hides the bottom strip too, and AmpView names its curves differently. Two-tone
+  IMD readouts on the display are off until you check **Show 2Tone
+  measurements**.
 
 ## Core installs on a Raspberry Pi, Rock or other SBC
 
@@ -118,6 +160,15 @@ including anything that surprised you.
 8. **Two-tone and PureSignal.** If you use PureSignal, run a two-tone test and
    a calibration at your new two-tone level and compare it with what you
    expect.
+   Then check **Show 2Tone measurements** (Bench > IMD measurements), turn on
+   DUP, run a brief two-tone test and read **WORST IMD3** and **WORST IMD5** on
+   the rail's **Inspect** readout.
+9. **RADE waveforms.** In **Containers > Edit Container**, add **Microphone
+   waveform** and **Decoded speech waveform** to a container whose **Slice** is
+   in RADE-U or RADE-L. Speak while transmitting in RADE and confirm the
+   microphone trace moves; receive a RADE signal and confirm the decoded speech
+   trace moves. On a remote desktop, confirm an older Core shows a reason
+   instead of a trace.
 
 ## Reporting
 

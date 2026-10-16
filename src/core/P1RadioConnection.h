@@ -130,6 +130,9 @@
 //                and printed after it (takeComposeLog, printComposeLog).
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-15 - wireMox(): the MOX state the wire carries, unkeyed while
+//                the transmit is cut. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 /*
@@ -1223,6 +1226,11 @@ private:
     // not once per sample, so the ordering cost is irrelevant next to the
     // surrounding ring arithmetic.
     std::atomic<bool> m_mox{false};
+    // The MOX state every compose site puts on the wire: m_mox, read as
+    // unkeyed while the transmit is cut (RadioConnection::transmitCut), so
+    // the window before the cut's own setMox(false) runs carries no MOX bit.
+    // Atomic reads only, so it is safe from any compose thread.
+    bool wireMox() const noexcept { return m_mox.load() && !transmitCut(); }
     // Link-loss latch (TX safety, whole-branch review 2026-09-30, fix
     // round 1). Set when the watchdog declares a link lost while keyed, and
     // at a reconnect attempt that found a key made during the outage. While

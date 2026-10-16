@@ -36,6 +36,12 @@
 //   2026-10-10: R-AUD-SEND: audioRtpSink(), a sink any thread may send
 //               the receive audio lines through, valid after stop().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setTxReceiptHook for the remote transmit
+//               cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-15: handshakeStateForTest(): how far a handshake has come, for
+//               a test whose wait for ready() ran out. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/IMediaTransport.h"
@@ -152,12 +158,15 @@ public:
     DisplaySendResult submitDisplay(const QByteArray& message) override;
     DisplaySendResult submitIq(const QByteArray& message) override;
     bool iqBusy() const override;
+    DisplaySendResult submitWaveform(const QByteArray& message) override;
+    bool waveformBusy() const override;
     bool displayBusy() const override;
     bool sendRtp(const QByteArray& packet) override;
     std::shared_ptr<MediaRtpSink> audioRtpSink() override;
     bool sendMicRtp(const QByteArray& packet) override;
     bool sendTx(const QByteArray& message) override;
     bool setMicPacketSink(MicPacketSink sink) override;
+    bool setTxReceiptHook(TxReceiptHook hook) override;
 
     bool isReady() const override;
     bool gatherCandidates(const QList<IceRelayServer>& relays) override;
@@ -176,6 +185,14 @@ public:
     /// dropped as it comes off the network, as if the path had gone dead
     /// without closing. Sending is unchanged.
     void setReceiveSeveredForTest(bool severed);
+    /// Owner-thread seam: expose a negotiated channel as pending-open.
+    void setWaveformOpenHeldForTest(bool held);
+    /// Test seam: how far this end's handshake has come, for a test whose
+    /// wait for ready() ran out. The peer's signaling, gathering, ICE and
+    /// connection states, what the far end has sent that was accepted,
+    /// which channels are open, and the library events still waiting for
+    /// this thread's drain. Owner's thread.
+    QString handshakeStateForTest() const;
 
 private:
     struct Private;

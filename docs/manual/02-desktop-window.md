@@ -241,9 +241,7 @@ paused history view from missing data before reconnecting the station.
 The receive meter describes signal level in the selected receiver. The TX
 meters describe microphone level, RF power and SWR in their applicable
 operating state. A displayed meter face is not evidence of fresh samples.
-For example, while receiving, a forward-power display may be zero or retain
-its last indication; use it during the controlled transmit operation it is
-intended to measure.
+For example, while receiving, the TX applet's **Power** and **SWR** gauges show dashes, and a forward-power display on another meter may be zero or retain its last indication; use it during the controlled transmit operation it is intended to measure. When a connected Power Genius XL or RF2K-S is in OPERATE, the main power and SWR meters read that amplifier's output instead of the radio's, and the TX applet shows the radio's own power as a small **DRIVE** figure beside the gauge name. Standby or disconnecting the amplifier returns the meters to the radio.
 
 Connection/traffic indicators answer a different question: whether this
 window is receiving data from its radio or Core. Core round-trip time is a

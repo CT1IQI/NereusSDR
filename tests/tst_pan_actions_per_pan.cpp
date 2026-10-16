@@ -41,8 +41,10 @@
 
 #include <QtTest/QtTest>
 
+#include <QAbstractSlider>
 #include <QAction>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QPushButton>
@@ -746,25 +748,53 @@ private slots:
         grid->click();
         QCOMPARE(sw1->gridEnabled(), true);
 
-        const int black0 = sw0->wfBlackLevel();
-        emit strip1->wfBlackLevelChanged(black0 == 42 ? 43 : 42);
-        QCOMPARE(sw1->wfBlackLevel(), black0 == 42 ? 43 : 42);
-        QCOMPARE(sw0->wfBlackLevel(), black0);
+        // Display pill plan Task 16: the flyout is the Display pill, which
+        // edits its own pan directly; the per-row signals this case used to
+        // emit are gone. Task 17: the waterfall rows (black level, colour
+        // scheme) are on its Waterfall tab.
+        QCOMPARE(strip1->displayTarget(), sw1);
+        strip1->openDisplayPill();
+        QVERIFY(strip1->displayPillVisible());
 
+        auto* alpha = sw1->findChild<QAbstractSlider*>(QStringLiteral("pillDisplayFftFillAlpha"));
+        QVERIFY(alpha);
         const float alpha0 = sw0->fillAlpha();
-        emit strip1->fillAlphaChanged(0.25f);
+        alpha->setValue(25);
         QCOMPARE(sw1->fillAlpha(), 0.25f);
         QCOMPARE(sw0->fillAlpha(), alpha0);
 
+        auto* cursor = sw1->findChild<QPushButton*>(QStringLiteral("pillDisplayShowCursorFreq"));
+        QVERIFY(cursor);
         const bool cursor0 = sw0->cursorFreqVisible();
-        emit strip1->cursorFreqVisibleChanged(!cursor0);
-        QCOMPARE(sw1->cursorFreqVisible(), !cursor0);
+        QCOMPARE(cursor->isChecked(), sw1->cursorFreqVisible());
+        const bool cursor1 = sw1->cursorFreqVisible();
+        cursor->click();
+        QCOMPARE(sw1->cursorFreqVisible(), !cursor1);
         QCOMPARE(sw0->cursorFreqVisible(), cursor0);
 
+        auto* width = sw1->findChild<QAbstractSlider*>(QStringLiteral("pillDisplayLineWidth"));
+        QVERIFY(width);
+        const float width0 = sw0->lineWidth();
+        width->setValue(width0 == 3.0f ? 5 : 30);   // tenths of a pixel
+        QCOMPARE(sw1->lineWidth(), width0 == 3.0f ? 0.5f : 3.0f);
+        QCOMPARE(sw0->lineWidth(), width0);
+
+        auto* black = sw1->findChild<QAbstractSlider*>(QStringLiteral("pillDisplayWfBlackLevel"));
+        QVERIFY(black);
+        const int black0 = sw0->wfBlackLevel();
+        QCOMPARE(black->value(), sw1->wfBlackLevel());
+        black->setValue(black0 == 30 ? 70 : 30);
+        QCOMPARE(sw1->wfBlackLevel(), black0 == 30 ? 70 : 30);
+        QCOMPARE(sw0->wfBlackLevel(), black0);
+
+        auto* scheme = sw1->findChild<QComboBox*>(QStringLiteral("pillDisplayWfColorScheme"));
+        QVERIFY(scheme);
         const WfColorScheme scheme0 = sw0->wfColorScheme();
-        const int other = static_cast<int>(scheme0) == 0 ? 1 : 0;
-        emit strip1->colorSchemeChanged(other);
-        QCOMPARE(static_cast<int>(sw1->wfColorScheme()), other);
+        QCOMPARE(scheme->currentIndex(), static_cast<int>(sw1->wfColorScheme()));
+        const WfColorScheme chosen = scheme0 == WfColorScheme::Spectran
+            ? WfColorScheme::LinRad : WfColorScheme::Spectran;
+        scheme->setCurrentIndex(static_cast<int>(chosen));
+        QCOMPARE(sw1->wfColorScheme(), chosen);
         QCOMPARE(sw0->wfColorScheme(), scheme0);
     }
 
@@ -843,22 +873,22 @@ private slots:
         const auto badge = [&window](const QString& panId) -> QLabel* {
             SpectrumOverlayPanel* strip = stripFor(window.get(), panId);
             if (!strip) { return nullptr; }
-            for (QLabel* label : strip->parentWidget()->findChildren<QLabel*>()) {
-                if (label->toolTip()
-                    == QStringLiteral("Clarity status: green = active, amber = paused")) {
-                    return label;
-                }
-            }
-            return nullptr;
+            return strip->parentWidget()->findChild<QLabel*>(
+                QStringLiteral("pillClarityBadge"));
         };
         QVERIFY(badge(QStringLiteral("pan-0")) && badge(QStringLiteral("pan-1")));
+        // Display pill plan Task 17: the badge is always shown. It is grey
+        // ("off") until Clarity sets its pan's levels.
+        const auto lit = [&badge](const QString& panId) {
+            return badge(panId)->property("clarityState").toString() != QStringLiteral("off");
+        };
         auto* stack = window->findChild<PanadapterStack*>();
         QVERIFY(stack);
         stack->setActivePan(QStringLiteral("pan-0"));
         emit clarity->waterfallThresholdsChanged(-125.0f, -85.0f);
         QVERIFY(sw0->clarityActive());
-        QVERIFY(!badge(QStringLiteral("pan-0"))->isHidden());
-        QVERIFY(badge(QStringLiteral("pan-1"))->isHidden());
+        QVERIFY(lit(QStringLiteral("pan-0")));
+        QVERIFY(!lit(QStringLiteral("pan-1")));
 
         emit stripFor(window.get(), QStringLiteral("pan-1"))->clarityRetuneRequested();
         QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
@@ -868,6 +898,8 @@ private slots:
         emit second->waterfallThresholdsChanged(-120.0f, -80.0f);
         QVERIFY(sw1->clarityActive());
         QVERIFY(sw0->clarityActive());
+        QVERIFY(lit(QStringLiteral("pan-0")));
+        QVERIFY(lit(QStringLiteral("pan-1")));
         QVERIFY(!badge(QStringLiteral("pan-0"))->isHidden());
         QVERIFY(!badge(QStringLiteral("pan-1"))->isHidden());
     }
