@@ -146,8 +146,8 @@ edit. These controls do not themselves start the generator. Two-tone settings ar
    active button and actual transmit/protection indications. If keying is
    refused, read the reason and verify that the generator returned to off.
 4. Read the intended spectrum/IMD, power/SWR and feedback measurements during
-   a brief test; for IMD on the display, turn on **Show 2Tone measurements** and
-   **View > Display duplex (DUP)** first, see [Read two-tone measurements on the
+   a brief test; for IMD on the display, have **Show 2Tone measurements** and
+   **View > Display duplex (DUP)** on before step 3, see [Read two-tone measurements on the
    display](18-puresignal-diversity.md#read-two-tone-measurements-on-the-display).
    For a correction, follow [Single Cal](18-puresignal-diversity.md#calibrate-and-apply-a-correction).
 5. Press the active test button again to stop. Confirm the generator and MOX are

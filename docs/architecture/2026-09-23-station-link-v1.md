@@ -1025,8 +1025,8 @@ desktop's remote window and the phone app do.
 
 **`waveform` 1** (the RADE waveform meters): the client draws the exact
 samples of the RADE microphone and decoded-speech waveforms. A peer that
-declares it at agreed minor 11, while media is available on a Core that runs a
-radio model, is sent `waveformVersion` (section 6.3) and may declare
+declares it at agreed minor 11, while media is available on a Core that is not
+itself a remote client, is sent `waveformVersion` (section 6.3) and may declare
 `waveformVersion` 1 in its media `start`, ask for a waveform with
 `waveform-stream`, and read the Core's answer in `waveform-stream-context`
 (the waveform media document, `2026-10-11-waveform-media-v1.md`). A peer that
@@ -2381,7 +2381,7 @@ client's media `start` may declare `waveformVersion` 1, the client may send
 samples travel on the optional `waveform` data channel (the waveform media
 document). A peer that did not declare the feature is sent no entry. A client
 connected to a Core that sends no entry shows a waveform meter as unsupported
-("Core does not advertise waveform telemetry"); nothing else changes for it.
+("This Core does not support exact waveform observation."); nothing else changes for it.
 
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
@@ -2425,7 +2425,7 @@ declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
 for a peer that declared `spectrumPicture` while media is available;
 `firmwareBeta` only for a peer that declared `firmwareBeta`;
 `waveformVersion` only for a peer that declared `waveform` while media is
-available on a Core that runs a radio model. A client ignores a capability it does not know
+available on a Core that is not itself a remote client. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -5579,7 +5579,7 @@ Hz/bin target holds the bin width at or below the target at any zoom
 is the sample rate over the size the Core grants (its spectrum context's
 `grantedFftSize`), which may be less than asked.
 
-> Correction 2026-10-10: the per-pixel planner rule above is out of date. A remote pan's FFT size now comes from the same rule a local pan uses (`ControlRanges::planAutoZoomFft`); pan width in pixels no longer changes it.
+> Correction 2026-10-10: the per-pixel planner rule above is out of date. A remote pan's FFT size now comes from the same rule a local pan uses (`ControlRanges::planDisplayFft`, which calls `planAutoZoomFft`); pan width in pixels no longer changes it.
 
 `offered` is the Core's (iPhone app plan Task 25, D41). It starts from
 the unbuilt features list the desktop hides by (`UnbuiltFeatureList.h`:

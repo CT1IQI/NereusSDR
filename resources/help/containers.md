@@ -4,7 +4,7 @@ Containers hold an ordered stack of meter faces and existing applet views. Open
 **Containers > Edit Container** or the container's **Container Settings…** menu
 to edit its name, appearance, sources and Contents. For RADE digital voice, add
 **Microphone waveform** or **Decoded speech waveform** from **Available**; each
-follows a slice that is in a RADE mode and only watches audio already running.
+shows the container's slice when it is in a RADE mode (the microphone one draws only when that slice is the transmit slice) and only watches audio already running.
 
 ## Arrange the workspace
 

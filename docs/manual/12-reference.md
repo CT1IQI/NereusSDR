@@ -87,7 +87,7 @@ until that readback is ready.
 | **Display** | Spectrum; Levels; Waterfall; View; Peaks & Markers; FFT & Engine; Transmit Display; Multimeter. | [Display and layout](10-customize.md). |
 | **Transmit** | Power; Speech Processor; DEXP/VOX. | [Transmit](05-transmit.md), [voice processing](14-voice-profiles.md). TX Profile is under Audio. |
 | **Appearance** | Colors & Theme; Meter Styles. | [Display and layout](10-customize.md). |
-| **CAT & Network** | Serial Ports; TCI Server when built; 4O3A; Remote Access; RF-Kit; Rotor; TCP/IP CAT; CAT Options; CAT PTT. | [CAT and digital routing](09-tools.md), [phone connection](06-iphone-connect.md), [accessories](19-amplifiers-tuners.md), [shared rotor](08-shared-core.md). |
+| **CAT & Network** | Serial Ports; TCI Server when built; 4O3A; Remote Access; RF-Kit; Rotor; TCP/IP CAT; rigctld (in a window signed in to a Core); CAT Options; CAT PTT. | [CAT and digital routing](09-tools.md), [phone connection](06-iphone-connect.md), [accessories](19-amplifiers-tuners.md), [shared rotor](08-shared-core.md). |
 | **Test** | Two-Tone IMD, with transmit/radio gates. | [PureSignal](18-puresignal-diversity.md). |
 | **Diagnostics** | Radio Status; Connection Quality; Settings Validation; Export / Import; Logs. | [Troubleshooting and support](11-troubleshooting.md). |
 
@@ -205,7 +205,7 @@ The operator-facing exclusions below explain common missing controls.
 | ACC microphone input/Phone-CW +ACC; Phone-CW MON. | Offered MIC/BAL/LINE/PC routes; TX applet MON is separate and implemented. |
 | RF-Kit TUNE/BYPASS. | Use the accessory's implemented status and controls; do not assume these key/tune it. |
 | Audio bit-depth/default-rate lookup, mic monitor/first-PTT tone check, IQ/TX-monitor-to-VAX and mute-VAX-during-other-slice-TX. | Implemented device/capture, VAX audio and TX monitor paths. |
-| Desktop TX grid controls. | Supported TX analyzer/palette and phone-local grid controls are separate. |
+| Desktop TX grid step, fill and label controls. | Supported TX analyzer/palette and phone-local grid controls are separate. |
 | Generic Logging & Performance and 60-second Connection Quality history. | Implemented Logs, Support diagnostic categories and current network measurements. |
 | Phone headset/Bluetooth/Action-button/locked-phone PTT; High audio quality. | On-screen PTT; Standard audio. Disabled labels do not establish accessory support. |
 | Spot Hub's unbuilt WSJT-X filter group, RBN rate limit and FreeDV-decode-to-PSK option. | The implemented feed/listener/filter controls described in the spots chapter. |
