@@ -26,7 +26,7 @@ Use the built-in RADE mode and its normal NereusSDR transmit path; an external F
 2. Before going on air, open **Setup > Audio > Microphone** and select the microphone source that will supply speech: **PC Mic**, **Radio Mic** when the radio supports it, or **VAX TX (virtual device)** on a supported host. Confirm that the selected source and its available input indication match the source you intend to speak into. See [chapter 5](05-transmit.md) for source-specific checks and [chapter 9](09-tools.md) for the VAX TX route.
 3. In the RADE applet's **Profile** selector, select the intended microphone profile while transmit settings are permitted. This uses the shared Mic Profile Manager, not a separate RADE profile store. If the station has a **RADE** profile, inspect that profile's leveler state: the RADE transmit path applies its own pre-codec mic gain/leveler and 80 Hz high-pass, then sends encoded modem audio through the WDSP TX modulator. The source specifically requires the RADE profile to disable the ordinary WDSP TXA Leveler so it does not act on the modem waveform. Do not use the ordinary SSB leveler/EQ recipe as a RADE tuning recipe; use [chapter 14](14-voice-profiles.md) to inspect and restore the shared profile.
 4. Confirm transmit ownership, selected slice, band, interlocks and power in [chapter 5](05-transmit.md). For this manual-key route, use NereusSDR's **MOX** control to key; do not depend on a Reporter connection or an undocumented external keying command. Speak a short call into the selected source and monitor the normal transmit state.
-5. Turn **MOX** off at the end of the call. Confirm the TX indication clears and the selected slice returns to receive. During the other station's next over, listen for decoded RADE speech and, in RADE-U or RADE-L, watch for its callsign in **Last RX** when its EOO is decoded. That callsign is the peer's EOO readback; it is not an acknowledgement that the peer copied your transmission.
+5. Turn **MOX** off at the end of the call. Confirm the TX indication clears and the selected slice returns to receive. During the other station's next over, listen for decoded RADE speech and, in RADE-U or RADE-L, watch for its callsign in **Last RX** when its EOO is decoded. That callsign is the peer's EOO readback; it is not an acknowledgment that the peer copied your transmission.
 6. If you changed the shared profile or TX source for the session, restore the previous active profile and source after the transmission, then verify their readbacks. If the Core refuses the profile or key request, follow the displayed refusal and do not repeat the request blindly.
 
 The mode's receive **Sync**, signed **Offset**, decoded speech and **Last RX** answer different questions. Reporter **Connected** status only reports the separate station-presence service. For that service and its station list, continue with [Open FreeDV Reporter](#open-freedv-reporter).
@@ -47,21 +47,21 @@ To show one:
 
 What each meter needs to draw a trace, and what its message means:
 
-* The microphone meter follows the transmit slice. On a slice that is not the transmit slice it reads "Microphone belongs to the current TX-bound slice".
-* **Conditioned encoder input** has samples only while RADE transmit is running. Before that it reads "Waiting for conditioned encoder input", or "Conditioned input has not started. Select Raw microphone for setup." Choose **Raw microphone** to see your microphone level before you key.
+* The microphone meter draws only when the container's slice is the transmit slice. On any other slice it reads "Microphone belongs to the current TX-bound slice".
+* **Conditioned encoder input** has samples only while RADE transmit is running. Before the first RADE transmission it reads "Conditioned input has not started. Select Raw microphone for setup."; between transmissions it reads "Waiting for conditioned encoder input". Choose **Raw microphone** to see your microphone level before you key.
 * "Waiting for existing microphone stream" means the microphone path is not running yet. "Waiting for actual remote microphone PCM" means the microphone is on a remote device that has not sent audio. "TCI input waveform is unavailable in this phase" means the transmit source is a TCI program, which this meter does not show.
 * The decoded speech meter reads "Waiting for actual decoded speech" until the decoder has produced speech, and "Decoder gated while this slice transmits" while the slice is transmitting.
-* A trace is marked " · clipped" when samples reached full scale, and " · observation gaps" when some audio was missed on the way to the meter. Gaps do not mean the audio itself was damaged.
-* An empty meter with no message reads "Waiting for observed PCM".
-* "Radio source disconnected", "Receive source unavailable" and "Foreign radio session" mean the meter has no radio, no receiver for its slice, or belongs to a different station than the one now connected.
+* A trace is marked " · clipped" when samples went past full scale, and " · observation gaps" when some audio was missed on the way to the meter. Gaps do not mean the audio itself was damaged.
+* When there is no other reason to give, an empty meter reads "Waiting for observed PCM".
+* "Radio source disconnected", "Receive source unavailable" and "Foreign radio session" mean the meter has no radio, no receiver for its slice, or is bound to a different radio session than the one now connected.
 
-On a remote desktop the waveforms come from the Core. They need a 2026.10.1 Core; an older Core shows "Core does not advertise waveform telemetry". The phone app has no waveform meter in this version.
+On a remote desktop the waveforms come from the Core. They need a 2026.10.1 Core; an older Core shows "This Core does not support exact waveform observation." While the Core starts the feed, a remote meter reads "Waiting for the Core waveform source." or "Waiting for observed Core PCM". The phone app has no waveform meter in this version.
 
 ## Turn on the experimental RADE2 modes
 
 RADE2-U and RADE2-L are an experimental second version of RADE. They are off by default and do not appear in any mode list until you turn them on. Use RADE-U and RADE-L for everyday operation.
 
-To turn them on, start the Core with the environment variable `NEREUS_ENABLE_RADE_V2` set to `1` (only the value `1` works). The Core is the NereusSDR desktop app when it runs the radio itself, or `nereusd` on a Core computer; set the variable where that program starts, then restart it. A remote desktop or a phone follows the Core: it shows the modes only when the Core has them on.
+To turn them on, start the Core with the environment variable `NEREUS_ENABLE_RADE_V2` set to `1` (a value such as true or yes leaves them off). The Core is the NereusSDR desktop app when it runs the radio itself, or `nereusd` on a Core computer; set the variable where that program starts, then restart it. A remote desktop or a phone follows the Core: it shows the modes only when the Core has them on.
 
 Once on:
 
@@ -69,7 +69,7 @@ Once on:
 * They use the same passband as RADE-U and RADE-L (RADE2-U is 650 to 2350 Hz, RADE2-L is -2350 to -650 Hz). Sync, SNR and Offset read as they do in RADE-U and RADE-L.
 * They send and decode no callsign at the end of an over, so **Last RX** stays empty.
 
-If you pick RADE2-U or RADE2-L while the Core has them off, for example from a saved setting, the slice shows the reason "Experimental RADE V2 is disabled. Start the Core with NEREUS_ENABLE_RADE_V2=1 to enable it." and does not start.
+If a slice comes back in RADE2-U or RADE2-L while the Core has them off, for example from a saved setting, the slice shows the reason "Experimental RADE V2 is disabled. Start the Core with NEREUS_ENABLE_RADE_V2=1 to enable it." and does not start.
 
 ## Open FreeDV Reporter
 

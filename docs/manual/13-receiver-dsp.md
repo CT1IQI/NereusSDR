@@ -155,10 +155,10 @@ To choose a setting for the current mode:
 1. Start off air. Read the current mode group, RX row and values. The Buffer Size group is locked while transmitting; a remote Core can also refuse a change while keyed.
 2. If an adjacent signal is entering the receiver passband, first set appropriate filter edges as described in [Set filter edges and edit the shared preset bank](#set-filter-edges-and-edit-the-shared-preset-bank). If you still need sharper skirts, raise **Filter Size (taps)** by one available step and compare the same adjacent-signal condition. Change **Buffer Size (IQcomp)** only when its sharper response is worth the extra interaction delay.
 3. If tuning or mode changes feel delayed, compare **Low Latency** with the current filter type. Keep the buffer and tap count fixed during that comparison so the result has one cause.
-4. Read back the changed row. When the active slice mode matches the edited group, wait for the DSP rebuild and check **Time to last change**. A setting for another mode takes effect when a slice uses that mode.
+4. Read back the changed row. Every receiver whose mode is in the edited group takes the change at once; wait for the DSP rebuild and check **Time to last change**. A setting for a mode group that no receiver is in takes effect when a receiver uses that mode.
 5. If sharpness, latency, CPU behavior or audio worsens, restore the recorded value and read it back again. Warning icons indicate differences among mode groups, not a failure.
 
-The defaults are 64 samples / 4096 taps / **Low Latency** for SSB/AM, 256 RX and 128 TX samples / 4096 taps / **Low Latency** for FM, 64 / 4096 / **Low Latency** for CW RX, and 64 / 4096 / **Low Latency** for Digital RX/TX. CW has no TX row.
+The defaults are 64 samples / 4096 taps / **Low Latency** for SSB/AM, 64 RX and 64 TX samples / 4096 taps / **Low Latency** for FM, 64 / 4096 / **Low Latency** for CW RX, and 64 / 4096 / **Low Latency** for Digital RX/TX. CW has no TX row. Every receiver starts with the values for its mode.
 
 **Enable impulse caching** keeps filter responses in memory to speed later channel rebuilds at the cost of memory. **Keep impulse cache on disk between launches** saves and reloads the cache, which can avoid the first rebuild cost after restart but can create a large cache file. Both take effect on the next radio connect or channel rebuild. **High-resolution filter characteristics in filter graph** shows the computed FIR response instead of a simplified box-shaped passband; it changes the graph, not the selected filter.
 

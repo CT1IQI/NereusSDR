@@ -165,10 +165,11 @@ The workspace look is now the default.
   Clarity sets Low and High from the noise floor. Auto sets Low from the
   weakest signals and you set High. Floor puts Low at the noise floor plus NF
   Offset and you set High. Manual lets you set both. Scale uses the spectrum's
-  dB Min and dB Max. **Black Level** now runs 0 to 100 in half-dB steps with 50
-  at the noise floor (default 57), and **Color Gain** sets how many dB the
-  colors cover (default 60, which is 38 dB). Your saved levels are converted
-  once.
+  dB Min and dB Max. With Clarity, **Black Level** runs 0 to 100 in half-dB
+  steps with 50 at the noise floor (default 57), and **Color Gain** sets how
+  many dB the colors cover (default 60, which is 38 dB). In Auto, Floor,
+  Manual and Scale they trim Low and High around those defaults. Your saved
+  levels are converted once.
 - The spectrum scale is Manual or Track floor. Each pan's dB Max and dB Min are
   kept per band, and the pill and the right-click menu's **Ref Level** and
   **Dyn Range** change the same band value.
@@ -178,8 +179,9 @@ The workspace look is now the default.
 - FFT size has a **Sizing** choice: **Auto** lets the zoom pick the size,
   **Hz/bin** follows the bin width you set (0.5 to 200 Hz), and **Fixed** uses
   the **FFT Size** slider. It is one station setting, shared by every pan and
-  every window connected to the Core, and it is kept after a restart. A saved
-  Hz/bin target above zero opens as Hz/bin; anything else opens as Auto. A
+  every window connected to the Core, and it is kept after a restart. On the
+  first launch of this version, a saved Hz/bin target above zero opens as
+  Hz/bin and anything else as Auto. A
   remote window pan picks its FFT size by the same rule as a local pan, so the
   pan's width in pixels no longer changes it.
 - After a key or un-key every pan keeps its level. The FFT input is cleared on
@@ -223,8 +225,8 @@ The workspace look is now the default.
   **Too low** (90 or below), **Low / marginal**, **In range** (129 to 181)
   and **High**, the calibration stage, and the successful and attempted
   calibration counts. The applet's old gauges, lamps and iteration count are
-  gone. Right-click anything in the applet, or press **Details →**, to open
-  the Bench.
+  gone. Right-click an enabled button or the readouts in the applet, or press
+  **Details →**, to open the Bench.
 - The Bench has two button rows (**Two-tone**, **Single Cal**, **Start Auto**,
   **OFF**; **Apply Current**, **AmpView**, **Advanced**), a **Calibration**
   tab and an **IMD measurements** tab, and a **Calibration details** group in
@@ -265,7 +267,8 @@ The workspace look is now the default.
   attenuation on TX then) changes the TX attenuation and leaves the receive
   value for when you unkey.
 - When a keyed remote window or phone loses its link, the Core cuts its
-  transmit 400 ms after the link goes quiet, even while the Core's main thread
+  transmit 400 ms after the link goes quiet (for any device whose media
+  connection is open), even while the Core's main thread
   is busy. Before, a stall on that thread (about half a second in a Windows
   desktop Core with the screen locked) could keep the radio keyed for about a
   second.
@@ -274,9 +277,10 @@ The workspace look is now the default.
 
 - Two new container meters, **Microphone waveform** and **Decoded speech
   waveform**, draw the audio RADE works with. Add them in **Containers > Edit
-  Container** from **Available**. They follow a slice that is in a RADE mode;
-  the microphone one follows the transmit slice and can show the conditioned
-  encoder input or the raw microphone.
+  Container** from **Available**. They show the container's slice when it is
+  in a RADE mode; the microphone one draws only when that slice is the
+  transmit slice, and can show the conditioned encoder input or the raw
+  microphone.
 - A remote desktop shows the waveforms from a 2026.10.1 Core. An older Core
   gives a reason in the meter.
 - Experimental **RADE2-U** and **RADE2-L** modes are off by default. Start the
@@ -323,24 +327,26 @@ The workspace look is now the default.
 - FM squelch opens again. With FM squelch on, an FM receiver no longer stays
   muted whatever its threshold. **Squelch Threshold** on
   **File > Settings... > DSP > FM** now reads 0 to 100, where 100 is the
-  tightest, instead of dB. A new receiver starts at 100. A threshold you
-  saved is kept, so the old starting value now reads 6. The CAT SQ, ZZSQ
-  and ZZSX commands set the same threshold as before.
+  tightest, instead of dB. A new receiver starts at 100. 2026.10.0 did not
+  save this threshold, so after the update every FM receiver starts at 100;
+  lower it if squelch stays closed. The CAT SQ, ZZSQ and ZZSX commands set
+  the same threshold as before.
 - The radio's firmware shows its second number where the radio reports one,
   so an Anvelina Pro 3 on gateware 2.2.14 reads 22.14 instead of 22 and a
-  Hermes Lite 2 on 74.2 reads 74.2. It shows in the radio list, Add Custom
-  Radio, **Radio > Protocol Info**, the station block, **Diagnostics > Radio
-  Status** and support bundles, and a remote window or the phone shows the
-  number its Core sent. An ANAN-G2, and any radio that reports no second number, reads
-  as before.
+  Hermes Lite 2 on 74.2 reads 74.2 instead of 74. It shows in the radio
+  list, Add Custom Radio, **Radio > Protocol Info**, the station block,
+  **File > Settings... > Diagnostics > Radio Status** and support bundles,
+  and a remote window or the phone shows the number its Core sent. An
+  ANAN-G2, and any radio that reports no second number, reads as before.
 - With AGC Off, a receiver now runs the **Fixed Gain** that **File >
   Settings... > DSP > AGC/ALC** shows, 20 dB by default. Before, a receiver
   left at 20 dB ran 60 dB, so AGC Off is about 40 dB quieter than in
   2026.10.0. The **Fixed Gain** and **Max Gain** boxes also follow a change
   made by CAT, TCI or a remote window.
 - Every receiver starts with the sizes saved on **File > Settings... > DSP >
-  Options**. Before, receivers B to D never took them and ran a 4096-sample
-  block with a Linear Phase filter, 85 ms of delay. They now run the block
+  Options**. Before, receivers B to D did not take them until their next mode
+  change and until then ran a 4096-sample block with a Linear Phase filter,
+  85 ms of delay. They now run the block
   size, filter size and filter type for their mode, 64, 4096 and Low Latency
   unless you changed them, so expect less delay and a different filter shape
   on those receivers.
@@ -613,6 +619,10 @@ Advanced, and each control appears on one page only.
   item.
 - On Linux, a window closed while maximized or full screen comes back with
   its panadapter and waterfall drawn. Before, they stayed blank.
+- On a Mac, a remote window or Core's connection no longer fails to open
+  because another program, such as an Android emulator, holds the same IPv4
+  port. Before, the other program could get the traffic and the connection
+  timed out.
 
 ## [2026.10.0] - 2026-10-05
 

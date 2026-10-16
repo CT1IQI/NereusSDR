@@ -52,24 +52,27 @@ normally so the new version can migrate them once.
   from before.
 - **FM squelch reads 0 to 100.** **Squelch Threshold** on
   **File > Settings... > DSP > FM** now shows 0 to 100, where 100 is the
-  tightest, instead of dB. Your saved threshold is kept: the old starting
-  value now reads 6, and with FM squelch on it now opens. A new receiver
-  starts at 100.
+  tightest, instead of dB. 2026.10.0 did not save this threshold, so every
+  receiver now starts at 100, the tightest. With FM squelch on it now opens;
+  lower the threshold if it stays closed.
 - **Display settings are now defaults plus per-pan values.** Setup's Display
   pages (now Spectrum, Levels, Waterfall, View, Peaks & Markers, FFT & Engine,
   Transmit Display and Multimeter) set the default for every pan, and each pan's
   Display pill can keep its own value, marked with an amber dot. Old page names
   such as Spectrum Defaults and Grid & Scales no longer exist. **Reset this pan**
   returns one pan to the defaults.
-- **Waterfall Black Level and Color Gain are converted once.** Black Level now
-  runs 0 to 100 with 50 at the noise floor, and Color Gain sets how many dB the
-  colors cover. Your saved values, and each pan's, are converted so the
-  waterfall looks the same as before. If it looks different, check Levels.
-- **Cal Offset and stored noise floors are cleared once.** The display Cal
-  Offset (Setup default and each pan's value) held the station's offset and is
-  removed; the stored per-band noise floors that Clarity measured before
-  calibration are removed, so Clarity measures each band again the first time
-  you tune to it. Your radio's own calibration is not touched.
+- **Waterfall Black Level and Color Gain are converted once.** With Clarity,
+  Black Level now runs 0 to 100 with 50 at the noise floor, and Color Gain
+  sets how many dB the colors cover; in the other choices they trim Low and
+  High. Your saved values, and each pan's, are converted so the waterfall
+  looks the same as before. If it looks different, check Levels.
+- **Cal Offset is reset and stored noise floors are cleared once.** The saved
+  display Cal Offset values (the Setup default and each pan's) held the
+  station's offset, so they are removed and Cal Offset starts at 0 dB; the
+  control stays on Setup's Spectrum page. The stored per-band noise floors
+  that Clarity measured before calibration are removed, so Clarity measures
+  each band again the first time you tune to it. Your radio's own calibration
+  is not touched.
 - **FFT size has a Sizing choice.** Sizing is **Auto**, **Hz/bin** or **Fixed**.
   If you had a Hz/bin target above zero, you start in **Hz/bin**. Otherwise you
   start in **Auto**, and the FFT Size you saved applies only if you choose
@@ -81,11 +84,12 @@ normally so the new version can migrate them once.
   changed it. In 2026.10.0 it ran 60 dB until you changed the value, so AGC
   Off is about 40 dB quieter. Raise **Fixed Gain** if you want the old level.
 - **Every receiver starts with your DSP Options sizes.** Receivers B, C and D
-  used to ignore the block size, filter size and filter type on **File >
-  Settings... > DSP > Options** and ran a 4096-sample block with a Linear
-  Phase filter. They now use the saved values for their mode, 64, 4096 and Low
-  Latency unless you changed them, so they may sound and respond differently.
-  The FM row on that page now starts at 64 for receive and transmit.
+  did not take the block size, filter size and filter type on **File >
+  Settings... > DSP > Options** until their next mode change, and ran a
+  4096-sample block with a Linear Phase filter until then. They now use the
+  saved values for their mode, 64, 4096 and Low Latency unless you changed
+  them, so they may sound and respond differently. The FM row on that page now
+  starts at 64 for receive and transmit.
 - **PureSignal looks different.** The applet and the Bench show **CORRECTION**
   and **CALIBRATION FEEDBACK** with a class (Too low to High), **Advanced** now
   hides the bottom strip too, and AmpView names its curves differently. Two-tone
@@ -111,6 +115,11 @@ cards and serial adapters each need a small systemd drop-in.
 - **Rock real-time priority.** On a Rock, run the 2026.10.1 installer once and
   then restart the board. It adds a drop-in meant to keep an ssh login from
   costing the Core its real-time priority. See What to try.
+- **Network receive buffer.** The 2026.10.1 packages and the Pi 4 and Rock
+  scripts raise Linux's `net.core.rmem_max` to 4 MB through
+  `/usr/lib/sysctl.d/10-nereusd.conf`, and never lower a limit that is already
+  higher. Removing the package removes it. The README section "The system
+  setting the Core's installer changes" says how to check or undo it.
 
 The [SBC install guide](install-core-sbc.md) has the details, including the
 sound card's own mixer and kernels that refuse real-time priority.
@@ -164,11 +173,11 @@ including anything that surprised you.
    DUP, run a brief two-tone test and read **WORST IMD3** and **WORST IMD5** on
    the rail's **Inspect** readout.
 9. **RADE waveforms.** In **Containers > Edit Container**, add **Microphone
-   waveform** and **Decoded speech waveform** to a container whose **Slice** is
-   in RADE-U or RADE-L. Speak while transmitting in RADE and confirm the
-   microphone trace moves; receive a RADE signal and confirm the decoded speech
-   trace moves. On a remote desktop, confirm an older Core shows a reason
-   instead of a trace.
+   waveform** and **Decoded speech waveform** to a container whose **Slice**
+   is the transmit slice and is in RADE-U or RADE-L. Speak while transmitting
+   in RADE and confirm the microphone trace moves; receive a RADE signal and
+   confirm the decoded speech trace moves. On a remote desktop, confirm an
+   older Core shows a reason instead of a trace.
 
 ## Reporting
 

@@ -530,6 +530,39 @@ private slots:
         QVERIFY2(wide == 3 || wide == 4, qPrintable(QString::number(wide)));
     }
 
+    // 2026-10-16: below 520 px the narrow layout drops a label that would
+    // run into the one before it or past the live button. The counter
+    // counts the labels drawn, so it matches the runs of ink in the strip
+    // (a label's characters sit closer together than the 8 px kept
+    // between labels).
+    void narrowScale_countsOnlyDrawnLabels()
+    {
+        SpectrumWidget w;
+        w.resize(400, 400);
+        w.setFrequencyRange(kCenterHz, 384'000.0);
+        const QImage img = renderScale(w);
+        const int drawn = w.freqScaleLabelsDrawnForTest();
+        const QRgb background = img.pixel(0, kPad + 1);
+        int runs = 0;
+        int gap = 1000;
+        for (int x = 0; x < img.width(); ++x) {
+            bool ink = false;
+            for (int y = kPad; y < img.height() - kPad && !ink; ++y) {
+                ink = img.pixel(x, y) != background;
+            }
+            if (ink) {
+                if (gap >= 6) { ++runs; }
+                gap = 0;
+            } else {
+                ++gap;
+            }
+        }
+        QVERIFY2(drawn >= 2, qPrintable(QString::number(drawn)));
+        // Auto at 384 kHz has 15 or 16 lines; 400 px has room for fewer.
+        QVERIFY2(drawn < 15, qPrintable(QString::number(drawn)));
+        QCOMPARE(drawn, runs);
+    }
+
     // ── Scale text ──────────────────────────────────────────────────────
     //
     // 10 px is what an untouched pan draws. 14 px is taller, and all of it
