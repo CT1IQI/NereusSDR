@@ -20,6 +20,9 @@
 // 2026-10-08: test seam that skips the scan (setDiscoveryStartSkippedForTest),
 // for offscreen tests and the visual preview. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 
 #include "gui/LanScanDialog.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
@@ -194,8 +197,6 @@ void LanScanDialog::buildUi(const QString& status)
 
     // 6-column table: Model, IP, Port, Version, Serial, Nickname.
     m_table = new QTableWidget(0, 6, this);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Rows arrive as devices answer the scan.
-    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setHorizontalHeaderLabels({
         tr("Model"), tr("IP"), tr("Port"),
         tr("Version"), tr("Serial"), tr("Nickname")
@@ -235,6 +236,7 @@ void LanScanDialog::onDeviceDiscovered(const QString& model,
                                        const QString& nickname)
 {
     const int row = m_table->rowCount();
+    resetItemsBeforeRowChange(m_table);
     m_table->insertRow(row);
 
     m_table->setItem(row, 0, new QTableWidgetItem(model));

@@ -197,6 +197,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ContainerTypes.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QWidget>
 #include <QPointer>
@@ -221,7 +222,7 @@ class MeterItem;
 class FloatingContainer;
 class WorkspaceGroupHeader;
 
-class ContainerWidget : public QWidget {
+class NEREUS_GUI_EXPORT ContainerWidget : public QWidget {
     Q_OBJECT
 
 public:

@@ -106,13 +106,14 @@ mw0lge@grange-lane.co.uk
 
 #include <QWidget>
 #include <QString>
+#include "gui/NereusGuiExport.h"
 
 namespace NereusSDR {
 
 class ContainerWidget;
 class ScreenSource;
 
-class FloatingContainer : public QWidget {
+class NEREUS_GUI_EXPORT FloatingContainer : public QWidget {
     Q_OBJECT
 
 public:

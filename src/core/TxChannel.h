@@ -392,6 +392,7 @@ warren@wpratt.com
 #include "dsp/Ps3DisplayAdapter.h"
 #include "dsp/TxChannelState.h"
 #include "wdsp_api.h"  // NEREUS_STDCALL macro for s_pushVoxCallback (Task 17)
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -468,7 +469,7 @@ class WdspEngine;  // forward declaration for rebuild()
 //
 // Ported from Thetis wdsp/TXA.c:31-479 [v2.10.3.13] — create_txa() signal
 // flow order determines the Stage enum ordinal values.
-class TxChannel : public QObject {
+class NEREUS_CORE_EXPORT TxChannel : public QObject {
     Q_OBJECT
 
 public:

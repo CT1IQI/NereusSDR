@@ -13,6 +13,9 @@
 //   2026-10-08  J.J. Boyd (KG4VCF): Qt 6.11.0 Cocoa accessibility cache
 //               repair on a live item view (QtCocoaAccessibleTableCache).
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -116,8 +119,6 @@ XvtrTab::XvtrTab(RadioModel* model, QWidget* parent)
     // Source: Thetis xvtr.cs — 16 rows, columns: Enabled/Name/RF Start/RF End/
     // LO Offset/RX-only/Power/LO Error
     m_table = new QTableWidget(0, ColCount, this);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Resized when a radio connects.
-    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setHorizontalHeaderLabels({
         tr("Enabled"),
         tr("Name"),
@@ -160,6 +161,7 @@ void XvtrTab::populate(const RadioInfo& /*info*/, const BoardCapabilities& caps)
     if (rows == m_visibleRows) { return; }
 
     QSignalBlocker blocker(m_table);
+    resetItemsBeforeRowChange(m_table);
     m_table->setRowCount(rows);
     m_visibleRows = rows;
 

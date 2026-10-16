@@ -39,6 +39,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-13 - Notify profile consumers when the MAC scope changes to
+//                 an existing bank, preserving same-scope load idempotence.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-28 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
@@ -114,6 +117,9 @@ public:
 
     /// Set the per-MAC scope (hardware/<mac>/tx/profile/...).  Must be called
     /// before any other op.  Mirrors TransmitModel::loadFromSettings(mac).
+    /// A changed scope with an existing bank emits profileListChanged so
+    /// consumers refresh its names and active selection without applying it.
+    /// An unchanged scope, empty/missing bank, or station mirror emits nothing.
     void setMacAddress(const QString& mac);
 
     /// Load the profile list from AppSettings.  Seeds "Default" on first launch

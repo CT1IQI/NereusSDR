@@ -60,6 +60,14 @@
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+
+// MinGW imports a static constexpr member of an exported class by address
+// when it is bound to a reference (QCOMPARE does), and the Core DLL never
+// exports one, so this test did not link on Windows. It reads these
+// copies by value instead.
+namespace {
+constexpr double kNoReadingDbm = NereusSDR::SliceMeterPump::kNoReadingDbm;
+} // namespace
 using NereusSDR::Test::ConnectableRadioModel;
 using NereusSDR::Test::LoopbackTransport;
 
@@ -71,11 +79,11 @@ const char* const kReadings[] = {
 
 void expectNoReadings(const SliceModel* slice)
 {
-    QCOMPARE(slice->adcPeakDbfs(), SliceMeterPump::kNoReadingDbm);
-    QCOMPARE(slice->adcAverageDbfs(), SliceMeterPump::kNoReadingDbm);
-    QCOMPARE(slice->agcGainDb(), SliceMeterPump::kNoReadingDbm);
-    QCOMPARE(slice->agcPeakDb(), SliceMeterPump::kNoReadingDbm);
-    QCOMPARE(slice->agcAverageDb(), SliceMeterPump::kNoReadingDbm);
+    QCOMPARE(slice->adcPeakDbfs(), kNoReadingDbm);
+    QCOMPARE(slice->adcAverageDbfs(), kNoReadingDbm);
+    QCOMPARE(slice->agcGainDb(), kNoReadingDbm);
+    QCOMPARE(slice->agcPeakDb(), kNoReadingDbm);
+    QCOMPARE(slice->agcAverageDb(), kNoReadingDbm);
 }
 
 std::unique_ptr<RadioModel> makeStationRadioModel()
@@ -195,8 +203,8 @@ private slots:
         QCOMPARE(SliceMeterPump::thetisAgcGainReading(12.5), -12.5);
         // WDSP's -400 before its first measurement stays no reading, never
         // a 400 dB gain.
-        QCOMPARE(SliceMeterPump::thetisAgcGainReading(-400.0), SliceMeterPump::kNoReadingDbm);
-        QCOMPARE(SliceMeterPump::thetisAgcGainReading(qQNaN()), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(SliceMeterPump::thetisAgcGainReading(-400.0), kNoReadingDbm);
+        QCOMPARE(SliceMeterPump::thetisAgcGainReading(qQNaN()), kNoReadingDbm);
     }
 
     // Readings present: the pump writes the live channel's five meters,
@@ -248,7 +256,7 @@ private slots:
         model.setConnectionStateForTest(ConnectionState::LinkLost);
         pump->poll();
         expectNoReadings(slice);
-        QCOMPARE(slice->signalPeakDbm(), SliceMeterPump::kNoReadingDbm);
+        QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
 
         // Back to Connected: the channel's readings again.
         seed();
