@@ -31,6 +31,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16: media started on a routed web relay leg (a loopback shim
+//               that is not the media tunnel, the tunnel declared while
+//               the session runs on a data channel) tries no direct-only
+//               replace, so a later session move is followed at once
+//               (relayLegShimPath, GuiHarness::sessionCarriesBinary).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-29: a refused replace keeps the move it carried: a move folded
 //               into the retried fallback, or one made while the
 //               fallback's replace is under way, is still followed after
@@ -76,10 +82,12 @@
 #include <QTemporaryDir>
 #include <QtEndian>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
@@ -97,6 +105,7 @@
 #include "core/session/media/OpusAudioCodec.h"
 #include "core/session/media/DualPathAudio.h"
 #include "core/session/media/RtpDuplicateFilter.h"
+#include "core/session/IceConfiguration.h"
 #include "core/session/PathRacer.h"
 #include "OperatorWording.h"
 #include "core/settings/SettingsProxy.h"
@@ -220,6 +229,16 @@ MediaIcePath tunnelShimPath()
     return path;
 }
 
+// The web relay leg's pair: also through this end's own loopback shim, so
+// on the wire it looks just like the tunnel's (viaLoopbackShim()). What
+// tells them apart is where the connection's ICE settings came from: a
+// test that wants this leg starts media on the session's ICE settings
+// (setSessionIceConfigurationForTest) over a link that carries no binary.
+MediaIcePath relayLegShimPath()
+{
+    return tunnelShimPath();
+}
+
 QList<QJsonObject> controlsNamed(const QSignalSpy& spy, const QString& op)
 {
     QList<QJsonObject> out;
@@ -331,6 +350,10 @@ struct GuiHarness {
     QList<QPointer<FakeTransport>> guiTransports;
     qint64 now = 0;
     Test::LoopbackTransport* stationLink = nullptr;
+    Test::LoopbackTransport* clientLink = nullptr;
+    // Whether the session link carries binary messages (false: a data
+    // channel such as the web relay's, where the media tunnel cannot run).
+    bool sessionCarriesBinary = true;
     QList<QByteArray> toCore;
     std::unique_ptr<RemoteMediaController> gui;
     // Audio keeps arriving on the first connection (every 100 ms) while
@@ -363,7 +386,9 @@ struct GuiHarness {
     bool connect(const MediaIcePath& path)
     {
         stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
-        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->setCarriesBinary(sessionCarriesBinary);
+        clientLink->setCarriesBinary(sessionCarriesBinary);
         stationLink->linkTo(clientLink);
         QObject::connect(stationLink, &SessionTransport::textReceived, stationLink,
                          [this](const QByteArray& wire) { toCore.append(wire); });
@@ -854,6 +879,83 @@ private slots:
         g.guiTransports.at(2)->close();
         QTRY_COMPARE_WITH_TIMEOUT(g.gui->directUpgradeDelayMs(), PathRacer::kUpgradeRetryMs[3],
                                   3000);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Media started on a routed web relay leg (the session on a data
+    // channel, the tunnel declared for a later move, the pair through this
+    // end's own relay-leg shim) is not on the tunnel: no direct-only
+    // replace is armed or sent, so none can hold the one replacement slot
+    // while UDP is blocked, and a session move is followed at once.
+    void theWindowOnTheWebRelayTriesNoDirectAndFollowsAMoveAtOnce()
+    {
+        GuiHarness g;
+        g.core.server.setMediaStun({QStringLiteral("stun:stun.example.test:3478")});
+        g.sessionCarriesBinary = false;
+        g.core.client.setSessionIceConfigurationForTest(IceConfiguration::throughRendezvous(
+            {QStringLiteral("stun:stun.example.test:3478")}, /*relayAllowed=*/false, {}, {}));
+        QVERIFY(g.connect(relayLegShimPath()));
+        QVERIFY(g.core.client.mediaDirectAvailable());
+        QCOMPARE(g.core.client.capabilities().mediaDirectVersion, 1);
+        QVERIFY(g.core.client.mediaTunnelAvailable());
+        QVERIFY(!g.core.client.mediaTunnelIceConfiguration());
+        FakeTransport* const first = g.guiTransports.first();
+        // Started on the session's ICE settings, routed: not the tunnel's.
+        QVERIFY(first->startOptions.ice.has_value());
+        QVERIFY(!first->startOptions.ice->hasCandidateSourceFactory());
+        QVERIFY(first->startOptions.ice->mediaRouting());
+        const QString firstId = g.gui->mediaConnectionId();
+
+        // The stall rule's tick (every 500 ms) has run a few times: it is
+        // what would arm the first direct step.
+        QList<QTimer*> ticks;
+        for (QTimer* timer : g.gui->findChildren<QTimer*>(Qt::FindDirectChildrenOnly)) {
+            if (timer->isActive() && !timer->isSingleShot() && timer->interval() == 500) {
+                ticks.append(timer);
+            }
+        }
+        QVERIFY(!ticks.isEmpty());
+        std::vector<std::unique_ptr<QSignalSpy>> tickSpies;
+        for (QTimer* timer : ticks) {
+            tickSpies.push_back(std::make_unique<QSignalSpy>(timer, &QTimer::timeout));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(std::all_of(tickSpies.begin(), tickSpies.end(),
+                                             [](const auto& spy) { return spy->count() >= 3; }),
+                                 5000);
+        QCOMPARE(g.gui->directUpgradeDelayMs(), -1);
+        // Nor does the web relay ping at the tunnel's rate.
+        QVERIFY(!g.core.client.mediaTunnelInUse());
+
+        // The first step's time comes and goes: nothing is tried.
+        g.now += PathRacer::kUpgradeRetryMs[0];
+        g.gui->runDirectUpgradeStep();
+        QCOMPARE(g.guiTransports.size(), 1);
+        QVERIFY(!g.gui->replacingConnection());
+        QCOMPARE(g.gui->directUpgradeDelayMs(), -1);
+        // A replace is sent only with a new connection started for it, so
+        // none went to the Core.
+        QCOMPARE(g.core.transports.size(), 1);
+        for (const QJsonObject& replace : g.replacesSent()) {
+            QVERIFY2(!replace.contains(QStringLiteral("mediaDirectVersion")),
+                     "a direct-only replace was sent from the web relay");
+        }
+        const qsizetype replacesBefore = g.replacesSent().size();
+
+        // The session moves to a direct WebSocket: the replace that follows
+        // is sent at once, a plain one over the tunnel, and nothing waits.
+        g.stationLink->setCarriesBinary(true);
+        g.clientLink->setCarriesBinary(true);
+        emit g.core.client.pathChanged();
+        QVERIFY(!g.gui->replacePending());
+        QVERIFY(g.gui->replacingConnection());
+        QCOMPARE(g.guiTransports.size(), 2);
+        QVERIFY(g.guiTransports.at(1)->startOptions.ice.has_value());
+        QVERIFY(g.guiTransports.at(1)->startOptions.ice->hasCandidateSourceFactory());
+        QTRY_COMPARE(g.replacesSent().size(), replacesBefore + 1);
+        const QJsonObject moved = g.replacesSent().constLast();
+        QCOMPARE(moved.size(), 3);
+        QCOMPARE(moved.value(QStringLiteral("replaces")).toString(), firstId);
+        QVERIFY(!g.gui->replacePending());
         g.core.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
