@@ -61,10 +61,11 @@ normally so the new version can migrate them once.
   Display pill can keep its own value, marked with an amber dot. Old page names
   such as Spectrum Defaults and Grid & Scales no longer exist. **Reset this pan**
   returns one pan to the defaults.
-- **Waterfall Black Level and Color Gain are converted once.** With Clarity, Black
-  Level now runs 0 to 100 with 50 at the noise floor, and Color Gain sets how
-  many dB the colors cover; in the other choices they trim Low and High. Your saved values, and each pan's, are converted so the
-  waterfall looks the same as before. If it looks different, check Levels.
+- **Waterfall Black Level and Color Gain are converted once.** With Clarity,
+  Black Level now runs 0 to 100 with 50 at the noise floor, and Color Gain
+  sets how many dB the colors cover; in the other choices they trim Low and
+  High. Your saved values, and each pan's, are converted so the waterfall
+  looks the same as before. If it looks different, check Levels.
 - **Cal Offset is reset and stored noise floors are cleared once.** The saved
   display Cal Offset values (the Setup default and each pan's) held the
   station's offset, so they are removed and Cal Offset starts at 0 dB; the
@@ -85,9 +86,10 @@ normally so the new version can migrate them once.
 - **Every receiver starts with your DSP Options sizes.** Receivers B, C and D
   did not take the block size, filter size and filter type on **File >
   Settings... > DSP > Options** until their next mode change, and ran a
-  4096-sample block with a Linear Phase filter until then. They now use the saved values for their mode, 64, 4096 and Low
-  Latency unless you changed them, so they may sound and respond differently.
-  The FM row on that page now starts at 64 for receive and transmit.
+  4096-sample block with a Linear Phase filter until then. They now use the
+  saved values for their mode, 64, 4096 and Low Latency unless you changed
+  them, so they may sound and respond differently. The FM row on that page now
+  starts at 64 for receive and transmit.
 - **PureSignal looks different.** The applet and the Bench show **CORRECTION**
   and **CALIBRATION FEEDBACK** with a class (Too low to High), **Advanced** now
   hides the bottom strip too, and AmpView names its curves differently. Two-tone
@@ -171,11 +173,11 @@ including anything that surprised you.
    DUP, run a brief two-tone test and read **WORST IMD3** and **WORST IMD5** on
    the rail's **Inspect** readout.
 9. **RADE waveforms.** In **Containers > Edit Container**, add **Microphone
-   waveform** and **Decoded speech waveform** to a container whose **Slice** is the
-   transmit slice and is in RADE-U or RADE-L. Speak while transmitting in RADE and confirm the
-   microphone trace moves; receive a RADE signal and confirm the decoded speech
-   trace moves. On a remote desktop, confirm an older Core shows a reason
-   instead of a trace.
+   waveform** and **Decoded speech waveform** to a container whose **Slice**
+   is the transmit slice and is in RADE-U or RADE-L. Speak while transmitting
+   in RADE and confirm the microphone trace moves; receive a RADE signal and
+   confirm the decoded speech trace moves. On a remote desktop, confirm an
+   older Core shows a reason instead of a trace.
 
 ## Reporting
 
