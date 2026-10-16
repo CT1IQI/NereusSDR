@@ -15,6 +15,10 @@
 //               the workgroup of the device the speakers play on (native
 //               audio plan Task 8, R-AUD-18). AI-assisted implementation
 //               via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): setAudioWorkgroupLookupHookForTest(),
+//               called at the start of the Mac's default output workgroup
+//               lookup when a test sets it. With AI-assisted implementation
+//               via Anthropic Claude Code.
 // =================================================================
 #include "RealtimeAudioPriority.h"
 
@@ -29,7 +33,13 @@ namespace NereusSDR {
 
 namespace {
 std::atomic<bool> g_threadPriorityRefusedWarned{false};
+std::atomic<AudioWorkgroupLookupHookForTest> g_workgroupLookupHookForTest{nullptr};
 } // namespace
+
+void setAudioWorkgroupLookupHookForTest(AudioWorkgroupLookupHookForTest hook)
+{
+    g_workgroupLookupHookForTest.store(hook, std::memory_order_release);
+}
 
 bool claimThreadPriorityRefusedWarning()
 {
@@ -96,6 +106,10 @@ namespace {
 // nullptr on failure (caller continues without workgroup membership).
 os_workgroup_t fetchDefaultOutputWorkgroup()
 {
+    if (const AudioWorkgroupLookupHookForTest hook =
+            g_workgroupLookupHookForTest.load(std::memory_order_acquire)) {
+        hook();
+    }
     AudioObjectPropertyAddress defaultOutAddr = {
         kAudioHardwarePropertyDefaultOutputDevice,
         kAudioObjectPropertyScopeGlobal,
