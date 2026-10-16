@@ -363,6 +363,8 @@ Advanced, and each control appears on one page only.
   freed memory, which could crash it on exit.
 - On Windows the warning signs on the PureSignal and DSP Options pages are
   drawn as text instead of color emoji.
+- On the Mac, a remote window can no longer hang when its microphone stops
+  while Core Audio is slow to answer at startup.
 
 ## [2026.10.0] - 2026-10-05
 
