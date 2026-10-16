@@ -183,7 +183,7 @@ private slots:
     // -140.0 default. That default is a floor number the flag bar draws as
     // "-140 dBm", a reading that does not exist. The plan settles that a
     // local flag with no reading shows "-- dBm", so poll() now writes the
-    // -400 dBm no-reading value (kNoReadingDbm) to all
+    // -400 dBm no-reading value (SliceMeterPump::kNoReadingDbm) to all
     // three readings. A bare, never-connected Role::Local model is not
     // Connected, so this exercises the link-down gate; the Connected
     // no-channel branch has its own case below. Not a weakened test: the

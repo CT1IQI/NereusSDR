@@ -26,12 +26,23 @@ SettingsFileWriter::~SettingsFileWriter()
 
 void SettingsFileWriter::run(std::function<void()> job)
 {
+    if (m_finished) {
+        job();
+        return;
+    }
     m_pool.start(std::move(job));
 }
 
 void SettingsFileWriter::waitUntilIdle()
 {
     m_pool.waitForDone();
+}
+
+void SettingsFileWriter::finish()
+{
+    // QThreadPool::waitForDone() also stops and joins the pool's threads.
+    m_pool.waitForDone();
+    m_finished = true;
 }
 
 void SettingsFileWriter::report(quint64 ticket, bool saved, const QString& error)
