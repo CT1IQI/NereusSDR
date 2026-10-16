@@ -6,6 +6,7 @@
 // Extract the production deadline handler into a private Qt slot.
 #include "gui/CoreTargetStore.h"
 #include "core/session/StationClient.h"
+#include "gui/NereusGuiExport.h"
 #include <QPointer>
 #include <QTimer>
 #include <memory>
@@ -16,7 +17,7 @@ class ClientDeviceIdentity;
 /// inspected-page authority. The store must outlive this helper.
 /// Use one app-scoped helper for every Settings dialog. SessionSource reports
 /// desktop sessions, excluding this helper's own current temporary admission.
-class CoreRenameController final : public QObject {
+class NEREUS_GUI_EXPORT CoreRenameController final : public QObject {
     Q_OBJECT
 public:
     struct Request {

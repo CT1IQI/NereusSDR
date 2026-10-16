@@ -27,13 +27,14 @@
 #include <QStringList>
 #include <QHash>
 #include <QPointer>
+#include "gui/NereusGuiExport.h"
 
 namespace NereusSDR {
 
 class ContainerWorkspaceStore;
 class ContainerContentRegistry;
 struct WorkspaceDocument;
-class AppletVisibilityController : public QObject {
+class NEREUS_GUI_EXPORT AppletVisibilityController : public QObject {
     Q_OBJECT
 public:
     explicit AppletVisibilityController(QObject* parent = nullptr);

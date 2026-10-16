@@ -380,9 +380,15 @@ void TestGuiConnectionController::connectionsDisconnectReopensConnectionsOnceWit
                                    &RemoteConnectionController::operatorDisconnected);
     QSignalSpy windowRequests(window, &MainWindow::connectionsRequested);
     QSignalSpy pickerRequests(controller.sessions(), &GuiSessionCoordinator::connectionsRequested);
+    QVERIFY(operatorDisconnects.isValid());
+    QVERIFY(windowRequests.isValid());
+    QVERIFY(pickerRequests.isValid());
     auto* disconnect = button(controller.selector(), QStringLiteral("connectionSelectorDisconnect"));
     QVERIFY(disconnect != nullptr && disconnect->isEnabled());
     disconnect->click();
+    QCOMPARE(operatorDisconnects.size(), 1);
+    QCOMPARE(windowRequests.size(), 1);
+    QCOMPARE(pickerRequests.size(), 0); // MainWindow forwards this queued.
     QTRY_COMPARE(pickerRequests.size(), 1);
     QTRY_VERIFY(!cores.firstServer.hasAuthenticatedSession());
     // Long enough for any queued reopen or dial to have run.
@@ -656,6 +662,7 @@ void TestGuiConnectionController::codeOnlyDialogPairsThroughMailboxAndOpensRemot
     core.server->devicesFacade()->setCoreAddresses(QString::fromUtf8("{\"addresses\":[\"[2001:db8::4]:47914\"]}"));
     StationRendezvous rendezvous(core.server.get(), {service.url()}, true);
     QSignalSpy nameplates(rendezvous.client(), &RendezvousClient::nameplateClaimed);
+    QVERIFY(nameplates.isValid());
     QVERIFY(rendezvous.start());
     QTRY_COMPARE_WITH_TIMEOUT(nameplates.size(), 1, 10000);
     const QString code = core.server->pairingWindow()->currentCode();

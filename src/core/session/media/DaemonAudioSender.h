@@ -17,6 +17,7 @@
 #include "core/session/media/DaemonAudioSource.h"
 #include "core/session/media/OpusAudioCodec.h"
 #include "core/session/media/PcmAudioCodec.h"
+#include "core/NereusCoreExport.h"
 
 #include <QList>
 #include <QObject>
@@ -98,7 +99,7 @@ struct DaemonAudioSenderTelemetry {
 ///     the mutex released, on the draining thread. A tap from a drain on
 ///     another thread may therefore be seen after stop() returned; the sink
 ///     is the delivery.
-class DaemonAudioSender final : public QObject {
+class NEREUS_CORE_EXPORT DaemonAudioSender final : public QObject {
     Q_OBJECT
 public:
     static constexpr int kDrainIntervalMs = 10;
