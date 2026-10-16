@@ -65,6 +65,13 @@
 // starved between the first two did on the STRIX at 100% CPU. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
+// 2026-10-16: the display sink's case, as its main twin after pull request
+// 542's second review: a result no lost race explains (Refused anywhere,
+// Busy before the third send) fails at once; between attempts it also waits
+// for each held message's writable signal, and every such wait shares one
+// 20 s budget, with none after the last attempt; a miss says when that
+// budget ran out. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -76,6 +83,7 @@
 #include "core/session/media/RemoteIqCodec.h"
 #include "core/session/media/RemoteMicReceiver.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QMetaEnum>
 #include <QPointer>
@@ -833,7 +841,9 @@ void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
 // sender starved between two steps finds the second message sent (this case
 // did so on the STRIX at 100% CPU, 2026-10-15), the held one already gone or
 // the third taken. Such an attempt shows nothing either way: once the path
-// is idle, the other thread tries a fresh pair.
+// is idle, the other thread tries a fresh pair. A lost race can only turn
+// an expected Queued or Busy into Sent or Queued, or find the held message
+// gone; any other result fails at once.
 void TestMediaTransport::displaySinkSendsFromAnotherThread()
 {
     using Result = IMediaTransport::DisplaySendResult;
@@ -852,7 +862,7 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     // late, after the far end is read below. What arrives is whole and in
     // the order sent; the far end is read once it has taken nothing new
     // for 300 ms.
-    const auto farEndSettles = [&](int atLeast) {
+    const auto farEndSettles = [&](int atLeast, int timeoutMs = 30'000) {
         int seen = -1;
         QElapsedTimer quiet;
         quiet.start();
@@ -862,7 +872,7 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
                 quiet.restart();
             }
             return seen >= atLeast && quiet.elapsed() >= 300;
-        }, 30'000);
+        }, timeoutMs);
     };
 
     constexpr qsizetype kChunkBytes = 49'216; // one PureSignal display chunk
@@ -886,15 +896,29 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
     };
     QStringList attempts;
     bool held = false;
+    // Every wait between attempts draws on one budget, so the case stays
+    // well inside the binary's ctest timeout however the attempts go.
+    const QDeadlineTimer idleBudget(20'000);
+    const auto budgetLeft = [&idleBudget] {
+        return int(std::max<qint64>(0, idleBudget.remainingTime()));
+    };
     while (!held && attempts.size() < kMostAttempts) {
         steps.clear();
         Result first = Result::Refused;
+        // Refused, or Busy before the third send, is no lost race.
+        bool unexplained = false;
         std::thread sender([&] {
-            first = submit();
-            if (first == Result::Sent && submit() == Result::Queued) {
+            const auto offer = [&](bool busyExpected) {
+                const Result result = submit();
+                unexplained = unexplained || result == Result::Refused
+                              || (result == Result::Busy && !busyExpected);
+                return result;
+            };
+            first = offer(false);
+            if (first == Result::Sent && offer(false) == Result::Queued) {
                 const bool busy = sink->displayBusy();
                 steps << (busy ? QStringLiteral("busy") : QStringLiteral("not busy"));
-                held = busy && submit() == Result::Busy;
+                held = busy && offer(true) == Result::Busy;
             }
         });
         sender.join();
@@ -903,15 +927,30 @@ void TestMediaTransport::displaySinkSendsFromAnotherThread()
             QCOMPARE(first, Result::Sent);
         }
         attempts << steps.join(QStringLiteral(", "));
-        if (held) {
+        if (unexplained) {
+            QFAIL(qPrintable(QStringLiteral("attempt %1 gave a result no lost race explains: %2")
+                                 .arg(attempts.size())
+                                 .arg(attempts.join(QStringLiteral("; ")))));
+        }
+        if (held || attempts.size() == kMostAttempts) {
             break;
         }
-        // Idle again: nothing held, and the far end quiet for 300 ms, which
-        // also gives a delayed acknowledgment its time.
-        if (!QTest::qWaitFor([&] { return !sink->displayBusy(); }, 10'000)
-            || !farEndSettles(0)) {
-            QFAIL(qPrintable(QStringLiteral("the path did not go idle after attempt %1 (%2)")
-                                 .arg(attempts.size()).arg(attempts.constLast())));
+        // Idle again: nothing held, each held message's writable signal in,
+        // and the far end quiet for 300 ms, which also gives a delayed
+        // acknowledgment its time.
+        const qsizetype heldInAttempt = steps.count(QStringLiteral("Queued"));
+        if (!QTest::qWaitFor([&] {
+                return !sink->displayBusy() && writable.count() >= heldInAttempt;
+            }, budgetLeft())
+            || !farEndSettles(0, budgetLeft())) {
+            QFAIL(qPrintable(QStringLiteral("the path did not go idle after attempt %1 (%2)%3: "
+                                            "%4 of %5 writable signals")
+                                 .arg(attempts.size()).arg(attempts.constLast())
+                                 .arg(idleBudget.hasExpired()
+                                          ? QStringLiteral(" before the 20 s budget for the "
+                                                           "waits between attempts ran out")
+                                          : QString())
+                                 .arg(writable.count()).arg(heldInAttempt)));
         }
         writable.clear();
     }
