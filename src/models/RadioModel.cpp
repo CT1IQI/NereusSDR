@@ -23729,8 +23729,9 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
 
     // Squelch — FM → WDSP
     // From Thetis Project Files/Source/Console/radio.cs:1274-1329
-    // WDSP: third_party/wdsp/src/fmsq.c:236,244
-    // SliceModel stores fmsqThresh in dB; RxChannel::setFmsqThresh converts to linear
+    // WDSP: third_party/wdsp/src/fmsq.c:239,247
+    // SliceModel stores fmsqThresh as the -160..0 slider value;
+    // RxChannel::setFmsqThresh maps it to WDSP's linear threshold
     connect(slice, &SliceModel::fmsqEnabledChanged, this, [this, slice](bool on) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
