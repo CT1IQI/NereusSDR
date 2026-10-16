@@ -220,6 +220,11 @@ Cores and apps still connect.
   after installing.
 - On Windows the Core can lock its signal-processing buffers in memory; before,
   Windows refused the lock and logged a warning for every FFT buffer.
+- On a board with slow and fast cores, such as the Rock 5C, the Core puts the
+  radio connection and the first receiver on fast cores of their own. With
+  four receivers at 1.536 MHz, receive packet drops on the Rock fell from
+  about 12,000 a second to almost none. With VOX on, the receivers keep their
+  fast cores between transmissions. Pi 4, Pi 5 and x86 placement is unchanged.
 
 ### Settings, support and spotting
 
