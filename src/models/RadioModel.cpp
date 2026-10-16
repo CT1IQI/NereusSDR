@@ -17,6 +17,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The HL2 temperature average spans mi0bot's 800 ms (100
+//                samples of the latest reading, 8 ms apart) at any
+//                telemetry rate, and starts fresh when the connection
+//                leaves Connected. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
+//   2026-10-15 - The TGXL autotune RF settle reads its length from
+//                m_tgxlRfSettleMs (kTgxlRfSettleMs unless a test sets it)
+//                and calls a test observer when it fires. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-14 - Clear the retired connection's discovery exemption before
+//                publishing intentional disconnect. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
+// 2026-10-14 - Retain outgoing-band values across coalesced settings saves.
+//              J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-10-15 - A held per-band value gives way to a newer write of its key
+//              from outside (a remote window through the settings proxy).
+//              J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - Headless Core speaker (JJ's ruling, R-AUD-27): the comment
 //                on the local output mask says where ruling 9.2 holds and
 //                where a headless Core's speaker leaves it. No change to
@@ -1144,6 +1161,9 @@
 //                app reuses the app's plans. A process told nothing keeps
 //                its own folder, as before. J.J. Boyd (KG4VCF), AI-assisted
 //                via Anthropic Claude Code.
+//   2026-10-14 - The HL2 I/O board's I2C signals now come from the P1 EP2
+//                sender thread; still queued, so nothing here changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1768,6 +1788,8 @@ RadioModel::RadioModel(Role role, QObject* parent)
     }
     connect(AppSettings::instance().backgroundSaveNotifier(), &SettingsFileWriter::finished,
             this, &RadioModel::onBackgroundSettingsSaveFinished);
+    m_settingsWriteObserverId = AppSettings::instance().addWriteObserver(
+        [this](const QString& key) { onSettingsKeyWritten(key); });
     // Keying marks the published Auto AGC noise floor stale at once, as the
     // headless Core's source does, not up to a tick later.
     connect(&m_transmitModel, &TransmitModel::moxChanged, this,
@@ -2393,6 +2415,23 @@ RadioModel::RadioModel(Role role, QObject* parent)
         if (m_role != Role::Remote && state != ConnectionState::Connected) {
             m_paCurrentReported = false;
             m_paTemperatureReported = false;
+        }
+        // The HL2 temperature average starts fresh on the next connection,
+        // so a reconnect (perhaps to another radio) never averages in the
+        // old readings. mi0bot zeroes the shown temperature when its
+        // reading loop ends but leaves _tempQueue full (it clears only the
+        // volts and amps queues):
+        // From mi0bot console.cs:25022-25024 [v2.10.3.13-beta2 @c26a8a4]:
+        //   _MKIIHL2Temp = 0f;      // MI0BOT: HL2 temperature
+        //
+        //   //there is no clear for ConcurrentQueues, we need to dequeue to clear
+        // Ours clears the samples too, so the old readings are gone.
+        if (state != ConnectionState::Connected) {
+            m_hl2TempRing.fill(0);
+            m_hl2TempCount = 0;
+            m_hl2TempHead = 0;
+            m_hl2TempLastPollNs = 0;
+            m_hl2TempHeld = 0;
         }
         emit paReadingsChanged();
     });
@@ -3038,8 +3077,9 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
     // ── H.5: P1/P2 status-frame mic_ptt → MoxController PTT-source dispatch ──
     //
-    // RadioConnection::micPttFromRadio(bool) is emitted unconditionally on every
-    // status frame (P1 EP6, P2 High-Priority) with the instantaneous PTT state.
+    // RadioConnection::micPttFromRadio(bool) is emitted for each P1 packet
+    // carrying ordinary status and every P2 High-Priority packet, with the
+    // instantaneous PTT state. The P1 all-I2C path publishes no PTT update.
     // MoxController::onMicPttFromRadio is idempotent on repeated same-state calls.
     //
     // The actual connect() is deferred to wireConnectionSignals() where
@@ -4750,6 +4790,7 @@ RadioModel::RadioModel(Role role, QObject* parent)
 
 RadioModel::~RadioModel()
 {
+    AppSettings::instance().removeWriteObserver(m_settingsWriteObserverId);
     // The CAT publisher reads this model and CatService; it goes first.
     m_stationCat.reset();
     if (m_catService) { m_catService->beginRetirement(); }
@@ -13232,14 +13273,35 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         // binds, so there is nothing to widen yet and nothing to warn about.
         return;
     }
-    if (m_streamAllocator.streamSampleRateHz(stream) == restored) {
+    const int effective = m_streamAllocator.streamSampleRateHz(stream);
+    if (effective == restored) {
         // Already there. Skipping keeps a band change that did not actually
         // change the rate from running the whole rebind transaction, and
         // from emitting a rejection toast for a rate the radio is on.
         return;
     }
 
-    requestSliceSampleRate(slice->sliceIndex(), restored);
+    const int sliceId = slice->sliceIndex();
+    if (m_role == Role::Local && effective > 0) {
+        // Until the request commits, the property describes the effective
+        // stream rate. A rejected or pending request must not display the
+        // restored preference as though it has already been applied.
+        const QPointer<RadioModel> self(this);
+        const QPointer<SliceModel> target(slice);
+        const double frequencyHz = slice->frequency();
+        slice->setSampleRateHz(effective);
+        // The reset emits: an observer can retire, rebind, retune or re-rate the
+        // slice. A newer change owns it rather than this saved preference.
+        if (!self || !target || self->sliceById(sliceId) != target.data()
+            || target->streamIndex() != stream
+            || target->frequency() != frequencyHz
+            || target->sampleRateHz() != effective
+            || self->m_streamAllocator.streamSampleRateHz(stream) != effective) {
+            return;
+        }
+    }
+
+    requestSliceSampleRate(sliceId, restored);
 }
 
 // R-R3-49. NereusSDR-original: per-slice per-band rates are a Phase 3F
@@ -15782,6 +15844,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
     wasPublished = m_slicePublications.value(originalVictim.data()).published;
     m_slicePublications.remove(originalVictim.data());
     SliceModel* slice = m_slices.takeAt(position);
+    m_pendingBandSettings.remove(sliceId);
     detached = true;
     removalBegun = true; // Remote removal also owns detached-object completion.
     // R-R3-49: the audio thread stops seeing this slice before it is
@@ -17400,6 +17463,7 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // mode, filter, AGC tuple, NB, step, antennas, etc.) before we
     // overwrite the slice. See SliceModel::saveToSettings for the exact
     // key set persisted.
+    materializePendingBandSettings(slice->sliceIndex());
     slice->saveToSettings(current);
 
     if (slice->hasSettingsFor(band)) {
@@ -20746,15 +20810,62 @@ void RadioModel::handlePaTelemetry(quint16 fwdRaw, quint16 revRaw,
     //   ...
     //   // MI0BOT: temp for HL2
     //   _MKIIHL2Temp = (3.26f * (tempAverage / 4096.0f) - 0.5f) / 0.01f;
+    //
+    // mi0bot samples the latest reading on a fixed schedule, not once per
+    // status frame, so its 100 samples always span 800 ms:
+    // From mi0bot console.cs:24926-24930 [v2.10.3.13-beta2 @c26a8a4]:
+    //   // MW0LGE_21k9c
+    //   // old method ran ~100ms of volts and ~100ms of amps, then waited 600ms, total time for 100 readings of each = 800ms
+    //   // new method takes two readings every 8ms into a threadsafe fifo queue, so those 100 of each will be spread over 800ms
+    //   // MW0LGE [2.9.0.7] changed volts to 150
+    //   //G8NJJ need similar code for Saturn here, but rates from Ssaturn will be different
+    // NereusSDR's telemetry arrives once per status tick (every 200 ms
+    // idle, every 1 ms keyed), so the ring takes one sample of the latest
+    // reading per 8 ms poll that has passed: the reading held from the
+    // last call fills the polls in between, and this call's reading takes
+    // the latest poll. The window is 100 x 8 ms = 800 ms at either rate.
+    // From mi0bot console.cs:24976 [v2.10.3.13-beta2 @c26a8a4]:
+    //   while (_tempQueue.Count > 100 && nTries < 100) //  MI0BOT: HL2 temperature, keep max 100 in the queue
+    // From mi0bot console.cs:24987-24989 [v2.10.3.13-beta2 @c26a8a4]:
+    //   await Task.Delay(8);
+    //
+    //   // [2.10.1.0]MW0LGE log data to VALog.txt
+    // (the Volts/Amps log is VoltsAmpsLog, sampled above.)
+    constexpr int    kHl2TempSamples = 100;                 // console.cs:24976
+    constexpr qint64 kHl2TempPollNs  = 8LL * 1000 * 1000;   // 8 ms, console.cs:24987
+    static_assert(kHl2TempSamples == static_cast<int>(std::tuple_size_v<decltype(m_hl2TempRing)>),
+                  "the HL2 temperature ring holds mi0bot's 100 samples");
     double hl2TempC = 0.0;
     bool   hl2TempValid = false;
     if (model == HPSDRModel::HERMESLITE) {
-        m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = exciterRaw;
-        m_hl2TempHead = (m_hl2TempHead + 1) %
-                        static_cast<int>(m_hl2TempRing.size());
-        if (m_hl2TempCount < static_cast<int>(m_hl2TempRing.size())) {
-            ++m_hl2TempCount;
+        const qint64 nowNs = m_paTelemetryNowNsForTest
+            ? *m_paTelemetryNowNsForTest
+            : static_cast<qint64>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now().time_since_epoch()).count());
+        const auto pushHl2Temp = [this](quint16 value) {
+            m_hl2TempRing[static_cast<std::size_t>(m_hl2TempHead)] = value;
+            m_hl2TempHead = (m_hl2TempHead + 1) % kHl2TempSamples;
+            if (m_hl2TempCount < kHl2TempSamples) {
+                ++m_hl2TempCount;
+            }
+        };
+        if (m_hl2TempCount == 0) {
+            // First reading since the reset: it is the first sample.
+            pushHl2Temp(exciterRaw);
+            m_hl2TempLastPollNs = nowNs;
+        } else {
+            const qint64 polls = (nowNs - m_hl2TempLastPollNs) / kHl2TempPollNs;
+            if (polls > 0) {
+                const qint64 heldPolls =
+                    std::min<qint64>(polls - 1, kHl2TempSamples);
+                for (qint64 i = 0; i < heldPolls; ++i) {
+                    pushHl2Temp(m_hl2TempHeld);
+                }
+                pushHl2Temp(exciterRaw);
+                m_hl2TempLastPollNs += polls * kHl2TempPollNs;
+            }
         }
+        m_hl2TempHeld = exciterRaw;
         quint64 sum = 0;
         for (int i = 0; i < m_hl2TempCount; ++i) {
             sum += m_hl2TempRing[static_cast<std::size_t>(i)];
@@ -22906,7 +23017,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
                                   << "(freq=" << freq << "Hz)";
             crossBandForSlice(slice, newBand);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // Mode → WDSP
@@ -22964,7 +23075,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             snapTransmitFilterForMode(mode);
         }
 
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // R-R3-24: a slice restored already in a RADE mode never produces the
@@ -22983,7 +23094,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setFilterFreqs(low, high);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // AGC → WDSP
@@ -22992,7 +23103,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setAgcMode(mode);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // AGC advanced → WDSP
@@ -23023,35 +23134,35 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
             // without a lane.
             syncRfGainFromAgcTop(slice, rxCh);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::agcHangChanged, this, [this, slice](int ms) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setAgcHang(ms);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::agcSlopeChanged, this, [this, slice](int slope) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setAgcSlope(slope);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::agcAttackChanged, this, [this, slice](int ms) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setAgcAttack(ms);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
     connect(slice, &SliceModel::agcDecayChanged, this, [this, slice](int ms) {
         RxChannel* rxCh = m_wdspEngine->rxChannel(slice->sliceIndex());
         if (rxCh) {
             rxCh->setAgcDecay(ms);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // From Thetis v2.10.3.13 setup.cs:9081 — hang threshold
@@ -23060,7 +23171,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setAgcHangThreshold(val);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // From Thetis v2.10.3.13 setup.cs:9001 — fixed gain
@@ -23069,7 +23180,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setAgcFixedGain(dB);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // From Thetis v2.10.3.13 setup.cs:9011 — max gain
@@ -23078,7 +23189,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setAgcMaxGain(dB);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // ── Auto AGC-T timer ────────────────────────────────────────────────
@@ -23337,7 +23448,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
         if (rxCh) {
             rxCh->setNbMode(m);
         }
-        scheduleSettingsSave();
+        scheduleSettingsSave(slice);
     });
 
     // ── NB1 / NB2 / SNB detailed tuning → WDSP ──────────────────────────────
@@ -23590,7 +23701,7 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     // The dspModeChanged / filterChanged / agcModeChanged etc. handlers
     // above already call scheduleSettingsSave() as part of their main
     // job; this block covers the gaps.
-    connect(slice, &SliceModel::stepHzChanged,    this, [this](int) { scheduleSettingsSave(); });
+    connect(slice, &SliceModel::stepHzChanged,    this, [this, slice](int) { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::lockedChanged,    this, [this](bool) { scheduleSettingsSave(); });
     connect(slice, &SliceModel::ritEnabledChanged, this, [this](bool) { scheduleSettingsSave(); });
     connect(slice, &SliceModel::ritHzChanged,     this, [this](int) { scheduleSettingsSave(); });
@@ -25733,6 +25844,7 @@ void RadioModel::prepareReceiveLayout(const QString& radioMac)
         return;
     }
     m_receiveLayoutManaged = true;
+    m_pendingBandSettings.clear();
     m_receiveLayoutPendingAdmission = true;
     if (radioMac.isEmpty()) {
         setReceiveLayoutRestoreStatus(QStringLiteral("pending"),
@@ -26003,6 +26115,7 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     }
 
     const QPointer<RadioModel> self(this);
+    m_pendingBandSettings.clear();
     m_receiveLayoutHydrating = true;
     const auto finishHydration = qScopeGuard([self] {
         if (self) { self->m_receiveLayoutHydrating = false; }
@@ -26150,7 +26263,16 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
         slice = m_activeSlice;
     }
     if (slice) {
-        m_dirtySettingsSliceIds.insert(slice->sliceIndex());
+        const int id = slice->sliceIndex();
+        m_dirtySettingsSliceIds.insert(id);
+        QMap<QString, QVariant>& pending = m_pendingBandSettings[id];
+        // frequencyChanged runs before SliceModel updates its cached band.
+        // Capture the destination from the already-updated VFO, never pair
+        // that new VFO with the outgoing band's key.
+        for (const QPair<QString, QVariant>& value :
+             slice->captureBandSettings(bandFromFrequency(slice->frequency()))) {
+            pending.insert(value.first, value.second);
+        }
     }
     m_settingsSaveScheduled = true;
     // Fix wave (2026-09-30): one coalescing timer at a time, tracked apart
@@ -26366,6 +26488,38 @@ void RadioModel::applyStationSettingsSaveError(const QString& reason)
     emit settingsSaveErrorChanged(reason);
 }
 
+// Captures are consumed into the normal in-memory store, which retains
+// them through a failed file write and the existing background/retry path.
+void RadioModel::materializePendingBandSettings(int sliceId)
+{
+    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+        return;
+    }
+    const QMap<QString, QVariant> pending = m_pendingBandSettings.take(sliceId);
+    auto& settings = AppSettings::instance();
+    m_materializingPendingBandSettings = true;
+    const auto clearMaterializing = qScopeGuard([this] { m_materializingPendingBandSettings = false; });
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+        settings.setValue(it.key(), it.value());
+    }
+}
+
+void RadioModel::onSettingsKeyWritten(const QString& key)
+{
+    // The hold is this model's thread's alone. Slice keys are written on
+    // it (the proxy applies remote writes there); a write from any other
+    // thread is left alone rather than racing the hold.
+    if (QThread::currentThread() != thread()) {
+        return;
+    }
+    if (m_materializingPendingBandSettings || m_pendingBandSettings.isEmpty()) {
+        return;
+    }
+    for (auto it = m_pendingBandSettings.begin(); it != m_pendingBandSettings.end(); ++it) {
+        it.value().remove(key);
+    }
+}
+
 // Persist current slice state to AppSettings (per-band + session state).
 // Also flushes AlexController persistence if the dirty flag was set —
 // see the antennaChanged / blockTxChanged handlers in wireSliceSignals.
@@ -26375,7 +26529,8 @@ void RadioModel::saveSliceState(SliceModel* slice)
         return;
     }
     if (slice) {
-        slice->saveToSettings(slice->band());
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(bandFromFrequency(slice->frequency()));
     }
 
     // Flush AlexController if any per-band antenna or block-TX toggle
@@ -27000,6 +27155,12 @@ void RadioModel::teardownConnection()
     // but isConnected() still read stale-Connected. See design addendum
     // docs/architecture/2026-08-03-remote-daemon-r2-r3-design-addendum.md
     // section 5.
+    // The disconnected callback is severed above, so its discovery cleanup
+    // must also happen here. Clear before observers see Disconnected; an
+    // unsaved radio that has stopped replying may now age out normally.
+    if (m_discovery) {
+        m_discovery->clearConnectedMac();
+    }
     setConnectionState(ConnectionState::Disconnected);
 
     // TX safety fix round 2 (2026-09-30): the forced Disconnected above never
@@ -32049,8 +32210,8 @@ void RadioModel::wireIoBoardTool()
         return;
     }
     m_ioBoardToolWired = true;
-    // The codec emits these on the connection thread; they arrive queued,
-    // in the order they were sent.
+    // The codec emits these on the P1 EP2 sender thread, where frames are
+    // composed; they arrive queued, in the order they were sent.
     connect(&m_ioBoard, &IoBoardHl2::i2cTxComposed, this,
             [this](quint8 /*c0*/, quint8 c1, quint8 c2, quint8 c3, quint8 /*c4*/) {
                 // A read goes out with C1 0x07; C2 is 0x80 | the address and
@@ -33453,10 +33614,14 @@ void RadioModel::scheduleTgxlAutotune()
     const quint64 cycle = m_tgxlCycleGeneration;
     const QPointer<TxChannel> channel = m_tgxlCarrierChannel;
     const quint64 sequence = m_tgxlCarrierSequence;
-    QTimer::singleShot(kTgxlRfSettleMs, Qt::PreciseTimer, this,
+    QTimer::singleShot(m_tgxlRfSettleMs, Qt::PreciseTimer, this,
                       [this, cycle, channel, sequence]() {
-        if (cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
-            || sequence != m_tgxlCarrierSequence) {
+        const bool stale = cycle != m_tgxlCycleGeneration || channel != m_tgxlCarrierChannel
+            || sequence != m_tgxlCarrierSequence;
+        if (m_tgxlSettleFiredObserverForTest) {
+            m_tgxlSettleFiredObserverForTest(cycle, stale);
+        }
+        if (stale) {
             return;
         }
         m_tgxlSettlePending = false;

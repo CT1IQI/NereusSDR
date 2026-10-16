@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14: Restore saved spans down to the existing 1 kHz zoom minimum;
+//               re-anchor toasts on window geometry changes and remove a
+//               closing toast before restacking. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -780,6 +784,9 @@
 //                last or hidden. The S-Meter has a check box in the
 //                Containers menu's applet list. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
+//                 J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via OpenAI Codex.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1243,6 +1250,7 @@ warren@wpratt.com
 #include <QScreen>
 #include <QSlider>
 #include <QCloseEvent>
+#include <QMoveEvent>
 #include <QResizeEvent>
 #include <QEvent>
 #include <QHelpEvent>
@@ -4006,7 +4014,7 @@ void MainWindow::setDisplayDuplexSetting(bool on)
 // The setting to what the pan does (MoxDisplayController: none in a remote
 // window whose Core is below txDisplayVersion 3), to this window's own
 // noise blanking rule (RadioModel, a window running its own DSP), and to
-// the two controls: checked from the setting, disabled with the reason
+// all DUP controls: checked from the setting, disabled with the reason
 // when DUP cannot apply.
 void MainWindow::applyDisplayDuplex()
 {
@@ -4017,14 +4025,17 @@ void MainWindow::applyDisplayDuplex()
         m_radioModel->setLocalDisplayDuplex(m_displayDuplexSetting);
     }
     const QString reason = MoxDisplayController::displayDuplexUnavailableReason(m_radioModel);
+    const QString tip = reason.isEmpty()
+        ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
+                         "transmitting, under the transmit grid and colors.")
+        : reason;
+    if (m_txApplet) {
+        m_txApplet->setDisplayDuplexState(m_displayDuplexSetting, reason.isEmpty(), tip);
+    }
     if (m_displayDuplexAction) {
         const QSignalBlocker block(m_displayDuplexAction);
         m_displayDuplexAction->setChecked(m_displayDuplexSetting);
         m_displayDuplexAction->setEnabled(reason.isEmpty());
-        const QString tip = reason.isEmpty()
-            ? QStringLiteral("Keep the receiver on the transmitting panadapter while "
-                             "transmitting, under the transmit grid and colors.")
-            : reason;
         m_displayDuplexAction->setToolTip(tip);
         m_displayDuplexAction->setStatusTip(tip);
     }
@@ -10836,6 +10847,9 @@ void MainWindow::populateDefaultMeter()
     // through to TxApplet::requestOpenCfcDialog.
     auto* txApplet = new TxApplet(m_radioModel, nullptr);
     m_txApplet = txApplet;
+    connect(txApplet, &TxApplet::displayDuplexRequested,
+            this, &MainWindow::setDisplayDuplexSetting);
+    applyDisplayDuplex();
     panel->addApplet(txApplet);
 
     // ── 3M-1c Phase L: hand TxApplet the controllers it needs ──────────────
@@ -14012,8 +14026,12 @@ StatusToast* MainWindow::showToast(const QString& message,
     }
 
     auto* toast = new StatusToast(message, severity, timeoutMs, this);
-    connect(toast, &QObject::destroyed, this, [this]() {
-        m_toasts.removeIf([](const QPointer<StatusToast>& t) { return t.isNull(); });
+    connect(toast, &QObject::destroyed, this, [this](QObject* destroyedToast) {
+        // QWidget's QPointer may still be non-null during destroyed().
+        // Remove the dying window by identity before reading live geometry.
+        m_toasts.removeIf([destroyedToast](const QPointer<StatusToast>& t) {
+            return t.isNull() || t.data() == destroyedToast;
+        });
         restackToasts();
     });
     m_toasts.append(toast);
@@ -15452,7 +15470,8 @@ void MainWindow::wireSliceToSpectrum()
     // persisted zoom level if present. SpectrumWidget::loadSettings()
     // has already read "DisplayBandwidth" from AppSettings into
     // m_bandwidthHz by this point. If the loaded value is sensible
-    // (between 10 kHz and the DDC sample rate), keep it; otherwise
+    // (between the 1 kHz zoom minimum and the permitted ceiling), keep it;
+    // otherwise
     // fall back to the full-span default (768 kHz = sample rate).
     const double freq = slice->frequency();
     if (firstWiring) {
@@ -15463,8 +15482,8 @@ void MainWindow::wireSliceToSpectrum()
 
         // Same ceiling as setDisplayWindowClamped, spelled out here because the
         // FALLBACK differs: an out-of-range stored value goes to the full-span
-        // 768 kHz default rather than to the ceiling, and there is a 10 kHz floor
-        // that only applies to a restored value. The ceiling is the shared part.
+        // 768 kHz default rather than to the ceiling. The 1 kHz floor matches
+        // the operator zoom controls; the ceiling is the shared part.
         //
         // The upper bound is that extended ceiling, not a hardcoded 768 kHz.
         //
@@ -15476,7 +15495,7 @@ void MainWindow::wireSliceToSpectrum()
         // old literal meant to say. Codex, PR #318.
         const double loadedBw = host->bandwidth();
         const double ceiling  = host->maxZoomOutBandwidthHz();
-        const double initialBw = (loadedBw >= 10000.0 && loadedBw <= ceiling)
+        const double initialBw = (loadedBw >= 1000.0 && loadedBw <= ceiling)
                                  ? loadedBw : 768000.0;
         // The provisional remote Slice A has no authoritative hosting key.
         // Preserve this pane's view until its record completes, just as the
@@ -16162,6 +16181,12 @@ double MainWindow::readSystemCpuPercent()
                               / static_cast<double>(totalDelta));
 }
 
+void MainWindow::moveEvent(QMoveEvent* event)
+{
+    QMainWindow::moveEvent(event);
+    restackToasts();
+}
+
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
@@ -16186,6 +16211,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         m_chromeBar->relayout(m_chromeBarWidget->width());
     }
     placeCoreStopBanner();
+    restackToasts();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)

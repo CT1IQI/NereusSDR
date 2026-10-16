@@ -34,6 +34,8 @@
 //   2026-10-11: permission-while-marked holds Permission until the test
 //               removes a file, in place of a set time.  J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: generation-tagged open-step diagnostic regression.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "FakeCaptureChild.h"
@@ -79,7 +81,7 @@ constexpr double kTwoPi = 6.283185307179586;
 constexpr int kToneFrames = 480;
 
 enum class Scenario {
-    Ready, HangOpen, HangOpenAfterStep, NoHello, PermissionThenReady, CrashAfterReady,
+    Ready, HangOpen, HangOpenAfterStep, HangOpenAfterTaggedSteps, NoHello, PermissionThenReady, CrashAfterReady,
     Malformed, Oversize, InputLost, IgnoreStop, Stale, Probe, Version1,
     PcmRecord, PcmRecordOnProbeEnable, CrashOnProbeEnable, InputLostOnProbeEnable,
     Busy, BusyWhileMarked, BusyWhileMarkedThenPending, BadRing,
@@ -91,6 +93,7 @@ std::optional<Scenario> scenarioFromName(const QString& name)
     if (name == QLatin1String("ready")) { return Scenario::Ready; }
     if (name == QLatin1String("hang-open")) { return Scenario::HangOpen; }
     if (name == QLatin1String("hang-open-after-step")) { return Scenario::HangOpenAfterStep; }
+    if (name == QLatin1String("hang-open-after-tagged-steps")) { return Scenario::HangOpenAfterTaggedSteps; }
     if (name == QLatin1String("no-hello")) { return Scenario::NoHello; }
     if (name == QLatin1String("permission-then-ready")) { return Scenario::PermissionThenReady; }
     if (name == QLatin1String("crash-after-ready")) { return Scenario::CrashAfterReady; }
@@ -491,6 +494,20 @@ private:
             std::fflush(stderr);
             m_ignoring = true;
             return;
+        case Scenario::HangOpenAfterTaggedSteps: {
+            sendStatus(m_generation, P::HelperState::Opening);
+            const long long pid = QCoreApplication::applicationPid();
+            std::fprintf(stderr, "nereus-audio-capture: open step: [pid=%lld generation=%u] current query at 12 ms\n",
+                         pid, static_cast<unsigned int>(m_generation));
+            std::fprintf(stderr, "nereus-audio-capture: open step: [pid=%lld generation=%u] stale generation at 20 ms\n",
+                         pid, static_cast<unsigned int>(m_generation - 1));
+            std::fprintf(stderr, "nereus-audio-capture: open step: [pid=%lld generation=%u] wrong process at 30 ms\n",
+                         pid + 1, static_cast<unsigned int>(m_generation));
+            std::fprintf(stderr, "nereus-audio-capture: open step: [pid=invalid generation=invalid] malformed tag at 40 ms\n");
+            std::fflush(stderr);
+            m_ignoring = true;
+            return;
+        }
         case Scenario::PermissionThenReady:
             sendStatus(m_generation, P::HelperState::Permission);
             m_readyAt = Clock::now() + kPermissionHold;

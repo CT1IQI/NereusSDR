@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-14: Follow window moves with the existing toast anchor and add
+//               access-only display regression friendship. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-11 - J.J. Boyd (KG4VCF). Follow-up wave F6:
 //                dispatchFftFrameToPans takes the frame's input generation.
 //                AI-assisted via Anthropic Claude Code.
@@ -255,6 +258,7 @@
 #include "gui/ReceiverStopNotices.h"
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
+#include "gui/NereusGuiExport.h"
 
 class QProgressDialog;
 class QSplitter;
@@ -344,7 +348,7 @@ class ClientChainApplet;
 // Phase 3J-1 closeout Item 2 (2026-05-12): TciLogWindow viewer.
 class TciLogWindow;
 
-class MainWindow : public QMainWindow {
+class NEREUS_GUI_EXPORT MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
@@ -668,6 +672,7 @@ public slots:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -1167,6 +1172,7 @@ private slots:
 private:
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
+    friend class DisplaySettingsCorrectnessAccess;
 #endif
     // Parity Task 21 (R-IOS-18, B6.2, B6.3): the Core's radio from a remote
     // window: Setup > This Core opened on what the menu asked for.

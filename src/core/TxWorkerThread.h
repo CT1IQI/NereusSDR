@@ -58,6 +58,7 @@
 #include <vector>
 
 #include "core/audio/RadeTxFilters.h"
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -114,7 +115,7 @@ class TxMicSource;
 //   5. Destruct (after stopPump and after TxChannel is moved back to
 //      its original thread by RadioModel).
 // ---------------------------------------------------------------------------
-class TxWorkerThread : public QThread {
+class NEREUS_CORE_EXPORT TxWorkerThread : public QThread {
     Q_OBJECT
 
 public:

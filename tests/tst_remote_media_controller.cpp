@@ -12490,6 +12490,8 @@ private slots:
     {
         const RestoreAudioChoice restore;
         Test::RemoteAudioSessionHarness h;
+        // This fake session uses VAX to stop preview capture on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.pairWindow = true;
         h.makeTransmitReady();
         AudioEngine* engine = h.remote.audioEngine();
@@ -12513,6 +12515,7 @@ private slots:
         // preview off the line holds no capture lease at all, and the key
         // still sends its silence.
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         QVERIFY(takeTransmit(h));
         const quint64 beforeProgram = media.micPacketsSent();
@@ -12754,6 +12757,8 @@ private slots:
     {
         const RestoreAudioChoice restore;
         Test::RemoteAudioSessionHarness h;
+        // This fake session uses VAX to stop preview capture on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.pairWindow = true;
         h.makeTransmitReady();
         AudioEngine* engine = h.remote.audioEngine();
@@ -12772,6 +12777,7 @@ private slots:
                                  5000);
         // No local preview: nothing of this window demands the capture.
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         {
             // A demand of its own opens (and fails) a generation, then goes.
@@ -12806,6 +12812,8 @@ private slots:
     {
         const RestoreAudioChoice restore;
         Test::RemoteAudioSessionHarness h;
+        // This fake session uses VAX to stop preview capture on every platform.
+        h.remote.transmitModel().setVaxSourceAvailable(true);
         h.pairWindow = true;
         h.makeTransmitReady();
         AudioEngine* engine = h.remote.audioEngine();
@@ -12824,6 +12832,7 @@ private slots:
                                  5000);
         // No local preview: this window holds no lease.
         h.remote.transmitModel().setMicSource(MicSource::Vax);
+        QCOMPARE(h.remote.transmitModel().micSource(), MicSource::Vax);
         QTRY_VERIFY(!media.micCaptureLeaseHeldForTest());
         const quint32 previewed = engine->captureStatus().generation;
         CaptureSupervisor::Lease other = engine->acquireCaptureDemand(

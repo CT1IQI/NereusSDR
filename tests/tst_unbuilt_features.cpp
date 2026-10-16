@@ -1057,6 +1057,13 @@ private slots:
             QVERIFY(action->isCheckable());
             QCOMPARE(action->text(), QStringLiteral("Display duplex (DUP)"));
             QVERIFY(!action->isChecked());
+            QPushButton* dup = hosts.window()->findChild<QPushButton*>(QStringLiteral("TxAppletDupBtn"));
+            QVERIFY(dup);
+            QVERIFY(!dup->isHidden());
+            QVERIFY(dup->isCheckable());
+            QCOMPARE(dup->isChecked(), action->isChecked());
+            QCOMPARE(dup->isEnabled(), action->isEnabled());
+            QCOMPARE(dup->toolTip(), action->toolTip());
             QVERIFY(OperatorWording::isPlain(action->toolTip()));
             if (remote) {
                 QVERIFY(!action->isEnabled());
@@ -1064,13 +1071,30 @@ private slots:
                          QStringLiteral("This Core does not show the receiver while "
                                         "transmitting for this app. Updating the Core may "
                                         "help."));
+                hosts.window()->radioModel()->setStationTxDisplayVersion(3);
+                QVERIFY(action->isEnabled());
+                QVERIFY(dup->isEnabled());
+                QCOMPARE(dup->toolTip(), action->toolTip());
+                dup->click();
+                QVERIFY(action->isChecked());
+                QVERIFY(dup->isChecked());
+                hosts.window()->radioModel()->setStationTxDisplayVersion(2);
+                QVERIFY(!action->isEnabled());
+                QVERIFY(!dup->isEnabled());
+                QCOMPARE(dup->toolTip(), action->toolTip());
+                QVERIFY(dup->isChecked());
+                hosts.window()->radioModel()->setStationTxDisplayVersion(3);
+                action->trigger();
+                QVERIFY(!dup->isChecked());
             } else {
                 QVERIFY(action->isEnabled());
-                action->trigger();
+                dup->click();
                 QVERIFY(action->isChecked());
+                QVERIFY(dup->isChecked());
                 QCOMPARE(AppSettings::instance().value(QStringLiteral("DisplayDuplex")).toString(),
                          QStringLiteral("True"));
                 action->trigger();
+                QVERIFY(!dup->isChecked());
                 QCOMPARE(AppSettings::instance().value(QStringLiteral("DisplayDuplex")).toString(),
                          QStringLiteral("False"));
             }

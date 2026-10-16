@@ -52,6 +52,9 @@
 //                 also sends the receive audio, no longer waits for the
 //                 disk. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-15 - addWriteObserver(): setValue() and remove() also tell
+//                 the write observers, beside the change hook. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1122,6 +1125,7 @@ void AppSettings::setValue(const QString& key, const QVariant& val)
     if (m_changeHook) {
         m_changeHook(key);
     }
+    notifyWriteObservers(key);
 }
 
 void AppSettings::remove(const QString& key)
@@ -1176,6 +1180,7 @@ void AppSettings::remove(const QString& key)
     if (m_changeHook) {
         m_changeHook(key);
     }
+    notifyWriteObservers(key);
 }
 
 bool AppSettings::contains(const QString& key) const
@@ -1246,6 +1251,27 @@ void AppSettings::clear()
 void AppSettings::setChangeHook(std::function<void(const QString& key)> hook)
 {
     m_changeHook = std::move(hook);
+}
+
+int AppSettings::addWriteObserver(std::function<void(const QString& key)> observer)
+{
+    const int id = m_nextWriteObserverId++;
+    m_writeObservers.insert(id, std::move(observer));
+    return id;
+}
+
+void AppSettings::removeWriteObserver(int id)
+{
+    m_writeObservers.remove(id);
+}
+
+void AppSettings::notifyWriteObservers(const QString& key) const
+{
+    for (auto it = m_writeObservers.cbegin(); it != m_writeObservers.cend(); ++it) {
+        if (it.value()) {
+            it.value()(key);
+        }
+    }
 }
 
 QMap<QString, QString> AppSettings::snapshot(const QStringList& prefixes) const

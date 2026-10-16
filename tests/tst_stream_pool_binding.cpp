@@ -780,6 +780,123 @@ private slots:
         QCOMPARE(assignments.count(), 0);
     }
 
+    // A rejected restored preference must not claim a rate the DDC never adopted.
+    void rejected_restored_rate_keeps_effective_rate_and_geometry()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 3, 192000);
+        model.receiverManager()->createReceiver();
+        model.receiverManager()->createReceiver();
+        model.openRxChannelPool(3, bufferSizeForRate(192000), 192000);
+
+        const int a = model.addSlice();
+        model.sliceById(a)->setFrequency(14200000.0);
+        model.setStreamSampleRate(0, 768000);
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        const int b = model.addSlice();
+        model.sliceById(b)->setFrequency(14400000.0);
+        QCOMPARE(model.sliceById(b)->streamIndex(), 0);
+
+        const int c = model.addSlice();
+        model.sliceById(c)->setFrequency(7100000.0);
+        QCOMPARE(model.sliceById(c)->streamIndex(), 1);
+        QCOMPARE(model.activeStreamCount(), 2);
+
+        struct StreamSnapshot {
+            bool active;
+            double centreHz;
+            int rateHz;
+        };
+        const std::array<StreamSnapshot, 2> streamsBefore{{
+            {model.streamActiveForTest(0),
+             model.streamCentreHzForTest(0),
+             model.streamSampleRateHzForTest(0)},
+            {model.streamActiveForTest(1),
+             model.streamCentreHzForTest(1),
+             model.streamSampleRateHzForTest(1)}
+        }};
+
+        struct SliceSnapshot {
+            int stream;
+            double shiftHz;
+            int rateHz;
+        };
+        const std::array<SliceSnapshot, 3> slicesBefore{{
+            {model.sliceById(a)->streamIndex(),
+             model.sliceById(a)->shiftOffsetHz(),
+             model.sliceById(a)->sampleRateHz()},
+            {model.sliceById(b)->streamIndex(),
+             model.sliceById(b)->shiftOffsetHz(),
+             model.sliceById(b)->sampleRateHz()},
+            {model.sliceById(c)->streamIndex(),
+             model.sliceById(c)->shiftOffsetHz(),
+             model.sliceById(c)->sampleRateHz()}
+        }};
+
+        const std::array<ReceiverConfig, 2> receiversBefore{{
+            model.receiverManager()->receiverConfig(0),
+            model.receiverManager()->receiverConfig(1)
+        }};
+        const std::array<std::pair<int, int>, 3> wdspBefore{{
+            {engine->rxChannel(a)->sampleRate(), engine->rxChannel(a)->bufferSize()},
+            {engine->rxChannel(b)->sampleRate(), engine->rxChannel(b)->bufferSize()},
+            {engine->rxChannel(c)->sampleRate(), engine->rxChannel(c)->bufferSize()}
+        }};
+
+        QSignalSpy centres(&model, &RadioModel::streamCentreChanged);
+        QSignalSpy bindings(&model, &RadioModel::streamBindingsChanged);
+        QSignalSpy assignments(&model, &RadioModel::ddcAssignmentRequested);
+
+        QSignalSpy rejected(&model, &RadioModel::sliceRetuneRejected);
+        model.sliceById(a)->setSampleRateHz(192000);
+        model.applyRestoredSampleRate(model.sliceById(a));
+        // R-R3-39: the WDSP and worker sides of the change run on the receive lane.
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(rejected.count(), 1);
+        QCOMPARE(rejected.first().at(0).toInt(), a);
+        QCOMPARE(model.sliceById(a)->frequency(), 14200000.0);
+        QCOMPARE(model.sliceById(b)->frequency(), 14400000.0);
+        QCOMPARE(model.sliceById(c)->frequency(), 7100000.0);
+
+        for (int st = 0; st < 2; ++st) {
+            QCOMPARE(model.streamActiveForTest(st), streamsBefore[st].active);
+            QCOMPARE(model.streamCentreHzForTest(st), streamsBefore[st].centreHz);
+            QCOMPARE(model.streamSampleRateHzForTest(st), streamsBefore[st].rateHz);
+        }
+
+        const std::array<int, 3> ids{{a, b, c}};
+        for (int i = 0; i < 3; ++i) {
+            const SliceModel* slice = model.sliceById(ids[i]);
+            QCOMPARE(slice->streamIndex(), slicesBefore[i].stream);
+            QCOMPARE(slice->shiftOffsetHz(), slicesBefore[i].shiftHz);
+            QCOMPARE(slice->sampleRateHz(), slicesBefore[i].rateHz);
+        }
+
+        for (int st = 0; st < 2; ++st) {
+            const ReceiverConfig after =
+                model.receiverManager()->receiverConfig(st);
+            QCOMPARE(after.frequencyHz, receiversBefore[st].frequencyHz);
+            QCOMPARE(after.sampleRate, receiversBefore[st].sampleRate);
+            QCOMPARE(after.active, receiversBefore[st].active);
+        }
+
+        for (int i = 0; i < 3; ++i) {
+            const RxChannel* channel = engine->rxChannel(ids[i]);
+            QCOMPARE(channel->sampleRate(), wdspBefore[i].first);
+            QCOMPARE(channel->bufferSize(), wdspBefore[i].second);
+        }
+
+        QCOMPARE(centres.count(), 0);
+        QCOMPARE(bindings.count(), 0);
+        QCOMPARE(assignments.count(), 0);
+    }
+
     // ── Phase 3F Sub-Epic I closeout, defect F1 ─────────────────────────
     //
     // connectToRadio sizes the pool and binds every slice BEFORE

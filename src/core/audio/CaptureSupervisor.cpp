@@ -41,6 +41,8 @@
 //               fireDeadlinesNowForTest() runs the armed deadlines'
 //               handlers at once, so a test can fire them early.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: attribute open-step diagnostics to their process/generation.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/audio/CaptureSupervisor.h"
@@ -62,10 +64,12 @@
 #include <QMutexLocker>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QSemaphore>
 #include <QTimer>
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -879,6 +883,10 @@ private:
             return;
         }
         startWaiter(m_generation);
+        qCDebug(lcAudio).nospace() << "capture-command send configure-attach-open pid=" << m_process->processId()
+                                 << " generation=" << m_generation
+                                 << " monotonic-ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()).count();
         write(configureRecord);
         write(attachRecord);
         write(openRecord);
@@ -1044,7 +1052,26 @@ private:
         // last one is named when the open deadline passes.
         const qsizetype step = text.indexOf(kOpenStepMark);
         if (step >= 0) {
-            m_lastOpenStep = text.mid(step + kOpenStepMark.size());
+            const QString detail = text.mid(step + kOpenStepMark.size());
+            if (detail.startsWith(QLatin1Char('['))) {
+                // Tagged steps from retired opens are still forwarded, but
+                // cannot explain this generation's deadline. Malformed tags
+                // must not fall back to the legacy untagged format.
+                static const QRegularExpression tag(QStringLiteral(
+                    "^\\[pid=([0-9]+) generation=([0-9]+)\\] (.+)$"));
+                const QRegularExpressionMatch match = tag.match(detail);
+                bool pidValid = false;
+                bool generationValid = false;
+                const qint64 pid = match.captured(1).toLongLong(&pidValid);
+                const quint32 generation = match.captured(2).toUInt(&generationValid);
+                if (match.hasMatch() && pidValid && generationValid && pid > 0
+                    && m_process && pid == m_process->processId() && generation == m_generation) {
+                    m_lastOpenStep = match.captured(3);
+                }
+            } else {
+                // Retain diagnostics from older helpers and the legacy fake.
+                m_lastOpenStep = detail;
+            }
         }
         qCInfo(lcAudio).noquote() << "capture helper stderr:" << text;
     }

@@ -38,6 +38,9 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
+//   2026-10-14: comments say how often P1 reports its PTT level: on each
+//                change and each status tick. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-04: CAT accepted-intent tags and guarded cycle lifetimes,
 //                NereusSDR-original, by J.J. Boyd (KG4VCF), AI-assisted
 //                via OpenAI Codex.
@@ -1037,8 +1040,9 @@ public slots:
     // Mic PTT, CAT, VOX and TCI record their source's level and run one
     // PollPTT pass (console.cs:25463-25623 [v2.10.3.15]) over the recorded
     // levels. Thetis polls every millisecond; NereusSDR runs the pass on
-    // every source event, and the radio's status frames (mic PTT, sent on
-    // every frame) keep it running like a poll while connected.
+    // every source event, and the radio's PTT reports (each P2 status
+    // frame; for P1, each change and each status tick, 1 ms keyed and
+    // 200 ms idle) keep it running like a poll while connected.
     //
     // The pass follows Thetis:
     //   - Nothing happens while a manual key is on (isManualKey(), Thetis
@@ -1072,9 +1076,11 @@ public slots:
     //   _current_ptt_mode = PTTMode.MIC;                   [v2.10.3.13]
     //   From Thetis console.cs:25492 [v2.10.3.13]
     //
-    // RadioConnection::micPttFromRadio calls this on every P1/P2 status
-    // frame (H.5), pressed or not, so the PollPTT pass runs like Thetis's
-    // poll while connected.
+    // RadioConnection::micPttFromRadio calls this for every P2 status frame
+    // (H.5) and, for P1, on each PTT change and each status tick (1 ms
+    // keyed, 200 ms idle), pressed or not, so the PollPTT
+    // pass runs like Thetis's poll while connected. The HL2 I2C-response path
+    // does not publish its retained C0 bit 0 as a PTT update.
     //
     // Note: the slot name is "FromRadio" to distinguish hardware PTT from a
     // future software-only "mic mute" control.
