@@ -19,6 +19,11 @@
 //   2026-10-12: wakes() and collectedFrames(), so the owner can report a
 //               collector that takes nothing.  J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: stop() no longer waits on the thread's priority request,
+//               which reads Core Audio on the Mac and can take seconds
+//               there; it lets such a thread go and says so.  The priority
+//               calls can be swapped for tests.  J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -35,6 +40,8 @@
 
 namespace NereusSDR {
 
+struct AudioPriorityToken;
+
 // One producer (the collector thread, or collectOnce() called inline while
 // the thread is not running) and one consumer (the owner's thread).
 //
@@ -44,7 +51,13 @@ namespace NereusSDR {
 //                  wakeIntervalMs calls collectOnce() until stop().
 //   stop()         wakes the thread at once, joins it, and discards what is
 //                  queued.  Safe when not running.  The source is never
-//                  called after stop() returns.
+//                  called after stop() returns.  A thread still waiting on
+//                  its priority request is not waited for: on the Mac that
+//                  request reads Core Audio, which can take seconds while
+//                  Core Audio starts or a voice isolation storm runs, and
+//                  the owner's thread is the GUI thread.  stop() lets it
+//                  go; once answered it gives the priority back and ends
+//                  without touching the collector, which may be gone.
 //   collectOnce()  pulls the source until it gives a short block and queues
 //                  what it gave.  No allocation, no lock, no logging.
 //   drain()        the consumer takes up to maxFrames, oldest first.
@@ -70,14 +83,30 @@ public:
     // A source that fills every pull ends a wake after this many pulls.
     static constexpr int kMaxPullsPerWake = kQueueFrames / kPullFrames;
 
+    // How the thread asks for real-time audio priority and gives it back,
+    // on its own thread (RealtimeAudioPriority.h by default; tests put in
+    // their own).
+    struct PriorityCalls {
+        std::function<AudioPriorityToken*()> elevate;
+        std::function<void(AudioPriorityToken*)> leave;
+    };
+
+    // How stop() ended the run.
+    enum class StopOutcome {
+        NotRunning,             // there was no thread
+        Joined,                 // the thread ended before stop() returned
+        LeftWaitingOnPriority   // let go while it waited on its priority request
+    };
+
     explicit MicUplinkCollector(Source source, int wakeIntervalMs = kWakeIntervalMs);
+    MicUplinkCollector(Source source, int wakeIntervalMs, PriorityCalls priority);
     ~MicUplinkCollector();                       // stop()
     MicUplinkCollector(const MicUplinkCollector&) = delete;
     MicUplinkCollector& operator=(const MicUplinkCollector&) = delete;
 
     // ── Owner's thread ──────────────────────────────────────────────────
     void start();
-    void stop();
+    StopOutcome stop();
     bool isRunning() const { return m_thread.joinable(); }
     int drain(float* dst, int maxFrames);
     void discardQueued();
@@ -98,13 +127,17 @@ public:
     int collectOnce();
 
 private:
-    void run();
+    // Shared with the thread, which may outlive the collector.
+    struct ThreadGate;
+
+    void run(AudioPriorityToken* priority);
     void push(const float* src, int frames);
 
     static constexpr std::uint64_t kMask = static_cast<std::uint64_t>(kQueueFrames) - 1;
 
     Source m_source;
     int m_wakeIntervalMs;
+    PriorityCalls m_priority;
     std::unique_ptr<std::atomic<float>[]> m_ring;
     std::atomic<std::uint64_t> m_write{0};       // the producer advances it
     std::atomic<std::uint64_t> m_read{0};        // the consumer; the producer when full
@@ -116,6 +149,7 @@ private:
     QSemaphore m_stopWake;
     std::atomic<bool> m_stopRequested{false};
     std::thread m_thread;
+    std::shared_ptr<ThreadGate> m_gate;
 };
 
 } // namespace NereusSDR
