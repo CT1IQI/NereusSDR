@@ -3,6 +3,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: mediaIceConfiguration says whether its settings are the
+//               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: startMicCollector's vax source (VAX as a remote window's
@@ -772,7 +775,9 @@ private:
     void updateDirectUpgrade(bool viaTunnel);
     void markReplacePending();
     void tryPendingReplace();
-    std::optional<IceConfiguration> mediaIceConfiguration();
+    // fromTunnel, when given, says whether the settings are the media
+    // tunnel's.
+    std::optional<IceConfiguration> mediaIceConfiguration(bool* fromTunnel = nullptr);
     void retireOldPeer();
 };
 } // namespace NereusSDR

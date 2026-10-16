@@ -208,6 +208,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  setSessionIceConfigurationForTest:
+//                                    a test stands in for the ICE settings
+//                                    of a session through the service.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable
 //                                    and coreSpeakerNeedsNewerCore
 //                                    (coreSpeakerVersion 1, native audio
@@ -802,6 +806,14 @@ public:
     /// (DataChannelTransport::mediaIceConfiguration()); none for a
     /// WebSocket session.
     std::optional<IceConfiguration> sessionIceConfiguration() const;
+    /// Test seam: what sessionIceConfiguration() returns, as a session
+    /// through the service would (a test link is not a
+    /// DataChannelTransport). Empty: the session's own. No production
+    /// caller.
+    void setSessionIceConfigurationForTest(std::optional<IceConfiguration> ice)
+    {
+        m_sessionIceForTest = std::move(ice);
+    }
     /// Task 29 step 2b (link section 21, "The media tunnel"): the Core told
     /// mediaTunnelVersion 1, so the media start may declare the tunnel even
     /// before a later path move to a direct WebSocket.
@@ -2284,6 +2296,8 @@ private:
     /// The ICE settings of the connection through the service this session
     /// left, so its media keeps the service's STUN server (link 21.3).
     std::optional<IceConfiguration> m_serviceIce;
+    // setSessionIceConfigurationForTest.
+    std::optional<IceConfiguration> m_sessionIceForTest;
     /// The last STUN server a session through the service used (the
     /// direct media ladder's fallback); never saved.
     mutable std::optional<IceServerAddress> m_lastServiceStun;

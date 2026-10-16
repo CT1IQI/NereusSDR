@@ -3,6 +3,16 @@
 //   2026-10-15: a control path whose ICE pair is not known yet keeps the
 //               direct-path media rules, as before it ranked as relayed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: the direct media ladder and the tunnel-rate heartbeat count
+//               only a connection whose ICE settings came from the media
+//               tunnel, not any loopback shim: media on the web relay leg
+//               (the tunnel declared for a later move) tries no direct-only
+//               replace, so a session move is followed at once instead of
+//               waiting behind one that cannot connect where UDP is
+//               blocked. The stall rule still covers any loopback shim on a
+//               start that declared the tunnel. The stall tick's timer is
+//               named remoteMediaStallTimer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-15: fix wave 2: the line follows programAudioKeyChanged at
 //               once (a direct connection), so a program key that arrives
 //               or ends under the screen key joins or restarts the VAX
@@ -1214,6 +1224,12 @@ struct RemoteMediaController::Private {
     bool currentRouted = false;
     bool replacementRouted = false;
     bool replacementDirect = false;
+    // Whether the connection in use, and the one being started, took
+    // their ICE settings from the media tunnel. The web relay leg is a
+    // loopback shim too, and the tunnel may be declared on it for a later
+    // move, so only this says media rides the tunnel.
+    bool currentTunnelIce = false;
+    bool replacementTunnelIce = false;
     // The direct media ladder: the next direct-only replace while media
     // rides the tunnel (PathRacer::kUpgradeRetryMs steps), and when a media
     // packet last came (allocationClock; -1 before the first).
@@ -1857,6 +1873,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     // Task 29 step 2b: the media stall rule's check.
     d->stallTimer = new QTimer(this);
     d->stallTimer->setInterval(500);
+    d->stallTimer->setObjectName(QStringLiteral("remoteMediaStallTimer"));
     connect(d->stallTimer, &QTimer::timeout, this, [this] {
         // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
@@ -1870,12 +1887,17 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         // The tunnel counts only once ICE settled on it (a host pair on an
         // open network is not a slow path); the control heartbeat follows.
+        // The ladder and the heartbeat count only media on the tunnel's own
+        // settings; the stall rule still covers any loopback shim on a start
+        // that declared the tunnel, the web relay leg included (media left
+        // on it after the session moved to a better path).
         const std::optional<MediaIcePath> path = d->peer->selectedPath();
-        const bool viaTunnel = d->tunnelNegotiated && path && path->viaLoopbackShim();
+        const bool viaShim = path && path->viaLoopbackShim();
+        const bool viaTunnel = d->currentTunnelIce && viaShim;
         d->client->setMediaTunnelInUse(viaTunnel);
         const int rank = d->client->pathRank();
         const bool slowPath = (rank == PathRacer::ServiceRelayed && !d->client->pathPairUnknown())
-            || rank == PathRacer::Floor || viaTunnel;
+            || rank == PathRacer::Floor || (d->tunnelNegotiated && viaShim);
         // The Core stops RX audio for the TX-bound slice while keyed. Only
         // its negotiated txState can establish that this silence is expected.
         // Keep the media connection and display alive; the independent TX
@@ -3835,6 +3857,8 @@ void RemoteMediaController::stop()
     d->currentRouted = false;
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->currentTunnelIce = false;
+    d->replacementTunnelIce = false;
     d->silenceFallbackFired = false;
     d->replacementFallback = false;
     d->fallbackFinishedMs = -1;
@@ -4148,6 +4172,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
         }
     }
     std::optional<IceConfiguration> nextIce;
+    bool nextTunnelIce = false;
     if (direct) {
         nextIce = d->client->mediaDirectIceConfiguration();
     } else if (kind == ReplaceKind::TunnelFallback && d->tunnelNegotiated) {
@@ -4155,9 +4180,10 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
         // candidates), so ICE cannot settle on the silent direct pair
         // again. The replace on the wire is the plain three-field one.
         nextIce = d->client->mediaTunnelOnlyIceConfiguration();
-        if (!nextIce) { nextIce = mediaIceConfiguration(); }
+        nextTunnelIce = nextIce.has_value();
+        if (!nextIce) { nextIce = mediaIceConfiguration(&nextTunnelIce); }
     } else {
-        nextIce = mediaIceConfiguration();
+        nextIce = mediaIceConfiguration(&nextTunnelIce);
     }
     // A raw tag-2 relay leg in use has one agent destination: a new
     // connection without the tunnel's own framing would redirect it.
@@ -4206,6 +4232,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
     });
     d->replacementRouted = nextIce && nextIce->mediaRouting();
     d->replacementDirect = direct;
+    d->replacementTunnelIce = nextTunnelIce;
     d->replacementFallback = kind == ReplaceKind::TunnelFallback;
     d->replacementMoveFolded = carriesFoldedMove;
     peer->setIceConfiguration(nextIce);
@@ -4320,6 +4347,7 @@ void RemoteMediaController::promoteReplacement()
     // The direct media ladder: the connection in use is now the new one,
     // and its silence is counted from here.
     d->currentRouted = std::exchange(d->replacementRouted, false);
+    d->currentTunnelIce = std::exchange(d->replacementTunnelIce, false);
     d->replacementDirect = false;
     d->replacementMoveFolded = false;
     d->lastMediaMs = d->allocationClock();
@@ -4383,12 +4411,18 @@ void RemoteMediaController::retireOldPeer()
     }
 }
 
-std::optional<IceConfiguration> RemoteMediaController::mediaIceConfiguration()
+std::optional<IceConfiguration> RemoteMediaController::mediaIceConfiguration(bool* fromTunnel)
 {
+    if (fromTunnel != nullptr) {
+        *fromTunnel = false;
+    }
     // Task 29 step 2b: over the tunnel while it was declared and the
     // session still runs on a WebSocket (as the Core decides the same).
     if (d->tunnelNegotiated) {
         if (auto tunnel = d->client->mediaTunnelIceConfiguration()) {
+            if (fromTunnel != nullptr) {
+                *fromTunnel = true;
+            }
             return tunnel;
         }
     }
@@ -4503,6 +4537,7 @@ void RemoteMediaController::dropReplacement(const QString& why)
     d->replacementId.clear();
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->replacementTunnelIce = false;
     d->replacementMoveFolded = false;
     if (std::exchange(d->replacementFallback, false)) {
         d->fallbackFinishedMs = d->allocationClock();
@@ -4587,7 +4622,7 @@ void RemoteMediaController::runDirectUpgradeStep()
     }
     const auto onTunnel = [this] {
         const std::optional<MediaIcePath> path = d->peer->selectedPath();
-        return d->tunnelNegotiated && path && path->viaLoopbackShim();
+        return d->currentTunnelIce && path && path->viaLoopbackShim();
     };
     if (!onTunnel()) {
         updateDirectUpgrade(false);
@@ -4874,12 +4909,15 @@ void RemoteMediaController::start()
     // The window pings faster once media rides the tunnel (step 2b; the
     // stall check sets it when ICE has settled on the tunnel's pair).
     d->client->setMediaTunnelInUse(false);
-    const auto startIce = mediaIceConfiguration();
+    bool startTunnelIce = false;
+    const auto startIce = mediaIceConfiguration(&startTunnelIce);
     // The direct media ladder: a new media start begins its direct-only
     // schedule at the first step.
     d->currentRouted = startIce && startIce->mediaRouting();
+    d->currentTunnelIce = startTunnelIce;
     d->replacementRouted = false;
     d->replacementDirect = false;
+    d->replacementTunnelIce = false;
     d->directUpgrade->stop();
     d->directUpgradeStep = 0;
     d->lastMediaMs = -1;

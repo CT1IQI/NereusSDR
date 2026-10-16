@@ -27,6 +27,10 @@
 //   2026-10-15  J.J. Boyd / KG4VCF  A canceled path race says why in its
 //                                    log line. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-10-15  J.J. Boyd / KG4VCF  sessionIceConfiguration() returns a
+//                                    test's stand-in first
+//                                    (setSessionIceConfigurationForTest).
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
@@ -1574,6 +1578,9 @@ void StationClient::dialThroughService()
 
 std::optional<IceConfiguration> StationClient::sessionIceConfiguration() const
 {
+    if (m_sessionIceForTest) {
+        return m_sessionIceForTest;
+    }
     const auto* transport = qobject_cast<const DataChannelTransport*>(this->transport());
     if (transport != nullptr) {
         return transport->mediaIceConfiguration();
