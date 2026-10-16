@@ -95,6 +95,9 @@
 //               X509_NAME, as OpenSSL 4's X509_get_subject_name() is
 //               const. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: the Core keeps at most kMaxLiveIntroductions answers past
+//               their introductions; the next goes at once. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -109,6 +112,7 @@
 #include <QNetworkInterface>
 #include <QProcess>
 #include <QRandomGenerator>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSslCertificate>
 #include <QSslConfiguration>
@@ -128,6 +132,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #ifdef Q_OS_UNIX
 #include <pwd.h>
@@ -3838,6 +3843,91 @@ private slots:
         send({{"type", "introduction.end"}, {"from", b64(intro)}, {"code", "clientLeft"}});
         QTRY_COMPARE_WITH_TIMEOUT(rendezvous.pendingAnswers(), 0, 2000);
         QCOMPARE(rendezvous.client()->liveIntroductions(), 0);
+        rendezvous.client()->stop();
+    }
+
+    // 2026-10-15: an answer whose connection is under way (ICE has a pair)
+    // is kept past its introduction's end, but only while fewer than
+    // kMaxLiveIntroductions are kept: the next goes at once, so a device
+    // that opens and leaves over and over cannot hold more.
+    void theCoreKeepsAtMostTheLiveCapOfAnswersPastTheirIntroductions()
+    {
+        MediaIcePath pair;
+        pair.localType = QStringLiteral("host");
+        pair.remoteType = QStringLiteral("host");
+        pair.localAddress = QStringLiteral("127.0.0.1");
+        pair.remoteAddress = QStringLiteral("127.0.0.1");
+        DataChannelTransport::setSelectedPathOverrideForTest(
+            [pair](const DataChannelTransport*) -> std::optional<MediaIcePath> { return pair; });
+        const auto clearOverride =
+            qScopeGuard([] { DataChannelTransport::setSelectedPathOverrideForTest({}); });
+        ServicePlayer player;
+        Core core;
+        auto device = makeKey();
+        QVERIFY(core.pair(*device));
+        StationRendezvous rendezvous(core.server.get(), {player.url()}, /*relayAllowed=*/false);
+        // Nothing opens; nothing reaches the deadline within the test.
+        rendezvous.setAnswerDeadlineMs(600000);
+        QVERIFY(rendezvous.start());
+        QWebSocket* station = player.waitForConnection();
+        QVERIFY(station != nullptr);
+        const auto send = [station](const QJsonObject& message) {
+            station->sendTextMessage(compact(message));
+        };
+        send({{"type", "hello"}, {"version", 1}, {"nonce", b64(randomBytes(32))},
+              {"stun", QJsonArray()}});
+        QVERIFY(player.waitForMessage(station).has_value());  // register
+        send({{"type", "challenge"}, {"nonce", b64(randomBytes(32))}});
+        QVERIFY(player.waitForMessage(station).has_value());  // prove
+        const QString id = Wire::rendezvousId(core.server->stationIdentity().publicKeySpki());
+        send({{"type", "registered"}, {"id", id}});
+        QTRY_VERIFY(rendezvous.client()->isRegistered());
+        QSignalSpy ended(rendezvous.client(), &RendezvousClient::introductionEnded);
+
+        std::vector<std::unique_ptr<DataChannelTransport>> offerers;
+        const auto introduceAndLeave = [&](int count) -> bool {
+            auto offerer = std::make_unique<DataChannelTransport>();
+            QSignalSpy offered(offerer.get(), &DataChannelTransport::localDescription);
+            DataChannelTransport::Options options;
+            options.role = DataChannelTransport::Role::Offerer;
+            options.maxIncomingBytes = StationClient::kMaxIncomingMessageBytes;
+            options.ice = IceConfiguration::throughRendezvous({}, false, AddressFamilies{},
+                                                              HostFamilies{});
+            if (!offerer->start(options) || !offered.wait(5000)) {
+                return false;
+            }
+            const QByteArray nonce = randomBytes(32);
+            const QByteArray intro = randomBytes(16);
+            send({{"type", "introduction"}, {"from", b64(intro)},
+                  {"device", b64(StationIdentity::fingerprintOf(device->spki()))},
+                  {"deviceSignature", b64(device->sign(Wire::introduceTranscript(id, nonce)))},
+                  {"offer", offered.at(0).at(0).toString()}, {"nonce", b64(nonce)}});
+            // The answer, past any earlier answer's candidates.
+            bool answered = false;
+            QDeadlineTimer deadline(5000);
+            while (!answered && !deadline.hasExpired()) {
+                const std::optional<QString> next = player.waitForMessage(station, 200);
+                answered = next
+                    && QJsonDocument::fromJson(next->toUtf8()).object().value("type").toString()
+                        == QStringLiteral("answer");
+            }
+            offerers.push_back(std::move(offerer));
+            if (!answered) {
+                return false;
+            }
+            send({{"type", "introduction.end"}, {"from", b64(intro)}, {"code", "clientLeft"}});
+            return QTest::qWaitFor([&] { return ended.size() == count; }, 5000);
+        };
+        for (int index = 1; index <= RendezvousClient::kMaxLiveIntroductions; ++index) {
+            QVERIFY2(introduceAndLeave(index), qPrintable(QString::number(index)));
+            QCOMPARE(rendezvous.pendingAnswers(), index);
+        }
+        // The cap is full: the next answer goes at once.
+        QVERIFY(introduceAndLeave(RendezvousClient::kMaxLiveIntroductions + 1));
+        QTRY_COMPARE_WITH_TIMEOUT(rendezvous.pendingAnswers(),
+                                  RendezvousClient::kMaxLiveIntroductions, 2000);
+        QTest::qWait(200);
+        QCOMPARE(rendezvous.pendingAnswers(), RendezvousClient::kMaxLiveIntroductions);
         rendezvous.client()->stop();
     }
 
