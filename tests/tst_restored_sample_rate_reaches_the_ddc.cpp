@@ -35,6 +35,7 @@
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QStandardPaths>
 
 #include "core/AppSettings.h"
 #include "models/RadioModel.h"
@@ -91,9 +92,18 @@ private slots:
     {
         // Exercise the real settings/restore/helper ordering with a full pool.
         // The 20m window hosts two slices 200 kHz apart, so 192 kHz cannot fit.
+#ifdef Q_OS_WIN
+        // Windows tests get no NEREUS_TEST_HOME (its known folders ignore a
+        // changed home), so check Qt's test-mode location instead.
+        QVERIFY(QStandardPaths::isTestModeEnabled());
+        QVERIFY(AppSettings::instance().filePath().startsWith(
+            QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+            + QLatin1Char('/')));
+#else
         QVERIFY(!qEnvironmentVariableIsEmpty("NEREUS_TEST_HOME"));
         QVERIFY(AppSettings::instance().filePath().startsWith(
             qEnvironmentVariable("NEREUS_TEST_HOME") + QLatin1Char('/')));
+#endif
         auto& settings = AppSettings::instance();
         const QString prefix = QStringLiteral("Slice0/Band20m/");
         RadioModel model;

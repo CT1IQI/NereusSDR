@@ -95,7 +95,9 @@ class GroupDropins(unittest.TestCase):
         install = self.text.split("trap rollback EXIT", 1)[1].split("trap - EXIT", 1)[0]
         self.assertIn("\nadd_group_dropins\n", install)
         self.assertLess(install.index("\nadd_group_dropins\n"),
-                        install.index("systemctl daemon-reload\nsystemctl start nereusd\n"))
+                        install.index("\nsystemctl daemon-reload\n"))
+        self.assertLess(install.index("\nsystemctl daemon-reload\n"),
+                        install.index("\nsystemctl start nereusd\n"))
         rollback = self.text.split("rollback() {", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("remove_added_group_dropins || restored=0", rollback)
         self.assertLess(rollback.index("remove_added_group_dropins"),

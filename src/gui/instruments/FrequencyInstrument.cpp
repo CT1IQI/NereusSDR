@@ -96,6 +96,10 @@
 //   2026-10-08 - VFO row letters from setSliceLetters() instead of the
 //                 hard-coded A and B. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-15 - minimumSizeHint() never exceeds sizeHint()'s height:
+//                 with Windows fonts the measured height came out below
+//                 74 plus the reservation. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/instruments/FrequencyInstrument.h"
@@ -328,6 +332,11 @@ QSize FrequencyInstrument::minimumSizeHint() const
     // instruments-sheet preview scene). NumberOnly is unchanged (its
     // reservation is 0).
     h += stripReserveFor(m_form);
+    // NereusSDR: never above the preferred height. sizeHint() measures the
+    // layout, and with Windows fonts that came out below 74 plus the
+    // reservation, so the minimum left a gap under the digits there. On
+    // macOS the measured height is the larger one and nothing changes.
+    h = qMin(h, sizeHint().height());
     return {qMax(240, w), h};
 }
 

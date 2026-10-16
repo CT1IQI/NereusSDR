@@ -142,10 +142,18 @@ Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
 - **Real-time priority can be refused by the kernel.** The service is allowed
   to ask for it (`LimitRTPRIO=99`), but a kernel built with
   `CONFIG_RT_GROUP_SCHED=y` on cgroup v2 refuses real-time scheduling
-  (`SCHED_FIFO`) to every service. The Radxa vendor kernel
-  `6.1.115-vendor-rk35xx` is one. The Core then logs "Raised thread priority
-  was refused" and runs its signal processing at nice -10. To check a
-  kernel: `zcat /proc/config.gz | grep RT_GROUP_SCHED`.
+  (`SCHED_FIFO`) to every service while the cgroup CPU controller is on. The
+  Radxa vendor kernel `6.1.115-vendor-rk35xx` is one, and on Debian any login
+  switches the controller on, because each login manager (`user@.service`)
+  asks for it. The Core then logs "Raised thread priority was refused", and
+  each audio thread refused when it started runs at normal priority. Signal
+  processing never asks for real-time priority; it runs at nice -10 whether
+  or not the controller is on. The Rock install script writes a drop-in,
+  `/etc/systemd/system/user@.service.d/nereusd-realtime-priority.conf`, so
+  login managers no longer ask for the controller; see
+  `scripts/radxa/README.md`. To check a kernel:
+  `zcat /proc/config.gz | grep RT_GROUP_SCHED`. To see whether the controller
+  is on, look for `cpu` in `cat /sys/fs/cgroup/cgroup.subtree_control`.
 
 A rotor or serial CAT on the Core also needs the `dialout` group, through a
 `serial.conf` drop-in that the `.deb` packages do not ship. The
