@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd (KG4VCF), AI-assisted via Claude Code: the
+//                 frequency-scale label counter counts only labels drawn,
+//                 after the narrow-layout skip.
 //   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: cached IMD acceptance
 //                 on finalized local/remote receiver planes and invalidation.
 //   2026-10-13 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -7904,7 +7907,6 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
             && (std::llround(f / freqStep) % labelEvery) != 0) {
             continue;
         }
-        ++m_freqScaleLabelsDrawn;
 
         int x = hzToX(f, r);
         // Format as MHz with appropriate decimals
@@ -7949,6 +7951,9 @@ void SpectrumWidget::drawFreqScale(QPainter& p, const QRect& r)
         }
         const qreal ly = textRect.center().y() - labelSize.height() / 2.0;
         p.drawStaticText(QPointF(lx, ly), cit.value());
+        // 2026-10-16: counted only once drawn, after the narrow-layout skip
+        // above, so the test counter matches the labels on screen.
+        ++m_freqScaleLabelsDrawn;
     }
 }
 

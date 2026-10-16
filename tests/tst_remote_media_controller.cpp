@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF  The pixel-grant rows place their pans
+//                                    with applyLayout so each fills the
+//                                    600 px stack; the crop row's 4 kHz
+//                                    overlap is restored. AI-assisted via
+//                                    Claude Code.
 //   2026-10-15  J.J. Boyd / KG4VCF  A remote window's rigctld key sends
 //                                    what programs play into VAX TX, never
 //                                    the PC microphone, whichever source
@@ -10551,15 +10556,25 @@ private slots:
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
         PanadapterStack stack;
-        auto* first = stack.addPanadapter(QStringLiteral("first"));
+        // 2026-10-16: the pans are placed by applyLayout, as MainWindow
+        // places them. addPanadapter alone leaves a pan after the stack's
+        // own pan-0 outside the splitter, at its own default width rather
+        // than the stack's: 400 px, which the 320 px narrow minimum
+        // (PanadapterApplet) made 320 and the crop row's 4 kHz overlap
+        // (about 342 bins) then outnumbered the 284 pixels it asked for.
+        stack.applyLayout(QStringLiteral("1"), {QStringLiteral("first")});
+        auto* first = stack.panadapter(QStringLiteral("first"));
+        QVERIFY(first);
         first->setActiveSliceIndex(sliceId);
         first->spectrumWidget()->setExtendedViewAllowed(false);
+        // 2026-10-16: placed in the stack, a pan's waterfall runs, and with
+        // waterfall AGC its dBm window follows the levels AGC sets from the
+        // first frames and asks again (as the C-Tune rows note), which the
+        // refused row would count as a second ask. This test is about
+        // pixel grants, so its pans use the stored levels.
+        first->spectrumWidget()->setWfAgcEnabled(false);
         // Shared: a "fine" pan that sizes the engine. Edge: a crop that
-        // overlaps the source by 2 kHz, so fewer bins than pixels exist.
-        // 2026-10-16: the overlap was 4 kHz. Auto sizes this 48 kHz span at
-        // 16384 (4096 x 192000 / 48000), so 4 kHz holds about 342 bins, more
-        // than the 284 pixels of a pan at the 320 px narrow minimum
-        // (PanadapterApplet). 2 kHz holds about 171, fewer at either width.
+        // overlaps the source by 4 kHz, so fewer bins than pixels exist.
         // 2026-10-10: the shared pan's span was 12 kHz, which the per-pixel
         // rule sized at 8192 (192000 x pixels / 12000 = 16 points a pixel on
         // a pan 257 to 512 px wide). Under the shared rule
@@ -10570,11 +10585,13 @@ private slots:
         if (shared) {
             first->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 96000);
         } else {
-            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre + 118000, 48000);
+            first->spectrumWidget()->setDisplayWindowPreservingHistory(centre + 116000, 48000);
         }
         stack.resize(600, 400);
         stack.show();
         QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        // The pan fills its stack, so it asks for the stack's width.
+        QTRY_COMPARE(first->spectrumWidget()->width(), stack.width());
         QPointer<DisplayTransport> sinkMedia;
         RemoteMediaController gui(&client, &remote, &stack, nullptr,
             [&sinkMedia](QObject* owner) -> IMediaTransport* {
@@ -10618,10 +10635,15 @@ private slots:
         if (shared) {
             // A deeper zoom on the same receiver asks for a longer "fine"
             // FFT than the first pan's engine; it is granted that engine.
-            limited = stack.addPanadapter(QStringLiteral("second"));
+            stack.applyLayout(QStringLiteral("2v"),
+                              {QStringLiteral("first"), QStringLiteral("second")});
+            limited = stack.panadapter(QStringLiteral("second"));
+            QVERIFY(limited);
             limited->setActiveSliceIndex(sliceId);
             limited->spectrumWidget()->setExtendedViewAllowed(false);
+            limited->spectrumWidget()->setWfAgcEnabled(false);
             limited->spectrumWidget()->setDisplayWindowPreservingHistory(centre, 6000);
+            QTRY_COMPARE(limited->spectrumWidget()->width(), stack.width());
             QTRY_COMPARE(daemon.activeEndpointCount(), 2);
         }
         QTRY_VERIFY2_WITH_TIMEOUT(paints(limited), qPrintable(limited->remoteDisplayStatus()),
