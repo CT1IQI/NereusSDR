@@ -253,6 +253,7 @@ find_upstream() {
 
 THETIS_LOCAL="$(find_upstream Thetis "${NEREUS_THETIS_DIR:-}")"
 THETIS_V21015_LOCAL="$(find_upstream Thetis-v2.10.3.15 "${NEREUS_THETIS_V21015_DIR:-}")"
+THETIS_V21013_LOCAL="$(find_upstream Thetis-v2.10.3.13 "${NEREUS_THETIS_V21013_DIR:-}")"
 MI0BOT_LOCAL="$(find_upstream mi0bot-Thetis "${NEREUS_MI0BOT_DIR:-}")"
 DESKHPSDR_LOCAL="$(find_upstream deskhpsdr "${NEREUS_DESKHPSDR_DIR:-}")"
 FREEDV_LOCAL="$(find_upstream freedv-gui "${NEREUS_FREEDV_DIR:-}")"
@@ -261,8 +262,8 @@ FREEDV_LOCAL="$(find_upstream freedv-gui "${NEREUS_FREEDV_DIR:-}")"
 # each ported comment with the upstream lines its cite names, so a
 # missing clone leaves those cites unchecked while the commit goes
 # through looking verified. A missing Thetis used to print "SKIPPED" and
-# pass, and a missing mi0bot-Thetis, Thetis-v2.10.3.15, deskhpsdr or
-# freedv-gui left its cites as upstream-not-found warnings that pass
+# pass, and a missing mi0bot-Thetis, Thetis-v2.10.3.15, Thetis-v2.10.3.13,
+# deskhpsdr or freedv-gui left its cites as upstream-not-found warnings that pass
 # (JJ, 2026-10-06: make sure the repo is there, never skip).
 #
 # Ported comments live only in C and C++ files, so a commit that stages
@@ -278,11 +279,15 @@ note_missing() {
 }
 if [ -z "$THETIS_LOCAL" ]; then
     note_missing Thetis NEREUS_THETIS_DIR \
-        "git clone https://github.com/ramdor/Thetis.git"
+        "git clone --branch v2.10.3.15 https://github.com/ramdor/Thetis.git"
 fi
 if [ -z "$THETIS_V21015_LOCAL" ]; then
     note_missing Thetis-v2.10.3.15 NEREUS_THETIS_V21015_DIR \
         "git clone --branch v2.10.3.15 https://github.com/ramdor/Thetis.git Thetis-v2.10.3.15"
+fi
+if [ -z "$THETIS_V21013_LOCAL" ]; then
+    note_missing Thetis-v2.10.3.13 NEREUS_THETIS_V21013_DIR \
+        "git clone https://github.com/ramdor/Thetis.git Thetis-v2.10.3.13 && git -C Thetis-v2.10.3.13 checkout 501e3f5"
 fi
 if [ -z "$MI0BOT_LOCAL" ]; then
     note_missing mi0bot-Thetis NEREUS_MI0BOT_DIR \
@@ -310,6 +315,9 @@ run_tag_check() {
     export NEREUS_THETIS_DIR="$THETIS_LOCAL"
     if [ -n "$THETIS_V21015_LOCAL" ]; then
         export NEREUS_THETIS_V21015_DIR="$THETIS_V21015_LOCAL"
+    fi
+    if [ -n "$THETIS_V21013_LOCAL" ]; then
+        export NEREUS_THETIS_V21013_DIR="$THETIS_V21013_LOCAL"
     fi
     if [ -n "$MI0BOT_LOCAL" ]; then
         export NEREUS_MI0BOT_DIR="$MI0BOT_LOCAL"

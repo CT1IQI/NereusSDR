@@ -1021,6 +1021,11 @@
 //   2026-10-12: each slice access entry names the holder of the receiver
 //               its slice is on (receiverHolderDeviceId). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: sliceHolderWords() gives its words for the start of a
+//               sentence too, and the notice of a take of control names
+//               the taker through it: on a Core no desktop hosts the
+//               Core's own position was named with nothing. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -10076,7 +10081,7 @@ StationServer::SliceForms StationServer::sliceFormsFor(SessionTransport* transpo
     return forms;
 }
 
-QString StationServer::sliceHolderWords(const QByteArray& device) const
+QString StationServer::sliceHolderWords(const QByteArray& device, WordsPlace place) const
 {
     // Slice control plan Task 17: who holds a slice, in a refusal. The Core
     // only for a slice nobody holds or the station device holds; otherwise
@@ -10084,8 +10089,21 @@ QString StationServer::sliceHolderWords(const QByteArray& device) const
     // word for its kind when it has none, and "another device" when the
     // Core knows neither. kindWord reads an empty kind as a computer, so an
     // empty kind is checked first.
+    //
+    // The one place a sentence gets a device's words. A sentence that took
+    // the device's name alone had a gap where the name goes for a device
+    // with none: the Core's own position on a Core no desktop hosts, a
+    // device that gave no name, and a device the Core has forgotten. The
+    // Core's own words start a sentence with a capital; a name is never
+    // changed.
+    const auto own = [place](QString words) {
+        if (place == WordsPlace::SentenceStart) {
+            words[0] = words.at(0).toUpper();
+        }
+        return words;
+    };
     if (device.isEmpty()) {
-        return QStringLiteral("the Core");
+        return own(QStringLiteral("the Core"));
     }
     const std::optional<ConnectedDevicesFacade::DeviceWords> words =
         m_connectedDevices->describe(device);
@@ -10093,13 +10111,13 @@ QString StationServer::sliceHolderWords(const QByteArray& device) const
         return words->name;
     }
     if (device == SliceOwnership::stationDevice()) {
-        return QStringLiteral("the Core");
+        return own(QStringLiteral("the Core"));
     }
     if (words && !words->kind.isEmpty()) {
         const QString kind = DeviceSessionRegistry::kindWord(words->kind).toLower();
-        return QStringLiteral("a %1").arg(kind);
+        return own(QStringLiteral("a %1").arg(kind));
     }
-    return QStringLiteral("another device");
+    return own(QStringLiteral("another device"));
 }
 
 QString StationServer::ownedElsewhereReason(int sliceId) const
@@ -11262,7 +11280,7 @@ void StationServer::tellControlTaken(int sliceId, const QByteArray& former,
          static_cast<qint64>(ownership->controlRevision(sliceId))},
     }};
     notice.reason = QStringLiteral("%1 took control of slice %2. You are still listening.")
-                        .arg(planDevice(taker).name, letter);
+                        .arg(sliceHolderWords(taker, WordsPlace::SentenceStart), letter);
     tellDevice(notice, taker);
 }
 

@@ -7,6 +7,7 @@ class QFormLayout;
 
 #include "gui/SetupPage.h"
 #include "gui/setup/RemoteStationPage.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -272,7 +273,7 @@ protected:
     void syncPttEnableWaits();
     bool m_syncing{false};
 };
-class CatOptionsSetupPage : public CatGlobalSetupPage {
+class NEREUS_GUI_EXPORT CatOptionsSetupPage : public CatGlobalSetupPage {
     Q_OBJECT
 public:
     explicit CatOptionsSetupPage(RadioModel*, QWidget* parent = nullptr);

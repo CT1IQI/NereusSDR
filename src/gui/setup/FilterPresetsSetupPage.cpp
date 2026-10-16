@@ -18,6 +18,9 @@
 //   2026-10-09 - The slot column widens to its numbers, so slot 10 shows
 //                 "10", not an ellipsis. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "FilterPresetsSetupPage.h"
@@ -111,8 +114,6 @@ void FilterPresetsSetupPage::buildUi()
     auto* tableBoxLayout = qobject_cast<QBoxLayout*>(tableBox->layout());
 
     m_table = new QTableWidget(0, 6, tableBox);  // rows filled by populateTable()
-    // Qt 6.11.0 Cocoa accessibility cache repair. Resized per mode and preset edit.
-    installQtCocoaAccessibleTableCacheRepair(m_table);
     m_table->setProperty("nereusSetupId", "dsp.filterPresets.presets");
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("#"),
@@ -231,6 +232,8 @@ void FilterPresetsSetupPage::populateTable()
     const QList<FilterPreset> presets = m_store->presetsForMode(mode);
     const int count = presets.size();
 
+    // The reset releases the cell widgets too; each row gets new ones below.
+    resetItemsBeforeRowChange(m_table);
     m_table->setRowCount(count);
 
     for (int i = 0; i < count; ++i) {

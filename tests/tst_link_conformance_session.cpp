@@ -2618,6 +2618,12 @@ void TstLinkConformanceSession::jsonStringsMatchTheirShape()
 // still end at 180 s of virtual time.
 void TstLinkConformanceSession::theVirtualClockKeepsALongTimersDueAsRealTimePasses()
 {
+#ifdef Q_OS_WIN
+    // The case needs a coarse timer that reports more than its interval,
+    // which is how Qt's Unix timer list rounds one. Windows' event
+    // dispatcher never does, so no start there can set the case up.
+    QSKIP("Windows never reports a coarse timer above its interval");
+#endif
     constexpr int kIntervalMs = 180000;
     // How far above its interval the timer must report, so the real time
     // below passes while the report is still above it.

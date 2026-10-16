@@ -111,6 +111,7 @@
 
 #include <QObject>
 #include <QVector>
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -139,7 +140,7 @@ struct AudioPriorityToken;   // src/core/audio/RealtimeAudioPriority.h
 // thread, given non-owning WdspEngine/AudioEngine pointers via
 // setEngines(), moved to RadioModel::m_dspThread, then driven by a
 // Qt::QueuedConnection from ReceiverManager::iqDataForReceiverStamped.
-class RxDspWorker : public QObject {
+class NEREUS_CORE_EXPORT RxDspWorker : public QObject {
     Q_OBJECT
 
 public:

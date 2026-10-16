@@ -76,6 +76,7 @@ mw0lge@grange-lane.co.uk
 #include <QVector>
 
 #include <array>
+#include "gui/NereusGuiExport.h"
 
 class QCheckBox;
 class QCloseEvent;
@@ -138,7 +139,7 @@ enum class Ps3ActionPhase;
 // Test seam: constructor accepts RadioModel + PureSignal pointers
 // independently so tests can pass a real PureSignal coordinator with
 // nullptr RadioModel (avoids needing a full MainWindow stand-up).
-class PsForm : public QDialog {
+class NEREUS_GUI_EXPORT PsForm : public QDialog {
     Q_OBJECT
 
 public:

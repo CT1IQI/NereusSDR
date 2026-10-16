@@ -14,6 +14,7 @@
 #include <optional>
 
 #include "core/WidebandFftEngine.h"
+#include "core/session/media/DssWideRow.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "core/spectrum/ExtendedSpectrumReducer.h"
 #include "core/spectrum/WidebandDisplayReference.h"
@@ -212,6 +213,93 @@ private slots:
         beside.centreHz = source.centreHz + source.sampleRateHz * 4.0;
         QCOMPARE(SpectrumEndpoint::grantedPixels(beside, source.fftBins, source.centreHz,
                                                  source.sampleRateHz, false), 0);
+    }
+
+    // The wide row is the one a conversion of every FFT bin gives: each bin to
+    // dBm, then the crop, then the peak reduction. The endpoint reduces the
+    // powers first and converts what is left (at most kMaxWideSamples), which
+    // gives the same row because the conversion rises with the power.
+    void wideRowIsTheRowOfTheFullConversion_data()
+    {
+        QTest::addColumn<int>("fftBins");
+        QTest::addColumn<double>("spanHz");
+        QTest::addColumn<double>("centreOffsetHz");
+        QTest::addColumn<int>("wideSamples");
+        QTest::newRow("1024 bins, whole source reduced") << 1024 << 96'000.0 << 0.0 << 768;
+        QTest::newRow("16384 bins, half the source reduced") << 16384 << 48'000.0 << 0.0 << 768;
+        QTest::newRow("16384 bins, crop at the source edge") << 16384 << 48'000.0 << 70'000.0 << 768;
+        QTest::newRow("16384 bins, fewer bins than samples") << 16384 << 3'000.0 << -20'000.0 << 512;
+    }
+
+    void wideRowIsTheRowOfTheFullConversion()
+    {
+        QFETCH(int, fftBins);
+        QFETCH(double, spanHz);
+        QFETCH(double, centreOffsetHz);
+        QFETCH(int, wideSamples);
+
+        SpectrumEndpointSourceContext source = sourceContext();
+        source.fftBins = fftBins;
+        SpectrumEndpointRequest asked = request();
+        asked.spanHz = spanHz;
+        asked.centreHz = source.centreHz + centreOffsetHz;
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(asked, source));
+        QCOMPARE(int(endpoint.context().codec.wideSamples), wideSamples);
+
+        DaemonSpectrumFrame input = frame(source, 1'000'000'000);
+        input.dbmOffset = -23.75;
+        const double stationOffsetDb = 4.5;
+        // Powers over 14 decades, a zero and a run of equal values, from a
+        // fixed sequence.
+        quint32 state = 0x2545F491u;
+        for (int index = 0; index < fftBins; ++index) {
+            state = state * 1664525u + 1013904223u;
+            const double unit = (state >> 8) / 16777216.0;
+            input.binsLinear[index] = static_cast<float>(std::pow(10.0, -16.0 + 14.0 * unit));
+        }
+        input.binsLinear[fftBins / 2] = 0.0f;
+        for (int index = fftBins / 2 + 40; index < fftBins / 2 + 60; ++index) {
+            input.binsLinear[index] = 3.0e-9f;
+        }
+
+        const double scale = std::pow(10.0, (input.dbmOffset + stationOffsetDb) / 10.0);
+        QVector<float> fullDbm(fftBins);
+        for (int index = 0; index < fftBins; ++index) {
+            fullDbm[index] = static_cast<float>(
+                10.0 * std::log10(scale * input.binsLinear.at(index) + 1.0e-60));
+        }
+        const DssWideRow crop = cropDssWideRow(fullDbm, {
+            asked.centreHz, asked.spanHz, source.centreHz, source.sampleRateHz,
+            asked.requestedWideSpanFactor});
+        const QVector<float> expected =
+            peakReduceDssWideRow(crop.binsDbm, SpectrumEndpoint::kMaxWideSamples);
+        QCOMPARE(int(expected.size()), wideSamples);
+
+        const std::optional<DisplayCodecFrame> output = endpoint.consume(input, stationOffsetDb);
+        QVERIFY(output.has_value());
+        QCOMPARE(output->wideDbm, expected);
+    }
+
+    // A bin that does not convert refuses the whole frame, wherever the bin
+    // sits: here outside the view and outside the wide row.
+    void wideRowRefusesAFrameWithABinThatDoesNotConvert()
+    {
+        SpectrumEndpointSourceContext source = sourceContext();
+        SpectrumEndpointRequest asked = request();
+        asked.spanHz = 24'000.0;   // wide row: 48 kHz of the 192 kHz source
+        SpectrumEndpoint endpoint;
+        QVERIFY(endpoint.configure(asked, source));
+        QVERIFY(endpoint.context().codec.wideSamples != 0);
+
+        DaemonSpectrumFrame input = frame(source, 1'000'000'000);
+        input.dbmOffset = 3000.0;              // a scale of 1e300
+        input.binsLinear.fill(1.0e-30f);
+        QVERIFY(endpoint.consume(input).has_value());
+
+        input.producedAtNs = 2'000'000'000;
+        input.binsLinear[10] = 1.0e10f;        // 1e310: past a double
+        QVERIFY(!endpoint.consume(input).has_value());
     }
 
     void cadenceAndGenerationReset()

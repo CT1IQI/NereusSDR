@@ -1,12 +1,13 @@
 #pragma once
 // no-port-check: NereusSDR-original draft content property adapter.
 #include "ContainerContentRegistry.h"
+#include "gui/NereusGuiExport.h"
 #include <functional>
 #include <memory>
 class QLabel;
 namespace NereusSDR {
 class MeterItem;
-class ContentPropertyEditor : public QWidget {
+class NEREUS_GUI_EXPORT ContentPropertyEditor : public QWidget {
     Q_OBJECT
 public:
     explicit ContentPropertyEditor(ContainerContentRegistry& registry, QWidget* parent=nullptr);

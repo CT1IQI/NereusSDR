@@ -797,6 +797,10 @@ jobs:
       - name: Configure
         run: |
           ccache --max-size=2G
+          # Each row builds against the one OpenSSL its OPENSSL_ROOT_DIR
+          # names; the reason is in scripts/ci/macos-openssl.sh. The unlink
+          # runs here, after the job's last brew install.
+          scripts/ci/macos-openssl.sh unlink
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             # Cross-compile path: FFTW comes from our source build at
             # ${{ github.workspace }}/fftw-x86_64. PKG_CONFIG_PATH lets
@@ -823,12 +827,11 @@ jobs:
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
-            # needed because brew's lib dir is in the default search path,
-            # and openssl@3 is not keg-only (fix round 3 correction; see
-            # CMakeLists.txt's find_package(OpenSSL) comment) so it needs
-            # no OPENSSL_ROOT_DIR hint either.
+            # needed because brew's lib dir is in the default search path.
+            # OpenSSL comes from the openssl@3 keg by explicit
+            # OPENSSL_ROOT_DIR (see scripts/ci/macos-openssl.sh).
             CMAKE_PREFIX_PATH_VAL="$QT_ROOT_DIR;$(brew --prefix)"
-            EXTRA_CMAKE_ARGS=""
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)"
           fi
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -843,6 +846,18 @@ jobs:
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      # Before macdeployqt rewrites the paths: every libcrypto or libssl
+      # reference must be libcrypto.3 or libssl.3 from the OpenSSL this row's
+      # Configure named. ci.yml's macOS leg runs the arm64 check on every PR.
+      - name: Check OpenSSL link
+        run: |
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            EXPECT="${{ github.workspace }}/openssl-x86_64/lib"
+          else
+            EXPECT="$(brew --prefix openssl@3)/lib"
+          fi
+          scripts/ci/macos-openssl.sh check-link build "$EXPECT"
 
       - name: Test
         working-directory: build
@@ -912,6 +927,11 @@ jobs:
               exit 1
             fi
           done
+
+          # The same for OpenSSL: libcrypto.3 and libssl.3 must be in
+          # Contents/Frameworks, and no bundled binary may still point at the
+          # build machine's copy.
+          scripts/ci/macos-openssl.sh check-bundle build/NereusSDR.app
 
       - name: Copy license notices into app bundle
         run: |
@@ -1036,6 +1056,9 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ matrix.deployment_target }}"
           cmake --build build-hal
+          # 2026-10-12: J.J. Boyd / OpenAI Codex; check metadata before signing.
+          python3 scripts/verify_vax_factory.py --plist hal-plugin/Info.plist \
+            --plist build-hal/NereusSDRVAX.driver/Contents/Info.plist
 
       - name: Sign HAL plugin
         if: env.HAS_APPLE_DEVELOPER_ID == 'true'
@@ -1635,14 +1658,50 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="${{ needs.prepare.outputs.tag }}"
           PRERELEASE_FLAG=""
           if [[ "${{ needs.prepare.outputs.is_prerelease }}" == "true" ]]; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          # GraphQL resolves pending draft tags as well as published releases.
+          RELEASE_LOOKUP=$(gh api graphql \
+            -f owner="${GITHUB_REPOSITORY%/*}" \
+            -f name="${GITHUB_REPOSITORY#*/}" \
+            -f tag="$TAG" \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                id
+                release(tagName: $tag) { databaseId tagName isDraft }
+              }
+            }')
+          RELEASE_ID=$(jq -er --arg tag "$TAG" '
+            if type != "object" or has("errors")
+              or (.data.repository | type) != "object"
+              or (.data.repository.id | type) != "string"
+              or (.data.repository.id | length) == 0
+              or (.data.repository | has("release") | not)
+            then error("Cannot establish existing release state")
+            elif .data.repository.release == null then "absent"
+            else .data.repository.release |
+              if type != "object" or .tagName != $tag
+                or (.isDraft | type) != "boolean"
+                or (.databaseId | type) != "number"
+                or .databaseId <= 0 or .databaseId != (.databaseId | floor)
+              then error("Malformed release response")
+              elif .isDraft == false then error("Refusing to replace a published release")
+              else .databaseId
+              end
+            end' <<< "$RELEASE_LOOKUP")
           # Delete existing draft for this tag if rerunning
-          gh release delete "$TAG" --yes --cleanup-tag=false 2>/dev/null || true
+          if [[ "$RELEASE_ID" != "absent" ]]; then
+            if ! [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::Invalid draft release ID"
+              exit 1
+            fi
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+          fi
           gh release create "$TAG" \
             --title "NereusSDR ${VERSION}" \
             --notes-file artifacts/release_notes.md \
