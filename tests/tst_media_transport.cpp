@@ -52,6 +52,12 @@
 // closed (the machine starving the transport, not the owner). J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
+// 2026-10-15: the stalled-owner case's coordinator waits on a
+// high-resolution timer (HighResolutionWait.h). On Windows its std sleep
+// lasted 15.6 ms, so one stall saw 29 pulls and 2 packets instead of about
+// 315 and 21, and owner.ownerExposed failed in every run. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
 // 2026-10-15: a handshake wait that runs out says how far each end had
 // come (LibDataChannelMediaTransport::handshakeStateForTest), so a miss
 // under load shows whether the handshake was slow or stuck, and where.
@@ -80,6 +86,7 @@
 //
 // =================================================================
 
+#include "HighResolutionWait.h"
 #include "RealtimeTestLoad.h"
 
 #include "core/session/media/LibDataChannelMediaTransport.h"
@@ -2809,10 +2816,14 @@ void TestMediaTransport::aStalledOwnerLeavesTheMicrophoneLineWhole()
             std::atomic<qint64> pumpBlocks{0};
             std::thread coordinator([&]() {
                 std::vector<float> out(kBlock);
+                // On Windows a std sleep lasts a whole 15.6 ms scheduler
+                // tick, which would pace the 1.33 ms pulls at one a tick
+                // (HighResolutionWait.h).
+                NereusSDR::Test::HighResolutionWait wait;
                 Clock::time_point deadline = Clock::now();
                 quint64 packetIndex = 0;
                 for (qint64 tick = 0; !stop.load(); ++tick) {
-                    std::this_thread::sleep_until(deadline);
+                    wait.until(deadline);
                     if (stop.load()) {
                         break;
                     }

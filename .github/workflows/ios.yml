@@ -75,12 +75,43 @@ jobs:
   interop:
     runs-on: macos-26
     name: Media and pairing interop with the Core
+    env:
+      NEREUS_DEPENDENCY_ARCHIVE_DIR: ${{ github.workspace }}/.nereus-deps
     steps:
       - uses: actions/checkout@v4
 
       - name: Install the station's dependencies
         # The station build's macOS dependencies, as ci.yml installs them.
         run: brew install qt@6 ninja fftw openssl@3 autoconf automake libtool wget
+
+      # Reuse ci.yml's pin-verified downloads and Git mirrors so the
+      # station configure can use cached dependencies after upstream 5xx.
+      - name: Restore dependency downloads
+        id: deps-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: nereus-deps-${{ runner.os }}-${{ hashFiles('cmake/NereusDependencyArchives.cmake', 'cmake/FetchDependencyArchives.cmake') }}
+          restore-keys: |
+            nereus-deps-${{ runner.os }}-
+
+      - name: Fetch dependency downloads
+        shell: bash
+        run: |
+          # pwd -W gives Git Bash's D:/ form on Windows; elsewhere it fails
+          # and plain pwd is used.
+          mirrors="$(cd "$RUNNER_TEMP" && (pwd -W 2>/dev/null || pwd))/nereus-git-mirrors.gitconfig"
+          cmake -DNEREUS_DEPENDENCY_ARCHIVE_DIR="$NEREUS_DEPENDENCY_ARCHIVE_DIR" \
+                -DNEREUS_GIT_MIRROR_CONFIG="$mirrors" \
+                -P cmake/FetchDependencyArchives.cmake
+          git config --global --add include.path "$mirrors"
+
+      - name: Save dependency downloads
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.nereus-deps
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Configure the station build
         # Against the openssl@3 keg only; the reason is in

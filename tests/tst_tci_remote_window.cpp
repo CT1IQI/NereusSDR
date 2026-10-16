@@ -450,7 +450,11 @@ private slots:
         QCOMPARE(metrics.historySkippedFrames, quint64{8 * 192});
         QCOMPARE(metrics.resamplerRecreates, quint64{8});
         QVERIFY(metrics.resamplerRecreateWallNs > 0);
+#ifndef Q_OS_WIN
+        // Windows counts thread CPU time in 15.6 ms steps (GetThreadTimes),
+        // so eight short resets there can read as no time at all.
         QVERIFY(metrics.resamplerRecreateCpuNs > 0);
+#endif
         QVERIFY(metrics.maxQuantumWallNs >= metrics.maxResamplerRecreateWallNs);
         QVERIFY(metrics.serviceWallNs >= metrics.resamplerRecreateWallNs);
         QCOMPARE(metrics.liveWdspPairs, 0);
