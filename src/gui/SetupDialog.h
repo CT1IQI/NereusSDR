@@ -23,6 +23,7 @@
 
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/setup/CoreSettingsContext.h"
+#include "gui/NereusGuiExport.h"
 
 #include <functional>
 #include <vector>
@@ -78,7 +79,7 @@ enum class SetupScope {
 // realizePage() the first time its tree node is selected, then cached for the
 // lifetime of the dialog. See SetupDialog.cpp for the cross-page wiring rules
 // that fall out of that split.
-class SetupDialog : public QDialog {
+class NEREUS_GUI_EXPORT SetupDialog : public QDialog {
     Q_OBJECT
 public:
     explicit SetupDialog(RadioModel* model, QWidget* parent = nullptr);

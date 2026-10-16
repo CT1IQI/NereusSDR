@@ -45,6 +45,8 @@
 //               (CaptureInputWatch), not the blocks the ring accepted: a
 //               window that stops reading no longer loses the input.  J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12: process/generation tags and debug command timestamps.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/audio/CaptureHelper.h"
@@ -595,6 +597,11 @@ private:
 
     void execute(const ParentCommand& command)
     {
+        qCDebug(lcAudio).nospace() << "capture-command execute type=" << static_cast<int>(command.type)
+                                 << " pid=" << QCoreApplication::applicationPid()
+                                 << " generation=" << command.generation
+                                 << " monotonic-ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        Clock::now().time_since_epoch()).count();
         switch (command.type) {
         case P::RecordType::Configure:
             configure(command.configure);
@@ -1023,7 +1030,9 @@ private:
     {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - m_openStarted);
-        std::fprintf(stderr, "nereus-audio-capture: open step: %s at %lld ms\n", step,
+        std::fprintf(stderr, "nereus-audio-capture: open step: [pid=%lld generation=%u] %s at %lld ms\n",
+                     static_cast<long long>(QCoreApplication::applicationPid()),
+                     static_cast<unsigned int>(m_generation), step,
                      static_cast<long long>(elapsed.count()));
         std::fflush(stderr);
     }

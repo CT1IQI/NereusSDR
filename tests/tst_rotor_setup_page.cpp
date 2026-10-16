@@ -50,6 +50,7 @@
 #include "gui/setup/RotorSetupPage.h"
 #include "models/RadioModel.h"
 #include "models/RotorModel.h"
+#include "ExpiredAccessibleCells.h"
 #include "OperatorWording.h"
 
 using namespace NereusSDR;
@@ -381,6 +382,50 @@ private slots:
         window.reportStationCommandFinished(second, false, kUnknownPort);
         QCOMPARE(refused.count(), 2);
         QVERIFY(!refused.at(1).at(2).toBool());
+    }
+
+    // With accessibility on, the Core's new ports, a baud rate the list
+    // lacks, new presets and the preset buttons all change rows after the
+    // macOS bridge may have deleted the cells; each list is reset first.
+    void rowChangesSurviveExpiredAccessibleCells()
+    {
+        ExpiredAccessibleCells::ActiveScope accessibility;
+        QVERIFY(QAccessible::isActive());
+        RadioModel window(RadioModel::Role::Remote);
+        RecordingRotorLink link;
+        window.attachStation(&link);
+        window.rotorModel()->setState(coreRotor());
+        RotorSetupPage page(&window);
+        QComboBox* ports = page.serialPortComboForTesting();
+        QComboBox* baud = page.baudComboForTesting();
+        QTableWidget* table = page.presetsTableForTesting();
+
+        QVERIFY(ExpiredAccessibleCells::expire(ports->view()) > 0);
+        QVERIFY(ExpiredAccessibleCells::expire(baud->view()) > 0);
+        QVERIFY(ExpiredAccessibleCells::expire(table) > 0);
+        RotorModel::State more = coreRotor();
+        more.serialPorts = QStringLiteral("/dev/ttyCORE1\n/dev/ttyCORE2\n/dev/ttyCORE3");
+        more.baud = 14400;
+        more.presets = QStringLiteral("Europe\t45\nJapan\t330\nVK\t240");
+        window.rotorModel()->setState(more);
+        QCOMPARE(items(ports), QStringList({QStringLiteral("/dev/ttyCORE1"),
+                                            QStringLiteral("/dev/ttyCORE2"),
+                                            QStringLiteral("/dev/ttyCORE3")}));
+        QCOMPARE(ports->currentText(), QStringLiteral("/dev/ttyCORE2"));
+        QCOMPARE(baud->currentData().toInt(), 14400);
+        QCOMPARE(table->rowCount(), 3);
+        QCOMPARE(table->item(2, 0)->text(), QStringLiteral("VK"));
+
+        QVERIFY(ExpiredAccessibleCells::expire(table) > 0);
+        page.addPresetButtonForTesting()->click();
+        QCOMPARE(table->rowCount(), 4);
+        QCOMPARE(table->currentRow(), 3);
+
+        table->setCurrentCell(1, 0);
+        QVERIFY(ExpiredAccessibleCells::expire(table) > 0);
+        page.removePresetButtonForTesting()->click();
+        QCOMPARE(table->rowCount(), 3);
+        QCOMPARE(table->item(1, 0)->text(), QStringLiteral("VK"));
     }
 
     void remotePresetsGoToTheCore()

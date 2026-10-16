@@ -36,6 +36,9 @@
 //               least busy fast core, judged from the plan (JJ's ruling
 //               of 2026-09-30). J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-14: TxIqSender's comment names the P1 EP2 sender as well,
+//               which takes the same role. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -85,7 +88,7 @@ enum class ThreadRole {
     DspThread,       ///< RxDspWorker's thread (fexchange2 for every slice)
     TxWorker,        ///< the transmit channel's WDSP worker
     TxWorkerThread,  ///< TxWorkerThread, the transmit audio pump
-    TxIqSender,      ///< the Protocol 2 transmit I/Q send thread
+    TxIqSender,      ///< the protocol's transmit send thread (P2 TX I/Q sender or P1 EP2 sender)
     RadeDecoder,     ///< a RADE slice's decoder thread (RadeRx<id>), per channel
 };
 

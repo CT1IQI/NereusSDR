@@ -58,6 +58,11 @@
 //   2026-10-10: The six peak readings (txReadingsVersion 4) compared,
 //               applied and cleared with the other meters. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15: The stage peaks line leaves out a leveler gain WDSP has
+//               not yet measured, which Thetis's reading turns into +400
+//               (it logged 400.0 dB on every key of the HL2 retest).
+//               Logging only. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/TransmitStateFacade.h"
@@ -454,7 +459,17 @@ void TransmitState::onMeterReadings(const TxMeterReadings& readings)
     // Control logging lane: the key's peaks, from this reading.
     ++m_keyReadings;
     m_keyPeaks.levelerDb = std::max(m_keyPeaks.levelerDb, readings.levelerDb);
-    m_keyPeaks.levelerGainDb = std::max(m_keyPeaks.levelerGainDb, readings.levelerGainDb);
+    // Thetis reads the leveler gain without the second negation its other
+    // readings get, so the -400 WDSP holds for a gain its meter has not yet
+    // measured reads +400 (WDSP flushes its transmit meters to -400 when
+    // the channel stops: meter.c:65-72, channel.c:153-172). That is no
+    // reading, so it is left out of the peak: the line shows the real gain,
+    // or none.
+    // From Thetis console.cs:46975 [v2.10.3.15]:
+    //   updateMetersReading(Reading.LVL_G, (float)Math.Max(0, WDSP.CalculateTXMeter(1, WDSP.MeterType.LVL_G)), 0);
+    if (readings.levelerGainDb < -TxMeterReadings::kNoReadingDb) {
+        m_keyPeaks.levelerGainDb = std::max(m_keyPeaks.levelerGainDb, readings.levelerGainDb);
+    }
     m_keyPeaks.alcDb = std::max(m_keyPeaks.alcDb, readings.alcDb);
     m_keyPeaks.alcGainDb = std::max(m_keyPeaks.alcGainDb, readings.alcGainDb);
     m_keyPeaks.compressionDb = std::max(m_keyPeaks.compressionDb, readings.compressionDb);

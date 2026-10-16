@@ -73,6 +73,9 @@
 //               Thetis does: a combo box draws its item text as written, so
 //               the doubled ampersand showed twice. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15  J.J. Boyd (KG4VCF): rows change after a real model reset
+//               (resetItemsBeforeRowChange), so accessibility cannot read a
+//               deleted cell. AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - The DSP > FM squelch readout shows Thetis's 0-100 number
 //               (console.cs:47296-47318 [v2.10.3.15]) from
 //               RxChannel::fmsqScaleValue, with no unit; the slider and its
@@ -2779,8 +2782,6 @@ MnfSetupPage::MnfSetupPage(RadioModel* model, QWidget* parent,
 
     // ── Notch table ──────────────────────────────────────────────────────────
     m_notchTable = new QTableWidget(0, 4, mnfGrp);
-    // Qt 6.11.0 Cocoa accessibility cache repair. Resized whenever a notch is added or removed.
-    installQtCocoaAccessibleTableCacheRepair(m_notchTable);
     m_notchTable->setObjectName(QStringLiteral("tblMNFNotches"));
     m_notchTable->setProperty("nereusSetupId", "dsp.tnf.list");
     // Column captions follow Thetis lblMNFFreq / lblMNFWidth / chkMNFActive
@@ -2973,6 +2974,8 @@ void MnfSetupPage::rebuildTable()
 
     m_rowIds.clear();
     m_rowIds.reserve(count);
+    // The reset releases the cell widgets too; each row gets new ones below.
+    resetItemsBeforeRowChange(m_notchTable);
     m_notchTable->setRowCount(count);
 
     for (int row = 0; row < count; ++row) {
