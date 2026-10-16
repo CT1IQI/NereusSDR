@@ -70,6 +70,15 @@ void useFakeDevices(AudioEngine* engine, int* opened)
     });
 }
 
+// Fake devices a reset opens: the speakers and, on macOS and Linux, the
+// four VAX buses. Windows leaves the VAX outputs closed after a reset,
+// since no saved device is left to open there.
+#ifdef Q_OS_WIN
+constexpr int kMinOpenedByReset = 1;
+#else
+constexpr int kMinOpenedByReset = 5;
+#endif
+
 } // namespace
 
 class TstAudioEngineResetAudioSettings : public QObject {
@@ -119,6 +128,8 @@ void TstAudioEngineResetAudioSettings::init()
     // Wipe the singleton's in-memory store before each test so previous
     // test runs don't bleed into each other.
     AppSettings::instance().clear();
+    // Each case counts only the fake devices its own engine opens.
+    m_opened = 0;
 }
 
 void TstAudioEngineResetAudioSettings::seedSettings(AppSettings& s)
@@ -289,7 +300,6 @@ void TstAudioEngineResetAudioSettings::emitsSpeakersConfigChanged()
 
     RadioModel radio;
     AudioEngine* engine = radio.audioEngine();
-    m_opened = 0;
     useFakeDevices(engine, &m_opened);
 
     QSignalSpy spy(engine, &AudioEngine::speakersConfigChanged);
@@ -298,8 +308,8 @@ void TstAudioEngineResetAudioSettings::emitsSpeakersConfigChanged()
     // ensureSpeakersOpen() emits speakersConfigChanged after rebuilding the
     // default bus (or on the fake path if no PortAudio backend is available).
     QVERIFY(spy.count() >= 1);
-    // Rebuilt on fakes: the speakers and the four VAX devices.
-    QVERIFY(m_opened >= 5);
+    // Rebuilt on fakes: the speakers and, off Windows, the four VAX devices.
+    QVERIFY(m_opened >= kMinOpenedByReset);
 }
 
 void TstAudioEngineResetAudioSettings::emitsVaxConfigChangedForAllChannels()
@@ -377,7 +387,7 @@ void TstAudioEngineResetAudioSettings::operatorLocalResetPreservesCoreAudioSetti
     QVERIFY(!s.contains(QStringLiteral("audio/Speakers/DeviceName")));
     QCOMPARE(engine->txMonitorOutput(), TxMonitorOutput::Speakers);
     QCOMPARE(vax.count(), 4);
-    QVERIFY(m_opened >= 5);
+    QVERIFY(m_opened >= kMinOpenedByReset);
 }
 
 QTEST_MAIN(TstAudioEngineResetAudioSettings)

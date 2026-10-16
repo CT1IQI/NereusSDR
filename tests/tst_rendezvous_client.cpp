@@ -86,6 +86,11 @@
 //   2026-10-01: NEREUS_ICE_DIAG is read in initTestCase, so a CI run can
 //               log its ICE checks. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Anthropic Claude Code.
+//   2026-10-15: Windows: a dead cached address may be stopped because
+//               another path won first (a closed localhost port takes about
+//               2 s to refuse there), and the parent watch case is skipped
+//               (POSIX only). J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 //   2026-10-15: The loopback certificate's name is built as its own
 //               X509_NAME, as OpenSSL 4's X509_get_subject_name() is
 //               const. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -2641,6 +2646,9 @@ private slots:
     // tied to a stand-in process that is then killed.
     void theServiceEndsWithTheProcessThatStartedIt()
     {
+#ifdef Q_OS_WIN
+        QSKIP("The service's parent watch is POSIX only, and there is no /bin/sleep");
+#endif
         QProcess standIn;
         standIn.start(QStringLiteral("/bin/sleep"), {QStringLiteral("600")});
         QVERIFY(standIn.waitForStarted(10000));
@@ -3077,10 +3085,24 @@ private slots:
         QCOMPARE(window.connectedUrl(), core.url());
         const StationConnectionAttempt attempt = window.connectionAttempt();
         QCOMPARE(attempt.tries.size(), 3);
+#ifdef Q_OS_WIN
+        // Windows takes about 2 s to refuse a closed localhost port, so the
+        // Core's own address can win first and the dead one is stopped.
+        QVERIFY2(attempt.tries.at(0).outcome == StationConnectionAttempt::Outcome::NoAnswer
+                     || attempt.tries.at(0).outcome
+                            == StationConnectionAttempt::Outcome::AnotherPathFirst,
+                 qPrintable(attempt.summary()));
+#else
         QCOMPARE(attempt.tries.at(0).outcome, StationConnectionAttempt::Outcome::NoAnswer);
+#endif
         QCOMPARE(attempt.tries.at(1).outcome, StationConnectionAttempt::Outcome::NotThisCore);
         QCOMPARE(attempt.tries.at(2).outcome, StationConnectionAttempt::Outcome::Connected);
+#ifdef Q_OS_WIN
+        QVERIFY(attempt.summary().contains(QLatin1String("no answer"))
+                || attempt.summary().contains(QLatin1String("another path connected first")));
+#else
         QVERIFY(attempt.summary().contains(QLatin1String("no answer")));
+#endif
         QVERIFY(attempt.summary().contains(QLatin1String("another computer answered")));
         // The other Core was told nothing: this computer sent no sign-in.
         QVERIFY(!other.server->hasAuthenticatedSession());
