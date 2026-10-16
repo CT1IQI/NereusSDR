@@ -613,6 +613,10 @@ Advanced, and each control appears on one page only.
   item.
 - On Linux, a window closed while maximized or full screen comes back with
   its panadapter and waterfall drawn. Before, they stayed blank.
+- On a Mac, a remote window or Core's connection no longer fails to open
+  because another program, such as an Android emulator, holds the same IPv4
+  port. Before, the other program could get the traffic and the connection
+  timed out.
 
 ## [2026.10.0] - 2026-10-05
 
