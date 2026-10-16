@@ -263,9 +263,9 @@ rollback() {
         rm -rf /usr/local/share/NereusSDR/models/dfnet3 /usr/local/share/NereusSDR/models/rnnoise /usr/local/share/doc/nereussdr/deepfilter || restored=0
         if test -f "$backup/assets.tar"; then tar -C / -xpf "$backup/assets.tar" || restored=0; fi
         restore_daemon_state || restored=0
-        remove_added_group_dropins || restored=0
-        remove_added_receive_buffer_limit || restored=0
         remove_added_realtime_dropin || restored=0
+        remove_added_receive_buffer_limit || restored=0
+        remove_added_group_dropins || restored=0
         systemctl daemon-reload || restored=0
         if [[ "$restored" == 1 ]]; then
             systemctl start nereusd

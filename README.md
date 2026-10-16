@@ -130,9 +130,10 @@ Three things found on the maintainer's Rock 5C bench Core on 2026-10-10:
 
 #### The system setting the Core's installer changes
 
-Installing the Core changes one system-wide Linux setting and no other:
-`net.core.rmem_max`, the largest receive buffer a program may ask for on a
-network socket.
+The `nereusd` packages and the Pi 4 scripts change one system-wide Linux
+setting and no other: `net.core.rmem_max`, the largest receive buffer a
+program may ask for on a network socket. The Rock script changes that setting
+too, and also writes the login-manager drop-in described above.
 
 - **What it is for.** The Core asks for a 4 MB receive buffer (4194304
   bytes) on the socket its radio sends to, so the system holds the radio's

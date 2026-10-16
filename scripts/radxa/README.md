@@ -22,7 +22,7 @@ with the card open, and for refused real-time priority on the Radxa vendor
 kernel, see "Sound from the Core's own sound card" in the top-level
 `README.md`.
 
-The installer also changes one system setting, when the stage carries it:
+The installer also changes a system setting, when the stage carries it (this is one of two changes it makes; the other is described below):
 it installs `/usr/lib/sysctl.d/10-nereusd.conf`, which raises the network
 receive buffer limit (`net.core.rmem_max`) to the 4 MB (4194304 bytes) the
 Core asks for on the socket its radio sends to, and before the Core starts
