@@ -14,6 +14,11 @@
 // alone relabels the running source and keeps its input history. Without
 // that the source restarts as before.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-15: Display send thread: setFrameWake(), a published frame wakes
+// the display thread instead of queueing frameAvailable to the main thread;
+// currentGeneration(), so a frame held for the main thread is dropped after
+// a retune.
+// J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonSpectrumSource.h"
@@ -353,6 +358,22 @@ DaemonSpectrumSource::inputQueueDiagnostics(const MediaSourceKey& key) const
             static_cast<int>(it->state->pendingIq.size()), it->state->maxPendingIqFloats};
 }
 
+quint64 DaemonSpectrumSource::currentGeneration(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) { return 0; }
+    QMutexLocker lock(&it->state->mutex);
+    return it->state->generation;
+}
+
+bool DaemonSpectrumSource::frameWaitingForTest(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) { return false; }
+    QMutexLocker lock(&it->state->mutex);
+    return it->state->hasLatest;
+}
+
 int DaemonSpectrumSource::engineDecimation(const MediaSourceKey& key) const
 {
     const auto it = m_sources.constFind(key);
@@ -389,6 +410,22 @@ DaemonSpectrumSource::takeLatest(const MediaSourceKey& key)
     DaemonSpectrumFrame frame = it->state->latest;
     frame.replacedBefore = std::exchange(it->state->replacedSinceTaken, 0);
     return frame;
+}
+
+void DaemonSpectrumSource::setFrameWake(std::function<void()> wake)
+{
+    const std::lock_guard<std::mutex> lock(m_frameWakeMutex);
+    m_frameWake = std::move(wake);
+}
+
+bool DaemonSpectrumSource::callFrameWake()
+{
+    const std::lock_guard<std::mutex> lock(m_frameWakeMutex);
+    if (!m_frameWake) {
+        return false;
+    }
+    m_frameWake();
+    return true;
 }
 
 void DaemonSpectrumSource::submitIq(int streamIndex,
@@ -631,7 +668,10 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->notificationQueued = true;
         ++state->publishedFrames;
     }
-    emit frameAvailable(key);
+    // Display send thread: the display thread takes it when it is woken.
+    if (!callFrameWake()) {
+        emit frameAvailable(key);
+    }
     return true;
 }
 
@@ -666,7 +706,10 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->notificationQueued = true;
         ++state->publishedFrames;
     }
-    emit frameAvailable(key);
+    // Display send thread: the display thread takes it when it is woken.
+    if (!callFrameWake()) {
+        emit frameAvailable(key);
+    }
     return true;
 }
 
@@ -679,6 +722,15 @@ void DaemonSpectrumSource::publishFrame(
     bool binsDbmValid = false;
     if (computesBinsDbm()) {
         binsDbmValid = binsLinearToDbm(binsLinear, dbmOffset, binsDbm);
+    }
+    // Display send thread: with a wake set the display thread is told, not
+    // the main thread, and the frame is not announced on the main thread;
+    // whoever clears the wake takes it (setFrameWake). Held from here to
+    // the call, so a wake replaced meanwhile is never called.
+    std::unique_lock<std::mutex> wakeLock(m_frameWakeMutex);
+    const bool waking = static_cast<bool>(m_frameWake);
+    if (!waking) {
+        wakeLock.unlock();
     }
     bool queueNotification = false;
     {
@@ -699,10 +751,14 @@ void DaemonSpectrumSource::publishFrame(
         if (state->hasLatest) { ++state->replacedSinceTaken; }
         state->hasLatest = true;
         ++state->publishedFrames;
-        if (!state->notificationQueued) {
+        if (!waking && !state->notificationQueued) {
             state->notificationQueued = true;
             queueNotification = true;
         }
+    }
+    if (waking) {
+        m_frameWake();
+        return;
     }
     if (queueNotification) {
         QMetaObject::invokeMethod(this, [this, key, state]() {

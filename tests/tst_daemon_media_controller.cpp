@@ -6,6 +6,13 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15: Display send thread: on the real transport the failing
+//               display send is the display thread's, made while this
+//               thread is held, so the close and the error drain together;
+//               raw I/Q leaves on the display thread through a sink for any
+//               thread (ThreadDisplaySink), and a stall it finds there ends
+//               the stream on this thread. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-04: Verify accurate wake-interval wording, same-event stage
 //               timing, and unknown split in the runtime unkey summary.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -122,6 +129,50 @@ bool isKeyframe(const QByteArray& frame)
     return frame.size() > 5 && (static_cast<quint8>(frame.at(5)) & 0x01) != 0;
 }
 
+// Display send thread: the display and raw I/Q sends from any thread, as
+// LibDataChannelMediaTransport's displaySink() takes them. Ready while the
+// fake transport's own sink is; it records the thread each raw I/Q message
+// was sent from, and a stalled channel takes none.
+class ThreadDisplaySink final : public MediaDisplaySink {
+public:
+    explicit ThreadDisplaySink(std::shared_ptr<Test::RecordingRtpSink> readiness)
+        : m_readiness(std::move(readiness))
+    {
+    }
+
+    bool ready() const override { return m_readiness->ready.load(std::memory_order_acquire); }
+    IMediaTransport::DisplaySendResult submitDisplay(const QByteArray&) override
+    {
+        return ready() ? IMediaTransport::DisplaySendResult::Sent
+                       : IMediaTransport::DisplaySendResult::Refused;
+    }
+    bool displayBusy() const override { return false; }
+    IMediaTransport::DisplaySendResult submitIq(const QByteArray&) override
+    {
+        if (!ready()) { return IMediaTransport::DisplaySendResult::Refused; }
+        if (stallIq.load(std::memory_order_acquire)) {
+            return IMediaTransport::DisplaySendResult::Busy;
+        }
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        m_iqThreads.append(std::this_thread::get_id());
+        return IMediaTransport::DisplaySendResult::Sent;
+    }
+    bool iqBusy() const override { return stallIq.load(std::memory_order_acquire); }
+
+    QList<std::thread::id> iqThreads() const
+    {
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_iqThreads;
+    }
+
+    std::atomic<bool> stallIq{false};
+
+private:
+    const std::shared_ptr<Test::RecordingRtpSink> m_readiness;
+    mutable std::mutex m_mutex;
+    QList<std::thread::id> m_iqThreads;
+};
+
 class FakeTransport final : public IMediaTransport {
 public:
     explicit FakeTransport(QObject* parent = nullptr) : IMediaTransport(parent) {}
@@ -203,6 +254,9 @@ public:
     }
     bool sendRtp(const QByteArray& packet) override { return rtpSink->sendRtpAccepted(packet); }
     std::shared_ptr<MediaRtpSink> audioRtpSink() override { return rtpSink; }
+    // Display send thread: null unless the test set one, so the display
+    // is sent from the owner's thread as before.
+    std::shared_ptr<MediaDisplaySink> displaySink() override { return threadSink; }
     bool isReady() const override { return readyState; }
     bool losslessAudioNegotiated() const override { return losslessNegotiated; }
     std::optional<MediaIcePath> selectedPath() const override { return path; }
@@ -238,6 +292,7 @@ public:
     bool submitIqBusy{false}; // submit can race iqBusy() and remain Busy.
     std::optional<DisplaySendResult> nextIqSubmitResult;
     std::function<void(const QByteArray&)> onIqSend;
+    std::shared_ptr<ThreadDisplaySink> threadSink;
 };
 
 class ClosingControlTransport final : public Test::LoopbackTransport {
@@ -481,6 +536,9 @@ struct Harness {
     QPointer<FakeTransport> mediaTransport;
     // When set, Core's media transport comes from here instead of a fake.
     std::function<IMediaTransport*(QObject*)> realTransport;
+    // Display send thread: when set, the fake sends displays and raw I/Q
+    // from any thread, so Core sends them from its display thread.
+    bool threadDisplaySink{false};
     QPointer<ClosingControlTransport> stationTransport;
     qint64 nowNs{0};
     // A run in real time paces displays on the wall clock instead of nowNs.
@@ -508,6 +566,10 @@ struct Harness {
                      [this](QObject* parent) -> IMediaTransport* {
                          if (realTransport) { return realTransport(parent); }
                          mediaTransport = new FakeTransport(parent);
+                         if (threadDisplaySink) {
+                             mediaTransport->threadSink =
+                                 std::make_shared<ThreadDisplaySink>(mediaTransport->rtpSink);
+                         }
                          return mediaTransport;
                      },
                      [this] {
@@ -761,6 +823,7 @@ private slots:
     void aListenedSliceJoinsTheMixAtTheListenersOwnLevel();
     void rawIqRunsForSixtySecondsInSequenceAndRetires();
     void stalledRawIqFailsWithoutBlockingControl();
+    void rawIqLeavesOnTheDisplayThreadAndItsStallEndsOnMain();
     void rawIqBusyRetryDebitsOnlyOnce();
     void rawIqSubmitBusyStopsAtDeadline();
     void synchronousIqClosureRetiresPeerBeforeNextSend();
@@ -1896,6 +1959,18 @@ void TstDaemonMediaController::realDisplayErrorIsCountedAndLoggedOnce()
         harness.sendDisplayTick();
         return !farDisplays.isEmpty();
     })(), kRealTransportWaitMs);
+    // Display send thread: on the real transport Core's displays leave on
+    // its display thread, not on a tick of this one.
+    QVERIFY(harness.controller.displaysSentFromThread());
+    // The display thread takes its timed turns while the controller's send
+    // timer runs, as it does whenever a pan is open; the manual ticks above
+    // stopped it. It runs again here, and once one of its turns has passed
+    // on this thread (which copies that for the display thread), the
+    // display thread sends with nothing from this thread.
+    QVERIFY(harness.manualSender);
+    QSignalSpy senderTurns(harness.manualSender.data(), &QTimer::timeout);
+    harness.manualSender->start(static_cast<int>(kDisplaySenderIntervalMs));
+    QTRY_VERIFY(!senderTurns.isEmpty());
     // Every frame Core has sent so far was produced before this point.
     QElapsedTimer sinceLastSend;
     sinceLastSend.start();
@@ -1905,49 +1980,59 @@ void TstDaemonMediaController::realDisplayErrorIsCountedAndLoggedOnce()
     // loop hears of it, the next display send finds the channel closed and
     // libdatachannel throws.
     //
-    // The send needs three things, and each is waited on rather than
+    // Display send thread: a frame no longer waits for a tick of this
+    // thread, since the display thread sends it once it is due. So this
+    // thread stops the far end and is then held, running no event loop,
+    // until the display thread has offered a frame to the closed channel.
+    // Core's event loop has heard of neither the close nor the error, and
+    // its next drain takes both together.
+    //
+    // The send needs two things, and each is waited on rather than
     // assumed after a fixed delay, which a loaded machine outruns:
     //  - the channel holds no earlier message (a busy one is never offered
     //    a frame);
     //  - the frame is due: the endpoint drops a frame produced within one
     //    output period (60 fps, plus 5% early tolerance) of the last one it
     //    sent, so the frame must be published more than that after the
-    //    last send;
-    //  - Core holds that frame as its latest input. frameAvailable is
-    //    emitted on this thread and Core takes the source's latest frame
-    //    inside the emit, so an emit after a newer frame was published
-    //    hands Core a due frame. No display tick runs until the one below.
+    //    last send. The hold below is longer.
     QTRY_VERIFY_WITH_TIMEOUT(!core->displayBusy(), kRealTransportWaitMs);
     constexpr qint64 kOutputPeriodMs = 1000 / 60 + 1;
     QTRY_VERIFY(sinceLastSend.elapsed() > 2 * kOutputPeriodMs);
-    auto* source = &harness.controller.sharedSpectrum()->source();
-    QVERIFY(source);
-    const QList<MediaSourceKey> sourceKeys = source->activeSources();
-    QCOMPARE(sourceKeys.size(), 1);
-    const MediaSourceKey sourceKey = sourceKeys.constFirst();
-    QSignalSpy sourceFrames(source, &DaemonSpectrumSource::frameAvailable);
-    const quint64 publishedBefore = source->publishedFrames(sourceKey);
-    const quint64 submitted = core->telemetry()->submittedDisplayPayloadBytes;
-    bool duePublished = false;
+    // The display thread sends a frame fed above on a turn of its own, so
+    // one could still leave during the hold, before the close or after it.
+    // None waits once no display has been offered for 250 ms, many output
+    // periods.
+    QVERIFY(core->telemetry().has_value());
+    quint64 lastOffered = core->telemetry()->submittedDisplayPayloadBytes;
+    QElapsedTimer nothingOffered;
+    nothingOffered.start();
     QTRY_VERIFY_WITH_TIMEOUT(([&] {
-        if (!duePublished && source->publishedFrames(sourceKey) > publishedBefore) {
-            // An emit already seen may have taken an older frame.
-            duePublished = true;
-            sourceFrames.clear();
+        const quint64 offered = core->telemetry()->submittedDisplayPayloadBytes;
+        if (offered != lastOffered) {
+            lastOffered = offered;
+            nothingOffered.restart();
         }
-        if (duePublished && !sourceFrames.isEmpty()) {
-            return true;
-        }
-        harness.feedRadio(0.3125);
-        return false;
+        return nothingOffered.elapsed() > 250;
     })(), kRealTransportWaitMs);
     far.stop();
     std::this_thread::sleep_for(std::chrono::seconds(2));
-    harness.sendDisplayTick();
+    QVERIFY(core->telemetry().has_value());
+    const quint64 submitted = core->telemetry()->submittedDisplayPayloadBytes;
+    QElapsedTimer held;
+    held.start();
+    int fed = 0;
+    while (core->telemetry()->submittedDisplayPayloadBytes == submitted
+           && held.elapsed() < kRealTransportWaitMs) {
+        harness.feedRadio(0.3125 + 0.0078125 * (++fed % 16));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     QVERIFY2(core, "Core retired its transport before the send");
     QVERIFY2(core->telemetry()->submittedDisplayPayloadBytes > submitted,
              "no display frame was waiting to be sent");
 
+    // The drain reports the error; the frames the display thread offers
+    // before it are refused without reaching the library again.
+    QTRY_VERIFY(harness.controller.displayDiagnostics().displayTransportErrors > 0);
     QCOMPARE(harness.controller.displayDiagnostics().displayTransportErrors, quint64(1));
     const QStringList displayErrors =
         g_daemonMediaMessages.filter(QStringLiteral("media transport error:"));
@@ -7360,6 +7445,69 @@ void TstDaemonMediaController::stalledRawIqFailsWithoutBlockingControl()
         }
         return false;
     })());
+    h.finish();
+}
+
+// Display send thread: with a transport that sends from any thread, raw
+// I/Q leaves on the display thread, never on this one. A stalled channel
+// found there ends the stream on this thread, which sends its context.
+void TstDaemonMediaController::rawIqLeavesOnTheDisplayThreadAndItsStallEndsOnMain()
+{
+    Harness h(DisplayBudgetLimits{10'000'000, 10'000'000, 1});
+    // The display thread reads the clock; a run in real time reads nothing
+    // this thread writes.
+    h.realClock = true;
+    h.threadDisplaySink = true;
+    h.establishSession();
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    h.startReadyPeer(true);
+    QVERIFY(h.mediaTransport->threadSink);
+    const std::shared_ptr<ThreadDisplaySink> sink = h.mediaTransport->threadSink;
+    QTRY_VERIFY(h.controller.displaysSentFromThread());
+    std::atomic<int> sentHere{0};
+    h.mediaTransport->onIqSend = [&sentHere](const QByteArray&) { ++sentHere; };
+
+    QVERIFY(h.client.sendMediaControl({
+        {QStringLiteral("op"), QStringLiteral("iq-stream")},
+        {QStringLiteral("connectionId"), QLatin1String(kConnectionId)},
+        {QStringLiteral("sliceId"), h.sliceId},
+        {QStringLiteral("revision"), 1},
+        {QStringLiteral("enabled"), true}}, h.client.sessionEpoch()));
+    QTRY_VERIFY(([&] {
+        for (const auto& call : controls) {
+            const auto context = call.at(0).toJsonObject();
+            if (context.value(QStringLiteral("op")) == QLatin1String("iq-stream-context")
+                && context.value(QStringLiteral("enabled")).toBool()) { return true; }
+        }
+        return false;
+    })());
+    const QVector<float> block(2048, 0.25f);
+    QTRY_VERIFY(([&] {
+        h.radio.rawIqDataForStream(h.streamIndex, block);
+        return sink->iqThreads().size() >= 3;
+    })());
+    const std::thread::id here = std::this_thread::get_id();
+    for (const std::thread::id& sentFrom : sink->iqThreads()) {
+        QVERIFY(sentFrom != here);
+    }
+    QCOMPARE(sentHere.load(), 0);
+
+    // The channel stalls. The display thread finds it after 250 ms and
+    // leaves the stream's end to this thread.
+    sink->stallIq.store(true, std::memory_order_release);
+    h.radio.rawIqDataForStream(h.streamIndex, block);
+    QTRY_VERIFY_WITH_TIMEOUT(([&] {
+        for (const auto& call : controls) {
+            const auto context = call.at(0).toJsonObject();
+            if (context.value(QStringLiteral("op")) == QLatin1String("iq-stream-context")
+                && context.value(QStringLiteral("revision")).toInt() == 1
+                && !context.value(QStringLiteral("enabled")).toBool()
+                && context.value(QStringLiteral("reason")).toString().contains(
+                    QLatin1String("stalled"))) { return true; }
+        }
+        return false;
+    })(), 10'000);
+    QCOMPARE(sentHere.load(), 0);
     h.finish();
 }
 

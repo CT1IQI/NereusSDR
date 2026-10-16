@@ -4,6 +4,13 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: display send thread (JJ approved 2026-10-15): with a media
+//               peer whose transport sends displays from any thread, the
+//               shared spectrum's display thread takes in the frames and
+//               runs the sender's turns under the display lock, which every
+//               entry into controller code on the station thread takes.
+//               What only the station thread may do is queued to it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11: R-DISP-RETUNE (third wave): a peer whose start declared
 //               spectrumPictureVersion is told, in each spectrum context,
 //               which picture its frames continue. J.J. Boyd (KG4VCF),
@@ -201,6 +208,7 @@
 #include <QVarLengthArray>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <tuple>
@@ -525,6 +533,16 @@ struct DaemonMediaController::EndpointEntry {
     int keyframesInWindow{0};
     QElapsedTimer keyframeWindow;
     qint64 lastNoiseFloorTimestampNs{-1};
+    // Display send thread: the display thread found this endpoint needs a
+    // configure, which the station thread does (mainWorkForFrame); until
+    // then no turn sends from it. And the station thread's values for it
+    // the display thread reads (refreshDisplaySnapshot): its wideband
+    // context, whether it is on the transmitting pan, and its slice's
+    // fields of the display extras' inputs.
+    bool configurePending{false};
+    std::optional<WidebandDisplayContext> snapshotWideband;
+    bool snapshotOnTransmitPan{false};
+    DisplayExtrasInputs snapshotSlice;
     // iPhone app Task 20 (R-IOS-27): what the subscription asked the Core
     // to compute, the computation, and the NSDX datagram waiting to go
     // right after the frame it describes.
@@ -562,6 +580,27 @@ struct DaemonMediaController::EndpointEntry {
 
 // ── Shared spectrum engines (iPhone app Task 76, ruling 9.1) ─────────────
 
+namespace {
+
+// Display send thread: how long the display thread waits for the display
+// lock at a time before it looks whether it is being stopped.
+constexpr auto kDisplayLockWait = std::chrono::milliseconds(1);
+
+// The display lock the display thread took with tryLockFor(), let go at the
+// end of the scope.
+class HeldDisplayLock final {
+public:
+    explicit HeldDisplayLock(DaemonDisplayLock& lock) : m_lock(lock) {}
+    ~HeldDisplayLock() { m_lock.unlock(); }
+    HeldDisplayLock(const HeldDisplayLock&) = delete;
+    HeldDisplayLock& operator=(const HeldDisplayLock&) = delete;
+
+private:
+    DaemonDisplayLock& m_lock;
+};
+
+} // namespace
+
 DaemonSharedSpectrum::DaemonSharedSpectrum(RadioModel* radioModel, QObject* parent)
     : QObject(parent)
     , m_source(this)
@@ -573,11 +612,29 @@ DaemonSharedSpectrum::DaemonSharedSpectrum(RadioModel* radioModel, QObject* pare
 
 DaemonSharedSpectrum::~DaemonSharedSpectrum()
 {
+    // Display send thread: no engine wakes the thread from here on, and the
+    // thread is gone before the engines go.
+    m_source.setFrameWake({});
+    m_displayThread.stop();
+    {
+        const DaemonDisplayLockGuard hold(m_displayLock);
+        m_displayLock->setReleaseHook({});
+    }
     const QList<MediaSourceKey> keys = m_runtimes.keys();
     for (const MediaSourceKey& key : keys) {
         m_source.deactivate(key);
     }
     m_runtimes.clear();
+}
+
+void DaemonSharedSpectrum::forgetHeldFrames(const MediaSourceKey& key)
+{
+    for (const QPointer<DaemonMediaController>& member : m_members) {
+        if (member) {
+            member->m_framesForMain.remove(key);
+            member->m_pendingSourceFrames.remove(key);
+        }
+    }
 }
 
 QList<DaemonMediaController*> DaemonSharedSpectrum::members() const
@@ -593,6 +650,7 @@ QList<DaemonMediaController*> DaemonSharedSpectrum::members() const
 
 void DaemonSharedSpectrum::join(DaemonMediaController* controller)
 {
+    const DaemonDisplayLockGuard hold(m_displayLock);
     if (controller != nullptr && !m_members.contains(controller)) {
         m_members.append(controller);
     }
@@ -600,11 +658,71 @@ void DaemonSharedSpectrum::join(DaemonMediaController* controller)
 
 void DaemonSharedSpectrum::leave(DaemonMediaController* controller)
 {
+    const DaemonDisplayLockGuard hold(m_displayLock);
     m_members.removeAll(controller);
     m_members.removeAll(QPointer<DaemonMediaController>());
+    // The last member sending from the display thread may be the one going.
+    syncDisplayThread();
+}
+
+void DaemonSharedSpectrum::askDisplayTurn(DaemonMediaController* member)
+{
+    member->m_displayTurnAsked.store(true, std::memory_order_release);
+    m_displayThread.wakeTurn();
+}
+
+void DaemonSharedSpectrum::syncDisplayThread()
+{
+    bool used = false;
+    for (const QPointer<DaemonMediaController>& member : m_members) {
+        if (member && member->m_displayThreadMode) {
+            used = true;
+            break;
+        }
+    }
+    if (used == m_displayThreadUsed) {
+        return;
+    }
+    m_displayThreadUsed = used;
+    if (used) {
+        if (!m_displayThread.isRunning()) {
+            m_displayThread.start([this](bool timedTurn, bool askedTurn) {
+                displayPass(timedTurn, askedTurn);
+            });
+        }
+        m_displayLock->setHookExemptThread(m_displayThread.threadId());
+        m_displayLock->setReleaseHook([this] { refreshMemberSnapshots(); });
+        DaemonDisplaySendThread* const thread = &m_displayThread;
+        m_source.setFrameWake([thread] { thread->wakeFrames(); });
+        m_displayThread.setActive(true);
+        return;
+    }
+    // Every engine announces its frames on this thread again. A frame
+    // published while the wake was set and not taken yet was announced to
+    // no one, so this thread takes it: at its next turn, not inside the
+    // controller code that moved off the display thread.
+    m_source.setFrameWake({});
+    m_displayThread.setActive(false);
+    m_displayLock->setReleaseHook({});
+    QMetaObject::invokeMethod(this, [this] {
+        const DaemonDisplayLockGuard hold(m_displayLock);
+        if (m_displayThreadUsed) {
+            return;
+        }
+        const QList<MediaSourceKey> keys = m_source.activeSources();
+        for (const MediaSourceKey& key : keys) {
+            takeInOnStationThread(key);
+        }
+    }, Qt::QueuedConnection);
 }
 
 void DaemonSharedSpectrum::onFrameAvailable(MediaSourceKey key)
+{
+    const DaemonDisplayLockGuard hold(m_displayLock);
+    takeInOnStationThread(key);
+}
+
+void DaemonSharedSpectrum::takeInOnStationThread(const MediaSourceKey& key)
 {
     // Taken once; every controller watching this receiver gets the frame.
     const std::optional<DaemonSpectrumFrame> frame = m_source.takeLatest(key);
@@ -615,6 +733,59 @@ void DaemonSharedSpectrum::onFrameAvailable(MediaSourceKey key)
     for (const QPointer<DaemonMediaController>& member : members) {
         if (member) {
             member->onSourceFrame(*frame);
+        }
+    }
+}
+
+void DaemonSharedSpectrum::takeInOnDisplayThread()
+{
+    const QList<MediaSourceKey> keys = m_source.activeSources();
+    for (const MediaSourceKey& key : keys) {
+        const std::optional<DaemonSpectrumFrame> frame = m_source.takeLatest(key);
+        if (!frame.has_value()) {
+            continue;
+        }
+        for (const QPointer<DaemonMediaController>& member : m_members) {
+            if (member) {
+                member->takeInOnDisplayThread(*frame);
+            }
+        }
+    }
+}
+
+void DaemonSharedSpectrum::displayPass(bool timedTurn, bool askedTurn)
+{
+    // The display thread. It waits for the lock only while the station
+    // thread runs controller code, which never draws.
+    while (!m_displayLock->tryLockFor(kDisplayLockWait)) {
+        if (m_displayThread.stopRequested()) {
+            return;
+        }
+    }
+    const HeldDisplayLock hold(*m_displayLock);
+    takeInOnDisplayThread();
+    if (!timedTurn && !askedTurn) {
+        return;
+    }
+    const QList<QPointer<DaemonMediaController>> members = m_members;
+    for (const QPointer<DaemonMediaController>& member : members) {
+        if (!member || !member->m_displayThreadMode) {
+            continue;
+        }
+        // An asked turn is that member's own, as its displayWritable ran
+        // only its own sender.
+        const bool asked = member->m_displayTurnAsked.exchange(false, std::memory_order_acq_rel);
+        if (timedTurn || asked) {
+            member->displayThreadTurn(timedTurn, asked);
+        }
+    }
+}
+
+void DaemonSharedSpectrum::refreshMemberSnapshots()
+{
+    for (const QPointer<DaemonMediaController>& member : m_members) {
+        if (member && member->m_displayThreadMode) {
+            member->refreshDisplaySnapshot();
         }
     }
 }
@@ -634,6 +805,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
                                 [](DaemonSharedSpectrum*) {}),
                             parent, std::move(peerFactory), std::move(monotonicClock))
 {
+    const auto displayHold = displayGuard();
     m_shared->setParent(this);
     if (!m_server || !m_radioModel) {
         return;
@@ -673,6 +845,10 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
     , m_audioDiagnosticsTimer(this)
     , m_displayDiagnosticsTimer(this)
 {
+    // Display send thread: the lock is the shared spectrum's, and this body
+    // holds it from here, as every entry into controller code does.
+    m_displayLock = m_shared->displayLock();
+    const auto displayHold = displayGuard();
     m_receiverStreamSlice.fill(-1);
     m_receiverNextSequence.fill(1);
     m_receiverNextTimestamp.fill(0);
@@ -681,10 +857,12 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
     connect(&m_sendTimer, &QTimer::timeout, this, &DaemonMediaController::onSendTimerTurn);
     m_audioDiagnosticsTimer.setInterval(kAudioDiagnosticsLogIntervalMs);
     connect(&m_audioDiagnosticsTimer, &QTimer::timeout, this, [this] {
+        const auto displayHold = displayGuard();
         maybeLogAudioDiagnostics(false);
     });
     m_displayDiagnosticsTimer.setInterval(kDisplayDiagnosticsLogIntervalMs);
     connect(&m_displayDiagnosticsTimer, &QTimer::timeout, this, [this] {
+        const auto displayHold = displayGuard();
         // Control logging lane: a pair that changed since is logged.
         logMediaPath();
         logDisplayDiagnostics(false);
@@ -696,10 +874,12 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
             &DaemonMediaController::finishReplacement);
     m_replaceConnectTimer.setSingleShot(true);
     connect(&m_replaceConnectTimer, &QTimer::timeout, this, [this] {
+        const auto displayHold = displayGuard();
         failReplacement(QString::fromLatin1(kMediaPeerClosedReason));
     });
     m_retireDrainTimer.setSingleShot(true);
     connect(&m_retireDrainTimer, &QTimer::timeout, this, [this] {
+        const auto displayHold = displayGuard();
         if (m_retiring) {
             MediaPeer* const peer = m_retiring.release();
             peer->disconnect(this);
@@ -718,12 +898,14 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
             this, &DaemonMediaController::onControl);
     connect(m_server, &StationServer::displayBudgetChanged,
             this, [this] {
+        const auto displayHold = displayGuard();
         ++m_iqBudgetChangeRevision;
         beginDisplayBudgetIfNeeded();
         refreshDisplayBudgetPacer();
         if (!m_iqStreams.empty() && !m_iqBudgetRecheckScheduled) {
             m_iqBudgetRecheckScheduled = true;
             QTimer::singleShot(0, this, [this] {
+                const auto displayHold = displayGuard();
                 m_iqBudgetRecheckScheduled = false;
                 reconcileIqBudget();
             });
@@ -745,6 +927,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
     // listening, the listener half of a claims removal) reaches the media
     // as a change of controller does.
     const auto followAccess = [this](int sliceId) {
+        const auto displayHold = displayGuard();
         const QPointer<DaemonMediaController> self(this);
         refreshOwnerMixMask();
         // Fix wave: a slice this device can no longer see is gone from its
@@ -764,9 +947,15 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
             followAccess);
     // A slice made for this device is noted without a mark change.
     connect(m_radioModel->sliceOwnership(), &SliceOwnership::activeChanged, this,
-            [this] { refreshOwnerMixMask(); });
+            [this] {
+                const auto displayHold = displayGuard();
+                refreshOwnerMixMask();
+            });
     connect(m_radioModel, &RadioModel::sliceRemoved, this,
-            [this](int) { refreshOwnerMixMask(); });
+            [this](int) {
+                const auto displayHold = displayGuard();
+                refreshOwnerMixMask();
+            });
     connect(m_radioModel, &RadioModel::streamCentreChanged,
             this, &DaemonMediaController::onStreamGeometryChanged);
     connect(m_radioModel, &RadioModel::streamBindingsChanged,
@@ -781,6 +970,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
         watchSliceOutputRoute(slice);
     }
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
+        const auto displayHold = displayGuard();
         if (m_radioModel) {
             watchSliceOutputRoute(m_radioModel->sliceById(sliceId));
         }
@@ -790,12 +980,23 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
     // Capture changes can be emitted inside endpoint lease release. Process
     // them after map replacement/removal completes, then revalidate again at
     // send time so no old source row slips through the queued notification.
+    // Display send thread: the copy the display thread reads holds each
+    // ADC's newest wideband frame, and a release of the lock refreshes it.
+    connect(m_radioModel, &RadioModel::widebandSpectrumAvailable, this, [this](int, quint32) {
+        if (m_displayThreadMode) {
+            const auto displayHold = displayGuard();
+        }
+    });
     connect(m_radioModel, &RadioModel::widebandSourceChanged, this,
             &DaemonMediaController::onWidebandSourceChanged, Qt::QueuedConnection);
     connect(m_radioModel, &RadioModel::streamAdcRoutingChanged, this,
-            [this]() { onWidebandSourceChanged(-1); }, Qt::QueuedConnection);
+            [this]() {
+                const auto displayHold = displayGuard();
+                onWidebandSourceChanged(-1);
+            }, Qt::QueuedConnection);
     connect(m_radioModel->pureSignalFacade(), &PureSignalSessionFacade::displayInvalidated,
             this, [this]() {
+        const auto displayHold = displayGuard();
         m_ps3CurrentChunks.clear();
         m_ps3LatestChunks.clear();
         m_ps3CurrentAttempted = false;
@@ -805,6 +1006,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
             this, &DaemonMediaController::onRemoteAmpViewSubscriptionChanged);
     connect(m_radioModel->pureSignalFacade(), &PureSignalSessionFacade::displaySnapshotReady,
             this, [this](const Ps3Snapshot& snapshot) {
+        const auto displayHold = displayGuard();
         if (m_epoch == 0 || !m_peer || !m_peer->isReady() || !ps3DisplayHere()) {
             return;
         }
@@ -897,6 +1099,7 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
 
 DaemonMediaController::~DaemonMediaController()
 {
+    const auto displayHold = displayGuard();
     // TX stall lane: an unkey whose walk is still running when the
     // controller goes (its session ended in the tail) still gets its line.
     logUnkeyStats();
@@ -947,11 +1150,13 @@ DaemonMediaController::~DaemonMediaController()
 
 int DaemonMediaController::activeEndpointCount() const
 {
+    const auto displayHold = displayGuard();
     return static_cast<int>(m_endpoints.size());
 }
 
 int DaemonMediaController::activeSourceCount() const
 {
+    const auto displayHold = displayGuard();
     int active = 0;
     const QList<MediaSourceKey> keys = m_source.activeSources();
     for (const MediaSourceKey& key : keys) {
@@ -964,6 +1169,7 @@ int DaemonMediaController::activeSourceCount() const
 
 void DaemonMediaController::setAudioTargetBitrate(int bitsPerSecond)
 {
+    const auto displayHold = displayGuard();
     // Stored only: a peer and sender already built keep the target they
     // were built with, so a live session never changes encoder mid-context.
     m_audioTargetBitrate = bitsPerSecond;
@@ -971,12 +1177,20 @@ void DaemonMediaController::setAudioTargetBitrate(int bitsPerSecond)
 
 DaemonAudioDiagnostics DaemonMediaController::audioDiagnostics() const
 {
+    const auto displayHold = displayGuard();
     return snapshotAudioDiagnostics();
 }
 
 DaemonDisplayDiagnostics DaemonMediaController::displayDiagnostics() const
 {
+    const auto displayHold = displayGuard();
     return m_displayDiagnostics;
+}
+
+bool DaemonMediaController::displaysSentFromThread() const
+{
+    const auto displayHold = displayGuard();
+    return m_displayThreadMode;
 }
 
 namespace {
@@ -1115,6 +1329,7 @@ void DaemonMediaController::logMediaPath()
 
 std::optional<SpectrumGrant> DaemonMediaController::spectrumGrant(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     if (it == m_endpoints.end()) {
         return std::nullopt;
@@ -1132,6 +1347,7 @@ bool DaemonMediaController::coreBusyLimitsSources() const
 std::optional<bool> DaemonMediaController::spectrumSourceTransformsFollowFrameRate(
     quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     if (it == m_endpoints.end()) {
         return std::nullopt;
@@ -1145,6 +1361,7 @@ std::optional<bool> DaemonMediaController::spectrumSourceTransformsFollowFrameRa
 
 std::optional<int> DaemonMediaController::spectrumSourceDecimation(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     if (it == m_endpoints.end()) {
         return std::nullopt;
@@ -1156,6 +1373,7 @@ std::optional<int> DaemonMediaController::spectrumSourceDecimation(quint32 endpo
 std::optional<DaemonMediaController::SpectrumAveraging>
 DaemonMediaController::spectrumAveraging(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     if (it == m_endpoints.end()) {
         return std::nullopt;
@@ -1166,12 +1384,14 @@ DaemonMediaController::spectrumAveraging(quint32 endpointId) const
 
 DisplayExtrasProcessor* DaemonMediaController::displayExtrasForTest(quint32 endpointId)
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     return it == m_endpoints.end() ? nullptr : it->second.extras.get();
 }
 
 std::optional<int> DaemonMediaController::spectrumSourceFps(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     if (it == m_endpoints.end()) {
         return std::nullopt;
@@ -1199,6 +1419,10 @@ bool DaemonMediaController::displayBudgetWireAvailable() const
 
 bool DaemonMediaController::displayPacingRequired() const
 {
+    // Display send thread: the station thread's answer, copied.
+    if (onDisplayThread()) {
+        return m_displaySnapshot.pacingRequired;
+    }
     return m_server && m_server->displayBudgetLimits(m_epoch).has_value();
 }
 
@@ -1215,11 +1439,13 @@ DisplayBudgetCharge DaemonMediaController::currentSpectrumCharge() const
 
 DisplayBudgetCharge DaemonMediaController::ownDisplayCharge() const
 {
+    const auto displayHold = displayGuard();
     return acceptedDisplayCharge();
 }
 
 DisplayBudgetCharge DaemonMediaController::displayDemand() const
 {
+    const auto displayHold = displayGuard();
     QList<DisplayBudgetCharge> charges;
     for (const auto& [unused, demand] : m_displayDemand) {
         Q_UNUSED(unused);
@@ -1260,6 +1486,7 @@ void DaemonMediaController::holdRefusedDemand(quint32 endpointId,
 
 void DaemonMediaController::endRefusedDemands()
 {
+    const auto displayHold = displayGuard();
     const qint64 now = displayNowNs();
     std::optional<qint64> next;
     QList<QPair<quint32, std::optional<DisplayBudgetCharge>>> ended;
@@ -1295,6 +1522,7 @@ void DaemonMediaController::endRefusedDemands()
 
 DisplayBudgetCharge DaemonMediaController::acceptedDisplayCharge() const
 {
+    const auto displayHold = displayGuard();
     const bool ps3Enabled = ps3DisplayHere();
     return sumDisplayCharges({currentSpectrumCharge(),
                               ps3Enabled ? ps3DisplayCharge() : DisplayBudgetCharge{},
@@ -1365,6 +1593,7 @@ void DaemonMediaController::beginDisplayBudgetIfNeeded()
 
 void DaemonMediaController::refreshDisplayBudgetPacer()
 {
+    warnIfDisplayLockNotHeld("refreshDisplayBudgetPacer", true);
     beginDisplayBudgetIfNeeded();
     if (!m_displayPacerInitialized || !m_server) {
         return;
@@ -1382,6 +1611,7 @@ void DaemonMediaController::refreshDisplayBudgetPacer()
 
 bool DaemonMediaController::admitPs3Display(bool enabled, QString* refusal)
 {
+    const auto displayHold = displayGuard();
     const bool current = ps3DisplayHere();
     if (enabled == current || !enabled) {
         return true;
@@ -1405,6 +1635,7 @@ bool DaemonMediaController::admitPs3Display(bool enabled, QString* refusal)
 
 void DaemonMediaController::onRemoteAmpViewSubscriptionChanged(bool subscribed)
 {
+    const auto displayHold = displayGuard();
     if (!subscribed) {
         m_ps3CurrentChunks.clear();
         m_ps3LatestChunks.clear();
@@ -1507,6 +1738,7 @@ bool DaemonMediaController::rejectAllocation(
 
 void DaemonMediaController::onSessionStarted(quint64 epoch)
 {
+    const auto displayHold = displayGuard();
     if (epoch == 0 || epoch <= m_lastSessionEpoch) {
         return;
     }
@@ -1534,6 +1766,7 @@ void DaemonMediaController::onSessionStarted(quint64 epoch)
 
 void DaemonMediaController::onSessionEnded(quint64 epoch)
 {
+    const auto displayHold = displayGuard();
     if (epoch == m_epoch) {
         clearSession();
         m_displayPacer.endSession();
@@ -1560,7 +1793,10 @@ void DaemonMediaController::acquireOwnerMix()
     if (m_server && m_server->sliceAccessController()) {
         m_listenLevelConnection = connect(
             m_server->sliceAccessController(), &SliceAccessController::listenLevelChanged, this,
-            [this](int, const QByteArray&) { refreshOwnerMixMask(); });
+            [this](int, const QByteArray&) {
+                const auto displayHold = displayGuard();
+                refreshOwnerMixMask();
+            });
     }
     refreshOwnerMixMask();
     // Parity Task 32: and the transmit monitor, if this device has one.
@@ -1598,6 +1834,7 @@ bool DaemonMediaController::hearsSlice(int sliceId) const
 
 QList<const DaemonAudioSender*> DaemonMediaController::audioSendersForTest() const
 {
+    const auto displayHold = displayGuard();
     QList<const DaemonAudioSender*> senders;
     if (m_audioSender) {
         senders.append(m_audioSender.get());
@@ -1617,6 +1854,7 @@ QList<const DaemonAudioSender*> DaemonMediaController::audioSendersForTest() con
 #ifdef NEREUS_BUILD_TESTS
 void DaemonMediaController::handOverPendingAudioForTest()
 {
+    const auto displayHold = displayGuard();
     if (m_audioSender) {
         m_audioSender->handOverPendingCaptureForTest();
     }
@@ -1695,6 +1933,10 @@ void DaemonMediaController::refreshOwnerMixMask()
 
 bool DaemonMediaController::ps3DisplayHere() const
 {
+    // Display send thread: the station thread's answer, copied.
+    if (onDisplayThread()) {
+        return m_displaySnapshot.ps3Here;
+    }
     // Ruling 9.3 item 4: the PureSignal display goes to its subscriber.
     if (!m_radioModel || !m_radioModel->pureSignalFacade()->remoteAmpViewSubscribed()
         || m_epoch == 0 || !m_server) {
@@ -1732,6 +1974,7 @@ bool DaemonMediaController::anySharedEndpointOn(const MediaSourceKey& key) const
 
 void DaemonMediaController::onRadioConnectionStateChanged(ConnectionState state)
 {
+    const auto displayHold = displayGuard();
     // R-R3-43: the wanted receiver streams, handled after the main one.
     QList<int> wantedReceivers;
     for (const auto& [sliceId, stream] : m_receiverStreams) {
@@ -1795,6 +2038,7 @@ void DaemonMediaController::onRadioConnectionStateChanged(ConnectionState state)
 
 void DaemonMediaController::onControl(const QJsonObject& control, quint64 epoch)
 {
+    const auto displayHold = displayGuard();
     // R-R3-35: a clock probe's arrival time (t1), read before anything else.
     const qint64 receivedNs = displayNowNs();
     if (!m_server || !m_server->mediaAvailable(epoch) || epoch == 0 || epoch != m_epoch
@@ -2083,12 +2327,14 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
     const quint64 peerEpoch = m_epoch;
     connect(peer, &MediaPeer::errorOccurred, this,
             [this, peer, peerEpoch](const QString& message) {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             onMediaPeerError(message);
         }
     });
     connect(peer, &MediaPeer::displayErrorOccurred, this,
             [this, peer, peerEpoch](const QString& message) {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             onMediaTransportError(message);
         }
@@ -2098,12 +2344,19 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
     // the link's acknowledgement pace. Nothing waits here; the tick sends
     // whatever is latest.
     connect(peer, &MediaPeer::displayWritable, this, [this, peer, peerEpoch]() {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
-            onSendTick();
+            // Display send thread: its next pass runs the turn.
+            if (m_displayThreadMode) {
+                m_shared->askDisplayTurn(this);
+            } else {
+                onSendTick();
+            }
         }
     });
     connect(peer, &MediaPeer::controlReady, this,
             [this, peer, peerEpoch](const QJsonObject& outbound) {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             sendControl(outbound);
         }
@@ -2113,6 +2366,7 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
     m_peerLost = false;
     connect(peer, &MediaPeer::connectionFailed, this,
             [this, peer, peerEpoch](const QString& message) {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             m_peerLost = true;
             qCInfo(lcDaemonMedia).noquote()
@@ -2120,6 +2374,7 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
         }
     });
     connect(peer, &MediaPeer::closed, this, [this, peer, peerEpoch, connectionId]() {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
             // The Core dropped this peer on its own. Tell the app at once,
             // with the whole-peer refusal (endpointId 0, revision 0), so it
@@ -2140,7 +2395,10 @@ void DaemonMediaController::wireCurrentPeer(MediaPeer* peer, const QString& conn
         }
     });
     connect(peer, &MediaPeer::ready, this, [this, peer, peerEpoch]() {
+        const auto displayHold = displayGuard();
         if (m_peer.get() == peer && m_epoch == peerEpoch) {
+            // Display send thread: displays leave from it from now on.
+            syncDisplayThread();
             // Control logging lane: the pair it settled on.
             logMediaPath();
             reconcileAudio();
@@ -2411,6 +2669,9 @@ void DaemonMediaController::syncAudioRoutes()
             warnIfNoSink(m_replacement.get());
         }
     }
+    // Display send thread: every change of peer or of its readiness
+    // passes here.
+    syncDisplayThread();
 }
 
 std::optional<IceConfiguration> DaemonMediaController::mediaIceConfiguration()
@@ -2510,16 +2771,19 @@ bool DaemonMediaController::handleReplace(const QJsonObject& control)
         return m_replacement.get() == peer && m_epoch == peerEpoch;
     };
     connect(peer, &MediaPeer::controlReady, this, [this, current](const QJsonObject& outbound) {
+        const auto displayHold = displayGuard();
         if (current()) {
             sendControl(outbound);
         }
     });
     connect(peer, &MediaPeer::ready, this, [this, current] {
+        const auto displayHold = displayGuard();
         if (current()) {
             onReplacementReady();
         }
     });
     connect(peer, &MediaPeer::connectionFailed, this, [this, current](const QString& message) {
+        const auto displayHold = displayGuard();
         if (current()) {
             qCInfo(lcDaemonMedia).noquote()
                 << QStringLiteral("replacement media connection failed: %1").arg(message.left(256));
@@ -2527,11 +2791,13 @@ bool DaemonMediaController::handleReplace(const QJsonObject& control)
         }
     });
     connect(peer, &MediaPeer::closed, this, [this, current] {
+        const auto displayHold = displayGuard();
         if (current()) {
             failReplacement(QString::fromLatin1(kMediaPeerClosedReason));
         }
     });
     connect(peer, &MediaPeer::errorOccurred, this, [this, current](const QString& message) {
+        const auto displayHold = displayGuard();
         if (current()) {
             qCInfo(lcDaemonMedia).noquote()
                 << QStringLiteral("replacement media error: %1").arg(message.left(256));
@@ -2587,6 +2853,7 @@ void DaemonMediaController::onReplacementReady()
 
 void DaemonMediaController::finishReplacement()
 {
+    const auto displayHold = displayGuard();
     if (!m_replacement || !m_replacementReady || !m_peer) {
         return;
     }
@@ -2739,6 +3006,7 @@ void DaemonMediaController::startMicLine(MediaPeer* peer)
     // Task 37 (remote design section 12.3): starvation while the device is
     // keyed on its line takes the Core's per-mode action.
     connect(m_micReceiver.get(), &RemoteMicReceiver::starved, this, [this](bool starved) {
+        const auto displayHold = displayGuard();
         if (m_server && !m_micDeviceId.isEmpty()) {
             m_server->remoteMicStarved(m_micDeviceId, starved);
         }
@@ -3976,6 +4244,7 @@ void DaemonMediaController::stopIqStream(IqStream& stream)
     stream.sampleRate = 0;
     stream.generation = ++m_nextIqGeneration;
     if (stream.generation == 0) { stream.generation = ++m_nextIqGeneration; }
+    stream.failOnMain.reset();
 }
 
 void DaemonMediaController::sendIqContext(int sliceId, const IqStream& stream,
@@ -4085,6 +4354,10 @@ void DaemonMediaController::reconcileWantedIq()
 
 bool DaemonMediaController::iqFitsCurrentShare() const
 {
+    // Display send thread: the station thread's answer, copied.
+    if (onDisplayThread()) {
+        return m_displaySnapshot.iqFits;
+    }
     const auto limits = m_server ? m_server->displayBudgetLimits(m_epoch) : std::nullopt;
     if (!limits) { return false; }
     QList<DisplayBudgetCharge> floor{
@@ -4335,6 +4608,7 @@ quint32 DaemonMediaController::nextReceiverContextGeneration()
 
 int DaemonMediaController::activeReceiverAudioStreamCount() const
 {
+    const auto displayHold = displayGuard();
     int count = 0;
     for (const auto& [sliceId, stream] : m_receiverStreams) {
         Q_UNUSED(sliceId);
@@ -4347,6 +4621,7 @@ int DaemonMediaController::activeReceiverAudioStreamCount() const
 
 std::optional<RemoteAudioProfile> DaemonMediaController::receiverAudioProfile(int sliceId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_receiverStreams.find(sliceId);
     if (it == m_receiverStreams.end() || !it->second.sending) {
         return std::nullopt;
@@ -4434,6 +4709,7 @@ TxMonitorRoute DaemonMediaController::appliedMonitorRoute() const
 
 void DaemonMediaController::refreshTxMonitor()
 {
+    const auto displayHold = displayGuard();
     TxMonitorRoute route = TxMonitorRoute::None;
     if (m_txMonitorNegotiated && m_monitorRevision != 0 && m_peer && m_epoch != 0 && m_server
         && m_radioModel && m_radioModel->transmitModel().monEnabled()) {
@@ -4497,6 +4773,7 @@ void DaemonMediaController::watchSliceOutputRoute(SliceModel* slice)
 
 void DaemonMediaController::onOutputRoutesChanged()
 {
+    const auto displayHold = displayGuard();
     // Only the first receiver onto the headphones starts the mix and only
     // the last one off stops it; the mix itself follows every route change
     // in AudioEngine without a new context.
@@ -4668,11 +4945,13 @@ quint32 DaemonMediaController::nextHeadphonesContextGeneration()
 
 bool DaemonMediaController::headphonesMixSending() const
 {
+    const auto displayHold = displayGuard();
     return m_headphones.sending && m_headphones.sender && m_headphones.sender->isRunning();
 }
 
 std::optional<RemoteAudioProfile> DaemonMediaController::headphonesMixProfile() const
 {
+    const auto displayHold = displayGuard();
     if (!headphonesMixSending()) {
         return std::nullopt;
     }
@@ -4764,6 +5043,7 @@ void DaemonMediaController::admitAudioProfile()
 void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame)
 {
     // Task 76: DaemonSharedSpectrum took this frame once for every device.
+    warnIfDisplayLockNotHeld("onSourceFrame", true);
     const MediaSourceKey key = sharedFrame.source;
     const DaemonSpectrumFrame* const sourceFrame = &sharedFrame;
     if (!m_radioModel || m_endpoints.empty()) {
@@ -4825,6 +5105,9 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
             ++m_displayDiagnostics.displayPanFramesReplaced;
         }
         entry.latestInput = frame;
+        // This thread checks it whole: any configure the display thread
+        // left to it is done here.
+        entry.configurePending = false;
         const auto wideband = widebandContext(entry);
         if (!wideband) {
             entry.contextSent = false;
@@ -4840,6 +5123,27 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
         }
     }
 
+    if (!sendDueNoiseFloors(*sourceFrame, stationOffsetDb)) {
+        return;
+    }
+
+    for (auto& [unused, entry] : m_endpoints) {
+        Q_UNUSED(unused);
+        if (entry.request.source == key && !entry.txViewer
+            && entry.endpoint.configured() && entry.contextSent
+            && entry.endpoint.context().sourceGeneration == frame.generation) {
+            entry.latestInput = frame;
+        }
+    }
+}
+
+bool DaemonMediaController::sendDueNoiseFloors(const DaemonSpectrumFrame& frame,
+                                               double stationOffsetDb)
+{
+    const MediaSourceKey key = frame.source;
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
+    const QList<quint32> ids = endpointIds();
     bool needsNoiseFloor = false;
     for (const auto& [unused, entry] : m_endpoints) {
         Q_UNUSED(unused);
@@ -4853,7 +5157,7 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
         }
     }
     if (needsNoiseFloor) {
-        const std::optional<float> floorDbm = fullSourceNoiseFloor(*sourceFrame, stationOffsetDb);
+        const std::optional<float> floorDbm = fullSourceNoiseFloor(frame, stationOffsetDb);
         if (floorDbm.has_value() && m_peer) {
             for (quint32 endpointId : ids) {
                 auto it = m_endpoints.find(endpointId);
@@ -4884,7 +5188,7 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
                 }
                 const QPointer<DaemonMediaController> self(this);
                 const bool sent = sendControl(message);
-                if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+                if (!self || m_peer.get() != peer || m_epoch != epoch) { return false; }
                 it = m_endpoints.find(endpointId);
                 if (sent && it != m_endpoints.end() && it->second.revision == revision
                     && it->second.endpoint.configured()
@@ -4894,20 +5198,419 @@ void DaemonMediaController::onSourceFrame(const DaemonSpectrumFrame& sharedFrame
             }
         }
     }
+    return true;
+}
 
-    for (auto& [unused, entry] : m_endpoints) {
-        Q_UNUSED(unused);
-        if (entry.request.source == key && !entry.txViewer
-            && entry.endpoint.configured() && entry.contextSent
-            && entry.endpoint.context().sourceGeneration == frame.generation) {
-            entry.latestInput = frame;
+// ---- Display send thread (2026-10-15) ---------------------------------------
+
+void DaemonMediaController::takeInOnDisplayThread(const DaemonSpectrumFrame& frame)
+{
+    if (m_endpoints.empty()) {
+        return;
+    }
+    const MediaSourceKey key = frame.source;
+    if (!m_displayThreadMode) {
+        // This controller still sends from the station thread: the frame
+        // goes there whole, as onFrameAvailable() hands it. One it replaces
+        // there was never taken.
+        DaemonSpectrumFrame pending = frame;
+        const auto held = m_pendingSourceFrames.constFind(key);
+        if (held != m_pendingSourceFrames.cend()) {
+            pending.replacedBefore += 1 + held->replacedBefore;
+        }
+        m_pendingSourceFrames.insert(key, pending);
+        queueFrameWork();
+        return;
+    }
+    // As onSourceFrame(), with the station thread's values from the copy;
+    // what needs that thread (a configure, a noise floor) is left to it.
+    const auto offset = m_displaySnapshot.offsetByStream.constFind(key.streamIndex);
+    if (offset == m_displaySnapshot.offsetByStream.cend()) {
+        return;
+    }
+    const double stationOffsetDb = *offset;
+    if (!std::isfinite(stationOffsetDb) || !std::isfinite(frame.dbmOffset + stationOffsetDb)) {
+        return;
+    }
+    // Display diagnostics: frames replaced in the source's slot before this
+    // thread took one, counted once when a pan here is sending from it.
+    if (frame.replacedBefore != 0) {
+        for (const auto& [unused, entry] : m_endpoints) {
+            Q_UNUSED(unused);
+            if (entry.request.source == key && !entry.txViewer && entry.contextSent
+                && entry.endpoint.configured()) {
+                m_displayDiagnostics.displaySourceFramesReplaced += frame.replacedBefore;
+                break;
+            }
         }
     }
+    bool needsMain = false;
+    for (auto& [unused, entry] : m_endpoints) {
+        Q_UNUSED(unused);
+        if (!(entry.request.source == key) || entry.txViewer) {
+            continue;
+        }
+        entry.stationOffsetDb = entry.snapshotOnTransmitPan
+                && std::isfinite(m_displaySnapshot.duplexOffsetDb)
+            ? m_displaySnapshot.duplexOffsetDb
+            : stationOffsetDb;
+        // Display diagnostics: the frame this one replaces was never sent.
+        if (heldFrameWouldBeSent(entry)) {
+            ++m_displayDiagnostics.displayPanFramesReplaced;
+        }
+        entry.latestInput = frame;
+        if (!entry.snapshotWideband) {
+            entry.contextSent = false;
+            continue;
+        }
+        if (entry.configurePending || !entry.endpoint.configured()
+            || entry.endpoint.context().sourceGeneration != frame.generation
+            || entry.endpoint.context().codec.contextGeneration == 0
+            || entry.endpoint.context().wideband != *entry.snapshotWideband) {
+            // Sends nothing until the station thread has configured it.
+            entry.configurePending = true;
+            needsMain = true;
+        }
+    }
+    if (!needsMain) {
+        for (const auto& [unused, entry] : m_endpoints) {
+            Q_UNUSED(unused);
+            if (entry.request.source == key && entry.contextSent && entry.endpoint.configured()
+                && entry.endpoint.context().sourceGeneration == frame.generation
+                && (entry.lastNoiseFloorTimestampNs < 0
+                    || frame.producedAtNs - entry.lastNoiseFloorTimestampNs
+                        >= kNoiseFloorMinimumIntervalNs)) {
+                needsMain = true;
+                break;
+            }
+        }
+    }
+    if (needsMain) {
+        holdFrameForMain(frame);
+        queueFrameWork();
+    }
+}
+
+void DaemonMediaController::holdFrameForMain(const DaemonSpectrumFrame& frame)
+{
+    const auto held = m_framesForMain.constFind(frame.source);
+    if (held == m_framesForMain.cend() || held->producedAtNs <= frame.producedAtNs) {
+        m_framesForMain.insert(frame.source, frame);
+    }
+}
+
+void DaemonMediaController::queueFrameWork()
+{
+    if (m_frameWorkQueued) {
+        return;
+    }
+    m_frameWorkQueued = true;
+    QMetaObject::invokeMethod(this, [this] { runQueuedFrameWork(); }, Qt::QueuedConnection);
+}
+
+void DaemonMediaController::runQueuedFrameWork()
+{
+    const auto displayHold = displayGuard();
+    m_frameWorkQueued = false;
+    const QPointer<DaemonMediaController> self(this);
+    // A frame taken before its source was updated since (a retune) is not
+    // of it any more: it is dropped, and the source's next frame decides.
+    // One from a source stopped since went when it stopped
+    // (DaemonSharedSpectrum::forgetHeldFrames).
+    const QMap<MediaSourceKey, DaemonSpectrumFrame> sourceFrames =
+        std::exchange(m_pendingSourceFrames, {});
+    for (const DaemonSpectrumFrame& frame : sourceFrames) {
+        if (frame.generation != m_source.currentGeneration(frame.source)) { continue; }
+        onSourceFrame(frame);
+        if (!self) { return; }
+    }
+    const QMap<MediaSourceKey, DaemonSpectrumFrame> framesForMain =
+        std::exchange(m_framesForMain, {});
+    for (const DaemonSpectrumFrame& frame : framesForMain) {
+        if (frame.generation != m_source.currentGeneration(frame.source)) { continue; }
+        mainWorkForFrame(frame);
+        if (!self) { return; }
+    }
+    // The raw I/Q streams the display thread found ended.
+    QList<int> failed;
+    for (const auto& [sliceId, stream] : m_iqStreams) {
+        if (stream.failOnMain) {
+            failed.append(sliceId);
+        }
+    }
+    for (int sliceId : failed) {
+        const auto found = m_iqStreams.find(sliceId);
+        if (found == m_iqStreams.end() || !found->second.failOnMain) {
+            continue;
+        }
+        const IqStream::Failure failure = *std::exchange(found->second.failOnMain, std::nullopt);
+        if (!found->second.sending) {
+            continue;
+        }
+        failIqStream(sliceId, failure.reason, failure.budgetRefused);
+        if (!self) { return; }
+    }
+}
+
+void DaemonMediaController::mainWorkForFrame(const DaemonSpectrumFrame& frame)
+{
+    const MediaSourceKey key = frame.source;
+    if (!m_radioModel || m_endpoints.empty()) {
+        return;
+    }
+    const double stationOffsetDb = m_radioModel->rxMeterOffsetDbForStream(key.streamIndex);
+    if (!std::isfinite(stationOffsetDb) || !std::isfinite(frame.dbmOffset + stationOffsetDb)) {
+        return;
+    }
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
+    // The configures the display thread left here, each on the newest frame
+    // its endpoint holds, as onSourceFrame() decides them.
+    QHash<quint32, DaemonSpectrumFrame> checked;
+    for (quint32 endpointId : endpointIds()) {
+        auto it = m_endpoints.find(endpointId);
+        if (it == m_endpoints.end()) { continue; }
+        EndpointEntry& entry = it->second;
+        if (!(entry.request.source == key) || entry.txViewer || !entry.configurePending) {
+            continue;
+        }
+        // Only on a frame of the source as it is now. An endpoint whose
+        // frame went with a retune keeps waiting, and the next frame the
+        // display thread takes in for it leaves the configure here again.
+        if (!entry.latestInput.has_value() || entry.latestInput->generation != frame.generation) {
+            continue;
+        }
+        entry.configurePending = false;
+        const DaemonSpectrumFrame input = *entry.latestInput;
+        checked.insert(endpointId, input);
+        const auto wideband = widebandContext(entry);
+        if (!wideband) {
+            entry.contextSent = false;
+            continue; // Await capture enable acknowledgement, never ADC data.
+        }
+        if (!entry.endpoint.configured()
+            || entry.endpoint.context().sourceGeneration != input.generation
+            || entry.endpoint.context().codec.contextGeneration == 0
+            || entry.endpoint.context().wideband != *wideband) {
+            const QPointer<DaemonMediaController> self(this);
+            configureEndpointFromFrame(entry, input);
+            if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+        }
+    }
+    if (!sendDueNoiseFloors(frame, stationOffsetDb)) {
+        return;
+    }
+    // As onSourceFrame(): an endpoint whose context is out holds the frame
+    // it was checked on, unless it holds a newer one.
+    for (auto it = checked.cbegin(); it != checked.cend(); ++it) {
+        const auto found = m_endpoints.find(it.key());
+        if (found == m_endpoints.end()) { continue; }
+        EndpointEntry& entry = found->second;
+        if (!entry.latestInput.has_value() && entry.request.source == key && !entry.txViewer
+            && entry.endpoint.configured() && entry.contextSent
+            && entry.endpoint.context().sourceGeneration == it->generation) {
+            entry.latestInput = *it;
+        }
+    }
+}
+
+void DaemonMediaController::failIqStream(int sliceId, const QString& reason, bool budgetRefused)
+{
+    const auto found = m_iqStreams.find(sliceId);
+    if (found == m_iqStreams.end()) {
+        return;
+    }
+    IqStream& stream = found->second;
+    if (onDisplayThread()) {
+        // Ending a stream sends its context and moves the budget, which are
+        // the station thread's. The first end found stands; the stream
+        // sends nothing more meanwhile.
+        if (!stream.failOnMain) {
+            stream.failOnMain = IqStream::Failure{reason, budgetRefused};
+        }
+        queueFrameWork();
+        return;
+    }
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
+    stopIqStream(stream);
+    stream.budgetRefused = budgetRefused;
+    const QPointer<DaemonMediaController> self(this);
+    sendIqContext(sliceId, stream, reason);
+    if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+    refreshDisplayBudgetPacer();
+    if (m_server) { m_server->publishDisplayBudgetCapabilities(); }
+    if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
+    if (budgetRefused) {
+        const auto again = m_iqStreams.find(sliceId);
+        if (again != m_iqStreams.end() && again->second.budgetRefused) {
+            again->second.lastBudgetRefusalRevision = m_iqBudgetChangeRevision;
+        }
+    }
+}
+
+void DaemonMediaController::syncDisplayThread()
+{
+    // On the display thread while the current peer is ready and its
+    // transport sends displays from any thread; otherwise this thread
+    // sends, as before.
+    const bool wanted = m_epoch != 0 && m_peer && m_peer->isReady()
+        && m_peer->transportHasDisplaySink();
+    std::shared_ptr<MediaDisplaySink> sink = wanted ? m_peer->displaySink() : nullptr;
+    MediaPeer* const sinkPeer = wanted ? m_peer.get() : nullptr;
+    if (wanted == m_displayThreadMode && sink == m_displaySink && sinkPeer == m_displaySinkPeer) {
+        return;
+    }
+    const bool modeChanged = wanted != m_displayThreadMode;
+    m_displayThreadMode = wanted;
+    m_displaySink = std::move(sink);
+    m_displaySinkPeer = sinkPeer;
+    if (!modeChanged) {
+        return;
+    }
+    // Display diagnostics: a gap is measured between one thread's turns.
+    m_lastSenderTurnNs.reset();
+    m_displayTurnAsked.store(false, std::memory_order_release);
+    qCInfo(lcDaemonMedia).noquote()
+        << QStringLiteral("displays are sent from %1")
+               .arg(wanted ? QStringLiteral("the display send thread")
+                           : QStringLiteral("the station thread"));
+    m_shared->syncDisplayThread();
+}
+
+void DaemonMediaController::refreshDisplaySnapshot()
+{
+    DisplaySnapshot& snapshot = m_displaySnapshot;
+    snapshot.sending = m_sendTimer.isActive();
+    snapshot.pacingRequired = displayPacingRequired();
+    snapshot.ps3Here = ps3DisplayHere();
+    bool iqSending = false;
+    for (const auto& [sliceId, stream] : m_iqStreams) {
+        Q_UNUSED(sliceId);
+        iqSending = iqSending || (stream.sending && stream.ingress);
+    }
+    snapshot.iqFits = iqSending && iqFitsCurrentShare();
+    snapshot.keyedNow = m_txDisplayNegotiated && !m_txFeed.isNull() && m_txFeed->isKeyed();
+    snapshot.duplexOffsetDb = snapshot.keyedNow && m_radioModel
+        ? m_radioModel->keyedDisplayOffsetDb(true) : 0.0;
+    snapshot.offsetByStream.clear();
+    snapshot.widebandByAdc.fill(std::nullopt);
+    for (auto& [unused, entry] : m_endpoints) {
+        Q_UNUSED(unused);
+        const int stream = entry.request.source.streamIndex;
+        if (m_radioModel && !snapshot.offsetByStream.contains(stream)) {
+            snapshot.offsetByStream.insert(stream, m_radioModel->rxMeterOffsetDbForStream(stream));
+        }
+        entry.snapshotWideband = widebandContext(entry);
+        entry.snapshotOnTransmitPan =
+            snapshot.keyedNow && entry.duplex && endpointOnTransmitPan(entry);
+        if (entry.snapshotWideband && entry.snapshotWideband->active && m_radioModel) {
+            const int adc = entry.snapshotWideband->physicalAdcIndex;
+            if (adc >= 0 && adc < WidebandSpectrumCache::kMaxSources
+                && !snapshot.widebandByAdc[static_cast<std::size_t>(adc)]) {
+                snapshot.widebandByAdc[static_cast<std::size_t>(adc)] =
+                    m_radioModel->latestWidebandSpectrum(adc);
+            }
+        }
+        if (entry.extras && entry.extrasRequest.sections() != 0) {
+            entry.snapshotSlice = displayExtrasInputs(entry, 0.0, 0);
+        }
+    }
+}
+
+void DaemonMediaController::displayThreadTurn(bool timedTurn, bool askedTurn)
+{
+    // A timed turn is the timer's, taken only while the timer runs, as
+    // onSendTimerTurn(); an asked one is displayWritable's.
+    const bool timerTurn = timedTurn && m_displaySnapshot.sending;
+    if (!timerTurn && !askedTurn) {
+        return;
+    }
+    // One sender turn for each, as the timer's and displayWritable's were
+    // two turns on the station thread.
+    if (timerTurn) {
+        noteSenderTurn(peerDisplayReady());
+        onSendTick();
+    }
+    if (askedTurn) {
+        onSendTick();
+    }
+}
+
+void DaemonMediaController::warnIfDisplayLockNotHeld(const char* where,
+                                                     bool stationThreadOnly) const
+{
+    const bool unguarded = m_displayLock && !m_displayLock->heldByCurrentThread();
+    const bool wrongThread = stationThreadOnly && onDisplayThread();
+    if (!unguarded && !wrongThread) {
+        return;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(m_unguardedWarnedMutex);
+        const QByteArray site = QByteArray(where) + (wrongThread ? "/thread" : "/lock");
+        if (m_unguardedWarned.contains(site)) {
+            return;
+        }
+        m_unguardedWarned.insert(site);
+    }
+    qCWarning(lcDaemonMedia).noquote()
+        << (wrongThread
+                ? QStringLiteral("display send thread ran %1, which is the station thread's")
+                      .arg(QLatin1String(where))
+                : QStringLiteral("display lock not held in %1: an entry into the media "
+                                 "controller is missing its display guard")
+                      .arg(QLatin1String(where)));
+}
+
+bool DaemonMediaController::peerDisplayReady() const
+{
+    if (onDisplayThread()) {
+        return m_displaySink && m_displaySinkPeer == m_peer.get() && m_displaySink->ready();
+    }
+    return m_peer && m_peer->isReady();
+}
+
+bool DaemonMediaController::peerDisplayBusy(MediaPeer* peer) const
+{
+    if (onDisplayThread()) {
+        return m_displaySink && m_displaySink->displayBusy();
+    }
+    return peer->displayBusy();
+}
+
+IMediaTransport::DisplaySendResult DaemonMediaController::peerSubmitDisplay(
+    MediaPeer* peer, const QByteArray& message)
+{
+    if (onDisplayThread()) {
+        return m_displaySink ? m_displaySink->submitDisplay(message)
+                             : IMediaTransport::DisplaySendResult::Refused;
+    }
+    return peer->submitDisplay(message);
+}
+
+bool DaemonMediaController::peerIqBusy(MediaPeer* peer) const
+{
+    if (onDisplayThread()) {
+        return m_displaySink && m_displaySink->iqBusy();
+    }
+    return peer->iqBusy();
+}
+
+IMediaTransport::DisplaySendResult DaemonMediaController::peerSubmitIq(
+    MediaPeer* peer, const QByteArray& message)
+{
+    if (onDisplayThread()) {
+        return m_displaySink ? m_displaySink->submitIq(message)
+                             : IMediaTransport::DisplaySendResult::Refused;
+    }
+    return peer->submitIq(message);
 }
 
 void DaemonMediaController::configureEndpointFromFrame(EndpointEntry& entry,
                                                         const DaemonSpectrumFrame& frame)
 {
+    warnIfDisplayLockNotHeld("configureEndpointFromFrame", true);
+    entry.configurePending = false;
     SpectrumEndpointSourceContext sourceContext;
     sourceContext.source = frame.source;
     sourceContext.sourceGeneration = frame.generation;
@@ -5098,7 +5801,7 @@ bool DaemonMediaController::trySendPs3(MediaPeer* peer, quint64 epoch, qint64 no
     // While the library still holds a display message the chunk would not
     // be taken. Keep it, spend nothing, and offer it again when the display
     // channel clears (displayWritable) or at a later tick.
-    if (peer->displayBusy()) {
+    if (peerDisplayBusy(peer)) {
         return false;
     }
     if (displayPacingRequired()
@@ -5114,7 +5817,7 @@ bool DaemonMediaController::trySendPs3(MediaPeer* peer, quint64 epoch, qint64 no
     m_ps3CurrentChunks.removeFirst();
     m_lastDisplayAttemptWasPs3 = true;
     const QPointer<DaemonMediaController> self(this);
-    const IMediaTransport::DisplaySendResult result = peer->submitDisplay(chunk);
+    const IMediaTransport::DisplaySendResult result = peerSubmitDisplay(peer, chunk);
     if (!self || m_peer.get() != peer || m_epoch != epoch) {
         return true;
     }
@@ -5146,7 +5849,7 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
 {
     // A frame would not be taken while the library holds a display message;
     // each endpoint keeps only its latest input until the channel clears.
-    if (m_endpoints.empty() || peer->displayBusy()) {
+    if (m_endpoints.empty() || peerDisplayBusy(peer)) {
         return false;
     }
     // iPhone app Task 20: a frame's display extras go on the next send,
@@ -5203,7 +5906,7 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
             continue;
         }
         if (found == m_endpoints.end() || !found->second.latestInput.has_value()
-            || !found->second.contextSent) {
+            || !found->second.contextSent || found->second.configurePending) {
             continue;
         }
         const SpectrumEndpoint& endpoint = found->second.endpoint;
@@ -5251,7 +5954,7 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
             m_roundRobinCursor = cursor;
             continue;
         }
-        if (!entry.latestInput.has_value() || !entry.contextSent) {
+        if (!entry.latestInput.has_value() || !entry.contextSent || entry.configurePending) {
             continue;
         }
         if (displayPacingRequired()
@@ -5266,6 +5969,14 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
         const auto currentWideband = widebandContext(entry);
         if (!currentWideband) { entry.contextSent = false; continue; }
         if (*currentWideband != entry.endpoint.context().wideband) {
+            if (onDisplayThread()) {
+                // Display send thread: a configure is the station thread's,
+                // and this endpoint waits for it.
+                entry.configurePending = true;
+                holdFrameForMain(frame);
+                queueFrameWork();
+                continue;
+            }
             const QPointer<DaemonMediaController> self(this);
             configureEndpointFromFrame(entry, frame);
             if (!self || m_peer.get() != peer || m_epoch != epoch) { return true; }
@@ -5283,9 +5994,18 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
             continue;
         }
         current.latestInput.reset();
-        const auto adcFrame = currentWideband->active && m_radioModel
-            ? m_radioModel->latestWidebandSpectrum(currentWideband->physicalAdcIndex)
-            : std::nullopt;
+        std::optional<WidebandSpectrumFrame> adcFrame;
+        if (currentWideband->active) {
+            const int adc = currentWideband->physicalAdcIndex;
+            if (onDisplayThread()) {
+                // Display send thread: the station thread's copy.
+                if (adc >= 0 && adc < WidebandSpectrumCache::kMaxSources) {
+                    adcFrame = m_displaySnapshot.widebandByAdc[static_cast<std::size_t>(adc)];
+                }
+            } else if (m_radioModel) {
+                adcFrame = m_radioModel->latestWidebandSpectrum(adc);
+            }
+        }
         std::optional<DisplayCodecFrame> reduced =
             current.endpoint.consume(frame, current.stationOffsetDb, adcFrame);
         m_roundRobinCursor = (index + 1) % ids.size();
@@ -5334,7 +6054,7 @@ bool DaemonMediaController::trySendSpectrum(MediaPeer* peer, quint64 epoch, qint
         current.forceKeyframe = false;
         m_lastDisplayAttemptWasPs3 = false;
         const QPointer<DaemonMediaController> self(this);
-        const IMediaTransport::DisplaySendResult result = peer->submitDisplay(bytes);
+        const IMediaTransport::DisplaySendResult result = peerSubmitDisplay(peer, bytes);
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return true; }
         const bool sent = result == IMediaTransport::DisplaySendResult::Sent
             || result == IMediaTransport::DisplaySendResult::Queued;
@@ -5385,6 +6105,16 @@ DisplayExtrasInputs DaemonMediaController::displayExtrasInputs(const EndpointEnt
     inputs.spanHz = context.exactSpanHz;
     inputs.binWidthHz = binWidthHz;
     inputs.traceDetector = static_cast<int>(entry.request.trace.detector);
+    // Display send thread: the slice and transmit state, copied.
+    if (onDisplayThread()) {
+        inputs.sliceHz = entry.snapshotSlice.sliceHz;
+        inputs.filterLowHz = entry.snapshotSlice.filterLowHz;
+        inputs.filterHighHz = entry.snapshotSlice.filterHighHz;
+        inputs.band = entry.snapshotSlice.band;
+        inputs.mox = entry.snapshotSlice.mox;
+        inputs.transmitting = entry.snapshotSlice.transmitting;
+        return inputs;
+    }
     if (m_radioModel) {
         if (const SliceModel* slice = m_radioModel->sliceById(entry.sliceId)) {
             inputs.sliceHz = slice->frequency();
@@ -5421,7 +6151,7 @@ bool DaemonMediaController::trySendDisplayExtras(MediaPeer* peer, quint64 epoch,
         }
         m_lastDisplayAttemptWasPs3 = false;
         const QPointer<DaemonMediaController> self(this);
-        const IMediaTransport::DisplaySendResult result = peer->submitDisplay(bytes);
+        const IMediaTransport::DisplaySendResult result = peerSubmitDisplay(peer, bytes);
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return true; }
         if (result == IMediaTransport::DisplaySendResult::Queued) {
             ++m_displayDiagnostics.displayQueuedLate;
@@ -5436,10 +6166,22 @@ bool DaemonMediaController::trySendDisplayExtras(MediaPeer* peer, quint64 epoch,
 
 void DaemonMediaController::onSendTimerTurn()
 {
+    const auto displayHold = displayGuard();
+    // Display send thread: its own timed turns stand in for this timer's,
+    // whose turn then only refreshes the copy they read (the release hook).
+    if (m_displayThreadMode) {
+        return;
+    }
+    noteSenderTurn(m_peer && m_peer->isReady());
+    onSendTick();
+}
+
+void DaemonMediaController::noteSenderTurn(bool peerReady)
+{
     // Display diagnostics: how long the timer went between two turns with
     // a ready peer. A peer that is not ready is sent nothing, so a turn
     // without one ends no gap and starts none.
-    if (!m_peer || !m_peer->isReady()) {
+    if (!peerReady) {
         m_lastSenderTurnNs.reset();
     } else {
         const qint64 nowNs = displayNowNs();
@@ -5452,21 +6194,21 @@ void DaemonMediaController::onSendTimerTurn()
         }
         m_lastSenderTurnNs = nowNs;
     }
-    onSendTick();
 }
 
 bool DaemonMediaController::heldFrameWouldBeSent(const EndpointEntry& entry) const
 {
     // What trySendSpectrum() asks of an endpoint and consume() of a frame.
     return entry.latestInput.has_value() && entry.contextSent && !entry.txViewer
-        && entry.endpoint.configured()
+        && !entry.configurePending && entry.endpoint.configured()
         && entry.endpoint.context().sourceGeneration == entry.latestInput->generation
         && entry.endpoint.outputDeadlineNs(entry.latestInput->producedAtNs).has_value();
 }
 
 void DaemonMediaController::onSendTick()
 {
-    if (!m_peer || !m_peer->isReady()) {
+    warnIfDisplayLockNotHeld("onSendTick", false);
+    if (!m_peer || !peerDisplayReady()) {
         return;
     }
     MediaPeer* const peer = m_peer.get();
@@ -5505,34 +6247,19 @@ void DaemonMediaController::onSendTick()
 
 bool DaemonMediaController::trySendIq(MediaPeer* peer, quint64 epoch, qint64 nowNs)
 {
-    if (!m_iqNegotiated || !peer || !peer->isReady()) { return false; }
-    const auto fail = [this, peer, epoch](int sliceId, IqStream& stream,
-                                          const QString& reason, bool budgetRefused = false) {
-        stopIqStream(stream);
-        stream.budgetRefused = budgetRefused;
-        const QPointer<DaemonMediaController> self(this);
-        sendIqContext(sliceId, stream, reason);
-        if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
-        refreshDisplayBudgetPacer();
-        if (m_server) { m_server->publishDisplayBudgetCapabilities(); }
-        if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
-        if (budgetRefused) {
-            const auto found = m_iqStreams.find(sliceId);
-            if (found != m_iqStreams.end() && found->second.budgetRefused) {
-                found->second.lastBudgetRefusalRevision = m_iqBudgetChangeRevision;
-            }
-        }
-    };
+    if (!m_iqNegotiated || !peer || !peerDisplayReady()) { return false; }
     for (auto& [sliceId, stream] : m_iqStreams) {
-        if (!stream.sending || !stream.ingress) { continue; }
+        // Display send thread: a stream whose end waits for the station
+        // thread sends nothing more.
+        if (!stream.sending || !stream.ingress || stream.failOnMain) { continue; }
         if (!iqFitsCurrentShare()) {
-            fail(sliceId, stream,
-                 QStringLiteral("The link to the Core is too busy to send raw I/Q for this receiver."),
-                 true);
+            failIqStream(sliceId,
+                QStringLiteral("The link to the Core is too busy to send raw I/Q for this receiver."),
+                true);
             return false;
         }
         if (stream.ingress->failed.load(std::memory_order_acquire)) {
-            fail(sliceId, stream, QStringLiteral("Raw I/Q capture overflowed on the Core."));
+            failIqStream(sliceId, QStringLiteral("Raw I/Q capture overflowed on the Core."), false);
             return false;
         }
         if (stream.pending.isEmpty()) {
@@ -5541,16 +6268,17 @@ bool DaemonMediaController::trySendIq(MediaPeer* peer, quint64 epoch, qint64 now
             const auto encoded = RemoteIqCodec::encode(
                 static_cast<quint32>(sliceId), stream.generation, stream.sequence, *samples);
             if (!encoded) {
-                fail(sliceId, stream, QStringLiteral("Invalid raw I/Q samples from the Core."));
+                failIqStream(sliceId, QStringLiteral("Invalid raw I/Q samples from the Core."),
+                             false);
                 return false;
             }
             stream.pending = *encoded;
         }
-        if (peer->iqBusy()) {
+        if (peerIqBusy(peer)) {
             if (stream.blockedAtNs < 0) { stream.blockedAtNs = nowNs; }
             if (nowNs - stream.blockedAtNs >= 250'000'000LL) {
-                fail(sliceId, stream,
-                     QStringLiteral("Raw I/Q stopped because the media link stalled."));
+                failIqStream(sliceId,
+                    QStringLiteral("Raw I/Q stopped because the media link stalled."), false);
             }
             return false;
         }
@@ -5559,25 +6287,27 @@ bool DaemonMediaController::trySendIq(MediaPeer* peer, quint64 epoch, qint64 now
                 || !m_displayPacer.spendIq(quint64(stream.pending.size()), nowNs))) {
             if (stream.blockedAtNs < 0) { stream.blockedAtNs = nowNs; }
             if (nowNs - stream.blockedAtNs >= 250'000'000LL) {
-                fail(sliceId, stream,
-                     QStringLiteral("Raw I/Q stopped because the display share was exhausted."));
+                failIqStream(sliceId,
+                    QStringLiteral("Raw I/Q stopped because the display share was exhausted."),
+                    false);
             }
             return false;
         }
         if (displayPacingRequired()) { stream.pendingDebited = true; }
         const QPointer<DaemonMediaController> self(this);
-        const auto result = peer->submitIq(stream.pending);
+        const auto result = peerSubmitIq(peer, stream.pending);
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return false; }
         if (result == IMediaTransport::DisplaySendResult::Busy) {
             if (stream.blockedAtNs < 0) { stream.blockedAtNs = nowNs; }
             if (nowNs - stream.blockedAtNs >= 250'000'000LL) {
-                fail(sliceId, stream,
-                     QStringLiteral("Raw I/Q stopped because the media link stalled."));
+                failIqStream(sliceId,
+                    QStringLiteral("Raw I/Q stopped because the media link stalled."), false);
             }
             return false;
         }
         if (result == IMediaTransport::DisplaySendResult::Refused) {
-            fail(sliceId, stream, QStringLiteral("The raw I/Q media channel refused a frame."));
+            failIqStream(sliceId, QStringLiteral("The raw I/Q media channel refused a frame."),
+                         false);
             return false;
         }
         stream.pending.clear();
@@ -5593,6 +6323,7 @@ bool DaemonMediaController::trySendIq(MediaPeer* peer, quint64 epoch, qint64 now
 
 bool DaemonMediaController::transmitDisplayActive(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     return it != m_endpoints.end() && it->second.txViewer != nullptr;
 }
@@ -5608,29 +6339,47 @@ void DaemonMediaController::wireTxDisplayFeed()
         if (feed != nullptr) {
             // Queued: an endpoint's viewer is given back from inside the
             // endpoint map's own erase, and the feed answers at once.
-            const auto reconcile = [this]() { reconcileTransmitDisplay(); };
+            const auto reconcile = [this]() {
+                const auto displayHold = displayGuard();
+                reconcileTransmitDisplay();
+            };
             // Direct: the pan is recorded on the edge itself, before a
             // rebinding or a layout change queued behind it can move the
             // transmit slice.
             connect(feed, &TxDisplayFeed::keyedChanged, this,
-                    [this](bool keyed) { recordTransmitPan(keyed); });
+                    [this](bool keyed) {
+                        const auto displayHold = displayGuard();
+                        recordTransmitPan(keyed);
+                    });
             connect(feed, &TxDisplayFeed::keyedChanged, this, reconcile, Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::viewChanged, this, reconcile, Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::governorChanged, this, reconcile,
                     Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::traceReady, this,
-                    [this](const QVector<float>& dbm) { onTransmitPlane(dbm, false); },
+                    [this](const QVector<float>& dbm) {
+                        const auto displayHold = displayGuard();
+                        onTransmitPlane(dbm, false);
+                    },
                     Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::waterfallReady, this,
-                    [this](const QVector<float>& dbm) { onTransmitPlane(dbm, true); },
+                    [this](const QVector<float>& dbm) {
+                        const auto displayHold = displayGuard();
+                        onTransmitPlane(dbm, true);
+                    },
                     Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::miniViewChanged, this, reconcile,
                     Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::miniTraceReady, this,
-                    [this](const QVector<float>& dbm) { onTransmitPlane(dbm, false, true); },
+                    [this](const QVector<float>& dbm) {
+                        const auto displayHold = displayGuard();
+                        onTransmitPlane(dbm, false, true);
+                    },
                     Qt::QueuedConnection);
             connect(feed, &TxDisplayFeed::miniWaterfallReady, this,
-                    [this](const QVector<float>& dbm) { onTransmitPlane(dbm, true, true); },
+                    [this](const QVector<float>& dbm) {
+                        const auto displayHold = displayGuard();
+                        onTransmitPlane(dbm, true, true);
+                    },
                     Qt::QueuedConnection);
         }
     }
@@ -5638,7 +6387,10 @@ void DaemonMediaController::wireTxDisplayFeed()
     if (!m_txArbiterConnection && m_radioModel) {
         if (TxSliceArbiter* arbiter = m_radioModel->txSliceArbiter()) {
             m_txArbiterConnection = connect(arbiter, &TxSliceArbiter::txBoundSliceChanged, this,
-                                            [this](int, int) { reconcileTransmitDisplay(); },
+                                            [this](int, int) {
+                                                const auto displayHold = displayGuard();
+                                                reconcileTransmitDisplay();
+                                            },
                                             Qt::QueuedConnection);
         }
     }
@@ -5666,12 +6418,14 @@ void DaemonMediaController::recordTransmitPan(bool keyed)
 
 bool DaemonMediaController::endpointDuplex(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     return it != m_endpoints.end() && it->second.duplex;
 }
 
 double DaemonMediaController::endpointDisplayOffsetDb(quint32 endpointId) const
 {
+    const auto displayHold = displayGuard();
     const auto it = m_endpoints.find(endpointId);
     return it != m_endpoints.end() ? it->second.stationOffsetDb : 0.0;
 }
@@ -5998,7 +6752,7 @@ bool DaemonMediaController::trySendTransmitFrame(quint32 endpointId, MediaPeer* 
     const quint32 generation = entry.txCodec.contextGeneration;
     m_lastDisplayAttemptWasPs3 = false;
     const QPointer<DaemonMediaController> self(this);
-    const IMediaTransport::DisplaySendResult result = peer->submitDisplay(bytes);
+    const IMediaTransport::DisplaySendResult result = peerSubmitDisplay(peer, bytes);
     if (!self || m_peer.get() != peer || m_epoch != epoch) {
         return true;
     }
@@ -6047,6 +6801,10 @@ bool DaemonMediaController::reconcileWidebandDemand(EndpointEntry& entry)
 std::optional<WidebandDisplayContext>
 DaemonMediaController::widebandContext(const EndpointEntry& entry) const
 {
+    // Display send thread: the station thread's answer, copied.
+    if (onDisplayThread()) {
+        return entry.snapshotWideband;
+    }
     WidebandDisplayContext context;
     if (!entry.widebandNegotiated || !m_radioModel) { return context; }
     const int adc = m_radioModel->sliceAdcIndex(entry.sliceId);
@@ -6070,6 +6828,7 @@ DaemonMediaController::widebandContext(const EndpointEntry& entry) const
 
 void DaemonMediaController::onWidebandSourceChanged(int)
 {
+    const auto displayHold = displayGuard();
     MediaPeer* const peer = m_peer.get();
     const quint64 epoch = m_epoch;
     for (quint32 endpointId : endpointIds()) {
@@ -6100,6 +6859,7 @@ void DaemonMediaController::onWidebandSourceChanged(int)
 
 void DaemonMediaController::removeEndpoint(quint32 endpointId, bool retainOperation)
 {
+    warnIfDisplayLockNotHeld("removeEndpoint", true);
     // Fix wave I5: a closed display (or one refused and then closed) asks
     // for nothing more.
     m_refusedDemand.erase(endpointId);
@@ -6224,12 +6984,14 @@ void DaemonMediaController::releaseSourceIfUnused(const MediaSourceKey& key)
         return;
     }
     m_source.deactivate(key);
+    m_shared->forgetHeldFrames(key);
     m_sources.remove(key);
 }
 
 bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
                                             DaemonSpectrumSourceUpdate* sourceUpdate)
 {
+    warnIfDisplayLockNotHeld("reconcileSource", true);
     if (sourceUpdate) {
         *sourceUpdate = {};
     }
@@ -6348,6 +7110,7 @@ bool DaemonMediaController::reconcileSource(const MediaSourceKey& key,
 
 void DaemonMediaController::onStreamGeometryChanged(int streamIndex, double, int)
 {
+    const auto displayHold = displayGuard();
     QList<int> changedIq;
     for (const auto& [sliceId, iq] : m_iqStreams) {
         const SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
@@ -6417,6 +7180,7 @@ void DaemonMediaController::onStreamGeometryChanged(int streamIndex, double, int
             // explicitly so a client can retry instead of believing a source
             // that no longer exists still owns a live display allocation.
             m_source.deactivate(key);
+            m_shared->forgetHeldFrames(key);
             m_sources.remove(key);
             for (quint32 endpointId : endpointIds()) {
                 const auto it = m_endpoints.find(endpointId);
@@ -6435,6 +7199,7 @@ void DaemonMediaController::onStreamGeometryChanged(int streamIndex, double, int
 
 void DaemonMediaController::onStreamBindingsChanged(int streamIndex, const QVector<int>&)
 {
+    const auto displayHold = displayGuard();
     QList<int> changedIq;
     for (const auto& [sliceId, iq] : m_iqStreams) {
         const SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
@@ -6472,6 +7237,7 @@ void DaemonMediaController::onStreamBindingsChanged(int streamIndex, const QVect
 
 void DaemonMediaController::onSliceRemoved(int sliceId)
 {
+    const auto displayHold = displayGuard();
     if (auto iq = m_iqStreams.find(sliceId); iq != m_iqStreams.end()) {
         stopIqStream(iq->second);
         iq->second.desired = false;
@@ -6923,6 +7689,10 @@ void DaemonMediaController::clearProduction()
         }
     }
     m_endpoints.clear();
+    // Display send thread: the frames held for this thread were those
+    // endpoints'.
+    m_framesForMain.clear();
+    m_pendingSourceFrames.clear();
     m_roundRobinCursor = 0;
     refreshDeviceDisplayDuplex();
     // An engine nobody else watches stops; one another device still
@@ -6932,6 +7702,7 @@ void DaemonMediaController::clearProduction()
             rebalanceSourceAfterDeparture(key);
         } else {
             m_source.deactivate(key);
+            m_shared->forgetHeldFrames(key);
             m_sources.remove(key);
         }
     }
@@ -6940,6 +7711,7 @@ void DaemonMediaController::clearProduction()
 
 bool DaemonMediaController::sendControl(const QJsonObject& payload) const
 {
+    warnIfDisplayLockNotHeld("sendControl", true);
     return m_server && m_epoch != 0 && m_server->sendMediaControl(payload, m_epoch);
 }
 

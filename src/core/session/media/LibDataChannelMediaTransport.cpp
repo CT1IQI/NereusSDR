@@ -80,6 +80,12 @@
 //               it, and a failed send is reported by the owner's next
 //               drain. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-15: Display send thread: the display and raw I/Q channels'
+//               sends for any thread are DisplaySendLane (displaySink()); a
+//               failed send there is reported by the owner's next drain,
+//               and the lane refuses that channel until the owner publishes
+//               again. The owner's own sends are unchanged. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-01: Mic 48k lane (JJ's ruling: the phone microphone at 48
 //               kbit/s): the microphone line's offer advertises
 //               maxaveragebitrate=48000 (kMicLineMaxAverageBitrate), the
@@ -744,6 +750,127 @@ private:
     State m_state;
 };
 
+// Display send thread: the display and raw I/Q channels' sends for any
+// thread (displaySink()), with the checks submitDisplay(), submitIq(),
+// displayBusy() and iqBusy() make on the owner's thread. The library calls
+// made here are safe off the owner's thread (libdatachannel v0.24.5):
+// Channel::bufferedAmount() reads an atomic (src/channel.cpp:22,
+// src/impl/channel.hpp:43); DataChannel::isOpen() reads two atomics
+// (src/impl/datachannel.cpp:149, src/impl/datachannel.hpp:67-68);
+// DataChannel::send() takes the channel's mutex shared, then the SCTP
+// transport's send mutex (src/datachannel.cpp:53-55,
+// src/impl/datachannel.cpp:181-200, src/impl/sctptransport.cpp:374-375),
+// as the library's own SCTP threads do beside the owner's.
+//
+// A send the library throws on means the channel has closed. The owner's
+// next drain reports it; until the owner publishes again, the lane refuses
+// that channel's sends without offering them to the library, so a closed
+// channel is reported once however many turns the display thread runs
+// before the owner's thread drains. On the owner's thread the drain runs
+// between two turns.
+class DisplaySendLane final : public MediaDisplaySink {
+public:
+    struct State {
+        bool ready = false;
+        std::shared_ptr<rtc::DataChannel> display;
+        std::shared_ptr<rtc::DataChannel> iq;
+        std::shared_ptr<CallbackBridge> bridge;
+        // Set by a send that threw; the owner's next publish clears them.
+        bool displayFailed = false;
+        bool iqFailed = false;
+    };
+
+    // Owner's thread. After it returns, no send uses the state it replaced.
+    void publish(State state)
+    {
+        {
+            const std::lock_guard lock(m_mutex);
+            std::swap(m_state, state);
+        }
+        // The replaced channels and bridge are let go here, outside the lock.
+    }
+
+    bool ready() const override
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_state.ready;
+    }
+
+    IMediaTransport::DisplaySendResult submitDisplay(const QByteArray& message) override
+    {
+        using Result = IMediaTransport::DisplaySendResult;
+        const std::lock_guard lock(m_mutex);
+        if (!m_state.ready || !m_state.display || m_state.displayFailed || message.isEmpty()
+            || message.size() > IMediaTransport::kMaxDisplayMessageBytes) {
+            return Result::Refused;
+        }
+        // Latest-value-wins, as on the owner's thread.
+        if (m_state.display->bufferedAmount() != 0) {
+            return Result::Busy;
+        }
+        if (!m_state.bridge) {
+            return Result::Refused;
+        }
+        m_state.bridge->submittedDisplayPayloadBytes.fetch_add(
+            static_cast<quint64>(message.size()), std::memory_order_relaxed);
+        try {
+            return m_state.display->send(
+                       reinterpret_cast<const rtc::byte*>(message.constData()),
+                       static_cast<std::size_t>(message.size()))
+                ? Result::Sent : Result::Queued;
+        } catch (const std::exception& error) {
+            // R-R3-05: reported once, as a display error, on the owner's
+            // thread by its next drain.
+            m_state.displayFailed = true;
+            queueEvent(m_state.bridge, CallbackEvent::Kind::DisplayError, error.what());
+            return Result::Refused;
+        }
+    }
+
+    bool displayBusy() const override
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_state.ready && m_state.display && m_state.display->bufferedAmount() != 0;
+    }
+
+    IMediaTransport::DisplaySendResult submitIq(const QByteArray& message) override
+    {
+        using Result = IMediaTransport::DisplaySendResult;
+        const std::lock_guard lock(m_mutex);
+        if (!m_state.ready || !m_state.iq || m_state.iqFailed || !m_state.iq->isOpen()
+            || message.isEmpty() || message.size() > IMediaTransport::kMaxIqMessageBytes) {
+            return Result::Refused;
+        }
+        if (m_state.iq->bufferedAmount() != 0) {
+            return Result::Busy;
+        }
+        if (!m_state.bridge) {
+            return Result::Refused;
+        }
+        m_state.bridge->submittedIqPayloadBytes.fetch_add(
+            static_cast<quint64>(message.size()), std::memory_order_relaxed);
+        try {
+            return m_state.iq->send(reinterpret_cast<const rtc::byte*>(message.constData()),
+                                    static_cast<std::size_t>(message.size()))
+                ? Result::Sent : Result::Queued;
+        } catch (const std::exception& error) {
+            m_state.iqFailed = true;
+            queueEvent(m_state.bridge, CallbackEvent::Kind::IqError, error.what());
+            return Result::Refused;
+        }
+    }
+
+    bool iqBusy() const override
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_state.iq && m_state.iq->bufferedAmount() != 0;
+    }
+
+private:
+    mutable std::mutex m_mutex;
+    State m_state;
+};
+
 // Task 36: 0 (none), or an id that is none of the Core's own streams'.
 bool validMicAudioSsrc(quint32 mainSsrc, const QList<quint32>& receiverSsrcs,
                        quint32 headphonesSsrc, quint32 micSsrc)
@@ -870,6 +997,21 @@ struct LibDataChannelMediaTransport::Private {
             state.headphonesSsrc = headphonesAudioSsrc;
         }
         audioSend->publish(std::move(state));
+    }
+    // Display send thread: the display and raw I/Q sends for any thread,
+    // and what they were last told (publishDisplaySend(), after every change
+    // of ready and of either channel).
+    const std::shared_ptr<DisplaySendLane> displaySend = std::make_shared<DisplaySendLane>();
+    void publishDisplaySend()
+    {
+        DisplaySendLane::State state;
+        state.ready = ready;
+        if (started) {
+            state.display = display;
+            state.iq = iq;
+            state.bridge = bridge;
+        }
+        displaySend->publish(std::move(state));
     }
     // Task 36: the microphone line (the offerer's receive-only track or the
     // answerer's send-only one), null without one.
@@ -1249,6 +1391,7 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
 
         d->started = true;
         d->ready = false;
+        d->publishDisplaySend();
         d->remoteDescriptionAccepted = false;
         d->remoteDescribesLossless = false;
         d->remoteDescribesMicLossless = false;
@@ -1428,6 +1571,8 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
     d->ready = false;
     // R-AUD-SEND: from here no send from another thread reaches the library.
     d->publishAudioSend();
+    // Display send thread: nor any display or raw I/Q send.
+    d->publishDisplaySend();
     d->localAudioSsrc = 0;
     d->receiverAudioSsrcs.clear();
     d->headphonesAudioSsrc = 0;
@@ -1760,6 +1905,11 @@ std::shared_ptr<MediaRtpSink> LibDataChannelMediaTransport::audioRtpSink()
     return d->audioSend;
 }
 
+std::shared_ptr<MediaDisplaySink> LibDataChannelMediaTransport::displaySink()
+{
+    return d->displaySend;
+}
+
 bool LibDataChannelMediaTransport::sendMicRtp(const QByteArray& packet)
 {
     // Task 36: only an answerer sends on the microphone line, and only the
@@ -1936,11 +2086,14 @@ void LibDataChannelMediaTransport::drainCallbacks()
         d->tx = std::move(incomingTx);
     }
 
+    bool displayChannelsChanged = false;
     if (!d->display && incomingDisplay) {
         d->display = std::move(incomingDisplay);
+        displayChannelsChanged = true;
     }
     if (!d->iq && incomingIq) {
         d->iq = std::move(incomingIq);
+        displayChannelsChanged = true;
     }
     if (!d->audio && incomingAudio) {
         d->audio = std::move(incomingAudio);
@@ -2036,6 +2189,7 @@ void LibDataChannelMediaTransport::drainCallbacks()
     if (nowReady && !d->ready) {
         d->ready = true;
         d->publishAudioSend();
+        d->publishDisplaySend();
         if (IceDiagnostics::enabled()) {
             IceDiagnostics::logSelectedPair("media", *d->peer);
         }
@@ -2046,6 +2200,9 @@ void LibDataChannelMediaTransport::drainCallbacks()
     } else if (!nowReady && d->ready) {
         d->ready = false;
         d->publishAudioSend();
+        d->publishDisplaySend();
+    } else if (displayChannelsChanged) {
+        d->publishDisplaySend();
     }
 
     for (const rtc::binary& message : displayMessages) {

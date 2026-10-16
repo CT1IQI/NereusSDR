@@ -18,6 +18,10 @@
 // 50 ms. Two pans on two receivers at 60 frames a second each, so a frame
 // one pan's own pacing drops never shows as a gap.
 //
+// A frame the display thread leaves to the main thread and a retune made
+// before the main thread gets to it: no context goes out for the center the
+// receiver has left.
+//
 // Modification history (NereusSDR):
 //   2026-10-15  J.J. Boyd / KG4VCF  Created. AI-assisted via Anthropic
 //                                    Claude Code.
@@ -34,10 +38,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <mutex>
 #include <random>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "RealtimeTestLoad.h"
@@ -47,6 +53,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/media/DaemonMediaController.h"
+#include "core/session/media/DaemonSpectrumSource.h"
 #include "core/session/media/IMediaTransport.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
@@ -378,6 +385,77 @@ private slots:
         qInfo().noquote() << detail;
         QVERIFY2(onMain == 0, qPrintable(detail));
         QVERIFY2(maxGapNs < kMaxGapNs, qPrintable(detail));
+        h.finish();
+    }
+
+    // A frame the display thread leaves to the main thread (here for a
+    // configure) and a retune the main thread makes before it gets to that
+    // frame: the frame is of the old center and is dropped. The pan's next
+    // context is the new center's, and none goes out for the center the
+    // receiver has already left.
+    void aFrameHeldForTheMainThreadIsDroppedByARetune()
+    {
+        Harness h;
+        QVERIFY(h.firstSlice >= 0);
+        QVERIFY(h.start());
+        QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+        QVERIFY(h.ask(kFirstEndpoint, h.firstSlice));
+        QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+        QTRY_COMPARE(h.controller.activeSourceCount(), 1);
+        QVERIFY(h.controller.displaysSentFromThread());
+        DaemonSpectrumSource* const source = &h.controller.sharedSpectrum()->source();
+        const MediaSourceKey key = source->activeSources().constFirst();
+        const auto contextCentres = [&controls] {
+            QList<double> centres;
+            for (const QList<QVariant>& arguments : std::as_const(controls)) {
+                const QJsonObject message = arguments.constFirst().toJsonObject();
+                if (message.value(QStringLiteral("op")).toString() == QStringLiteral("context")
+                    && message.value(QStringLiteral("endpointId")).toInteger()
+                        == qint64{kFirstEndpoint}) {
+                    centres.append(message.value(QStringLiteral("sourceCentreHz")).toDouble());
+                }
+            }
+            return centres;
+        };
+        // Frames from the engine's slot, as the FFT engine thread publishes
+        // them, until this pan is sending.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs()), 10'000);
+        QVERIFY(QTest::qWaitFor([&] {
+            source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs());
+            return h.log->copy().size() >= 5;
+        }, 10'000));
+
+        const double centre = std::round(h.radio.streamCentreHz(key.streamIndex));
+        const double leftCentre = centre + 1000.0;
+        const double newCentre = centre + 2000.0;
+        controls.clear();
+        // From here the main thread runs no event until the second retune.
+        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, leftCentre));
+        QVERIFY(source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs()));
+        // The display thread takes the frame in and, the pan waiting on a
+        // configure, leaves the frame to this thread.
+        QElapsedTimer taking;
+        taking.start();
+        while (source->frameWaitingForTest(key) && taking.elapsed() < 10'000) {
+            QThread::msleep(5);
+        }
+        QVERIFY(!source->frameWaitingForTest(key));
+        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, newCentre));
+
+        QVERIFY(QTest::qWaitFor([&] {
+            source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs());
+            return contextCentres().contains(newCentre);
+        }, 10'000));
+        const QList<double> centres = contextCentres();
+        QStringList sent;
+        for (double sentCentre : centres) {
+            sent.append(QString::number(sentCentre, 'f', 0));
+        }
+        const QString detail = QStringLiteral("contexts after the retunes: %1")
+                                   .arg(sent.join(QStringLiteral(", ")));
+        QVERIFY2(!centres.contains(leftCentre), qPrintable(detail));
+        QCOMPARE(centres.constFirst(), newCentre);
         h.finish();
     }
 };
