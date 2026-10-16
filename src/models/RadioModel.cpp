@@ -26,6 +26,11 @@
 //                m_tgxlRfSettleMs (kTgxlRfSettleMs unless a test sets it)
 //                and calls a test observer when it fires. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - nereusd's thread placement registers the radio connection
+//                thread (R-R3-41, from 2026-10-10): where slower cores run
+//                housekeeping it shares the DSP thread's fast core, raised;
+//                on equal cores it stays on the housekeeping cores. J.J.
+//                Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - Clear the retired connection's discovery exemption before
 //                publishing intentional disconnect. J.J. Boyd (KG4VCF),
 //                AI-assisted via OpenAI Codex.
@@ -20067,14 +20072,30 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // connect thread missed packet wake-ups long enough to drop frames.
     // Bumped to USER_INTERACTIVE so it sits in the same scheduling
     // class as the audio + GUI threads.
-    // R-R3-41: nereusd's placement keeps networking on the housekeeping
-    // cores and skips the nice call there.
+    // R-R3-41: nereusd's placement owns this thread's core and priority
+    // and skips the nice call there. 2026-10-10: where slower cores run
+    // housekeeping (the Rock 5C) it shares the DSP thread's fast core, at
+    // raised priority; on a slow core it could not keep up with four
+    // receivers at 1.536 MHz and the kernel dropped the radio's packets.
+    // Where every core is equally fast it stays on the housekeeping cores
+    // at normal priority, since it was not measured there.
     connect(m_connThread, &QThread::started, m_connection,
             []() {
-                if (!NereusSDR::ThreadPlacement::managesThreadPriority()) {
-                    NereusSDR::elevateLatencyCriticalThreadPriority();
+                if (NereusSDR::ThreadPlacement::managesThreadPriority()) {
+                    NereusSDR::ThreadPlacement::instance().registerCurrentThread(
+                        NereusSDR::ThreadRole::ConnectionThread);
+                    return;
                 }
+                NereusSDR::elevateLatencyCriticalThreadPriority();
             });
+    // finished() is emitted on the thread itself, so a direct connection
+    // forgets it before its ID can be reused.
+    connect(m_connThread, &QThread::finished, m_connThread,
+            []() {
+                if (NereusSDR::ThreadPlacement::managesThreadPriority()) {
+                    NereusSDR::ThreadPlacement::instance().deregisterCurrentThread();
+                }
+            }, Qt::DirectConnection);
 
     m_connThread->start();
 

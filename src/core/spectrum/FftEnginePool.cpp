@@ -35,6 +35,9 @@
 // Modification history (NereusSDR):
 // 2026-09-27: Use the approved shared decimation bounds.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via OpenAI Codex.
+// 2026-10-10: Each spectrum thread registers with nereusd's thread
+// placement, which lets it use the fast cores. J.J. Boyd (KG4VCF),
+// AI-assisted implementation via Anthropic Claude Code.
 // 2026-10-10: One setter per FFT setting and resetInputHistoryAll
 // (R-DSP-30, R-DSP-33). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
@@ -53,6 +56,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <utility>
 
@@ -326,18 +330,37 @@ FFTEngine* FftEnginePool::createEngine(const FftSourceKey& key,
         // afterwards, same as the pre-extraction code's single
         // connection using stream 0's engine as context for the whole
         // (then-implicitly-one) shared thread.
+        // nereusd runs several pools (one per spectrum source), each with
+        // a bucket 0, so placement tells their threads apart by a number
+        // of its own, taken once per thread.
+        static std::atomic<int> nextPlacementId{0};
+        const int placementId = nextPlacementId.fetch_add(1, std::memory_order_relaxed);
         // A priority setThreadPriority() chose replaces that elevation,
         // also when it is chosen between start() and this lambda: the two
         // take turns under m_elevation's mutex, because macOS refuses the
         // elevation on a thread whose priority was set first.
-        connect(thread, &QThread::started, engine, [elevation = m_elevation]() {
+        connect(thread, &QThread::started, engine, [placementId, elevation = m_elevation]() {
+            // R-R3-41: nereusd's placement owns this thread's cores and
+            // skips the nice call there. 2026-10-10: where slower cores
+            // run everything else it may use every fast core, at normal
+            // priority, and is never held to one (ThreadPlacement.h).
+            if (ThreadPlacement::managesThreadPriority()) {
+                ThreadPlacement::instance().registerCurrentThread(
+                    ThreadRole::SpectrumThread, placementId);
+                return;
+            }
             const std::lock_guard<std::mutex> lock(elevation->mutex);
-            // R-R3-41: nereusd's placement keeps spectrum work on the
-            // housekeeping cores and skips the nice call there.
-            if (!elevation->priorityChosen && !ThreadPlacement::managesThreadPriority()) {
+            if (!elevation->priorityChosen) {
                 elevateLatencyCriticalThreadPriority();
             }
         });
+        // finished() is emitted on the thread itself, so a direct
+        // connection forgets it before its ID can be reused.
+        connect(thread, &QThread::finished, thread, []() {
+            if (ThreadPlacement::managesThreadPriority()) {
+                ThreadPlacement::instance().deregisterCurrentThread();
+            }
+        }, Qt::DirectConnection);
         thread->start(m_threadPriority.value_or(QThread::InheritPriority));
     }
 
