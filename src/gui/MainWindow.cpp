@@ -758,6 +758,14 @@
 //                last or hidden. The S-Meter has a check box in the
 //                Containers menu's applet list. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - Protocol Info and the station block's hardware line show
+//                the radio's second firmware number where it reported one
+//                (RadioInfo::firmwareText). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-12 - The hardware line of a window with no connection of its own
+//                takes the model's firmware text, which carries the number
+//                a Core sent (RadioModel::firmwareText). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-13 - Share DisplayDuplex with the regular TxApplet DUP button.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
@@ -11274,7 +11282,7 @@ void MainWindow::buildMenuBar()
                 QStringLiteral("Radio:    %1\nProtocol: %2\nFirmware: %3\nMAC:      %4\nIP:       %5")
                     .arg(info.displayName())
                     .arg(proto)
-                    .arg(info.firmwareVersion)
+                    .arg(info.firmwareText())
                     .arg(info.macAddress, info.address.toString());
             QMessageBox::information(this, QStringLiteral("Protocol Info"), msg);
         });
@@ -17084,7 +17092,7 @@ void MainWindow::showCoreRadioInfo()
     const QString proto = caps.radioProtocol == 2 ? QStringLiteral("P2")
         : caps.radioProtocol == 1 ? QStringLiteral("P1") : notReported;
     const QString firmware = info.firmwareVersion > 0
-        ? QString::number(info.firmwareVersion)
+        ? info.firmwareText()
         : (!caps.firmwareVersion.isEmpty() ? caps.firmwareVersion : notReported);
     const QString mac = info.macAddress.isEmpty() ? notReported : info.macAddress;
     const QString address = info.address.isNull() ? notReported : info.address.toString();
@@ -17996,8 +18004,12 @@ void MainWindow::onConnectionStateChanged()
             const QString code = conn != nullptr
                 ? QString::fromLatin1(boardCodeName(conn->radioInfo().boardType))
                 : m_radioModel->model();
-            m_stationBlock->setHardwareLine(
-                code, QStringLiteral("v%1").arg(m_radioModel->version()));
+            // A connection of our own knows the radio's second firmware
+            // number; without one the model has the station's, where the
+            // Core sent it.
+            const QString firmware = conn != nullptr
+                ? conn->radioInfo().firmwareText() : m_radioModel->firmwareText();
+            m_stationBlock->setHardwareLine(code, QStringLiteral("v%1").arg(firmware));
             // The second row's text (and hence StationBlock's sizeHint)
             // just changed (Task A8 fix round 1 finding 4).
             if (m_chromeBar && m_chromeBarWidget) {

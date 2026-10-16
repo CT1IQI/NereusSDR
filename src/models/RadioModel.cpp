@@ -1185,6 +1185,15 @@
 //                takes the admission rule, and the window's own Connect and
 //                Disconnect go through the controllers. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - The status firmware text and the connect log line carry
+//                the radio's second firmware number (RadioInfo::
+//                firmwareText). A Core sends its windows the first number
+//                only, so a remote window's stored radio holds none.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - firmwareBetaVersion and firmwareText: the second number of
+//                the radio version() names. A remote window's stored radio
+//                takes the Core's (firmwareBeta 1) where the Core sends it.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - The saved FFT plans are looked for where the process was
 //                told (DspCacheLocation): a background Core started by the
 //                app reuses the app's plans. A process told nothing keeps
@@ -9762,6 +9771,7 @@ void RadioModel::applyStationCapabilities(const NereusSDR::StationCapabilities& 
     const auto identityOf = [this]() {
         return std::make_tuple(m_lastRadioInfo.macAddress, m_lastRadioInfo.boardType,
                                m_lastRadioInfo.name, m_lastRadioInfo.firmwareVersion,
+                               m_lastRadioInfo.firmwareBetaVersion,
                                m_lastRadioInfo.protocol, m_lastRadioInfo.address,
                                m_hardwareProfile.model, m_hardwareProfile.effectiveBoard,
                                m_hardwareProfile.caps);
@@ -9779,6 +9789,11 @@ void RadioModel::applyStationCapabilities(const NereusSDR::StationCapabilities& 
     bool firmwareOk = false;
     const int firmware = caps.firmwareVersion.trimmed().toInt(&firmwareOk);
     m_lastRadioInfo.firmwareVersion = firmwareOk && firmware > 0 ? firmware : 0;
+    // The second number is the Core's too (firmwareBeta 1). A Core that
+    // sends none leaves it 0, so one left by a radio this window ran itself,
+    // or by the last Core, is not shown beside this Core's radio.
+    m_lastRadioInfo.firmwareBetaVersion =
+        m_lastRadioInfo.firmwareVersion > 0 ? caps.firmwareBetaVersion : 0;
     if (caps.radioProtocol == 2) {
         m_lastRadioInfo.protocol = ProtocolVersion::Protocol2;
     } else {
@@ -20424,7 +20439,8 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     m_connectionActiveRxCount = activeRxCount;
 
     qCDebug(lcConnection) << "Connecting to" << info.displayName()
-                          << "P" << static_cast<int>(info.protocol);
+                          << "P" << static_cast<int>(info.protocol)
+                          << "fw" << info.firmwareText();
 }
 
 void RadioModel::disconnectFromRadio()
@@ -30890,7 +30906,23 @@ QString RadioModel::connectionFirmwareText() const
     if (!isConnected() || m_lastRadioInfo.firmwareVersion <= 0) {
         return QStringLiteral("–");
     }
-    return QStringLiteral("v") + QString::number(m_lastRadioInfo.firmwareVersion);
+    return QStringLiteral("v") + m_lastRadioInfo.firmwareText();
+}
+
+int RadioModel::firmwareBetaVersion() const
+{
+    // m_lastRadioInfo is written when a connect starts and m_version when
+    // one succeeds, so after a failed try at a second radio the record is
+    // that radio's. Its second number belongs to version() only while its
+    // first number is version().
+    const bool recordIsThisRadio = !m_version.isEmpty()
+        && m_version == QString::number(m_lastRadioInfo.firmwareVersion);
+    return recordIsThisRadio ? m_lastRadioInfo.firmwareBetaVersion : 0;
+}
+
+QString RadioModel::firmwareText() const
+{
+    return firmwareBetaVersion() > 0 ? m_lastRadioInfo.firmwareText() : m_version;
 }
 
 QString RadioModel::connectionIpText() const

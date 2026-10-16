@@ -1014,6 +1014,15 @@ it sees exactly the wire it was built for: no capability entry, and every
 `context` byte for byte as before. The station does not declare it; the
 desktop's remote window and the phone app do.
 
+**`firmwareBeta` 1** (the radio's second firmware number): the client words
+the firmware release of the Core's radio in full, as a window running that
+radio does. A release is two numbers (22 and 14 read "22.14"), and
+`firmwareVersion` is the first alone. A peer that declares it at agreed
+minor 11 is sent `firmwareBeta` (section 6.3), the second. A peer that does
+not declare it sees exactly the wire it was built for: no capability entry,
+and `firmwareVersion` as before. The station does not declare it; the
+desktop's remote window and the phone app do.
+
 **`sessionHolder` 1** (iPhone app plan Task 71; the several-devices
 design, ruling 10.1): the Core admits up to four devices at once (section
 5.1). A client declares it only together with `deviceAuth` 1 or later, and
@@ -2335,6 +2344,22 @@ is sent no entry. A client connected to a Core that sends no entry treats
 a context that differs from the one it shows in more than its dBm range or
 frame rate as a new picture; nothing is shown to the operator for it.
 
+**The radio's second firmware number.** A client at agreed minor 11 that
+declared `firmwareBeta` 1 is sent `firmwareBeta`, an `i64` of 0 to 255,
+after `spectrumPictureVersion` (or after the last entry before it when that
+is absent) and before `coreBuildInfo`. It is the second number of the
+radio's firmware release as the radio's discovery reply gave it (byte 23 of
+a Protocol 2 reply, byte 21 of a Hermes Lite 2's), and 0 when the radio
+gave none or the Core has no radio; `firmwareVersion` stays the first
+number alone. A client words the two as "22.14", and the first alone when
+the second is 0. On an ANAN-G2 or ANAN-G2 MkII (`board` 10 or 11) the
+number is the version of the radio's own program, not of its gateware: it
+is carried, and a client leaves it out of the text. An entry that is not an
+`i64` of 0 to 255 reads as no entry. A peer that did not declare the
+feature is sent no entry. A client connected to a Core that sends no entry
+words the firmware by its first number alone; nothing is shown to the
+operator for it.
+
 **Core executable identity.** A client at agreed minor 11 may declare
 `coreBuildInfo` 1. After authentication, a Core with a known product version
 appends one optional `coreBuildInfo` utf8 capability after all existing
@@ -2374,7 +2399,8 @@ that declared `radeReason`; `stationCatVersion` only for a peer that
 declared `stationCat` on a Core that runs CAT; `radioSpeakerVersion` only for a peer that
 declared `radioSpeaker`; `coreSpeakerVersion` only for a peer that declared
 `coreSpeaker` on a Core with its own speaker; `spectrumPictureVersion` only
-for a peer that declared `spectrumPicture` while media is available. A client ignores a capability it does not know
+for a peer that declared `spectrumPicture` while media is available;
+`firmwareBeta` only for a peer that declared `firmwareBeta`. A client ignores a capability it does not know
 (`StationCapabilities::fromUpdates`).
 
 **Each device's share of the display budget** (iPhone app plan Task 76; the
@@ -2574,8 +2600,9 @@ older window sees only the values it was built for.
 | 110 | `radioSpeakerVersion` | `i64` |
 | 111 | `coreSpeakerVersion` | `i64` |
 | 112 | `spectrumPictureVersion` | `i64` |
-| 113 | `waveformVersion` | `i64` |
-| 114 | `coreBuildInfo` | `utf8` |
+| 113 | `firmwareBeta` | `i64` |
+| 114 | `waveformVersion` | `i64` |
+| 115 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 

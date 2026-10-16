@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12  J.J. Boyd / KG4VCF  The radio's second firmware number: the
+//                                    capture declares firmwareBeta, so the
+//                                    firmwareBeta entry is captured.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-10-11  J.J. Boyd / KG4VCF  Capture optional native waveform media
 //                                    capability and exact control shapes.
 //                                    AI-assisted via OpenAI Codex.
@@ -756,7 +760,10 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"coreSpeaker", 1},
                                   // R-DISP-RETUNE: spectrumPictureVersion
                                   // and the context's pictureGeneration.
-                                  {"spectrumPicture", 1}})));
+                                  {"spectrumPicture", 1},
+                                  // The radio's second firmware number:
+                                  // the firmwareBeta entry.
+                                  {"firmwareBeta", 1}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -856,6 +863,9 @@ QJsonArray captureCapabilities()
     caps.coreSpeakerVersion = 1;
     // R-DISP-RETUNE: sent to a peer that declared spectrumPicture.
     caps.spectrumPictureVersion = 1;
+    // The radio's second firmware number: sent to a peer that declared
+    // firmwareBeta. The capture's radio reports none, so its value is 0.
+    caps.firmwareBetaEntry = true;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its

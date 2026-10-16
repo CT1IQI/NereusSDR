@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-12: The radio's second firmware number: firmwareBeta for a
+//               minor-11 peer that declared firmwareBeta 1
+//               (RadioModel::firmwareBetaVersion). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
 //                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion 1 for a
@@ -13484,6 +13488,16 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // descriptor.
             caps.spectrumPictureVersion = caps.radioIdentityEntries && media
                 && peerDeclares(transport, QByteArrayLiteral("spectrumPicture"), 1) ? 1 : 0;
+            // The radio's second firmware number, beside firmwareVersion
+            // (the first alone): likewise optional, for a minor-11 peer that
+            // declared firmwareBeta 1 (after spectrumPictureVersion and
+            // before coreBuildInfo on the wire); old peers retain their exact
+            // descriptor. The model gives 0 unless its record is the radio
+            // whose version is sent above.
+            if (peerDeclares(transport, QByteArrayLiteral("firmwareBeta"), 1)) {
+                caps.firmwareBetaEntry = true;
+                caps.firmwareBetaVersion = m_radioModel->firmwareBetaVersion();
+            }
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.
