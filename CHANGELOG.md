@@ -158,6 +158,9 @@ The workspace look is now the default.
   packets back for long stretches while keyed; a Hermes Lite 2 drops PTT
   when its packets stop, so a held key went on and off.
 - Physical PTT from a Protocol 1 radio is read in the order the radio sent it.
+- On the Mac, the thread that feeds the microphone to the radio while
+  transmitting now gets the high scheduling class it asks for. macOS refused
+  it before, so the thread ran at the default class.
 - Saved TX profiles show in the TX and Phone/CW pickers at startup, instead of
   leaving them empty until a profile is chosen again.
 - While transmitting, an edit to the RX1 S-ATT readout (which shows the
