@@ -41,6 +41,7 @@ struct WindowsTask {
     QString triggerUser;
     QString principalUser;
     QString timeLimit;
+    QString priority;
     bool wellFormed = false;
 };
 
@@ -71,6 +72,8 @@ WindowsTask readWindowsTask(const QString& path)
                 task.arguments = reader.readElementText();
             } else if (name == QStringLiteral("ExecutionTimeLimit")) {
                 task.timeLimit = reader.readElementText();
+            } else if (name == QStringLiteral("Priority") && parent == QStringLiteral("Settings")) {
+                task.priority = reader.readElementText();
             } else if (name == QStringLiteral("UserId") && parent == QStringLiteral("LogonTrigger")) {
                 task.triggerUser = reader.readElementText();
             } else if (name == QStringLiteral("UserId") && parent == QStringLiteral("Principal")) {
@@ -104,6 +107,7 @@ private slots:
     void windowsRefusedChangeKeepsTheLoginSwitch();
     void windowsOlderTaskFileStillReadsLoginStart();
     void windowsAcceptsTheTaskFile();
+    void windowsTaskRunsAtNormalPriority();
     void macAndLinuxFailuresSayWhy();
     void stopRefusesFailedStateQuery();
     void macReloadsIdleRegistration();
@@ -708,7 +712,8 @@ void StationServiceManagerTest::windowsAcceptsTheTaskFile()
         "$d=$s.NewTask(0); $d.XmlText=$x; $a=$d.Actions.Item(1); "
         "[Console]::Out.WriteLine('ACCEPTED'); "
         "[Console]::Out.WriteLine('PATH=' + $a.Path); "
-        "[Console]::Out.WriteLine('ARGS=' + $a.Arguments) } "
+        "[Console]::Out.WriteLine('ARGS=' + $a.Arguments); "
+        "[Console]::Out.WriteLine('PRIORITY=' + $d.Settings.Priority) } "
         "catch { [Console]::Out.WriteLine('REFUSED ' + $_.Exception.Message); exit 1 }");
     QProcess powershell;
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
@@ -732,9 +737,49 @@ void StationServiceManagerTest::windowsAcceptsTheTaskFile()
              qPrintable(said.simplified()));
     QCOMPARE(lines.value(1), QStringLiteral("PATH=") + backslashes(f.binary));
     QCOMPARE(lines.value(2), QStringLiteral("ARGS=") + windowsLaunchWords(f, manager));
+    QCOMPARE(lines.value(3), QStringLiteral("PRIORITY=4"));
 #else
     QSKIP("Task Scheduler's own reader exists only on Windows.");
 #endif
+}
+
+// A task's program starts at the task's Priority, and a definition that
+// names none gets 7: BELOW_NORMAL_PRIORITY_CLASS with low I/O and memory
+// priority. The same Core started from a shortcut runs at the normal class,
+// and a Core doing the receive DSP below it can fall behind when the
+// computer is busy. 4 is NORMAL_PRIORITY_CLASS with normal I/O and normal memory
+// priority, as a program started from a shortcut gets (Microsoft Learn,
+// "Priority (settingsType) Element"). Every path that writes the task file
+// asks for it; each starts here from no file, so a path that wrote none
+// cannot pass on a file another path left.
+void StationServiceManagerTest::windowsTaskRunsAtNormalPriority()
+{
+    Fixture f;
+    f.addConfig();
+    StationServiceManager manager(f.options(StationPlatform::Windows));
+
+    // A window closing with "Keep it running when NereusSDR is closed" on.
+    QVERIFY2(manager.startBackground(), qPrintable(manager.lastError()));
+    WindowsTask task = readWindowsTask(manager.entryPath());
+    QVERIFY(task.wellFormed);
+    QCOMPARE(task.priority, QStringLiteral("4"));
+    QVERIFY(manager.stopBackground());
+
+    // "Start it with the computer" switched on.
+    QVERIFY(QFile::remove(manager.entryPath()));
+    QVERIFY2(manager.setStartWithComputer(true), qPrintable(manager.lastError()));
+    task = readWindowsTask(manager.entryPath());
+    QVERIFY(task.wellFormed);
+    QCOMPARE(task.priority, QStringLiteral("4"));
+
+    // Switched off again: the task stays registered without its logon
+    // trigger, and the file it is registered from is written once more.
+    QVERIFY(QFile::remove(manager.entryPath()));
+    QVERIFY(f.taskExists);
+    QVERIFY2(manager.setStartWithComputer(false), qPrintable(manager.lastError()));
+    task = readWindowsTask(manager.entryPath());
+    QVERIFY(task.wellFormed);
+    QCOMPARE(task.priority, QStringLiteral("4"));
 }
 
 void StationServiceManagerTest::macAndLinuxFailuresSayWhy()

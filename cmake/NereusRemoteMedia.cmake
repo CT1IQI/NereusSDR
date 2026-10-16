@@ -65,6 +65,12 @@
 #               retain its registry, via libjuice-0003. J.J. Boyd (KG4VCF),
 #               with AI-assisted implementation via OpenAI Codex.
 #
+#   2026-10-15: vendor patches are applied with core.autocrlf=input, so
+#               Git for Windows' system core.autocrlf=true no longer writes
+#               CRLF into the patched LF sources, while a CRLF build copy
+#               (PortAudio's, on Windows) is still read as LF. J.J. Boyd
+#               (KG4VCF), with AI-assisted implementation via Anthropic
+#               Claude Code.
 #   2026-10-16: libdatachannel-0007, applied to MinGW builds only, locks
 #               each of the library's shared mutexes once when it is made,
 #               so winpthreads' lazy rwlock setup is never raced on Windows.
@@ -88,9 +94,15 @@ function(_nereus_apply_vendor_patch source_dir patch_name)
     # paths outside its current subdirectory. Stop discovery at the source
     # tree's parent so patch paths are relative to this vendor copy.
     get_filename_component(_ceiling "${source_dir}" DIRECTORY)
+    # Git for Windows sets core.autocrlf=true system-wide, and outside a
+    # repository git apply then writes the patched lines with CRLF into
+    # these LF sources. "input" still reads a CRLF file as LF, which the
+    # PortAudio copy is on Windows (CMake's file(WRITE) writes CRLF there),
+    # and writes the patched file with LF on every system.
+    set(_lf -c core.autocrlf=input)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env
             "GIT_CEILING_DIRECTORIES=${_ceiling}" "LC_ALL=C" "${GIT_EXECUTABLE}"
-            apply --check --verbose "${_patch}"
+            ${_lf} apply --check --verbose "${_patch}"
         WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE _check
         OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     string(FIND "${_out}${_err}" "Checking patch" _checked)
@@ -99,7 +111,7 @@ function(_nereus_apply_vendor_patch source_dir patch_name)
     endif()
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env
             "GIT_CEILING_DIRECTORIES=${_ceiling}" "LC_ALL=C" "${GIT_EXECUTABLE}"
-            apply --verbose "${_patch}"
+            ${_lf} apply --verbose "${_patch}"
         WORKING_DIRECTORY "${source_dir}" RESULT_VARIABLE _result
         OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
     string(FIND "${_out}${_err}" "Applied patch" _applied)

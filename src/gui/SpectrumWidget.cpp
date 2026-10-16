@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-13  J.J. Boyd (KG4VCF), OpenAI Codex: place shared TX
+//                 pixels at their RF coordinates when the view is wider
+//                 than the governing analyzer's source frame.
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
@@ -1533,6 +1536,19 @@ void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
     // Same window slice the trace path uses, so the transmit trace and the
     // transmit waterfall agree about the X axis.
     auto [firstBin, lastBin] = visibleBinRange(binsDbm.size());
+    QVector<float> projected;
+    const QVector<float>* sourcePixels = &binsDbm;
+    if (showsTransmitView() && m_txSampleRateHz > 0.0 && m_txCenterHz != 0.0
+        && (m_centerHz - m_bandwidthHz / 2.0 < m_txCenterHz - m_txSampleRateHz / 2.0
+            || m_centerHz + m_bandwidthHz / 2.0 > m_txCenterHz + m_txSampleRateHz / 2.0)) {
+        // A shared analyzer can cover less than this window. Clamping its
+        // input range and stretching it across the window changes RF
+        // coordinates; retain uncovered space with the capture's own floor.
+        projected = reprojectedToView(binsDbm, m_txCenterHz, m_txSampleRateHz);
+        sourcePixels = &projected;
+        firstBin = 0;
+        lastBin = projected.size() - 1;
+    }
     const int sliceCount = lastBin - firstBin + 1;
     if (sliceCount <= 0) { return; }
 
@@ -1553,8 +1569,8 @@ void SpectrumWidget::updateSpectrumFromTxPixels(int receiverId,
         const int    i0  = static_cast<int>(src);
         const int    i1  = qMin(i0 + 1, lastBin);
         const double f   = src - static_cast<double>(i0);
-        const float  a   = binsDbm[qBound(firstBin, i0, lastBin)];
-        const float  b   = binsDbm[qBound(firstBin, i1, lastBin)];
+        const float  a   = (*sourcePixels)[qBound(firstBin, i0, lastBin)];
+        const float  b   = (*sourcePixels)[qBound(firstBin, i1, lastBin)];
         m_renderedPixels[x] = static_cast<float>(a + (b - a) * f);
     }
 
@@ -3697,6 +3713,17 @@ QVector<float> SpectrumWidget::txWaterfallRow(const QVector<float>& binsDbm) con
     // `max = data[i] + fOffset` with fOffset = RX1Offset): keyed, the TX
     // Display Cal Offset. A remote pan's rows carry the Core's already.
     const float offset = displayCalOffsetDb();
+    if (showsTransmitView() && m_txSampleRateHz > 0.0 && m_txCenterHz != 0.0
+        && (m_centerHz - m_bandwidthHz / 2.0 < m_txCenterHz - m_txSampleRateHz / 2.0
+            || m_centerHz + m_bandwidthHz / 2.0 > m_txCenterHz + m_txSampleRateHz / 2.0)) {
+        // The row is stored with the shown view's RF coordinates. Place a
+        // narrower shared source there before history captures that binding.
+        QVector<float> visible = reprojectedToView(binsDbm, m_txCenterHz, m_txSampleRateHz);
+        for (float& value : visible) {
+            value += offset;
+        }
+        return visible;
+    }
     QVector<float> visible(lastBin - firstBin + 1);
     for (int k = firstBin; k <= lastBin; ++k) {
         visible[k - firstBin] = binsDbm[k] + offset;
