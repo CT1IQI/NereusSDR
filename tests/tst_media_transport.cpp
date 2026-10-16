@@ -71,6 +71,13 @@
 // and builds its stage text only on a miss. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
 //
+// 2026-10-16: second review of pull request 542. The held-message case
+// fails at once on a result no lost race explains (Refused anywhere, Busy
+// before the third send); between attempts it also waits for each held
+// message's writable signal, and every such wait shares one 20 s budget,
+// with none after the last attempt. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
 // =================================================================
 
 #include "RealtimeTestLoad.h"
@@ -82,6 +89,7 @@
 #include "core/session/media/RemoteIqCodec.h"
 #include "core/session/media/RemoteMicReceiver.h"
 
+#include <QDeadlineTimer>
 #include <QElapsedTimer>
 #include <QMetaEnum>
 #include <QPointer>
@@ -841,8 +849,10 @@ void TestMediaTransport::stalledReceiverRefusesDisplayInsteadOfQueueing()
 // one already gone or the third taken (this case's copy on the display send
 // thread's branch, pull request 539, found the second sent on the STRIX at
 // 100% CPU, 2026-10-15). Such an attempt shows nothing either way: once the
-// path is idle, a fresh pair is tried. Every message taken in any attempt
-// must reach the receiver, in order.
+// path is idle, a fresh pair is tried. A lost race can only turn an expected
+// Queued or Busy into Sent or Queued, or find the held message gone; any
+// other result fails at once. Every message taken in any attempt must reach
+// the receiver, in order.
 void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
 {
     using Result = IMediaTransport::DisplaySendResult;
@@ -873,31 +883,52 @@ void TestMediaTransport::heldDisplayMessageIsTakenAndSignalsWritable()
     };
     QStringList attempts;
     bool held = false;
+    // Every wait between attempts draws on one budget, so the case stays
+    // well inside the binary's ctest timeout however the attempts go.
+    const QDeadlineTimer idleBudget(20'000);
     while (!held && attempts.size() < kMostAttempts) {
         steps.clear();
-        const Result first = submit();
+        // Refused, or Busy before the third send, is no lost race.
+        bool unexplained = false;
+        const auto offer = [&](bool busyExpected) {
+            const Result result = submit();
+            unexplained = unexplained || result == Result::Refused
+                          || (result == Result::Busy && !busyExpected);
+            return result;
+        };
+        const Result first = offer(false);
         // The path is idle before the first attempt: usrsctp always has room.
         if (attempts.isEmpty()) {
             QCOMPARE(first, Result::Sent);
         }
-        if (first == Result::Sent && submit() == Result::Queued) {
+        if (first == Result::Sent && offer(false) == Result::Queued) {
             const bool busy = offerer.displayBusy();
             steps << (busy ? QStringLiteral("busy") : QStringLiteral("not busy"));
-            held = busy && submit() == Result::Busy;
+            held = busy && offer(true) == Result::Busy;
         }
         attempts << steps.join(QStringLiteral(", "));
-        if (held) {
+        if (unexplained) {
+            QFAIL(qPrintable(QStringLiteral("attempt %1 gave a result no lost race explains: %2")
+                                 .arg(attempts.size())
+                                 .arg(attempts.join(QStringLiteral("; ")))));
+        }
+        if (held || attempts.size() == kMostAttempts) {
             break;
         }
-        // Idle again: nothing held, everything taken delivered, and a
-        // delayed acknowledgment's time for the last of it.
+        // Idle again: nothing held, everything taken delivered, each held
+        // message's writable signal in, and a delayed acknowledgment's time
+        // for the last of it.
+        const qsizetype heldInAttempt = steps.count(QStringLiteral("Queued"));
         if (!QTest::qWaitFor([&] {
-                return !offerer.displayBusy() && displayReceived.count() == taken.size();
-            }, 10'000)) {
+                return !offerer.displayBusy() && displayReceived.count() == taken.size()
+                       && writable.count() >= heldInAttempt;
+            }, int(std::max<qint64>(0, idleBudget.remainingTime())))) {
             QFAIL(qPrintable(QStringLiteral("the path did not go idle after attempt %1 (%2): "
-                                            "%3 of %4 taken messages delivered")
+                                            "%3 of %4 taken messages delivered, %5 of %6 "
+                                            "writable signals")
                                  .arg(attempts.size()).arg(attempts.constLast())
-                                 .arg(displayReceived.count()).arg(taken.size())));
+                                 .arg(displayReceived.count()).arg(taken.size())
+                                 .arg(writable.count()).arg(heldInAttempt)));
         }
         QTest::qWait(250);
         writable.clear();
