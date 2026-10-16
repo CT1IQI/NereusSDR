@@ -696,6 +696,7 @@ struct StationCapabilities {
     /// Task 23: one dedicated ordered raw-I/Q media stream for a window's
     /// TCI apps, only after the media start declares this version.
     int remoteIqVersion = 0;
+    int waveformVersion = 0;
     /// A media peer may declare version 1 and subscribe to a receiver-scoped
     /// mini display with displayRole="mini". Absent means a normal pan.
     int miniDisplayVersion = 0;

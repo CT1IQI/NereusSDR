@@ -35,6 +35,8 @@
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via
 //                                    OpenAI Codex.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-12  J.J. Boyd / KG4VCF  The radio's second firmware number: the
 //                                    hello declares firmwareBeta.
 //                                    AI-assisted via Anthropic Claude Code.
@@ -957,6 +959,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // window transmits through the Core (link section 18.6), so its hello
     // says so and the Core answers with txPermitted and remoteTxVersion.
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("waveform"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
     m_declaredFeatures.insert(QByteArrayLiteral("audioQuality"), 1);
     // G-38: 2 adds Repair invalid settings (station.repairSettings).
@@ -2195,6 +2198,7 @@ void StationClient::attachTransport(SessionTransport* transport, const QString& 
     m_capabilities.displayBudgetReason.reset();
     m_capabilities.remotePs3DisplaySubscribed = false;
     m_capabilitiesThisSession = false;
+    if (m_radioModel) { m_radioModel->setStationRadeV2Enabled(false); }
     m_capabilities.radioSpeakerVersion = 0;
     m_capabilities.coreSpeakerVersion = 0;
 
@@ -2399,6 +2403,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
     m_capabilitiesThisSession = false;
+    if (m_radioModel) { m_radioModel->setStationRadeV2Enabled(false); }
     m_capabilities.radioAntennaRowsVersion = 0;
     m_capabilities.band2mVersion = 0;
     m_enrolledDeviceKey = false;
@@ -4402,6 +4407,19 @@ void StationClient::reconcileSlicesAgainstStation()
     }
 }
 
+void StationClient::handleRadeCatalogue(const QList<MirrorUpdate>& updates)
+{
+    if (!m_sessionActive || !m_authenticated || !m_radioModel) { return; }
+    for (const MirrorUpdate& update : updates) {
+        if (update.name != QByteArrayLiteral("json")) { continue; }
+        const QJsonDocument document = QJsonDocument::fromJson(update.value.toString().toUtf8());
+        const QJsonValue enabled = document.object().value(QStringLiteral("radeV2Enabled"));
+        // Older catalogues can list IDs 14/15 without implementing this gate.
+        // Only an explicit boolean true is authority to offer new V2 choices.
+        m_radioModel->setStationRadeV2Enabled(enabled.isBool() && enabled.toBool());
+    }
+}
+
 void StationClient::handleAudioCatalogue(const QList<MirrorUpdate>& updates)
 {
     // The authenticated snapshot precedes handshakeComplete. Admit its
@@ -4440,6 +4458,7 @@ void StationClient::handleObjectCreate(const SessionMessage& message)
 {
     if (message.objectKey == QByteArrayLiteral("catalog")) {
         m_pendingStationSchemas.remove(message.className);
+        handleRadeCatalogue(message.updates);
         handleAudioCatalogue(message.updates);
         return;
     }
@@ -4502,6 +4521,7 @@ void StationClient::handleObjectDestroy(const SessionMessage& message)
 void StationClient::handleDelta(const SessionMessage& message)
 {
     if (message.objectKey == QByteArrayLiteral("catalog")) {
+        handleRadeCatalogue(message.updates);
         handleAudioCatalogue(message.updates);
         return;
     }

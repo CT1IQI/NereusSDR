@@ -241,6 +241,8 @@
 #include "core/security/ClientDeviceIdentity.h"
 #include "core/security/DeviceStore.h"
 #include "gui/RemoteMediaController.h"
+#include "models/RadeWaveformModel.h"
+#include "core/session/media/WaveformCodec.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
@@ -267,7 +269,7 @@ using namespace NereusSDR;
 class DisplayTransport final : public IMediaTransport {
 public:
     explicit DisplayTransport(QObject* parent) : IMediaTransport(parent) {}
-    bool start(const StartOptions&) override { return true; }
+    bool start(const StartOptions& options) override { startOptions=options; return true; }
     void stop() override { active = false; }
     bool acceptDescription(const QString&, const QString&) override
     {
@@ -290,6 +292,12 @@ public:
     void failConnection(const QString& reason) { emit connectionFailed(reason); }
     void closeUnexpectedly() { active = false; emit closed(); }
     void reportGenericError(const QString& reason) { emit errorOccurred(reason); }
+    DisplaySendResult submitWaveform(const QByteArray& bytes) override {
+        if (!active || !other) { return DisplaySendResult::Refused; }
+        waveformPackets.append(bytes); emit other->waveformReceived(bytes); return DisplaySendResult::Sent;
+    }
+    StartOptions startOptions;
+    QList<QByteArray> waveformPackets;
     bool active = false;
     // Started when Core's media description first reaches this side.
     QElapsedTimer descriptionClock;
@@ -1092,6 +1100,80 @@ private slots:
         QVERIFY(text.isValid());
         QCOMPARE(text.methodIndex(), SessionTransport::staticMetaObject.indexOfSignal(
                                          "textReceived(QByteArray)"));
+    }
+
+    void waveformRemoteDemandClockAndIdentity()
+    {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings"));
+        RadioModel station; station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5,5,192000); station.setConnectionStateForTest(ConnectionState::Connected);
+        const int slice=station.addSlice(); QVERIFY(slice>=0);
+        StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true); QVERIFY(server.setDisplayBudgetLimits({10000000,10000000,1}));
+        QPointer<DisplayTransport> coreMedia,guiMedia;
+        constexpr qint64 offset=1000000000;
+        DaemonMediaController core(&server,&station,nullptr,[&](QObject* parent)->IMediaTransport* {
+            coreMedia=new DisplayTransport(parent); return coreMedia;
+        },[] { return waveformNowNs()+offset; });
+        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy; StationClient client(&remote,&proxy);
+        client.withholdFeatureForTest("remoteTx"); // This observer fixture opens no microphone line/capture.
+        RemoteMediaController gui(&client,&remote,nullptr,nullptr,[&](QObject* parent)->IMediaTransport* {
+            guiMedia=new DisplayTransport(parent); return guiMedia;
+        });
+        auto* stationLink=new Test::LoopbackTransport("station", &server);
+        auto* clientLink=new Test::LoopbackTransport("client", &client);
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(coreMedia && guiMedia && remote.sliceById(slice));
+        coreMedia->other=guiMedia; guiMedia->other=coreMedia; coreMedia->activate(); guiMedia->activate();
+        QVERIFY(gui.waveformNegotiated()); QVERIFY(guiMedia->startOptions.waveformChannel);
+        WaveformPublisher publisher(WaveformKind::DecodedSpeech,24000);
+        station.radeWaveformModel()->setEndpoint(slice,WaveformKind::DecodedSpeech,&publisher,UINT64_MAX,true);
+        auto* model=remote.radeWaveformModel(); model->setDemand(100,{{slice,WaveformKind::DecodedSpeech}});
+        model->setDemand(101,{{slice,WaveformKind::DecodedSpeech}});
+        QTRY_VERIFY(publisher.bindingToken()!=0);
+        auto* probe=gui.findChild<QTimer*>("remoteAudioClockProbeTimer"); QVERIFY(probe); QVERIFY(probe->isActive());
+        QVERIFY(QMetaObject::invokeMethod(probe,"timeout",Qt::DirectConnection));
+        QTRY_COMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->reason,
+                     QStringLiteral("Waiting for observed Core PCM"));
+        std::vector<float> pcm(240,0.375f);
+        QVERIFY(publisher.appendFloat(publisher.bindingToken(),pcm.data(),240,1,waveformNowNs()+offset,true));
+        QTRY_VERIFY(!coreMedia->waveformPackets.empty());
+        QTRY_VERIFY(!model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->samples.empty());
+        const auto snapshot=model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs());
+        QCOMPARE(snapshot->samples[0],0.375f);
+        QVERIFY(std::abs(snapshot->segments[0].startNs-waveformNowNs())<500000000);
+        const auto packet=WaveformCodec::decode(coreMedia->waveformPackets[0]); QVERIFY(packet);
+        const quint64 before=snapshot->revision;
+        emit guiMedia->waveformReceived(coreMedia->waveformPackets[0]); // Duplicate discarded.
+        QCOMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->revision,before);
+        WaveformPacket stale=*packet; stale.deliveryGeneration+=1; const auto bad=WaveformCodec::encode(stale); QVERIFY(bad);
+        emit guiMedia->waveformReceived(*bad);
+        QCOMPARE(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->revision,before);
+        WaveformPacket hole=*packet; hole.batch.serial+=2; hole.batch.segments[0].firstSequence+=1000;
+        hole.batch.segments[0].startNs+=100000000; const auto gap=WaveformCodec::encode(hole); QVERIFY(gap);
+        emit guiMedia->waveformReceived(*gap);
+        QVERIFY(model->snapshot(slice,WaveformKind::DecodedSpeech,waveformNowNs())->droppedFrames>=760);
+        model->clearDemand(100); QVERIFY(publisher.bindingToken()!=0);
+        model->clearDemand(101); QTRY_COMPARE(publisher.bindingToken(),quint64(0)); QVERIFY(!probe->isActive());
+        client.disconnectFromStation("test complete");
+    }
+
+    void waveformOlderCoreIsUnsupported()
+    {
+        QTemporaryDir dir; AppSettings settings(dir.filePath("station.settings")); RadioModel station;
+        StationServer server(&station,settings,NereusSDR::Test::seedUpgradedCoreToken(dir.path())); server.setMediaEnabled(true);
+        DaemonMediaController core(&server,&station,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
+        RadioModel remote(RadioModel::Role::Remote); remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy; StationClient client(&remote,&proxy); client.withholdFeatureForTest("waveform");
+        RemoteMediaController gui(&client,&remote,nullptr,nullptr,[](QObject* parent)->IMediaTransport* { return new DisplayTransport(parent); });
+        auto* stationLink=new Test::LoopbackTransport("station", &server);
+        auto* clientLink=new Test::LoopbackTransport("client", &client);
+        stationLink->linkTo(clientLink); client.startSession(clientLink,server.token()); server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.isHandshakeComplete()); QVERIFY(!gui.waveformNegotiated());
+        const auto snapshot=remote.radeWaveformModel()->snapshot(0,WaveformKind::RawMicrophone,waveformNowNs());
+        QCOMPARE(snapshot->availability,WaveformAvailability::Unsupported); QVERIFY(!snapshot->reason.isEmpty());
+        client.disconnectFromStation("test complete");
     }
 
     void pureSignalChunksShareMediaWithoutChangingMessageLimit()

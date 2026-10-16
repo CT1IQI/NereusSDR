@@ -168,6 +168,8 @@ mw0lge@grange-lane.co.uk
 #include "core/ControlRanges.h"
 #include "models/MainPowerMeter.h"
 #include "MeterPoller.h"
+#include "WaveformMeterItem.h"
+#include <QEvent>
 #include "MeterWidget.h"
 
 #include <algorithm>  // std::clamp (Task 3.1 setIntervalMs / setAverageWindow)
@@ -208,9 +210,16 @@ MeterPoller::MeterPoller(QObject* parent)
     m_clock.start();
     m_timer.setInterval(100);  // 10 fps default (from Thetis UpdateInterval=100ms)
     connect(&m_timer, &QTimer::timeout, this, &MeterPoller::poll);
+    m_waveformTimer.setInterval(33);
+    connect(&m_waveformTimer, &QTimer::timeout, this, &MeterPoller::pollWaveforms);
 }
 
-MeterPoller::~MeterPoller() = default;
+MeterPoller::~MeterPoller()
+{
+    if (m_waveformDemandSource) {
+        m_waveformDemandSource({});
+    }
+}
 
 void MeterPoller::setRxChannel(RxChannel* channel)
 {
@@ -623,8 +632,15 @@ void MeterPoller::addTarget(MeterWidget* widget)
         if (target) { rememberPresentation(target); }
     }
     m_targets.append(widget);
+    widget->installEventFilter(this);
+    connect(widget, &MeterWidget::displayVisibilityChanged, this,
+            [this] { m_waveformTimer.start(); });
+    m_waveformTimer.start();
     connect(widget, &MeterWidget::itemAdded, this, [this, widget](MeterItem* item) {
         if (item && item->hasMmioBinding()) { replayMmioReading(widget, item); }
+        if (qobject_cast<WaveformMeterItem*>(item)) {
+            m_waveformTimer.start();
+        }
     });
     connect(widget, &MeterWidget::aboutToDestroy, this, [this, widget] { removeTarget(widget); });
     connect(widget, &QObject::destroyed, this, [this, widget] {
@@ -647,7 +663,8 @@ void MeterPoller::removeTarget(MeterWidget* widget)
     m_targets.removeIf([widget](const QPointer<MeterWidget>& target) { return !target || target.data() == widget; });
     m_targets.removeAll(QPointer<MeterWidget>(nullptr));
     m_targetContexts.remove(widget);
-    if (registered) { disconnect(widget, nullptr, this, nullptr); }
+    if (registered) { disconnect(widget, nullptr, this, nullptr); widget->removeEventFilter(this); }
+    pollWaveforms();
 }
 void MeterPoller::setTargetContext(MeterWidget* widget, const QJsonObject& context)
 {
@@ -850,6 +867,7 @@ void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context
 void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& context) const
 {
     if (!widget) { return; }
+    copyCachedWaveforms(widget,context);
     synchronizeRxSource(widget, context);
     if (widget->unitMode()!=m_unitMode) { widget->setUnitMode(m_unitMode); }
     applyMainPowerScale(widget);
@@ -1680,3 +1698,92 @@ void MeterPoller::setRadioStatus(RadioStatus* status)
 }
 
 } // namespace NereusSDR
+
+namespace NereusSDR {
+QByteArray MeterPoller::waveformKey(const QJsonObject& context, WaveformKind kind) const
+{
+    const QByteArray identity =
+        m_rxSourceIdentitySource ? m_rxSourceIdentitySource(context) : contextKey(context);
+    return identity + ":" + QByteArray::number(int(kind));
+}
+bool MeterPoller::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::Show || event->type() == QEvent::Hide) {
+        m_waveformTimer.start();
+    }
+    return QObject::eventFilter(watched, event);
+}
+void MeterPoller::pollWaveforms()
+{
+    struct Recipient {
+        MeterWidget* widget;
+        WaveformMeterItem* face;
+        QJsonObject context;
+        QByteArray key;
+    };
+    QList<Recipient> recipients;
+    QList<WaveformContextRequest> requests;
+    QSet<QByteArray> demanded;
+    bool anyTyped = false;
+    for (const auto& target : m_targets) {
+        if (!target) {
+            continue;
+        }
+        for (MeterItem* item : target->items()) {
+            auto* face = qobject_cast<WaveformMeterItem*>(item);
+            if (!face) {
+                continue;
+            }
+            if (!target->isVisible() || !target->shouldRender(face)) {
+                if (face->setSnapshot({})) {
+                    target->invalidatePresentation(face);
+                }
+                continue;
+            }
+            anyTyped = true;
+            const QJsonObject context = m_targetContexts.value(target);
+            synchronizeRxSource(target, context);
+            const QByteArray key = waveformKey(context, face->waveformKind());
+            recipients.append({target, face, context, key});
+            if (!demanded.contains(key)) {
+                demanded.insert(key);
+                requests.append({context, face->waveformKind()});
+            }
+        }
+    }
+    if (m_waveformDemandSource) {
+        m_waveformDemandSource(requests);
+    }
+    QHash<QByteArray, WaveformSnapshotPtr> cache;
+    for (const Recipient& recipient : recipients) {
+        if (!cache.contains(recipient.key)) {
+            cache.insert(recipient.key, m_waveformSource ? m_waveformSource(recipient.context,
+                                                                            recipient.face->waveformKind())
+                                                         : WaveformSnapshotPtr());
+        }
+        if (recipient.face->setSnapshot(cache.value(recipient.key))) {
+            recipient.widget->invalidatePresentation(recipient.face);
+        }
+    }
+    m_waveformCache = std::move(cache);
+    if (anyTyped) {
+        m_waveformTimer.start();
+    } else {
+        m_waveformTimer.stop();
+    }
+    emit waveformFrameAdvanced(waveformNowNs() / 1000000);
+}
+void MeterPoller::copyCachedWaveforms(MeterWidget* widget, const QJsonObject& context) const
+{
+    if (!widget) {
+        return;
+    }
+    for (MeterItem* item : widget->items()) {
+        if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
+            if (face->setSnapshot(m_waveformCache.value(waveformKey(context, face->waveformKind())))) {
+                widget->invalidatePresentation(face);
+            }
+        }
+    }
+}
+}

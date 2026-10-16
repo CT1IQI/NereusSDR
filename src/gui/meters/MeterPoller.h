@@ -122,6 +122,7 @@ mw0lge@grange-lane.co.uk
 #include "core/WdspTypes.h"
 #include "MeterItem.h"
 #include "gui/NereusGuiExport.h"
+#include "core/audio/WaveformSnapshot.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QHash>
@@ -208,10 +209,21 @@ namespace MeterBinding {
     constexpr int RotatorEle     = 301;  // Elevation (0-90)
 }
 
+struct WaveformContextRequest {
+    QJsonObject context;
+    WaveformKind kind;
+};
 class NEREUS_GUI_EXPORT MeterPoller : public QObject {
     Q_OBJECT
 
 public:
+    void setWaveformSource(std::function<WaveformSnapshotPtr(const QJsonObject&, WaveformKind)> source) {
+        m_waveformSource = std::move(source);
+    }
+    void setWaveformDemandSource(std::function<void(const QList<WaveformContextRequest>&)> source) {
+        m_waveformDemandSource = std::move(source);
+    }
+    void copyCachedWaveforms(MeterWidget* widget, const QJsonObject& context) const;
     explicit MeterPoller(QObject* parent = nullptr);
     ~MeterPoller() override;
 
@@ -436,6 +448,7 @@ public:
     void setRxOffsetSource(std::function<double()> source);
 
 signals:
+    void waveformFrameAdvanced(qint64 monotonicMs);
     void frameAdvanced(qint64 monotonicMs);
     void bindingAvailabilityChanged(int bindingId, const QString& reason);
     void bindingSupportChanged(int bindingId, MeterItem::BindingSupport support);
@@ -476,11 +489,18 @@ public slots:
     void setInTx(bool isTx);
 
 private slots:
+    void pollWaveforms();
     void poll();
 
 private slots:
 
 private:
+    QByteArray waveformKey(const QJsonObject& context, WaveformKind kind) const;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    QTimer m_waveformTimer;
+    QHash<QByteArray, WaveformSnapshotPtr> m_waveformCache;
+    std::function<WaveformSnapshotPtr(const QJsonObject&, WaveformKind)> m_waveformSource;
+    std::function<void(const QList<WaveformContextRequest>&)> m_waveformDemandSource;
     // ── TX poll helper ────────────────────────────────────────────────────────
     // Reads the 4 WDSP TX meters gated for 3M-1a and pushes them to all
     // registered MeterWidget targets.

@@ -289,6 +289,7 @@ public:
         // Task 23: dedicated reliable ordered raw-I/Q channel, negotiated
         // only when the window declared remoteIqVersion 1.
         bool iqChannel = false;
+        bool waveformChannel = false;
         // iPhone app plan Task 27 (R-IOS-16): set for a connection that came
         // through the remote access service. Its one STUN server goes in at
         // once; automatic gathering is off, and gathering starts with the
@@ -409,6 +410,13 @@ public:
         return DisplaySendResult::Refused;
     }
     virtual bool iqBusy() const { return false; }
+    static constexpr qsizetype kMaxWaveformMessageBytes = 4168;
+    virtual DisplaySendResult submitWaveform(const QByteArray& message)
+    {
+        Q_UNUSED(message);
+        return DisplaySendResult::Refused;
+    }
+    virtual bool waveformBusy() const { return false; }
     virtual bool sendRtp(const QByteArray& packet) = 0;
     /// R-AUD-SEND: the audio line's send for another thread (MediaRtpSink).
     /// The same object for the transport's whole life, so it may be asked
@@ -518,6 +526,10 @@ signals:
     void gatheringComplete();
     void displayReceived(const QByteArray& message);
     void iqReceived(const QByteArray& message);
+    void waveformReceived(const QByteArray& message);
+    void waveformErrorOccurred(const QString& reason);
+    void waveformDropped(quint64 packets);
+    void waveformWritable();
     void iqErrorOccurred(const QString& reason);
     void rtpReceived(const QByteArray& packet);
     /// Task 36: an RTP packet that arrived on the microphone line. Never

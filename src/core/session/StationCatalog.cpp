@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-09-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -95,8 +97,8 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcCatalog, "nereus.station.catalog")
 
-// The 14 modes, DSPMode 0 to 13.
-constexpr int kModeCount = static_cast<int>(DSPMode::RADE_L) + 1;
+// All declared modes, including experimental RADE v2.
+constexpr int kModeCount = static_cast<int>(DSPMode::RADE2_L) + 1;
 
 QString colourText(std::uint32_t rgb)
 {
@@ -119,11 +121,13 @@ QString sidebandOf(DSPMode mode)
     case DSPMode::LSB:
     case DSPMode::CWL:
     case DSPMode::DIGL:
+    case DSPMode::RADE2_L:
     case DSPMode::RADE_L:
         return QStringLiteral("lower");
     case DSPMode::USB:
     case DSPMode::CWU:
     case DSPMode::DIGU:
+    case DSPMode::RADE2_U:
     case DSPMode::RADE_U:
         return QStringLiteral("upper");
     case DSPMode::DSB:
@@ -156,11 +160,12 @@ QJsonObject rangeObject(double min, double max, double step)
                        {QStringLiteral("step"), step}};
 }
 
-QJsonArray modesArray()
+QJsonArray modesArray(bool radeV2Enabled)
 {
     QJsonArray modes;
     for (int id = 0; id < kModeCount; ++id) {
         const auto mode = static_cast<DSPMode>(id);
+        if (isRade2DspMode(mode) && !radeV2Enabled) { continue; }
         modes.append(QJsonObject{{QStringLiteral("id"), id},
                                  {QStringLiteral("label"), SliceModel::modeName(mode)},
                                  {QStringLiteral("sideband"), sidebandOf(mode)}});
@@ -172,6 +177,7 @@ QJsonObject filterPresetsObject(const StationCatalog::Inputs& inputs)
 {
     QJsonObject presets;
     for (const auto& [mode, list] : inputs.filterPresets) {
+        if (isRade2DspMode(mode) && !inputs.radeV2Enabled) { continue; }
         QJsonArray entries;
         for (int slot = 0; slot < list.size(); ++slot) {
             const FilterPreset& preset = list.at(slot);
@@ -976,7 +982,8 @@ StationCatalog::~StationCatalog() = default;
 QJsonObject StationCatalog::build(const Inputs& inputs)
 {
     return QJsonObject{
-        {QStringLiteral("modes"), modesArray()},
+        {QStringLiteral("modes"), modesArray(inputs.radeV2Enabled)},
+        {QStringLiteral("radeV2Enabled"), inputs.radeV2Enabled},
         {QStringLiteral("filterPresets"), filterPresetsObject(inputs)},
         {QStringLiteral("tuneSteps"), tuneStepsArray(inputs)},
         {QStringLiteral("agc"), agcObject()},
@@ -1000,6 +1007,7 @@ QJsonObject StationCatalog::build(const Inputs& inputs)
 StationCatalog::Inputs StationCatalog::inputsFrom(const RadioModel& model)
 {
     Inputs inputs;
+    inputs.radeV2Enabled = model.radeV2Enabled();
     const HardwareProfile& profile = model.hardwareProfile();
     inputs.model = profile.caps != nullptr ? profile.model : HPSDRModel::FIRST;
     inputs.board = model.boardCapabilities();

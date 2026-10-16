@@ -11,11 +11,15 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <functional>
+#include "models/RadeWaveformModel.h"
+#include <optional>
 namespace NereusSDR {
 class RadioModel;
 class SliceModel;
 class ContainerSourceAdapter {
 public:
+    static WaveformSnapshotPtr waveform(RadioModel* model, const QJsonObject& context, SliceModel* inherited, WaveformKind kind, const QString& session = {});
+    static std::optional<WaveformRequest> waveformRequest(RadioModel* model, const QJsonObject& context, SliceModel* inherited, WaveformKind kind, const QString& session = {});
     static bool followsSelectedRx(const QJsonObject& context);
     // The container-level source write of Container Settings' Slice combo:
     // `rxSource` is 1-based (slices A to D are 1..4). A config that saves a

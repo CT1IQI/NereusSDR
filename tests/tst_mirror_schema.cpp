@@ -275,10 +275,10 @@ private slots:
         // Negative, and one past the last declared enumerator, are the
         // two ways to walk off either end.
         QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(-1))).isValid());
-        QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(14))).isValid());
+        QVERIFY(!MirrorSchema::decode(*dsp, QVariant(qlonglong(16))).isValid());
 
-        // Every declared enumerator still round-trips, including the two
-        // NereusSDR-native RADE modes at the top of the range.
+        // Representative enabled enumerators still round-trip through the
+        // live model.
         for (const DSPMode mode : { DSPMode::LSB, DSPMode::AM, DSPMode::DRM,
                                     DSPMode::RADE_U, DSPMode::RADE_L }) {
             const QVariant wire(static_cast<qlonglong>(mode));
@@ -286,6 +286,19 @@ private slots:
                      qPrintable(QString::number(static_cast<int>(mode))));
             QVERIFY(schema.write(*dsp, &slice, wire));
             QCOMPARE(slice.dspMode(), mode);
+        }
+
+        // The two declared RADE V2 enumerators remain valid on the wire, but
+        // the default-off feature gate belongs to SliceModel and refuses a
+        // live transition. QMetaProperty::write reports delivery to the
+        // setter; the unchanged model value is the authority check.
+        for (const DSPMode mode : {static_cast<DSPMode>(14), static_cast<DSPMode>(15)}) {
+            const QVariant wire(static_cast<qlonglong>(mode));
+            QVERIFY2(MirrorSchema::decode(*dsp, wire).isValid(),
+                     qPrintable(QString::number(static_cast<int>(mode))));
+            const DSPMode beforeBlockedWrite = slice.dspMode();
+            QVERIFY(schema.write(*dsp, &slice, wire));
+            QCOMPARE(slice.dspMode(), beforeBlockedWrite);
         }
 
         // Band carries a Count sentinel that is NOT a band. It must not

@@ -318,6 +318,8 @@
 #include "gui/RemoteDisplayPresenter.h"
 #include "core/session/media/DisplayBudget.h"
 #include "core/session/media/RemoteIqCodec.h"
+#include "core/session/media/WaveformCodec.h"
+#include <set>
 #include "core/session/media/RemoteSpectrumContext.h"
 #include "core/session/media/SpectrumEndpoint.h"
 #include "core/session/media/WidebandDisplayContext.h"
@@ -1627,6 +1629,21 @@ struct RemoteMediaController::Private {
     // connection, so a slice id's revision only ever grows, even when a new
     // slice reuses the id; a new connection starts afresh.
     QHash<int, quint32> receiverRevisions;
+    using WaveformKey = std::pair<int, WaveformKind>;
+    struct WaveformStream {
+        bool wanted = false;
+        bool enabled = false;
+        quint32 revision = 0;
+        quint64 sourceGeneration = 0;
+        quint64 deliveryGeneration = 0;
+        quint64 lastSerial = 0;
+        quint64 nextSequence = 0;
+        quint64 lastDroppedTotal = 0;
+        int sampleRate = 0;
+    };
+    std::map<WaveformKey, WaveformStream> waveformStreams;
+    bool waveformNegotiated = false;
+    quint64 waveformBytesPerSecond = 0;
     struct IqStream {
         bool wanted = false;
         bool enabled = false;
@@ -1849,6 +1866,12 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
 {
     d->client = client;
     d->model = model;
+    if (model && model->radeWaveformModel()) {
+        connect(model->radeWaveformModel(), &RadeWaveformModel::remoteDemandChanged,
+                this, &RemoteMediaController::reconcileWaveformDemand);
+        model->radeWaveformModel()->setRemoteSupported(false,
+            QStringLiteral("This Core does not support exact waveform observation."));
+    }
     d->stack = stack;
     d->factory = std::move(factory);
     d->clock.start();
@@ -2751,7 +2774,9 @@ void RemoteMediaController::reconcileClockProbe()
         && std::any_of(d->bindings.cbegin(), d->bindings.cend(),
                        [](const auto& entry) { return entry.second.accepted; });
     const bool probe = d->peer && audioClockNegotiated()
-        && ((d->audioEnabled && d->audio->isRunning()) || displaying);
+        && ((d->audioEnabled && d->audio->isRunning()) || displaying
+            || std::any_of(d->waveformStreams.cbegin(), d->waveformStreams.cend(),
+                [](const auto& entry) { return entry.second.wanted; }));
     if (probe && !d->clockProbeTimer->isActive()) {
         d->clockProbeTimer->start();
     } else if (!probe && d->clockProbeTimer->isActive()) {
@@ -2761,6 +2786,7 @@ void RemoteMediaController::reconcileClockProbe()
 
 void RemoteMediaController::sendClockProbe()
 {
+    updateWaveformClock();
     if (!d->peer || !audioClockNegotiated()) {
         return;
     }
@@ -2801,6 +2827,7 @@ void RemoteMediaController::receiveClockEcho(const QJsonObject& payload, qint64 
     if (!d->clockEstimator.addSample({t0, t1, t2, receivedNs})) {
         return;
     }
+    updateWaveformClock();
     if (generation != 0) {
         d->captureAnchor = AudioCaptureAnchor{quint32(generation), quint32(rtpTimestamp), capturedNs};
     } else {
@@ -3925,6 +3952,18 @@ void RemoteMediaController::stop()
     // session; a reconnect measures afresh.
     d->clockProbeTimer->stop();
     d->clockEstimator.reset();
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+    }
+    for (auto& [key, stream] : d->waveformStreams) {
+        stream.enabled = false; stream.revision = 0; stream.sourceGeneration = 0;
+        stream.deliveryGeneration = 0; stream.lastSerial = 0; stream.nextSequence = 0; stream.lastDroppedTotal = 0; stream.sampleRate = 0;
+        if (d->model && d->model->radeWaveformModel()) {
+            d->model->radeWaveformModel()->applyRemoteContext(key.first, key.second, 0, 0, 0,
+                WaveformAvailability::Unavailable, QStringLiteral("The waveform media connection closed."));
+        }
+    }
+    d->waveformNegotiated = false; d->waveformBytesPerSecond = 0;
     d->captureAnchor.reset();
     d->pendingClockProbes.clear();
     // R-R3-21: so do the display's map and counters.
@@ -4241,7 +4280,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
                                 IMediaTransport::kDefaultAudioTargetBitrate,
                                 /*offerLosslessAudio=*/false, receiverAudioNegotiated(),
                                 headphonesMixNegotiated(), micLineNegotiated(),
-                                d->iqNegotiated);
+                                d->iqNegotiated, d->waveformNegotiated);
     if (!ok || !started) {
         dropReplacement(QStringLiteral("the new connection could not start"));
         // Re-review: a connection that cannot start is tried again only a
@@ -4377,6 +4416,10 @@ void RemoteMediaController::promoteReplacement()
         }
     }
     connectPeer(next, d->epoch);
+    for (const auto& [key, stream] : d->waveformStreams) {
+        if (stream.wanted) { sendWaveformRequest(key.first, key.second, true); }
+    }
+    reconcileClockProbe();
     for (const auto& [sliceId, stream] : d->iqStreams) {
         if (stream.wanted) { sendIqRequest(sliceId, true); }
     }
@@ -4721,6 +4764,18 @@ void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
         reportDisplayDrops();
         receiveDisplay(packet);
     });
+    connect(peer, &MediaPeer::waveformReceived, this, [this, current](const QByteArray& packet) {
+        if (current()) { receiveWaveformFrame(packet); }
+    });
+    connect(peer, &MediaPeer::waveformErrorOccurred, this, [this, current](const QString& reason) {
+        if (!current() || !d->model || !d->model->radeWaveformModel()) { return; }
+        for (auto& [key, stream] : d->waveformStreams) {
+            stream.enabled = false;
+            d->model->radeWaveformModel()->applyRemoteContext(key.first, key.second, 0, 0, 0,
+                WaveformAvailability::Unavailable, reason);
+        }
+        d->waveformBytesPerSecond = 0;
+    });
     connect(peer, &MediaPeer::iqReceived, this, [this, current](const QByteArray& packet) {
         if (current()) { receiveIqFrame(packet); }
     });
@@ -4764,6 +4819,10 @@ void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
             // R-R3-43: each receiver stream an app wants, after the mix.
             requestWantedReceiverAudio();
             if (!self || !current()) { return; }
+            for (const auto& [key, stream] : d->waveformStreams) {
+                if (stream.wanted) { sendWaveformRequest(key.first, key.second, true); }
+            }
+            reconcileClockProbe();
             for (const auto& [sliceId, stream] : d->iqStreams) {
                 if (stream.wanted) { sendIqRequest(sliceId, true); }
             }
@@ -4899,6 +4958,11 @@ void RemoteMediaController::start()
     // Task 36: likewise the microphone line.
     const bool micLine = micLineNegotiated();
     d->iqNegotiated = remoteIqNegotiated();
+    d->waveformNegotiated = waveformNegotiated();
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->setRemoteSupported(d->waveformNegotiated,
+            QStringLiteral("This Core does not support exact waveform observation."));
+    }
     // iPhone app plan Task 28 (R-IOS-16): a session through the remote
     // access service makes its media connection with the same ICE settings
     // as its control connection. Task 29 step 2b: a direct WebSocket
@@ -4928,7 +4992,7 @@ void RemoteMediaController::start()
     const bool started = peer->start(IMediaTransport::Role::Answerer, d->connectionId,
                                      IMediaTransport::kDefaultAudioTargetBitrate,
                                      /*offerLosslessAudio=*/false, receiverAudioNegotiated(),
-                                     headphonesMixNegotiated(), micLine, d->iqNegotiated);
+                                     headphonesMixNegotiated(), micLine, d->iqNegotiated, d->waveformNegotiated);
     if (!self) { return; }
     d->startingPeer = false;
     d->receiverSsrcs = started && startedPeer ? startedPeer->receiverAudioSsrcs() : QList<quint32>{};
@@ -4979,6 +5043,7 @@ void RemoteMediaController::start()
     if (receiverAudioNegotiated()) {
         startControl.insert(QStringLiteral("receiverAudioVersion"), 1);
     }
+    if (d->waveformNegotiated) { startControl.insert(QStringLiteral("waveformVersion"), 1); }
     if (d->iqNegotiated) {
         startControl.insert(QStringLiteral("remoteIqVersion"), 1);
     }
@@ -5819,7 +5884,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         d->wantedIntents = intents;
     }
     const bool askWanted = d->askingWanted && !retainedPs3ExceedsCap
-        && d->iqBytesPerSecond == 0;
+        && d->iqBytesPerSecond == 0 && d->waveformBytesPerSecond == 0;
     // While asking, plan without the share: every pan at its wanted quality.
     // The Core admits or refuses each against the share it gives this
     // device with the new request.
@@ -5827,10 +5892,11 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         ? DisplayBudgetLimits{kDisplayBudgetJsonSafePositiveLimit,
                               kDisplayBudgetJsonSafePositiveLimit, limits->generation}
         : *limits;
-    if (d->iqBytesPerSecond != 0) {
+    const quint64 observationBytes = d->iqBytesPerSecond + d->waveformBytesPerSecond;
+    if (observationBytes != 0) {
         planLimits.applicationBytesPerSecond =
-            planLimits.applicationBytesPerSecond > d->iqBytesPerSecond
-                ? planLimits.applicationBytesPerSecond - d->iqBytesPerSecond : 1;
+            planLimits.applicationBytesPerSecond > observationBytes
+                ? planLimits.applicationBytesPerSecond - observationBytes : 1;
     }
     const QString cacheIdentity = allocationIdentity(
         planLimits, intents, targetPs3, retainedPs3ExceedsCap);
@@ -5851,7 +5917,7 @@ void RemoteMediaController::refreshBudgetSubscriptions()
         } else {
             d->cachedAllocation = allocateRemoteDisplay(
                 planLimits, intents, targetPs3, &d->cachedAllocationError,
-                d->iqBytesPerSecond != 0);
+                observationBytes != 0);
             if (!d->cachedAllocation) {
                 qCInfo(lcRemoteMedia).noquote() << "Remote display allocation failed:"
                                                 << d->cachedAllocationError;
@@ -6500,6 +6566,171 @@ std::shared_ptr<RemoteTciAudioStage> RemoteMediaController::requestReceiverAudio
     if (!self) { return {}; }
     refreshAudioStatus();
     return stage;
+}
+
+bool RemoteMediaController::waveformNegotiated() const
+{
+    return d->client && d->client->mediaAvailable() && d->client->capabilities().waveformVersion == 1;
+}
+
+void RemoteMediaController::reconcileWaveformDemand(const QList<WaveformRequest>& requests)
+{
+    if (!d->model || !d->model->radeWaveformModel()) { return; }
+    const QPointer<RemoteMediaController> self(this);
+    const quint64 epoch = d->epoch;
+    d->model->radeWaveformModel()->setRemoteSupported(waveformNegotiated(),
+        QStringLiteral("This Core does not support exact waveform observation."));
+    if (!self || d->epoch != epoch) { return; }
+    std::set<Private::WaveformKey> wanted;
+    for (const WaveformRequest& request : requests) {
+        if (request.sliceId >= 0 && d->model->sliceById(request.sliceId)) {
+            wanted.emplace(request.sliceId, request.kind);
+        }
+    }
+    QList<Private::WaveformKey> changed;
+    for (auto& [key, stream] : d->waveformStreams) {
+        const bool enabled = wanted.contains(key);
+        if (enabled != stream.wanted) {
+            stream.wanted = enabled; stream.enabled = false;
+            changed.append(key);
+        }
+    }
+    for (const auto& key : wanted) {
+        if (!d->waveformStreams.contains(key)) {
+            d->waveformStreams[key].wanted = true;
+            changed.append(key);
+        }
+    }
+    for (const auto& key : changed) {
+        if (!self || d->epoch != epoch) { return; }
+        const auto current = d->waveformStreams.find(key);
+        if (current != d->waveformStreams.end()) { sendWaveformRequest(key.first, key.second, current->second.wanted); }
+    }
+    if (self && d->epoch == epoch) { reconcileClockProbe(); }
+}
+
+void RemoteMediaController::sendWaveformRequest(int sliceId, WaveformKind kind, bool enabled)
+{
+    if (!d->waveformNegotiated || !d->peer || !d->peer->isReady()) { return; }
+    auto& stream = d->waveformStreams[{sliceId,kind}];
+    ++stream.revision;
+    if (!stream.revision) { ++stream.revision; }
+    stream.enabled = false;
+    const quint32 revision = stream.revision;
+    const quint64 epoch = d->epoch;
+    const QPointer<RemoteMediaController> self(this);
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->applyRemoteContext(sliceId, kind, 0, 0, 0,
+            WaveformAvailability::Unavailable, enabled ? QStringLiteral("Waiting for the Core waveform source.")
+                                                     : QStringLiteral("Waveform observation is disabled."));
+    }
+    if (!self || d->epoch != epoch) { return; }
+    send({{QStringLiteral("op"), QStringLiteral("waveform-stream")},
+          {QStringLiteral("connectionId"), d->connectionId},
+          {QStringLiteral("sliceId"), sliceId}, {QStringLiteral("kind"), WaveformCodec::kindName(kind)},
+          {QStringLiteral("revision"), qint64(revision)}, {QStringLiteral("enabled"), enabled}});
+}
+
+void RemoteMediaController::receiveWaveformContext(const QJsonObject& payload)
+{
+    static const QSet<QString> expected{QStringLiteral("op"), QStringLiteral("connectionId"),
+        QStringLiteral("sliceId"), QStringLiteral("kind"), QStringLiteral("revision"),
+        QStringLiteral("enabled"), QStringLiteral("availability"), QStringLiteral("reason"),
+        QStringLiteral("sourceGeneration"), QStringLiteral("deliveryGeneration"), QStringLiteral("sampleRateHz")};
+    if (payload.size() != expected.size()) { return; }
+    for (auto it = payload.begin(); it != payload.end(); ++it) { if (!expected.contains(it.key())) { return; } }
+    double slice = -1, revision = 0, rate = 0;
+    const auto kind = WaveformCodec::parseKind(payload.value(QStringLiteral("kind")).toString());
+    const auto source = WaveformCodec::decimalIdentity(payload.value(QStringLiteral("sourceGeneration")));
+    const auto delivery = WaveformCodec::decimalIdentity(payload.value(QStringLiteral("deliveryGeneration")));
+    if (!kind || !source || !delivery || payload.value(QStringLiteral("connectionId")).toString() != d->connectionId
+        || !number(payload, "sliceId", 0, INT_MAX, slice, true)
+        || !number(payload, "revision", 1, UINT32_MAX, revision, true)
+        || !number(payload, "sampleRateHz", 0, 48000, rate, true)
+        || !payload.value(QStringLiteral("enabled")).isBool()
+        || !payload.value(QStringLiteral("reason")).isString()) { return; }
+    const auto found = d->waveformStreams.find({int(slice), *kind});
+    if (found == d->waveformStreams.end() || found->second.revision != quint32(revision)) { return; }
+    const bool enabled = payload.value(QStringLiteral("enabled")).toBool();
+    const QString availability = payload.value(QStringLiteral("availability")).toString();
+    if ((enabled && (availability != QLatin1String("Available") || !*source || !*delivery
+                     || int(rate) != WaveformCodec::sampleRate(*kind) || !found->second.wanted))
+        || (!enabled && (availability != QLatin1String("Unavailable") || rate != 0))) { return; }
+    Private::WaveformStream& stream = found->second;
+    if (stream.sourceGeneration != *source || stream.deliveryGeneration != *delivery || stream.enabled != enabled) {
+        stream.lastSerial = 0; stream.nextSequence = 0; stream.lastDroppedTotal = 0;
+    }
+    stream.sourceGeneration = *source; stream.deliveryGeneration = *delivery;
+    stream.enabled = enabled; stream.sampleRate = int(rate);
+    const QPointer<RemoteMediaController> self(this);
+    const quint64 epoch = d->epoch;
+    if (d->model && d->model->radeWaveformModel()) {
+        d->model->radeWaveformModel()->applyRemoteContext(int(slice), *kind, *source, *delivery, int(rate),
+            enabled ? WaveformAvailability::Available : WaveformAvailability::Unavailable,
+            payload.value(QStringLiteral("reason")).toString());
+    }
+    if (!self || d->epoch != epoch) { return; }
+    d->waveformBytesPerSecond = 0;
+    for (const auto& [key, current] : d->waveformStreams) {
+        Q_UNUSED(key);
+        if (current.enabled) {
+            const int segments = current.sampleRate == 24000 ? 100 : 750;
+            d->waveformBytesPerSecond += quint64(current.sampleRate) * 4
+                + quint64(WaveformCodec::kHeaderBytes) * quint64(segments + (current.sampleRate + 1023) / 1024 + 30);
+        }
+    }
+    refreshSubscriptions();
+    if (self && d->epoch == epoch) { reconcileClockProbe(); }
+}
+
+void RemoteMediaController::updateWaveformClock()
+{
+    if (!d->model || !d->model->radeWaveformModel() || !d->audio) { return; }
+    // Probes and the estimator use RemoteAudioReceiver's actual local clock.
+    // Its default clock is elapsed from a process-local steady-clock base,
+    // whereas waveform snapshots use the absolute steady-clock epoch. Convert
+    // that origin here without changing audio release/presentation timing.
+    const qint64 audioNow = d->audio->nowNs();
+    const qint64 waveformNow = waveformNowNs();
+    const auto map = d->clockEstimator.offset(audioNow);
+    if (!map || audioNow < 0 || waveformNow < 0) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+        return;
+    }
+    // Both clocks are nonnegative int64 readings, so their difference fits.
+    const qint64 originDifference = waveformNow - audioNow;
+    const qint64 offset = map->offsetNs;
+    if ((originDifference > 0 && offset < std::numeric_limits<qint64>::min() + originDifference)
+        || (originDifference < 0 && offset > std::numeric_limits<qint64>::max() + originDifference)) {
+        d->model->radeWaveformModel()->setRemoteClockMap(0, false);
+        return;
+    }
+    d->model->radeWaveformModel()->setRemoteClockMap(offset - originDifference, true);
+}
+
+void RemoteMediaController::receiveWaveformFrame(const QByteArray& bytes)
+{
+    const auto packet = WaveformCodec::decode(bytes);
+    if (!packet || !d->model || !d->model->radeWaveformModel()) { return; }
+    const auto found = d->waveformStreams.find({packet->sliceId, packet->batch.kind});
+    if (found == d->waveformStreams.end()) { return; }
+    Private::WaveformStream& stream = found->second;
+    const WaveformSegment& segment = packet->batch.segments[0];
+    if (!stream.wanted || !stream.enabled || !d->model->sliceById(packet->sliceId)
+        || stream.sourceGeneration != packet->sourceGeneration
+        || stream.deliveryGeneration != packet->deliveryGeneration
+        || stream.sampleRate != packet->batch.sampleRate
+        || packet->batch.serial <= stream.lastSerial || segment.firstSequence < stream.nextSequence) { return; }
+    if (packet->batch.droppedFrames < stream.lastDroppedTotal) { return; }
+    auto batch = std::make_shared<WaveformBatch>(packet->batch);
+    batch->droppedFrames = std::max(packet->batch.droppedFrames - stream.lastDroppedTotal,
+        segment.firstSequence - stream.nextSequence);
+    stream.lastDroppedTotal = packet->batch.droppedFrames;
+    stream.lastSerial = packet->batch.serial;
+    stream.nextSequence = segment.firstSequence + quint64(segment.count);
+    updateWaveformClock();
+    d->model->radeWaveformModel()->appendRemoteBatch(packet->sliceId, packet->sourceGeneration,
+        batch);
 }
 
 void RemoteMediaController::requestRawIq(int sliceId)
@@ -7204,6 +7435,10 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
     }
     if (op == QLatin1String("receiver-audio-context")) {
         if (receiverAudioNegotiated()) { receiveReceiverAudioContext(payload); }
+        return;
+    }
+    if (op == QLatin1String("waveform-stream-context")) {
+        if (d->waveformNegotiated) { receiveWaveformContext(payload); }
         return;
     }
     if (op == QLatin1String("iq-stream-context")) {

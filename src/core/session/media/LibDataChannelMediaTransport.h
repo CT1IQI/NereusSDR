@@ -155,6 +155,8 @@ public:
     DisplaySendResult submitDisplay(const QByteArray& message) override;
     DisplaySendResult submitIq(const QByteArray& message) override;
     bool iqBusy() const override;
+    DisplaySendResult submitWaveform(const QByteArray& message) override;
+    bool waveformBusy() const override;
     bool displayBusy() const override;
     bool sendRtp(const QByteArray& packet) override;
     std::shared_ptr<MediaRtpSink> audioRtpSink() override;
@@ -180,6 +182,8 @@ public:
     /// dropped as it comes off the network, as if the path had gone dead
     /// without closing. Sending is unchanged.
     void setReceiveSeveredForTest(bool severed);
+    /// Owner-thread seam: expose a negotiated channel as pending-open.
+    void setWaveformOpenHeldForTest(bool held);
 
 private:
     struct Private;

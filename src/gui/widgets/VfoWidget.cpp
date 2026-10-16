@@ -13,10 +13,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15 - The mode combo resets before a RADE v2 mode is added or
+//                removed (resetItemsBeforeRowChange), so accessibility
+//                cannot read a deleted cell. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-14 - The flag's squelch slider tooltip says it sets SSB
 //                squelch, 0 to 100, and that AM and FM thresholds are on
 //                their Settings > DSP pages in dB. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -433,6 +439,7 @@ warren@wpratt.com
 #include "gui/AntennaPopupBuilder.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/OperatorReasonText.h"
+#include "gui/QtCocoaAccessibleTableCache.h"
 #include "core/BoardCapabilities.h"
 #include "core/ControlRanges.h"
 #include "core/SkuUiProfile.h"
@@ -444,6 +451,7 @@ warren@wpratt.com
 #include "gui/widgets/AntennaPickerMenu.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
+#include "core/RadeV2Feature.h"
 #include "core/dsp/DspAssetService.h"
 #include "models/SliceModel.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -1328,8 +1336,7 @@ void VfoWidget::updateSnrVisibility()
 {
     // AetherSDR-style: active state follows slice mode.  Setting
     // m_radeActive=false hides the label and clears stale text.
-    const bool isRade = (m_currentMode == DSPMode::RADE_U
-                         || m_currentMode == DSPMode::RADE_L);
+    const bool isRade = (isRadeDspMode(m_currentMode));
     setRadeActive(isRade);
 }
 
@@ -1346,8 +1353,7 @@ void VfoWidget::updateModeTabAccent()
     if (m_tabButtons.size() <= 2 || !m_tabButtons[2]) {
         return;
     }
-    const bool isRade = (m_currentMode == DSPMode::RADE_U
-                         || m_currentMode == DSPMode::RADE_L);
+    const bool isRade = (isRadeDspMode(m_currentMode));
     if (isRade) {
         // RADE accent style — same structure as vfoTabBtnStyle() but
         // with the cyan kAccent replaced by the purple #a78bfa.  Both
@@ -2154,9 +2160,15 @@ void VfoWidget::buildModeTab()
             QStringLiteral("SAM"), QStringLiteral("DSB"),
             QStringLiteral("DRM"),
             QStringLiteral("RADE-U"),  // Phase 3R L3, NereusSDR-native upper
-            QStringLiteral("RADE-L")   // Phase 3R L3, NereusSDR-native lower
+            QStringLiteral("RADE-L"),   // Phase 3R L3, NereusSDR-native lower
+            QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")
         });
+        for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
+            m_modeCmb->setItemData(m_modeCmb->findText(name),
+                QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
+        }
         m_modeCmb->setCurrentText(QStringLiteral("USB"));
+        refreshRadeV2Modes();
         m_modeCmb->setStyleSheet(
             QStringLiteral("QComboBox { background: #1a2a3a; color: #c8d8e8;"
                             "border: 1px solid #304050; border-radius: 3px;"
@@ -2418,9 +2430,11 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
     // InitFilterPresets source: Thetis console.cs:5180-5575 [v2.10.3.13].
     // 3-column layout matches RxApplet's 3-column grid (i/kCols × i%kCols).
     QList<FilterPreset> storePresets;
-    if (m_filterPresetStore) {
+    const bool offered = !isRade2DspMode(mode)
+        || (m_radioModel ? m_radioModel->radeV2Enabled() : RadeV2Feature::enabled());
+    if (m_filterPresetStore && offered) {
         storePresets = m_filterPresetStore->presetsForMode(mode);
-    } else {
+    } else if (offered) {
         const auto pairs = SliceModel::presetsForMode(mode);
         for (int idx = 0; idx < pairs.size(); ++idx) {
             FilterPreset fp;
@@ -2467,6 +2481,8 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
         // snaps to the same audio Hz range as the RX (Thetis-style
         // alignment shortcut).
         connect(btn, &QPushButton::clicked, this, [this, low, high, mode, btn](bool checked) {
+            if (isRade2DspMode(mode)
+                && !(m_radioModel ? m_radioModel->radeV2Enabled() : RadeV2Feature::enabled())) { return; }
             if (!checked) {
                 // Don't allow unchecking the active preset — keep it toggled on
                 btn->setChecked(true);
@@ -2508,7 +2524,8 @@ void VfoWidget::rebuildFilterButtons(DSPMode mode)
         const int slot = i;
         connect(btn, &QPushButton::customContextMenuRequested, this,
                 [this, slot, mode](const QPoint& pos) {
-            if (!m_filterPresetStore) { return; }
+            if (!m_filterPresetStore || (isRade2DspMode(mode)
+                && !(m_radioModel ? m_radioModel->radeV2Enabled() : RadeV2Feature::enabled()))) { return; }
             QMenu menu(this);
             menu.setStyleSheet(QString::fromLatin1(kPopupMenu));  // Stage C2 — issue #98 parity
             QAction* editAct  = menu.addAction(QStringLiteral("Edit this preset…"));
@@ -2649,12 +2666,38 @@ void VfoWidget::setFrequency(double hz)
     m_updatingFromModel = false;
 }
 
+void VfoWidget::refreshRadeV2Modes()
+{
+    if (!m_modeCmb) { return; }
+    const QSignalBlocker block(m_modeCmb);
+    const bool enabled = m_radioModel ? m_radioModel->radeV2Enabled() : RadeV2Feature::enabled();
+    for (const QString& name : {QStringLiteral("RADE2-U"), QStringLiteral("RADE2-L")}) {
+        const int index = m_modeCmb->findText(name);
+        if (enabled && index < 0) {
+            resetItemsBeforeRowChange(m_modeCmb);
+            m_modeCmb->addItem(name);
+            m_modeCmb->setItemData(m_modeCmb->count() - 1,
+                QStringLiteral("Experimental RADE v2 speech mode"), Qt::ToolTipRole);
+        } else if (!enabled && index >= 0) {
+            resetItemsBeforeRowChange(m_modeCmb);
+            m_modeCmb->removeItem(index);
+        }
+    }
+    // A preserved disabled current V2 stays on the mode tab; the picker
+    // has no selected fallback and refreshing never emits a mode request.
+    const QString currentName = SliceModel::modeName(m_currentMode);
+    m_modeCmb->setPlaceholderText(currentName);
+    m_modeCmb->setCurrentIndex(m_modeCmb->findText(currentName));
+    if (m_filterBtnContainer && isRade2DspMode(m_currentMode)) { rebuildFilterButtons(m_currentMode); }
+}
+
 void VfoWidget::setMode(DSPMode mode)
 {
     m_updatingFromModel = true;
     m_currentMode = mode;
     QString name = SliceModel::modeName(mode);
-    m_modeCmb->setCurrentText(name);
+    m_modeCmb->setPlaceholderText(name);
+    m_modeCmb->setCurrentIndex(m_modeCmb->findText(name));
     if (m_tabButtons.size() > 2) {
         m_tabButtons[2]->setText(name);
     }
@@ -4402,6 +4445,7 @@ void VfoWidget::setRxBypassActive(bool on)
 // is non-owning; lifetime is RadioModel-owned and MainWindow-scoped.
 void VfoWidget::setRadioModel(RadioModel* model)
 {
+    if (m_radeV2AvailabilityConn) { disconnect(m_radeV2AvailabilityConn); }
     for (QMetaObject::Connection& conn : m_nrAvailabilityConns) {
         if (conn) {
             disconnect(conn);
@@ -4409,6 +4453,11 @@ void VfoWidget::setRadioModel(RadioModel* model)
         }
     }
     m_radioModel = model;
+    if (model) {
+        m_radeV2AvailabilityConn = connect(model, &RadioModel::radeV2AvailabilityChanged,
+                                          this, &VfoWidget::refreshRadeV2Modes);
+    }
+    refreshRadeV2Modes();
     // R-R3-49, Sub-epic C-1: DFNR and MNR are enabled only while the Core
     // can run them.
     if (model && model->dspAssets()) {
