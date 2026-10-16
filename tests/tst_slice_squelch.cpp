@@ -17,6 +17,10 @@
 //   2026-10-15 - Squelch persistence tests (Thetis console.cs:2830-2852
 //                 save, 4164-4193 load [v2.10.3.15]). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-10-16 - The persistence tests expect the FM threshold default of 0
+//                 (Thetis console.cs:171 [v2.10.3.15]) where nothing usable
+//                 is saved. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -235,9 +239,11 @@ private slots:
         QTest::newRow("am above") << "AmsqThresh" << "12" << 0.0;
         QTest::newRow("fm above") << "FmsqThresh" << "500" << 0.0;
         QTest::newRow("fm below") << "FmsqThresh" << "-400" << -160.0;
-        // Not a number: the default stays, never 0 (FM fully closed).
-        QTest::newRow("fm garbage") << "FmsqThresh" << "garbage" << -150.0;
-        QTest::newRow("fm nan") << "FmsqThresh" << "nan" << -150.0;
+        // Not a number: the value is skipped and the default stays. For FM
+        // that is Thetis's 0 (console.cs:171 [v2.10.3.15]), the tightest
+        // threshold.
+        QTest::newRow("fm garbage") << "FmsqThresh" << "garbage" << 0.0;
+        QTest::newRow("fm nan") << "FmsqThresh" << "nan" << 0.0;
         QTest::newRow("ssql garbage") << "SsqlThresh" << "x" << 16.0;
     }
 
@@ -261,7 +267,7 @@ private slots:
         QCOMPARE(b.amsqEnabled(), false);
         QCOMPARE(b.amsqThresh(), -150.0);
         QCOMPARE(b.fmsqEnabled(), false);
-        QCOMPARE(b.fmsqThresh(), -150.0);
+        QCOMPARE(b.fmsqThresh(), 0.0);
     }
 
     // ── ssqlEnabled ──────────────────────────────────────────────────────────

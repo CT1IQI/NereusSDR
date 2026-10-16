@@ -11860,14 +11860,15 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
     applyNnrStateToChannel(slice, ch);
     if (!current()) { return; }
 
-    // The slice's saved squelch. WDSP opens every squelch with run 0
+    // The slice's saved squelch, again. WDSP opens every squelch with run 0
     // (third_party/wdsp/src/RXA.c:163,228,534), and a slice restored with
     // its signals blocked never fires the per-slice pushes in
-    // wireSliceSignals, so without this a restored slice B to D shows
-    // squelch on while the radio does not squelch. Thresholds first, then
-    // the enables, so a channel never runs a saved enable with WDSP's
-    // default threshold. The same conversions as Slice A's push in
-    // connectToRadio (SSQL slider units / 100, clamped to WDSP's 0..1).
+    // wireSliceSignals. pushSliceStateToChannel above already sends the
+    // squelch, each enable before its threshold as Slice A's push in
+    // connectToRadio does; this block sends it once more, thresholds first
+    // and then the enables, so the last values the channel gets before
+    // setActive come in that order. The same conversions as Slice A's push
+    // (SSQL slider units / 100, clamped to WDSP's 0..1).
     ch->setSsqlThresh(std::clamp(slice->ssqlThresh() / 100.0, 0.0, 1.0));
     if (!current()) { return; }
     ch->setAmsqThresh(slice->amsqThresh());
