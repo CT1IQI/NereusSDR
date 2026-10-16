@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15: A refused slice change from a remote window shows the Core's
+//               reason in a toast (NNR edits keep their own page message).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-14: Restore saved spans down to the existing 1 kHz zoom minimum;
 //               re-anchor toasts on window geometry changes and remove a
 //               closing toast before restacking. J.J. Boyd (KG4VCF),

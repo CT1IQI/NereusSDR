@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-15  J.J. Boyd / KG4VCF  A refused property write that carries no
+//                                    value puts the Core's last value back
+//                                    on screen. AI-assisted via Anthropic
+//                                    Claude Code.
 //   2026-10-14  J.J. Boyd / KG4VCF  Retire remote transmit state when a
 //                                    session ends even if its capability was
 //                                    already unavailable. AI-assisted via

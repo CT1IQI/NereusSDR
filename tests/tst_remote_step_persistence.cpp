@@ -35,6 +35,11 @@
 //                                    refusal shapes, no second write, the
 //                                    non-active slice save. AI-assisted via
 //                                    Anthropic Claude Code.
+//   2026-10-16  J.J. Boyd / KG4VCF  The non-active slice save stays an
+//                                    expected failure: the test Core has no
+//                                    radio connection, so per-slice saves are
+//                                    not wired. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -471,13 +476,15 @@ private slots:
         coreSlice->setStepHz(kCoreStepHz);
         QTRY_COMPARE(windowSlice->stepHz(), kCoreStepHz);
         const QString key = QStringLiteral("Slice1/Band%1/StepHz").arg(bandKeyName(coreSlice->band()));
-        // Nothing of the window's step is saved yet (on main the Core has
-        // saved no step for this slice at all here).
+        // Nothing of the window's step is saved yet (the test Core has no
+        // radio connection, so it saves no step for this slice at all here).
         QVERIFY(coreSavedValue(h, key).toInt() != kWindowStepHz);
 
         windowSlice->setStepHz(kWindowStepHz);
         QTRY_COMPARE(coreSlice->stepHz(), kWindowStepHz);
-        QEXPECT_FAIL("", "needs PR 398: the step save goes to the active slice", Continue);
+        // RadioModel::wireSliceSignals returns early when there is no radio
+        // connection, so the per-slice step save it wires never runs here.
+        QEXPECT_FAIL("", "the test Core has no radio connection, so per-slice saves are not wired", Continue);
         QCOMPARE(coreSavedValue(h, key).toInt(), kWindowStepHz);
 
         StationClient* client = h.client();
