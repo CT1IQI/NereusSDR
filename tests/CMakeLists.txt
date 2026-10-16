@@ -10937,6 +10937,11 @@ nereus_add_test(tst_cat_setup_page_teardown)
 nereus_add_test(tst_cat_integration CORE_ONLY)
 
 nereus_add_test(tst_cat_rigctld CORE_ONLY)
+# 2026-10-15: a remote window's own rigctld (RemoteRigctlServer): Hamlib on
+# the slice the window transmits on, its key as the window's program, and
+# the VAX TX device's audio on that key. NereusSDR-native; no upstream port.
+nereus_add_test(tst_remote_rigctld)
+target_compile_definitions(tst_remote_rigctld PRIVATE NEREUS_BUILD_TESTS)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

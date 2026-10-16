@@ -602,6 +602,12 @@ private slots:
         QTest::newRow("RemoteVax/<core>/Slice1/Channel is OperatorLocal (this computer's VAX)")
             << QStringLiteral("RemoteVax/3f1a9c0d22b4e6f7/Slice1/Channel")
             << int(SettingsScope::OperatorLocal);
+        // A remote window's own rigctld listens on this computer, for this
+        // computer's programs (RemoteRigctlServer).
+        QTest::newRow("RemoteRigctld/Enabled is OperatorLocal (this computer's rigctld)")
+            << QStringLiteral("RemoteRigctld/Enabled") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("RemoteRigctld/Port is OperatorLocal (this computer's rigctld)")
+            << QStringLiteral("RemoteRigctld/Port") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Slice1/VaxChannel is Station (the Core's own VAX)")
             << QStringLiteral("Slice1/VaxChannel") << int(SettingsScope::Station);
         QTest::newRow("audio/Vax1/RxGain is OperatorLocal (this computer's VAX gain)")

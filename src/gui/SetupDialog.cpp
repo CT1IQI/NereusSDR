@@ -206,6 +206,9 @@
 //                Core pages: a remote window sets up the Core's CAT, as
 //                it does the Core's RF-Kit and Rotor. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - CAT & Network > rigctld in a remote window: this computer's
+//                rigctld, which acts as the window (RemoteRigctldPage).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -279,6 +282,8 @@
 #include "setup/TestTwoTonePage.h"
 // TX Profile editor (Phase 3M-1c J.3 — under Audio)
 #include "setup/TxProfileSetupPage.h"
+#include "setup/RemoteRigctldPage.h"
+#include "gui/RemoteRigctlServer.h"
 
 #include <QApplication>
 #include <QDialog>
@@ -602,6 +607,14 @@ void SetupDialog::setTciServer(NereusSDR::TciServer* server)
     m_pendingTciServer = server;
     if (m_tciServerPage) {
         m_tciServerPage->setTciServer(server);
+    }
+}
+
+void SetupDialog::setRemoteRigctlServer(NereusSDR::RemoteRigctlServer* server)
+{
+    m_remoteRigctlServer = server;
+    if (m_remoteRigctldPage) {
+        m_remoteRigctldPage->setServer(server);
     }
 }
 
@@ -1951,6 +1964,19 @@ void SetupDialog::buildTree()
         }
         return fourO3A;
     });
+    // 2026-10-15: a remote window's own rigctld, which acts as the window
+    // (WSJT-X CAT through this computer). A local window has the TCP/IP
+    // CAT page for its own CAT.
+    if (remoteSession()) {
+        registerPage(cat, "rigctld", SetupScope::ThisComputer, [this]() -> QWidget* {
+            auto* page = new RemoteRigctldPage;
+            m_remoteRigctldPage = page;
+            connect(page, &RemoteRigctldPage::settingsChanged,
+                    this, &SetupDialog::remoteRigctldSettingsChanged);
+            page->setServer(m_remoteRigctlServer);
+            return page;
+        });
+    }
     registerPage(cat, "Remote Access", SetupScope::ThisComputer, [this] {
         auto* page = new RemoteStationPage;
         connect(page, &RemoteStationPage::connectionsRequested,
