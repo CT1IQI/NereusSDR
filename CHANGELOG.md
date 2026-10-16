@@ -611,6 +611,8 @@ Advanced, and each control appears on one page only.
   seconds first. Audio and display kept flowing on the relay meanwhile.
 - A remote window's VFO flag level meters now work when there is no S-meter
   item.
+- On Linux, a window closed while maximized or full screen comes back with
+  its panadapter and waterfall drawn. Before, they stayed blank.
 
 ## [2026.10.0] - 2026-10-05
 
