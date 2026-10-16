@@ -3,6 +3,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-16: mediaIceConfiguration says whether its settings are the
+//               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-12: Separate mirrored pin projection from preference requests.
 //               J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-11: kReceiverMoveSettleMs, the longest a pan's ask waits to be
@@ -762,7 +765,9 @@ private:
     void updateDirectUpgrade(bool viaTunnel);
     void markReplacePending();
     void tryPendingReplace();
-    std::optional<IceConfiguration> mediaIceConfiguration();
+    // fromTunnel, when given, says whether the settings are the media
+    // tunnel's.
+    std::optional<IceConfiguration> mediaIceConfiguration(bool* fromTunnel = nullptr);
     void retireOldPeer();
 };
 } // namespace NereusSDR
