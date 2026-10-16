@@ -1,8 +1,17 @@
 #pragma once
+#include "models/RadeWaveformModel.h"
 #include <QVector>
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-15: mediaIceConfiguration says whether its settings are the
+//               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-15: kVaxBacklogDiscardPulls (fix wave). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: startMicCollector's vax source (VAX as a remote window's
+//               transmit source). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-12: Separate mirrored pin projection from preference requests.
 //               J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //   2026-10-11: kReceiverMoveSettleMs, the longest a pan's ask waits to be
@@ -317,6 +326,7 @@ public:
     /// Core to stop the stream. GUI thread only.
     void releaseReceiverAudio(int sliceId, IReceiverPcmSink* sink);
     bool remoteIqNegotiated() const;
+    bool waveformNegotiated() const;
     void requestRawIq(int sliceId);
     void releaseRawIq(int sliceId);
     /// R-R3-43: each wanted receiver stream's measured health, by slice id.
@@ -449,6 +459,9 @@ public:
     // 2026-10-12: how long the microphone's collector may take no audio,
     // with capture ready, before the window says so in its log.
     static constexpr int kMicCollectorStallMs = 1000;
+    // 2026-10-15 (fix wave): the most 20 ms reads a VAX feed that starts
+    // or comes back makes to drop what waits on the VAX TX device (5 s).
+    static constexpr int kVaxBacklogDiscardPulls = 256;
     /// R-R3-37: how long a pan in budget mode may wait for the Core's first
     /// answer before it says "Waiting for the Core". A Core that answers
     /// within this (the usual case at session start) never flashes the line.
@@ -661,6 +674,11 @@ private:
     // Parity Task 32: the monitor-audio request and its answer.
     void requestMonitorAudio();
     void sendIqRequest(int sliceId, bool enabled);
+    void reconcileWaveformDemand(const QList<WaveformRequest>& requests);
+    void sendWaveformRequest(int sliceId, WaveformKind kind, bool enabled);
+    void receiveWaveformContext(const QJsonObject& payload);
+    void receiveWaveformFrame(const QByteArray& bytes);
+    void updateWaveformClock();
     void receiveIqContext(const QJsonObject& payload);
     void receiveIqFrame(const QByteArray& message);
     void failIqStream(int sliceId, const QString& reason);
@@ -725,7 +743,9 @@ private:
     void reconcileMicUplink();
     /// 2026-10-10: the microphone's collector thread: started while the
     /// capture lease is held, joined before the lease or the engine goes.
-    void startMicCollector(AudioEngine* engine);
+    // 2026-10-15: vax: the collector pulls the VAX TX device
+    // (AudioEngine::pullVaxTxMic) instead of the PC microphone.
+    void startMicCollector(AudioEngine* engine, bool vax);
     void stopMicCollector();
     /// Logs, once, what the collector dropped during the key that ends.
     void reportMicDropped();
@@ -762,7 +782,9 @@ private:
     void updateDirectUpgrade(bool viaTunnel);
     void markReplacePending();
     void tryPendingReplace();
-    std::optional<IceConfiguration> mediaIceConfiguration();
+    // fromTunnel, when given, says whether the settings are the media
+    // tunnel's.
+    std::optional<IceConfiguration> mediaIceConfiguration(bool* fromTunnel = nullptr);
     void retireOldPeer();
 };
 } // namespace NereusSDR

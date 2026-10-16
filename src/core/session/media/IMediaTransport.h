@@ -46,6 +46,10 @@
 //               line's send from any thread, so the Core's receive audio
 //               leaves on a thread of its own. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-15: setTxReceiptHook, the "tx" channel's
+//               receipts reported off the owner's thread for the remote
+//               transmit cut guard. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -59,6 +63,7 @@
 #include <QPair>
 #include <QString>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -284,6 +289,7 @@ public:
         // Task 23: dedicated reliable ordered raw-I/Q channel, negotiated
         // only when the window declared remoteIqVersion 1.
         bool iqChannel = false;
+        bool waveformChannel = false;
         // iPhone app plan Task 27 (R-IOS-16): set for a connection that came
         // through the remote access service. Its one STUN server goes in at
         // once; automatic gathering is off, and gathering starts with the
@@ -404,6 +410,13 @@ public:
         return DisplaySendResult::Refused;
     }
     virtual bool iqBusy() const { return false; }
+    static constexpr qsizetype kMaxWaveformMessageBytes = 4168;
+    virtual DisplaySendResult submitWaveform(const QByteArray& message)
+    {
+        Q_UNUSED(message);
+        return DisplaySendResult::Refused;
+    }
+    virtual bool waveformBusy() const { return false; }
     virtual bool sendRtp(const QByteArray& packet) = 0;
     /// R-AUD-SEND: the audio line's send for another thread (MediaRtpSink).
     /// The same object for the transport's whole life, so it may be asked
@@ -445,6 +458,24 @@ public:
     virtual bool setMicPacketSink(MicPacketSink sink)
     {
         Q_UNUSED(sink);
+        return false;
+    }
+
+    /// Remote transmit cut off the main thread (2026-10-15): called on the
+    /// transport's own receive thread for every message the "tx" data
+    /// channel takes, with when it came off the network, so a guard off
+    /// the owner's thread hears the keepalives while the owner's event loop
+    /// is held. A cancelled or severed transport never calls it. The hook
+    /// must be safe on that thread, must not block, and must not call back
+    /// into the transport.
+    using TxReceiptHook = std::function<void(std::chrono::steady_clock::time_point receivedAt)>;
+    /// Installs `hook` (empty: none) for this start and every later one.
+    /// After it returns, the hook it replaced is never called again. False
+    /// when this transport cannot call one off the owner's thread. Owner's
+    /// thread only.
+    virtual bool setTxReceiptHook(TxReceiptHook hook)
+    {
+        Q_UNUSED(hook);
         return false;
     }
 
@@ -495,6 +526,10 @@ signals:
     void gatheringComplete();
     void displayReceived(const QByteArray& message);
     void iqReceived(const QByteArray& message);
+    void waveformReceived(const QByteArray& message);
+    void waveformErrorOccurred(const QString& reason);
+    void waveformDropped(quint64 packets);
+    void waveformWritable();
     void iqErrorOccurred(const QString& reason);
     void rtpReceived(const QByteArray& packet);
     /// Task 36: an RTP packet that arrived on the microphone line. Never

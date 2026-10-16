@@ -84,6 +84,9 @@
 //   2026-10-01: TX watch follow-up: a check already due is left to run
 //               rather than restarted. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-15: tripQuiet, the cut guard's judgement
+//               tripping a watched device once. J.J. Boyd (KG4VCF), AI-
+//               assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -195,6 +198,13 @@ public:
 
     /// The check timer fired.
     void onTimer();
+    /// Remote transmit cut off the main thread (2026-10-15): the Core's cut
+    /// guard (RemoteTxCutGuard) judged `deviceId`'s link quiet off the main
+    /// thread. A watched device trips now as a quiet link (not a closed
+    /// one), with the same stop and `tripped`, and is no longer watched, so
+    /// a check for the same silence that comes later finds nothing to
+    /// stop. False when it was not watched (its stop has already run).
+    bool tripQuiet(const QByteArray& deviceId);
 
     // ---- The "tx" data channel's message ----
 

@@ -20,6 +20,9 @@
 //   2026-10-12 - Fit live inset threshold/hold readouts to the actual
 //                 slider range and resolved workspace font/style metrics.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic status for the transmit badge (native audio plan
 //                Task 20; R-AUD-24, R-AUD-09, R-AUD-13). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -366,6 +369,9 @@
 #include "core/MicProfileManager.h"
 #include "core/MoxController.h"
 #include "core/PureSignal.h"
+#include "models/MainPowerMeter.h"
+#include "gui/applets/AccessoryReadouts.h"
+#include "gui/instruments/BarInstrument.h"
 #include "core/RadioStatus.h"
 #include "core/session/IStationLink.h"
 #include "core/session/RemoteTransmitClient.h"
@@ -502,31 +508,17 @@ void TxApplet::buildUI()
     // (wired in wireControls()).  Bench-reported #167 follow-up: HL2 reading
     // 1-5 W on a 0-120 W scale was a barely-visible sliver; per-SKU scaling
     // gives each radio a properly-sized meter.
-    auto* fwdGauge = new HGauge(this);
-    fwdGauge->setTitle(QStringLiteral("RF Pwr"));
-    fwdGauge->setAccessibleName(QStringLiteral("Forward power gauge"));
-    m_fwdPowerGauge = fwdGauge;
-    rescaleFwdGaugeForModel(HPSDRModel::FIRST);   // sentinel default until model known
-    // 3M-1a (2026-04-27): wired to RadioStatus::powerChanged in
-    // wireControls() — the gauge displays radio-reported forward
-    // power in watts (scaleFwdPowerWatts'd at the model side).
-    // The legacy "Phase 3I-1" NYI marker has been dropped.
-    vbox->addWidget(fwdGauge);
+    m_fwdPowerGauge = AccessoryReadouts::makeSlimBar(
+        AccessoryReadouts::forwardPower(120.0, 100.0), QStringLiteral("Power"), this);
+    m_fwdPowerGauge->setAccessibleName(QStringLiteral("Forward power gauge"));
+    rescaleFwdGaugeForModel(HPSDRModel::FIRST);
+    vbox->addWidget(m_fwdPowerGauge);
 
-    // ── 2. SWR gauge ── 1.0–3.0, redStart 2.5 ───────────────────────────────
-    // Ticks: 1 / 1.5 / 2.5 / 3  (AetherSDR TxApplet.cpp:77)
-    auto* swrGauge = new HGauge(this);
-    // Range and red zone from ControlRanges.h, which the Core's catalogue
-    // reads too (iPhone app Task 19).
-    swrGauge->setRange(ControlRanges::kSwrGaugeMin, ControlRanges::kSwrGaugeMax);
-    swrGauge->setRedStart(ControlRanges::kSwrGaugeRedFrom);
-    swrGauge->setYellowStart(ControlRanges::kSwrGaugeRedFrom);
-    swrGauge->setTitle(QStringLiteral("SWR"));
-    swrGauge->setTickLabels({QStringLiteral("1"), QStringLiteral("1.5"),
-                              QStringLiteral("2.5"), QStringLiteral("3")});
-    swrGauge->setAccessibleName(QStringLiteral("SWR gauge"));
-    m_swrGauge = swrGauge;
-    vbox->addWidget(swrGauge);
+    // The approved SWR row uses the same text and limit as the accessory panels.
+    m_swrGauge = AccessoryReadouts::makeSlimBar(
+        AccessoryReadouts::swr(), AccessoryReadouts::swrName(), this);
+    m_swrGauge->setAccessibleName(QStringLiteral("SWR gauge"));
+    vbox->addWidget(m_swrGauge);
 
     // ── 3. RF Power slider row ───────────────────────────────────────────────
     // Label fixedWidth 62, value fixedWidth 22  (AetherSDR TxApplet.cpp:87–104)
@@ -1161,61 +1153,56 @@ void TxApplet::wireControls()
     //
     // Two-stage de-jitter (Phase 3I-1 will replace with the proper Thetis
     // peak-decay filter):
-    //   1.  alpha=0.10 EMA on every powerChanged emit — smooths the per-
+    //   1.  alpha=0.30 EMA on every powerChanged emit — smooths the per-
     //       sample noise without much lag (~10 sample time-constant).
-    //   2.  10 Hz QTimer reads the smoothed state into the gauge — keeps
+    //   2.  20 Hz QTimer reads the smoothed state into the gauge — keeps
     //       the visible digits stable even when RadioStatus::powerChanged
     //       fires twice per hardware sample (documented in
     //       RadioModel.cpp:572).  Without this throttle the digit
     //       characters update too fast to read.
     connect(&m_model->radioStatus(), &RadioStatus::powerChanged,
-            this, [this](double fwdW, double /*revW*/, double swr) {
-        constexpr double kAlpha = 0.30;
-        m_fwdPowerSmoothedW = kAlpha * fwdW + (1.0 - kAlpha) * m_fwdPowerSmoothedW;
-        if (m_swrGauge) {
-            m_swrGauge->setValue(swr);
+            this, [this](double fwdW, double /*revW*/, double /*swr*/) {
+        if (!m_model->mainPowerMeter()->onAmplifier()) {
+            constexpr double kAlpha = 0.30;
+            m_fwdPowerSmoothedW = kAlpha * fwdW + (1.0 - kAlpha) * m_fwdPowerSmoothedW;
         }
     });
     auto* fwdGaugeRefreshTimer = new QTimer(this);
     fwdGaugeRefreshTimer->setInterval(50);   // 20 Hz UI refresh
-    connect(fwdGaugeRefreshTimer, &QTimer::timeout, this, [this]() {
-        if (m_fwdPowerGauge) {
-            m_fwdPowerGauge->setValue(m_fwdPowerSmoothedW);
-        }
-    });
+    connect(fwdGaugeRefreshTimer, &QTimer::timeout,
+            this, &TxApplet::refreshPowerReadouts);
     fwdGaugeRefreshTimer->start();
 
-    // Bench-reported #167 follow-up: TxApplet's RF Pwr / SWR HGauges have
-    // their own EMA smoothing (m_fwdPowerSmoothedW, alpha=0.30) separate
-    // from the MeterPanel's BarItem stack.  A single zero from
-    // RadioStatus::powerChanged after un-key only walks the smoothed
-    // value down by 30% (e.g. 60 → 42), then no more updates flow so the
-    // gauge stays stuck at ~42.  Snap the smoothed state to 0 on MOX
-    // falling-edge so the gauge clears instantly — same idea as the
-    // BarItem clearSmoothing path in MeterPoller::setInTx.  Subscribed
-    // to MoxController::moxStateChanged (the authoritative TX boundary,
-    // covers MOX un-key AND TUNE release) rather than orphan
-    // TransmitModel::moxChanged signals.
-    if (m_model && m_model->moxController()) {
-        connect(m_model->moxController(), &MoxController::moxStateChanged,
-                this, [this](bool active) {
-            if (active) { return; }      // rising-edge: smoothing takes over
-            m_fwdPowerSmoothedW = 0.0;
-            if (m_fwdPowerGauge) { m_fwdPowerGauge->setValue(0.0); }
-            if (m_swrGauge)      { m_swrGauge->setValue(1.0); }
+    MainPowerMeter* meter = m_model->mainPowerMeter();
+    connect(meter, &MainPowerMeter::sourceChanged, this, [this, meter] {
+        if (!meter->onAmplifier()) {
+            m_fwdPowerSmoothedW = meter->forwardW();
+        }
+        refreshPowerReadouts();
+    });
+    const auto refreshAmplifier = [this, meter] {
+        if (meter->onAmplifier()) { refreshPowerReadouts(); }
+    };
+    connect(meter, &MainPowerMeter::readingChanged, this, refreshAmplifier);
+    connect(meter, &MainPowerMeter::driveChanged, this, refreshAmplifier);
+    connect(meter, &MainPowerMeter::scaleChanged, this, [this] {
+        rescaleFwdGaugeForModel(m_model->hardwareProfile().model);
+        refreshPowerReadouts();
+    });
+    // Bench #167: a lone zero after unkey left the EMA stuck above zero.
+    // Keep the explicit reset; the new rows then show their no-reading dashes.
+    if (mox) {
+        connect(mox, &MoxController::moxStateChanged, this, [this](bool active) {
+            if (!active) { m_fwdPowerSmoothedW = 0.0; }
+            refreshPowerReadouts();
         });
     }
-    // R-R3-49 (parity Task 33): a remote window's MoxController never keys;
-    // the Core's unkey (its mirrored transmit state) clears the two bars
-    // the same way.
-    if (m_model && m_model->role() == RadioModel::Role::Remote) {
-        connect(m_model, &RadioModel::transmittingChanged, this, [this](bool active) {
-            if (active) { return; }
-            m_fwdPowerSmoothedW = 0.0;
-            if (m_fwdPowerGauge) { m_fwdPowerGauge->setValue(0.0); }
-            if (m_swrGauge)      { m_swrGauge->setValue(1.0); }
-        });
-    }
+    // R-R3-49 parity Task 33: the remote controller never keys; the Core's
+    // mirrored transmit state clears the rows and drive note instead.
+    connect(m_model, &RadioModel::transmittingChanged, this, [this](bool active) {
+        if (!active) { m_fwdPowerSmoothedW = 0.0; }
+        refreshPowerReadouts();
+    });
 
     // Per-SKU RF Pwr gauge rescale.  Bench-reported #167 follow-up: the
     // 0-120 W default scale made HL2 (5 W) and ANAN-G2-1K (1000 W) both
@@ -2364,34 +2351,43 @@ void TxApplet::syncDesktopKeyState()
 void TxApplet::rescaleFwdGaugeForModel(HPSDRModel model)
 {
     if (!m_fwdPowerGauge) { return; }
-
-    // Per-SKU PA ceiling from HpsdrModel.h paMaxWattsFor().  Bench-reported
-    // #167 follow-up: 0-120 W default scale made HL2 (5 W max) and
-    // ANAN-G2-1K (1000 W max) both show meaningless bar widths.
-    const int maxW   = paMaxWattsFor(model);
-    const double red = static_cast<double>(maxW);
-    // 20% headroom past the red zone (ControlRanges.h, which the Core's
-    // catalogue reads too).
-    const double top = red * ControlRanges::kRfPowerGaugeHeadroom;
-
-    m_fwdPowerGauge->setRange(0.0, top);
-    m_fwdPowerGauge->setRedStart(red);
-    m_fwdPowerGauge->setYellowStart(red);   // no distinct yellow zone
-
-    // Pick five ticks proportional to the new range: 0 / 1/3 / 2/3 / red / top.
-    // For HL2 (red=5): 0 / 1.7 / 3.3 / 5 / 6.  For ANAN-100 (red=100):
-    // 0 / 33 / 67 / 100 / 120.  For ANAN-G2-1K (red=1000): 0 / 333 / 667 / 1000 / 1200.
-    auto fmt = [maxW](double v) {
-        return (maxW <= 10) ? QString::number(v, 'f', 1)   // sub-watt resolution for QRP
-                            : QString::number(qRound(v));
+    const MainPowerMeter* meter = m_model ? m_model->mainPowerMeter() : nullptr;
+    const int limit = meter ? meter->visualLimitW() : paMaxWattsFor(model);
+    const double top = meter ? meter->scaleTopW()
+        : limit * ControlRanges::kRfPowerGaugeHeadroom;
+    ReadingDescriptor reading = AccessoryReadouts::forwardPower(top, limit);
+    // Per-SKU PA rating and 20 percent headroom remain the radio rule.
+    // Keep sub-watt resolution for a QRP radio, whole watts for an amplifier.
+    reading.decimals = limit <= 10 ? 1 : 0;
+    const auto fmt = [limit](double watts) {
+        return QString::number(watts, 'f', limit <= 10 ? 1 : 0);
     };
-    m_fwdPowerGauge->setTickLabels({
-        fmt(0.0),
-        fmt(red / 3.0),
-        fmt(2.0 * red / 3.0),
-        fmt(red),
-        fmt(top),
-    });
+    reading.ticks = {{0.0, fmt(0.0)}, {limit / 3.0, fmt(limit / 3.0)},
+                     {2.0 * limit / 3.0, fmt(2.0 * limit / 3.0)},
+                     {static_cast<double>(limit), fmt(limit)}, {top, fmt(top)}};
+    m_fwdPowerGauge->setReading(reading, QStringLiteral("Power"));
+}
+
+void TxApplet::refreshPowerReadouts()
+{
+    if (!m_model || !m_fwdPowerGauge || !m_swrGauge) { return; }
+    if (!m_model->isTransmitting()) {
+        m_fwdPowerSmoothedW = 0.0;
+        m_fwdPowerGauge->clearValue();
+        m_swrGauge->clearValue();
+        m_fwdPowerGauge->setCompactNote({}, {});
+        return;
+    }
+    const MainPowerMeter* meter = m_model->mainPowerMeter();
+    m_fwdPowerGauge->setValue(meter->onAmplifier() ? meter->forwardW() : m_fwdPowerSmoothedW);
+    m_swrGauge->setValue(meter->swr());
+    if (meter->onAmplifier()) {
+        const int decimals = paMaxWattsFor(m_model->hardwareProfile().model) <= 10 ? 1 : 0;
+        m_fwdPowerGauge->setCompactNote(QStringLiteral("DRIVE"),
+            QString::number(meter->driveW(), 'f', decimals) + QStringLiteral(" W"));
+    } else {
+        m_fwdPowerGauge->setCompactNote({}, {});
+    }
 }
 
 // ── Issue #175 Task 7: per-SKU power-slider rescale + dB labels ─────────────

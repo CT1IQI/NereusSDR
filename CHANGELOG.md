@@ -312,11 +312,81 @@ Advanced, and each control appears on one page only.
 - Every page opens at the top. Your saved audio settings carry over, and the
   Driver choice picks up your saved Driver API and WASAPI choices.
 
+### Tuner and amplifier meters while transmitting
+
+- The Tuner Genius XL and Power Genius XL meters follow the signal while you
+  transmit or tune: NereusSDR asks the tuner for its readings about 16 times a
+  second and the amplifier 10 times a second while keyed, and for two seconds
+  after. In receive the tuner's readings now update four times a second; it
+  was once a second.
+- The Tuner Genius XL, Power Genius XL and RF2K-S panels show forward power as
+  one large bar with its scale, a legal-limit marker and a mark that holds the
+  peak. Reflected power, SWR and temperature are slim rows under it, each with
+  its number on the row (whole watts and whole degrees).
+- Forward power, reflected power and SWR show dashes when no power is passing,
+  where they used to read 0 W and 1.00. Forward power turns red past the
+  1500 W legal display marker; SWR and temperature turn red past 2.5 and
+  80 °C. Reflected power has no limit marker. The RF2K-S line under the
+  meters now shows only volts and amps.
+- Main power meters use a connected amplifier in OPERATE, with Power Genius
+  XL taking precedence over RF2K-S. They show its forward power and SWR on
+  a 0 to 2000 W display; standby or disconnection restores the radio's
+  readings and scale. The transmit row also shows the radio's DRIVE power.
+  The 1500 W marker is visual only, and reported readings such as 2300 W
+  remain complete. It does not change drive, keying or output controls.
+
 ### Tuner Genius XL firmware 1.2.44
 
 - A Tuner Genius XL on firmware 1.2.44 connects again. That firmware adds a
   field to the tuner's network announcement, which NereusSDR rejected, so the
   tuner stayed disconnected after the upgrade.
+
+### A Display pill and steadier waterfall levels
+
+Each pan now has a Display pill with four tabs: Spectrum, FFT, Waterfall and
+3D View. It holds the display controls you reach for most, per pan, and the
+right-click menu keeps only what is left.
+
+- Setup's Display pages now set the defaults for every pan and follow changes
+  live. A pan you adjusted keeps its own value until you reset it.
+- New on the pill: NB Blank, a Background picture or colour with opacity, grid
+  spacing, scale text and a trace colour.
+- Waterfall Black Level now runs 0 to 100 in half-dB steps, with 50 at the noise
+  floor (default 57). Color Gain sets how many dB the colours cover (default
+  60, which is 38 dB). Your saved levels are converted once.
+- With Clarity on, AGC, NF-AGC, Low and High are greyed and Clarity sets the
+  levels. With Clarity off, Low and High set them and Black Level and Color
+  Gain are greyed. With AGC on, only the low edge follows the signal; High stays
+  where you set it. NF-AGC is an option under AGC.
+- Each pan's dB range is now kept per band, and the pill and the right-click
+  menu edit the same value.
+- On un-key every pan keeps its level. The FFT input is cleared on key and
+  un-key, and Clarity waits before it measures again: about 11 seconds at a
+  262144-point FFT and 48 kHz.
+- The FFT Size slider sets the size once for every pan and keeps it after a
+  restart, and the other FFT controls reach every pan and every open pill.
+- A remote window pan picks its FFT size by the same rule as a local pan, so the
+  pan's width in pixels no longer changes it.
+- With Auto AGC-T on, the AGC threshold no longer drops as you zoom a pan in.
+  It used to fall 3 dB each time the zoom doubled the FFT size, up to 15 dB on
+  a 192 kHz receiver, so zoomed in it now sits higher than before, where it
+  sits at full span. The FFT Size slider no longer moves it either, and a
+  local console and a Core set the same threshold for the same band noise.
+  The "NF" number beside AGC-T shows the noise floor that threshold is built
+  from, so it no longer drops as you zoom in either.
+- The phone's Display setup greys the same level rows under Clarity and "Use
+  spectrum min/max".
+- Fixed: the waterfall's Low is gray while waterfall AGC is on, in the Display
+  pill and on Setup's Waterfall Defaults page, because AGC sets it. It was live
+  and moving it did nothing. Turn AGC off to set Low yourself.
+- Fixed: Setup's dB Step (Display > Grid & Scales) now sets the spacing of the
+  horizontal dB lines on every pan. It was saved and drew nothing. With a dB
+  range of 50 or less the lines were 5 dB apart; they are now dB Step apart
+  (10 unless you change it).
+- Fixed: the FFT size looking like it reset after a restart (Setup showed the
+  zoomed size instead of the one you chose).
+- Fixed: a remote window's VFO flag level meters now work when there is no
+  S-meter item.
 
 ### Fixes
 
@@ -347,6 +417,18 @@ Advanced, and each control appears on one page only.
   and presets, the transmit display settings, the radio list, and the
   accessory fault and limit records. Each of these saved the settings file on
   the thread that sends the audio and now hands it to the same writer thread.
+- A Core on Linux is now given the network receive buffer it asks for. It
+  asks for 4 MB on the socket its radio sends to, and Linux granted only what
+  its limit (`net.core.rmem_max`) allowed: 212992 bytes on a Rock 5C, which
+  three or four wide receivers fill in 6 to 9 ms. The `nereusd` packages, the
+  station images and the Pi 4 and Rock install scripts now install
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which raises that limit to 4 MB, and
+  apply it at install without lowering a limit that is already higher. This
+  is the only system setting the packages and the Pi 4 scripts change (the
+  Rock script also writes a login-manager drop-in); removing the package or
+  the file undoes it from the next system start. The Core's log
+  now says how much of the buffer it was given. See "The system setting the
+  Core's installer changes" in the README.
 - The Power Genius XL's OPERATE button works again in a NereusSDR window
   that runs its own radio. Since 2026.10.0 the click was sent only by the
   headless Core (`nereusd`); in the desktop app it did nothing.

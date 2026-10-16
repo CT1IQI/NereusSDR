@@ -162,6 +162,52 @@ A rotor or serial CAT on the Core also needs the `dialout` group, through a
 `serial.conf` drop-in that the `.deb` packages do not ship. The
 [SBC install guide](https://nereussdr.com/guides/install-core-sbc.html) has it.
 
+#### The system setting the Core's installer changes
+
+The `nereusd` packages and the Pi 4 scripts change one system-wide Linux
+setting and no other: `net.core.rmem_max`, the largest receive buffer a
+program may ask for on a network socket. The Rock script changes that setting
+too, and also writes the login-manager drop-in described above.
+
+- **What it is for.** The Core asks for a 4 MB receive buffer (4194304
+  bytes) on the socket its radio sends to, so the system holds the radio's
+  packets while the Core is briefly held up. Linux grants at most
+  `net.core.rmem_max`. On the maintainer's Rock 5C that limit was 212992
+  bytes as found, a twentieth of what the Core asks for: 6 to 9 ms of
+  packets with three or four wide receivers open. A longer hold-up lost
+  packets, and the receivers lost samples (measured 2026-10-10).
+- **What is installed.** The `nereusd` `.deb` packages ship
+  `/usr/lib/sysctl.d/10-nereusd.conf`, which sets the limit to 4194304 at
+  every system start, and they apply it when the package is installed. The
+  station images get it from the package, and the Pi 4 and Rock install
+  scripts install and apply the same file. The installer prints what it
+  changed. The setting is a ceiling, not a size any socket is given: a
+  program that does not ask keeps the system's default size.
+- **A limit is never lowered.** The install step leaves a limit already at
+  or above 4194304 as it is. An install, reinstall or upgrade also leaves
+  the limit as it is, whatever its value, when the Core's file is masked or
+  replaced in `/etc/sysctl.d` or `/run/sysctl.d`, or when a file read after
+  it sets this limit. At system start, a sysctl file whose name sorts after
+  the Core's and sets this limit wins over it, whether its value is higher
+  or lower; an administrator's own files (numbered 60 to 90 by systemd's
+  convention) do. `/etc/sysctl.conf` is read at system start only where a
+  file in `/etc/sysctl.d` links to it, as Debian's `99-sysctl.conf` did up
+  to bookworm.
+- **To undo it.** Remove the `nereusd` package, or delete the file; the
+  system then starts with its own limit again. To keep the system's own
+  limit with the package installed, link `/etc/sysctl.d/10-nereusd.conf` to
+  `/dev/null`. To put the Rock's old limit back at once:
+  `sudo sysctl -w net.core.rmem_max=212992`.
+- **To check it.** When the Core connects to a radio its log says
+  `radio socket receive buffer 4194304 bytes, all that was asked for`, or
+  how many bytes it was given of the 4194304 asked for.
+
+The desktop packages do not change this setting. A Core installed from
+source with `cmake --install build --component nereusd` gets the file too.
+It takes effect at the next system start, or at once with
+`sudo /usr/local/libexec/nereusd/raise-receive-buffer-limit /usr/lib/sysctl.d/10-nereusd.conf`
+(under the install prefix; `/usr/local` unless you chose another).
+
 ### Take the console with you
 
 The native **iPhone and iPad app** provides live spectrum and waterfall,

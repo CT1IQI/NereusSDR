@@ -14,7 +14,7 @@ directory alongside NereusSDR's own `LICENSE`.
 | Qt 6 | GUI / network / audio framework | LGPL-3.0 (dynamic linking) | `qt6.txt` | `LGPLv3.txt` (+ `GPLv3.txt` by LGPL §4 reference) |
 | FFTW3 | FFT library | GPL-2.0-or-later | `fftw3.txt`, `fftw3-notices.txt` | `GPLv2.txt` |
 | WDSP | DSP engine | GPL-2.0-or-later | `wdsp.txt`, `wdsp-notices.txt` | `GPLv2.txt` |
-| RADE (radae_nopy b2891023) | RADE digital voice modem, built as the rade shared library | BSD-2-Clause | `rade.txt`, `rade-notices.txt` | `rade.txt` |
+| RADE (rade_c c8a3dc15) | RADE digital voice modem, built as the rade shared library | BSD-2-Clause | `rade.txt`, `rade-notices.txt` | `rade.txt` |
 | r8brain-free-src 5c44bebe | sample rate conversion for RADE transmit audio | MIT | `r8brain.txt`, `r8brain-notices.txt` | `r8brain.txt` |
 | libspecbleach 0.2.0 (41d3f583) | NR4 noise reduction | LGPL-2.1-or-later | `libspecbleach.txt` | `LGPLv2.1.txt` |
 | rnnoise 70f1d256 | NR3 noise reduction and its two bundled models | BSD-3-Clause | `rnnoise.txt`, `rnnoise-notices.txt` | `rnnoise.txt` |
@@ -56,7 +56,7 @@ directory, or when a text file here is named by no row.
 | Qt 6 | installed on the build machine; copied into packages by linuxdeploy, macdeployqt and windeployqt | the release workflow's Qt | desktop packages; the Core uses the system's Qt | `qt6.txt` |
 | FFTW3 (libfftw3, libfftw3f and libfftw3_threads, all FFTW's own libraries under its one licence) | `third_party/fftw3` (Windows headers and DLLs, fetched from fftw.org by the root CMakeLists.txt when missing; the threads functions are inside libfftw3-3.dll there); system package on Linux (libfftw3-double3 carries libfftw3_threads.so.3); Homebrew on macOS | 3.3.5 on Windows; the system or Homebrew package elsewhere | desktop packages and the Core | `fftw3.txt`, `fftw3-notices.txt` |
 | WDSP | `third_party/wdsp` | TAPR v1.29 with NereusSDR changes | desktop packages and the Core | `wdsp.txt`, `wdsp-notices.txt` |
-| RADE (radae_nopy) | `third_party/rade` | b2891023f3aecdf8b1793618000b1be6bcb2c4d1 | desktop packages and the Core | `rade.txt`, `rade-notices.txt` |
+| RADE (rade_c) | `third_party/rade` | c8a3dc156045cae2cd251e1a4be0c304c9ddf2f9 | desktop packages and the Core | `rade.txt`, `rade-notices.txt` |
 | Opus | ExternalProject `build_opus`, `build_opus_x86` and `build_opus_arm` in `third_party/rade/cmake/BuildOpus.cmake`, built into the rade library with its LPCNet and FARGAN parts | 940d4e5af64351ca8ba8390df3f555484c567fbb | desktop packages and the Core | `opus.txt`, `opus-notices.txt` |
 | r8brain-free-src | `third_party/r8brain` | 5c44bebe9c477d47b1dc7037fcaae2794ff2b4e1 | desktop packages and the Core | `r8brain.txt`, `r8brain-notices.txt` |
 | libspecbleach | `third_party/libspecbleach`, FetchContent `libspecbleach_upstream` | 41d3f58310391e05ecfb8b7c9efb62ea2ba8ef05 (v0.2.0) | desktop packages and the Core | `libspecbleach.txt` |
@@ -65,7 +65,7 @@ directory, or when a text file here is named by no row.
 | PortAudio | FetchContent `portaudio` | v19.7.0 | desktop packages and the Core | `portaudio.txt`, `portaudio-notices.txt` |
 | Steinberg ASIO SDK | `third_party/asiosdk`, the release archive `ASIO-SDK_2.3.4_2025-10-15.zip` copied unchanged (SHA-256 in `third_party/asiosdk/VERSION.txt`), built as `asiosdk_host` on Windows only | 2.3.4 | Windows packages (the mic helper) | `asiosdk.txt`, `asiosdk-notices.txt` |
 | zlib | FetchContent `zlib` on Windows; the system library elsewhere | v1.3.1 on Windows | Windows packages | `zlib.txt` |
-| libdatachannel | FetchContent `nereus_libdatachannel`, with build-owned source copies changed by `cmake/patches/libdatachannel-keep-remote-description-first.cpp`, `libdatachannel-set-dtls-mtu-before-incoming.cpp`, `libdatachannel-0003-retain-juice-agent-through-turn-release.patch`, `libdatachannel-0004-retain-ice-lifetime-anchor.patch`, `libdatachannel-0005-defer-dtls-startup.patch` and `libdatachannel-0006-recheck-pool-queue-while-idle.patch` in the same directory | v0.24.5 | desktop packages and the Core | `libdatachannel.txt`, `libdatachannel-notices.txt` |
+| libdatachannel | FetchContent `nereus_libdatachannel`, with build-owned source copies changed by `cmake/patches/libdatachannel-keep-remote-description-first.cpp`, `libdatachannel-set-dtls-mtu-before-incoming.cpp`, `libdatachannel-0003-retain-juice-agent-through-turn-release.patch`, `libdatachannel-0004-retain-ice-lifetime-anchor.patch`, `libdatachannel-0005-defer-dtls-startup.patch`, `libdatachannel-0006-recheck-pool-queue-while-idle.patch` and `libdatachannel-0007-lock-shared-mutexes-once-when-made.patch` in the same directory | v0.24.5 | desktop packages and the Core | `libdatachannel.txt`, `libdatachannel-notices.txt` |
 | libjuice | FetchContent `nereus_libjuice`, with build-owned source copies changed by `cmake/patches/libjuice-0001-give-turn-allocations-back.patch`, `libjuice-0002-bounded-turn-release-lifecycle.patch` and `libjuice-0003-keep-poll-worker-with-retained-agents.patch` in the same directory | 3c40a3545b6b1b62c7adee7f8f2bd58aa290afd6 | desktop packages and the Core | `libjuice.txt`, `libjuice-notices.txt` |
 | plog | FetchContent `nereus_plog` | 94899e0b926ac1b0f4750bfbd495167b4a6ae9ef | desktop packages and the Core | `plog.txt` |
 | usrsctp | FetchContent `nereus_usrsctp` | fec583d54493f879d2ae44a743423bf8a04371ab | desktop packages and the Core | `usrsctp.txt`, `usrsctp-notices.txt` |
@@ -262,7 +262,7 @@ the §6(b) fallback.
 - `aethersdr.txt`       — AetherSDR upstream-port notice
 - `SOURCE-OFFER.txt`    — written source offer + corresponding-source pointers
 - `LGPLv2.1.txt`        full GNU Lesser General Public License, version 2.1
-- `rade.txt`            RADE (radae_nopy) full BSD-2-Clause notice
+- `rade.txt`            RADE (rade_c) full BSD-2-Clause notice
 - `opus.txt`            Opus full BSD-3-Clause notice
 - `r8brain.txt`         r8brain-free-src full MIT notice
 - `libspecbleach.txt`   libspecbleach dependency notice

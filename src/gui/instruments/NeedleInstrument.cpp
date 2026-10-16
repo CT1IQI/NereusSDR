@@ -74,6 +74,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Adds clearSecondValue().
@@ -158,6 +161,7 @@ bool NeedleInstrument::setPrimary(int bindingId)
     // Auswahl als ein Zifferblatt, dessen Bereich niemand verantwortet.
     if (!d || !d->hasScale) { return false; }
     m_primary = bindingId;
+    m_ownReading.reset();
     // Kein Startwert. Ein Instrument, dem man die Grösse zuweist, hat
     // deswegen noch nichts gemessen.
     clearValue();
@@ -239,9 +243,21 @@ void NeedleInstrument::onReading(int bindingId, double value)
 }
 
 // From Longpath src/gui/instruments/NeedleInstrument.cpp:143 [@551576e3]
+const ReadingDescriptor* NeedleInstrument::primaryReading() const
+{
+    return m_ownReading ? &*m_ownReading : readingFor(m_primary);
+}
+
+void NeedleInstrument::setPrimaryScale(const ReadingDescriptor& d)
+{
+    m_ownReading = d;
+    refreshFooter();
+    update();
+}
+
 void NeedleInstrument::refreshFooter()
 {
-    const ReadingDescriptor* d = readingFor(m_primary);
+    const ReadingDescriptor* d = primaryReading();
     if (!d || !m_footer) { return; }
     m_footer->setCaption(d->thetisName());
 
@@ -366,7 +382,7 @@ void NeedleInstrument::paintEvent(QPaintEvent*)
 // bleibt, wie es ist.
 void NeedleInstrument::paintInto(QPainter& painter, QSize forSize, bool bare)
 {
-    const ReadingDescriptor* d = readingFor(m_primary);
+    const ReadingDescriptor* d = primaryReading();
     if (!d || !d->hasScale) { return; }
 
     // Ohne Fusszeile, wenn nur das Gesicht verlangt ist.

@@ -1,6 +1,12 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-12: The radio's second firmware number: firmwareBeta for a
+//               minor-11 peer that declared firmwareBeta 1
+//               (RadioModel::firmwareBetaVersion). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11: R-DISP-RETUNE (third wave): spectrumPictureVersion 1 for a
 //               minor-11 peer that declared spectrumPicture 1, media on.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -166,6 +172,19 @@
 //               transmit and keys as the radio's own PTT does (ruling
 //               8.9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-10-15: remote transmit cut off the main thread:
+//               the cut guard armed with the key, fed keepalives on
+//               main and "tx" receipts off main, its cut posted to
+//               onTransmitCutOffMain. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-15: review fix wave: the cut's main-thread handling waits one
+//               event-loop turn and re-checks the key, so a release read in
+//               that turn records no link loss; a server destroyed with a
+//               cut still set clears it. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-15: re-review wording: the one-turn deferral comment says why a
+//               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -1079,7 +1098,9 @@
 #include "core/SliceOwnership.h"
 #include "core/MoxController.h"
 #include "core/safety/BandPlanGuard.h"
+#include "core/safety/RemoteTxCutGuard.h"
 #include "core/safety/RemoteTxWatchdog.h"
+#include "core/safety/TransmitCutLine.h"
 #include "core/session/TxWatchServer.h"
 #include "core/safety/TransmitHolder.h"
 #include "core/safety/StationSliceFreeze.h"
@@ -1159,8 +1180,18 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <mutex>
 
 namespace NereusSDR {
+
+// Remote transmit cut off the main thread: what the guard's cut reaches,
+// under `mutex` (the guard's thread reads it; the main thread sets it and
+// clears it before the server goes).
+struct StationServer::TxCutTarget {
+    std::mutex mutex;
+    StationServer* server = nullptr;
+    std::shared_ptr<TransmitCutLine> line;
+};
 
 struct StationServer::PendingRelayWatch {
     QPointer<DataChannelTransport> transport;
@@ -1471,9 +1502,12 @@ bool isDevicesSettingsKey(const QString& key)
 constexpr const char* kCatalogKey = "catalog";
 
 constexpr const char* kSetupDescriptionKey = "setup";
-// The highest Setup description version the Core sends (25: Audio's
-// Outputs page and Microphone title, R-SPK-23).
-constexpr int kSetupDescriptionCap = 25;
+// The highest Setup description version the Core sends (29: the accepted
+// eight Display pages and scoped picture controls; 28: Display's FFT
+// sizing rows and the averaging times from 1 ms; 27: Appearance's Trace
+// Color row beside Fill Color; 26: Display's Waterfall Defaults level gates
+// and the allOf form of enabledWhen).
+constexpr int kSetupDescriptionCap = 29;
 
 bool isSetupDescriptionMessage(const SessionMessage& message)
 {
@@ -2543,8 +2577,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             if (m_txWatchdog) {
                 // Control logging lane: logged after, as it was watched.
                 const bool watched = m_txWatchdog->isWatching(deviceId);
-                m_txWatchdog->keepalive(deviceId, sequence, epoch,
-                                        RemoteTxWatchdog::Path::Auxiliary);
+                if (m_txWatchdog->keepalive(deviceId, sequence, epoch,
+                                            RemoteTxWatchdog::Path::Auxiliary)) {
+                    noteKeepaliveForCutGuard(deviceId, 0);
+                }
                 controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::TxWatch, 0, watched);
             }
         }, this);
@@ -2969,6 +3005,40 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     m_controlLog.watchdogStopped(deviceId, transport, info, linkClosed,
                                                  silentMs);
                 });
+        // Remote transmit cut off the main thread (2026-10-15): the guard
+        // judges the same 400 ms from the "tx" channel's messages at their
+        // receipt, on a thread of its own, so a held main thread still cuts
+        // a keyed remote device's transmit. Its cut, on its thread, only
+        // cuts the model's line and posts the rest here
+        // (onTransmitCutOffMain); it never waits on this thread.
+        m_txCutTarget = std::make_shared<TxCutTarget>();
+        m_txCutTarget->server = this;
+        m_txCutTarget->line = m_radioModel->transmitCutLine();
+        connect(m_radioModel, &QObject::destroyed, this, [this]() {
+            const std::lock_guard<std::mutex> lock(m_txCutTarget->mutex);
+            m_txCutTarget->line.reset();
+        });
+        {
+            const std::shared_ptr<TxCutTarget> target = m_txCutTarget;
+            m_txCutGuard = std::make_shared<RemoteTxCutGuard>(
+                [target](quint64 mediaEpoch, quint64 armSerial, qint64 silentMs) {
+                    const std::lock_guard<std::mutex> lock(target->mutex);
+                    if (target->line) {
+                        target->line->cut();
+                    }
+                    StationServer* const server = target->server;
+                    if (server != nullptr) {
+                        // Posted, never waited on. A post that has not run
+                        // when this object goes is dropped with it.
+                        QMetaObject::invokeMethod(
+                            server,
+                            [server, mediaEpoch, armSerial, silentMs]() {
+                                server->onTransmitCutOffMain(mediaEpoch, armSerial, silentMs);
+                            },
+                            Qt::QueuedConnection);
+                    }
+                });
+        }
         connect(m_radioModel, &RadioModel::keyedByChanged, this,
                 &StationServer::followKeyedForWatchdog);
 
@@ -4028,8 +4098,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
                     ? m_dispatchingTransport->deliveringMessageWaitUs()
                     : std::nullopt;
-                m_txWatchdog->keepalive(requester, sequence, epoch,
-                                        RemoteTxWatchdog::Path::Session);
+                if (m_txWatchdog->keepalive(requester, sequence, epoch,
+                                            RemoteTxWatchdog::Path::Session)) {
+                    noteKeepaliveForCutGuard(requester, 0);
+                }
                 controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
                                     waitUs.value_or(0) / 1000, watched);
             }
@@ -4209,6 +4281,30 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
 
 StationServer::~StationServer()
 {
+    // Remote transmit cut off the main thread: nothing the guard's cut
+    // reaches may go first. The cut lets go of this object and the line,
+    // then the guard stops and joins its thread. A receipt hook still
+    // holding the guard for a moment finds nothing to cut.
+    if (m_txCutTarget) {
+        const std::lock_guard<std::mutex> lock(m_txCutTarget->mutex);
+        m_txCutTarget->server = nullptr;
+        m_txCutTarget->line.reset();
+    }
+    m_txCutGuard.reset();
+    // Its thread has stopped, so no new cut can start. A cut whose post
+    // (onTransmitCutOffMain) or its turn after (finishTransmitCutOnMain)
+    // has not run goes with this object, and nothing else would clear the
+    // connection's cut: every later key would be refused on the wire while
+    // the model and the windows show MOX on. The model catches up here
+    // instead, with the watchdog's sentence.
+    if (m_radioModel && m_radioModel->connection() != nullptr
+        && m_radioModel->connection()->transmitCut()) {
+        const QString sentence = RemoteTxWatchdog::stopMessage(
+            m_txCutGuardDevice.isEmpty() ? QStringLiteral("a device")
+                                         : deviceNameForStop(m_txCutGuardDevice));
+        m_radioModel->catchUpTransmitCut(sentence);
+    }
+
     const bool canonical = m_radioModel && m_radioModel->m_diversityStationServer == this;
     if (canonical) { m_radioModel->m_diversityStationServer.clear(); }
 
@@ -8035,6 +8131,13 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
             refusals.insert(update.name, QStringLiteral("The Core does not have this setting, or not in this form."));
             continue;
         }
+        if (message.objectKey.startsWith("slice:") && update.name == "dspMode"
+            && isRade2DspMode(static_cast<DSPMode>(update.value.toInt()))
+            && !m_radioModel->radeV2Enabled()) {
+            refusals.insert(update.name, QStringLiteral(
+                "Experimental RADE V2 is disabled. Start the Core with NEREUS_ENABLE_RADE_V2=1 to enable it."));
+            continue;
+        }
         if (message.objectKey.startsWith("slice:") && update.name == "diversityEnabled") {
             const int id = message.objectKey.mid(6).toInt();
             QString refusal = m_radioModel->legacyDiversityRefusal(id, update.value.toBool());
@@ -9488,7 +9591,9 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
             // on-the-air lock. 23: Hardware > Calibration's Rx1 6m LNA row.
             // 24: Audio > TX Input's Line In Gain in 1.5 dB steps and the
             // Saturn G2's Mic Tip-Ring row. 25: Audio > Outputs' radio
-            // speaker rows; TX Input titled Microphone.
+            // speaker rows; TX Input titled Microphone. 26: Display >
+            // Waterfall Defaults' level rows grey out as the desktop page's
+            // do (the allOf form of enabledWhen).
             const int version = qMin(declared, kSetupDescriptionCap);
             // Version 20: the transmit holder's own PA band stays live.
             const QByteArray deviceId = peerInfoFor(transport).deviceId;
@@ -10243,6 +10348,148 @@ void StationServer::followKeyedForWatchdog()
         m_txWatchdog->setKeyed(keyedBy.deviceId, true,
                                keyedBy.trigger == QByteArrayLiteral("vox") ? 0 : keyedBy.epoch);
     }
+    // Remote transmit cut off the main thread: the guard is armed for the
+    // remote key on the air, with that device's media session (0 without
+    // one: then it never judges), and armed afresh for each new key; no
+    // remote key disarms it. A media replacement mid-key keeps the
+    // session's epoch (DaemonMediaController::handleReplace hands the
+    // replacement peer m_epoch), so the guard keeps hearing it. A media
+    // session that starts after the key re-arms nothing until the key
+    // changes: the guard then never judges this key (epoch 0) or judges
+    // the older session's, which fails safe (a cut, never a missed cut);
+    // the watchdog still watches the key.
+    if (m_txCutGuard) {
+        if (remoteKey) {
+            const quint64 mediaEpoch = mediaEpochOfDevice(keyedBy.deviceId);
+            if (keyedBy.deviceId != m_txCutGuardDevice || keyedBy.epoch != m_txCutGuardKeyEpoch
+                || mediaEpoch != m_txCutGuardMediaEpoch) {
+                m_txCutGuardDevice = keyedBy.deviceId;
+                m_txCutGuardKeyEpoch = keyedBy.epoch;
+                m_txCutGuardMediaEpoch = mediaEpoch;
+                m_txCutGuard->arm(mediaEpoch);
+            }
+        } else if (!m_txCutGuardDevice.isEmpty()) {
+            m_txCutGuardDevice.clear();
+            m_txCutGuardKeyEpoch = 0;
+            m_txCutGuardMediaEpoch = 0;
+            m_txCutGuard->disarm();
+        }
+    }
+}
+
+quint64 StationServer::mediaEpochOfDevice(const QByteArray& deviceId) const
+{
+    quint64 newest = 0;
+    if (deviceId.isEmpty()) {
+        return newest;
+    }
+    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+        if (it->authenticated && it->mediaEpoch != 0 && it->sessionDeviceId == deviceId) {
+            newest = std::max(newest, it->mediaEpoch);
+        }
+    }
+    return newest;
+}
+
+void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs)
+{
+    if (!m_txCutGuard || deviceId.isEmpty() || deviceId != m_txCutGuardDevice) {
+        return;
+    }
+    m_txCutGuard->heardOnMain(RemoteTxCutGuard::Clock::now()
+                              - std::chrono::microseconds(std::max<qint64>(0, ageUs)));
+}
+
+std::function<void(std::chrono::steady_clock::time_point)>
+StationServer::txChannelReceiptHook(quint64 mediaEpoch) const
+{
+    if (!m_txCutGuard) {
+        return {};
+    }
+    const std::weak_ptr<RemoteTxCutGuard> weak = m_txCutGuard;
+    const std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> stamp =
+        m_lastTxChannelReceipt;
+    return [weak, stamp, mediaEpoch](std::chrono::steady_clock::time_point receivedAt) {
+        stamp->store(receivedAt.time_since_epoch().count(), std::memory_order_relaxed);
+        if (const std::shared_ptr<RemoteTxCutGuard> guard = weak.lock()) {
+            guard->heardOffMain(mediaEpoch, receivedAt);
+        }
+    };
+}
+
+std::chrono::steady_clock::time_point StationServer::lastTxChannelReceiptForTest() const
+{
+    return std::chrono::steady_clock::time_point(
+        std::chrono::steady_clock::duration(m_lastTxChannelReceipt->load(std::memory_order_relaxed)));
+}
+
+void StationServer::onTransmitCutOffMain(quint64 mediaEpoch, quint64 armSerial, qint64 silentMs)
+{
+    // The radio is already off the air (the cut ran on the guard's thread),
+    // so the model may learn one event-loop turn later. A release the
+    // device sent as its keepalives stopped rides the session link, which
+    // only this thread reads; after a stall it can still wait behind this
+    // post. QTimer::singleShot(0, this, ...) posts a queued call (Qt 6.11
+    // qtimer.cpp:368-389), so the rest of the cut runs one event-loop pass
+    // later. Qt runs a call posted during a pass only in the next pass
+    // (qcoreapplication.cpp:1795, 1834-1835), and QWebSocket reads its
+    // socket directly on readyRead (qwebsocket_p.cpp:678), so a release
+    // that reached the Core during the stall is read before this runs and
+    // the key it ended is not recorded as a lost link.
+    QTimer::singleShot(0, this, [this, mediaEpoch, armSerial, silentMs]() {
+        finishTransmitCutOnMain(mediaEpoch, armSerial, silentMs);
+    });
+}
+
+void StationServer::finishTransmitCutOnMain(quint64 mediaEpoch, quint64 armSerial,
+                                            qint64 silentMs)
+{
+    // The device the cut was for: the armed one while its media session is
+    // the cut's, otherwise whoever that media session is.
+    const QByteArray deviceId = mediaEpoch != 0 && mediaEpoch == m_txCutGuardMediaEpoch
+        ? m_txCutGuardDevice
+        : mediaSessionDevice(mediaEpoch);
+    const QString deviceHex = deviceId.isEmpty() ? QStringLiteral("(no device)")
+                                                 : QString::fromLatin1(deviceId.toHex());
+    if (!m_radioModel) {
+        qCWarning(lcStation).noquote()
+            << QStringLiteral("Transmit cut off the main thread for %1 after %2 ms: no radio "
+                              "model to catch up")
+                   .arg(deviceHex)
+                   .arg(silentMs);
+        return;
+    }
+    const bool current = m_txCutGuard && armSerial == m_txCutGuard->armSerial();
+    const bool keyedByDevice = !deviceId.isEmpty() && m_radioModel->keyedBy().deviceId == deviceId;
+    const bool watched = !deviceId.isEmpty() && m_txWatchdog && m_txWatchdog->isWatching(deviceId);
+    qCWarning(lcStation).noquote()
+        << QStringLiteral("Transmit cut off the main thread: no \"tx\" message from %1 for %2 ms "
+                          "(arm %3, %4)")
+               .arg(deviceHex)
+               .arg(silentMs)
+               .arg(armSerial)
+               .arg(current ? (keyedByDevice ? QStringLiteral("still keyed")
+                                             : QStringLiteral("no longer keyed"))
+                            : QStringLiteral("an earlier key"));
+    // The watchdog's own stop, once: it trips the device as a quiet link
+    // (VOX that device armed off, the stop recorded, StopAllTx) and no
+    // longer watches it, so its own check for the same silence, due while
+    // the main thread was held, finds nothing. When the watchdog tripped
+    // first, it is not watching and nothing more is stopped or recorded.
+    // When the device's release was read in the turn this waited, the key
+    // ended normally: no longer keyed by it, nothing is recorded.
+    if (current && keyedByDevice && watched) {
+        m_txWatchdog->tripQuiet(deviceId);
+    }
+    // Always: the model and the radio agree, and the connection's cut is
+    // cleared so the next key reaches the radio. With nothing keyed (the
+    // key ended normally, or the watchdog's stop ran) the catch-up stops
+    // nothing. A stale cut (an earlier arm's) still catches up a key that
+    // slipped in after it: the wire already refused that key while the
+    // cut was set, so stopping it makes the model agree with the radio.
+    const QString sentence = RemoteTxWatchdog::stopMessage(
+        deviceId.isEmpty() ? QStringLiteral("a device") : deviceNameForStop(deviceId));
+    m_radioModel->catchUpTransmitCut(sentence);
 }
 
 void StationServer::disarmVoxArmedBy(const QByteArray& deviceId, const char* why)
@@ -10287,8 +10534,10 @@ void StationServer::txChannelMessage(quint64 mediaEpoch, const QByteArray& messa
     }
     // Control logging lane: logged after, as it was watched.
     const bool watched = m_txWatchdog->isWatching(deviceId);
-    m_txWatchdog->keepalive(deviceId, sequence, epoch, RemoteTxWatchdog::Path::TxChannel,
-                            std::max<qint64>(0, heldUs) / 1000);
+    if (m_txWatchdog->keepalive(deviceId, sequence, epoch, RemoteTxWatchdog::Path::TxChannel,
+                                std::max<qint64>(0, heldUs) / 1000)) {
+        noteKeepaliveForCutGuard(deviceId, std::max<qint64>(0, heldUs));
+    }
     controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::MediaTx,
                         std::max<qint64>(0, heldUs) / 1000, watched);
 }
@@ -12812,6 +13061,20 @@ bool StationServer::txMonitorAudioAvailable(quint64 epoch) const
         && txMonitorAudioVersion() >= 1;
 }
 
+int StationServer::waveformVersion() const
+{
+    return m_mediaEnabled && m_radioModel && m_radioModel->role() != RadioModel::Role::Remote
+        && m_radioModel->radeWaveformModel() ? 1 : 0;
+}
+
+bool StationServer::waveformAvailable(quint64 epoch) const
+{
+    const auto peer = m_peers.constFind(mediaSessionFor(epoch));
+    return mediaAvailable(epoch) && peer != m_peers.cend()
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peer->features.value(QByteArrayLiteral("waveform")) >= 1 && waveformVersion() >= 1;
+}
+
 int StationServer::remoteIqVersion() const
 {
     return m_mediaEnabled && m_radioModel && m_radioModel->role() != RadioModel::Role::Remote
@@ -13382,6 +13645,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // controlChannelVersion.
             caps.txMonitorAudioVersion = media ? txMonitorAudioVersion() : 0;
             caps.remoteIqVersion = media ? remoteIqVersion() : 0;
+            caps.waveformVersion = media && peerDeclares(transport, QByteArrayLiteral("waveform"), 1)
+                ? waveformVersion() : 0;
             // R-IOS-26 / R-R3-49 (iPhone plan Task 22, parity Task 20): the
             // Core's FreeDV Reporter, appended after txMonitorAudioVersion.
             caps.stationFreedvVersion = stationFreedvVersion();
@@ -13459,6 +13724,16 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // descriptor.
             caps.spectrumPictureVersion = caps.radioIdentityEntries && media
                 && peerDeclares(transport, QByteArrayLiteral("spectrumPicture"), 1) ? 1 : 0;
+            // The radio's second firmware number, beside firmwareVersion
+            // (the first alone): likewise optional, for a minor-11 peer that
+            // declared firmwareBeta 1 (after spectrumPictureVersion and
+            // before coreBuildInfo on the wire); old peers retain their exact
+            // descriptor. The model gives 0 unless its record is the radio
+            // whose version is sent above.
+            if (peerDeclares(transport, QByteArrayLiteral("firmwareBeta"), 1)) {
+                caps.firmwareBetaEntry = true;
+                caps.firmwareBetaVersion = m_radioModel->firmwareBetaVersion();
+            }
             // iPhone app Task 71 (ruling 10.1): several devices at once, for
             // a peer that declared sessionHolder with deviceAuth; any other
             // peer is sent no entry, so its capabilities are today's.

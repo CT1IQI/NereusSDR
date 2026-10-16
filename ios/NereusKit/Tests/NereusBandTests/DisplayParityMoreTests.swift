@@ -223,7 +223,7 @@ import Testing
 
     @Test func useSpectrumMinMaxColoursAgainstTheScaleAndAsksTheCoreForNoLevels() throws {
         var settings = BandDisplaySettings.desktopDefaults
-        settings.useSpectrumMinMax = true
+        settings.waterfallLevelMode = .scale
         #expect(settings.phoneLevels == .init(lowDbm: -140, highDbm: -40))
         let request = try #require(settings.extrasRequest(gates: BandDisplaySettingsTests.open))
         #expect(request.waterfallLevels?.mode == .manual)

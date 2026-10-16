@@ -39,6 +39,9 @@
 //   2026-09-30: Fix wave GUI-I4: remoteWindow, remoteTuneControl and the
 //               three remote reasons. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-10-12  The two HGauge bars become one large forward power bar
+//               and slim reflected and SWR rows. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -56,15 +59,16 @@ class QTimer;
 
 namespace NereusSDR {
 
-class HGauge;
+class BarInstrument;
 class RelayBar;
 class TunerModel;
 
 // 4O3A Tuner Genius XL (TGXL) controls.
 //
 // Layout (top to bottom):
-//   1. Fwd Power gauge    -- HGauge (0-200W, red@125; rescaled if PGXL present)
-//   2. SWR gauge          -- HGauge (1.0-3.0, red@2.5)
+//   1. Forward power      -- large bar (0-200W, limit 125; rescaled if PGXL present),
+//                            then reflected power as a slim row (0-500W)
+//   2. SWR                -- slim row (1.0-3.0, limit 2.5)
 //   3. Relay position bars  -- RelayBar x3 ("C1", "L", "C2"), 0-255
 //   4. TUNE button        -- QPushButton (non-toggle, sends autoTune; shows
 //                            "TUNING..." in red while active, then "SWR X.XX"
@@ -126,6 +130,23 @@ public:
         m_lastC2 = c2;
     }
     QString tuneButtonTextForTesting() const;
+    // The readout rows: the last value each was given, whether it shows a
+    // value (true) or the instrument's dashes (false), and the forward
+    // scale's top and limit.
+    double fwdValueForTesting() const;
+    double reflectedValueForTesting() const;
+    double swrValueForTesting() const;
+    bool   fwdHasValueForTesting() const;
+    bool   reflectedHasValueForTesting() const;
+    bool   swrHasValueForTesting() const;
+    double fwdScaleMaxForTesting() const;
+    double fwdScaleLimitForTesting() const;
+
+    // The barefoot forward scale (AetherSDR's 0-200 W, red above 125 W)
+    // and the forward power from which the rows show a reading.
+    static constexpr double kBarefootMaxW = 200.0;
+    static constexpr double kBarefootLimitW = 125.0;
+    static constexpr float  kPassingPowerW = 0.5f;
     bool carrierEngagedForTgxlTuneForTesting() const
     {
         return m_carrierEngagedForTgxlTune;
@@ -259,10 +280,14 @@ private:
 
     TunerModel* m_tunerModel = nullptr;
 
-    // Control 1 -- Forward power gauge (0-200W, red@125; auto-rescaled)
-    HGauge* m_fwdPowerGauge = nullptr;
-    // Control 2 -- SWR gauge (1.0-3.0, red@2.5)
-    HGauge* m_swrGauge       = nullptr;
+    // Control 1 -- Forward power, a large bar (0-200W, limit 125;
+    // auto-rescaled), and under it reflected power, a slim row.
+    BarInstrument* m_fwdBar = nullptr;
+    BarInstrument* m_refBar = nullptr;
+    // Control 2 -- SWR, a slim row (1.0-3.0, limit 2.5)
+    BarInstrument* m_swrBar = nullptr;
+    // The forward scale setPowerScale() last set.
+    double m_fwdScaleMaxW{kBarefootMaxW};
     QLabel* m_staleLabel     = nullptr;
 
     // Control 3 -- Relay position bars (C1 / L / C2)

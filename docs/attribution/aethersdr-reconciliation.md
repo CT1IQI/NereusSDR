@@ -94,6 +94,12 @@ claim), or when 25a couldn't positively disprove the claim.
 | `src/models/BandPlanManager.h` | `src/models/BandPlanManager.h` | File header line 5: "Ported from AetherSDR src/models/BandPlanManager.h [@0cd4559]." Phase 3G RX Epic sub-epic D Task 3. BandPlanManager loader class verbatim port. | "Loader class ported verbatim from AetherSDR `src/models/BandPlanManager.{h,cpp}` [@0cd4559]. NereusSDR namespace; AppSettings key 'BandPlanName' kept for upstream parity; value types in BandPlan.h." |
 | `src/models/BandPlanManager.cpp` | `src/models/BandPlanManager.cpp` | File cites "See BandPlanManager.h for license, attribution, and modification history." Inline cites at loadPlans (line 30), setActivePlan (line 57), loadPlanFromJson (line 82). Phase 3G RX Epic sub-epic D Task 3. | Same as BandPlanManager.h above. |
 
+### 2026-10-10 Display pill Task 3 addition (outside the historical 176-file scan)
+
+| NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |
+|---|---|---|---|
+| `src/core/spectrum/ClarityLevels.h` | `src/gui/SpectrumWidget.cpp:11588-11593, 11928` [@1e0718ad] | Constants only: the 0.5 dB Black Level step centred on 50 (`:11928`), the colour span `80 - 0.7 x gain` (`:11593`, its inline comment kept verbatim) and, for the one-time conversion of stored values, the old floor shift `(125 - black) * 0.4` (`:11592`, comment kept verbatim). Upstream file has no copyright/GPL header; the project-level attribution block is in the file. | "Created for NereusSDR: the waterfall level model used while Clarity drives the levels, and the one-time conversion of Black Level and Color Gain values stored under the model before it." NereusSDR differs on purpose: Black Level up is blacker, where AetherSDR's formula is inverted against its own comment. `src/gui/SpectrumWidget.cpp` (already listed) consumes it. |
+
 ### 2026-10-04 CAT Task 13 additions (outside the historical 176-file scan)
 
 | NereusSDR file | AetherSDR counterpart | Evidence | Specific mod-history wording |

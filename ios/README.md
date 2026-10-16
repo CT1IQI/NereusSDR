@@ -148,3 +148,14 @@ The vendored libraries (`COpus`, and `CDataChannel`, `CJuice`, `CSrtp`,
 `CUsrsctp`, `CPlog` and `CMbedTLS` for the media peer) are written by
 `ios/scripts/vendor-sources.sh` and checked against their pinned archives by
 `swift-test.sh` before every run.
+
+### Accessory meter display
+
+The app and Live Activity share `NereusModels.TransmitMeterRule` and
+`MeterReadout`. A present amplifier in OPERATE supplies the main forward-power
+and SWR meters, with Power Genius taking precedence over RF-Kit. The display
+runs from 0 to 2000 W with a 1500 W legal-limit marker. Neither value sets an
+amplifier rating or changes a control, and a reported 2300 W stays visible as
+2300 W. The transmit panel retains the radio's drive beside that meter while
+keyed. Accessory pages show forward, reflected, SWR and temperature readings;
+idle power readings use dashes while temperature stays live.

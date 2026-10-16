@@ -14,25 +14,39 @@
 //   2. Invalid sizes (out of range, non-power-of-two) rejected.
 //   3. Default baseline matches default fftSize (4096).
 //
-// NB: the auto-zoom formula and hysteresis live in MainWindow's
-// bandwidthChangeRequested lambda (cannot test in headless mode
-// without instantiating MainWindow + signal wiring).  This test
-// covers the FFTEngine-side state API; the math is tested via the
-// helper computeAutoZoomFftSize() defined inline below, which
-// duplicates the lambda's algorithm so changes to either MUST be
-// kept in sync.
+// NB: the per-stream replan lives in MainWindow::replanFftForStream
+// (cannot test in headless mode without instantiating MainWindow +
+// signal wiring).  This test covers the FFTEngine-side state API; the
+// sizing rule is the shared ControlRanges::planAutoZoomFft and
+// largestPlannedFftSize, which replanStreamFftSize() below calls as
+// replanFftForStream does.  Only the [0.66, 1.5] hysteresis is
+// duplicated here, so a change to it in either place MUST be kept in
+// sync.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-05-06 -- Created in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                  (KG4VCF), with AI-assisted transformation via
 //                  Anthropic Claude Code.
+//   2026-10-10 -- The remote planner's rows call the shared
+//                  ControlRanges::planAutoZoomFft in place of a
+//                  test-local copy of the per-pixel rule. J.J. Boyd
+//                  (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-10 -- The local mirror is per stream, as
+//                  MainWindow::replanFftForStream is: every pan of the
+//                  stream plans through ControlRanges::planAutoZoomFft
+//                  and the engine takes the largest (display pill plan
+//                  Task 7). J.J. Boyd (KG4VCF), AI-assisted via
+//                  Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <array>
+#include <initializer_list>
 #include <limits>
+#include <vector>
 
 #include "core/ControlRanges.h"
 #include "core/FFTEngine.h"
@@ -41,10 +55,10 @@ using namespace NereusSDR;
 
 namespace {
 
-// Mirror of the auto-zoom math in MainWindow's bandwidthChangeRequested
-// lambda.  Keep in sync with src/gui/MainWindow.cpp.
+// Mirror of MainWindow::replanFftForStream.  Keep in sync with
+// src/gui/MainWindow.cpp.
 struct AutoZoomResult {
-    int  size;       // computed target FFT size
+    int  size;       // the size the engine runs afterwards
     bool replanned;  // true when ratio fell outside hysteresis band
 };
 
@@ -55,49 +69,28 @@ struct AutoZoomResult {
 // the slider already did.  Shared with the remote planner.
 using ControlRanges::autoZoomMaxFftSize;
 
-// Mirror of fftSizeFor in src/gui/RemoteMediaController.cpp: the smallest
-// power of two from kDisplayFftPlanMinSize that reaches `target`, at most
-// kDisplayFftPlanMaxSize.
-int planFftSizeFor(double target)
-{
-    int size = ControlRanges::kDisplayFftPlanMinSize;
-    while (size < ControlRanges::kDisplayFftPlanMaxSize && size < target) {
-        size *= 2;
-    }
-    return size;
-}
+// One pan showing the stream: its widget's sample rate and span.
+struct PanView {
+    double sampleRate;
+    double spanHz;
+};
 
-// Mirror of RemoteMediaController's plannedFftSize: the zoom term
-// (sample rate x pixels / span) and the Hz/bin term, through the shared
-// ControlRanges::autoZoomFftSize.
-int remotePlannedFftSize(double sampleRate, int pixels, double spanHz,
-                         double hzPerBinTarget, int baseline)
-{
-    double target = sampleRate * pixels / spanHz;
-    if (hzPerBinTarget > 0.0) {
-        target = std::max(target, sampleRate / hzPerBinTarget);
-    }
-    return ControlRanges::autoZoomFftSize(planFftSizeFor(target), baseline, sampleRate);
-}
-
-AutoZoomResult computeAutoZoomFftSize(int baseline,
-                                      int currentSize,
-                                      double sampleRate,
-                                      double bwHz)
+AutoZoomResult replanStreamFftSize(int baseline,
+                                   int currentSize,
+                                   std::initializer_list<PanView> pans,
+                                   double hzPerBinTarget = 0.0)
 {
     AutoZoomResult r{currentSize, false};
-    if (sampleRate <= 0.0 || bwHz <= 0.0) { return r; }
-    const double scale = sampleRate / bwHz;
-    double desired = static_cast<double>(baseline) * scale;
-    int targetSize = 1024;
-    const int cap = autoZoomMaxFftSize(sampleRate);
-    while (targetSize < desired && targetSize < cap) {
-        targetSize *= 2;
+    std::vector<ControlRanges::AutoZoomPlan> plans;
+    for (const PanView& pan : pans) {
+        // A pan with no rate or span yet has no need to state.
+        if (!(pan.sampleRate > 0.0) || !(pan.spanHz > 0.0)) { continue; }
+        plans.push_back(ControlRanges::planAutoZoomFft(baseline, pan.sampleRate, pan.spanHz,
+                                                       hzPerBinTarget));
     }
-    // Floor at baseline, cap at max(baseline, autoZoomMax(rate)): when the
-    // user picks a slider value above the auto-zoom cap, baseline wins
-    // (their explicit choice).
-    targetSize = ControlRanges::autoZoomFftSize(targetSize, baseline, sampleRate);
+    if (plans.empty()) { return r; }
+    // Pans that share a stream share its engine: the finest need wins.
+    const int targetSize = ControlRanges::largestPlannedFftSize(plans, baseline);
     if (currentSize > 0) {
         const double ratio = static_cast<double>(targetSize)
                              / static_cast<double>(currentSize);
@@ -108,6 +101,15 @@ AutoZoomResult computeAutoZoomFftSize(int baseline,
     r.size = targetSize;
     r.replanned = (targetSize != currentSize);
     return r;
+}
+
+// One pan on the stream, the Hz/bin target off.
+AutoZoomResult computeAutoZoomFftSize(int baseline,
+                                      int currentSize,
+                                      double sampleRate,
+                                      double bwHz)
+{
+    return replanStreamFftSize(baseline, currentSize, {{sampleRate, bwHz}});
 }
 
 }  // namespace
@@ -310,8 +312,18 @@ private slots:
         static_assert(ControlRanges::autoZoomMaxFftSize(768000.0) == 262144);
     }
 
-    // The remote planner's size and tier ("fine" when the size is above
-    // the baseline) on a pan 1068 px wide.
+    // The one sizing rule a local and a remote pan share
+    // (ControlRanges::planAutoZoomFft): the points wanted are
+    // baseline x rate / span, or rate / target when the Hz/bin target is
+    // on, rounded up to a power of two, then floored at the baseline and
+    // capped at about 0.7 s per transform. A remote pan's tier is "fine"
+    // when the size is above the baseline. The pan's pixel width is not an
+    // input.
+    // 2026-10-10: these rows called a test-local copy of the remote
+    // planner's per-pixel rule (rate x pixels / span on a 1068 px pan);
+    // under it the 5549 Hz row was 32768 (96000 x 1068 / 5549 = 18477).
+    // The shared rule gives 4096 x 96000 / 5549 = 70861, up to 131072,
+    // capped at 65536.
     void remote_planner_caps_zoom_like_local_data()
     {
         QTest::addColumn<double>("sampleRate");
@@ -320,13 +332,23 @@ private slots:
         QTest::addColumn<int>("baseline");
         QTest::addColumn<int>("size");
         QTest::addColumn<bool>("fine");
-        QTest::newRow("300 Hz span: capped, was 262144") << 96000.0 << 300.0 << 0.0 << 4096 << 65536 << true;
-        QTest::newRow("96 kHz span: baseline, wide") << 96000.0 << 96000.0 << 0.0 << 4096 << 4096 << false;
-        QTest::newRow("5549 Hz span: below the cap") << 96000.0 << 5549.0 << 0.0 << 4096 << 32768 << true;
-        QTest::newRow("baseline 131072 wins over the cap") << 96000.0 << 300.0 << 0.0 << 131072 << 131072 << false;
-        QTest::newRow("Hz/bin 0.5: capped, was 262144") << 96000.0 << 96000.0 << 0.5 << 4096 << 65536 << true;
-        QTest::newRow("768k, 3 kHz span: engine max, was 65536") << 768000.0 << 3000.0 << 0.0 << 4096 << 262144 << true;
-        QTest::newRow("192k, 300 Hz span: 131072") << 192000.0 << 300.0 << 0.0 << 4096 << 131072 << true;
+        QTest::addColumn<bool>("inCharge");
+        QTest::newRow("300 Hz span: the 0.7 s cap") << 96000.0 << 300.0 << 0.0 << 4096 << 65536 << true << false;
+        QTest::newRow("96 kHz span: baseline, wide") << 96000.0 << 96000.0 << 0.0 << 4096 << 4096 << false << false;
+        QTest::newRow("5549 Hz span: capped, was 32768") << 96000.0 << 5549.0 << 0.0 << 4096 << 65536 << true << false;
+        QTest::newRow("24 kHz span: four times the baseline") << 96000.0 << 24000.0 << 0.0 << 4096 << 16384 << true << false;
+        QTest::newRow("baseline 131072 wins over the cap") << 96000.0 << 300.0 << 0.0 << 131072 << 131072 << false << false;
+        QTest::newRow("Hz/bin 0.5: capped, in charge") << 96000.0 << 96000.0 << 0.5 << 4096 << 65536 << true << true;
+        QTest::newRow("Hz/bin 50: baseline, not in charge") << 96000.0 << 96000.0 << 50.0 << 4096 << 4096 << false << false;
+        QTest::newRow("Hz/bin 50 replaces the zoom term") << 96000.0 << 300.0 << 50.0 << 4096 << 4096 << false << false;
+        QTest::newRow("Hz/bin 0.5, baseline 131072: not in charge") << 96000.0 << 96000.0 << 0.5 << 131072 << 131072 << false << false;
+        QTest::newRow("768k, 3 kHz span: engine max") << 768000.0 << 3000.0 << 0.0 << 4096 << 262144 << true << false;
+        QTest::newRow("192k, 300 Hz span: 131072") << 192000.0 << 300.0 << 0.0 << 4096 << 131072 << true << false;
+        QTest::newRow("rate 0") << 0.0 << 300.0 << 0.5 << 4096 << 4096 << false << false;
+        QTest::newRow("span 0") << 96000.0 << 0.0 << 0.5 << 4096 << 4096 << false << false;
+        QTest::newRow("negative span") << 96000.0 << -300.0 << 0.0 << 8192 << 8192 << false << false;
+        QTest::newRow("rate NaN") << std::numeric_limits<double>::quiet_NaN() << 300.0 << 0.0 << 4096 << 4096 << false << false;
+        QTest::newRow("span infinite") << 96000.0 << std::numeric_limits<double>::infinity() << 0.5 << 4096 << 4096 << false << false;
     }
 
     void remote_planner_caps_zoom_like_local()
@@ -337,9 +359,30 @@ private slots:
         QFETCH(int, baseline);
         QFETCH(int, size);
         QFETCH(bool, fine);
-        const int planned = remotePlannedFftSize(sampleRate, 1068, spanHz, hzPerBin, baseline);
-        QCOMPARE(planned, size);
-        QCOMPARE(planned > baseline, fine);
+        QFETCH(bool, inCharge);
+        const ControlRanges::AutoZoomPlan plan =
+            ControlRanges::planAutoZoomFft(baseline, sampleRate, spanHz, hzPerBin);
+        QCOMPARE(plan.size, size);
+        QCOMPARE(plan.size > baseline, fine);
+        QCOMPARE(plan.hzPerBinInCharge, inCharge);
+    }
+
+    void plan_is_usable_at_compile_time()
+    {
+        static_assert(ControlRanges::planAutoZoomFft(4096, 96000.0, 300.0, 0.0).size == 65536);
+        static_assert(ControlRanges::planAutoZoomFft(4096, 96000.0, 96000.0, 0.5).hzPerBinInCharge);
+        static_assert(!ControlRanges::planAutoZoomFft(4096, 96000.0, 96000.0, 50.0).hzPerBinInCharge);
+    }
+
+    // Pans that share a stream run the largest size any of them plans.
+    void largest_planned_size_of_several_pans()
+    {
+        const std::array<ControlRanges::AutoZoomPlan, 2> plans{{{4096, false}, {65536, true}}};
+        QCOMPARE(ControlRanges::largestPlannedFftSize(plans, 4096), 65536);
+        const std::array<ControlRanges::AutoZoomPlan, 2> reversed{{{65536, false}, {4096, false}}};
+        QCOMPARE(ControlRanges::largestPlannedFftSize(reversed, 4096), 65536);
+        QCOMPARE(ControlRanges::largestPlannedFftSize({}, 4096), 4096);
+        QCOMPARE(ControlRanges::largestPlannedFftSize({}, 16384), 16384);
     }
 
     // Hysteresis: small bandwidth change relative to current FFT size
@@ -369,6 +412,90 @@ private slots:
         const auto r = computeAutoZoomFftSize(4096, 32768, 768000.0, 192000.0);
         QVERIFY(r.replanned);
         QCOMPARE(r.size, 16384);
+    }
+
+    // Display pill plan Task 7: two pans on one stream at 96 kHz, baseline
+    // 4096, spans 96 kHz and 3 kHz.  The engine runs the narrow pan's need
+    // (4096 x 96000 / 3000 = 131072, capped at 65536 for 96 kHz), and when
+    // the narrow pan zooms back out it returns to 4096.
+    void two_pans_on_one_stream_run_the_finest_need()
+    {
+        const auto zoomed = replanStreamFftSize(4096, 4096,
+                                                {{96000.0, 96000.0}, {96000.0, 3000.0}});
+        QVERIFY(zoomed.replanned);
+        QCOMPARE(zoomed.size, 65536);
+        // The order of the pans does not matter.
+        QCOMPARE(replanStreamFftSize(4096, 4096, {{96000.0, 3000.0}, {96000.0, 96000.0}}).size,
+                 65536);
+
+        const auto zoomedOut = replanStreamFftSize(4096, zoomed.size,
+                                                   {{96000.0, 96000.0}, {96000.0, 96000.0}});
+        QVERIFY(zoomedOut.replanned);
+        QCOMPARE(zoomedOut.size, 4096);
+    }
+
+    // The wide pan zooming does not shrink the engine under the narrow
+    // pan's need.
+    void a_wide_pan_does_not_take_resolution_from_a_narrow_one()
+    {
+        const auto r = replanStreamFftSize(4096, 65536,
+                                           {{96000.0, 48000.0}, {96000.0, 3000.0}});
+        QVERIFY(!r.replanned);
+        QCOMPARE(r.size, 65536);
+    }
+
+    // The Size slider's choice is the floor: baseline 8192 at full span
+    // runs 8192 (from the 4096 it ran), half span 16384, back to full span
+    // 8192 again.
+    void new_baseline_is_the_floor_through_a_zoom()
+    {
+        const double rate = 192000.0;
+        const auto applied = replanStreamFftSize(8192, 4096, {{rate, rate}});
+        QVERIFY(applied.replanned);
+        QCOMPARE(applied.size, 8192);
+        const auto half = replanStreamFftSize(8192, applied.size, {{rate, rate / 2.0}});
+        QCOMPARE(half.size, 16384);
+        const auto back = replanStreamFftSize(8192, half.size, {{rate, rate}});
+        QCOMPARE(back.size, 8192);
+    }
+
+    // A lower slider choice shrinks an engine that ran the higher one.
+    void lower_baseline_shrinks_at_full_span()
+    {
+        const auto r = replanStreamFftSize(4096, 16384, {{192000.0, 192000.0}});
+        QVERIFY(r.replanned);
+        QCOMPARE(r.size, 4096);
+    }
+
+    // Baseline 262144 at 48 kHz is above that rate's zoom cap (32768) and
+    // is honoured exactly, at full span and zoomed.
+    void largest_baseline_at_48k_is_honoured_exactly()
+    {
+        QCOMPARE(replanStreamFftSize(262144, 4096, {{48000.0, 48000.0}}).size, 262144);
+        QCOMPARE(replanStreamFftSize(262144, 4096, {{48000.0, 3000.0}}).size, 262144);
+    }
+
+    // The Hz/bin target sizes every pan of the stream alike, whatever its
+    // span: 96000 / 5 = 19200 points, up to 32768.
+    void hz_per_bin_target_sizes_the_stream()
+    {
+        const auto r = replanStreamFftSize(4096, 4096,
+                                           {{96000.0, 96000.0}, {96000.0, 3000.0}}, 5.0);
+        QCOMPARE(r.size, 32768);
+    }
+
+    // A pan with no rate or span yet states no need; with no pan that
+    // does, the engine keeps its size.
+    void pans_without_a_rate_or_span_state_no_need()
+    {
+        QCOMPARE(replanStreamFftSize(4096, 4096, {{0.0, 96000.0}, {96000.0, 24000.0}}).size,
+                 16384);
+        const auto none = replanStreamFftSize(4096, 32768, {{0.0, 96000.0}, {96000.0, 0.0}});
+        QVERIFY(!none.replanned);
+        QCOMPARE(none.size, 32768);
+        const auto noPans = replanStreamFftSize(4096, 32768, {});
+        QVERIFY(!noPans.replanned);
+        QCOMPARE(noPans.size, 32768);
     }
 
     // Defensive: zero / negative inputs short-circuit without crashing.

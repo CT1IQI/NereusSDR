@@ -68,6 +68,7 @@ ReducerConfig reducerConfig(const SpectrumEndpointRequest& request,
     config.detector = plane.detector;
     config.averageMode = plane.averageMode;
     config.averageAlpha = plane.averageAlpha;
+    config.averageFrames = plane.averageFrames;
     return config;
 }
 
