@@ -509,17 +509,17 @@ private slots:
         QVERIFY(h.controller.displaysSentFromThread());
         DaemonSpectrumSource* const source = &h.controller.sharedSpectrum()->source();
         const MediaSourceKey key = source->activeSources().constFirst();
-        const auto contextCentres = [&controls] {
-            QList<double> centres;
+        const auto contextCenters = [&controls] {
+            QList<double> centers;
             for (const QList<QVariant>& arguments : std::as_const(controls)) {
                 const QJsonObject message = arguments.constFirst().toJsonObject();
                 if (message.value(QStringLiteral("op")).toString() == QStringLiteral("context")
                     && message.value(QStringLiteral("endpointId")).toInteger()
                         == qint64{kFirstEndpoint}) {
-                    centres.append(message.value(QStringLiteral("sourceCentreHz")).toDouble());
+                    centers.append(message.value(QStringLiteral("sourceCentreHz")).toDouble());
                 }
             }
-            return centres;
+            return centers;
         };
         // Frames from the engine's slot, as the FFT engine thread publishes
         // them, until this pan is sending.
@@ -530,12 +530,12 @@ private slots:
             return h.log->copy().size() >= 5;
         }, 10'000));
 
-        const double centre = std::round(h.radio.streamCentreHz(key.streamIndex));
-        const double leftCentre = centre + 1000.0;
-        const double newCentre = centre + 2000.0;
+        const double center = std::round(h.radio.streamCentreHz(key.streamIndex));
+        const double leftCenter = center + 1000.0;
+        const double newCenter = center + 2000.0;
         controls.clear();
         // From here the main thread runs no event until the second retune.
-        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, leftCentre));
+        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, leftCenter));
         QVERIFY(source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs()));
         // The display thread takes the frame in and, the pan waiting on a
         // configure, leaves the frame to this thread.
@@ -545,21 +545,21 @@ private slots:
             QThread::msleep(5);
         }
         QVERIFY(!source->frameWaitingForTest(key));
-        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, newCentre));
+        QVERIFY(h.radio.requestStreamCentre(h.firstSlice, newCenter));
 
         QVERIFY(QTest::qWaitFor([&] {
             source->publishFrameForTest(key, DaemonSpectrumSource::monotonicNowNs());
-            return contextCentres().contains(newCentre);
+            return contextCenters().contains(newCenter);
         }, 10'000));
-        const QList<double> centres = contextCentres();
+        const QList<double> centers = contextCenters();
         QStringList sent;
-        for (double sentCentre : centres) {
-            sent.append(QString::number(sentCentre, 'f', 0));
+        for (double sentCenter : centers) {
+            sent.append(QString::number(sentCenter, 'f', 0));
         }
         const QString detail = QStringLiteral("contexts after the retunes: %1")
                                    .arg(sent.join(QStringLiteral(", ")));
-        QVERIFY2(!centres.contains(leftCentre), qPrintable(detail));
-        QCOMPARE(centres.constFirst(), newCentre);
+        QVERIFY2(!centers.contains(leftCenter), qPrintable(detail));
+        QCOMPARE(centers.constFirst(), newCenter);
         h.finish();
     }
 };

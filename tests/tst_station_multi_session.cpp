@@ -4624,8 +4624,11 @@ private slots:
     // station thread is held for 500 ms, as Direct3D can hold the hosted
     // window's on a locked Windows session, and the receiver is retuned at
     // the end of the hold, before the station thread gets to the frames
-    // taken in for it meanwhile. A's displays keep going through the hold,
-    // and B is sent no context for the center the receiver has left.
+    // taken in for it meanwhile. A's displays are all sent from the display
+    // thread, and B is sent no context for the center the receiver has left.
+    // How A's sends were spaced through the hold is logged, not checked:
+    // this suite runs beside others, so the gap is checked in
+    // tst_daemon_display_send_thread, which runs alone (REALTIME).
     void twoDevicesThroughAHeldStationThreadAndARetune()
     {
         MediaCore m(DisplayBudgetLimits{10'000'000, 1'000'000, 1});
@@ -4636,15 +4639,15 @@ private slots:
         SliceModel* const b = m.core.model->sliceById(sliceB);
         QVERIFY(a && b);
         QCOMPARE(a->streamIndex(), b->streamIndex());
-        const double centre = m.core.model->streamCentreHz(a->streamIndex());
+        const double center = m.core.model->streamCentreHz(a->streamIndex());
         m.nextSendsDisplaysFromAnyThread = true;
         MediaFake* const transportA = m.startMedia(m.appA);
         m.nextSendsDisplaysFromAnyThread = false;
         MediaFake* const transportB = m.startMedia(m.appB);
         QVERIFY(transportA && transportA->threadDisplays);
         QVERIFY(transportB && !transportB->threadDisplays);
-        sendMedia(m.appA, displayRequestAt(1, sliceA, centre, 60));
-        sendMedia(m.appB, displayRequestAt(1, sliceB, centre, 60));
+        sendMedia(m.appA, displayRequestAt(1, sliceA, center, 60));
+        sendMedia(m.appB, displayRequestAt(1, sliceB, center, 60));
         DaemonMediaController* const controllerA = m.hub->controllerFor(m.epochOf(0));
         DaemonMediaController* const controllerB = m.hub->controllerFor(m.epochOf(1));
         QTRY_COMPARE(controllerA->activeEndpointCount(), 1);
@@ -4675,23 +4678,23 @@ private slots:
                 && transportB->displays.size() >= 10;
         }, 10'000));
 
-        const auto contextCentres = [](const LoopbackTransport* app) {
-            QList<double> centres;
+        const auto contextCenters = [](const LoopbackTransport* app) {
+            QList<double> centers;
             for (const QJsonObject& context : mediaOps(app, QStringLiteral("context"))) {
-                centres.append(context.value(QStringLiteral("sourceCentreHz")).toDouble());
+                centers.append(context.value(QStringLiteral("sourceCentreHz")).toDouble());
             }
-            return centres;
+            return centers;
         };
-        const qsizetype contextsBeforeB = contextCentres(m.appB).size();
-        const double newCentre = std::round(centre) + 2000.0;
+        const qsizetype contextsBeforeB = contextCenters(m.appB).size();
+        const double newCenter = std::round(center) + 2000.0;
         const auto holdStart = std::chrono::steady_clock::now();
         QThread::msleep(500);
         const auto holdEnd = std::chrono::steady_clock::now();
         // Still before any event: the frames taken in during the hold are
         // of the old center now.
-        QVERIFY(m.core.model->requestStreamCentre(sliceA, newCentre));
+        QVERIFY(m.core.model->requestStreamCentre(sliceA, newCenter));
         QVERIFY(QTest::qWaitFor([&] {
-            return contextCentres(m.appB).mid(contextsBeforeB).contains(newCentre);
+            return contextCenters(m.appB).mid(contextsBeforeB).contains(newCenter);
         }, 10'000));
 
         const std::thread::id mainThread = std::this_thread::get_id();
@@ -4711,9 +4714,9 @@ private slots:
         const double maxGapMs =
             std::chrono::duration<double, std::milli>(maxGap).count();
         QStringList sentB;
-        const QList<double> centresB = contextCentres(m.appB).mid(contextsBeforeB);
-        for (double sentCentre : centresB) {
-            sentB.append(QString::number(sentCentre, 'f', 0));
+        const QList<double> centersB = contextCenters(m.appB).mid(contextsBeforeB);
+        for (double sentCenter : centersB) {
+            sentB.append(QString::number(sentCenter, 'f', 0));
         }
         const QString detail =
             QStringLiteral("A: %1 of %2 displays on the station thread, %3 during the hold, "
@@ -4725,9 +4728,8 @@ private slots:
                 .arg(sentB.join(QStringLiteral(", ")));
         qInfo().noquote() << detail;
         QVERIFY2(onMain == 0, qPrintable(detail));
-        QVERIFY2(maxGapMs < 50.0, qPrintable(detail));
-        QVERIFY2(!centresB.contains(centre), qPrintable(detail));
-        QCOMPARE(centresB.constFirst(), newCentre);
+        QVERIFY2(!centersB.contains(center), qPrintable(detail));
+        QCOMPARE(centersB.constFirst(), newCenter);
     }
 
     // Fix wave (ruling 9.1): a display on a slice its device can no longer
