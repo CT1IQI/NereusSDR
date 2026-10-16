@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434: a second hardware key with no unkey between
+//                 (a key again inside MoxController's unkey wait) no longer
+//                 saves the TX S-ATT or forced-off preamp as the RX value.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -1062,11 +1066,21 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // Level Cal: PreampMode::Off is HPSDR_OFF now that the ten
             // Thetis modes are held (Minus20 is HPSDR_MINUS20).
             // Thetis leaves RX1EnableAtt off at the unkey; so does this.
-            saveRxPreampMode();
+            // Issue #434: Thetis's two HdwMOXChanged calls always take turns
+            // because its MOX change runs in one call.  MoxController emits
+            // hardwareFlipped(false) only after its unkey timers, and a key
+            // inside that wait stops them, so a second key can arrive with
+            // the preamp already forced Off.  Save only on the first key.
+            if (!m_savedRxPreampValid) {
+                saveRxPreampMode();
+                if (rx2PreampPresent()) {
+                    m_savedRx2PreampMode = m_rx2PreampMode;
+                }
+                m_savedRxPreampValid = true;
+            }
             setStepAttEnabled(false);
             setPreampMode(PreampMode::Off);			// set to -20dB
             if (rx2PreampPresent()) {
-                m_savedRx2PreampMode = m_rx2PreampMode;
                 setRx2PreampMode(PreampMode::Off);
             }
         } else {
@@ -1106,8 +1120,15 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
             // actually populated the stash.  Without the flag, the restore
             // ran unconditionally and clobbered the user's RX att value
             // with the default-zero stash whenever ATT-on-TX was OFF.
-            m_savedRxAttDbForTx = m_attDb;
-            m_savedRxAttDbValid = true;
+            //
+            // Issue #434: a second key with no unkey between (a key again
+            // inside MoxController's unkey wait, which skips its
+            // hardwareFlipped(false)) finds the TX value in m_attDb; the
+            // valid stash already holds the RX one, so keep it.
+            if (!m_savedRxAttDbValid) {
+                m_savedRxAttDbForTx = m_attDb;
+                m_savedRxAttDbValid = true;
+            }
             if (m_attDb != txAtt) {
                 m_attDb = txAtt;
                 emit attenuationChanged(txAtt);
@@ -1150,6 +1171,8 @@ void StepAttenuatorController::onMoxHardwareFlipped(bool isTx)
                     setRx2PreampMode(m_savedRx2PreampMode);
                 }
             }
+            // Issue #434: the next key saves afresh.
+            m_savedRxPreampValid = false;
         } else {
             // Standard board: clear TX ATT back to 0 + restore the saved RX
             // att so the S-ATT spinbox tracks the un-keyed value.

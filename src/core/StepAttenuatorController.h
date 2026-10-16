@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434: a second hardware key with no unkey between
+//                 (a key again inside MoxController's unkey wait) no longer
+//                 saves the TX S-ATT or forced-off preamp as the RX value.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-13 — Route operator S-ATT edits to the displayed RX/TX lane.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -863,6 +867,11 @@ private:
     // Distinct from m_classicSavedPreamp (which is for the auto-att
     // Classic mode undo path and serves a different purpose).
     PreampMode m_savedPreampMode{PreampMode::Off};
+
+    // Issue #434: true from the HPSDR key that saved m_savedPreampMode (and
+    // m_savedRx2PreampMode) until the matching unkey, so a second key with
+    // no unkey between does not save the forced Off as the RX mode.
+    bool m_savedRxPreampValid{false};
 
     // Saved RX att for restore on TX→RX (#175 follow-up bench, 2026-05-04).
     //

@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16 — Issue #434: a key again before the unkey's hardware flip
+//                 keeps the saved RX S-ATT and HPSDR preamp mode.
+//                 NereusSDR-original tests; no new Thetis logic.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-26 — Implemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -74,6 +78,7 @@
 #include <QSignalSpy>
 
 #include "core/AppSettings.h"
+#include "core/MoxController.h"
 #include "core/RadioConnection.h"
 #include "core/StepAttenuatorController.h"
 #include "core/WdspTypes.h"
@@ -905,6 +910,89 @@ private slots:
         // Crucial assertion: m_attDb stays at 5.  Pre-fix, the inverted
         // defensive resync would have snapped it back to the stale 0.
         QCOMPARE(ctrl.attenuatorDb(), 5);
+    }
+
+    // ── Issue #434: a key again before the unkey's hardware flip ──────────
+    // Thetis's MOX change runs start to end in one call (its delays are
+    // Thread.Sleep), so its HdwMOXChanged(true) and (false) always take
+    // turns. MoxController's unkey waits on timers (the TX drain, the send
+    // ring, key-up delay) before it emits hardwareFlipped(false), and a key
+    // in that wait stops those timers, so the hardware gets a second
+    // hardwareFlipped(true) with no false between. The second key must not
+    // save the TX value as the RX one.
+    void rekeyBeforeTheUnkeyFlip_keepsTheRxAttenuation()
+    {
+        auto* ctrl = makeStdCtrl(/*txAtt20m=*/20);
+        ctrl->setAttenuation(5, 0);       // the operator's RX S-ATT
+
+        ctrl->onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl->attenuatorDb(), 31);   // force-31 (PS off + flag)
+        ctrl->onMoxHardwareFlipped(true);     // key again, no unkey flip
+        QCOMPARE(ctrl->attenuatorDb(), 31);
+
+        ctrl->onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl->attenuatorDb(), 5);    // not stuck on 31
+
+        delete ctrl;
+    }
+
+    // The same through the real MoxController: unkey, then key again before
+    // the unkey's timers run.
+    void rekeyDuringTheUnkeyWait_keepsTheRxAttenuation()
+    {
+        auto* ctrl = makeStdCtrl(/*txAtt20m=*/20);
+        ctrl->setAttenuation(5, 0);
+
+        MoxController mox;
+        mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
+        QList<bool> flips;
+        connect(&mox, &MoxController::hardwareFlipped, ctrl,
+                [&flips, ctrl](bool isTx) {
+                    flips.append(isTx);
+                    ctrl->onMoxHardwareFlipped(isTx);
+                });
+
+        mox.setMox(true);
+        QCoreApplication::processEvents();
+        QCOMPARE(ctrl->attenuatorDb(), 31);
+
+        mox.setMox(false);                // the unkey starts its wait
+        mox.setMox(true);                 // key again inside it
+        QCoreApplication::processEvents();
+        QCOMPARE(flips, (QList<bool>{true, true}));
+
+        mox.setMox(false);
+        QTRY_COMPARE(flips.size(), 3);
+        QCOMPARE(flips.last(), false);
+        QCOMPARE(ctrl->attenuatorDb(), 5);
+
+        delete ctrl;
+    }
+
+    // HPSDR boards save the RX preamp mode at the key instead; a second key
+    // must not save the forced Off as the mode to come back to.
+    void rekeyBeforeTheUnkeyFlip_hpsdrKeepsTheRxPreamp()
+    {
+        StepAttenuatorController ctrl;
+        ctrl.setTickTimerEnabled(false);
+        ctrl.setIsHpsdrBoard(true);
+        ctrl.setAttOnTxEnabled(true);
+        ctrl.setPreampMode(PreampMode::On);
+
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Off);
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.savedPreampModeForTest(), PreampMode::On);
+
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.preampMode(), PreampMode::On);
+
+        // The next over saves afresh.
+        ctrl.setPreampMode(PreampMode::Minus20);
+        ctrl.onMoxHardwareFlipped(true);
+        QCOMPARE(ctrl.savedPreampModeForTest(), PreampMode::Minus20);
+        ctrl.onMoxHardwareFlipped(false);
+        QCOMPARE(ctrl.preampMode(), PreampMode::Minus20);
     }
 };
 
