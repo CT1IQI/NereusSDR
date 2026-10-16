@@ -10,6 +10,9 @@
 //               Anthropic Claude Code.
 //   2026-10-12: Separate mirrored pin projection from preference requests.
 //               J.J. Boyd / KG4VCF, AI-assisted via Codex.
+//   2026-10-11: kReceiverMoveSettleMs, the longest a pan's ask waits to be
+//               for its slice's new receiver. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: R-DISP-HOLD: planNowForTest. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-10: the microphone is collected by a real-time thread while
@@ -467,6 +470,17 @@ public:
     /// (kPlannerIntervalMs), so a drag, whose steps come far faster, asks
     /// once when it stops, not at every step.
     static constexpr int kResizeSettleMs = 2 * kPlannerIntervalMs;
+    /// The longest a pan's ask waits to be for its slice's new receiver
+    /// once the Core has moved the slice to one. The Core says at once that
+    /// the display is retired; the slice's new frequency and receiver come
+    /// with its next mirrored update (StationServer::kDefaultDeltaFlushMs,
+    /// 50 ms, plus the link), and the pan then follows its slice. The ask
+    /// goes out as soon as both have happened. Past this the pan asks for
+    /// the view it has, as it always did, so a pan is never left blank by a
+    /// move this window was not told of (a slice sent away and back between
+    /// two updates). Under kPanWaitingGraceMs, so the wait shows no status
+    /// line.
+    static constexpr int kReceiverMoveSettleMs = 10 * kPlannerIntervalMs;
     /// R-R3-37: what the pan named `panId` was last told about its remote
     /// display, including its zoom-detail limit. The pan paints
     /// buildPanStatusText() of this.

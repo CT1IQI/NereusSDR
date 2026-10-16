@@ -18,6 +18,13 @@
 //   2026-10-12: Refresh CTUN container state on mirrored pan changes without
 //               a new pin request. J.J. Boyd / KG4VCF, AI-assisted via Codex.
 //
+//   2026-10-11 - Settings restore: the settings are saved when the
+//                session ends (logoff, shutdown, a forced close), through
+//                SessionEndSave. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-11 - Settings restore: the slices made for empty pans at
+//                connect come back as they were saved (populatePanSlices).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-11 - Workspace preview only: the window owns the filter that
 //                 arranges while Shift is held and leaves Arrange on Escape
 //                 (ArrangeHoldFilter). J.J. Boyd (KG4VCF), AI-assisted via
@@ -968,6 +975,7 @@ warren@wpratt.com
 //============================================================================================//
 
 #include "MainWindow.h"
+#include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
 #include "gui/multidevice/NoticeCard.h"
@@ -1950,6 +1958,36 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         saveMainWindowGeometry();
         AppSettings::instance().save();
     });
+
+    // A logoff, shutdown or an installer closing the app (settings restore
+    // audit 2026-10-11, gap 8). closeEvent and aboutToQuit above cover a
+    // normal close and a signal; the session manager's request reached
+    // neither in time, so whatever the 500 ms save timer had not written
+    // was lost. The same saves as closeEvent, and nothing else: the
+    // session's end can still be called off, so the radio stays connected
+    // and nothing is torn down. If the session does end, the quit that
+    // follows runs the handler above.
+    new SessionEndSave([this]() {
+        if (m_radioModel) {
+            m_radioModel->flushPendingSettingsSave();
+        }
+        if (m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    applet->spectrumWidget()->saveSettings();
+                }
+            }
+        }
+        if (m_containerManager) {
+            m_containerManager->saveState();
+        }
+        if (m_panStack) {
+            m_panStack->saveSplitterState();
+            m_panStack->saveFloatingGeometry();
+        }
+        saveMainWindowGeometry();
+        AppSettings::instance().save();
+    }, this);
 
     // ── Remote-daemon R2 Task 20: the remote gate, then the dial ─────────
     //
@@ -17734,7 +17772,11 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         if (hosting) {
             hosting->addOnPan(emptyPan);
         } else {
-            model->addSliceOnPan(emptyPan);
+            // Settings restore (2026-10-11): the slices made here at
+            // connect (not asked for by the operator) come back as they
+            // were saved, so receivers B to D return like A without a
+            // Core. A layout change or +RX still makes a new slice.
+            model->addSliceOnPan(emptyPan, !operatorRequested);
         }
     }
 }
