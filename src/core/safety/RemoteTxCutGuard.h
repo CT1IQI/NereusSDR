@@ -21,7 +21,8 @@
 // - heardOnMain(at) while armed moves last-heard the same way (a keepalive
 //   for the armed device on any path, seen on the main thread) but does not
 //   start judging: a main thread that runs needs no guard.
-// - While judging, once now >= last-heard + kDeadlineMs, CutFn runs once on
+// - While judging, once now >= last-heard + kDeadlineMs + 1 ms (more than
+//   kDeadlineMs of silence, the watchdog's own rule), CutFn runs once on
 //   the guard's thread with the armed epoch, the arm serial and how long
 //   the link was silent; then nothing more until the next arm(). A heard
 //   after the cut does not undo it.
@@ -43,6 +44,9 @@
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-16: cuts after more than kDeadlineMs of silence, not at it,
+//               as the watchdog does. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #pragma once
 

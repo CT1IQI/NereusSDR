@@ -44,6 +44,9 @@
 //   2026-10-15: a quiet trip from the off-main cut guard (tripQuiet)
 //               stops once in either order. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-16: a quiet trip reports the guard's measured silence when
+//               this clock reads less, never less than its own. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -121,6 +124,7 @@ private slots:
     void keepalivesHoldTenMinutesAndOneMissedStopsBetween400And410();
     void theLinkClosingStopsAtOnce();
     void aQuietTripFromTheCutGuardStopsOnce();
+    void aQuietTripReportsTheGuardsSilence();
     void aTripLogsTheDeviceIdAsHex();
     void voxArmedIsWatchedAndStops();
     void watchingStartsWithAFresh400ms();
@@ -248,6 +252,34 @@ void TestRemoteTxWatchdog::aQuietTripFromTheCutGuardStopsOnce()
     QCOMPARE(other.stops.size(), size_t(1));
     QVERIFY(!other.watchdog.tripQuiet(kTablet));
     QCOMPARE(other.stops.size(), size_t(1));
+}
+
+// CI 2026-10-16: the guard judged more than 400 ms on its own clock and the
+// watchdog's clock, rounding at other instants, read 400; the stop said
+// 400 ms. The guard's measurement is what the stop reports when it is the
+// longer; it never lowers the watchdog's own reading.
+void TestRemoteTxWatchdog::aQuietTripReportsTheGuardsSilence()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel));
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    QVERIFY(tripped.isValid());
+    rig.nowMs = 100 + RemoteTxWatchdog::kLinkLossDeadlineMs;   // reads 400
+    QVERIFY(rig.watchdog.tripQuiet(kPhone, RemoteTxWatchdog::kLinkLossDeadlineMs + 1));
+    QCOMPARE(tripped.count(), 1);
+    QCOMPARE(tripped.at(0).at(2).toLongLong(), qint64(RemoteTxWatchdog::kLinkLossDeadlineMs + 1));
+
+    Rig longer;
+    longer.watchdog.setKeyed(kPhone, true, 3);
+    longer.advanceTo(100);
+    QVERIFY(longer.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel));
+    QSignalSpy longerTripped(&longer.watchdog, &RemoteTxWatchdog::tripped);
+    longer.nowMs = 900;   // reads 800, a main thread held past the guard's cut
+    QVERIFY(longer.watchdog.tripQuiet(kPhone, RemoteTxWatchdog::kLinkLossDeadlineMs + 1));
+    QCOMPARE(longerTripped.count(), 1);
+    QCOMPARE(longerTripped.at(0).at(2).toLongLong(), qint64(800));
 }
 
 // A device id is raw bytes (the link's binary id), so the trip's warning

@@ -183,6 +183,9 @@
 //   2026-10-15: re-review wording: the one-turn deferral comment says why a
 //               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-16: the cut guard's measured silence goes to tripQuiet, so
+//               its stop never reports 400 ms for a longer silence. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -10465,7 +10468,7 @@ void StationServer::finishTransmitCutOnMain(quint64 mediaEpoch, quint64 armSeria
     // When the device's release was read in the turn this waited, the key
     // ended normally: no longer keyed by it, nothing is recorded.
     if (current && keyedByDevice && watched) {
-        m_txWatchdog->tripQuiet(deviceId);
+        m_txWatchdog->tripQuiet(deviceId, silentMs);
     }
     // Always: the model and the radio agree, and the connection's cut is
     // cleared so the next key reaches the radio. With nothing keyed (the
