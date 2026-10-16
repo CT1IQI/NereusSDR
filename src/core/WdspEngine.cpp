@@ -80,6 +80,11 @@
 //                 channel was created with, not its input rate. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-10-16 - On Windows, the RX channel map's lock is taken once in the
+//                constructor, so the first lock never races winpthreads'
+//                lazy rwlock setup (the loser of that race runs unlocked).
+//                NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 // --- From cmaster.c ---
@@ -206,6 +211,15 @@ namespace NereusSDR {
 WdspEngine::WdspEngine(QObject* parent)
     : QObject(parent)
 {
+#ifdef Q_OS_WIN
+    // With MinGW, std::shared_mutex is a pthread rwlock that winpthreads sets
+    // up on its first lock, and a thread that loses that race gets EINVAL,
+    // which libstdc++ checks only under _GLIBCXX_ASSERTIONS, and runs without
+    // the lock. Lock once here, before the DSP worker can see the map.
+    m_rxChannelsMutex.lock();
+    m_rxChannelsMutex.unlock();
+#endif
+
     // Before anything this engine does can plan (a test may open channels
     // without initialize()).
     makeFftwPlannersThreadSafe();
