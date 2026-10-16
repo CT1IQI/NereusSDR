@@ -482,7 +482,7 @@ private slots:
     }
 
     // RxApplet's mode combo gains and loses RADE2-U and RADE2-L when the
-    // Core's RADE v2 catalogue changes (refreshRadeV2Modes in the ctor).
+    // Core's RADE v2 catalog changes (refreshRadeV2Modes in the ctor).
     void rxAppletModeComboResetsBeforeRadeV2Rows()
     {
         RadioModel model(RadioModel::Role::Remote);
