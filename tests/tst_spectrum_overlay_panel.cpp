@@ -40,6 +40,10 @@
 // 2026-10-14: align the tall-pan geometry and wheel assertions with the
 // contained scrolling Display pill used by short docked pans. J.J. Boyd
 // (KG4VCF), AI-assisted via OpenAI Codex.
+//
+// 2026-10-16: "Setup defaults" names the Setup Display pages as the tree
+// shows them, and the FFT tab's opens FFT & Engine. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1824,11 +1828,11 @@ private slots:
             const char* page;
             const char* setupPage;
         } tabs[] = {
-            {Tab::Spectrum, "displayPageSpectrum", "Spectrum Defaults"},
-            {Tab::Levels, "displayPageLevels", "Grid & Scales"},
-            {Tab::Fft, "displayPageFft", "Spectrum Defaults"},
-            {Tab::Waterfall, "displayPageWaterfall", "Waterfall Defaults"},
-            {Tab::View3D, "displayPage3D", "3D View"},
+            {Tab::Spectrum, "displayPageSpectrum", "Spectrum"},
+            {Tab::Levels, "displayPageLevels", "Levels"},
+            {Tab::Fft, "displayPageFft", "FFT & Engine"},
+            {Tab::Waterfall, "displayPageWaterfall", "Waterfall"},
+            {Tab::View3D, "displayPage3D", "View"},
         };
         int clicks = 0;
         for (const auto& tab : tabs) {
