@@ -11,6 +11,7 @@
 // =================================================================
 
 #include <QDialog>
+#include <QHash>
 #include <QMap>
 #include <QString>
 #include <QStringList>
@@ -22,6 +23,7 @@
 #include <QSet>
 
 #include "gui/RemoteReceiverAudioNote.h"
+#include "gui/SetupPage.h"
 #include "gui/setup/CoreSettingsContext.h"
 #include "gui/NereusGuiExport.h"
 
@@ -93,6 +95,45 @@ public:
     void setCoreTargets(CoreTargetStore* store);
     void setCoreSettingsContext(const CoreSettingsContext& context);
     void setCoresPageBinder(std::function<void(CoresSetupPage*)> binder);
+
+    // Display pill plan Task 20 (D22, D26; R-DSP-33): how Setup's FFT
+    // controls change the station's FFT settings. One handler per control;
+    // MainWindow points them at applyFftBaseline, applyDisplayFps,
+    // applyDisplayFftWindow, applyDisplayHzPerBinTarget and
+    // applyDisplayDecimation, the path each pan's Display pill uses, so a
+    // change made here reaches every stream and every open pill. The readout
+    // source says what the active pan's FFT runs at now. Each is kept and
+    // given to every page, built now or later (SetupPage::setFftHandlers).
+    void setFftBaselineHandler(std::function<void(int)> handler);
+    void setDisplayFpsHandler(std::function<void(int)> handler);
+    void setFftWindowHandler(std::function<void(int)> handler);
+    void setHzPerBinTargetHandler(std::function<void(double)> handler);
+    void setDisplayDecimationHandler(std::function<void(int)> handler);
+    void setFftReadoutSource(std::function<DisplayFftReadoutFacts()> source);
+    // FFT sizing mode (design D38): Spectrum Defaults' "Sizing" control;
+    // MainWindow points it at applyDisplayFftSizingMode.
+    void setFftSizingModeHandler(
+        std::function<void(ControlRanges::DisplayFftSizingMode, double)> handler);
+    // One of the station's FFT settings was changed from outside this
+    // dialog (a pan's Display pill, or the Core in a remote window): every
+    // realized page is told (SetupPage::stationFftSettingsChanged), so a
+    // page showing them shows them as they now stand. MainWindow connects
+    // its stationFftSettingsChanged() to this.
+    void notifyStationFftSettingsChanged();
+
+    // Display pill plan Task 21 (D26, D27): Setup's display controls are the
+    // defaults for every pan. The first provider names every pan's widget, so
+    // a changed default reaches each pan that has no value of its own; the
+    // second names the active pan's band store (PanModels), which Grid &
+    // Scales' per-band dB Max and dB Min write. Each is kept and given to
+    // every page, built now or later (SetupPage::setDisplayProviders).
+    void setPanWidgetsProvider(std::function<QList<SpectrumWidget*>()> provider);
+    void setDisplayPanIndex(int panIndex);
+    void setDisplayPanIndicesProvider(std::function<QList<int>()> provider);
+    void setBandGridModelProvider(std::function<PanadapterModel*()> provider);
+    void setBandGridModelForPanProvider(std::function<PanadapterModel*(int)> provider);
+    void setDisplayClarityStatusProvider(std::function<std::optional<SetupDisplayClarityStatus>(int)> provider);
+
     void inspectCoreTarget(const QString& id);
     void setCoreAudioSources(RemoteMediaController* media, RemoteTelemetryController* telemetry);
     void setCoreAudioContext(const CoreSettingsContext& context);
@@ -163,6 +204,7 @@ public:
     void reloadFeedbackPreferences();
 
 signals:
+    void clarityRetuneRequested(int panIndex);
     void connectionsRequested();
     /// Present this window's connection details; never initiate a connection.
     void coreConnectionDetailsRequested();
@@ -252,6 +294,7 @@ private:
         QWidget*                  widget     = nullptr;
         int                       stackIndex = -1;
         bool                      requiresTransmit = false;
+        bool                      retainsDisplaySources = false;
         // Unavailable in a remote session: set by the local-DSP gate, or by
         // a non-empty remoteUnavailableReason on a page registered through
         // markRemoteUnavailable(). R-R3-21.
@@ -405,6 +448,16 @@ private:
     CoreSettingsContext m_coreSettingsContext;
     QString m_inspectedCoreTarget;
     std::function<void(CoresSetupPage*)> m_coresPageBinder;
+    // Display pill plan Task 20: the window's FFT handlers, for every page.
+    SetupFftHandlers m_fftHandlers;
+    void pushFftHandlers();
+    SetupDisplayProviders m_displayProviders;
+    int m_displayPanIndex{-1};
+    QWidget* m_displaySourceHost{nullptr};
+    QHash<QString, SetupPage*> m_displaySourcePages;
+    void ensureDisplaySourceSet(QWidget* hostParent = nullptr);
+    QWidget* buildDisplayAssembly(const QString& name);
+    void pushDisplayProviders();
     QPointer<RemoteMediaController> m_coreAudioMedia;
     QPointer<RemoteTelemetryController> m_coreAudioTelemetry;
     CoreSettingsContext m_coreAudioContext;

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // 2026-10-15 - catchUpTransmitCut does not stop a second time when all that
 //              is left is a release already under way. J.J. Boyd (KG4VCF),
 //              AI-assisted via Anthropic Claude Code.
@@ -30,6 +33,8 @@
 //                per device after every ownership change (ruling 5.10).
 //                J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //                Anthropic Claude Code.
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-11 - sharedLnaReason: what the 6 m BPF/LNA costs the slices
 //                sharing its input on the Anvelina Pro 3. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -670,6 +675,9 @@
 //                beside version(), which a Core sends and a remote window
 //                reads (firmwareBeta 1). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-10-10 - rebuildDspOptionsForMode judges each slice by its own
+//                mode. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 //=================================================================
@@ -927,6 +935,7 @@ struct FreeDVStation;
 // mode flips to RADE), but exposes wireRadeChannel(sliceId, channel, slice)
 // to attach the channel's snrChanged / syncChanged / rxTextDecoded
 // signals into the slot graph.
+class RadeWaveformModel;
 class RadeChannel;
 
 // Phase 3R K-bench forward decl: Resampler is used by RadioModel to
@@ -945,6 +954,7 @@ class StationCatModel;
 class CatControl;
 class SliceOwnership;
 class RfKitBandFollow;
+class MainPowerMeter;
 class AmplifierModel;
 class RfKitModel;
 class AccessoryDataModel;
@@ -1127,6 +1137,10 @@ public:
 
     // Remote-daemon R2 Task 4.
     Role role() const { return m_role; }
+    /// Local: immutable process opt-in. Remote: explicit current Core catalogue.
+    bool radeV2Enabled() const;
+    void setStationRadeV2Enabled(bool enabled);
+
     void setReceiveOnlyStationPolicy(bool receiveOnly);
     bool receiveOnlyStationPolicy() const { return m_receiveOnlyStationPolicy; }
 
@@ -3708,6 +3722,11 @@ public:
     void wireRadeChannel(int sliceId, NereusSDR::RadeChannel* channel,
                          NereusSDR::SliceModel* slice);
 
+    // Existing audio observation only. The getter is stable; refresh never
+    // creates a DSP owner, microphone stream, connection or transmit key.
+    RadeWaveformModel* radeWaveformModel();
+    void synchronizeWaveformEndpoints();
+
     // RADE reason (2026-09-30), NereusSDR-original. How the last attempt to
     // start a slice's RADE decoder ended, kept while the slice stays in RADE
     // so its radeReason can say why it is silent. Main thread only.
@@ -3804,6 +3823,7 @@ public:
     // the Core mirrors them (`amplifier`, `rfkit`). Non-null from
     // construction. A Local model binds them to its own connections; a
     // Remote model's hold the Core's values only.
+    MainPowerMeter* mainPowerMeter() const { return m_mainPowerMeter; }
     AmplifierModel* amplifierModel() const { return m_amplifierModel; }
     RfKitModel*     rfKitModel()     const { return m_rfKitModel; }
     // R-R3-48: the Core's station TCI server as the `stationTci` object.
@@ -4351,6 +4371,12 @@ public:
     // each value.
     void applyClaritySmoothDefaults();
 
+    // Records that the smooth-defaults profile has been applied (the
+    // "DisplayProfileApplied" key). The key is this model's bookkeeping:
+    // Setup's "Reset to Smooth Defaults" calls this instead of writing the
+    // key itself, as it uses setClarityEnabled for "ClarityEnabled".
+    void markDisplayProfileApplied();
+
     // Radio info
     QString name() const { return m_name; }
     QString model() const { return m_model; }
@@ -4713,9 +4739,11 @@ public:
     //
     // Emits dspChangeMeasured(elapsedMs) if a WDSP channel rebuild occurred.
     //
-    // DspOptionsPage calls this when a combo changes and the combo's mode
-    // matches the current slice mode (design Section 4B: live-apply if same
-    // mode, persist-only otherwise — applies on next mode-switch).
+    // DspOptionsPage calls this when a combo changes, with the combo's mode
+    // (design Section 4B: live-apply if same mode, persist-only otherwise —
+    // applies on next mode-switch). Each slice is judged by its own mode:
+    // every receiver whose slice is in forMode's group takes the change, and
+    // the TX channel when the TX-bound slice is in it.
     //
     // Must be called on the main thread.
     void rebuildDspOptionsForMode(DSPMode forMode);
@@ -6264,6 +6292,9 @@ signals:
     /// physical ADC (the extended pan's wideband wings) has to listen here.
     /// Codex, PR #318.
     void streamAdcRoutingChanged();
+    // Display pill plan Task 9: applyPanGridSetting(key) ran. A window's
+    // own pan models (PanModels) re-read the band's dB max and min from it.
+    void panGridSettingChanged(const QString& key);
 
     /// iPhone app Task 75 (the several-devices design, ruling 5.11a, D61):
     /// slice `sliceId` crossed a band edge and the receive antenna stayed on
@@ -6382,6 +6413,7 @@ signals:
     // nrCannotRunReason may have changed for a reason DspAssetService's own
     // signals do not carry: whether the Core says (stationDspAssetVersion).
     void nrAvailabilityChanged();
+    void radeV2AvailabilityChanged();
     // Remote-window parity Task 16: dspOptionsLastApplyMs() changed.
     void dspOptionsLastApplyMsChanged(qint64 elapsedMs);
     // Fix wave (M2): stationRadioWaiting() changed.
@@ -7663,6 +7695,31 @@ private:
     QElapsedTimer m_nnrGovernorClock;
     QHash<int, qint64> m_nnrLimitReadbackPending;
     QThread*         m_dspThread{nullptr};
+    std::unique_ptr<RadeWaveformModel> m_radeWaveforms;
+    int m_waveformTxSlice = -1;
+    quint64 m_waveformTxGeneration = 0;
+    int m_waveformMicSource = -1;
+    quint64 m_waveformMicObservationEpoch = 0;
+    quint64 m_waveformPcRevision = 0;
+    quint64 m_waveformPcSourceRevision = 0;
+    quint32 m_waveformPcCaptureGeneration = 0;
+    QString m_waveformPcConfiguredDevice;
+    QString m_waveformPcActualDevice;
+    QPointer<TxWorkerThread> m_waveformTxWorker;
+    QByteArray m_waveformTxWriter;
+    quint64 m_waveformTxLineGeneration = 0;
+    quint64 m_waveformFeedChange = 0;
+    QHash<QByteArray, quint64> m_waveformMicLineGenerations;
+    quint64 m_nextWaveformMicLineGeneration = 0;
+    struct WaveformRxIdentity {
+        quint64 routeSerial = 0;
+        int streamIndex = -1;
+        quint64 streamEpoch = 0;
+        QPointer<RxDspWorker> worker;
+        quint64 generation = 0;
+    };
+    QHash<int, WaveformRxIdentity> m_waveformRxIdentities;
+    quint64 m_nextWaveformRxGeneration = 0;
     QHash<int, RadeRxRoute> m_radeRxRoutes;
     quint64 m_nextRadeRxRouteSerial{0};
 
@@ -8091,6 +8148,7 @@ private:
     // Remote-daemon R2 Task 4: non-owning; see attachStation()/
     // detachStation() above.
     NereusSDR::IStationLink* m_station{nullptr};
+    bool m_stationRadeV2Enabled{false};
     // iPhone app plan Task 78.
     bool m_stationMayCloseLastSlice{false};
     QPointer<QObject> m_stationDevices;
@@ -8830,6 +8888,7 @@ private:
     QHash<QString, StationLanScan> m_stationLanScans;
     StationPgxlController* m_stationPgxl{nullptr};
     TunerModel*     m_tunerModel{nullptr};
+    MainPowerMeter* m_mainPowerMeter{nullptr};
     AmplifierModel* m_amplifierModel{nullptr};
     RfKitModel*     m_rfKitModel{nullptr};
     // R-R3-47 / R-R3-48: the Core's RF-Kit controller, station TCI server

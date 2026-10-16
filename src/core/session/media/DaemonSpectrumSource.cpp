@@ -10,6 +10,8 @@
 // 2026-09-30: Frames can carry their bins in dBm, converted on the engine
 // thread, so DaemonAgcSource does no per-bin log10 on the main thread.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
+// 2026-10-10: resetInputHistoryAll, the FFT input purge on a MOX edge.
+// J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
 // 2026-10-11: R-DISP-RETUNE: a caller can ask that a change of the center
 // alone relabels the running source and keeps its input history. Without
 // that the source restarts as before.
@@ -57,6 +59,7 @@ struct DaemonSpectrumSource::FrameState {
     quint64 inputFramesDropped{0};
     quint64 completedInputHandoffs{0};
     quint64 publishedFrames{0};
+    quint64 inputHistoryResets{0};
     /// Frames replaced in `latest` since the last one taken, with nobody
     /// having taken them (DaemonSpectrumFrame::replacedBefore).
     quint32 replacedSinceTaken{0};
@@ -535,32 +538,89 @@ void DaemonSpectrumSource::enqueueIq(
             // Thus a raw-I/Q callback can either post to a live engine or see
             // retired, never post through a deleted raw pointer.
             QMetaObject::invokeMethod(engine, [engine, state]() {
-            QVector<float> iq;
-            bool resetInputHistory = false;
-            {
-                QMutexLocker lock(&state->mutex);
-                if (state->retired || !state->active
-                    || state->configurationPending) {
-                    state->pendingIq.clear();
-                    state->iqDrainQueued = false;
-                    return;
-                }
-                resetInputHistory = state->inputDiscontinuity;
-                state->inputDiscontinuity = false;
-                iq.swap(state->pendingIq);
-                state->iqDrainQueued = false;
-            }
-            if (resetInputHistory) {
-                engine->resetInputHistory();
-            }
-            if (!iq.isEmpty()) {
-                engine->feedIQ(iq);
-                QMutexLocker lock(&state->mutex);
-                ++state->completedInputHandoffs;
-            }
+                drainInput(engine, state);
             }, Qt::QueuedConnection);
         }
     }
+}
+
+void DaemonSpectrumSource::drainInput(FFTEngine* engine,
+                                      const QSharedPointer<FrameState>& state)
+{
+    // On the engine's worker thread.
+    QVector<float> iq;
+    bool resetInputHistory = false;
+    {
+        QMutexLocker lock(&state->mutex);
+        if (state->retired || !state->active
+            || state->configurationPending) {
+            state->pendingIq.clear();
+            state->iqDrainQueued = false;
+            return;
+        }
+        resetInputHistory = state->inputDiscontinuity;
+        state->inputDiscontinuity = false;
+        iq.swap(state->pendingIq);
+        state->iqDrainQueued = false;
+        if (resetInputHistory) {
+            ++state->inputHistoryResets;
+        }
+    }
+    if (resetInputHistory) {
+        engine->resetInputHistory();
+    }
+    if (!iq.isEmpty()) {
+        engine->feedIQ(iq);
+        QMutexLocker lock(&state->mutex);
+        ++state->completedInputHandoffs;
+    }
+}
+
+void DaemonSpectrumSource::resetInputHistoryAll()
+{
+    // NereusSDR, based on Thetis console.cs:24243-24254 and 24132
+    // [v2.10.3.15]: Thetis purges the display buffers on a MOX edge only
+    // when "Purge WDSP buffers on MOX" is set (off by default). NereusSDR
+    // always clears the FFT input, because a transform that spans the edge
+    // mixes receive and transmit samples on every display.
+    //
+    // The engine is not touched from this thread. Each source is marked
+    // through the path a dropped packet uses (inputDiscontinuity): the
+    // samples queued before the edge are discarded here, and the drain on
+    // the engine's own worker thread calls FFTEngine::resetInputHistory
+    // before it feeds the first samples after the edge.
+    for (SourceEntry& entry : m_sources) {
+        if (!entry.engine) {
+            continue;
+        }
+        const QSharedPointer<FrameState> state = entry.state;
+        QMutexLocker lock(&state->mutex);
+        if (state->retired) {
+            continue;
+        }
+        state->pendingIq.clear();
+        state->inputDiscontinuity = true;
+        if (!state->iqDrainQueued) {
+            // No drain is waiting: post one, so the reset does not wait for
+            // the next I/Q packet. Posted under the state lock, as enqueueIq
+            // does, so it never reaches a retired engine.
+            state->iqDrainQueued = true;
+            QMetaObject::invokeMethod(entry.engine,
+                                      [engine = entry.engine.data(), state]() {
+                drainInput(engine, state);
+            }, Qt::QueuedConnection);
+        }
+    }
+}
+
+quint64 DaemonSpectrumSource::inputHistoryResets(const MediaSourceKey& key) const
+{
+    const auto it = m_sources.constFind(key);
+    if (it == m_sources.cend()) {
+        return 0;
+    }
+    QMutexLocker lock(&it->state->mutex);
+    return it->state->inputHistoryResets;
 }
 
 void DaemonSpectrumSource::attachRadioIq(SourceEntry& entry)

@@ -33,6 +33,7 @@
 #include "core/safety/TxRefusal.h"
 #include "core/session/DeviceSessionRegistry.h"
 #include "core/session/StationServer.h"
+#include "core/spectrum/FftEnginePool.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/MeterWidget.h"
@@ -416,7 +417,8 @@ void dragPan(SpectrumWidget* pan, double byHz)
 bool feedFrame(MainWindow& window, int stream)
 {
     const QVector<float> frame(4096, 1.0e-12f);
-    return QMetaObject::invokeMethod(&window, "dispatchFftFrameToPans", stream, frame, 1.0, 0.0);
+    return QMetaObject::invokeMethod(&window, "dispatchFftFrameToPans", stream, frame, 1.0, 0.0,
+                                     window.fftEnginePoolForTest()->inputGeneration());
 }
 
 class TstDesktopStationWindow final : public QObject {

@@ -1083,7 +1083,12 @@ set(CORE_SOURCES
     src/core/DspControlThread.cpp
     src/core/RxChannel.cpp
     src/core/TxChannel.cpp
+    src/models/RadeWaveformModel.cpp
+    src/core/session/media/WaveformCodec.cpp
+    src/core/audio/WaveformPublisher.cpp
+    src/core/audio/WaveformHistory.cpp
     src/core/RadeChannel.cpp
+    src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp
     src/core/RadeText.cpp
     # RADE end-of-over callsigns: FreeDV's callsign format (freedv-backend
@@ -1265,6 +1270,7 @@ set(CORE_SOURCES
     # Phase 3P-II TGXL tuner model
     src/models/TunerModel.cpp
     # R-R3-47: the Core's Power Genius and RF-Kit status objects
+    src/models/MainPowerMeter.cpp
     src/models/AmplifierModel.cpp
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
@@ -1483,6 +1489,10 @@ set(CORE_SOURCES
     # extracts every key literal this tree passes to an AppSettings
     # accessor and cross-checks this table against it.
     src/core/settings/SettingsScope.cpp
+    # Display pill plan Task 1: where a per-pan display setting is stored.
+    # The bare key is the Setup default, base_N is pan N's own override,
+    # and overrides are written only when they differ from the default.
+    src/core/settings/PanDisplayKeys.cpp
     # R2 Task 15: the AppSettings delegation seam's two live components.
     # SettingsProxy.cpp is the client-side cache installed via
     # AppSettings::setRemoteBackend() on a remote-mode GUI. SettingsProxyServer.cpp
@@ -1743,6 +1753,11 @@ set(GUI_SOURCES
     # Remote-window parity Task 29 (A11, R-R3-49): one MOX display
     # controller for both windows, and its local and remote sources.
     src/gui/PanClarityRegistry.cpp
+    # Display pill plan Task 9: a per-band model for every window pan.
+    src/gui/PanModels.cpp
+    # Display pill plan Task 18: one pan's Display pill, wired to hooks.
+    src/gui/DisplayPillWiring.cpp
+    src/gui/DisplayPillWiring.h
     src/gui/MoxDisplayController.cpp
     src/gui/TxDisplaySource.cpp
     # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the
@@ -1807,6 +1822,7 @@ set(GUI_SOURCES
     src/gui/styles/WorkspaceStyle.cpp
     src/gui/styles/WorkspaceStyle.h
     src/gui/instruments/BarInstrument.cpp
+    src/gui/instruments/PowerReadingDescriptor.cpp
     src/gui/instruments/BarInstrument.h
     src/gui/instruments/FrequencyInstrument.cpp
     src/gui/instruments/FrequencyInstrument.h
@@ -1850,6 +1866,12 @@ set(GUI_SOURCES
     src/gui/PanLayoutDialog.cpp
     src/gui/ImdOverlay.h
     src/gui/ImdOverlay.cpp
+    src/gui/ImdMeasurementFrame.h
+    src/gui/ImdMeasurementPresenter.h
+    src/gui/ImdMeasurementPanel.cpp
+    src/gui/ImdMeasurementPresenter.cpp
+    src/gui/ImdWaterfallAnnotations.h
+    src/gui/ImdWaterfallAnnotations.cpp
     src/gui/dbm_strip_math.cpp
     src/gui/popup_placement.cpp
     src/gui/SpectrumOverlayMenu.cpp
@@ -2059,6 +2081,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
     src/gui/meters/ItemGroup.cpp
+    src/gui/meters/WaveformMeterItem.cpp
     src/gui/meters/MeterPoller.cpp
     src/gui/meters/SpacerItem.cpp
     src/gui/meters/FadeCoverItem.cpp
@@ -2177,6 +2200,7 @@ set(GUI_SOURCES
     src/gui/applets/CwxApplet.cpp
     src/gui/applets/DvkApplet.cpp
     src/gui/applets/CatApplet.cpp
+    src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/RotorApplet.cpp
     src/gui/applets/AmpApplet.cpp
@@ -2779,7 +2803,7 @@ endif()
 
 # --------------------------------------------------------------------------
 # RADE neural codec for FreeDV digital voice (Phase 3R)
-# License: BSD 2-Clause (radae_nopy at b2891023f3aecdf8b1793618000b1be6bcb2c4d1)
+# License: BSD 2-Clause (rade_c at c8a3dc156045cae2cd251e1a4be0c304c9ddf2f9)
 # See docs/architecture/phase3j2-3r-spots-and-rade-design.md Section 5
 #
 # radae_nopy's CMakeLists.txt fetches and builds Opus from xiph at first
@@ -3530,6 +3554,27 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install(FILES packaging/station-image/common/nereusd-audio.conf
             DESTINATION "${NEREUSD_SYSTEMD_UNIT_DIR}/nereusd.service.d"
             RENAME audio.conf
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    # Network receive buffer limit (the maintainer's ruling, 2026-10-11: the
+    # Core's installer raises it). The radio socket asks for
+    # RadioConnection::kRadioSocketReceiveBufferBytes (4 MB) and Linux grants
+    # at most net.core.rmem_max, 212992 bytes on the Rock 5C as found. One
+    # sysctl.d file, in the vendor directory so a package owns it and removing
+    # the package takes it away, sets that one limit to what the Core asks
+    # for; its name sorts ahead of an administrator's files so theirs win.
+    # /usr/lib/sysctl.d is where systemd-sysctl reads vendor files on every
+    # layout, so it is not taken from the install prefix. The helper beside
+    # it applies the limit at install, only ever upward: the .deb postinst
+    # and the Rock and Pi stage installers run it.
+    install(FILES packaging/nereusd-receive-buffer.conf
+            DESTINATION "/usr/lib/sysctl.d"
+            RENAME 10-nereusd.conf
+            COMPONENT nereusd
+            EXCLUDE_FROM_ALL)
+    install(PROGRAMS packaging/nereusd-raise-receive-buffer-limit.sh
+            DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
+            RENAME raise-receive-buffer-limit
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
     # Source-stage installers for both ARM stations use the same bounded

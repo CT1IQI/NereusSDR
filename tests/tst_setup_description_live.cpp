@@ -13,6 +13,10 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-10: txReadingsVersion is 4 (the six transmit peak readings).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-10: the cap is 26 (Display's Waterfall Defaults level gates).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-10-12: the negotiated cap is 29; Hardware remains frozen at 23.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #include <QtTest>
 
 #include <algorithm>
@@ -695,9 +699,10 @@ private slots:
     // reason; a version 15 phone keeps version 13's Hardware. Version 17
     // (the Alex-1 low-pass rows) keeps them, and version 18 (HL2 Options'
     // clock rows) opens the clock rows; version 23 (Calibration's Rx1 6m
-    // LNA row) is Hardware's cap; 25 (Audio > Outputs) is the
-    // description's own (21: CAT & Network's Forget row follows Duplicate;
-    // 22: DSP's RX buffer size lock; 24: Audio > TX Input).
+    // LNA row) is Hardware's cap; 27 (Appearance's Trace Color row) is
+    // followed by Display versions 28/29 (21: CAT & Network's Forget row follows
+    // Duplicate; 22: DSP's RX buffer size lock; 24: Audio > TX Input;
+    // 25: Audio > Outputs; 26: Display's Waterfall Defaults level gates).
     void pairedV16PhoneReadsHl2Options()
     {
         const auto hl2OptionsOf = [](const QJsonObject& hardware) {
@@ -715,7 +720,7 @@ private slots:
         const QList<std::tuple<int, int, int>> declarations{
             {16, 16, 16}, {17, 17, 17}, {18, 18, 18}, {19, 19, 18}, {20, 20, 18},
             {21, 21, 18}, {22, 22, 18}, {23, 23, 23}, {24, 24, 23}, {25, 25, 23},
-            {99, 25, 23},
+            {26, 26, 23}, {27, 27, 23}, {28, 28, 23}, {29, 29, 23}, {99, 29, 23},
             {15, 15, 13}};
         for (const auto& [declared, granted, received] : declarations) {
             // One Core per phone: five phones are more than a Core's places.

@@ -10,15 +10,18 @@
 // std::this_thread::sleep_for and runs no event loop (the guard is not a
 // QObject and needs none).
 //
-// Real time throughout: labelled realtime. A cut is bounded at
-// kLinkLossDeadlineMs + 100 ms (500 ms) after the last stamp, the bound
-// tst_tx_link_loss_each_path uses.
+// Real time throughout: labelled realtime. A cut comes more than
+// kLinkLossDeadlineMs and at most kLinkLossDeadlineMs + 100 ms (500 ms)
+// after the last stamp, the bounds tst_tx_link_loss_each_path uses.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-10-15: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), remote transmit cut off the main thread, with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-16: a cut comes after more than kDeadlineMs of silence, never
+//               at it (the watchdog's rule): every bound is now strict.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxCutGuard.h"
@@ -164,9 +167,9 @@ void TestRemoteTxCutGuard::cutsOnTimeWithMainHeld()
     QCOMPARE(cut.epoch, quint64(7));
     QCOMPARE(cut.serial, serial);
     const qint64 afterLast = msBetween(feeder.lastStamp(), cut.at);
-    QVERIFY2(afterLast >= kDeadlineMs && afterLast <= kBoundMs,
+    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
              qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
-    QVERIFY2(cut.silentMs >= kDeadlineMs && cut.silentMs <= kBoundMs,
+    QVERIFY2(cut.silentMs > kDeadlineMs && cut.silentMs <= kBoundMs,
              qPrintable(QStringLiteral("silentMs %1").arg(cut.silentMs)));
     QVERIFY(!guard.isJudging());
 }
@@ -191,7 +194,7 @@ void TestRemoteTxCutGuard::noFalseCutWithStreamAliveWhileMainHeld()
     QCOMPARE(cuts.front().epoch, quint64(7));
     QCOMPARE(cuts.front().serial, serial);
     const qint64 afterLast = msBetween(feeder.lastStamp(), cuts.front().at);
-    QVERIFY2(afterLast >= kDeadlineMs && afterLast <= kBoundMs,
+    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
              qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
 }
 
@@ -258,7 +261,7 @@ void TestRemoteTxCutGuard::heardOnMainHoldsJudgingGuard()
     QCOMPARE(int(cuts.size()), 1);
     QCOMPARE(cuts.front().serial, serial);
     const qint64 afterLast = msBetween(lastStamp, cuts.front().at);
-    QVERIFY2(afterLast >= kDeadlineMs && afterLast <= kBoundMs,
+    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
              qPrintable(QStringLiteral("cut %1 ms after the last stamp").arg(afterLast)));
 }
 
@@ -310,7 +313,7 @@ void TestRemoteTxCutGuard::disarmAndRearm()
     QCOMPARE(cuts.back().serial, third);
     QCOMPARE(cuts.back().epoch, quint64(7));
     const qint64 afterLast = msBetween(heard, cuts.back().at);
-    QVERIFY2(afterLast >= kDeadlineMs && afterLast <= kBoundMs,
+    QVERIFY2(afterLast > kDeadlineMs && afterLast <= kBoundMs,
              qPrintable(QStringLiteral("cut %1 ms after the heard").arg(afterLast)));
 }
 

@@ -13,6 +13,9 @@
 // DSP worker, and the new drain size still lands before the next batch.
 // J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude
 // Code.
+// 2026-10-12: an Anvelina Pro 3's third stream is routed from DDC5.
+// J.J. Boyd (KG4VCF), with AI-assisted implementation via Anthropic Claude
+// Code.
 // =================================================================
 #include <QtTest/QtTest>
 #include <QRegularExpression>
@@ -39,6 +42,7 @@
 #include "core/codec/P1CodecRedPitaya.h"
 #include "core/codec/P1CodecStandard.h"
 #include "core/codec/P2CodecHermes.h"
+#include "core/codec/P2CodecOrionMkII.h"
 #include "core/codec/P2CodecSaturn.h"
 #include "models/RadioModel.h"
 #include "models/RxDspWorker.h"
@@ -332,6 +336,44 @@ private slots:
         // Streams 2..4 are idle: no DDC, and no stale routing left behind.
         QCOMPARE(model.ddcForStream(2), -1);
         QCOMPARE(model.receiverManager()->ddcIndex(2), -1);
+    }
+
+    // An Anvelina Pro 3 on Protocol 2 hosts its third stream on DDC5 (the
+    // codec's order, tst_codec_5_slice_assignment). The slice and the
+    // receiver that takes the radio's packets must both follow: a receiver
+    // still listening for DDC4 would hear nothing at all.
+    void anvelina_third_stream_is_routed_from_ddc5()
+    {
+        RadioModel model;
+        P2CodecOrionMkII codec;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        model.receiverManager()->setP2Codec(&codec);
+        model.configureStreamPool(5, 5, 192000);
+        for (int st = 0; st < 5; ++st) {
+            model.receiverManager()->createReceiver();
+        }
+
+        const int a = model.addSlice();
+        model.slices().at(a)->setFrequency(3800000.0);
+        const int b = model.addSlice();
+        model.slices().at(b)->setFrequency(7150000.0);
+        const int c = model.addSlice();
+        model.slices().at(c)->setFrequency(18125000.0);
+
+        SliceModel* third = model.slices().at(c);
+        QCOMPARE(third->streamIndex(), 2);
+        QCOMPARE(model.ddcForStream(0), 2);
+        QCOMPARE(model.ddcForStream(1), 3);
+        QCOMPARE(model.ddcForStream(2), 5);
+        QCOMPARE(third->ddcIndex(), 5);
+        QCOMPARE(model.receiverManager()->ddcIndex(2), 5);
+        QCOMPARE(model.receiverManager()->receiverConfig(2).ddcIndex, 5);
+
+        // The fourth stream is idle, and nothing is left listening on DDC4.
+        QCOMPARE(model.ddcForStream(3), -1);
+        for (int st = 0; st < 5; ++st) {
+            QVERIFY(model.receiverManager()->ddcIndex(st) != 4);
+        }
     }
 
     void published_assignment_updates_slice_and_receiver_physical_routing()

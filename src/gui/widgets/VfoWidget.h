@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 — J.J. Boyd (KG4VCF), gate experimental RADE V2 opt-in;
+//                AI-assisted implementation via OpenAI Codex.
 //   2026-10-13 — Export the widget's Qt signal addresses from the Windows
 //                 GUI DLL. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-30 - VFO flag crash lane: lockButtonForTest, sliceForTest.
@@ -833,6 +835,14 @@ signals:
     // hosting SpectrumWidget listens (addVfoWidget) so its cached marker
     // overlay is redrawn in the new colours.
     void activeSliceChanged(bool active);
+    /// This flag just raised its close / lock / record / play buttons above
+    /// their siblings on the pan (positionFloatingButtons()). Emitted once
+    /// per call, however many buttons were raised, and not at all when none
+    /// was. The pan passes it on as SpectrumWidget::flagsRaised() when the
+    /// raise came from outside a placement pass (a re-show, the station
+    /// presentation gate, the access line), so an open overlay flyout goes
+    /// back above the buttons.
+    void floatingButtonsRaised();
 
     // The flag folded or opened (setCollapsed). The hosting SpectrumWidget
     // listens (addVfoWidget) to place the flag again and redraw its marker.
@@ -930,6 +940,8 @@ private:
     NereusSDR::RadioModel* m_radioModel{nullptr};
     // R-R3-49: the model's DFNR and MNR availability signals.
     std::array<QMetaObject::Connection, 3> m_nrAvailabilityConns;
+    QMetaObject::Connection m_radeV2AvailabilityConn;
+    void refreshRadeV2Modes();
 
     // Internal helper — update m_locked + drive Close-strip lock button + emit lockChanged.
     // Called by the floating m_lockBtn toggled lambda.  X/RIT-tab Lock removed (B7).

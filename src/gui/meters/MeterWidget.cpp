@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-12 - Shared accessory display readings and independent legal
+//                 marker / display scale by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 //   2026-10-08 - Rotor control plan Task 5: a rotator dial repaints when
 //                 its rotor's heading moves (RotatorItem::repaintRequested).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -96,6 +99,7 @@ mw0lge@grange-lane.co.uk
 //   2026-10-12 - Refresh cached text layers when the workspace floor changes.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
+#include "core/ControlRanges.h"
 #include "MeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
@@ -206,7 +210,7 @@ void MeterWidget::addItem(MeterItem* item)
                 [this, rotator]() { invalidatePresentation(rotator); });
     }
     if (m_unitMode) { item->setUnitMode(*m_unitMode); }
-    if (m_powerScale > 0) { item->setPowerScale(m_powerScale); }
+    if (m_powerScale > 0) { if (m_explicitPowerScale) { item->setPowerScale(m_powerScale, m_powerScaleTop); } else { item->setPowerScale(m_powerScale); } }
     item->resetForTxTransition(m_mox);
     for (int binding : item->readingBindings()) {
         if (!item->hasMmioBinding()) { item->setBindingSupport(binding, bindingSupport(binding)); }
@@ -415,7 +419,19 @@ void MeterWidget::rescalePowerMeters(int paMaxWatts)
 {
     if (paMaxWatts <= 0) { return; }
     m_powerScale = paMaxWatts;
+    m_powerScaleTop = paMaxWatts * ControlRanges::kRfPowerGaugeHeadroom;
+    m_explicitPowerScale = false;
     for (MeterItem* item : m_items) { item->setPowerScale(paMaxWatts); }
+    invalidateReadingLayers(true);
+}
+
+void MeterWidget::rescalePowerMeters(int visualLimitWatts, double topWatts)
+{
+    if (visualLimitWatts <= 0 || topWatts <= 0.0) { return; }
+    m_powerScale = visualLimitWatts;
+    m_powerScaleTop = topWatts;
+    m_explicitPowerScale = true;
+    for (MeterItem* item : m_items) { item->setPowerScale(visualLimitWatts, topWatts); }
     invalidateReadingLayers(true);
 }
 

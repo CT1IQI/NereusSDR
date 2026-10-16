@@ -129,7 +129,8 @@ struct Rig {
 const QList<DSPMode>& unkeyModes()
 {
     static const QList<DSPMode> modes{DSPMode::AM,  DSPMode::SAM,    DSPMode::FM,
-                                      DSPMode::DRM, DSPMode::RADE_U, DSPMode::RADE_L};
+                                      DSPMode::DRM, DSPMode::RADE_U, DSPMode::RADE_L,
+                                      static_cast<DSPMode>(14), static_cast<DSPMode>(15)};
     return modes;
 }
 
@@ -161,9 +162,9 @@ private slots:
 
 void TestStarvationPolicy::theTableCoversEveryModeOnce()
 {
-    QCOMPARE(unkeyModes().size(), 6);
+    QCOMPARE(unkeyModes().size(), 8);
     QCOMPARE(keepModes().size(), 8);
-    for (int value = static_cast<int>(DSPMode::LSB); value <= static_cast<int>(DSPMode::RADE_L);
+    for (int value = static_cast<int>(DSPMode::LSB); value <= 15;
          ++value) {
         const DSPMode mode = static_cast<DSPMode>(value);
         const bool unkey = unkeyModes().contains(mode);

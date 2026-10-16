@@ -52,10 +52,14 @@
 //   2026-10-12: The in-flight bookkeeping moved to GeniusStatusGate,
 //               shared with the tuner link. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-12: The status poll runs faster while keyed (setKeyed,
+//               m_pollPacer, kPollKeyedMs). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
 #include "core/NereusCoreExport.h"
+#include "core/GeniusPollPacer.h"
 #include "core/GeniusStatusGate.h"
 #include <QObject>
 #include <QTcpSocket>
@@ -87,12 +91,26 @@ public:
     explicit PgxlConnection(QObject* parent = nullptr);
     ~PgxlConnection() override;
 
+    // How often the link asks for `status` (GeniusPollPacer.h). Receive is
+    // what this link has always used. Keyed is AetherSDR's kPollTxMs,
+    // src/core/PgxlConnection.h:66 [@a9a83e66]; the vendor's own program
+    // asks every 124 ms throughout
+    // (captures/flex-pgxl-tgxl-capture_00001_20260519173452.pcapng).
+    static constexpr int kPollReceiveMs = 200;
+    static constexpr int kPollKeyedMs = 100;
+
     bool    isConnected() const { return m_connected; }
     QString version()     const { return m_version; }
     QString peerAddress() const { return m_socket->peerAddress().toString(); }
     quint16 peerPort()    const { return m_socket->peerPort(); }
     quint64 socketAttemptToken() const { return m_socketAttemptGeneration; }
     bool reconnectPending() const noexcept { return m_reconnectTimer.isActive(); }
+
+    // The Core is on the air (transmitting, TUNE or the two-tone test), or
+    // no longer: the status poll runs at kPollKeyedMs from now, and for
+    // GeniusPollPacer::kHoldMs after. The amplifier's own TRANSMIT_A or
+    // TRANSMIT_B state does the same without it.
+    void setKeyed(bool keyed) { m_pollPacer.setKeyed(keyed); }
     bool identityAdmissionRequired() const { return m_identityAdmissionRequired; }
     PgxlIdentityInfo identityInfo() const { return m_identityInfo; }
 
@@ -161,6 +179,10 @@ public:
     bool testAutoPingActive() const { return m_pingTimer.isActive(); }
     // Test-only: how long an unanswered `status` holds back the next one.
     void testSetStatusReplyWaitMs(int ms) { m_statusGate.setReplyWaitMsForTesting(ms); }
+    // Test-only: the status poll timer's interval now.
+    int testPollIntervalMs() const { return m_pollTimer.interval(); }
+    // Test-only: how long the keyed poll interval outlasts the key.
+    void testSetPollHoldMs(int ms) { m_pollPacer.setHoldMsForTesting(ms); }
 
 public slots:
     void connectToPgxl(const QString& host, quint16 port = 9008);
@@ -266,6 +288,7 @@ private:
     void clearPairing();
     void failIdentityAdmission(quint64 socketAttemptToken, const QString& reason);
     quint32 writeProtocolCommand(const QString& cmd);
+    void noteDeviceState(const QMap<QString, QString>& kvs);
 
     // 2026-05-26 KG4VCF: probe the kernel for the local source IP it
     // would use to reach `host` and explicitly bind m_socket to that
@@ -278,6 +301,9 @@ private:
     // the invalid-descriptor errors a reused socket gave after a timeout).
     QTcpSocket* m_socket{nullptr};
     QTimer     m_pollTimer;
+    // Sets m_pollTimer's interval: kPollReceiveMs, or kPollKeyedMs while
+    // the Core or the amplifier says keyed and for a hold after.
+    GeniusPollPacer m_pollPacer{&m_pollTimer, kPollReceiveMs, kPollKeyedMs};
     // One `status` in flight. The amplifier closes the link when a `status`
     // reaches it before it has answered the one before (bench, firmware
     // 3.9.9, 2026-10-12: four closes in twelve minutes, each 30 to 175 ms

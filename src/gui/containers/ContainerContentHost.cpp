@@ -86,6 +86,7 @@ Q_LOGGING_CATEGORY(lcFreeCanvas,"nereus.container.canvas")
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/meters/WaveformMeterItem.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/styles/WorkspaceStyle.h"
 #include <QVBoxLayout>
@@ -459,6 +460,9 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             height=stackSize.height();
             run->setMinimumWidth(qMax(run->minimumWidth(),containerStackButtonMinimum(item).width()));
         }
+        if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
+            height=face->preferredFaceHeight();run->setMinimumWidth(qMax(run->minimumWidth(),face->minimumFaceSize().width()));
+        }
         if (auto* face = qobject_cast<BarPresetItem*>(item)) {
             height = face->preferredFaceHeight();
             // Stack bars follow the usable viewport width. Other layouts retain
@@ -559,6 +563,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     item->setProperty("containerEntryId",entry.id);item->setProperty("containerSourceContext",row.context);
                     QSize minimum = isSingleContainerControl(item) ? singleContainerControlMinimum() : QSize(24,24);
                     if(auto* face=qobject_cast<BarPresetItem*>(item)) {minimum=face->minimumFaceSize();}
+                    if (auto* face = qobject_cast<WaveformMeterItem*>(item)) {
+                        minimum = face->minimumFaceSize();
+                    }
                     if(auto* face=qobject_cast<CompositePresetItem*>(item)) {
                         minimum=face->minimumFaceSize();for(auto* child:face->internalItems()) {child->setProperty("containerSourceContext",row.context);child->setProperty("containerEntryId",entry.id);}
                     }

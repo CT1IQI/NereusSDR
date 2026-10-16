@@ -47,6 +47,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-12 - setDetailVisible(): the footer without its peak and
+//                 limit text. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -80,10 +83,17 @@ public:
     /// Teil weg — es gibt Grössen ohne Grenze.
     void setPeakAndLimit(const QString& peakText, const QString& limitText);
 
+    // NereusSDR: false leaves the middle line empty whatever
+    // setPeakAndLimit() is given, for a width where it does not fit
+    // beside the value. The next setPeakAndLimit() after true fills it.
+    void setDetailVisible(bool on);
+    bool detailVisible() const { return m_detailVisible; }
+
 private:
     QLabel* m_caption{nullptr};
     QLabel* m_middle{nullptr};
     QLabel* m_value{nullptr};
+    bool    m_detailVisible{true};   // NereusSDR: see setDetailVisible()
     int     m_valueWidth{0};   // groesste bisher gezeigte Breite (2026-09-27)
 };
 

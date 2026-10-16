@@ -52,6 +52,9 @@
 //                 page fits with this platform's fonts is logged, not
 //                 failed. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-14 - Treat the alpha colour dialog's current-colour preview as
+//                 the user-owned fill colour it displays. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 
 #include <QtTest/QtTest>
 
@@ -213,6 +216,9 @@ const Listed kKeptByDecision[] = {
     { "look-dialog-lit-psa-on", "QLabel", "#ffaa70",
       "kept (settled 2026-10-10): the TX filter overlay label is the user's colour setting "
       "(StyleConstants:388)" },
+    { "look-dialog-overlay-colour", "QPushButton", "#00e5ff",
+      "kept under the sweep's user-colour rule: Qt's alpha colour dialog paints its current-colour "
+      "preview as a plain QPushButton; this is the DisplayFillColor default, not dialog chrome" },
     { "look-dialog-*", "QPushButton*", "#212630",
       "kept (JJ 2026-10-10, option 1): the tinted fill Fusion draws on a dialog's default button from the "
       "palette Highlight. Only the rim changed, to the selection rim (Workspace::LookStyle); the fill, the "
