@@ -150,6 +150,7 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 #include <QSet>
 #include "ContainerDocument.h"
+#include "gui/NereusGuiExport.h"
 
 #include <functional>
 #include <optional>
@@ -184,7 +185,7 @@ using ContainerContentFactory =
 
 class ContainerArrangeController;
 
-class ContainerManager : public QObject {
+class NEREUS_GUI_EXPORT ContainerManager : public QObject {
     Q_OBJECT
 
 public:

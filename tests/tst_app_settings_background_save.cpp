@@ -1,7 +1,10 @@
 // no-port-check: NereusSDR-original tests for AppSettings::saveInBackground().
 #include <QtTest>
 #include <QDir>
+#include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
+#include <QProcess>
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSignalSpy>
@@ -9,6 +12,7 @@
 #include <QThread>
 
 #include <atomic>
+#include <cstring>
 #include <memory>
 
 #include "core/AppSettings.h"
@@ -18,11 +22,27 @@ using namespace NereusSDR;
 
 namespace {
 
+constexpr const char* kExitChildArgument = "--exit-while-saving";
+const QString kExitProbeProfile = QStringLiteral("background-save-exit-probe");
+
 QString savedValue(const QString& path, const QString& key)
 {
     AppSettings onDisk(path);
     onDisk.load();
     return onDisk.value(key, QStringLiteral("<missing>")).toString();
+}
+
+// The child half of aSaveStillWritingAsTheProcessEndsReachesTheDisk(): main()
+// returns while the process-wide store's save is still on the writer thread.
+int runExitWhileSavingChild(int argc, char* argv[])
+{
+    QCoreApplication app(argc, argv);
+    AppSettings::setProfileOverride(kExitProbeProfile);
+    AppSettings& settings = AppSettings::instance();
+    settings.setValue(QStringLiteral("ExitProbe"), QStringLiteral("written"));
+    settings.setBackgroundSaveStartHookForTesting([] { QThread::msleep(500); });
+    settings.saveInBackground();
+    return 0;
 }
 
 } // namespace
@@ -166,7 +186,45 @@ private slots:
         QCOMPARE(finished.at(0).at(1).toBool(), true);
         QCOMPARE(savedValue(path, QStringLiteral("Dial")), QStringLiteral("imported"));
     }
+
+    void aSaveStillWritingAsTheProcessEndsReachesTheDisk()
+    {
+        // instance() is a static in the Core library. On Windows a DLL's
+        // static destructors run after the process has ended every other
+        // thread, so a save still on the writer thread then was waited for
+        // forever and the process never ended.
+        const QString path = AppSettings::resolveSettingsPath(kExitProbeProfile);
+        const QString profileDir = QFileInfo(path).absolutePath();
+        QDir(profileDir).removeRecursively();
+        const auto removeProfile = qScopeGuard([profileDir] {
+            QDir(profileDir).removeRecursively();
+        });
+
+        QProcess child;
+        child.setProcessChannelMode(QProcess::ForwardedChannels);
+        child.start(QCoreApplication::applicationFilePath(),
+                    {QString::fromLatin1(kExitChildArgument)});
+        QVERIFY(child.waitForStarted(5000));
+        const bool ended = child.waitForFinished(30000);
+        if (!ended) {
+            child.kill();
+            child.waitForFinished(3000);
+        }
+        QVERIFY2(ended, "the process did not end after main() returned");
+        QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(child.exitCode(), 0);
+        QCOMPARE(savedValue(path, QStringLiteral("ExitProbe")), QStringLiteral("written"));
+    }
 };
 
-QTEST_GUILESS_MAIN(TestAppSettingsBackgroundSave)
+int main(int argc, char* argv[])
+{
+    if (argc > 1 && std::strcmp(argv[1], kExitChildArgument) == 0) {
+        return runExitWhileSavingChild(argc, argv);
+    }
+    QCoreApplication app(argc, argv);
+    TestAppSettingsBackgroundSave test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_app_settings_background_save.moc"

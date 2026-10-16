@@ -97,7 +97,7 @@ enum class PathKind { ThisNetwork, Direct, Service, Relay, WebRelay };
 /// at most and reports it with opened() (handing the transport over,
 /// unparented) or ends with ended(). stop() cancels it; it emits nothing
 /// after.
-class PathRung : public QObject {
+class NEREUS_CORE_EXPORT PathRung : public QObject {
     Q_OBJECT
 public:
     explicit PathRung(QObject* parent = nullptr) : QObject(parent) {}

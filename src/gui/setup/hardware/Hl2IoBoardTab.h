@@ -97,6 +97,7 @@
 #include <array>
 
 #include "core/IoBoardHl2.h"
+#include "gui/NereusGuiExport.h"
 
 class QCheckBox;
 class QFrame;
@@ -136,7 +137,7 @@ struct BoardCapabilities;
 // NereusSDR spin: register state table + I2C transaction log + state-machine
 // viz + bandwidth monitor mini are pure NereusSDR diagnostic surfaces
 // (mi0bot does not expose them in the Thetis UI).
-class Hl2IoBoardTab : public QWidget {
+class NEREUS_GUI_EXPORT Hl2IoBoardTab : public QWidget {
     Q_OBJECT
 
 public:

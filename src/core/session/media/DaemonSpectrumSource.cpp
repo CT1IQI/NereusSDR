@@ -57,6 +57,9 @@ struct DaemonSpectrumSource::FrameState {
     quint64 inputFramesDropped{0};
     quint64 completedInputHandoffs{0};
     quint64 publishedFrames{0};
+    /// Frames replaced in `latest` since the last one taken, with nobody
+    /// having taken them (DaemonSpectrumFrame::replacedBefore).
+    quint32 replacedSinceTaken{0};
 };
 
 struct DaemonSpectrumSource::SourceEntry {
@@ -85,6 +88,7 @@ DaemonSpectrumSource::~DaemonSpectrumSource()
         entry.state->retired = true;
         entry.state->configurationPending = true;
         entry.state->hasLatest = false;
+        entry.state->replacedSinceTaken = 0;
         entry.state->notificationQueued = false;
         entry.state->pendingIq.clear();
     }
@@ -207,6 +211,7 @@ bool DaemonSpectrumSource::update(const MediaSourceKey& key,
             generation = ++m_nextGeneration;
             it->state->generation = generation;
             it->state->hasLatest = false;
+            it->state->replacedSinceTaken = 0;
             it->state->notificationQueued = false;
             if (result) {
                 *result = {true, previous, generation};
@@ -220,6 +225,7 @@ bool DaemonSpectrumSource::update(const MediaSourceKey& key,
         it->state->active = false;
         it->state->configurationPending = true;
         it->state->hasLatest = false;
+        it->state->replacedSinceTaken = 0;
         it->state->notificationQueued = false;
         it->state->config = config;
         it->state->maxPendingIqFloats = config.maxPendingIqFloats;
@@ -281,6 +287,7 @@ void DaemonSpectrumSource::deactivate(const MediaSourceKey& key)
         it->state->retired = true;
         it->state->configurationPending = true;
         it->state->hasLatest = false;
+        it->state->replacedSinceTaken = 0;
         it->state->notificationQueued = false;
         it->state->pendingIq.clear();
     }
@@ -379,7 +386,9 @@ DaemonSpectrumSource::takeLatest(const MediaSourceKey& key)
     }
     it->state->hasLatest = false;
     it->state->notificationQueued = false;
-    return it->state->latest;
+    DaemonSpectrumFrame frame = it->state->latest;
+    frame.replacedBefore = std::exchange(it->state->replacedSinceTaken, 0);
+    return frame;
 }
 
 void DaemonSpectrumSource::submitIq(int streamIndex,
@@ -617,6 +626,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->latest.binsDbm.clear();
         state->latest.binsDbmValid = computesBinsDbm()
             && binsLinearToDbm(state->latest.binsLinear, 0.0, state->latest.binsDbm);
+        if (state->hasLatest) { ++state->replacedSinceTaken; }
         state->hasLatest = true;
         state->notificationQueued = true;
         ++state->publishedFrames;
@@ -651,6 +661,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         state->latest.binsDbm.clear();
         state->latest.binsDbmValid = computesBinsDbm()
             && binsLinearToDbm(binsLinear, 0.0, state->latest.binsDbm);
+        if (state->hasLatest) { ++state->replacedSinceTaken; }
         state->hasLatest = true;
         state->notificationQueued = true;
         ++state->publishedFrames;
@@ -685,6 +696,7 @@ void DaemonSpectrumSource::publishFrame(
         state->latest.dbmOffset = dbmOffset;
         state->latest.binsDbm = std::move(binsDbm);
         state->latest.binsDbmValid = binsDbmValid;
+        if (state->hasLatest) { ++state->replacedSinceTaken; }
         state->hasLatest = true;
         ++state->publishedFrames;
         if (!state->notificationQueued) {

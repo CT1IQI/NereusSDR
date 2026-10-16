@@ -97,6 +97,7 @@
 
 #include "codec/CodecContext.h"   // PsDdcConfig + Q_DECLARE_METATYPE
 #include "HpsdrModel.h"           // HPSDRModel
+#include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
 
@@ -120,7 +121,7 @@ struct ReceiverConfig {
 // Client-side receiver lifecycle management.
 // Maps logical receivers to hardware DDC channels and (future) WDSP instances.
 // Lives on the main thread; RadioModel owns it.
-class ReceiverManager : public QObject {
+class NEREUS_CORE_EXPORT ReceiverManager : public QObject {
     Q_OBJECT
     Q_PROPERTY(int activeReceiverCount READ activeReceiverCount
                NOTIFY activeReceiverCountChanged)

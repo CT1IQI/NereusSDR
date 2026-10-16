@@ -689,6 +689,7 @@ private slots:
         // R-R3-49 (parity Task 7): a Core at transmitSettingsVersion 7
         // takes a restore from this window off the air.
         QSignalSpy restoreRequested(manager, &DspAssetDialog::restoreCorrectionRequested);
+        QVERIFY(restoreRequested.isValid());
         QTRY_VERIFY(restore->isEnabled());
         restore->click();
         QCOMPARE(restoreRequested.size(), 1);

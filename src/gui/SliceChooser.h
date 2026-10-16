@@ -40,6 +40,7 @@
 #include <QWidget>
 
 #include "gui/widgets/VfoWidget.h"
+#include "gui/NereusGuiExport.h"
 
 class QLabel;
 class QPushButton;
@@ -53,7 +54,7 @@ class RemoteDevicesState;
 class SliceAccessMirror;
 class StationServer;
 
-class SliceChooser : public QWidget {
+class NEREUS_GUI_EXPORT SliceChooser : public QWidget {
     Q_OBJECT
 
 public:

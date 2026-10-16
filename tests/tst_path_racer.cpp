@@ -38,6 +38,9 @@
 //               Claude Code.
 //   2026-10-02: cover adopted-session retry ownership by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via OpenAI Codex.
+//   2026-10-15: Windows: the closed address may be stopped because the
+//               service's path won first. J.J. Boyd (KG4VCF), with
+//               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -510,8 +513,18 @@ private slots:
         }
         QVERIFY(window.client->pathRank() == int(PathRacer::ServiceDirect)
                 || window.client->pathRank() == int(PathRacer::ServiceRelayed));
+#ifdef Q_OS_WIN
+        // Windows takes about 2 s to refuse a closed localhost port, so the
+        // service's path can win first and the address is stopped.
+        QVERIFY2(window.outcomeFor(StationConnectionAttempt::Path::ThisNetwork)
+                         == StationConnectionAttempt::Outcome::NoAnswer
+                     || window.outcomeFor(StationConnectionAttempt::Path::ThisNetwork)
+                            == StationConnectionAttempt::Outcome::AnotherPathFirst,
+                 qPrintable(window.client->connectionAttempt().summary()));
+#else
         QCOMPARE(window.outcomeFor(StationConnectionAttempt::Path::ThisNetwork),
                  StationConnectionAttempt::Outcome::NoAnswer);
+#endif
         QVERIFY2(window.hasOutcome(StationConnectionAttempt::Outcome::Connected),
                  qPrintable(window.client->connectionAttempt().summary()));
         QCOMPARE(handshakes.size(), 1);

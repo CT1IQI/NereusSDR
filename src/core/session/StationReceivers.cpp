@@ -98,6 +98,15 @@
 //               desktop hosts it left the Core's own position unnamed.
 //               J.J. Boyd (KG4VCF), with AI-assisted implementation via
 //               Anthropic Claude Code.
+//   2026-10-12: every sentence here that names a device takes its words
+//               from sliceHolderWords: who a change would affect, who
+//               holds the receivers, and who moved a panadapter or took a
+//               receiver or a slice. On a Core no desktop hosts the Core's
+//               own position was named with nothing. J.J. Boyd (KG4VCF),
+//               with AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-15: namesOf drops a check for an empty name sliceHolderWords
+//               never returns. J.J. Boyd (KG4VCF), with AI-assisted
+//               implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -547,7 +556,16 @@ QString StationServer::usableSlicesJson() const
 
 QString StationServer::withHolderNames(const QString& reason, const QByteArray& requester) const
 {
-    const QStringList names = receiverPlanner().namesHoldingReceivers(requester);
+    // Each holder by its words (sliceHolderWords): the Core's own position
+    // holds a receiver as any device does, and a device with no name is
+    // named by its kind. Two holders with the same words are said once.
+    QStringList names;
+    for (const QByteArray& device : receiverPlanner().devicesHoldingReceivers(requester)) {
+        const QString name = sliceHolderWords(device);
+        if (!names.contains(name)) {
+            names.append(name);
+        }
+    }
     if (names.isEmpty()) {
         return reason;
     }
@@ -1014,8 +1032,10 @@ QString StationServer::namesOf(const QList<ReceiverPlanner::Disturbed>& disturbe
 {
     QStringList names;
     for (const ReceiverPlanner::Disturbed& d : disturbed) {
-        const QString name = planDevice(d.device).name;
-        if (!name.isEmpty() && !names.contains(name)) {
+        // By its words (sliceHolderWords), so a device with no name is
+        // still named: the Core's own position on a Core no desktop hosts.
+        const QString name = sliceHolderWords(d.device);
+        if (!names.contains(name)) {
             names.append(name);
         }
     }
@@ -1269,6 +1289,9 @@ void StationServer::applyPanMove(const PanMoveCheck& check, const QByteArray& re
         }
     }
     const ReceiverPlanner planner = receiverPlanner();
+    // The device that moved its panadapter, as a sentence starts with it
+    // (sliceHolderWords).
+    const QString moverName = sliceHolderWords(requester, WordsPlace::SentenceStart);
     for (auto it = movedBy.cbegin(); it != movedBy.cend(); ++it) {
         QStringList letters;
         for (int id : it.value()) {
@@ -1278,7 +1301,7 @@ void StationServer::applyPanMove(const PanMoveCheck& check, const QByteArray& re
         notice.device = it.key();
         notice.prompt.kind = QStringLiteral("sliceMoved");
         notice.prompt.slices = planner.noticeSlicesJson(it.value());
-        notice.reason = sliceMovedReason(planDevice(requester).name, letters);
+        notice.reason = sliceMovedReason(moverName, letters);
         tellDevice(notice, requester);
     }
     for (auto it = closedBy.cbegin(); it != closedBy.cend(); ++it) {
@@ -1286,7 +1309,7 @@ void StationServer::applyPanMove(const PanMoveCheck& check, const QByteArray& re
         notice.device = it.key();
         notice.prompt.kind = QStringLiteral("sliceClosed");
         notice.prompt.slices = savedSlicesJson(it.value());
-        notice.reason = sliceClosedReason(planDevice(requester).name, lettersOf(it.value()));
+        notice.reason = sliceClosedReason(moverName, lettersOf(it.value()));
         tellDevice(notice, requester);
     }
     tellListeners(listenedBy, requester, QStringLiteral("panMove"));
@@ -1435,7 +1458,8 @@ QHash<QByteArray, QList<SavedSlice>> StationServer::closeForTake(
 void StationServer::tellListeners(const QHash<QByteArray, QList<SavedSlice>>& listenedBy,
                                   const QByteArray& by, const QString& why)
 {
-    const QString name = planDevice(by).name;
+    // Who closed the slice, as a sentence starts with it (sliceHolderWords).
+    const QString name = sliceHolderWords(by, WordsPlace::SentenceStart);
     for (auto it = listenedBy.cbegin(); it != listenedBy.cend(); ++it) {
         if (it.key() == by) {
             continue;
@@ -1453,7 +1477,8 @@ void StationServer::tellTaken(const QHash<QByteArray, QList<SavedSlice>>& closed
                               const QByteArray& taker, const QString& kind, int stream,
                               int takerSlice)
 {
-    const QString takerName = planDevice(taker).name;
+    // The taker, as a sentence starts with it (sliceHolderWords).
+    const QString takerName = sliceHolderWords(taker, WordsPlace::SentenceStart);
     for (auto it = closedBy.cbegin(); it != closedBy.cend(); ++it) {
         ConfirmStep::Notice notice;
         notice.device = it.key();
@@ -1484,7 +1509,9 @@ void StationServer::endOlderWindowsWithoutSlices(const QList<QByteArray>& device
             ending.append(transport);
         }
     }
-    const QString reason = takenOverReason(planDevice(taker).name);
+    // The taker, as a sentence starts with it (sliceHolderWords).
+    const QString takerName = sliceHolderWords(taker, WordsPlace::SentenceStart);
+    const QString reason = takenOverReason(takerName);
     for (SessionTransport* transport : ending) {
         // Ruling 6.10: an older window cannot hold no slice. Its place is
         // freed: it left, in effect, when its last slice went.

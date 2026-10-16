@@ -62,6 +62,10 @@
 //   2026-09-29 - R-R3-49 / R-IOS-18: Setup description version 15 ids on
 //                the high-resolution box and the time readout. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-15 - The warning sign asks for text presentation (U+FE0E), so
+//                Windows draws it in its yellow instead of as a color
+//                emoji. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 //=================================================================
@@ -169,7 +173,10 @@ QComboBox* makeCombo(QWidget* parent, const QStringList& items)
 QLabel* makeWarningIcon(QWidget* parent)
 {
     auto* lbl = new QLabel(parent);
-    lbl->setText(QStringLiteral("⚠"));  // U+26A0 WARNING SIGN
+    // U+26A0 WARNING SIGN. U+FE0E asks for its text form: without it
+    // Windows draws the sign from Segoe UI Emoji in color, ignoring the
+    // yellow below.
+    lbl->setText(QStringLiteral("\u26A0\uFE0E"));
     lbl->setStyleSheet(QStringLiteral("color: #FFC800; font-weight: bold;"));
     lbl->setVisible(false);
     return lbl;
