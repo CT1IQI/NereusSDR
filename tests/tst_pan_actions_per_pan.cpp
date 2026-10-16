@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF. A local slice keyed to a pan the layout
+//                does not show is rehomed onto the window's pan, with no
+//                hidden pan. AI-assisted via Anthropic Claude Code.
 //   2026-10-05 — J.J. Boyd (KG4VCF). Independent per-pan Clarity ownership.
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-03  J.J. Boyd / KG4VCF. STEP propagation, pan wheel and stale
@@ -673,6 +676,30 @@ private slots:
     }
 
     // A local window: a pan whose slice is closed says the same.
+    // A local window holds only the pans its layout shows. A slice added
+    // with a pan key the layout does not show gets no pan of its own; it is
+    // rehomed onto the window's pan, as a layout change rehomes it.
+    void localSliceKeyedToAPanTheLayoutLacksIsRehomed()
+    {
+        auto window = openLocalWindow(QStringLiteral("1"));
+        RadioModel* model = window->radioModel();
+        auto* stack = window->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("1"));
+        const int id = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(id >= 0);
+        SliceModel* slice = model->sliceById(id);
+        QVERIFY(slice);
+        PanadapterApplet* pan = appletFor(window.get(), QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        QTRY_COMPARE(slice->panKey(), QStringLiteral("pan-0"));
+        QTRY_VERIFY(pan->associatedSlices().contains(id));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("1"));
+        QCOMPARE(stack->allApplets().size(), 1);
+        QVERIFY(!appletFor(window.get(), QStringLiteral("pan-1")));
+    }
+
     void emptyPanSaysSoLocal()
     {
         std::unique_ptr<MainWindow> window = openLocalWindow(QStringLiteral("2v"));

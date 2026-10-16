@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-16  J.J. Boyd / KG4VCF. A controlled slice keyed to a pan the
+//                window does not show is rehomed onto its pan, with no
+//                hidden pan. AI-assisted via Anthropic Claude Code.
 //   2026-10-12  J.J. Boyd / KG4VCF. Take transmit offered and taken with
 //                nobody holding transmit; a program's refused key names
 //                the button. AI-assisted via Anthropic Claude Code.
@@ -3183,6 +3186,38 @@ private slots:
             }
         }
         QVERIFY(stopOffered);
+    }
+
+    // A slice this window controls whose pan key names a pan this window
+    // does not show. The window makes no pan for it: a pan outside the
+    // layout is never shown, yet it held the slice and asked the Core for
+    // its spectrum. The slice is rehomed onto the window's pan, as a layout
+    // change rehomes a controlled slice (ruling U7), and the layout stays
+    // the operator's.
+    void remoteControlledSliceOnAPanTheWindowLacksIsRehomedOntoItsPan()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("1")));
+        QVERIFY(h.start());
+        const int bId = 1;
+        QVERIFY(h.station().sliceById(bId));
+        QCOMPARE(h.station().sliceById(bId)->panKey(), QStringLiteral("pan-1"));
+        QVERIFY(connectSharing(h));
+        auto* stack = h.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QTRY_VERIFY(h.remoteModel()->sliceById(bId));
+        PanadapterApplet* pan = stack->panadapter(QStringLiteral("pan-0"));
+        QVERIFY(pan);
+        QTRY_COMPARE(h.remoteModel()->sliceById(bId)->panKey(), QStringLiteral("pan-0"));
+        QTRY_COMPARE(h.station().sliceById(bId)->panKey(), QStringLiteral("pan-0"));
+        QTRY_VERIFY(pan->associatedSlices().contains(bId));
+        QTRY_VERIFY(flagFor(h, bId) && flagFor(h, bId)->parentWidget() == pan->spectrumWidget());
+        QTest::qWait(kSettleMs);
+        // Every pan the window holds is one its layout shows.
+        QCOMPARE(stack->currentLayoutId(), QStringLiteral("1"));
+        QCOMPARE(stack->allApplets().size(), 1);
+        QVERIFY(!stack->panadapter(QStringLiteral("pan-1")));
+        QCOMPARE(h.station().sliceById(0)->panKey(), QStringLiteral("pan-0"));
+        QVERIFY(h.addSliceCommands().isEmpty());
     }
 
     // Slice control plan Task 17 (carried from Task 16, ruling U1): a
