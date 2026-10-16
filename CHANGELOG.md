@@ -493,7 +493,8 @@ Advanced, and each control appears on one page only.
   has a separate **Output** row; the three pages gain a **Ref Pwr** gauge,
   the RF2K-S line shows only volts and amps, and the TX panel shows
   **DRIVE** beside the meter while an amplifier is in use and you are keyed.
-  The Live Activity shows forward power and SWR.
+  The Live Activity's forward power and SWR follow the same readings and
+  show dashes when there is none.
 
 ### Tuner Genius XL firmware 1.2.44
 
