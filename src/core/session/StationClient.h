@@ -208,7 +208,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-16  J.J. Boyd / KG4VCF  setSessionIceConfigurationForTest:
+//   2026-10-15  J.J. Boyd / KG4VCF  setSessionIceConfigurationForTest:
 //                                    a test stands in for the ICE settings
 //                                    of a session through the service.
 //                                    AI-assisted via Anthropic Claude Code.

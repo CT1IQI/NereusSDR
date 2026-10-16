@@ -3,7 +3,7 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
-//   2026-10-16: mediaIceConfiguration says whether its settings are the
+//   2026-10-15: mediaIceConfiguration says whether its settings are the
 //               media tunnel's. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 //   2026-10-12: Separate mirrored pin projection from preference requests.

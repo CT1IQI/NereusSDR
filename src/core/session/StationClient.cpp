@@ -9,7 +9,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-16  J.J. Boyd / KG4VCF  sessionIceConfiguration() returns a
+//   2026-10-15  J.J. Boyd / KG4VCF  sessionIceConfiguration() returns a
 //                                    test's stand-in first
 //                                    (setSessionIceConfigurationForTest).
 //                                    AI-assisted via Anthropic Claude Code.

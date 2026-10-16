@@ -102,7 +102,7 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-28: opt-in IPv6 preference observation for the traversal test.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-10-16: the follow-media result also reports replacingConnection,
+//   2026-10-15: the follow-media result also reports replacingConnection,
 //               so a failure shows whether a replacement held the slot.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================

@@ -31,12 +31,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-10-16: media started on a routed web relay leg (a loopback shim
+//   2026-10-15: media started on a routed web relay leg (a loopback shim
 //               that is not the media tunnel, the tunnel declared while
 //               the session runs on a data channel) tries no direct-only
 //               replace, so a later session move is followed at once
-//               (relayLegShimPath, GuiHarness::sessionCarriesBinary).
-//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//               (relayLegShimPath, GuiHarness::sessionCarriesBinary,
+//               connectOnWebRelay); once that replace is promoted onto the
+//               tunnel the ladder and the tunnel-rate heartbeat start, and
+//               media left on the relay leg after the move keeps the stall
+//               rule. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-09-29: a refused replace keeps the move it carried: a move folded
 //               into the retried fallback, or one made while the
 //               fallback's replace is under way, is still followed after
@@ -87,7 +91,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <vector>
 
 #include "fakes/RecordingRtpSink.h"
 #include "core/AppSettings.h"
@@ -464,6 +467,34 @@ struct GuiHarness {
         return out;
     }
 };
+
+// Media started on a routed web relay leg: the session on a data channel,
+// the tunnel declared for a later move, mediaDirectVersion 1, the media
+// start on the session's own (routed) ICE settings, and the pair through
+// this end's relay-leg shim.
+bool connectOnWebRelay(GuiHarness& g)
+{
+    g.core.server.setMediaStun({QStringLiteral("stun:stun.example.test:3478")});
+    g.sessionCarriesBinary = false;
+    g.core.client.setSessionIceConfigurationForTest(IceConfiguration::throughRendezvous(
+        {QStringLiteral("stun:stun.example.test:3478")}, /*relayAllowed=*/false, {}, {}));
+    if (!g.connect(relayLegShimPath())) {
+        return false;
+    }
+    const std::optional<IceConfiguration>& ice = g.guiTransports.first()->startOptions.ice;
+    const bool ok = g.core.client.mediaDirectAvailable()
+        && g.core.client.capabilities().mediaDirectVersion == 1
+        && g.core.client.mediaTunnelAvailable()
+        && !g.core.client.mediaTunnelIceConfiguration()
+        // Started on the session's ICE settings, routed: not the tunnel's.
+        && ice.has_value() && !ice->hasCandidateSourceFactory() && ice->mediaRouting()
+        // The stall tick reaches the ladder only while audio is wanted.
+        && !g.core.remote.audioEngine()->masterMuted();
+    if (!ok) {
+        qWarning() << "media did not start as on a routed web relay leg";
+    }
+    return ok;
+}
 
 } // namespace
 
@@ -890,38 +921,18 @@ private slots:
     void theWindowOnTheWebRelayTriesNoDirectAndFollowsAMoveAtOnce()
     {
         GuiHarness g;
-        g.core.server.setMediaStun({QStringLiteral("stun:stun.example.test:3478")});
-        g.sessionCarriesBinary = false;
-        g.core.client.setSessionIceConfigurationForTest(IceConfiguration::throughRendezvous(
-            {QStringLiteral("stun:stun.example.test:3478")}, /*relayAllowed=*/false, {}, {}));
-        QVERIFY(g.connect(relayLegShimPath()));
-        QVERIFY(g.core.client.mediaDirectAvailable());
-        QCOMPARE(g.core.client.capabilities().mediaDirectVersion, 1);
-        QVERIFY(g.core.client.mediaTunnelAvailable());
-        QVERIFY(!g.core.client.mediaTunnelIceConfiguration());
-        FakeTransport* const first = g.guiTransports.first();
-        // Started on the session's ICE settings, routed: not the tunnel's.
-        QVERIFY(first->startOptions.ice.has_value());
-        QVERIFY(!first->startOptions.ice->hasCandidateSourceFactory());
-        QVERIFY(first->startOptions.ice->mediaRouting());
+        QVERIFY(connectOnWebRelay(g));
         const QString firstId = g.gui->mediaConnectionId();
 
-        // The stall rule's tick (every 500 ms) has run a few times: it is
-        // what would arm the first direct step.
-        QList<QTimer*> ticks;
-        for (QTimer* timer : g.gui->findChildren<QTimer*>(Qt::FindDirectChildrenOnly)) {
-            if (timer->isActive() && !timer->isSingleShot() && timer->interval() == 500) {
-                ticks.append(timer);
-            }
-        }
-        QVERIFY(!ticks.isEmpty());
-        std::vector<std::unique_ptr<QSignalSpy>> tickSpies;
-        for (QTimer* timer : ticks) {
-            tickSpies.push_back(std::make_unique<QSignalSpy>(timer, &QTimer::timeout));
-        }
-        QTRY_VERIFY_WITH_TIMEOUT(std::all_of(tickSpies.begin(), tickSpies.end(),
-                                             [](const auto& spy) { return spy->count() >= 3; }),
-                                 5000);
+        // The stall rule's tick (every 500 ms) has run a few times while
+        // audio is wanted (connectOnWebRelay): it is what would arm the
+        // first direct step.
+        auto* const tick = g.gui->findChild<QTimer*>(QStringLiteral("remoteMediaStallTimer"),
+                                                     Qt::FindDirectChildrenOnly);
+        QVERIFY(tick != nullptr);
+        QVERIFY(tick->isActive());
+        QSignalSpy ticks(tick, &QTimer::timeout);
+        QTRY_VERIFY_WITH_TIMEOUT(ticks.size() >= 3, 5000);
         QCOMPARE(g.gui->directUpgradeDelayMs(), -1);
         // Nor does the web relay ping at the tunnel's rate.
         QVERIFY(!g.core.client.mediaTunnelInUse());
@@ -956,6 +967,50 @@ private slots:
         QCOMPARE(moved.size(), 3);
         QCOMPARE(moved.value(QStringLiteral("replaces")).toString(), firstId);
         QVERIFY(!g.gui->replacePending());
+
+        // The Core takes it and moves media onto the tunnel: once ICE
+        // settles on the tunnel's pair, the direct ladder starts at its
+        // first step and the heartbeat runs at the tunnel's rate.
+        QTRY_COMPARE(g.core.transports.size(), 2);
+        g.guiTransports.at(1)->path = tunnelShimPath();
+        g.core.transports.at(1)->path = tunnelShimPath();
+        g.guiTransports.at(1)->becomeReady();
+        g.core.transports.at(1)->becomeReady();
+        const QString movedId = g.guiTransports.at(1)->startOptions.connectionId;
+        g.core.feed(3);
+        QTRY_COMPARE_WITH_TIMEOUT(g.gui->mediaConnectionId(), movedId,
+                                  DaemonMediaController::kReplaceOverlapMs + 3000);
+        g.audioOn(1);
+        QTRY_COMPARE_WITH_TIMEOUT(g.gui->directUpgradeDelayMs(), PathRacer::kUpgradeRetryMs[0],
+                                  3000);
+        QVERIFY(g.core.client.mediaTunnelInUse());
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Media still on the web relay leg after the session moved (its
+    // replacement not yet promoted) keeps the slow path's stall rule: the
+    // harness's session rank stands for the better rank after the move, so
+    // only the relay-leg shim makes the path slow.
+    void mediaLeftOnTheWebRelayAfterAMoveKeepsTheStallRule()
+    {
+        GuiHarness g;
+        QVERIFY(connectOnWebRelay(g));
+        const QString firstId = g.gui->mediaConnectionId();
+        const int rank = g.core.client.pathRank();
+        QVERIFY(rank != PathRacer::ServiceRelayed && rank != PathRacer::Floor);
+        g.stationLink->setCarriesBinary(true);
+        g.clientLink->setCarriesBinary(true);
+        emit g.core.client.pathChanged();
+        QVERIFY(g.gui->replacingConnection());
+        // The replacement is never made ready, so it is not promoted; the
+        // relay leg goes silent. (Recovery then stops media, so what was in
+        // use is checked first.)
+        QCOMPARE(g.gui->mediaConnectionId(), firstId);
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        g.feeding = false;
+        g.audioOn(0);
+        QTRY_COMPARE_WITH_TIMEOUT(recovery.size(), 1,
+                                  RemoteMediaController::kMediaStallMs + 1500);
         g.core.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

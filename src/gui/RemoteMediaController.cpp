@@ -1,13 +1,15 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
-//   2026-10-16: the direct media ladder and the tunnel-rate heartbeat count
+//   2026-10-15: the direct media ladder and the tunnel-rate heartbeat count
 //               only a connection whose ICE settings came from the media
 //               tunnel, not any loopback shim: media on the web relay leg
 //               (the tunnel declared for a later move) tries no direct-only
 //               replace, so a session move is followed at once instead of
 //               waiting behind one that cannot connect where UDP is
-//               blocked. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
-//               Claude Code.
+//               blocked. The stall rule still covers any loopback shim on a
+//               start that declared the tunnel. The stall tick's timer is
+//               named remoteMediaStallTimer. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-12: A display the Core ended because its slice was removed is
 //               not asked for again while the removal is on its way (at most
 //               kPanWaitingGraceMs); the removal retires the binding. J.J.
@@ -1832,6 +1834,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
     // Task 29 step 2b: the media stall rule's check.
     d->stallTimer = new QTimer(this);
     d->stallTimer->setInterval(500);
+    d->stallTimer->setObjectName(QStringLiteral("remoteMediaStallTimer"));
     connect(d->stallTimer, &QTimer::timeout, this, [this] {
         // Not isReady(): an agent that stopped hearing its pair may say it
         // is not ready long before it fails, which is the case to catch.
@@ -1845,12 +1848,17 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         // The tunnel counts only once ICE settled on it (a host pair on an
         // open network is not a slow path); the control heartbeat follows.
+        // The ladder and the heartbeat count only media on the tunnel's own
+        // settings; the stall rule still covers any loopback shim on a start
+        // that declared the tunnel, the web relay leg included (media left
+        // on it after the session moved to a better path).
         const std::optional<MediaIcePath> path = d->peer->selectedPath();
-        const bool viaTunnel = d->currentTunnelIce && path && path->viaLoopbackShim();
+        const bool viaShim = path && path->viaLoopbackShim();
+        const bool viaTunnel = d->currentTunnelIce && viaShim;
         d->client->setMediaTunnelInUse(viaTunnel);
         const int rank = d->client->pathRank();
         const bool slowPath = rank == PathRacer::ServiceRelayed || rank == PathRacer::Floor
-            || viaTunnel;
+            || (d->tunnelNegotiated && viaShim);
         // The Core stops RX audio for the TX-bound slice while keyed. Only
         // its negotiated txState can establish that this silence is expected.
         // Keep the media connection and display alive; the independent TX
