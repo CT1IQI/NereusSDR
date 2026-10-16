@@ -6046,6 +6046,13 @@ nereus_add_test(tst_daemon_display_keep
 nereus_add_test(tst_daemon_display_retune
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# Display send thread: the Core's displays leave on a thread of their own.
+# With the main thread held for 500 ms (as Direct3D holds it on a locked
+# Windows session) every display message is sent off the main thread and
+# no gap between them reaches 50 ms. REALTIME: wall-clock bounds.
+nereus_add_test(tst_daemon_display_send_thread
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session REALTIME)
 
 # ── Task 2.3: Spectrum Defaults overlay group + decimation wire-up ──────────
 # Tests for SpectrumWidget overlay setters (ShowMHzOnCursor / ShowBinWidth /
